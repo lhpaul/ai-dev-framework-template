@@ -166,3 +166,73 @@ See [`docs/ai/development-workflow/README.md`](docs/ai/development-workflow/READ
 - **CHANGELOG.md is required**: every feature/fix/hotfix PR must add an entry under `[Unreleased]` before merge. Never defer CHANGELOG entries to release time.
 - **Human approval gates**: PRs for spec, plan, and implementation are opened by agents but merged by humans.
 - **No destructive Git operations** without explicit human approval (no `--force`, `reset --hard`, `rebase` on shared branches).
+
+---
+
+## Managing This Template Alongside Your Projects
+
+### Recommended local setup
+
+```
+~/Git/
+├── ai-dev-framework-template/   ← this repo (upstream)
+├── project-a/                   ← downstream: has its own copy of framework files
+├── project-b/                   ← downstream: has its own copy of framework files
+└── ...
+```
+
+Each project created from this template carries its own copy of the framework files. This keeps projects fully self-contained — every team member, CI/CD system, and AI agent has access to the docs without external dependencies.
+
+### Starting a new project
+
+1. Click **"Use this template"** on GitHub to create a new repository
+2. Clone it locally
+3. Run the setup agent to generate project-specific docs (see [Getting Started](#getting-started-project-setup))
+
+### Propagating framework improvements to existing projects
+
+When you improve a protocol, agent, or best practice in this template repo, sync those changes to existing projects:
+
+```bash
+# Preview what would change (dry run)
+./scripts/sync-to-project.sh ~/Git/project-a --dry-run
+
+# Apply the sync
+./scripts/sync-to-project.sh ~/Git/project-a
+
+# Then review and commit in the target project
+cd ~/Git/project-a
+git diff
+git add docs/ai .claude/agents .cursor docs/best-practices
+git commit -m "chore: sync framework from ai-dev-framework-template"
+```
+
+**What gets synced:** `docs/ai/`, `.claude/agents/`, `.cursor/rules/`, `.cursor/commands/`, `docs/best-practices/1-general.md`, `2-version-control.md`, `3-testing.md`
+
+**What does NOT get synced:** `docs/project/`, `AGENTS.md`, `README.md`, `CHANGELOG.md`, `docs/best-practices/STACK-SPECIFIC.md`
+
+### Backporting improvements from a project to the template
+
+When you improve a framework file while working on a specific project and want to bring it back to the template:
+
+```bash
+# From the template repo:
+./scripts/sync-from-project.sh ~/Git/project-a --dry-run
+./scripts/sync-from-project.sh ~/Git/project-a
+
+# IMPORTANT: review the diff carefully before committing
+# to ensure no project-specific content ends up in the template
+git diff
+git add -A && git commit -m "feat: backport improvements from project-a"
+git push
+```
+
+### Setting GitHub as a template repository
+
+To enable the **"Use this template"** button on GitHub:
+
+1. Go to the repository **Settings**
+2. Under **General**, check **"Template repository"**
+3. Save
+
+New projects will be created as independent repositories (not forks), with a clean Git history.
