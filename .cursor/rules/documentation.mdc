@@ -1,0 +1,51 @@
+---
+description: Documentation conventions. Apply when creating or editing any documentation file.
+globs: ["docs/**/*.md", "AGENTS.md", "README.md"]
+alwaysApply: false
+---
+
+## Documentation Conventions
+
+### Single source of truth
+
+Every piece of information lives in exactly one place. Before adding content:
+1. Check if it already exists somewhere in `docs/`
+2. If it exists, reference it — don't duplicate it
+3. If it doesn't exist, add it in the most appropriate file
+
+### Document boundaries
+
+| File/Directory | Contains |
+|---|---|
+| `README.md` | Project overview, quick start, repo map |
+| `AGENTS.md` | AI agent guidance, commands, key conventions |
+| `docs/project/` | Project-specific context (domain, architecture, stack, DB) |
+| `docs/best-practices/` | Coding standards and conventions |
+| `docs/ai/development-workflow/` | Workflow protocols, templates, integrations |
+| `docs/specs/developments/` | Feature specs and implementation plans |
+| `docs/testing/` | Smoke test runbooks |
+
+### Cross-referencing
+
+Prefer references over duplication:
+
+```markdown
+<!-- Good -->
+For database conventions, see [`docs/best-practices/STACK-SPECIFIC.md`](../best-practices/STACK-SPECIFIC.md).
+
+<!-- Bad -->
+[Copying the entire database conventions section here]
+```
+
+### Placeholder discipline
+
+- Use `> TODO: [specific question]` for content that needs to be filled in
+- Never leave generic placeholder text (e.g., "[Description]") after setup is complete
+- If a section doesn't apply to the project, delete it rather than leaving it empty
+
+### Writing style
+
+- Write for AI readers as well as humans — be specific and unambiguous
+- Prefer tables over long prose for structured information
+- Use code blocks for commands, file paths, and code examples
+- Keep docs concise — AI agents read these on every task

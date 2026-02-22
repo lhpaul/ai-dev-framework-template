@@ -1,0 +1,41 @@
+---
+description: AI development workflow conventions. Apply when working on feature specs, implementation plans, code implementation, reviews, or releases.
+globs:
+alwaysApply: false
+---
+
+## AI Development Workflow
+
+This project follows a staged AI-assisted development workflow. The canonical reference is:
+
+`docs/ai/development-workflow/README.md`
+
+### Stages and protocols
+
+| Stage | Protocol |
+|---|---|
+| Write spec | `docs/ai/development-workflow/protocols/01-generate-specs-protocol.md` |
+| Review spec | `docs/ai/development-workflow/protocols/01-review-specs-protocol.md` |
+| Write plan | `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
+| Review plan | `docs/ai/development-workflow/protocols/02-review-implementation-plan-protocol.md` |
+| Implement | `docs/ai/development-workflow/protocols/04-implement-development-protocol.md` |
+| Review code | `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md` |
+| Orchestrate | `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
+
+### Key rules
+
+- Always read the spec and plan before implementing
+- Never skip the approval gate before Git operations
+- Always update CHANGELOG under `[Unreleased]` before opening a PR
+- No `git push --force`, `reset --hard`, or rebase on shared branches without explicit human approval
+- Humans merge PRs — agents open them
+
+### Development artifacts
+
+```
+docs/specs/developments/[YYYYMMDDHHMMSS]_[slug]/
+  1_[slug]_specs.md
+  2_[slug]_implementation-plan.md
+
+docs/testing/[section]/[slug].smoke-test.md
+```

@@ -1,0 +1,28 @@
+---
+description: Code quality conventions. Apply when writing, editing, or reviewing any source code file.
+globs: []
+alwaysApply: false
+---
+
+## Code Quality Conventions
+
+Follow the best practices defined in:
+
+- General standards: `docs/best-practices/1-general.md`
+- Version control: `docs/best-practices/2-version-control.md`
+- Testing: `docs/best-practices/3-testing.md`
+- Stack-specific: `docs/best-practices/STACK-SPECIFIC.md`
+
+### Key rules (quick reference)
+
+- Follow the principle of least surprise — write code that does what it looks like it does
+- One logical responsibility per function
+- No dead code, no commented-out code
+- No unilateral refactoring outside the scope of the current task
+- Validate at system boundaries (user input, external APIs); trust internal code
+- Never commit secrets, API keys, or credentials
+- Fix all lint errors before committing — do not suppress warnings without justification
+
+### When you find a convention not documented
+
+If you consistently follow a pattern not yet documented in `docs/best-practices/`, add it. Keep best practice docs up to date — they are read by AI agents on every task.
