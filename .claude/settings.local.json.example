@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      // ── GitHub CLI (requires: gh auth login) ─────────────────────────
+      "Bash(gh pr view:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh issue view:*)",
+
+      // ── GitHub MCP (requires: GitHub MCP server configured locally) ──
+      "mcp__github__get_me",
+      "mcp__github__get_file_contents",
+      "mcp__github__list_branches",
+      "mcp__github__list_commits",
+      "mcp__github__list_pull_requests",
+      "mcp__github__pull_request_read",
+      "mcp__github__search_pull_requests",
+      "mcp__github__list_issues",
+      "mcp__github__issue_read",
+      "mcp__github__search_code",
+      "mcp__github__create_pull_request",
+      "mcp__github__update_pull_request",
+      "mcp__github__add_issue_comment",
+      "mcp__github__add_reply_to_pull_request_comment",
+
+      // ── Linear MCP (requires: Linear MCP server configured locally) ──
+      // Uncomment if you use Linear as your issue tracker
+      // "mcp__linear__list_issues",
+      // "mcp__linear__get_issue",
+      // "mcp__linear__update_issue"
+    ]
+  },
+  "enableAllProjectMcpServers": false
+}
