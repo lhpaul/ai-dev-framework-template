@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- AI development workflow: clarified the Spec Ready stage is product-focused and technical design details belong in the Plan Ready stage.
+
+## [0.3.0] - 2026-02-24
+
+### Added
+
+- `docs/ai/agent-model-config.md` — documents model assignments, tool restrictions, and override instructions for all Claude Code agents
+- Link to `agent-model-config.md` in the Key Documentation table in `AGENTS.md`
+
+### Changed
+
+- All Claude Code agents (`.claude/agents/`) now declare an explicit `model` field in their YAML frontmatter:
+  - `tech-lead` → `claude-opus-4-5-20251101` (highest-reasoning stage; architecture decisions benefit from Opus depth)
+  - `developer`, `product-manager`, `spec-reviewer`, `implementation-plan-reviewer`, `code-reviewer`, `project-setup` → `claude-sonnet-4-5-20250929` (capable and cost-effective for their respective tasks)
+  - `orchestrator` → `claude-haiku-4-5-20251001` (mechanical dispatch work; speed and cost matter at orchestration frequency)
+- `product-manager`, `spec-reviewer`, and `implementation-plan-reviewer` agents: `Bash` removed from `tools` (least-privilege — these agents only read and write documentation files)
+- `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` Step 5: expanded with explicit parallel subagent dispatch instructions — the orchestrator now uses the Claude Code `Task` tool to launch all eligible agents simultaneously in a single message rather than sequentially
+
 ## [0.2.0] - 2026-02-24
 
 ### Added

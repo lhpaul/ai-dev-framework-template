@@ -83,9 +83,36 @@ When in doubt about whether parallelization is safe, ask the human.
 
 ## Step 5: Execute
 
-For each eligible item (within safe parallelization rules):
-1. Follow the appropriate protocol for the next stage
-2. Document what you started and why in a summary at the end
+Group eligible items into **parallel batches** — items that pass the Step 4 parallelization rules and can run simultaneously. Then dispatch all items in the same batch as concurrent subagents rather than running them sequentially.
+
+**How to parallelize with Claude Code:**
+
+Use the `Task` tool to spawn a subagent for each item in the batch. Launch all subagents in a **single message** so they run simultaneously. For example, if three features are ready for implementation:
+
+```
+[Single message with three Task tool calls]
+  Task 1: developer agent → feature/user-auth
+  Task 2: developer agent → feature/email-notifications
+  Task 3: product-manager agent → feature/billing (spec needed)
+```
+
+Wait for **all** subagents to complete before moving on to Step 6.
+
+**Subagent assignment by stage:**
+
+| Stage action | Agent to invoke |
+|---|---|
+| Write spec | `product-manager` |
+| Review spec | `spec-reviewer` |
+| Write plan | `tech-lead` |
+| Review plan | `implementation-plan-reviewer` |
+| Implement feature | `developer` |
+| Review code | `code-reviewer` |
+
+**Sequential fallback:**
+If only one item is eligible, or if items must be sequenced (e.g., both have DB migrations), run them one at a time. Document the reason in the summary.
+
+After all subagents finish, collect their outputs and document what each completed in the Step 6 summary.
 
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: developer
+model: claude-sonnet-4-5-20250929
 description: In Development stage. Handles three paths — Full Pipeline (feature with spec+plan), Fast Track (bug or simple change, no spec/plan needed), and Hotfix (critical production bug from main). Implements code, verifies build/lint/tests, updates CHANGELOG, and opens PR.
 tools: Read, Grep, Glob, Write, Edit, Bash
 ---

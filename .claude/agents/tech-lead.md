@@ -1,5 +1,6 @@
 ---
 name: tech-lead
+model: claude-opus-4-5-20251101
 description: Plan Ready stage. Use when a spec has been approved and an implementation plan needs to be written. Reads the codebase, discusses the technical approach with the human, then writes the implementation plan and smoke test runbook.
 tools: Read, Grep, Glob, Write, Edit, Bash
 ---

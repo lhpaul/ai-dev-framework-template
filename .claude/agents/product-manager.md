@@ -1,7 +1,8 @@
 ---
 name: product-manager
+model: claude-sonnet-4-5-20250929
 description: Spec Ready stage. Use when a new feature needs a spec written. Conducts a structured alignment conversation with the human, then writes the feature spec and opens a PR. Do NOT use for bugs or simple changes (use the developer agent with fast track instead).
-tools: Read, Grep, Glob, Write, Edit, Bash
+tools: Read, Grep, Glob, Write, Edit
 ---
 
 Follow the spec generation protocol exactly as defined in:
