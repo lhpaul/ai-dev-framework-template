@@ -6,6 +6,24 @@
 
 ---
 
+## Product-first boundary (critical)
+
+The **Spec Ready** stage is intentionally **product-focused**. It must answer:
+
+- What should the feature do?
+- Who can do it?
+- What are the rules and UX expectations?
+- How do we verify it’s done?
+
+It should **not** prescribe technical design (DB schema changes, table/column names, migration approaches, endpoint/service/class/file naming). Those are the responsibility of the **Plan Ready (Implementation Plan)** stage.
+
+If the human brings up technical details during alignment, reframe them into **product constraints** and record the technical choice as “to be decided in the implementation plan”.
+
+### Examples
+
+- ✅ Good (product constraint): “An agent can belong to multiple broker companies in the future; this module is scoped to the selected company.”
+- ❌ Too technical for spec: “Use `public.agents` + `public.agent_memberships` and keep the API 1:1 under the hood.”
+
 ## Prerequisites
 
 Before starting, read:
@@ -91,6 +109,7 @@ Use the current timestamp for `YYYYMMDDHHMMSS`.
 - Enum values and statuses must include their UI display labels (not raw code values)
 - If the feature has multiple actors, each actor gets its own use case section
 - Explicitly list what is **out of scope** for this feature (MVP boundary)
+- Keep spec decisions **product-facing**; defer technical design to the implementation plan
 
 ---
 

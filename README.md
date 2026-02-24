@@ -191,41 +191,29 @@ Each project created from this template carries its own copy of the framework fi
 
 ### Propagating framework improvements to existing projects
 
-When you improve a protocol, agent, or best practice in this template repo, sync those changes to existing projects:
+When you improve a protocol, agent, or best practice in this template repo, copy the framework-level files into existing projects and commit the changes there.
 
-```bash
-# Preview what would change (dry run)
-./scripts/sync-to-project.sh ~/Git/project-a --dry-run
+Framework-level paths to propagate:
 
-# Apply the sync
-./scripts/sync-to-project.sh ~/Git/project-a
+- `docs/ai/`
+- `.claude/agents/`
+- `.cursor/rules/`
+- `.cursor/commands/`
+- `docs/best-practices/1-general.md`
+- `docs/best-practices/2-version-control.md`
+- `docs/best-practices/3-testing.md`
 
-# Then review and commit in the target project
-cd ~/Git/project-a
-git diff
-git add docs/ai .claude/agents .cursor docs/best-practices
-git commit -m "chore: sync framework from ai-dev-framework-template"
-```
+Project-specific paths to avoid overwriting:
 
-**What gets synced:** `docs/ai/`, `.claude/agents/`, `.cursor/rules/`, `.cursor/commands/`, `docs/best-practices/1-general.md`, `2-version-control.md`, `3-testing.md`
-
-**What does NOT get synced:** `docs/project/`, `AGENTS.md`, `README.md`, `CHANGELOG.md`, `docs/best-practices/STACK-SPECIFIC.md`
+- `docs/project/`
+- `AGENTS.md`
+- `README.md`
+- `CHANGELOG.md`
+- `docs/best-practices/STACK-SPECIFIC.md`
 
 ### Backporting improvements from a project to the template
 
-When you improve a framework file while working on a specific project and want to bring it back to the template:
-
-```bash
-# From the template repo:
-./scripts/sync-from-project.sh ~/Git/project-a --dry-run
-./scripts/sync-from-project.sh ~/Git/project-a
-
-# IMPORTANT: review the diff carefully before committing
-# to ensure no project-specific content ends up in the template
-git diff
-git add -A && git commit -m "feat: backport improvements from project-a"
-git push
-```
+When you improve a framework file while working on a specific project, port the relevant changes back into this template repo via a normal PR (copy only the framework-level paths listed above, and avoid importing project-specific content).
 
 ### Setting GitHub as a template repository
 

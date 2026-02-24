@@ -54,6 +54,10 @@ This document is the **canonical master reference** for how development is struc
 
 ---
 
+## Product-first boundary (important)
+
+The **Spec Ready** stage is intentionally **product-focused**: it defines what the feature should do (actors, rules, UX, acceptance criteria). Avoid prescribing technical design (DB/schema details, file paths, specific endpoints/classes). Those decisions belong in the **Plan Ready (Implementation Plan)** stage.
+
 ## Commands by Stage
 
 | Stage | Claude Code | Cursor | Any AI tool |

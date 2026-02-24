@@ -7,14 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- AI development workflow: clarified the Spec Ready stage is product-focused and technical design details belong in the Plan Ready stage.
-
-### Removed
-
-- Framework sync scripts (manual propagation/backporting only).
-
 ## [0.3.0] - 2026-02-24
 
 ### Added
@@ -30,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `orchestrator` → `claude-haiku-4-5-20251001` (mechanical dispatch work; speed and cost matter at orchestration frequency)
 - `product-manager`, `spec-reviewer`, and `implementation-plan-reviewer` agents: `Bash` removed from `tools` (least-privilege — these agents only read and write documentation files)
 - `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` Step 5: expanded with explicit parallel subagent dispatch instructions — the orchestrator now uses the Claude Code `Task` tool to launch all eligible agents simultaneously in a single message rather than sequentially
+- AI development workflow: clarified the Spec Ready stage is product-focused and technical design details belong in the Plan Ready stage.
+
+### Removed
+
+- Framework sync scripts (manual propagation/backporting only).
 
 ## [0.2.0] - 2026-02-24
 
