@@ -207,6 +207,7 @@ Generate all files using the information collected. Follow the placeholder struc
 - Fill in the Repository Structure section with a real directory tree
 - Fill in the Common Commands section with the actual commands
 - Update the Troubleshooting section with any project-specific tips mentioned
+- Remove the "template overrides" block from the Git & Branching section (the "No `develop` branch" rule), as that only applies to the framework repository itself
 
 ---
 
