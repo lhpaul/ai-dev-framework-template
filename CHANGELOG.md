@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - AI development workflow: clarified the Spec Ready stage is product-focused and technical design details belong in the Plan Ready stage.
 
+### Removed
+
+- Framework sync scripts (manual propagation/backporting only).
+
 ## [0.3.0] - 2026-02-24
 
 ### Added
@@ -52,6 +56,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional integrations for Linear and Greptile (`docs/ai/development-workflow/integrations/`)
 - Spec, implementation plan, and smoke test runbook templates (`docs/ai/development-workflow/templates/`)
 - `AGENTS.md` as the universal AI entry point (AGENTS.md open format), with `CLAUDE.md` and `GEMINI.md` symlinks for Claude Code and Gemini CLI compatibility
-- Sync scripts to propagate framework improvements to downstream projects and backport improvements from projects to the template (`scripts/sync-to-project.sh`, `scripts/sync-from-project.sh`)
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
