@@ -170,7 +170,7 @@ Then ask:
 
 If the template source was a remote clone, clean it up now:
 ```bash
-rm -rf /tmp/template-sync-<timestamp>
+rm -rf /tmp/template-sync-*
 ```
 
 ---
