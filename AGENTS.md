@@ -60,6 +60,12 @@ This project uses a staged AI-assisted development workflow. See [`docs/ai/devel
 | Prepare Release | — | `@prepare-release` | Follow workflow README release section |
 | Orchestrate Work | `orchestrator` agent | `@run-work` | Follow `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
 
+### Maintenance Commands
+
+| Task | Claude Code | Cursor |
+|---|---|---|
+| Sync framework updates from template | `/sync-template` | `@sync-template` |
+
 ---
 
 ## Common Commands

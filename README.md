@@ -197,6 +197,7 @@ Framework-level paths to propagate:
 
 - `docs/ai/`
 - `.claude/agents/`
+- `.claude/skills/`
 - `.cursor/rules/`
 - `.cursor/commands/`
 - `docs/best-practices/1-general.md`
@@ -210,6 +211,19 @@ Project-specific paths to avoid overwriting:
 - `README.md`
 - `CHANGELOG.md`
 - `docs/best-practices/STACK-SPECIFIC.md`
+
+#### Using the sync-template skill (Claude Code / Cursor)
+
+If your project has the `.claude/skills/sync-template.md` skill, you can automate this process:
+
+| Tool | Command |
+|---|---|
+| Claude Code | `/sync-template` |
+| Cursor | `@sync-template` |
+
+The skill compares your project against the template, shows exactly what changed (categorized by auto-apply vs. manual review vs. skipped), and applies updates only after your explicit approval. It also generates ready-to-use git instructions for branching, committing, and opening a PR.
+
+On first run, the skill will ask you for the template source (local path or remote URL) and save it to `.claude/template-config.json` for future runs.
 
 ### Backporting improvements from a project to the template
 
