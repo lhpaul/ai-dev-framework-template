@@ -103,19 +103,37 @@ If no: skip this section and note that `docs/project/4-database-model.md` can be
 
 ## Step 6: Stack-Specific Best Practices
 
-Based on the tech stack identified in Step 4, generate appropriate best practices for `docs/best-practices/STACK-SPECIFIC.md`.
+Based on the tech stack identified in Step 4 and the database info from Step 5, generate stack-specific best practices using the coordinator + detail-files pattern.
 
 Ask:
 - Are there any coding conventions already established on the team I should document?
 - Any patterns you want to enforce or avoid?
 - Any linting rules or formatters configured?
 
-Then generate the STACK-SPECIFIC.md based on the stack and any conventions provided. Cover:
-- Language-specific conventions (naming, types, patterns)
-- Framework-specific patterns and anti-patterns
-- Styling/UI conventions (if applicable)
-- Database/ORM conventions (if applicable)
-- API design conventions (if applicable)
+Then generate the following files:
+
+**`docs/best-practices/STACK-SPECIFIC.md`** (always generated) — coordinator document with:
+- **Stack Summary**: one-line list of all technologies used
+- **Best Practices by Technology**: table linking to the `stack/` files below
+- **Quick Reference**: the 5–10 most important cross-cutting rules for the project (the "always remember" list)
+
+**`docs/best-practices/stack/[technology].md`** (one file per technology area) — detail documents covering:
+- Naming conventions specific to that technology
+- Recommended patterns and when to use them
+- Anti-patterns to avoid and why
+- Concrete examples where the rule isn't obvious
+
+Generate one file per distinct technology area. Typical areas:
+
+| Area | Generate if... |
+|---|---|
+| Language (e.g., `typescript.md`, `python.md`) | Always |
+| Primary framework (e.g., `nextjs.md`, `django.md`) | Always |
+| Styling system (e.g., `tailwind.md`, `scss.md`) | Project has a UI layer |
+| Database/ORM (e.g., `postgresql.md`, `prisma.md`) | Project has a database |
+| API style (e.g., `rest.md`, `graphql.md`, `trpc.md`) | Project has an API with design conventions worth documenting |
+
+Name each file after the specific technology, not the category (e.g., `typescript.md` not `language.md`).
 
 ---
 
@@ -161,7 +179,8 @@ Summarize everything collected:
 > - `docs/project/2-repo-architecture.md`
 > - `docs/project/3-software-architecture.md`
 > - `docs/project/4-database-model.md` (or note deletion if no DB)
-> - `docs/best-practices/STACK-SPECIFIC.md`
+> - `docs/best-practices/STACK-SPECIFIC.md` (coordinator)
+> - `docs/best-practices/stack/[technology].md` × [N] files (one per technology area)
 > - Updated `AGENTS.md`
 >
 > Shall I proceed?"
@@ -179,6 +198,9 @@ Generate all files using the information collected. Follow the placeholder struc
 - Where information is missing, use `> TODO: [specific question]` so the team knows what to fill in
 - Keep docs concise — they will be read by AI agents on every task, so clarity and brevity matter
 - Cross-reference between docs where relevant (e.g., `3-software-architecture.md` references `4-database-model.md`)
+- `STACK-SPECIFIC.md` must have a complete table with working links to all `stack/` files generated
+- Each `stack/[technology].md` must contain real conventions for that technology — not generic placeholders
+- The Quick Reference section in `STACK-SPECIFIC.md` must reflect the project's actual priorities, not generic advice
 
 **Update `AGENTS.md`**:
 - Fill in the Project Overview section with the project description

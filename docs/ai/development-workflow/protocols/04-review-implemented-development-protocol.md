@@ -37,7 +37,7 @@ Priority order:
 
 - [ ] `docs/best-practices/1-general.md` — general conventions followed
 - [ ] `docs/best-practices/2-version-control.md` — commit messages follow Conventional Commits
-- [ ] `docs/best-practices/STACK-SPECIFIC.md` — stack-specific conventions followed
+- [ ] `docs/best-practices/STACK-SPECIFIC.md` and `docs/best-practices/stack/` — stack-specific conventions followed (read the relevant technology files for the areas touched by this PR)
 - [ ] CHANGELOG updated under `[Unreleased]` with appropriate entry
 
 ### 3. Code Quality & Correctness

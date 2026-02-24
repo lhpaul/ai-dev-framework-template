@@ -85,20 +85,28 @@ This project uses a staged AI-assisted development workflow. See [`docs/ai/devel
 
 ### Git & Branching
 
-- Follow conventions in `docs/best-practices/2-version-control.md`
+> **This project overrides the default template workflow** (documented in `docs/ai/development-workflow/`).
+> The overrides below apply only here; downstream projects using this template are not affected.
+
+- **No `develop` branch** — all branches target `main` directly
 - Branch naming:
-  - Features: `feature/[feature-slug]`
-  - Bugs (fast track): `fix/[slug]`
+  - Features / improvements: `feature/[feature-slug]`
+  - Bug fixes (fast track): `fix/[slug]`
   - Hotfixes: `hotfix/[slug]` from `main`
-  - Specs: `spec/[feature-slug]`
-  - Implementation plans: `implementation-plan/[feature-slug]`
   - Releases: `release/v[X.Y.Z]`
 
-### CHANGELOG
+### CHANGELOG & Versioning
 
-- **Every PR must add a `[Unreleased]` entry** in `CHANGELOG.md` before merge
-- Never defer CHANGELOG entries to release time
+> **This project overrides the default CHANGELOG convention.**
+
+- **Every merged PR releases a new version** — convert `[Unreleased]` to `[X.Y.Z]` before merging
+- Use [Semantic Versioning](https://semver.org/): patch for fixes/tweaks, minor for new features or meaningful improvements, major for breaking changes to the template structure
+- Never leave `[Unreleased]` entries after a merge; the PR itself is the release
 - Follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format
+
+### Stack Conventions
+
+Read [`docs/best-practices/STACK-SPECIFIC.md`](docs/best-practices/STACK-SPECIFIC.md) for the stack summary and the most important cross-cutting rules. For detailed conventions per technology, see the files in [`docs/best-practices/stack/`](docs/best-practices/stack/).
 
 ### Safety Rules
 
