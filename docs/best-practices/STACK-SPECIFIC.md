@@ -17,14 +17,15 @@
 
 | Area | File |
 |---|---|
-| [Language] | [stack/[language].md](stack/[language].md) |
-| [Framework] | [stack/[framework].md](stack/[framework].md) |
-| [Styling] | [stack/[styling].md](stack/[styling].md) — if applicable |
-| [Database] | [stack/[database].md](stack/[database].md) — if applicable |
-| [API] | [stack/[api-style].md](stack/[api-style].md) — if applicable |
+| Language | `stack/[technology].md` |
+| Framework | `stack/[technology].md` |
+| Styling | `stack/[technology].md` — if applicable |
+| Database | `stack/[technology].md` — if applicable |
+| API | `stack/[technology].md` — if applicable |
 
-> **Setup agent**: Replace the table above with the actual technology files generated
-> under `docs/best-practices/stack/`. Remove rows that don't apply to this project.
+> **Setup agent**: Replace each `stack/[technology].md` above with actual links to the
+> files generated under `docs/best-practices/stack/`. Remove rows that don't apply.
+> Example: `| TypeScript | [stack/typescript.md](stack/typescript.md) |`
 
 ---
 
