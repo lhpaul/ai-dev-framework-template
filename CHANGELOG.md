@@ -5,13 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-02-24
+
+### Refactored
+
+- Moved `docs/ai/agent-model-config.md` to `docs/ai/development-workflow/agent-model-config.md` for better repository organization.
+- Updated documentation links in `AGENTS.md` and `CHANGELOG.md` to reflect the new path for `agent-model-config.md`.
+
+### Changed
+
+- `docs/ai/development-workflow/README.md` — Updated the development lifecycle diagram to specify the `develop` branch as the merge target.
 
 ## [0.3.0] - 2026-02-24
 
 ### Added
 
-- `docs/ai/agent-model-config.md` — documents model assignments, tool restrictions, and override instructions for all Claude Code agents
+- `docs/ai/development-workflow/agent-model-config.md` — documents model assignments, tool restrictions, and override instructions for all Claude Code agents
 - Link to `agent-model-config.md` in the Key Documentation table in `AGENTS.md`
 
 ### Changed

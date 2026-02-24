@@ -37,7 +37,7 @@ Always refer to these docs for authoritative guidance:
 | [`docs/best-practices/3-testing.md`](docs/best-practices/3-testing.md) | Testing standards |
 | [`docs/best-practices/STACK-SPECIFIC.md`](docs/best-practices/STACK-SPECIFIC.md) | Stack-specific conventions |
 | [`docs/ai/development-workflow/README.md`](docs/ai/development-workflow/README.md) | AI development workflow (master doc) |
-| [`docs/ai/agent-model-config.md`](docs/ai/agent-model-config.md) | Model assignments, tool restrictions, and override guide for all agents |
+| [`docs/ai/development-workflow/agent-model-config.md`](docs/ai/development-workflow/agent-model-config.md) | Model assignments, tool restrictions, and override guide for all agents |
 
 ---
 
@@ -89,7 +89,7 @@ This project uses a staged AI-assisted development workflow. See [`docs/ai/devel
 > **This project overrides the default template workflow** (documented in `docs/ai/development-workflow/`).
 > The overrides below apply only here; downstream projects using this template are not affected.
 
-- **No `develop` branch** — all branches target `main` directly
+- **No `develop` branch** — all branches target `main` directly. **Whenever a workflow protocol or README mentions the `develop` branch, you must substitute it with `main`.**
 - Branch naming:
   - Features / improvements: `feature/[feature-slug]`
   - Bug fixes (fast track): `fix/[slug]`
