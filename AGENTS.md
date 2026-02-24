@@ -100,6 +100,10 @@ This project uses a staged AI-assisted development workflow. See [`docs/ai/devel
 - Never defer CHANGELOG entries to release time
 - Follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format
 
+### Stack Conventions
+
+Read [`docs/best-practices/STACK-SPECIFIC.md`](docs/best-practices/STACK-SPECIFIC.md) for the stack summary and the most important cross-cutting rules. For detailed conventions per technology, see the files in [`docs/best-practices/stack/`](docs/best-practices/stack/).
+
 ### Safety Rules
 
 - **No `git push --force`**, `git reset --hard`, or rebase on shared branches without explicit human approval
