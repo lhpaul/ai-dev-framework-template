@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-02-24
+
+### Added
+
+- `docs/ai/agent-model-config.md` — documents model assignments, tool restrictions, and override instructions for all Claude Code agents
+- Link to `agent-model-config.md` in the Key Documentation table in `AGENTS.md`
+
+### Changed
+
+- All Claude Code agents (`.claude/agents/`) now declare an explicit `model` field in their YAML frontmatter:
+  - `tech-lead` → `claude-opus-4-6` (highest-reasoning stage; architecture decisions benefit from Opus depth)
+  - `developer`, `product-manager`, `spec-reviewer`, `implementation-plan-reviewer`, `code-reviewer`, `project-setup` → `claude-sonnet-4-6` (capable and cost-effective for their respective tasks)
+  - `orchestrator` → `claude-haiku-4-5-20251001` (mechanical dispatch work; speed and cost matter at orchestration frequency)
+- `product-manager`, `spec-reviewer`, and `implementation-plan-reviewer` agents: `Bash` removed from `tools` (least-privilege — these agents only read and write documentation files)
+- `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` Step 5: expanded with explicit parallel subagent dispatch instructions — the orchestrator now uses the Claude Code `Task` tool to launch all eligible agents simultaneously in a single message rather than sequentially
+- AI development workflow: clarified the Spec Ready stage is product-focused and technical design details belong in the Plan Ready stage.
+
+### Removed
+
+- Framework sync scripts (manual propagation/backporting only).
+
 ## [0.2.0] - 2026-02-24
 
 ### Added
@@ -32,6 +53,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional integrations for Linear and Greptile (`docs/ai/development-workflow/integrations/`)
 - Spec, implementation plan, and smoke test runbook templates (`docs/ai/development-workflow/templates/`)
 - `AGENTS.md` as the universal AI entry point (AGENTS.md open format), with `CLAUDE.md` and `GEMINI.md` symlinks for Claude Code and Gemini CLI compatibility
-- Sync scripts to propagate framework improvements to downstream projects and backport improvements from projects to the template (`scripts/sync-to-project.sh`, `scripts/sync-from-project.sh`)
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files

@@ -1,5 +1,6 @@
 ---
 name: orchestrator
+model: claude-haiku-4-5-20251001
 description: Coordination agent. Discovers what developments can advance to the next stage, runs safe parallel work, and notifies humans when PRs are ready for review. Use when you want to run multiple developments autonomously without directing each one manually.
 tools: Read, Grep, Glob, Write, Edit, Bash
 ---

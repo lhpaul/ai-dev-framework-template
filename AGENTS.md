@@ -37,6 +37,7 @@ Always refer to these docs for authoritative guidance:
 | [`docs/best-practices/3-testing.md`](docs/best-practices/3-testing.md) | Testing standards |
 | [`docs/best-practices/STACK-SPECIFIC.md`](docs/best-practices/STACK-SPECIFIC.md) | Stack-specific conventions |
 | [`docs/ai/development-workflow/README.md`](docs/ai/development-workflow/README.md) | AI development workflow (master doc) |
+| [`docs/ai/agent-model-config.md`](docs/ai/agent-model-config.md) | Model assignments, tool restrictions, and override guide for all agents |
 
 ---
 

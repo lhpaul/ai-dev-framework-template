@@ -56,7 +56,27 @@ Priority order:
 - [ ] Status transitions are defined (from → to, trigger)
 - [ ] No raw code values exposed in the spec as if they were the display labels
 
-### 6. Consistency with Project Conventions
+### 6. Product-first boundary (critical)
+
+Specs in this repo are intentionally **product-focused**. The spec should describe:
+
+- user-facing behavior and UX expectations,
+- permissions/roles,
+- business rules,
+- acceptance criteria.
+
+The spec should generally **avoid** prescribing technical design:
+
+- DB table/column names, migrations, triggers/functions
+- specific endpoints/handlers/services/classes
+- file paths and concrete module layouts
+
+If technical details appear, prefer to:
+
+1) rewrite them into **product constraints** (what must be true, not how), and
+2) record any remaining engineering decisions as **Open Questions** to be resolved in the Implementation Plan stage.
+
+### 7. Consistency with Project Conventions
 
 - [ ] Entity names match `docs/project/1-business-domain.md`
 - [ ] No new entities introduced without a description
