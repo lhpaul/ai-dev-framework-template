@@ -72,11 +72,11 @@ When a Linear issue exists, use the Linear issue identifier as the branch slug p
 
 | Branch type | Pattern | Example |
 |---|---|---|
-| Spec | `spec/[TEAM-ID]-[slug]` | `spec/ENG-123-user-auth` |
-| Implementation plan | `implementation-plan/[TEAM-ID]-[slug]` | `implementation-plan/ENG-123-user-auth` |
-| Feature | `feature/[TEAM-ID]-[slug]` | `feature/ENG-123-user-auth` |
-| Bug fix | `fix/[TEAM-ID]-[slug]` | `fix/ENG-456-login-redirect` |
-| Hotfix | `hotfix/[TEAM-ID]-[slug]` | `hotfix/ENG-789-payment-crash` |
+| Spec | `spec/[issue-id]-[slug]` | `spec/ENG-123-user-auth` |
+| Implementation plan | `implementation-plan/[issue-id]-[slug]` | `implementation-plan/ENG-123-user-auth` |
+| Feature | `feature/[issue-id]-[slug]` | `feature/ENG-123-user-auth` |
+| Bug fix | `fix/[issue-id]-[slug]` | `fix/ENG-456-login-redirect` |
+| Hotfix | `hotfix/[issue-id]-[slug]` | `hotfix/ENG-789-payment-crash` |
 
 The `[slug]` is a short kebab-case description derived from the issue title (omit common words like "add", "fix", "update" to keep it short). Linear also auto-suggests a branch name on each issue — use it directly if preferred.
 
