@@ -108,12 +108,15 @@ Present the plan and runbook to the human:
 
 Once approved:
 
-1. Create branch: `git checkout -b implementation-plan/[feature-slug]` from `develop`
-2. Write the plan file
-3. Write the smoke test runbook
-4. Update the spec status from `Spec Ready` to `Plan Ready` (in the spec file's status field)
-5. Commit: `docs: add implementation plan for [feature-name]`
-6. Push and open PR targeting `develop` with:
+1. Determine the branch slug:
+   - **With issue tracker**: `[issue-id]-[feature-slug]` (e.g., `ENG-123-user-auth`)
+   - **Without issue tracker**: `[feature-slug]` (e.g., `user-auth`)
+2. Create branch: `git checkout -b implementation-plan/[branch-slug]` from `develop`
+3. Write the plan file
+4. Write the smoke test runbook
+5. Update the spec status from `Spec Ready` to `Plan Ready` (in the spec file's status field)
+6. Commit: `docs: add implementation plan for [feature-name]`
+7. Push and open PR targeting `develop` with:
    - Title: `docs(plan): [feature-name]`
    - Body: summary of the approach, complexity estimate, key risks, link to plan and runbook
 
