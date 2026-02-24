@@ -1,5 +1,6 @@
 ---
 name: project-setup
+model: claude-sonnet-4-6
 description: Onboarding agent. Run this when first setting up a new project from this template. Guides a structured conversation to generate all project-specific documentation (business domain, architecture, tech stack, best practices) and configures the framework for your project.
 tools: Read, Grep, Glob, Write, Edit, Bash
 ---
