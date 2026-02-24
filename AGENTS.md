@@ -89,7 +89,7 @@ This project uses a staged AI-assisted development workflow. See [`docs/ai/devel
 > **This project overrides the default template workflow** (documented in `docs/ai/development-workflow/`).
 > The overrides below apply only here; downstream projects using this template are not affected.
 
-- **No `develop` branch** — all branches target `main` directly. **Whenever a workflow protocol or README mentions the `develop` branch, you must substitute it with `main`.**
+- **No `develop` branch** — all branches target `main` directly.
 - Branch naming:
   - Features / improvements: `feature/[feature-slug]`
   - Bug fixes (fast track): `fix/[slug]`
