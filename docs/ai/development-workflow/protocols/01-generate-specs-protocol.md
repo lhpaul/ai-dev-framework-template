@@ -110,12 +110,15 @@ If the human requests changes, make them and re-present. Repeat until approved.
 
 Once the human approves the spec:
 
-1. Create branch: `git checkout -b spec/[feature-slug]` from `develop`
-2. Create the development folder: `docs/specs/developments/[YYYYMMDDHHMMSS]_[feature-slug]/`
-3. Write the spec file: `1_[feature-slug]_specs.md`
-4. Commit: `docs: add spec for [feature-name]`
-5. Push: `git push -u origin spec/[feature-slug]`
-6. Open PR targeting `develop` with:
+1. Determine the branch slug:
+   - **With issue tracker**: `[issue-id]-[feature-slug]` (e.g., `ENG-123-user-auth`)
+   - **Without issue tracker**: `[feature-slug]` (e.g., `user-auth`)
+2. Create branch: `git checkout -b spec/[branch-slug]` from `develop`
+3. Create the development folder: `docs/specs/developments/[YYYYMMDDHHMMSS]_[feature-slug]/`
+4. Write the spec file: `1_[feature-slug]_specs.md`
+5. Commit: `docs: add spec for [feature-name]`
+6. Push: `git push -u origin spec/[branch-slug]`
+7. Open PR targeting `develop` with:
    - Title: `docs(spec): [feature-name]`
    - Body: summary of the feature, link to the spec file, list of open questions (if any)
 

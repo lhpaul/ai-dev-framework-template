@@ -72,12 +72,18 @@ This document is the **canonical master reference** for how development is struc
 
 | Branch type | Pattern | Base branch |
 |---|---|---|
-| Spec | `spec/[feature-slug]` | `develop` |
-| Implementation plan | `implementation-plan/[feature-slug]` | `develop` |
-| Feature | `feature/[feature-slug]` | `develop` |
+| Spec | `spec/[slug]` | `develop` |
+| Implementation plan | `implementation-plan/[slug]` | `develop` |
+| Feature | `feature/[slug]` | `develop` |
 | Bug / simple fix | `fix/[slug]` | `develop` |
 | Hotfix | `hotfix/[slug]` | `main` |
 | Release | `release/v[X.Y.Z]` | `develop` |
+
+**Slug format:**
+- **With issue tracker** → `[issue-id]-[short-description]` (e.g., `feature/ENG-123-user-auth`)
+- **Without issue tracker** → `[short-description]` (e.g., `feature/user-auth`)
+
+See `docs/best-practices/2-version-control.md` for the full slug convention.
 
 ---
 

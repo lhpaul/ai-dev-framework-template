@@ -55,6 +55,28 @@ chore(deps): upgrade eslint to v9
 | Implementation plan | `implementation-plan/[slug]` | `develop` | `develop` |
 | Release | `release/v[X.Y.Z]` | `develop` | `main` + `develop` |
 
+### Branch Slug Convention
+
+The `[slug]` is a short kebab-case identifier for the change.
+
+**If using an issue tracker**, prefix the slug with the issue identifier:
+
+```
+feature/ENG-123-user-authentication
+fix/ENG-456-login-redirect
+spec/ENG-123-user-authentication
+implementation-plan/ENG-123-user-authentication
+```
+
+**If not using an issue tracker**, use the slug alone:
+
+```
+feature/user-authentication
+fix/login-redirect
+```
+
+The issue ID prefix is the canonical identifier when a tracker is in use. The slug portion (derived from the issue title in kebab-case) is recommended for readability but may be omitted for brevity.
+
 ## Staging and Committing
 
 - Stage only files that belong to the logical change being committed

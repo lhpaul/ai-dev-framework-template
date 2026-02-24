@@ -47,10 +47,14 @@ Wait for explicit confirmation.
 
 ### Step 3: Branch
 
+Determine the branch slug:
+- **With issue tracker**: `[issue-id]-[slug]` (e.g., `ENG-123-user-auth`)
+- **Without issue tracker**: `[slug]` (e.g., `user-auth`)
+
 ```bash
 git checkout develop
 git pull
-git checkout -b feature/[slug]
+git checkout -b feature/[branch-slug]
 ```
 
 ### Step 4: Mark Status
@@ -158,7 +162,7 @@ See `docs/ai/development-workflow/protocols/91-pr-readiness-signal-protocol.md`.
 
 1. Read the brief provided by the human
 2. Present a brief execution plan and get approval
-3. Branch: `git checkout -b fix/[slug]` from `develop`
+3. Branch: `git checkout -b fix/[branch-slug]` from `develop` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without)
 4. Implement the fix
 5. Verify: build, lint, tests pass
 6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry
@@ -177,7 +181,7 @@ See `docs/ai/development-workflow/protocols/91-pr-readiness-signal-protocol.md`.
 
 1. Read the incident brief from the human
 2. Confirm it's a production-only issue (not a dev/staging issue)
-3. Branch: `git checkout -b hotfix/[slug]` from `main`
+3. Branch: `git checkout -b hotfix/[branch-slug]` from `main` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without)
 4. Implement the minimal fix (do not bundle unrelated changes)
 5. Verify: build, lint, tests pass
 6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry

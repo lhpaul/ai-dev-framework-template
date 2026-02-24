@@ -66,6 +66,22 @@ When the orchestrator has Linear access, it should:
 
 ---
 
+## Branch Naming with Linear
+
+When a Linear issue exists, use the Linear issue identifier as the branch slug prefix:
+
+| Branch type | Pattern | Example |
+|---|---|---|
+| Spec | `spec/[TEAM-ID]-[slug]` | `spec/ENG-123-user-auth` |
+| Implementation plan | `implementation-plan/[TEAM-ID]-[slug]` | `implementation-plan/ENG-123-user-auth` |
+| Feature | `feature/[TEAM-ID]-[slug]` | `feature/ENG-123-user-auth` |
+| Bug fix | `fix/[TEAM-ID]-[slug]` | `fix/ENG-456-login-redirect` |
+| Hotfix | `hotfix/[TEAM-ID]-[slug]` | `hotfix/ENG-789-payment-crash` |
+
+The `[slug]` is a short kebab-case description derived from the issue title (omit common words like "add", "fix", "update" to keep it short). Linear also auto-suggests a branch name on each issue — use it directly if preferred.
+
+---
+
 ## Workflow: Advancing Statuses
 
 The orchestrator or developer agent updates the Linear issue status at each stage transition:
