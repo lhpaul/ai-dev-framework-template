@@ -33,14 +33,6 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Create and push tag
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          TAG="${{ steps.extract_version.outputs.version }}"
-          git tag "$TAG"
-          git push origin "$TAG"
-
       - name: Extract release notes from CHANGELOG
         id: release_notes
         run: |
@@ -50,11 +42,23 @@ jobs:
           # Escape dots so they match literal '.' not any character in the awk regex
           VERSION_ESCAPED=$(echo "$VERSION_CLEAN" | sed 's/\./\\./g')
           NOTES=$(awk "/^## \[$VERSION_ESCAPED\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md)
+          if [ -z "$NOTES" ]; then
+            echo "ERROR: No CHANGELOG entry found for version $VERSION_CLEAN. Aborting before tag is created."
+            exit 1
+          fi
           # Use multiline output safely
           EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
           echo "notes<<$EOF" >> $GITHUB_OUTPUT
           echo "$NOTES" >> $GITHUB_OUTPUT
           echo "$EOF" >> $GITHUB_OUTPUT
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          TAG="${{ steps.extract_version.outputs.version }}"
+          git tag "$TAG"
+          git push origin "$TAG"
 
       - name: Create GitHub release
         env:
