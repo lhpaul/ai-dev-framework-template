@@ -29,7 +29,7 @@ This document is the **canonical master reference** for how development is struc
 │   Spec merged; implementation plan pending                      │
 │   AI: tech-lead agent dispatched                                │
 └─────────────────────┬───────────────────────────────────────────┘
-                      │  AI: implementation-plan-reviewer dispatched
+                      │  AI: tech-lead opens plan PR
                       ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                    PLAN IN REVIEW                               │
