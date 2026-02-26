@@ -47,7 +47,9 @@ jobs:
           VERSION="${{ steps.extract_version.outputs.version }}"
           # Strip leading 'v' to match CHANGELOG format (e.g., v1.2.0 → [1.2.0])
           VERSION_CLEAN="${VERSION#v}"
-          NOTES=$(awk "/^## \[$VERSION_CLEAN\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md)
+          # Escape dots so they match literal '.' not any character in the awk regex
+          VERSION_ESCAPED=$(echo "$VERSION_CLEAN" | sed 's/\./\\./g')
+          NOTES=$(awk "/^## \[$VERSION_ESCAPED\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md)
           # Use multiline output safely
           EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
           echo "notes<<$EOF" >> $GITHUB_OUTPUT
