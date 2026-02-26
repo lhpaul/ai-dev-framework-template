@@ -18,7 +18,7 @@ Execute the steps below in order. The review checklist is always run; when the c
 
 ---
 
-## Prerequisites
+## Step 1: Prerequisites
 
 Before reviewing, read:
 - The spec: `docs/specs/developments/[folder]/1_[slug]_specs.md`
