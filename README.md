@@ -223,7 +223,7 @@ If your project has the `.claude/skills/sync-template.md` skill, you can automat
 
 The skill compares your project against the template, shows exactly what changed (categorized by auto-apply vs. manual review vs. skipped), and applies updates only after your explicit approval. It also generates ready-to-use git instructions for branching, committing, and opening a PR.
 
-On first run, the skill will ask you for the template source (local path or remote URL) and save it to `.claude/template-config.json` for future runs.
+On first run, the skill will ask you for the template source (local path or remote URL) and save it to `.tmp/template-config.json` for future runs (`.tmp/` is gitignored).
 
 ### Backporting improvements from a project to the template
 
