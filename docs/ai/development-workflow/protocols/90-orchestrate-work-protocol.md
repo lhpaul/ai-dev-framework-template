@@ -33,6 +33,7 @@ Build a mental map of:
 - Items in **Plan Ready** (plan merged, not yet in development)
 - Items **In Development** (feature branch open, PR pending)
 - Items with pending review (PRs labeled `agent:ready-for-review`)
+- Open PRs with **unresolved automated reviewer comments** (the review platform posted comments after the last push — run Step 8)
 
 When dispatching a subagent for an item, include a short “Issue Tracker Summary” in the handoff:
 - What the issue is asking for (from description)
@@ -53,7 +54,8 @@ When dispatching a subagent for an item, include a short “Issue Tracker Summar
 | Plan In Review | — | **Wait** — plan PR is open, human must review and merge. Do not re-dispatch. |
 | Plan Ready | Plan PR is merged | Run `04-implement-development-protocol.md` |
 | In Development (PR open) | CI green, review loop clean | Apply `agent:ready-for-review`, notify human |
-| In Development (feedback received) | Human requested changes on PR | Address feedback, re-push |
+| In Development (automated reviewer commented) | Review platform posted comments after last push | Run Step 8 (automated reviewer loop) |
+| In Development (feedback received) | Human requested changes on PR | Address feedback, re-push, then run Step 8 |
 
 ### Pre-dispatch branch check
 
@@ -160,7 +162,9 @@ After completing work, provide a clear summary:
 - [Item B]: Implementation started → PR opened (feature/item-b)
 
 ### PRs Ready for Human Review
-- [PR link] — [feature name] — [stage]
+- [PR link] — [feature name] — [stage] — Automated review: ✅ passed after N cycle(s) / ⏭️ skipped (not configured) / ⚠️ escalated (see Flagged section)
+
+  > **Automated review status legend**: `✅ passed after N cycle(s)` — reviewer ran and found no blocking issues (N = number of fix cycles dispatched; 0 means it passed on the first review). `⏭️ skipped` — Step 8 was not run (no review platform configured). `⚠️ escalated` — loop could not complete autonomously; human action required.
 
 ### Blocked Items
 - [Item C]: blocked by [Item D] (not yet Merged)
@@ -179,6 +183,90 @@ When a human requests changes on a PR:
 2. Add `agent:needs-fixes` label
 3. Address the feedback
 4. Push fixes
-5. Reapply `agent:ready-for-review` when ready
+5. Run Step 8 (automated reviewer loop)
+6. Reapply `agent:ready-for-review` when ready
 
 See `91-pr-readiness-signal-protocol.md` for label definitions.
+
+---
+
+## Step 8: Automated Reviewer Loop
+
+If an automated code review platform is configured (see [`integrations/pr-review-platform.md`](../integrations/pr-review-platform.md)), run this loop after **any push to a PR branch** — whether from a subagent or from the orchestrator directly — to resolve all findings before requesting human review. If no review platform is configured, skip this step and report `⏭️ skipped` in the Step 6 summary.
+
+> **Tool-specific details** (how to trigger a review, poll for a response, and fetch inline comments) live in your review platform's integration doc. See [`integrations/greptile.md`](../integrations/greptile.md) for Greptile.
+
+### Loop parameters
+
+| Parameter | Value | Description |
+|---|---|---|
+| `poll_interval` | 2 min | Time to wait between review status checks |
+| `max_wait` | 20 min | Max wait **per fix cycle** for the reviewer to respond (resets after each push) |
+| `max_cycles` | 3 | Max number of times a fixing agent is dispatched before escalating to human |
+
+### Step 8.1 — Trigger the reviewer
+
+Initialize before entering Step 8.1 for the first time: `cycle = 0`.
+
+After each push, record the current timestamp as `last_push_at` in ISO 8601 format, set `elapsed = 0`, then trigger a re-review using your platform's mechanism (see integration doc).
+
+> **Cycle counter**: `cycle` counts how many times a fixing agent has been dispatched. It starts at 0 and increments only when a fixer is dispatched in Step 8.3 — not on the initial push.
+
+### Step 8.2 — Poll for response
+
+Wait `poll_interval` (2 min), add `poll_interval` to `elapsed`, then check whether the reviewer has completed a new review after `last_push_at` using your platform's mechanism (see integration doc).
+
+| Result | Action |
+|---|---|
+| No review yet and `elapsed < max_wait` | Wait another `poll_interval` and poll again |
+| No review yet and `elapsed >= max_wait` | **Escalate to human** — see Step 8.5 (timeout) |
+| Reviewer completed a new review | Proceed to Step 8.3 |
+
+### Step 8.3 — Evaluate findings
+
+Fetch new inline comments posted after `last_push_at` using your platform's mechanism (see integration doc).
+
+**Classifying comments — blocking vs. suggestion:**
+
+Treat a comment as a **suggestion** (safe to skip) only if its body starts with clearly soft language, such as:
+- "Consider...", "You might...", "An alternative...", "Optionally...", "It could be cleaner to...", "Perhaps...", "Maybe...", "You could...", "One option is...", "Alternatively..."
+
+Treat everything else as **blocking** — including comments describing bugs, failures, or any imperative phrasing ("Use...", "Change...", "Replace..."). When in doubt, treat as blocking.
+
+| Finding | Action |
+|---|---|
+| No inline comments, or only suggestions | Proceed to Step 8.4 — reviewer is satisfied |
+| Blocking issues found and `cycle < max_cycles` | Increment `cycle`. Dispatch fixing agent (see table below), wait for push, go back to Step 8.1 |
+| Blocking issues found and `cycle >= max_cycles` | **Escalate to human** — see Step 8.5 (max cycles) |
+
+**Fixing agent by PR branch type:**
+
+| PR branch prefix | Agent to dispatch |
+|---|---|
+| `spec/*` | `spec-reviewer` |
+| `implementation-plan/*` | `implementation-plan-reviewer` |
+| `feature/*` / `fix/*` / `hotfix/*` | `code-reviewer` |
+
+### Step 8.4 — Mark PR ready for human review
+
+The reviewer has no remaining blocking issues. Apply the readiness label and proceed to Step 6:
+
+```bash
+gh pr edit <pr_number> --add-label "agent:ready-for-review"
+```
+
+In the Step 6 summary, report: `Automated review: ✅ passed after N cycle(s)`.
+
+### Step 8.5 — Escalate to human
+
+Triggered when either `max_wait` or `max_cycles` is exceeded. Include in the Step 6 summary:
+
+```
+### Flagged for Human Decision
+- PR #N ([feature name]): Automated reviewer loop could not complete autonomously.
+  - Reason: timeout after `max_wait` waiting for reviewer response / max fixing agent dispatches (`max_cycles`) reached
+  - Reviewer's latest comments: [paste inline comment bodies here]
+  - Recommended action: human reviews comments and decides how to proceed
+```
+
+Do **not** apply `agent:ready-for-review` until the human resolves the escalation.
