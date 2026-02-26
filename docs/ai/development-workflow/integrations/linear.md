@@ -12,6 +12,7 @@ Linear is **optional**. The workflow functions without it — the orchestrator s
 - Status fields in Linear map directly to workflow stages
 - Labels in Linear map to issue types and scope
 - Priority and due date drive automated prioritization
+- Agents will read the **current brief** following tracker-agnostic rules in [`issue-tracker.md`](issue-tracker.md)
 
 ---
 

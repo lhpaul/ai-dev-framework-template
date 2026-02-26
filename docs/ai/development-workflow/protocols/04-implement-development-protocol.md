@@ -28,6 +28,7 @@ Read **all** of the following before writing a single line of code. Do not skip.
 4. `docs/project/3-software-architecture.md` — architecture patterns
 5. `docs/best-practices/` — all best practice docs
 6. Relevant existing code — read actual files for the areas you will modify
+7. If an issue tracker exists for this item, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for `In Development (Full Pipeline)` expectations before coding.
 
 Extract from your reading:
 - The full list of acceptance criteria
@@ -160,7 +161,7 @@ See `docs/ai/development-workflow/protocols/91-pr-readiness-signal-protocol.md`.
 
 ### Steps
 
-1. Read the brief provided by the human
+1. Read the brief. If the work item exists in an issue tracker, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for `In Development (Fast Track)` expectations.
 2. Present a brief execution plan and get approval
 3. Branch: `git checkout -b fix/[branch-slug]` from `develop` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without)
 4. Implement the fix

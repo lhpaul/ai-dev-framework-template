@@ -147,8 +147,10 @@ The workflow can be paired with any issue tracker. For each development unit, th
 - **Type**: Feature / Bug / Improvement / Chore
 - **Priority**: Urgent → High → Normal → Low
 - **Due date**: items due within 2 weeks take priority over abstract priority levels
+- **Brief & decisions**: treated as the current brief per `integrations/issue-tracker.md`
 
 See [`integrations/linear.md`](integrations/linear.md) for setup with Linear.
+See [`integrations/issue-tracker.md`](integrations/issue-tracker.md) for full tracker-agnostic rules and agent expectations.
 
 ---
 

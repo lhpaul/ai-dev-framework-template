@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Refactored issue tracker integration protocols to remove redundant field definitions and fallback logic.
+- Centralized "current brief" definitions and agent expectations in `docs/ai/development-workflow/integrations/issue-tracker.md`.
+- Updated `Spec Ready`, `Plan Ready`, and `In Development` protocols to delegate issue-tracker-specific logic to the centralized source.
+
 ## [0.5.0] - 2026-02-24
 
 ### Added
