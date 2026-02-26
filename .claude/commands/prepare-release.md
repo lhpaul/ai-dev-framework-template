@@ -1,5 +1,5 @@
 ---
-description: Prepare a release. Creates the release branch, updates CHANGELOG, bumps version, and opens PRs targeting both main and develop. Usage: /prepare-release [version number, e.g. 1.2.0]
+description: Prepare a release from develop. Creates the release branch, updates CHANGELOG, bumps version, and opens PRs targeting both main and develop. Usage: /prepare-release [version number, e.g. 1.2.0]
 allowed-tools: Bash(git checkout:*), Bash(git pull:*), Bash(git push:*), Bash(git log:*), Bash(git status:*), Bash(git branch:*), Bash(git diff:*), Bash(gh pr create:*), Bash(gh pr view:*), Bash(date:*)
 ---
 
