@@ -6,6 +6,18 @@
 
 ---
 
+## Flow Overview
+
+Execute the steps below in order. The review checklist is always run; when the code-review command is available, run it first so its findings inform the rest of the review.
+
+1. **Prerequisites** — Read spec, plan, best practices, locate code
+2. **Run code-review command** (when possible) — See [Step 2](#step-2-run-code-review-command-when-possible)
+3. **Review checklist** — Always complete the full [Review Checklist](#step-3-review-checklist)
+4. **Apply fixes** — Fix or report issues per [Apply Fixes](#apply-fixes)
+5. **Output** — Produce the review report per [Output Format](#output-format)
+
+---
+
 ## Prerequisites
 
 Before reviewing, read:
@@ -24,7 +36,21 @@ Priority order:
 
 ---
 
-## Review Checklist
+## Step 2: Run code-review command (when possible)
+
+If you have access to the `Task` tool (e.g. you are running inside Claude Code and can spawn subagents), run this step **before** the review checklist:
+
+Execute the pipeline defined in **`.claude/commands/code-review.md`**.
+
+That pipeline runs multiple parallel review agents, scores issues for confidence, filters to high-confidence findings (≥ 80), and can post the result as a PR comment. Use its findings to inform the checklist and fix list below.
+
+If the `Task` tool is not available (e.g. in Cursor, Codex, Gemini CLI), skip this step and proceed to the review checklist.
+
+---
+
+## Step 3: Review checklist
+
+**Always** work through the full checklist below. If you ran the code-review command in Step 2, incorporate its findings into your checklist (e.g. treat its reported issues as candidates for the fix list and verify them against the checklist). Otherwise complete the checklist from scratch.
 
 ### 1. Plan Alignment
 
@@ -87,7 +113,9 @@ Priority order:
 
 ---
 
-## How to Apply Fixes
+## Apply Fixes
+
+<a name="apply-fixes"></a>
 
 **Fix directly** (without asking) for:
 - Blocking and important issues
