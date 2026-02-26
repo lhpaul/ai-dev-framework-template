@@ -21,7 +21,7 @@ The orchestrator:
 
 Read from the following sources (in priority order):
 
-1. **Issue tracker** (if configured): current status of all issues. See [`integrations/`](../integrations/) for tracker-specific setup.
+1. **Issue tracker** (if configured): current status of all issues and the latest brief. See [`integrations/`](../integrations/) for tracker-specific setup and [`integrations/issue-tracker.md`](../integrations/issue-tracker.md) for tracker-agnostic rules.
 2. **Development folders**: `docs/specs/developments/` — read the status field of each spec to determine the current stage
 3. **Open PRs**: `git branch -r` and/or the repository's PR list — which branches are open and their CI status
 
@@ -31,6 +31,11 @@ Build a mental map of:
 - Items in Plan Ready (plan merged, not yet in development)
 - Items In Development (feature branch open, PR pending)
 - Items with pending review (PRs labeled `agent:ready-for-review`)
+
+When dispatching a subagent for an item, include a short “Issue Tracker Summary” in the handoff:
+- What the issue is asking for (from description)
+- Any scope changes / decisions in recent comments
+- Any flagged ambiguity or conflicts that require human confirmation
 
 ---
 

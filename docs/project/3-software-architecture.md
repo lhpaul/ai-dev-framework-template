@@ -63,3 +63,43 @@
 | Service | Purpose | Notes |
 |---|---|---|
 | [Service] | [Purpose] | [Notes] |
+
+## Testing Strategy
+
+> **TODO**: Define the project's testing approach during setup. The recommended pattern is a two-tier model — adapt the tiers and tooling to your stack.
+
+### Overview
+
+| Tier | Tool | Location | When to use |
+|---|---|---|---|
+| **[Automated Suite]** | [e.g. Playwright, Cypress, Jest] | `[path]` | Preferred — run committed specs whenever they exist |
+| **[Ad-hoc Scripts]** | [tool] | [ephemeral path] | Fallback when no spec exists yet for the feature |
+
+The automated suite is the canonical record of what works. Ad-hoc scripts are exploratory and temporary — they are the precursor to a committed spec.
+
+### Automated Suite
+
+> TODO: Describe the structure, key decisions (e.g. parallelism, authentication approach, environment setup), and run commands.
+
+```bash
+# Run the full suite
+[your e2e command]
+```
+
+### Relationship Between Runbooks and Specs
+
+Each smoke test runbook (`docs/testing/[section]/[feature].smoke-test.md`) is the human-readable specification for a feature's key journeys. The corresponding automated spec is the executable implementation of that runbook.
+
+- Runbook steps should map 1:1 to test cases in the spec.
+- The runbook is the source of truth for what is tested and why; the spec is the executable implementation.
+- When a new feature gets a runbook, a corresponding spec should be created or updated as part of that feature's implementation.
+
+### Ad-hoc Scripts (Fallback)
+
+When no spec exists for a feature yet, AI agents write a temporary automation script (e.g. at `/tmp/`). These scripts are:
+
+- Not committed to the repository.
+- Intentionally ephemeral — they validate the feature during development.
+- A stepping stone: once validated, the logic should be promoted to a committed spec.
+
+See `docs/testing/README.md` for how to decide which tier to use and how to execute each.

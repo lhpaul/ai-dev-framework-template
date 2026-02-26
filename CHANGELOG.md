@@ -5,14 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.6.0] - 2026-02-25
+
+### Added
+
+- `docs/ai/development-workflow/protocols/05-smoke-test-protocol.md` — new agnostic smoke test execution protocol with a two-path decision (run committed spec if it exists, fall back to ad-hoc script), standard output format, pass criteria, and fail handling rules. References the project testing README for all project-specific details.
+- `docs/testing/README.md` — template for the project-specific smoke test execution guide: decision tree, committed suite path, ad-hoc fallback scaffold (Node.js + Playwright example), selector/waiting conventions, and troubleshooting sections for projects to fill in during setup.
+- Testing Strategy section in `docs/project/3-software-architecture.md` — placeholder documenting the two-tier model (committed automated suite as primary path, ad-hoc scripts as stepping stone), the runbook-to-spec relationship, and setup instructions.
+
+### Changed
+
+- `docs/best-practices/3-testing.md` — testing strategy ownership moved to `docs/project/3-software-architecture.md`; this file now points there and focuses on principles and conventions only. Added two-tier execution model note and link to `docs/testing/README.md` in the Smoke Tests section.
+- `docs/ai/development-workflow/protocols/04-implement-development-protocol.md` — Step 5 now includes an explicit e2e spec maintenance instruction (keep committed specs in sync; create one when adding a feature with a runbook). Step 6 pre-commit verification separates unit/integration tests from the e2e suite command. Fast Track path updated accordingly.
+- Refactored issue tracker integration protocols to remove redundant field definitions and fallback logic.
+- Centralized "current brief" definitions and agent expectations in `docs/ai/development-workflow/integrations/issue-tracker.md`.
+- Updated `Spec Ready`, `Plan Ready`, and `In Development` protocols to delegate issue-tracker-specific logic to the centralized source.
+
+### Fixed
+
+- Updated all Cursor slash commands to use the correct `/` prefix (replacing incorrect `@` prefix) in all documentation, command descriptions, and protocols.
+
 ## [0.5.0] - 2026-02-24
 
 ### Added
 
 - `.claude/skills/sync-template.md` — Claude Code skill (`/sync-template`) to sync framework updates from the upstream template into a downstream project; compares files, shows a categorized diff, applies changes only after explicit approval, and generates ready-to-use git instructions
-- `.cursor/commands/sync-template.md` — Cursor equivalent (`@sync-template`) with identical behaviour
+- `.cursor/commands/sync-template.md` — Cursor equivalent (`/sync-template`) with identical behaviour
 - `.claude/skills/` added to the list of framework-level paths to propagate in `README.md`
-- "Maintenance Commands" table in `AGENTS.md` documenting `/sync-template` and `@sync-template`
+- "Maintenance Commands" table in `AGENTS.md` documenting `/sync-template` and `/sync-template`
 
 ## [0.4.0] - 2026-02-24
 

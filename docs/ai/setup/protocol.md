@@ -5,7 +5,7 @@
 
 This protocol is **tool-agnostic**. It is invoked via:
 - Claude Code: `project-setup` agent
-- Cursor: `@setup-project` command
+- Cursor: `/setup-project` command
 - Any other AI tool: "Follow the setup protocol at `docs/ai/setup/protocol.md`"
 
 ---
@@ -232,5 +232,5 @@ After the PR is opened, tell the human:
 >
 > Once merged, you're ready to start development. To kick off your first feature:
 > - Claude Code: use the `product-manager` agent
-> - Cursor: run `@generate-new-feature`
+> - Cursor: run `/generate-new-feature`
 > - Any other tool: ask your AI to follow `docs/ai/development-workflow/protocols/01-generate-specs-protocol.md`"

@@ -1,5 +1,5 @@
 ---
-description: Review a spec PR for completeness, clarity, and testability. Applies fixes directly where possible. Usage: @review-spec [optional path to dev folder]
+description: Review a spec PR for completeness, clarity, and testability. Applies fixes directly where possible. Usage: /review-spec [optional path to dev folder]
 ---
 
 Follow the spec review protocol exactly as defined in:

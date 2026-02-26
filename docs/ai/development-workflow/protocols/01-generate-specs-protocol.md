@@ -27,9 +27,10 @@ If the human brings up technical details during alignment, reframe them into **p
 ## Prerequisites
 
 Before starting, read:
+
 - `docs/project/1-business-domain.md` — domain context, entities, glossary
 - `docs/project/3-software-architecture.md` — architecture constraints
-- The feature brief or issue provided by the human
+- The feature brief. If you have an issue tracker configured, follow `docs/ai/development-workflow/integrations/issue-tracker.md` to get the current brief.
 
 ---
 
@@ -37,17 +38,24 @@ Before starting, read:
 
 Before writing anything, have a structured conversation with the human to gather all necessary information. Do not skip or abbreviate this step — incomplete alignment produces poor specs.
 
+If an issue tracker exists for this item, start by summarizing what you read from the issue (title/description + recent comments). If the human manually pasted this context for you, skip the summary. Then confirm with the human:
+
+- “Is this still the current and intended scope?”
+- “Are there any other decisions or constraints not captured here?”
+
 Work through the following checklist. Ask about each item. If the human can't answer something, note it as an **Open Question** (see Step 2).
 
 ### Alignment Checklist
 
-**Scope & Identity**
+#### Core Objective
+
 - [ ] Feature name and slug (for file naming)
 - [ ] Which part of the product does this affect? (which app, which section)
 - [ ] Is this a new capability or a change to an existing one?
 - [ ] What depends on this feature? What does this feature depend on?
 
-**Actors & Use Cases**
+#### Actors & Use Cases
+
 - [ ] Who initiates the action (which user role)?
 - [ ] What is the precondition (what must be true before the action)?
 - [ ] What are the steps the user takes?
@@ -56,26 +64,31 @@ Work through the following checklist. Ask about each item. If the human can't an
 - [ ] What actions can the user take?
 - [ ] Are there any error or edge case flows?
 
-**Business Rules**
+#### Business Rules
+
 - [ ] What invariants must always be true?
 - [ ] What constraints or validations apply?
 - [ ] Are there any rate limits, quotas, or permission restrictions?
 
-**UX Rules** (if the feature has UI)
+#### UX Rules (if the feature has UI)
+
 - [ ] What should the empty state look like?
 - [ ] Are there loading, error, and success states to define?
 - [ ] Any specific layout or interaction requirements?
 
-**Status & Lifecycle** (if the feature involves entities with states)
+#### Status & Lifecycle (if the feature involves entities with states)
+
 - [ ] What are the possible statuses/states?
 - [ ] What are the valid transitions?
 - [ ] What display labels should statuses have (for the UI)?
 
-**Operational Visibility** (if the feature involves background or system-initiated actions)
+#### Operational Visibility (if the feature involves background or system-initiated actions)
+
 - [ ] How does an admin or operator know the action happened?
 - [ ] Are there notifications, logs, or audit events?
 
-**Acceptance Criteria**
+#### Success Criteria
+
 - [ ] How do we know when this feature is done?
 - [ ] What must be testable?
 
@@ -86,6 +99,7 @@ Work through the following checklist. Ask about each item. If the human can't an
 After the alignment conversation, list any questions that remain unanswered. These become the **Open Questions** section of the spec.
 
 Rules:
+
 - Do not invent answers to open questions — list them explicitly
 - Do not block on open questions if enough is known to start; begin the spec and revisit
 - When the human answers an open question, update the spec immediately and remove it from the list
@@ -98,18 +112,27 @@ Rules:
 Using the template at `docs/ai/development-workflow/templates/spec-template.md`, write the spec document.
 
 **Output location**:
-```
+
+```markdown
 docs/specs/developments/[YYYYMMDDHHMMSS]_[feature-slug]/1_[feature-slug]_specs.md
 ```
 
 Use the current timestamp for `YYYYMMDDHHMMSS`.
 
 **Quality guardrails**:
+
 - Every acceptance criterion must be testable — a human can verify it by running through the smoke test
 - Enum values and statuses must include their UI display labels (not raw code values)
 - If the feature has multiple actors, each actor gets its own use case section
 - Explicitly list what is **out of scope** for this feature (MVP boundary)
 - Keep spec decisions **product-facing**; defer technical design to the implementation plan
+
+### Examples
+
+```markdown
+# Spec: [feature-name]
+...
+```
 
 ---
 
@@ -150,3 +173,4 @@ Apply the `agent:ready-for-review` label to the PR once it is open and CI is gre
 If CI fails, investigate and fix before applying the label.
 
 See `docs/ai/development-workflow/protocols/91-pr-readiness-signal-protocol.md` for the full readiness definition.
+

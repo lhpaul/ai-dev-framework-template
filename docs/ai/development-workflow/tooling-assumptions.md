@@ -48,9 +48,11 @@ For Greptile-specific setup, see [`integrations/greptile.md`](integrations/grept
 
 ### Issue Tracker (e.g., Linear, GitHub Issues, Jira)
 
-**Used for**: tracking work items, prioritization, status updates. The orchestrator reads the issue tracker to determine what to work on next.
+**Used for**: tracking work items, prioritization, status updates, and capturing the *current brief* (description + decisions in comments). The orchestrator reads the issue tracker to determine what to work on next **and** what the latest requirements/scope are.
 
 **Without it**: The orchestrator requires human input to determine the next item to work on, and prioritization logic cannot be automated.
+
+**Rules (tracker-agnostic)**: when an issue tracker is available, agents must use it as the primary source of the brief. See [`integrations/issue-tracker.md`](integrations/issue-tracker.md) for full protocol expectations.
 
 See [`integrations/linear.md`](integrations/linear.md) for Linear-specific setup.
 

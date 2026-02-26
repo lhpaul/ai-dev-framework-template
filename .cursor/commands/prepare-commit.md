@@ -1,5 +1,5 @@
 ---
-description: Review staged changes and propose a Conventional Commits message. Usage: @prepare-commit [optional description hint]
+description: Review staged changes and propose a Conventional Commits message. Usage: /prepare-commit [optional description hint]
 ---
 
 Follow the git conventions defined in:

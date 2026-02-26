@@ -1,5 +1,5 @@
 ---
-description: In Development stage. Implements a feature via Full Pipeline (with spec+plan), Fast Track (bug/simple change), or Hotfix (critical production bug). Usage: @implement-development [dev folder path | brief description of fix | "hotfix: [description]"]
+description: In Development stage. Implements a feature via Full Pipeline (with spec+plan), Fast Track (bug/simple change), or Hotfix (critical production bug). Usage: /implement-development [dev folder path | brief description of fix | "hotfix: [description]"]
 ---
 
 Follow the implementation protocol exactly as defined in:

@@ -2,15 +2,11 @@
 
 ## Testing Strategy
 
-> **TODO**: Define the testing strategy for your project during setup. Delete or replace the sections that don't apply.
+The testing strategy for this project — tools, tiers, when each runs, and how they relate — belongs in:
 
-This project uses the following testing levels:
+> `docs/project/3-software-architecture.md` → **Testing Strategy** section
 
-| Level | Tool | What it tests |
-|---|---|---|
-| Unit | [Tool] | Individual functions and classes in isolation |
-| Integration | [Tool] | Interaction between components/services |
-| End-to-End / Smoke | [Tool] | Key user journeys in a running environment |
+Define it there during project setup. This file covers principles and conventions that apply regardless of which tier or tool you are working with.
 
 ## General Principles
 
@@ -44,12 +40,14 @@ Smoke tests validate key user journeys in a running environment. They are define
 docs/testing/[app-or-section]/[feature-slug].smoke-test.md
 ```
 
-See the [smoke test runbook template](../ai/development-workflow/templates/smoke-test-runbook-template.md) for the standard format.
+See the [smoke test runbook template](../ai/development-workflow/templates/smoke-test-runbook-template.md) for the standard format, and [docs/testing/README.md](../testing/README.md) for how to execute them in this repo.
 
 Smoke tests should be run:
 - Before every release
 - After deploying to staging
 - When investigating a reported production issue
+
+The recommended approach is a **two-tier execution model**: a committed automated test suite (preferred) with ad-hoc scripts as a fallback when no spec exists yet. See `docs/project/3-software-architecture.md` → Testing Strategy.
 
 ## Test Data and Seed Data
 

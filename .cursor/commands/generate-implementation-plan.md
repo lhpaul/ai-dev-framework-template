@@ -1,5 +1,5 @@
 ---
-description: Plan Ready stage. Reads the approved spec and codebase, discusses the technical approach, then writes the implementation plan and smoke test runbook. Usage: @generate-implementation-plan [optional feature slug or dev folder path]
+description: Plan Ready stage. Reads the approved spec and codebase, discusses the technical approach, then writes the implementation plan and smoke test runbook. Usage: /generate-implementation-plan [optional feature slug or dev folder path]
 ---
 
 Follow the implementation plan generation protocol exactly as defined in:

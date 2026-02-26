@@ -1,5 +1,5 @@
 ---
-description: Prepare a release from develop. Creates the release branch, updates CHANGELOG, bumps version, and opens a PR targeting main. Usage: @prepare-release [version number, e.g. 1.2.0]
+description: Prepare a release from develop. Creates the release branch, updates CHANGELOG, bumps version, and opens a PR targeting main. Usage: /prepare-release [version number, e.g. 1.2.0]
 ---
 
 Follow the release process defined in:
