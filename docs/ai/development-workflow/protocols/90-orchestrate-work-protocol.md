@@ -26,10 +26,12 @@ Read from the following sources (in priority order):
 3. **Open PRs**: `git branch -r` and/or the repository's PR list — which branches are open and their CI status
 
 Build a mental map of:
-- Items in Backlog (no spec yet)
-- Items in Spec Ready (spec merged, no plan yet)
-- Items in Plan Ready (plan merged, not yet in development)
-- Items In Development (feature branch open, PR pending)
+- Items in **Backlog** (no spec yet)
+- Items in **Spec In Review** (spec PR open, waiting for human to merge — do not re-dispatch)
+- Items in **Spec Ready** (spec merged, no plan yet)
+- Items in **Plan In Review** (plan PR open, waiting for human to merge — do not re-dispatch)
+- Items in **Plan Ready** (plan merged, not yet in development)
+- Items **In Development** (feature branch open, PR pending)
 - Items with pending review (PRs labeled `agent:ready-for-review`)
 
 When dispatching a subagent for an item, include a short “Issue Tracker Summary” in the handoff:
@@ -46,10 +48,35 @@ When dispatching a subagent for an item, include a short “Issue Tracker Summar
 | Current stage | Can advance if... | Next action |
 |---|---|---|
 | Backlog | Human has requested it | Run `01-generate-specs-protocol.md` |
+| Spec In Review | — | **Wait** — spec PR is open, human must review and merge. Do not re-dispatch. |
 | Spec Ready | Spec PR is merged | Run `02-generate-implementation-plan-protocol.md` |
+| Plan In Review | — | **Wait** — plan PR is open, human must review and merge. Do not re-dispatch. |
 | Plan Ready | Plan PR is merged | Run `04-implement-development-protocol.md` |
 | In Development (PR open) | CI green, review loop clean | Apply `agent:ready-for-review`, notify human |
 | In Development (feedback received) | Human requested changes on PR | Address feedback, re-push |
+
+### Pre-dispatch branch check
+
+Before dispatching any agent, run all three checks below. An existing branch or active worktree means an agent is already working or has worked on this item — even if the work was never pushed.
+
+```bash
+# 1. Remote branches (pushed work)
+git branch -r | grep "<branch-prefix>/<slug>"
+
+# 2. Local branches (unpushed work)
+git branch | grep "<branch-prefix>/<slug>"
+
+# 3. Active worktrees (work in progress in a worktree, may not be pushed or even committed)
+git worktree list | grep "<branch-prefix>/<slug>"
+```
+
+| Stage about to dispatch | Branch / worktree to check for |
+|---|---|
+| Write spec (Backlog → Spec In Review) | `spec/[slug]` |
+| Write plan (Spec Ready → Plan In Review) | `implementation-plan/[slug]` |
+| Implement (Plan Ready → In Development) | `feature/[slug]` |
+
+If any check returns a match: **do not re-dispatch**. Instead, report the item's actual state to the human — including whether a worktree is active, whether the branch has been pushed, and whether a PR is open.
 
 ### Dependency check
 

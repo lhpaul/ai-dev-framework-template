@@ -14,22 +14,37 @@ This document is the **canonical master reference** for how development is struc
 │   Ideas, bugs, improvements tracked in your issue tracker       │
 └─────────────────────┬───────────────────────────────────────────┘
                       │  Human: decide to start a feature
+                      │  AI: product-manager agent dispatched
                       ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                       SPEC READY                                │
-│   Feature spec written and merged                               │
+│                    SPEC IN REVIEW                               │
+│   Spec PR open; pending human review and merge                  │
 │   Branch: spec/[feature-slug]                                   │
 │   Protocol: 01-generate-specs-protocol.md                       │
 └─────────────────────┬───────────────────────────────────────────┘
                       │  Human: merge spec PR
                       ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                      PLAN READY                                 │
-│   Implementation plan written and merged                        │
+│                       SPEC READY                                │
+│   Spec merged; implementation plan pending                      │
+│   AI: tech-lead agent dispatched                                │
+└─────────────────────┬───────────────────────────────────────────┘
+                      │  AI: implementation-plan-reviewer dispatched
+                      ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    PLAN IN REVIEW                               │
+│   Implementation plan PR open; pending human review and merge   │
 │   Branch: implementation-plan/[feature-slug]                    │
 │   Protocol: 02-generate-implementation-plan-protocol.md         │
 └─────────────────────┬───────────────────────────────────────────┘
                       │  Human: merge plan PR
+                      ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      PLAN READY                                 │
+│   Plan merged; ready for implementation                         │
+│   AI: developer agent dispatched                                │
+└─────────────────────┬───────────────────────────────────────────┘
+                      │  AI: PR opened
                       ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                    IN DEVELOPMENT                               │
@@ -143,7 +158,7 @@ The backport (main → develop) is non-negotiable to prevent branch drift.
 
 The workflow can be paired with any issue tracker. For each development unit, the issue tracks:
 
-- **Status**: maps to the workflow stage (Backlog → Spec Ready → Plan Ready → In Development → Merged → Released)
+- **Status**: maps to the workflow stage (Backlog → Spec In Review → Spec Ready → Plan In Review → Plan Ready → In Development → Merged → Released)
 - **Type**: Feature / Bug / Improvement / Chore
 - **Priority**: Urgent → High → Normal → Low
 - **Due date**: items due within 2 weeks take priority over abstract priority levels
@@ -244,12 +259,12 @@ See [`protocols/91-pr-readiness-signal-protocol.md`](protocols/91-pr-readiness-s
 
 ## Agent Roles Summary
 
-| Agent | Stage | Protocol |
-|---|---|---|
-| Product Manager | Spec Ready | `01-generate-specs-protocol.md` |
-| Spec Reviewer | Spec Review | `01-review-specs-protocol.md` |
-| Tech Lead | Plan Ready | `02-generate-implementation-plan-protocol.md` |
-| Implementation Plan Reviewer | Plan Review | `02-review-implementation-plan-protocol.md` |
-| Developer | In Development | `04-implement-development-protocol.md` |
-| Code Reviewer | Development Review | `04-review-implemented-development-protocol.md` |
-| Orchestrator | Coordination | `90-orchestrate-work-protocol.md` |
+| Agent | Operates on items in... | Advances item to... | Protocol |
+|---|---|---|---|
+| Product Manager | Backlog | Spec In Review | `01-generate-specs-protocol.md` |
+| Spec Reviewer | Spec In Review | Spec Ready | `01-review-specs-protocol.md` |
+| Tech Lead | Spec Ready | Plan In Review | `02-generate-implementation-plan-protocol.md` |
+| Implementation Plan Reviewer | Plan In Review | Plan Ready | `02-review-implementation-plan-protocol.md` |
+| Developer | Plan Ready | In Development | `04-implement-development-protocol.md` |
+| Code Reviewer | In Development | Merged (via human) | `04-review-implemented-development-protocol.md` |
+| Orchestrator | All stages | — (coordination only) | `90-orchestrate-work-protocol.md` |
