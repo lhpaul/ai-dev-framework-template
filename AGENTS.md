@@ -57,7 +57,7 @@ This project uses a staged AI-assisted development workflow. See [`docs/ai/devel
 | Implement | `developer` agent | `/implement-development` | Follow `docs/ai/development-workflow/protocols/04-implement-development-protocol.md` |
 | Review Code | `code-reviewer` agent | `/review-code` | Follow `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md` |
 | Prepare Commit | — | `/prepare-commit` | Follow `docs/best-practices/2-version-control.md` |
-| Prepare Release | `/prepare-release` | `/prepare-release` | Follow workflow README release section |
+| Prepare Release | `/prepare-release` | `/prepare-release` | Follow `docs/ai/development-workflow/protocols/06-prepare-release-protocol.md` |
 | Orchestrate Work | `orchestrator` agent | `/run-work` | Follow `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
 
 ### Maintenance Commands
