@@ -58,7 +58,7 @@ After each push, record the timestamp and post this comment on the PR:
 ```bash
 last_push_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-gh pr comment <pr_number> --body "@greptile please re-review"
+gh pr comment <pr_number> --body "@greptile review"
 ```
 
 ### Step 8.2 — Detect review completion

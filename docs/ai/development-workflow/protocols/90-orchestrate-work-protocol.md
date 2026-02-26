@@ -243,8 +243,8 @@ Treat everything else as **blocking** — including comments describing bugs, fa
 
 | PR branch prefix | Agent to dispatch |
 |---|---|
-| `spec/*` | `spec-reviewer` |
-| `implementation-plan/*` | `implementation-plan-reviewer` |
+| `spec/*` | `product-manager` |
+| `implementation-plan/*` | `tech-lead` |
 | `feature/*` / `fix/*` / `hotfix/*` | `code-reviewer` |
 
 ### Step 8.4 — Mark PR ready for human review
