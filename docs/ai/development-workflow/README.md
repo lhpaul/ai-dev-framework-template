@@ -234,9 +234,14 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## Automated PR Review Integration
 
-If an automated code review platform is configured, the orchestrator runs an automated reviewer loop after every push to a PR branch. The loop resolves all findings before the PR is flagged for human review.
+If an automated PR review tool is configured, the development agent must complete the review loop before handing off to humans:
 
-See [`integrations/pr-review-platform.md`](integrations/pr-review-platform.md) for platform-agnostic requirements and loop details.
+1. Open PR
+2. Wait for automated review
+3. Address all **blocking** issues
+4. Re-trigger the review if needed
+5. Once clean, signal readiness for human review
+
 See [`integrations/greptile.md`](integrations/greptile.md) for setup with Greptile.
 
 ---
