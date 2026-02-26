@@ -1,5 +1,5 @@
 ---
-description: Review implemented code against the spec, plan, and best practices. Applies fixes directly for blocking/important issues. Usage: @review-code [optional file paths or patterns]
+description: Review implemented code against the spec, plan, and best practices. Applies fixes directly for blocking/important issues. Usage: /review-code [optional file paths or patterns]
 ---
 
 Follow the code review protocol exactly as defined in:

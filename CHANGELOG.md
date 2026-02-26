@@ -13,14 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Centralized "current brief" definitions and agent expectations in `docs/ai/development-workflow/integrations/issue-tracker.md`.
 - Updated `Spec Ready`, `Plan Ready`, and `In Development` protocols to delegate issue-tracker-specific logic to the centralized source.
 
+### Fixed
+
+- Updated all Cursor slash commands to use the correct `/` prefix (replacing incorrect `@` prefix) in all documentation, command descriptions, and protocols.
+
 ## [0.5.0] - 2026-02-24
 
 ### Added
 
 - `.claude/skills/sync-template.md` — Claude Code skill (`/sync-template`) to sync framework updates from the upstream template into a downstream project; compares files, shows a categorized diff, applies changes only after explicit approval, and generates ready-to-use git instructions
-- `.cursor/commands/sync-template.md` — Cursor equivalent (`@sync-template`) with identical behaviour
+- `.cursor/commands/sync-template.md` — Cursor equivalent (`/sync-template`) with identical behaviour
 - `.claude/skills/` added to the list of framework-level paths to propagate in `README.md`
-- "Maintenance Commands" table in `AGENTS.md` documenting `/sync-template` and `@sync-template`
+- "Maintenance Commands" table in `AGENTS.md` documenting `/sync-template` and `/sync-template`
 
 ## [0.4.0] - 2026-02-24
 

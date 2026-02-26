@@ -1,5 +1,5 @@
 ---
-description: Spec Ready stage. Conducts an alignment conversation and writes the feature spec, then opens a PR. Usage: @generate-new-feature [optional brief description of the feature]
+description: Spec Ready stage. Conducts an alignment conversation and writes the feature spec, then opens a PR. Usage: /generate-new-feature [optional brief description of the feature]
 ---
 
 Follow the spec generation protocol exactly as defined in:

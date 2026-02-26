@@ -49,22 +49,22 @@ This project uses a staged AI-assisted development workflow. See [`docs/ai/devel
 
 | Stage | Claude Code | Cursor | Any other tool |
 |---|---|---|---|
-| Project Setup | `project-setup` agent | `@setup-project` | Follow `docs/ai/setup/protocol.md` |
-| Write Spec | `product-manager` agent | `@generate-new-feature` | Follow `docs/ai/development-workflow/protocols/01-generate-specs-protocol.md` |
-| Review Spec | `spec-reviewer` agent | `@review-spec` | Follow `docs/ai/development-workflow/protocols/01-review-specs-protocol.md` |
-| Write Plan | `tech-lead` agent | `@generate-implementation-plan` | Follow `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
-| Review Plan | `implementation-plan-reviewer` agent | `@review-implementation-plan` | Follow `docs/ai/development-workflow/protocols/02-review-implementation-plan-protocol.md` |
-| Implement | `developer` agent | `@implement-development` | Follow `docs/ai/development-workflow/protocols/04-implement-development-protocol.md` |
-| Review Code | `code-reviewer` agent | `@review-code` | Follow `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md` |
-| Prepare Commit | — | `@prepare-commit` | Follow `docs/best-practices/2-version-control.md` |
-| Prepare Release | — | `@prepare-release` | Follow workflow README release section |
-| Orchestrate Work | `orchestrator` agent | `@run-work` | Follow `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
+| Project Setup | `project-setup` agent | `/setup-project` | Follow `docs/ai/setup/protocol.md` |
+| Write Spec | `product-manager` agent | `/generate-new-feature` | Follow `docs/ai/development-workflow/protocols/01-generate-specs-protocol.md` |
+| Review Spec | `spec-reviewer` agent | `/review-spec` | Follow `docs/ai/development-workflow/protocols/01-review-specs-protocol.md` |
+| Write Plan | `tech-lead` agent | `/generate-implementation-plan` | Follow `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
+| Review Plan | `implementation-plan-reviewer` agent | `/review-implementation-plan` | Follow `docs/ai/development-workflow/protocols/02-review-implementation-plan-protocol.md` |
+| Implement | `developer` agent | `/implement-development` | Follow `docs/ai/development-workflow/protocols/04-implement-development-protocol.md` |
+| Review Code | `code-reviewer` agent | `/review-code` | Follow `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md` |
+| Prepare Commit | — | `/prepare-commit` | Follow `docs/best-practices/2-version-control.md` |
+| Prepare Release | — | `/prepare-release` | Follow workflow README release section |
+| Orchestrate Work | `orchestrator` agent | `/run-work` | Follow `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
 
 ### Maintenance Commands
 
 | Task | Claude Code | Cursor |
 |---|---|---|
-| Sync framework updates from template | `/sync-template` | `@sync-template` |
+| Sync framework updates from template | `/sync-template` | `/sync-template` |
 
 ---
 

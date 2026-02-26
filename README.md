@@ -26,7 +26,7 @@ Use the project-setup agent: Task the agent with "Initialize this project using 
 
 ### With Cursor
 ```
-@setup-project
+/setup-project
 ```
 
 ### With any other AI tool
@@ -111,19 +111,19 @@ The setup agent will have a structured conversation with you to understand your 
 ```
 Backlog
   │
-  ▼  @generate-new-feature / product-manager agent
+  ▼  /generate-new-feature / product-manager agent
 Spec Ready ──────────────────────────────── (Human approves PR)
   │
-  ▼  @generate-implementation-plan / tech-lead agent
+  ▼  /generate-implementation-plan / tech-lead agent
 Plan Ready ──────────────────────────────── (Human approves PR)
   │
-  ▼  @implement-development / developer agent
+  ▼  /implement-development / developer agent
 In Development ─────────────────────────── (Human approves PR)
   │
   ▼
 Merged
   │
-  ▼  @prepare-release
+  ▼  /prepare-release
 Released
 ```
 
@@ -144,7 +144,7 @@ See [`docs/ai/development-workflow/README.md`](docs/ai/development-workflow/READ
 
 ### Cursor
 - Rules in `.cursor/rules/` provide automatic context
-- Commands in `.cursor/commands/` are invoked with `@command-name`
+- Commands in `.cursor/commands/` are invoked with `/command-name`
 - MCP servers can be configured in `.cursor/.mcp.json`
 
 ### Other AI Tools (Codex, Gemini CLI, etc.)
@@ -219,7 +219,7 @@ If your project has the `.claude/skills/sync-template.md` skill, you can automat
 | Tool | Command |
 |---|---|
 | Claude Code | `/sync-template` |
-| Cursor | `@sync-template` |
+| Cursor | `/sync-template` |
 
 The skill compares your project against the template, shows exactly what changed (categorized by auto-apply vs. manual review vs. skipped), and applies updates only after your explicit approval. It also generates ready-to-use git instructions for branching, committing, and opening a PR.
 

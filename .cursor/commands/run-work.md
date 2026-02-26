@@ -1,5 +1,5 @@
 ---
-description: Orchestrate and advance multiple developments in parallel. Reads current state from the issue tracker and/or dev folders, determines what can advance, and executes safe parallel work. Usage: @run-work [optional filter, e.g. "only spec stage" or "feature-slug"]
+description: Orchestrate and advance multiple developments in parallel. Reads current state from the issue tracker and/or dev folders, determines what can advance, and executes safe parallel work. Usage: /run-work [optional filter, e.g. "only spec stage" or "feature-slug"]
 ---
 
 # Cursor Command: Run Work

@@ -4,7 +4,7 @@ description: >
   Compares template files (local path or remote ref) against this project,
   shows a categorized diff for review, applies approved changes, and generates
   ready-to-use git instructions (branch + commit + PR). Run from the project root.
-  Usage: @sync-template [--local=/path/to/template] [--ref=<branch|tag>]
+  Usage: /sync-template [--local=/path/to/template] [--ref=<branch|tag>]
 ---
 
 Follow this workflow exactly when invoked. Do not skip steps or reorder them.
