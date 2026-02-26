@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-02-26
+
+### Added
+
+- `.claude/commands/prepare-release.md` — Claude Code `/prepare-release` command: creates a release branch from `develop`, updates CHANGELOG, bumps version in manifests, and opens two PRs (one targeting `main`, one targeting `develop` as a mandatory backport).
+- `.github/workflows/auto-tag-release.yml` — GitHub Actions workflow that automatically creates a git tag and GitHub release when a `release/*` PR is merged into `main`. Extracts the version from the branch name and release notes from `CHANGELOG.md`.
+
+### Changed
+
+- `.cursor/commands/prepare-release.md` — updated to open two PRs (main + develop backport) instead of one, and replaced manual post-merge tagging steps with a reference to the automated CI workflow.
+- `docs/ai/development-workflow/README.md` — Release Process section updated to specify two PRs and automated tagging.
+- `AGENTS.md` — Prepare Release row now lists `/prepare-release` for Claude Code (was `—`).
+- `.claude/skills/sync-template.md` — added `.claude/commands/` to always-sync paths; added `.github/workflows/auto-tag-release.yml` to special-handling paths.
+
 ## [0.9.0] - 2026-02-26
 
 ### Added

@@ -83,6 +83,7 @@ Compare the following **framework-level paths** from the template against the cu
 ```
 docs/ai/                          ← full tree, all files recursively
 .claude/agents/                   ← all *.md files
+.claude/commands/                 ← all *.md files
 .claude/skills/                   ← all *.md files (including this skill itself)
 .cursor/commands/                 ← all *.md files
 .cursor/rules/                    ← all *.mdc files
@@ -100,8 +101,9 @@ For each file in these paths:
 ### Special handling (show full diff, user decides per file)
 
 ```
-.claude/settings.json             ← may have project-specific permissions
+.claude/settings.json                          ← may have project-specific permissions
 .claude/settings.local.json.example
+.github/workflows/auto-tag-release.yml         ← automated release tagging; add if CI is set up
 ```
 
 For each of these: show the full diff and ask the user explicitly whether to apply it.

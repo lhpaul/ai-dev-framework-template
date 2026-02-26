@@ -214,13 +214,16 @@ When implementation reveals something not covered by the spec or plan:
 1. Create branch `release/v[X.Y.Z]` from `develop`
 2. Move `[Unreleased]` entries in `CHANGELOG.md` to a new `[X.Y.Z] - YYYY-MM-DD` section
 3. Update version numbers in any manifest files (`package.json`, etc.)
-4. Open PR targeting `main`
+4. Open **two** PRs from the release branch:
+   - PR targeting `main`: the production release
+   - PR targeting `develop`: mandatory backport to prevent branch drift
 
 ### Finalize Release
 
-5. Human reviews and merges the release PR into `main`
-6. Tag `main` with `vX.Y.Z`
-7. **Mandatory backport**: merge `main` back into `develop` to prevent branch drift
+5. Human reviews and merges the `main` PR
+6. Tag `vX.Y.Z` is created automatically by CI on merge (`.github/workflows/auto-tag-release.yml`)
+7. Human merges the `develop` backport PR
+8. Do **not** delete the release branch until both PRs are merged
 
 ### Version Numbering
 

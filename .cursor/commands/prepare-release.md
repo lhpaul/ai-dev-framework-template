@@ -1,5 +1,5 @@
 ---
-description: Prepare a release from develop. Creates the release branch, updates CHANGELOG, bumps version, and opens a PR targeting main. Usage: /prepare-release [version number, e.g. 1.2.0]
+description: Prepare a release from develop. Creates the release branch, updates CHANGELOG, bumps version, and opens PRs targeting both main and develop. Usage: /prepare-release [version number, e.g. 1.2.0]
 ---
 
 Follow the release process defined in:
@@ -12,9 +12,12 @@ Steps:
 3. In `CHANGELOG.md`: rename `[Unreleased]` to `[X.Y.Z] - YYYY-MM-DD` and add a new empty `[Unreleased]` section at the top
 4. Bump version in any manifest files (e.g., `package.json`, `pyproject.toml`) — ask if unsure which files
 5. Commit: `chore(release): v[X.Y.Z]`
-6. Push and open PR targeting `main`
+6. Push the branch and open **two** PRs:
+   - PR targeting `main`: the production release
+   - PR targeting `develop`: mandatory backport to prevent branch drift
+   Use title `chore(release): v[X.Y.Z]` and include the CHANGELOG entries for this version in the PR body.
 
-After the human merges the release PR:
-7. Tag: `git tag v[X.Y.Z]` on `main`
-8. Push tag: `git push origin v[X.Y.Z]`
-9. Remind the human: merge `main` back into `develop` to prevent branch drift
+After both PRs are open, remind the human:
+7. Merge the `main` PR first — the tag `v[X.Y.Z]` will be created automatically by CI (`.github/workflows/auto-tag-release.yml`)
+8. Then merge the `develop` backport PR
+9. Do **not** delete the release branch until both PRs are merged
