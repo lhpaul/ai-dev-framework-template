@@ -17,9 +17,9 @@ Parse the user's arguments:
 
 - `--local=/path/to/template` → use that local directory as the template source
 - `--ref=<branch|tag>` → fetch remote at that ref (e.g., `--ref=main`, `--ref=v0.4.0`)
-- No arguments → check `.claude/template-config.json` in the current project
+- No arguments → check `.tmp/template-config.json` in the current project
 
-**If `.claude/template-config.json` exists**, read it and use the saved source:
+**If `.tmp/template-config.json` exists**, read it and use the saved source:
 ```json
 { "templatePath": "../ai-dev-framework-template" }
 ```
@@ -29,9 +29,9 @@ or
 ```
 
 **If no arguments and no config file**, ask the user:
-> "I need to know where to find the upstream template. Do you want to use a local path (e.g., `../ai-dev-framework-template`) or a remote GitHub URL? I'll save your answer to `.claude/template-config.json` for future runs."
+> "I need to know where to find the upstream template. Do you want to use a local path (e.g., `../ai-dev-framework-template`) or a remote GitHub URL? I'll save your answer to `.tmp/template-config.json` for future runs."
 
-Save the user's answer to `.claude/template-config.json` before continuing.
+Save the user's answer to `.tmp/template-config.json` before continuing (create the `.tmp` directory if needed; it is gitignored).
 
 **Remote fetch** (when a URL source is used):
 ```bash
