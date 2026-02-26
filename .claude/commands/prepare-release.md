@@ -8,6 +8,8 @@ Follow the release protocol exactly as defined in:
 `docs/ai/development-workflow/protocols/06-prepare-release-protocol.md`
 
 Key rules:
+- Verify working directory is clean and currently on `develop` before starting
+- If no version provided, inspect `[Unreleased]` entries and suggest the next version
 - Confirm the version with the human before creating the branch
 - Open **two** PRs: one to `main`, one backport to `develop`
 - Merge `main` PR first; the tag is created automatically by CI
