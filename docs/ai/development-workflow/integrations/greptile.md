@@ -53,24 +53,31 @@ Greptile posts as `greptile-apps[bot]`. Use this login to filter its comments an
 
 ### Step 8.1 — Trigger a re-review
 
-After each push, record the timestamp and post this comment on the PR:
+After each push, record the timestamp and capture the comment ID (needed for Step 8.2):
 
 ```bash
 last_push_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-gh pr comment <pr_number> --body "@greptile review"
+review_comment_url=$(gh pr comment <pr_number> --body "@greptile review")
+# Extract numeric comment ID from the URL (e.g. https://github.com/.../pull/18#issuecomment-12345678)
+review_comment_id=$(echo "$review_comment_url" | grep -oE '[0-9]+$')
 ```
 
 ### Step 8.2 — Detect review completion
 
-Greptile always posts a review summary when it finishes — even when it finds no issues — so this is the reliable signal that the review cycle is complete. Poll using:
+Greptile signals that it has **finished** reviewing by adding a 👍 reaction to the `@greptile review` comment. This is the reliable completion signal regardless of whether it found issues.
 
 ```bash
-gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews \
-  --jq "[.[] | select(.user.login == \"greptile-apps[bot]\" and .submitted_at > \"$last_push_at\")] | length"
+# Poll until Greptile reacts with 👍 on the trigger comment
+thumbs_up=$(gh api repos/{owner}/{repo}/issues/comments/{review_comment_id}/reactions \
+  --jq "[.[] | select(.content == \"+1\")] | length")
 ```
 
-A result of `> 0` means Greptile has completed a new review after `last_push_at`. A result of `0` means it has not responded yet.
+| Result | Action |
+|---|---|
+| `thumbs_up > 0` | Review complete — proceed to Step 8.3 to check for inline comments |
+| `thumbs_up == 0` and `elapsed < max_wait` | Not finished yet — wait another `poll_interval` and poll again |
+| `thumbs_up == 0` and `elapsed >= max_wait` | Timeout — escalate to human (Step 8.5) |
 
 ### Step 8.3 — Fetch inline comments
 

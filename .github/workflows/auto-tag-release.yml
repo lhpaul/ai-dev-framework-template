@@ -1,0 +1,71 @@
+# Automatically creates a git tag and GitHub release when a release/* PR is merged into main.
+# The tag is extracted from the branch name (e.g., release/v1.2.0 → tag v1.2.0).
+# Release notes are pulled from the matching section in CHANGELOG.md.
+name: Auto-tag release
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+jobs:
+  tag:
+    if: >
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'release/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Extract version from branch name
+        id: extract_version
+        run: |
+          BRANCH="${{ github.event.pull_request.head.ref }}"
+          VERSION="${BRANCH#release/}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Detected version: $VERSION"
+
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Extract release notes from CHANGELOG
+        id: release_notes
+        run: |
+          VERSION="${{ steps.extract_version.outputs.version }}"
+          # Strip leading 'v' to match CHANGELOG format (e.g., v1.2.0 → [1.2.0])
+          VERSION_CLEAN="${VERSION#v}"
+          # Escape dots so they match literal '.' not any character in the awk regex
+          VERSION_ESCAPED=$(echo "$VERSION_CLEAN" | sed 's/\./\\./g')
+          NOTES=$(awk "/^## \[$VERSION_ESCAPED\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md)
+          if [ -z "$NOTES" ]; then
+            echo "ERROR: No CHANGELOG entry found for version $VERSION_CLEAN. Aborting before tag is created."
+            exit 1
+          fi
+          # Use multiline output safely
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "notes<<$EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "$EOF" >> $GITHUB_OUTPUT
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          TAG="${{ steps.extract_version.outputs.version }}"
+          git tag "$TAG"
+          git push origin "$TAG"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.extract_version.outputs.version }}"
+          gh release create "$VERSION" \
+            --title "Release $VERSION" \
+            --notes "${{ steps.release_notes.outputs.notes }}" \
+            --target main

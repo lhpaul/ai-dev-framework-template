@@ -209,18 +209,13 @@ When implementation reveals something not covered by the spec or plan:
 
 ## Release Process
 
-### Prepare Release
+See the full protocol: [`protocols/06-prepare-release-protocol.md`](protocols/06-prepare-release-protocol.md)
 
-1. Create branch `release/v[X.Y.Z]` from `develop`
-2. Move `[Unreleased]` entries in `CHANGELOG.md` to a new `[X.Y.Z] - YYYY-MM-DD` section
-3. Update version numbers in any manifest files (`package.json`, etc.)
-4. Open PR targeting `main`
-
-### Finalize Release
-
-5. Human reviews and merges the release PR into `main`
-6. Tag `main` with `vX.Y.Z`
-7. **Mandatory backport**: merge `main` back into `develop` to prevent branch drift
+**Summary**:
+1. Branch `release/v[X.Y.Z]` from `develop`
+2. Update `CHANGELOG.md` and manifest versions
+3. Open **two** PRs: one to `main` (production), one to `develop` (mandatory backport)
+4. Merge `main` first — tag is created automatically by CI; then merge the backport PR
 
 ### Version Numbering
 
