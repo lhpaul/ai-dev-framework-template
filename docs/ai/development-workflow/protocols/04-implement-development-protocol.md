@@ -82,6 +82,8 @@ Execute each step from the implementation plan in order.
 
 **Seed data**: If the plan requires seed data changes, make them and verify they load correctly.
 
+**End-to-end spec maintenance**: If a committed automated spec exists for the feature under test, keep it in sync with your changes. If the feature is new and a smoke test runbook exists, create the corresponding spec as part of the implementation. See `docs/project/3-software-architecture.md` → Testing Strategy for the two-tier approach.
+
 ### Step 6: Pre-Commit Verification
 
 Before committing, verify:
@@ -93,8 +95,11 @@ Before committing, verify:
 # Lint — must pass with zero errors
 [your lint command]
 
-# Tests — must pass
+# Unit / integration tests — must pass
 [your test command]
+
+# End-to-end suite — run if a spec exists for the affected feature
+[your e2e command]
 ```
 
 Fix any failures before committing. Do not push a broken build.
@@ -165,7 +170,7 @@ See `docs/ai/development-workflow/protocols/91-pr-readiness-signal-protocol.md`.
 2. Present a brief execution plan and get approval
 3. Branch: `git checkout -b fix/[branch-slug]` from `develop` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without)
 4. Implement the fix
-5. Verify: build, lint, tests pass
+5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area
 6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry
 7. Commit: `fix([scope]): [description]`
 8. Push and open PR targeting `develop`
