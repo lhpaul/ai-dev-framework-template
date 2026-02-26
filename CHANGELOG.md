@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-02-26
+
+### Added
+
+- `.claude/agents/smoke-tester.md` — missing Claude Code sub-agent for the smoke test stage; delegates execution to `docs/ai/development-workflow/protocols/05-smoke-test-protocol.md` and `docs/testing/README.md`.
+
 ## [0.6.0] - 2026-02-25
 
 ### Added
