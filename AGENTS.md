@@ -47,18 +47,30 @@ This project uses a staged AI-assisted development workflow. See [`docs/ai/devel
 
 ### Workflow Commands
 
-| Stage | Claude Code | Cursor | Any other tool |
-|---|---|---|---|
-| Project Setup | `project-setup` agent | `/setup-project` | Follow `docs/ai/setup/protocol.md` |
-| Write Spec | `product-manager` agent | `/generate-new-feature` | Follow `docs/ai/development-workflow/protocols/01-generate-specs-protocol.md` |
-| Review Spec | `spec-reviewer` agent | `/review-spec` | Follow `docs/ai/development-workflow/protocols/01-review-specs-protocol.md` |
-| Write Plan | `tech-lead` agent | `/generate-implementation-plan` | Follow `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
-| Review Plan | `implementation-plan-reviewer` agent | `/review-implementation-plan` | Follow `docs/ai/development-workflow/protocols/02-review-implementation-plan-protocol.md` |
-| Implement | `developer` agent | `/implement-development` | Follow `docs/ai/development-workflow/protocols/04-implement-development-protocol.md` |
-| Review Code | `code-reviewer` agent | `/review-code` | Follow `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md` |
-| Prepare Commit | — | `/prepare-commit` | Follow `docs/best-practices/2-version-control.md` |
-| Prepare Release | `/prepare-release` | `/prepare-release` | Follow `docs/ai/development-workflow/protocols/06-prepare-release-protocol.md` |
-| Orchestrate Work | `orchestrator` agent | `/run-work` | Follow `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
+| Stage | Claude Code | Cursor | Codex | Any other tool |
+|---|---|---|---|---|
+| Project Setup | `project-setup` agent | `/setup-project` | `workflow-project-setup` skill | Follow `docs/ai/setup/protocol.md` |
+| Write Spec | `product-manager` agent | `/generate-new-feature` | `workflow-spec-writer` skill | Follow `docs/ai/development-workflow/protocols/01-generate-specs-protocol.md` |
+| Review Spec | `spec-reviewer` agent | `/review-spec` | `workflow-spec-reviewer` skill | Follow `docs/ai/development-workflow/protocols/01-review-specs-protocol.md` |
+| Write Plan | `tech-lead` agent | `/generate-implementation-plan` | `workflow-plan-writer` skill | Follow `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
+| Review Plan | `implementation-plan-reviewer` agent | `/review-implementation-plan` | `workflow-plan-reviewer` skill | Follow `docs/ai/development-workflow/protocols/02-review-implementation-plan-protocol.md` |
+| Implement | `developer` agent | `/implement-development` | `workflow-implementer` skill | Follow `docs/ai/development-workflow/protocols/04-implement-development-protocol.md` |
+| Review Code | `code-reviewer` agent | `/review-code` | `workflow-code-reviewer` skill | Follow `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md` |
+| Prepare Commit | — | `/prepare-commit` | Follow `docs/best-practices/2-version-control.md` | Follow `docs/best-practices/2-version-control.md` |
+| Prepare Release | `/prepare-release` | `/prepare-release` | Follow `docs/ai/development-workflow/protocols/06-prepare-release-protocol.md` | Follow `docs/ai/development-workflow/protocols/06-prepare-release-protocol.md` |
+| Orchestrate Work | `orchestrator` agent | `/run-work` | `workflow-orchestrator` skill | Follow `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
+
+### Codex Skills
+
+The repository ships Codex skill definitions in `.codex/skills/`. Install them into your local Codex skill directory before first use:
+
+```bash
+./scripts/install-codex-skills.sh
+```
+
+Installed skills are thin wrappers around the canonical workflow protocols. They do not redefine the workflow; they load the same documents used by other tools and, for orchestration, rely on the helper scripts in `scripts/` to inspect branches, worktrees, and development folders deterministically. The bundled skills also include optional `agents/openai.yaml` metadata so downstream projects created from this template have cleaner Codex skill labels and default prompts out of the box.
+
+For normal Codex usage, start with `workflow-orchestrator`. It is the primary entrypoint for advancing work with minimal human intervention. Run it on an `economy` tier by default, then escalate only when the routed stage recommends a higher tier. The other workflow skills are supporting stage executors that the orchestrator can route into, or that a human can invoke directly when they want to force a specific stage.
 
 ### Maintenance Commands
 

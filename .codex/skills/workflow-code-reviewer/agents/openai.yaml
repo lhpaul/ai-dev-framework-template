@@ -1,0 +1,7 @@
+interface:
+  display_name: "Workflow Code Reviewer"
+  short_description: "Review implemented changes and surface risks first."
+  default_prompt: "Use $workflow-code-reviewer to review the current implementation changes and report findings."
+
+policy:
+  allow_implicit_invocation: true

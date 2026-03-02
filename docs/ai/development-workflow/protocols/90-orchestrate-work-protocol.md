@@ -19,11 +19,21 @@ The orchestrator:
 
 ## Step 1: Gather State
 
+When running inside Codex with the repository skills installed, prefer the helper scripts in `scripts/` for deterministic state inspection before falling back to ad hoc shell commands.
+
 Read from the following sources (in priority order):
 
 1. **Issue tracker** (if configured): current status of all issues and the latest brief. See [`integrations/`](../integrations/) for tracker-specific setup and [`integrations/issue-tracker.md`](../integrations/issue-tracker.md) for tracker-agnostic rules.
 2. **Development folders**: `docs/specs/developments/` — read the status field of each spec to determine the current stage
 3. **Open PRs**: `git branch -r` and/or the repository's PR list — which branches are open and their CI status
+
+If available, run:
+
+```bash
+./scripts/discover-workflow-state.sh
+```
+
+to collect the current branch, relevant local/remote branches, worktrees, and development folders in one pass.
 
 Build a mental map of:
 - Items in **Backlog** (no spec yet)
@@ -131,6 +141,10 @@ Use the `Task` tool to spawn a subagent for each item in the batch. Launch all s
 ```
 
 Wait for **all** subagents to complete before moving on to Step 6.
+
+**How to execute with Codex skills:**
+
+Codex skills are thin wrappers over the same protocol files. If your Codex runner can invoke multiple skills concurrently, group a batch exactly as you would with subagents. If it cannot, process the batch sequentially in the current session, but preserve the same batching decision and state clearly in the summary that execution was serialized due to runner limitations.
 
 **Subagent assignment by stage:**
 
@@ -243,8 +257,8 @@ Treat everything else as **blocking** — including comments describing bugs, fa
 
 | PR branch prefix | Agent to dispatch |
 |---|---|
-| `spec/*` | `product-manager` |
-| `implementation-plan/*` | `tech-lead` |
+| `spec/*` | `spec-reviewer` |
+| `implementation-plan/*` | `implementation-plan-reviewer` |
 | `feature/*` / `fix/*` / `hotfix/*` | `code-reviewer` |
 
 ### Step 8.4 — Mark PR ready for human review

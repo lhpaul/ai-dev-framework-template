@@ -8,7 +8,7 @@ This template provides:
 
 - **A staged development workflow** (Spec → Plan → Implement → Review → Release) with clear human approval gates
 - **Canonical protocol documents** that AI agents execute — one per workflow stage
-- **Agent definitions** for Claude Code (`.claude/agents/`) and Cursor (`.cursor/commands/`) that point to those protocols
+- **Thin tool wrappers** for Claude Code (`.claude/agents/`), Cursor (`.cursor/commands/`), and Codex (`.codex/skills/`) that point to those protocols
 - **A guided project setup** so any AI assistant can help you fill in the project-specific docs
 
 The key principle: **protocols live in `docs/`** and are tool-agnostic. Tool-specific configs (`.claude/`, `.cursor/`) are thin wrappers that reference those protocols. Add support for a new AI tool by creating a thin wrapper — no protocol duplication needed.
@@ -88,6 +88,14 @@ The setup agent will have a structured conversation with you to understand your 
 │               ├── linear.md             # Issue tracker integration (Linear)
 │               └── greptile.md           # Automated PR review (Greptile)
 │
+├── .codex/
+│   └── skills/                           # Codex skills that wrap the workflow protocols and ship UI metadata
+│
+├── scripts/
+│   ├── install-codex-skills.sh          # Installs repo skills into your local Codex config
+│   ├── discover-workflow-state.sh       # Summarizes branches, worktrees, and development folders
+│   └── check-workflow-branch.sh         # Checks whether a workflow branch already exists
+│
 ├── .claude/
 │   └── agents/                           # Claude Code subagent definitions
 │       ├── project-setup.md
@@ -142,12 +150,62 @@ See [`docs/ai/development-workflow/README.md`](docs/ai/development-workflow/READ
 - `CLAUDE.md` (symlink to `AGENTS.md`) is auto-loaded
 - Invoke agents via the Task tool or by mentioning the agent name
 
+Example prompts:
+
+```text
+Use the orchestrator agent to inspect this repository's AI development workflow state, determine what work can safely advance next, and execute the next eligible stage with minimal human intervention. Follow AGENTS.md and the workflow protocols exactly. If multiple items are eligible, prioritize by the documented rules and explain any blockers or required approval gates.
+```
+
+```text
+Use the orchestrator agent to review the current backlog, specs, plans, branches, and open PRs in this repository, then advance the next workflow item that is eligible. Minimize human interaction, but stop at any documented approval gate or if the protocol requires a human decision.
+```
+
+```text
+Use the orchestrator agent to start and advance work for [feature or issue name]. Inspect the current workflow state first, then run the next eligible stage for that item. Keep going until you hit a required human approval gate.
+```
+
 ### Cursor
 - Rules in `.cursor/rules/` provide automatic context
 - Commands in `.cursor/commands/` are invoked with `/command-name`
 - MCP servers can be configured in `.cursor/.mcp.json`
 
-### Other AI Tools (Codex, Gemini CLI, etc.)
+Example commands:
+
+```text
+/run-work
+```
+
+```text
+/run-work Review the current backlog, specs, plans, branches, and open PRs in this repository, then advance the next workflow item that is eligible. Minimize human interaction, but stop at any documented approval gate or if the protocol requires a human decision.
+```
+
+```text
+/run-work Start and advance work for [feature or issue name]. Inspect the current workflow state first, then run the next eligible stage for that item. Keep going until you hit a required human approval gate.
+```
+
+### Codex
+- Install the bundled skills with `./scripts/install-codex-skills.sh`
+- Start with `workflow-orchestrator` as the default entrypoint for the workflow
+- Run `workflow-orchestrator` on an `economy` tier by default; only escalate when the stage-specific skill recommends it
+- Use the other skills in `.codex/skills/` when you want to run a specific stage directly
+- The skills are thin wrappers around the same protocol docs used by the other tools
+- Each skill can also ship `agents/openai.yaml` metadata for cleaner labels and starter prompts in Codex-compatible UIs
+
+Example prompts:
+
+```text
+Use $workflow-orchestrator to inspect this repository's AI development workflow state, determine what work can safely advance next, and execute the next eligible stage with minimal human intervention. Follow AGENTS.md and the workflow protocols exactly. If multiple items are eligible, prioritize by the documented rules and explain any blockers or required approval gates.
+```
+
+```text
+Use $workflow-orchestrator to review the current backlog, specs, plans, branches, and open PRs in this repository, then advance the next workflow item that is eligible. Minimize human interaction, but stop at any documented approval gate or if the protocol requires a human decision.
+```
+
+```text
+Use $workflow-orchestrator to start and advance work for [feature or issue name]. Inspect the current workflow state first, then run the next eligible stage for that item. Keep going until you hit a required human approval gate.
+```
+
+### Other AI Tools (Gemini CLI, etc.)
 - Point your tool at `AGENTS.md` for project context
 - Ask it to follow protocols in `docs/ai/development-workflow/protocols/`
 - The protocols are plain markdown — any AI can follow them
@@ -198,8 +256,12 @@ Framework-level paths to propagate:
 - `docs/ai/`
 - `.claude/agents/`
 - `.claude/skills/`
+- `.codex/skills/`
 - `.cursor/rules/`
 - `.cursor/commands/`
+- `scripts/install-codex-skills.sh`
+- `scripts/discover-workflow-state.sh`
+- `scripts/check-workflow-branch.sh`
 - `docs/best-practices/1-general.md`
 - `docs/best-practices/2-version-control.md`
 - `docs/best-practices/3-testing.md`

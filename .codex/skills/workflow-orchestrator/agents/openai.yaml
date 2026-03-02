@@ -1,0 +1,7 @@
+interface:
+  display_name: "Workflow Orchestrator"
+  short_description: "Advance the next safe stage in the AI workflow."
+  default_prompt: "Use $workflow-orchestrator to inspect workflow state and advance the next eligible item."
+
+policy:
+  allow_implicit_invocation: true
