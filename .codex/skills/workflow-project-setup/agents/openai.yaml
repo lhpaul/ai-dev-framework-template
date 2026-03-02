@@ -1,0 +1,7 @@
+interface:
+  display_name: "Workflow Project Setup"
+  short_description: "Initialize a project from this workflow template."
+  default_prompt: "Use $workflow-project-setup to initialize this repository with the project setup protocol."
+
+policy:
+  allow_implicit_invocation: true

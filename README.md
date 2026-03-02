@@ -89,7 +89,7 @@ The setup agent will have a structured conversation with you to understand your 
 │               └── greptile.md           # Automated PR review (Greptile)
 │
 ├── .codex/
-│   └── skills/                           # Codex skills that wrap the workflow protocols
+│   └── skills/                           # Codex skills that wrap the workflow protocols and ship UI metadata
 │
 ├── scripts/
 │   ├── install-codex-skills.sh          # Installs repo skills into your local Codex config
@@ -159,6 +159,7 @@ See [`docs/ai/development-workflow/README.md`](docs/ai/development-workflow/READ
 - Install the bundled skills with `./scripts/install-codex-skills.sh`
 - Use the workflow skills in `.codex/skills/` (for example, `workflow-orchestrator`)
 - The skills are thin wrappers around the same protocol docs used by the other tools
+- Each skill can also ship `agents/openai.yaml` metadata for cleaner labels and starter prompts in Codex-compatible UIs
 
 ### Other AI Tools (Gemini CLI, etc.)
 - Point your tool at `AGENTS.md` for project context

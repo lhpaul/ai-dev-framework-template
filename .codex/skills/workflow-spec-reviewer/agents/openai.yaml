@@ -1,0 +1,7 @@
+interface:
+  display_name: "Workflow Spec Reviewer"
+  short_description: "Review a feature spec against the spec checklist."
+  default_prompt: "Use $workflow-spec-reviewer to review the current spec draft for gaps or unclear requirements."
+
+policy:
+  allow_implicit_invocation: true

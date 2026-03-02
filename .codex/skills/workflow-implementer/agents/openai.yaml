@@ -1,0 +1,7 @@
+interface:
+  display_name: "Workflow Implementer"
+  short_description: "Implement a feature, fix, or hotfix in code."
+  default_prompt: "Use $workflow-implementer to implement the approved workflow item in this repository."
+
+policy:
+  allow_implicit_invocation: true

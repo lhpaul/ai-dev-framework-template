@@ -68,7 +68,7 @@ The repository ships Codex skill definitions in `.codex/skills/`. Install them i
 ./scripts/install-codex-skills.sh
 ```
 
-Installed skills are thin wrappers around the canonical workflow protocols. They do not redefine the workflow; they load the same documents used by other tools and, for orchestration, rely on the helper scripts in `scripts/` to inspect branches, worktrees, and development folders deterministically.
+Installed skills are thin wrappers around the canonical workflow protocols. They do not redefine the workflow; they load the same documents used by other tools and, for orchestration, rely on the helper scripts in `scripts/` to inspect branches, worktrees, and development folders deterministically. The bundled skills also include optional `agents/openai.yaml` metadata so downstream projects created from this template have cleaner Codex skill labels and default prompts out of the box.
 
 ### Maintenance Commands
 
