@@ -5,6 +5,8 @@ description: Review and refine an implementation plan. Use when a plan draft or 
 
 # Workflow Plan Reviewer
 
+Recommended model tier: `balanced`
+
 1. Read `AGENTS.md` for repository-wide rules.
 2. Read `docs/ai/development-workflow/protocols/02-review-implementation-plan-protocol.md`.
 3. Follow that protocol exactly.

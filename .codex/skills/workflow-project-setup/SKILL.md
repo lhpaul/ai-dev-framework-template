@@ -5,6 +5,8 @@ description: Run the repository's project setup workflow. Use when initializing 
 
 # Workflow Project Setup
 
+Recommended model tier: `balanced`
+
 1. Read `AGENTS.md` for repository-wide rules.
 2. Read `docs/ai/setup/protocol.md`.
 3. Follow that protocol exactly in the current repository.

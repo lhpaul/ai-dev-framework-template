@@ -5,6 +5,8 @@ description: Review and refine a workflow spec. Use when a spec draft or spec PR
 
 # Workflow Spec Reviewer
 
+Recommended model tier: `balanced`
+
 1. Read `AGENTS.md` for repository-wide rules.
 2. Read `docs/ai/development-workflow/protocols/01-review-specs-protocol.md`.
 3. Follow that protocol exactly.

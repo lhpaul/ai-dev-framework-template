@@ -5,6 +5,8 @@ description: Review implemented changes against the repository's code review wor
 
 # Workflow Code Reviewer
 
+Recommended model tier: `balanced`
+
 1. Read `AGENTS.md` for repository-wide rules.
 2. Read `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md`.
 3. Follow that protocol exactly.

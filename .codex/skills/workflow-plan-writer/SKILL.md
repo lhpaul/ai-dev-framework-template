@@ -5,6 +5,8 @@ description: Write an implementation plan for a spec-ready feature. Use when a m
 
 # Workflow Plan Writer
 
+Recommended model tier: `premium`
+
 1. Read `AGENTS.md` for repository-wide rules and branch overrides.
 2. Read `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md`.
 3. Follow that protocol exactly.

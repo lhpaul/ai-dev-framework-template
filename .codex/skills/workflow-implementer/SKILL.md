@@ -5,6 +5,8 @@ description: Implement a workflow item in code. Use for full-pipeline implementa
 
 # Workflow Implementer
 
+Recommended model tier: `balanced`
+
 1. Read `AGENTS.md` for repository-wide rules and branch overrides.
 2. Read `docs/ai/development-workflow/protocols/04-implement-development-protocol.md`.
 3. Follow that protocol exactly.
