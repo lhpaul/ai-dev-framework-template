@@ -1,10 +1,10 @@
-# Scripts
+# Repository-level scripts
 
-This directory contains small helper scripts that support the Codex workflow integration.
+Scripts intended to be run from the monorepo root or from CI/CD.
 
-## Scripts
+## AI development workflow (Codex / orchestrator)
 
-### `install-codex-skills.sh`
+Scripts used by the staged AI development workflow. Referenced by `docs/ai/development-workflow/` and by the Codex skills in `.codex/skills/`.
 
 Installs the repository's bundled Codex skills into the local Codex skill directory by creating symlinks.
 
