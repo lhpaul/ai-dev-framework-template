@@ -130,7 +130,7 @@ Once approved:
 1. Determine the branch slug:
    - **With issue tracker**: `[issue-id]-[feature-slug]` (e.g., `ENG-123-user-auth`)
    - **Without issue tracker**: `[feature-slug]` (e.g., `user-auth`)
-2. Create branch: `git checkout -b implementation-plan/[branch-slug]` from `main`
+2. Create branch: `git checkout -b implementation-plan/[branch-slug]` from `develop`
 3. Write the plan file
 4. Write the smoke test runbook
 5. Update the spec status from `Spec Ready` to `Plan Ready` (in the spec file's status field)
@@ -141,7 +141,7 @@ Once approved:
    - If your runner supports it, dispatch a dedicated `implementation-plan-reviewer` agent; otherwise self-review using the protocol checklist
    - Apply fixes directly on the branch, commit, and push again if needed
    - If the verdict is **NEEDS REVISION** due to plan/approach decisions, stop and request human input before opening a PR
-9. Open PR targeting `main` with:
+9. Open PR targeting `develop` with:
    - Title: `docs(plan): [feature-name]`
    - Body: summary of the approach, complexity estimate, key risks, link to plan and runbook
 

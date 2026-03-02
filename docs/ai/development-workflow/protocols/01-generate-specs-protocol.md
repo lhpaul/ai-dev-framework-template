@@ -155,7 +155,7 @@ Once the human approves the spec:
 1. Determine the branch slug:
    - **With issue tracker**: `[issue-id]-[feature-slug]` (e.g., `ENG-123-user-auth`)
    - **Without issue tracker**: `[feature-slug]` (e.g., `user-auth`)
-2. Create branch: `git checkout -b spec/[branch-slug]` from `main`
+2. Create branch: `git checkout -b spec/[branch-slug]` from `develop`
 3. Create the development folder: `docs/specs/developments/[YYYYMMDDHHMMSS]_[feature-slug]/`
 4. Write the spec file: `1_[feature-slug]_specs.md`
 5. Commit: `docs: add spec for [feature-name]`
@@ -165,7 +165,7 @@ Once the human approves the spec:
    - If your runner supports it, dispatch a dedicated `spec-reviewer` agent; otherwise self-review using the protocol checklist
    - Apply fixes directly on the branch, commit, and push again if needed
    - If the verdict is **NEEDS REVISION** due to product decisions, stop and request human input before opening a PR
-8. Open PR targeting `main` with:
+8. Open PR targeting `develop` with:
    - Title: `docs(spec): [feature-name]`
    - Body: summary of the feature, link to the spec file, list of open questions (if any)
 

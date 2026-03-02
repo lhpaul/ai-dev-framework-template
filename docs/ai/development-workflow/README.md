@@ -97,12 +97,12 @@ For low-human-interaction operation in Codex, treat `workflow-orchestrator` as t
 
 | Branch type | Pattern | Base branch |
 |---|---|---|
-| Spec | `spec/[slug]` | `main` |
-| Implementation plan | `implementation-plan/[slug]` | `main` |
-| Feature | `feature/[slug]` | `main` |
-| Bug / simple fix | `fix/[slug]` | `main` |
+| Spec | `spec/[slug]` | `develop` |
+| Implementation plan | `implementation-plan/[slug]` | `develop` |
+| Feature | `feature/[slug]` | `develop` |
+| Bug / simple fix | `fix/[slug]` | `develop` |
 | Hotfix | `hotfix/[slug]` | `main` |
-| Release | `release/v[X.Y.Z]` | `main` |
+| Release | `release/v[X.Y.Z]` | `develop` |
 
 **Slug format:**
 - **With issue tracker** → `[issue-id]-[short-description]` (e.g., `feature/ENG-123-user-auth`)
@@ -144,7 +144,7 @@ For bugs or simple changes that don't need a spec or plan:
 - No new database migrations
 - Human provides a clear, self-contained brief
 
-**Path**: branch `fix/[slug]` from `main` → implement → reviewer gate → open PR → merge
+**Path**: branch `fix/[slug]` from `develop` → implement → reviewer gate → open PR → merge
 
 **Important**: If the change turns out to be larger than described, **stop and report** to the human. Don't silently expand scope. The developer agent should surface this immediately.
 
@@ -154,7 +154,9 @@ For critical bugs that need immediate production deployment, bypassing the norma
 
 **Criteria**: Active production incident or critical security issue.
 
-**Path**: branch `hotfix/[slug]` from `main` → implement → reviewer gate → open PR targeting `main` → merge
+**Path**: branch `hotfix/[slug]` from `main` → implement → reviewer gate → open PR targeting `main` → merge → **mandatory backport to `develop`**
+
+The backport (main → develop) is non-negotiable to prevent branch drift.
 
 ---
 
@@ -216,10 +218,10 @@ When implementation reveals something not covered by the spec or plan:
 See the full protocol: [`protocols/06-prepare-release-protocol.md`](protocols/06-prepare-release-protocol.md)
 
 **Summary**:
-1. Branch `release/v[X.Y.Z]` from `main`
+1. Branch `release/v[X.Y.Z]` from `develop`
 2. Update `CHANGELOG.md` and manifest versions
-3. Open a PR to `main`
-4. Merge the PR — tag is created automatically by CI
+3. Open **two** PRs: one to `main` (production), one to `develop` (mandatory backport)
+4. Merge `main` first — tag is created automatically by CI; then merge the backport PR
 
 ### Version Numbering
 

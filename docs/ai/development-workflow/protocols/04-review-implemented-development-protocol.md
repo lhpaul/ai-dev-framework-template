@@ -31,7 +31,7 @@ Before reviewing, read:
 Priority order:
 1. Explicit file paths provided by the human
 2. Files edited in the current conversation
-3. All files changed in the branch: `git diff main...HEAD`
+3. All files changed in the branch: `git diff develop...HEAD` (or `main...HEAD` for hotfix)
 4. Ask the human
 
 ---

@@ -10,8 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - AI workflow: add a reviewer-agent gate before opening PRs for spec, plan, and implementation stages (so automated PR review tools run only after reviewer approval).
-- AI workflow: align protocols and docs to `main` as the integration branch (this repo has no `develop`).
-- AI workflow: update the release protocol to a single-PR `main`-only flow (no `develop` backport).
+- AI workflow: keep the template's `develop` integration branch + `main` releases, and enforce the reviewer gate before opening PRs.
 
 ## [0.12.0] - 2026-03-02
 

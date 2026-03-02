@@ -104,15 +104,15 @@ For normal Codex usage, start with `workflow-orchestrator`. It is the primary en
 
 ### Git & Branching
 
-> **This project overrides the default template workflow** (documented in `docs/ai/development-workflow/`).
-> The overrides below apply only here; downstream projects using this template are not affected.
+This repository follows the default template workflow (documented in `docs/ai/development-workflow/`).
 
-- **No `develop` branch** — all branches target `main` directly.
+- Integration branch: `develop` (spec/plan/feature/fix PRs target `develop`)
+- Release branch: `main` (release PR targets `main`, plus a mandatory backport PR to `develop`)
 - Branch naming:
-  - Features / improvements: `feature/[feature-slug]`
-  - Bug fixes (fast track): `fix/[slug]`
-  - Hotfixes: `hotfix/[slug]` from `main`
-  - Releases: `release/v[X.Y.Z]`
+  - Features / improvements: `feature/[feature-slug]` (from `develop`)
+  - Bug fixes (fast track): `fix/[slug]` (from `develop`)
+  - Hotfixes: `hotfix/[slug]` (from `main`, then backport to `develop`)
+  - Releases: `release/v[X.Y.Z]` (from `develop`)
 
 ### CHANGELOG & Versioning
 
