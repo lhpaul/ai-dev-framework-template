@@ -56,7 +56,7 @@ This document is the **canonical master reference** for how development is struc
                       ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                       MERGED                                    │
-│   PR merged into develop                                        │
+│   PR merged into the default integration branch                 │
 │   CI validates; deployed to staging if configured               │
 └─────────────────────┬───────────────────────────────────────────┘
                       │  Human: prepare release
@@ -75,15 +75,17 @@ The **Spec Ready** stage is intentionally **product-focused**: it defines what t
 
 ## Commands by Stage
 
-| Stage | Claude Code | Cursor | Any AI tool |
-|---|---|---|---|
-| Write Spec | `product-manager` agent | `/generate-new-feature` | `docs/ai/development-workflow/protocols/01-generate-specs-protocol.md` |
-| Review Spec | `spec-reviewer` agent | `/review-spec` | `docs/ai/development-workflow/protocols/01-review-specs-protocol.md` |
-| Write Plan | `tech-lead` agent | `/generate-implementation-plan` | `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
-| Review Plan | `implementation-plan-reviewer` agent | `/review-implementation-plan` | `docs/ai/development-workflow/protocols/02-review-implementation-plan-protocol.md` |
-| Implement | `developer` agent | `/implement-development` | `docs/ai/development-workflow/protocols/04-implement-development-protocol.md` |
-| Review Code | `code-reviewer` agent | `/review-code` | `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md` |
-| Orchestrate | `orchestrator` agent | `/run-work` | `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
+| Stage | Claude Code | Cursor | Codex | Any AI tool |
+|---|---|---|---|---|
+| Write Spec | `product-manager` agent | `/generate-new-feature` | `workflow-spec-writer` skill | `docs/ai/development-workflow/protocols/01-generate-specs-protocol.md` |
+| Review Spec | `spec-reviewer` agent | `/review-spec` | `workflow-spec-reviewer` skill | `docs/ai/development-workflow/protocols/01-review-specs-protocol.md` |
+| Write Plan | `tech-lead` agent | `/generate-implementation-plan` | `workflow-plan-writer` skill | `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
+| Review Plan | `implementation-plan-reviewer` agent | `/review-implementation-plan` | `workflow-plan-reviewer` skill | `docs/ai/development-workflow/protocols/02-review-implementation-plan-protocol.md` |
+| Implement | `developer` agent | `/implement-development` | `workflow-implementer` skill | `docs/ai/development-workflow/protocols/04-implement-development-protocol.md` |
+| Review Code | `code-reviewer` agent | `/review-code` | `workflow-code-reviewer` skill | `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md` |
+| Orchestrate | `orchestrator` agent | `/run-work` | `workflow-orchestrator` skill | `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
+
+Codex skills are stored in `.codex/skills/` and can be installed into the local Codex environment with `./scripts/install-codex-skills.sh`. They are intentionally thin wrappers over the same protocol files used by every other tool.
 
 ---
 
@@ -91,12 +93,12 @@ The **Spec Ready** stage is intentionally **product-focused**: it defines what t
 
 | Branch type | Pattern | Base branch |
 |---|---|---|
-| Spec | `spec/[slug]` | `develop` |
-| Implementation plan | `implementation-plan/[slug]` | `develop` |
-| Feature | `feature/[slug]` | `develop` |
-| Bug / simple fix | `fix/[slug]` | `develop` |
+| Spec | `spec/[slug]` | default integration branch (`develop` unless overridden in `AGENTS.md`) |
+| Implementation plan | `implementation-plan/[slug]` | default integration branch (`develop` unless overridden in `AGENTS.md`) |
+| Feature | `feature/[slug]` | default integration branch (`develop` unless overridden in `AGENTS.md`) |
+| Bug / simple fix | `fix/[slug]` | default integration branch (`develop` unless overridden in `AGENTS.md`) |
 | Hotfix | `hotfix/[slug]` | `main` |
-| Release | `release/v[X.Y.Z]` | `develop` |
+| Release | `release/v[X.Y.Z]` | default integration branch (`develop` unless overridden in `AGENTS.md`) |
 
 **Slug format:**
 - **With issue tracker** → `[issue-id]-[short-description]` (e.g., `feature/ENG-123-user-auth`)
@@ -138,7 +140,7 @@ For bugs or simple changes that don't need a spec or plan:
 - No new database migrations
 - Human provides a clear, self-contained brief
 
-**Path**: branch `fix/[slug]` from `develop` → implement → open PR → merge
+**Path**: branch `fix/[slug]` from the default integration branch → implement → open PR → merge
 
 **Important**: If the change turns out to be larger than described, **stop and report** to the human. Don't silently expand scope. The developer agent should surface this immediately.
 
@@ -148,9 +150,9 @@ For critical bugs that need immediate production deployment, bypassing the norma
 
 **Criteria**: Active production incident or critical security issue.
 
-**Path**: branch `hotfix/[slug]` from `main` → implement → open PR targeting `main` → merge → **mandatory backport to `develop`**
+**Path**: branch `hotfix/[slug]` from `main` → implement → open PR targeting `main` → merge → **mandatory backport to the default integration branch**
 
-The backport (main → develop) is non-negotiable to prevent branch drift.
+The backport (main → default integration branch) is non-negotiable to prevent branch drift.
 
 ---
 
@@ -212,9 +214,9 @@ When implementation reveals something not covered by the spec or plan:
 See the full protocol: [`protocols/06-prepare-release-protocol.md`](protocols/06-prepare-release-protocol.md)
 
 **Summary**:
-1. Branch `release/v[X.Y.Z]` from `develop`
+1. Branch `release/v[X.Y.Z]` from the default integration branch
 2. Update `CHANGELOG.md` and manifest versions
-3. Open **two** PRs: one to `main` (production), one to `develop` (mandatory backport)
+3. Open **two** PRs: one to `main` (production), one to the default integration branch (mandatory backport)
 4. Merge `main` first — tag is created automatically by CI; then merge the backport PR
 
 ### Version Numbering

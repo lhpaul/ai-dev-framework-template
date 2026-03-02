@@ -8,7 +8,7 @@ This template provides:
 
 - **A staged development workflow** (Spec → Plan → Implement → Review → Release) with clear human approval gates
 - **Canonical protocol documents** that AI agents execute — one per workflow stage
-- **Agent definitions** for Claude Code (`.claude/agents/`) and Cursor (`.cursor/commands/`) that point to those protocols
+- **Thin tool wrappers** for Claude Code (`.claude/agents/`), Cursor (`.cursor/commands/`), and Codex (`.codex/skills/`) that point to those protocols
 - **A guided project setup** so any AI assistant can help you fill in the project-specific docs
 
 The key principle: **protocols live in `docs/`** and are tool-agnostic. Tool-specific configs (`.claude/`, `.cursor/`) are thin wrappers that reference those protocols. Add support for a new AI tool by creating a thin wrapper — no protocol duplication needed.
@@ -88,6 +88,14 @@ The setup agent will have a structured conversation with you to understand your 
 │               ├── linear.md             # Issue tracker integration (Linear)
 │               └── greptile.md           # Automated PR review (Greptile)
 │
+├── .codex/
+│   └── skills/                           # Codex skills that wrap the workflow protocols
+│
+├── scripts/
+│   ├── install-codex-skills.sh          # Installs repo skills into your local Codex config
+│   ├── discover-workflow-state.sh       # Summarizes branches, worktrees, and development folders
+│   └── check-workflow-branch.sh         # Checks whether a workflow branch already exists
+│
 ├── .claude/
 │   └── agents/                           # Claude Code subagent definitions
 │       ├── project-setup.md
@@ -147,7 +155,12 @@ See [`docs/ai/development-workflow/README.md`](docs/ai/development-workflow/READ
 - Commands in `.cursor/commands/` are invoked with `/command-name`
 - MCP servers can be configured in `.cursor/.mcp.json`
 
-### Other AI Tools (Codex, Gemini CLI, etc.)
+### Codex
+- Install the bundled skills with `./scripts/install-codex-skills.sh`
+- Use the workflow skills in `.codex/skills/` (for example, `workflow-orchestrator`)
+- The skills are thin wrappers around the same protocol docs used by the other tools
+
+### Other AI Tools (Gemini CLI, etc.)
 - Point your tool at `AGENTS.md` for project context
 - Ask it to follow protocols in `docs/ai/development-workflow/protocols/`
 - The protocols are plain markdown — any AI can follow them
@@ -198,8 +211,12 @@ Framework-level paths to propagate:
 - `docs/ai/`
 - `.claude/agents/`
 - `.claude/skills/`
+- `.codex/skills/`
 - `.cursor/rules/`
 - `.cursor/commands/`
+- `scripts/install-codex-skills.sh`
+- `scripts/discover-workflow-state.sh`
+- `scripts/check-workflow-branch.sh`
 - `docs/best-practices/1-general.md`
 - `docs/best-practices/2-version-control.md`
 - `docs/best-practices/3-testing.md`
