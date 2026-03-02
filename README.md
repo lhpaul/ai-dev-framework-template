@@ -150,10 +150,38 @@ See [`docs/ai/development-workflow/README.md`](docs/ai/development-workflow/READ
 - `CLAUDE.md` (symlink to `AGENTS.md`) is auto-loaded
 - Invoke agents via the Task tool or by mentioning the agent name
 
+Example prompts:
+
+```text
+Use the orchestrator agent to inspect this repository's AI development workflow state, determine what work can safely advance next, and execute the next eligible stage with minimal human intervention. Follow AGENTS.md and the workflow protocols exactly. If multiple items are eligible, prioritize by the documented rules and explain any blockers or required approval gates.
+```
+
+```text
+Use the orchestrator agent to review the current backlog, specs, plans, branches, and open PRs in this repository, then advance the next workflow item that is eligible. Minimize human interaction, but stop at any documented approval gate or if the protocol requires a human decision.
+```
+
+```text
+Use the orchestrator agent to start and advance work for [feature or issue name]. Inspect the current workflow state first, then run the next eligible stage for that item. Keep going until you hit a required human approval gate.
+```
+
 ### Cursor
 - Rules in `.cursor/rules/` provide automatic context
 - Commands in `.cursor/commands/` are invoked with `/command-name`
 - MCP servers can be configured in `.cursor/.mcp.json`
+
+Example commands:
+
+```text
+/run-work
+```
+
+```text
+/run-work Review the current backlog, specs, plans, branches, and open PRs in this repository, then advance the next workflow item that is eligible. Minimize human interaction, but stop at any documented approval gate or if the protocol requires a human decision.
+```
+
+```text
+/run-work Start and advance work for [feature or issue name]. Inspect the current workflow state first, then run the next eligible stage for that item. Keep going until you hit a required human approval gate.
+```
 
 ### Codex
 - Install the bundled skills with `./scripts/install-codex-skills.sh`
