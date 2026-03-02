@@ -157,7 +157,8 @@ See [`docs/ai/development-workflow/README.md`](docs/ai/development-workflow/READ
 
 ### Codex
 - Install the bundled skills with `./scripts/install-codex-skills.sh`
-- Use the workflow skills in `.codex/skills/` (for example, `workflow-orchestrator`)
+- Start with `workflow-orchestrator` as the default entrypoint for the workflow
+- Use the other skills in `.codex/skills/` when you want to run a specific stage directly
 - The skills are thin wrappers around the same protocol docs used by the other tools
 - Each skill can also ship `agents/openai.yaml` metadata for cleaner labels and starter prompts in Codex-compatible UIs
 

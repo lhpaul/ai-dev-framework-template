@@ -87,6 +87,8 @@ The **Spec Ready** stage is intentionally **product-focused**: it defines what t
 
 Codex skills are stored in `.codex/skills/` and can be installed into the local Codex environment with `./scripts/install-codex-skills.sh`. They are intentionally thin wrappers over the same protocol files used by every other tool.
 
+For low-human-interaction operation in Codex, treat `workflow-orchestrator` as the default entrypoint. It inspects workflow state, chooses the next eligible stage, and then routes into the narrower stage-specific skills. The stage-specific skills remain available for direct use when you intentionally want to run one stage in isolation.
+
 ---
 
 ## Branch Naming

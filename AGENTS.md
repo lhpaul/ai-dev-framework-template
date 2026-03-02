@@ -70,6 +70,8 @@ The repository ships Codex skill definitions in `.codex/skills/`. Install them i
 
 Installed skills are thin wrappers around the canonical workflow protocols. They do not redefine the workflow; they load the same documents used by other tools and, for orchestration, rely on the helper scripts in `scripts/` to inspect branches, worktrees, and development folders deterministically. The bundled skills also include optional `agents/openai.yaml` metadata so downstream projects created from this template have cleaner Codex skill labels and default prompts out of the box.
 
+For normal Codex usage, start with `workflow-orchestrator`. It is the primary entrypoint for advancing work with minimal human intervention. The other workflow skills are supporting stage executors that the orchestrator can route into, or that a human can invoke directly when they want to force a specific stage.
+
 ### Maintenance Commands
 
 | Task | Claude Code | Cursor |
