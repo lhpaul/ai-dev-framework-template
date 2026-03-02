@@ -163,6 +163,20 @@ See [`docs/ai/development-workflow/README.md`](docs/ai/development-workflow/READ
 - The skills are thin wrappers around the same protocol docs used by the other tools
 - Each skill can also ship `agents/openai.yaml` metadata for cleaner labels and starter prompts in Codex-compatible UIs
 
+Example prompts:
+
+```text
+Use $workflow-orchestrator to inspect this repository's AI development workflow state, determine what work can safely advance next, and execute the next eligible stage with minimal human intervention. Follow AGENTS.md and the workflow protocols exactly. If multiple items are eligible, prioritize by the documented rules and explain any blockers or required approval gates.
+```
+
+```text
+Use $workflow-orchestrator to review the current backlog, specs, plans, branches, and open PRs in this repository, then advance the next workflow item that is eligible. Minimize human interaction, but stop at any documented approval gate or if the protocol requires a human decision.
+```
+
+```text
+Use $workflow-orchestrator to start and advance work for [feature or issue name]. Inspect the current workflow state first, then run the next eligible stage for that item. Keep going until you hit a required human approval gate.
+```
+
 ### Other AI Tools (Gemini CLI, etc.)
 - Point your tool at `AGENTS.md` for project context
 - Ask it to follow protocols in `docs/ai/development-workflow/protocols/`
