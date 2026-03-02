@@ -1,7 +1,7 @@
 # Protocol: Prepare Release
 
 **Stage**: Release
-**Triggered by**: Human (when develop is ready to ship)
+**Triggered by**: Human (when main is ready to ship)
 
 ---
 
@@ -10,8 +10,8 @@
 Before doing anything, verify:
 
 1. Working directory is clean (`git status` returns no uncommitted changes). If not, stop and report.
-2. Currently on `develop`. If not, stop and report.
-3. Pull latest: `git pull origin develop`
+2. Currently on `main`. If not, stop and report.
+3. Pull latest: `git pull origin main`
 
 ---
 
@@ -58,7 +58,7 @@ chore(release): v[X.Y.Z]
 
 ---
 
-## Step 6: Push and Open Two PRs
+## Step 6: Push and Open PR
 
 ```bash
 git push -u origin release/v[X.Y.Z]
@@ -68,24 +68,21 @@ Open **two** PRs from the release branch using `gh pr create`:
 
 | PR | Target | Purpose |
 |---|---|---|
-| Production release | `main` | Ships to production |
-| Backport | `develop` | Keeps develop in sync — **mandatory**, prevents branch drift |
+| Release | `main` | Ships to production |
 
-Use title `chore(release): v[X.Y.Z]` for both. Include the CHANGELOG entries for this version in the PR body.
+Use title `chore(release): v[X.Y.Z]`. Include the CHANGELOG entries for this version in the PR body.
 
 ---
 
 ## Step 7: Inform the Human
 
-After both PRs are open:
+After the PR is open:
 
-1. **Merge the `main` PR first** — the tag `v[X.Y.Z]` is created automatically by CI on merge (`.github/workflows/auto-tag-release.yml`)
-2. **Then merge the `develop` backport PR**
-3. **Do not delete the release branch** until both PRs are merged
+1. Merge the PR — the tag `v[X.Y.Z]` is created automatically by CI on merge (`.github/workflows/auto-tag-release.yml`)
+2. Do not delete the release branch until the PR is merged
 
 ---
 
 ## Notes
 
-- If `develop` is branch-protected (requires PR to merge), the backport PR is the correct mechanism — do not attempt to push directly.
 - If no CI workflow exists for auto-tagging, instruct the human to run after the `main` merge: `git tag v[X.Y.Z] && git push origin v[X.Y.Z]`

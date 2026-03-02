@@ -1,7 +1,7 @@
 # Protocol: Review Feature Spec (Spec Review)
 
 **Agent role**: Spec Reviewer
-**Stage**: Spec Review (after Spec Ready PR is opened)
+**Stage**: Spec Review (before opening PR; can also be used after PR is opened)
 **Output**: Fixes applied directly + review report
 
 ---

@@ -10,8 +10,8 @@
 
 | Path | Branch | Use when |
 |---|---|---|
-| **Full Pipeline** | `feature/[slug]` from `develop` | Feature with approved spec + plan |
-| **Fast Track** | `fix/[slug]` from `develop` | Bug or simple change — clear scope, ≤3 files, no schema changes, no new patterns |
+| **Full Pipeline** | `feature/[slug]` from `main` | Feature with approved spec + plan |
+| **Fast Track** | `fix/[slug]` from `main` | Bug or simple change — clear scope, ≤3 files, no schema changes, no new patterns |
 | **Hotfix** | `hotfix/[slug]` from `main` | Critical production bug requiring immediate deployment |
 
 ---
@@ -53,7 +53,7 @@ Determine the branch slug:
 - **Without issue tracker**: `[slug]` (e.g., `user-auth`)
 
 ```bash
-git checkout develop
+git checkout main
 git pull
 git checkout -b feature/[branch-slug]
 ```
@@ -120,9 +120,17 @@ git push -u origin feature/[slug]
 
 Use Conventional Commits (see `docs/best-practices/2-version-control.md`).
 
-### Step 9: Open PR
+### Step 9: Reviewer Gate (before opening PR)
 
-Open a PR targeting `develop` with:
+Before opening a PR, run the code reviewer protocol on this branch: `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md`.
+
+- If your runner supports it, dispatch a dedicated `code-reviewer` agent; otherwise self-review using the protocol checklist.
+- Apply fixes directly on the branch, commit, and push again if needed.
+- If the verdict is **NEEDS REVISION** due to product/design decisions, stop and request human input before opening a PR.
+
+### Step 10: Open PR
+
+Open a PR targeting `main` with:
 - **Title**: `feat([scope]): [feature-name]`
 - **Description**:
   - What was implemented
@@ -131,7 +139,7 @@ Open a PR targeting `develop` with:
   - Any deviations from the plan (with justification)
   - CHANGELOG entry preview
 
-### Step 10: Automated Review Loop (if configured)
+### Step 11: Automated Review Loop (if configured)
 
 If an automated PR review tool is enabled (see `docs/ai/development-workflow/integrations/`):
 
@@ -141,7 +149,7 @@ If an automated PR review tool is enabled (see `docs/ai/development-workflow/int
 4. Repeat until no blocking issues remain
 5. Non-blocking suggestions: address at your discretion
 
-### Step 11: PR Readiness Signal
+### Step 12: PR Readiness Signal
 
 Apply `agent:ready-for-review` label when:
 - CI checks are green
@@ -168,14 +176,16 @@ See `docs/ai/development-workflow/protocols/91-pr-readiness-signal-protocol.md`.
 
 1. Read the brief. If the work item exists in an issue tracker, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for `In Development (Fast Track)` expectations.
 2. Present a brief execution plan and get approval
-3. Branch: `git checkout -b fix/[branch-slug]` from `develop` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without)
+3. Branch: `git checkout -b fix/[branch-slug]` from `main` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without)
 4. Implement the fix
 5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area
 6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry
 7. Commit: `fix([scope]): [description]`
-8. Push and open PR targeting `develop`
-9. Follow automated review loop (Step 10 above) if configured
-10. Apply `agent:ready-for-review` label
+8. Push branch to remote
+9. Run the reviewer gate (Step 9 above)
+10. Open PR targeting `main`
+11. Follow automated review loop (Step 11 above) if configured
+12. Apply `agent:ready-for-review` label
 
 ---
 
@@ -192,9 +202,11 @@ See `docs/ai/development-workflow/protocols/91-pr-readiness-signal-protocol.md`.
 5. Verify: build, lint, tests pass
 6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry
 7. Commit: `fix([scope]): [description] (hotfix)`
-8. Push and open PR targeting `main`
-9. Apply `agent:ready-for-review` label
-10. **After merge**: notify the human that a backport PR (main → develop) must be opened to prevent branch drift
+8. Push branch to remote
+9. Run the reviewer gate (Step 9 above)
+10. Open PR targeting `main`
+11. Apply `agent:ready-for-review` label
+12. **After merge**: notify the human that the hotfix is shipped and confirm no follow-up backport is needed (this repo merges directly to `main`)
 
 ---
 

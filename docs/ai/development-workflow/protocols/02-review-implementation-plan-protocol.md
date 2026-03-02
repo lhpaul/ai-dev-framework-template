@@ -1,7 +1,7 @@
 # Protocol: Review Implementation Plan (Plan Review)
 
 **Agent role**: Implementation Plan Reviewer
-**Stage**: Plan Review (after Plan Ready PR is opened)
+**Stage**: Plan Review (before opening PR; can also be used after PR is opened)
 **Output**: Fixes applied directly + review report
 
 ---

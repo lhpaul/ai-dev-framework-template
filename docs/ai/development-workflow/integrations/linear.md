@@ -92,7 +92,7 @@ The orchestrator or developer agent updates the Linear issue status at each stag
 | Spec branch created | → Spec Ready |
 | Plan branch created | → Plan Ready |
 | Feature branch created | → In Development |
-| Feature PR merged to develop | → Merged |
+| Feature PR merged to the default integration branch (usually `main`) | → Merged |
 | Release deployed to production | → Released |
 
 ---

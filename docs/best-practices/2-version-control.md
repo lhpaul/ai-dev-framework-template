@@ -48,12 +48,12 @@ chore(deps): upgrade eslint to v9
 
 | Branch type | Naming | Branch from | Merges into |
 |---|---|---|---|
-| Feature (full pipeline) | `feature/[slug]` | `develop` | `develop` |
-| Bug / simple fix | `fix/[slug]` | `develop` | `develop` |
-| Hotfix (critical prod) | `hotfix/[slug]` | `main` | `main` + `develop` |
-| Spec | `spec/[slug]` | `develop` | `develop` |
-| Implementation plan | `implementation-plan/[slug]` | `develop` | `develop` |
-| Release | `release/v[X.Y.Z]` | `develop` | `main` + `develop` |
+| Feature (full pipeline) | `feature/[slug]` | `main` | `main` |
+| Bug / simple fix | `fix/[slug]` | `main` | `main` |
+| Hotfix (critical prod) | `hotfix/[slug]` | `main` | `main` |
+| Spec | `spec/[slug]` | `main` | `main` |
+| Implementation plan | `implementation-plan/[slug]` | `main` | `main` |
+| Release | `release/v[X.Y.Z]` | `main` | `main` |
 
 ### Branch Slug Convention
 

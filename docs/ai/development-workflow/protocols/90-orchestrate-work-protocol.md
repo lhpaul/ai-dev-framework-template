@@ -42,6 +42,7 @@ Build a mental map of:
 - Items in **Plan In Review** (plan PR open, waiting for human to merge — do not re-dispatch)
 - Items in **Plan Ready** (plan merged, not yet in development)
 - Items **In Development** (feature branch open, PR pending)
+- Items with a **pushed workflow branch but no PR yet** (reviewer gate pending before PR creation)
 - Items with pending review (PRs labeled `agent:ready-for-review`)
 - Open PRs with **unresolved automated reviewer comments** (the review platform posted comments after the last push — run Step 8)
 
@@ -60,9 +61,12 @@ When dispatching a subagent for an item, include a short “Issue Tracker Summar
 |---|---|---|
 | Backlog | Human has requested it | Run `01-generate-specs-protocol.md` |
 | Spec In Review | — | **Wait** — spec PR is open, human must review and merge. Do not re-dispatch. |
+| Spec branch pushed, no PR yet | Branch exists on remote | Run `01-review-specs-protocol.md` on the branch, then open the PR |
 | Spec Ready | Spec PR is merged | Run `02-generate-implementation-plan-protocol.md` |
 | Plan In Review | — | **Wait** — plan PR is open, human must review and merge. Do not re-dispatch. |
+| Plan branch pushed, no PR yet | Branch exists on remote | Run `02-review-implementation-plan-protocol.md` on the branch, then open the PR |
 | Plan Ready | Plan PR is merged | Run `04-implement-development-protocol.md` |
+| Dev branch pushed, no PR yet | Branch exists on remote | Run `04-review-implemented-development-protocol.md` on the branch, then open the PR |
 | In Development (PR open) | CI green, review loop clean | Apply `agent:ready-for-review`, notify human |
 | In Development (automated reviewer commented) | Review platform posted comments after last push | Run Step 8 (automated reviewer loop) |
 | In Development (feedback received) | Human requested changes on PR | Address feedback, re-push, then run Step 8 |

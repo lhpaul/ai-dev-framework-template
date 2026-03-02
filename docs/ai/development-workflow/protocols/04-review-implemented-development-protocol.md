@@ -1,7 +1,7 @@
 # Protocol: Review Implemented Development (Code Review)
 
 **Agent role**: Code Reviewer
-**Stage**: Development Review (after In Development PR is opened)
+**Stage**: Development Review (before opening PR; can also be used after PR is opened)
 **Output**: Fixes applied directly + review report
 
 ---
@@ -31,7 +31,7 @@ Before reviewing, read:
 Priority order:
 1. Explicit file paths provided by the human
 2. Files edited in the current conversation
-3. All files changed in the PR: `git diff develop...HEAD` (or `main...HEAD` for hotfix)
+3. All files changed in the branch: `git diff main...HEAD`
 4. Ask the human
 
 ---

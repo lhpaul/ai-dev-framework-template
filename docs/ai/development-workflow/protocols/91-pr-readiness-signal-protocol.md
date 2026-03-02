@@ -38,10 +38,12 @@ Apply this label when **any** of the following is true:
 ## Workflow
 
 ### Agent opens PR
-1. Push branch and open PR
-2. Wait for CI to complete
-3. If CI passes and automated review is clean (or not configured): apply `agent:ready-for-review`
-4. If CI fails or automated review has blocking issues: fix issues, push, wait again
+1. Push branch to remote
+2. Run the relevant reviewer-agent protocol **before** opening the PR (spec/plan/code review)
+3. Open PR
+4. Wait for CI to complete
+5. If CI passes and automated review is clean (or not configured): apply `agent:ready-for-review`
+6. If CI fails or automated review has blocking issues: fix issues, push, wait again
 
 ### Human requests changes
 1. Human leaves review comments
