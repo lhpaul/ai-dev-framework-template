@@ -73,15 +73,25 @@ Open **two** PRs from the release branch using `gh pr create`:
 
 Use title `chore(release): v[X.Y.Z]` for both. Include the CHANGELOG entries for this version in the PR body.
 
+Example:
+
+```bash
+# 1) Production release PR (release/* -> main)
+gh pr create --base main --title "chore(release): v[X.Y.Z]" --body-file /tmp/release-notes.md
+
+# 2) Backport PR (release/* -> develop)
+gh pr create --base develop --title "chore(release): v[X.Y.Z]" --body-file /tmp/release-notes.md
+```
+
 ---
 
 ## Step 7: Inform the Human
 
 After both PRs are open:
 
-1. **Merge the `main` PR first** — the tag `v[X.Y.Z]` is created automatically by CI on merge (`.github/workflows/auto-tag-release.yml`)
-2. **Then merge the `develop` backport PR**
-3. **Do not delete the release branch** until both PRs are merged
+1. Merge the `main` PR first — the tag `v[X.Y.Z]` is created automatically by CI on merge (`.github/workflows/auto-tag-release.yml`)
+2. Then merge the `develop` backport PR
+3. Do not delete the release branch until both PRs are merged
 
 ---
 

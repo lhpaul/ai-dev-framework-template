@@ -160,7 +160,12 @@ Once the human approves the spec:
 4. Write the spec file: `1_[feature-slug]_specs.md`
 5. Commit: `docs: add spec for [feature-name]`
 6. Push: `git push -u origin spec/[branch-slug]`
-7. Open PR targeting `develop` with:
+7. **Reviewer gate (before opening PR)**:
+   - Run the spec reviewer protocol on this branch: `docs/ai/development-workflow/protocols/01-review-specs-protocol.md`
+   - If your runner supports it, dispatch a dedicated `spec-reviewer` agent; otherwise self-review using the protocol checklist
+   - Apply fixes directly on the branch, commit, and push again if needed
+   - If the verdict is **NEEDS REVISION** due to product decisions, stop and request human input before opening a PR
+8. Open PR targeting `develop` with:
    - Title: `docs(spec): [feature-name]`
    - Body: summary of the feature, link to the spec file, list of open questions (if any)
 
@@ -173,4 +178,3 @@ Apply the `agent:ready-for-review` label to the PR once it is open and CI is gre
 If CI fails, investigate and fix before applying the label.
 
 See `docs/ai/development-workflow/protocols/91-pr-readiness-signal-protocol.md` for the full readiness definition.
-
