@@ -58,7 +58,7 @@ This document is the **canonical master reference** for how development is struc
                       ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                       MERGED                                    │
-│   PR merged into the default integration branch                 │
+│   PR merged into `develop`                                      │
 │   CI validates; deployed to staging if configured               │
 └─────────────────────┬───────────────────────────────────────────┘
                       │  Human: prepare release
