@@ -72,6 +72,19 @@ while :; do
   total_check_count="$(
     printf '%s\n' "$checks_json" | jq '(.statusCheckRollup // []) | length'
   )"
+  pending_count="$(
+    printf '%s\n' "$checks_json" | jq '
+      (.statusCheckRollup // [])
+      | map(select(
+          ((.status // "") != "" and (.status != "COMPLETED"))
+          or (.state == "EXPECTED")
+          or (.state == "PENDING")
+          or (.state == "IN_PROGRESS")
+          or (.state == "QUEUED")
+        ))
+      | length
+    '
+  )"
   pending_list="$(
     printf '%s\n' "$checks_json" | jq -r '
       (.statusCheckRollup // [])
@@ -84,6 +97,21 @@ while :; do
         ))
       | map(.name // .context // .workflowName // "unknown")
       | join(",")
+    '
+  )"
+  failing_count="$(
+    printf '%s\n' "$checks_json" | jq '
+      (.statusCheckRollup // [])
+      | map(select(
+          (.conclusion == "FAILURE")
+          or (.conclusion == "TIMED_OUT")
+          or (.conclusion == "ACTION_REQUIRED")
+          or (.conclusion == "CANCELLED")
+          or (.conclusion == "STARTUP_FAILURE")
+          or (.state == "FAILURE")
+          or (.state == "ERROR")
+        ))
+      | length
     '
   )"
   failing_list="$(
@@ -103,11 +131,6 @@ while :; do
     '
   )"
 
-  pending_count=0
-  failing_count=0
-  [ -n "$pending_list" ] && pending_count="$(printf '%s\n' "$pending_list" | awk -F',' '{print NF}')"
-  [ -n "$failing_list" ] && failing_count="$(printf '%s\n' "$failing_list" | awk -F',' '{print NF}')"
-
   if [ "$failing_count" -gt 0 ]; then
     print_kv RESULT red
     print_kv PR_NUMBER "$pr_number"
@@ -121,6 +144,12 @@ while :; do
   fi
 
   if [ "$pending_count" -eq 0 ]; then
+    if [ "$total_check_count" -eq 0 ] && [ "$elapsed" -lt "$poll_interval" ]; then
+      sleep "$poll_interval"
+      elapsed=$((elapsed + poll_interval))
+      continue
+    fi
+
     print_kv RESULT green
     print_kv PR_NUMBER "$pr_number"
     print_kv REPO "$repo"
