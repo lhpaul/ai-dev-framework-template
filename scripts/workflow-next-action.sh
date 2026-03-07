@@ -91,9 +91,22 @@ if [ -n "$branch_name" ]; then
   print_kv REVIEW_AGENT "$(reviewer_for_branch "$branch_name")"
 
   if [ -n "$pr_number" ]; then
+    labels="$(gh pr view "$pr_number" --json labels --jq '[.labels[].name] | join(",")')"
     print_kv PR_NUMBER "$pr_number"
-    print_kv NEXT_ACTION resolve-pr-readiness
-    exit 0
+    case ",$labels," in
+      *,agent:ready-for-review,*)
+        print_kv NEXT_ACTION wait-human-review
+        exit 0
+        ;;
+      *,agent:needs-fixes,*)
+        print_kv NEXT_ACTION resume-fix-loop
+        exit 0
+        ;;
+      *)
+        print_kv NEXT_ACTION resolve-pr-readiness
+        exit 0
+        ;;
+    esac
   fi
 
   case "$(branch_prefix "$branch_name")" in
@@ -144,4 +157,3 @@ case "$status_line" in
     print_kv NEXT_ACTION unknown
     ;;
 esac
-
