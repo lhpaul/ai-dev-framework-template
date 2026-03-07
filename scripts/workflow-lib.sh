@@ -63,6 +63,15 @@ print_kv() {
   printf '%s=%s\n' "$1" "$2"
 }
 
+print_kv_escaped() {
+  local value="$2"
+  value="${value//\\/\\\\}"
+  value="${value//$'\r'/\\r}"
+  value="${value//$'\n'/\\n}"
+  value="${value//$'\t'/\\t}"
+  printf '%s=%s\n' "$1" "$value"
+}
+
 soft_suggestion_prefixes() {
   cat <<'EOF'
 Consider

@@ -202,7 +202,7 @@ if [ "$blocking_count" -gt 0 ]; then
   for blocking_json in "${blocking_lines[@]}"; do
     print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
     print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-    print_kv "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -c '.body')"
+    print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
     index=$((index + 1))
   done
   exit 1

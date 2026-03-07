@@ -226,7 +226,7 @@ After all currently eligible work has reached a terminal condition, provide a cl
 
 If an automated code review platform is configured (see [`integrations/pr-review-platform.md`](../integrations/pr-review-platform.md)), run this loop after **any push to a PR branch**. If no review platform is configured, skip this step and report `⏭️ skipped` in the Step 6 summary.
 
-Initialize `cycle = 0` before entering Step 7 for the first time on a given push. Increment `cycle` only when a fixer agent is dispatched. After the fixer pushes a new commit, start the next pass with `cycle = 0` for that new push.
+Initialize `cycle = 0` once per orchestration run for the PR. Increment `cycle` each time a fixer agent is dispatched. Do not reset `cycle` after a fixer push; escalate when the run reaches `max_cycles`.
 
 Prefer the helper script:
 
