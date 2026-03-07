@@ -133,6 +133,11 @@ if [ -z "$review_comment_id" ]; then
   review_comment_id="$(printf '%s\n' "$review_comment_url" | grep -oE '[0-9]+$')"
 fi
 
+if [ -z "$review_comment_id" ]; then
+  echo "Failed to determine review comment ID for PR #$pr_number." >&2
+  exit 65
+fi
+
 elapsed=0
 
 while :; do
@@ -168,7 +173,7 @@ comments="$(
       | {
           path,
           line: (.line // .original_line // 0),
-          body
+          body: (.body // "")
         }
       | @json
     '
@@ -184,6 +189,7 @@ while IFS= read -r comment_json; do
   path="$(printf '%s\n' "$comment_json" | jq -r '.path')"
   line="$(printf '%s\n' "$comment_json" | jq -r '.line')"
   body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
+  [ -z "$body" ] && continue
   comment_count=$((comment_count + 1))
   if is_soft_suggestion "$body"; then
     suggestion_count=$((suggestion_count + 1))
