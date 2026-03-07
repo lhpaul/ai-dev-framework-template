@@ -90,9 +90,43 @@ if [ -z "$branch_name" ]; then
   branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"
 fi
 
-last_push_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-review_comment_url="$(gh pr comment "$pr_number" --body "$trigger_comment")"
-review_comment_id="$(printf '%s\n' "$review_comment_url" | grep -oE '[0-9]+$')"
+review_comment_id=""
+review_window_start=""
+recent_trigger_comment="$(
+  gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+    --jq '
+      [
+        .[]
+        | select(
+            .body == "'"$trigger_comment"'" and
+            ((now - (.created_at | fromdateiso8601)) <= '"$max_wait"')
+          )
+        | {id, created_at}
+      ]
+      | sort_by(.created_at)
+      | last // empty
+    '
+)"
+
+if [ -n "$recent_trigger_comment" ]; then
+  review_comment_id="$(printf '%s\n' "$recent_trigger_comment" | jq -r '.id')"
+  review_window_start="$(printf '%s\n' "$recent_trigger_comment" | jq -r '.created_at')"
+  existing_thumbs_up="$(
+    gh api "repos/$repo/issues/comments/$review_comment_id/reactions" \
+      --jq '[.[] | select(.content == "+1" and .user.login == "'"$bot_login"'")] | length'
+  )"
+  if [ "$existing_thumbs_up" -gt 0 ]; then
+    review_comment_id=""
+    review_window_start=""
+  fi
+fi
+
+if [ -z "$review_comment_id" ]; then
+  review_window_start="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  review_comment_url="$(gh pr comment "$pr_number" --body "$trigger_comment")"
+  review_comment_id="$(printf '%s\n' "$review_comment_url" | grep -oE '[0-9]+$')"
+fi
+
 elapsed=0
 
 while :; do
@@ -124,7 +158,7 @@ comments="$(
   gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
     --jq '
       .[]
-      | select(.user.login == "'"$bot_login"'" and .created_at > "'"$last_push_at"'")
+      | select(.user.login == "'"$bot_login"'" and .created_at > "'"$review_window_start"'")
       | {
           path,
           line: (.line // .original_line // 0),
