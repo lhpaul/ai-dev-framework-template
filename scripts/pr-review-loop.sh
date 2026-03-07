@@ -125,8 +125,12 @@ comments="$(
     --jq '
       .[]
       | select(.user.login == "'"$bot_login"'" and .created_at > "'"$last_push_at"'")
-      | [.path, (.line // .original_line // 0 | tostring), .body]
-      | @tsv
+      | {
+          path,
+          line: (.line // .original_line // 0),
+          body
+        }
+      | @json
     '
 )"
 
@@ -135,8 +139,11 @@ suggestion_count=0
 comment_count=0
 blocking_lines=()
 
-while IFS=$'\t' read -r path line body; do
-  [ -z "${path:-}" ] && continue
+while IFS= read -r comment_json; do
+  [ -z "${comment_json:-}" ] && continue
+  path="$(printf '%s\n' "$comment_json" | jq -r '.path')"
+  line="$(printf '%s\n' "$comment_json" | jq -r '.line')"
+  body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
   comment_count=$((comment_count + 1))
   if is_soft_suggestion "$body"; then
     suggestion_count=$((suggestion_count + 1))
@@ -144,7 +151,7 @@ while IFS=$'\t' read -r path line body; do
   fi
 
   blocking_count=$((blocking_count + 1))
-  blocking_lines+=("${path}:${line}:${body}")
+  blocking_lines+=("$comment_json")
 done <<< "$comments"
 
 if [ "$blocking_count" -gt 0 ]; then
@@ -158,8 +165,10 @@ if [ "$blocking_count" -gt 0 ]; then
   print_kv BLOCKING_COUNT "$blocking_count"
   print_kv SUGGESTION_COUNT "$suggestion_count"
   index=1
-  for line in "${blocking_lines[@]}"; do
-    print_kv "BLOCKING_$index" "$line"
+  for blocking_json in "${blocking_lines[@]}"; do
+    print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
+    print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
+    print_kv "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
     index=$((index + 1))
   done
   exit 1

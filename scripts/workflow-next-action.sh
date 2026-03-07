@@ -131,7 +131,7 @@ if [ ! -d "$development_path" ]; then
   exit 66
 fi
 
-spec_file="$(find "$development_path" -maxdepth 1 -type f -name '1_*_specs.md' | head -n 1)"
+spec_file="$(find "$development_path" -maxdepth 1 -type f -name '1_*_specs.md' -print -quit)"
 if [ -z "$spec_file" ]; then
   echo "No spec file found in $development_path" >&2
   exit 66
