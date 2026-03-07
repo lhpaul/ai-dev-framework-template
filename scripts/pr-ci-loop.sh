@@ -68,55 +68,39 @@ elapsed=0
 repo="$(repo_slug)"
 
 while :; do
-  raw_checks="$(
-    gh pr view "$pr_number" --json statusCheckRollup \
-      --jq '
-        .statusCheckRollup // []
-        | map({
-            name: (.name // .context // .workflowName // "unknown"),
-            state: (.state // .status // ""),
-            conclusion: (.conclusion // "")
-          })
-      '
+  checks_json="$(gh pr view "$pr_number" --json statusCheckRollup)"
+  total_check_count="$(
+    printf '%s\n' "$checks_json" | jq '(.statusCheckRollup // []) | length'
   )"
-
-  required_count="$(
-    gh pr view "$pr_number" --json statusCheckRollup \
-      --jq '(.statusCheckRollup // []) | length'
-  )"
-
   pending_list="$(
-    gh pr view "$pr_number" --json statusCheckRollup \
-      --jq '
-        (.statusCheckRollup // [])
-        | map(select(
-            ((.status // "") != "" and (.status != "COMPLETED"))
-            or (.state == "EXPECTED")
-            or (.state == "PENDING")
-            or (.state == "IN_PROGRESS")
-            or (.state == "QUEUED")
-          ))
-        | map(.name // .context // .workflowName // "unknown")
-        | join(",")
-      '
+    printf '%s\n' "$checks_json" | jq -r '
+      (.statusCheckRollup // [])
+      | map(select(
+          ((.status // "") != "" and (.status != "COMPLETED"))
+          or (.state == "EXPECTED")
+          or (.state == "PENDING")
+          or (.state == "IN_PROGRESS")
+          or (.state == "QUEUED")
+        ))
+      | map(.name // .context // .workflowName // "unknown")
+      | join(",")
+    '
   )"
-
   failing_list="$(
-    gh pr view "$pr_number" --json statusCheckRollup \
-      --jq '
-        (.statusCheckRollup // [])
-        | map(select(
-            (.conclusion == "FAILURE")
-            or (.conclusion == "TIMED_OUT")
-            or (.conclusion == "ACTION_REQUIRED")
-            or (.conclusion == "CANCELLED")
-            or (.conclusion == "STARTUP_FAILURE")
-            or (.state == "FAILURE")
-            or (.state == "ERROR")
-          ))
-        | map(.name // .context // .workflowName // "unknown")
-        | join(",")
-      '
+    printf '%s\n' "$checks_json" | jq -r '
+      (.statusCheckRollup // [])
+      | map(select(
+          (.conclusion == "FAILURE")
+          or (.conclusion == "TIMED_OUT")
+          or (.conclusion == "ACTION_REQUIRED")
+          or (.conclusion == "CANCELLED")
+          or (.conclusion == "STARTUP_FAILURE")
+          or (.state == "FAILURE")
+          or (.state == "ERROR")
+        ))
+      | map(.name // .context // .workflowName // "unknown")
+      | join(",")
+    '
   )"
 
   pending_count=0
@@ -128,7 +112,7 @@ while :; do
     print_kv RESULT red
     print_kv PR_NUMBER "$pr_number"
     print_kv REPO "$repo"
-    print_kv REQUIRED_CHECK_COUNT "$required_count"
+    print_kv TOTAL_CHECK_COUNT "$total_check_count"
     print_kv FAILING_CHECK_COUNT "$failing_count"
     print_kv FAILING_CHECKS "$failing_list"
     print_kv PENDING_CHECK_COUNT "$pending_count"
@@ -140,7 +124,7 @@ while :; do
     print_kv RESULT green
     print_kv PR_NUMBER "$pr_number"
     print_kv REPO "$repo"
-    print_kv REQUIRED_CHECK_COUNT "$required_count"
+    print_kv TOTAL_CHECK_COUNT "$total_check_count"
     print_kv FAILING_CHECK_COUNT 0
     print_kv FAILING_CHECKS ""
     print_kv PENDING_CHECK_COUNT 0
@@ -152,7 +136,7 @@ while :; do
     print_kv RESULT timeout
     print_kv PR_NUMBER "$pr_number"
     print_kv REPO "$repo"
-    print_kv REQUIRED_CHECK_COUNT "$required_count"
+    print_kv TOTAL_CHECK_COUNT "$total_check_count"
     print_kv FAILING_CHECK_COUNT "$failing_count"
     print_kv FAILING_CHECKS "$failing_list"
     print_kv PENDING_CHECK_COUNT "$pending_count"
@@ -163,4 +147,3 @@ while :; do
   sleep "$poll_interval"
   elapsed=$((elapsed + poll_interval))
 done
-

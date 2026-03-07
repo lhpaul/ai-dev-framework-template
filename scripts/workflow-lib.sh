@@ -80,20 +80,31 @@ EOF
 
 is_soft_suggestion() {
   local body="$1"
+  local line
   local prefix
+  local normalized_line
+  local saw_content=0
 
-  while IFS= read -r prefix; do
-    [ -z "$prefix" ] && continue
-    case "$body" in
-      "$prefix"*) return 0 ;;
-    esac
-  done < <(soft_suggestion_prefixes)
+  while IFS= read -r line; do
+    normalized_line="${line%$'\r'}"
+    normalized_line="${normalized_line#"${normalized_line%%[![:space:]]*}"}"
+    [ -z "$normalized_line" ] && continue
+    saw_content=1
 
-  return 1
+    while IFS= read -r prefix; do
+      [ -z "$prefix" ] && continue
+      case "$normalized_line" in
+        "$prefix"*) continue 2 ;;
+      esac
+    done < <(soft_suggestion_prefixes)
+
+    return 1
+  done <<< "$body"
+
+  [ "$saw_content" -eq 1 ]
 }
 
 open_pr_number_for_branch() {
   require_gh
   gh pr list --head "$1" --state open --json number --jq '.[0].number // empty'
 }
-
