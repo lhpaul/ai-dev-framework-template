@@ -96,7 +96,10 @@ case "$(branch_prefix "$branch_name")" in
 esac
 
 workflow_state="$(./scripts/workflow-next-action.sh --pr "$pr_number")"
-next_action="$(printf '%s\n' "$workflow_state" | sed -n 's/^NEXT_ACTION=//p' | head -n 1)"
+if ! next_action="$(printf '%s\n' "$workflow_state" | grep -m 1 '^NEXT_ACTION=' | sed 's/^NEXT_ACTION=//')"; then
+  echo "Unable to determine NEXT_ACTION from workflow-next-action output." >&2
+  exit 66
+fi
 
 if [ "$next_action" = "wait-human-review" ]; then
   echo "PR #$pr_number is already waiting on human review."

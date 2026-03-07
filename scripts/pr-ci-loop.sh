@@ -77,6 +77,7 @@ while :; do
       (.statusCheckRollup // [])
       | map(select(
           ((.status // "") != "" and (.status != "COMPLETED"))
+          or (.conclusion == "CANCELLED")
           or (.state == "EXPECTED")
           or (.state == "PENDING")
           or (.state == "IN_PROGRESS")
@@ -106,7 +107,6 @@ while :; do
           (.conclusion == "FAILURE")
           or (.conclusion == "TIMED_OUT")
           or (.conclusion == "ACTION_REQUIRED")
-          or (.conclusion == "CANCELLED")
           or (.conclusion == "STARTUP_FAILURE")
           or (.state == "FAILURE")
           or (.state == "ERROR")
@@ -121,7 +121,6 @@ while :; do
           (.conclusion == "FAILURE")
           or (.conclusion == "TIMED_OUT")
           or (.conclusion == "ACTION_REQUIRED")
-          or (.conclusion == "CANCELLED")
           or (.conclusion == "STARTUP_FAILURE")
           or (.state == "FAILURE")
           or (.state == "ERROR")
