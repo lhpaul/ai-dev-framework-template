@@ -11,3 +11,4 @@ Recommended model tier: `balanced`
 2. Read `docs/ai/development-workflow/protocols/01-review-specs-protocol.md`.
 3. Follow that protocol exactly.
 4. Treat the protocol as the checklist; keep review findings concrete and scoped to the spec.
+5. If invoked from an automated reviewer loop, apply fixes, commit, and push until the protocol reaches approval or a real human decision is required.

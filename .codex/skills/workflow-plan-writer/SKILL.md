@@ -11,3 +11,4 @@ Recommended model tier: `premium`
 2. Read `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md`.
 3. Follow that protocol exactly.
 4. Use the plan to make technical decisions that the spec intentionally avoids.
+5. When the branch is created, continue through reviewer gate, PR creation, and PR readiness unless the protocol surfaces a real human decision.

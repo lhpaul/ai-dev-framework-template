@@ -68,9 +68,9 @@ The repository ships Codex skill definitions in `.codex/skills/`. Install them i
 ./scripts/install-codex-skills.sh
 ```
 
-Installed skills are thin wrappers around the canonical workflow protocols. They do not redefine the workflow; they load the same documents used by other tools and, for orchestration, rely on the helper scripts in `scripts/` to inspect branches, worktrees, and development folders deterministically. The bundled skills also include optional `agents/openai.yaml` metadata so downstream projects created from this template have cleaner Codex skill labels and default prompts out of the box.
+Installed skills are thin wrappers around the canonical workflow protocols. They do not redefine the workflow; they load the same documents used by other tools and, for orchestration, rely on the helper scripts in `scripts/` to inspect state, resume partial work, and resolve PR readiness deterministically. The bundled skills also include optional `agents/openai.yaml` metadata so downstream projects created from this template have cleaner Codex skill labels and default prompts out of the box.
 
-For normal Codex usage, start with `workflow-orchestrator`. It is the primary entrypoint for advancing work with minimal human intervention. Run it on an `economy` tier by default, then escalate only when the routed stage recommends a higher tier. The other workflow skills are supporting stage executors that the orchestrator can route into, or that a human can invoke directly when they want to force a specific stage.
+For normal Codex usage, start with `workflow-orchestrator`. It is the primary entrypoint for advancing work with minimal human intervention. Run it on an `economy` tier by default, then escalate only when the routed stage recommends a higher tier. The other workflow skills are supporting stage executors that the orchestrator can route into, or that a human can invoke directly when they want to force a specific stage. Whether work is orchestrated or stage-specific, runs should continue until they reach a real terminal condition: waiting on human review / merge, blocked dependency, unresolved decision, or escalation.
 
 ### Maintenance Commands
 
@@ -131,7 +131,7 @@ Read [`docs/best-practices/STACK-SPECIFIC.md`](docs/best-practices/STACK-SPECIFI
 
 - **No `git push --force`**, `git reset --hard`, or rebase on shared branches without explicit human approval
 - **Stop and ask** if an action seems destructive or has wide blast radius
-- Human approval is required before opening PRs for spec, plan, and implementation stages
+- Human review is required before merging PRs; opening a PR is not a terminal condition by itself
 
 ---
 

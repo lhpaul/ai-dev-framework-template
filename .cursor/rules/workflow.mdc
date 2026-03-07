@@ -25,7 +25,7 @@ This project follows a staged AI-assisted development workflow. The canonical re
 ### Key rules
 
 - Always read the spec and plan before implementing
-- Never skip the approval gate before Git operations
+- Continue through reviewer gate, PR readiness, and CI unless the protocol surfaces a real human decision
 - Always update CHANGELOG under `[Unreleased]` before opening a PR
 - No `git push --force`, `reset --hard`, or rebase on shared branches without explicit human approval
 - Humans merge PRs — agents open them

@@ -2,9 +2,11 @@
 
 This document is the **canonical master reference** for how development is structured in this project. AI agents and human team members follow this workflow.
 
-**Core principle**: AI agents handle execution; humans participate at two points per stage — giving direction at the start and reviewing the output (via PR) at the end.
+**Core principle**: AI agents handle execution; humans give direction at the start, then review only when a PR is actually clean or when the workflow escalates.
 
-**Pre-PR reviewer gate**: For any stage that produces a branch intended for a PR (spec, plan, implementation), run the corresponding reviewer-agent protocol **before** opening the PR. This reduces duplicate findings from automated PR review tools (Greptile, CodeRabbit, etc.) because the PR is only created after the reviewer-agent has approved the branch.
+**Persistent execution contract**: A workflow run should continue through creator stage, reviewer gate, PR creation, automated review, and CI. It should stop only at a real terminal condition: waiting on human review / merge, blocked dependency, unresolved product decision, or escalation.
+
+**Pre-PR reviewer gate**: For any stage that produces a branch intended for a PR (spec, plan, implementation), run the corresponding reviewer-agent protocol **before** opening the PR. After the PR is opened, continue through automated review and CI until the PR is actually ready for human review.
 
 ---
 
@@ -46,7 +48,7 @@ This document is the **canonical master reference** for how development is struc
 │   Plan merged; ready for implementation                         │
 │   AI: developer agent dispatched                                │
 └─────────────────────┬───────────────────────────────────────────┘
-                      │  AI: PR opened
+                      │  AI: PR opened + reviewer / CI loops run
                       ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                    IN DEVELOPMENT                               │
@@ -89,7 +91,7 @@ The **Spec Ready** stage is intentionally **product-focused**: it defines what t
 
 Codex skills are stored in `.codex/skills/` and can be installed into the local Codex environment with `./scripts/install-codex-skills.sh`. They are intentionally thin wrappers over the same protocol files used by every other tool.
 
-For low-human-interaction operation in Codex, treat `workflow-orchestrator` as the default entrypoint. It inspects workflow state, chooses the next eligible stage, and then routes into the narrower stage-specific skills. The stage-specific skills remain available for direct use when you intentionally want to run one stage in isolation.
+For low-human-interaction operation in Codex, treat `workflow-orchestrator` as the default entrypoint. It inspects workflow state, chooses the next eligible action, and keeps progressing until the item is waiting on a human, blocked, or escalated. The stage-specific skills remain available for direct use, but when invoked directly they should still continue through reviewer gate and PR readiness before returning.
 
 ---
 
@@ -235,7 +237,15 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## Automated PR Review Integration
 
-If an automated code review platform is configured, the orchestrator runs an automated reviewer loop after every push to a PR branch. The loop resolves all findings before the PR is flagged for human review.
+If an automated code review platform is configured, the orchestrator runs an automated reviewer loop after every push to a PR branch. The loop resolves all findings before the PR is flagged for human review. After the review loop is clean, the orchestrator continues into CI polling rather than stopping at "PR opened".
+
+Repository helpers:
+
+- `scripts/discover-workflow-state.sh`
+- `scripts/pr-review-loop.sh`
+- `scripts/pr-ci-loop.sh`
+- `scripts/workflow-next-action.sh`
+- `scripts/workflow-resume.sh`
 
 See [`integrations/pr-review-platform.md`](integrations/pr-review-platform.md) for platform-agnostic requirements and loop details.
 See [`integrations/greptile.md`](integrations/greptile.md) for setup with Greptile.

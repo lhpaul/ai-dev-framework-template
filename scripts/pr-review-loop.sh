@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+# shellcheck source=scripts/workflow-lib.sh
+source "$SCRIPT_DIR/workflow-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: ./scripts/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--poll-interval seconds] [--max-wait seconds]
+
+Triggers an automated PR review, polls for completion, classifies findings, and reports a stable result.
+Outputs stable key=value lines and exits with:
+  0 -> clean or skipped
+  1 -> blocking findings present
+  2 -> timeout / escalation
+EOF
+}
+
+if [ "$#" -lt 1 ]; then
+  usage >&2
+  exit 64
+fi
+
+pr_number=""
+branch_name=""
+platform="greptile"
+poll_interval=120
+max_wait=1200
+bot_login="greptile-apps[bot]"
+trigger_comment="@greptile review"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --branch)
+      branch_name="$2"
+      shift 2
+      ;;
+    --platform)
+      platform="$2"
+      shift 2
+      ;;
+    --poll-interval)
+      poll_interval="$2"
+      shift 2
+      ;;
+    --max-wait)
+      max_wait="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      exit 64
+      ;;
+    *)
+      if [ -n "$pr_number" ]; then
+        echo "Only one PR number may be provided." >&2
+        exit 64
+      fi
+      pr_number="$1"
+      shift
+      ;;
+  esac
+done
+
+if [ -z "$pr_number" ]; then
+  usage >&2
+  exit 64
+fi
+
+if [ "$platform" != "greptile" ]; then
+  print_kv RESULT skipped
+  print_kv REASON "unsupported-platform"
+  print_kv PR_NUMBER "$pr_number"
+  print_kv PLATFORM "$platform"
+  exit 0
+fi
+
+require_gh
+cd_workflow_repo_root
+
+repo="$(repo_slug)"
+
+if [ -z "$branch_name" ]; then
+  branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"
+fi
+
+last_push_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+review_comment_url="$(gh pr comment "$pr_number" --body "$trigger_comment")"
+review_comment_id="$(printf '%s\n' "$review_comment_url" | grep -oE '[0-9]+$')"
+elapsed=0
+
+while :; do
+  thumbs_up="$(
+    gh api "repos/$repo/issues/comments/$review_comment_id/reactions" \
+      --jq '[.[] | select(.content == "+1")] | length'
+  )"
+
+  if [ "$thumbs_up" -gt 0 ]; then
+    break
+  fi
+
+  if [ "$elapsed" -ge "$max_wait" ]; then
+    print_kv RESULT escalate
+    print_kv REASON timeout
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID "$review_comment_id"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    exit 2
+  fi
+
+  sleep "$poll_interval"
+  elapsed=$((elapsed + poll_interval))
+done
+
+comments="$(
+  gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+    --jq '
+      .[]
+      | select(.user.login == "'"$bot_login"'" and .created_at > "'"$last_push_at"'")
+      | [.path, (.line // .original_line // 0 | tostring), .body]
+      | @tsv
+    '
+)"
+
+blocking_count=0
+suggestion_count=0
+comment_count=0
+blocking_lines=()
+
+while IFS=$'\t' read -r path line body; do
+  [ -z "${path:-}" ] && continue
+  comment_count=$((comment_count + 1))
+  if is_soft_suggestion "$body"; then
+    suggestion_count=$((suggestion_count + 1))
+    continue
+  fi
+
+  blocking_count=$((blocking_count + 1))
+  blocking_lines+=("${path}:${line}:${body}")
+done <<< "$comments"
+
+if [ "$blocking_count" -gt 0 ]; then
+  print_kv RESULT needs_fixes
+  print_kv PLATFORM "$platform"
+  print_kv PR_NUMBER "$pr_number"
+  print_kv BRANCH "$branch_name"
+  print_kv REVIEW_COMMENT_ID "$review_comment_id"
+  print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+  print_kv COMMENT_COUNT "$comment_count"
+  print_kv BLOCKING_COUNT "$blocking_count"
+  print_kv SUGGESTION_COUNT "$suggestion_count"
+  index=1
+  for line in "${blocking_lines[@]}"; do
+    print_kv "BLOCKING_$index" "$line"
+    index=$((index + 1))
+  done
+  exit 1
+fi
+
+print_kv RESULT clean
+print_kv PLATFORM "$platform"
+print_kv PR_NUMBER "$pr_number"
+print_kv BRANCH "$branch_name"
+print_kv REVIEW_COMMENT_ID "$review_comment_id"
+print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+print_kv COMMENT_COUNT "$comment_count"
+print_kv BLOCKING_COUNT 0
+print_kv SUGGESTION_COUNT "$suggestion_count"
+exit 0
+

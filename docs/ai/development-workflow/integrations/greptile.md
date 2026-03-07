@@ -47,6 +47,16 @@ review:
 
 The orchestrator's Step 8 (Automated Reviewer Loop) requires platform-specific commands. Below are the Greptile implementations for each step.
 
+### Preferred helper
+
+When possible, call the repository helper instead of re-implementing the loop inline:
+
+```bash
+./scripts/pr-review-loop.sh <pr_number> --branch <branch_name>
+```
+
+It encapsulates the trigger, polling, comment classification, and stable `RESULT=` output used by the orchestrator.
+
 ### Bot identity
 
 Greptile posts as `greptile-apps[bot]`. Use this login to filter its comments and reviews from human activity.
