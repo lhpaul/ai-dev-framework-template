@@ -91,6 +91,7 @@ while :; do
       (.statusCheckRollup // [])
       | map(select(
           ((.status // "") != "" and (.status != "COMPLETED"))
+          or (.conclusion == "CANCELLED")
           or (.state == "EXPECTED")
           or (.state == "PENDING")
           or (.state == "IN_PROGRESS")

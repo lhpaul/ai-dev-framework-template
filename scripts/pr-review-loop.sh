@@ -30,6 +30,7 @@ poll_interval=120
 max_wait=1200
 bot_login="greptile-apps[bot]"
 trigger_comment="@greptile review"
+trigger_author_login="${GITHUB_ACTOR:-}"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -86,6 +87,10 @@ cd_workflow_repo_root
 
 repo="$(repo_slug)"
 
+if [ -z "$trigger_author_login" ]; then
+  trigger_author_login="$(gh api user --jq '.login')"
+fi
+
 if [ -z "$branch_name" ]; then
   branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"
 fi
@@ -98,6 +103,7 @@ recent_trigger_comment="$(
       [
         .[]
         | select(
+            .user.login == "'"$trigger_author_login"'" and
             .body == "'"$trigger_comment"'" and
             ((now - (.created_at | fromdateiso8601)) <= '"$max_wait"')
           )
