@@ -137,7 +137,10 @@ if [ -z "$spec_file" ]; then
   exit 66
 fi
 
-status_line="$(grep -m 1 '^\*\*Status\*\*: ' "$spec_file" | sed 's/^\*\*Status\*\*: //')"
+if ! status_line="$(grep -m 1 '^\*\*Status\*\*: ' "$spec_file" | sed 's/^\*\*Status\*\*: //')"; then
+  echo "No **Status**: line found in $spec_file" >&2
+  exit 66
+fi
 
 print_kv TARGET "development:$development_path"
 print_kv SPEC_FILE "$spec_file"
