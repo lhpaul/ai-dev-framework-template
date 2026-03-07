@@ -137,7 +137,7 @@ if [ -z "$spec_file" ]; then
   exit 66
 fi
 
-status_line="$(sed -n 's/^\*\*Status\*\*: //p' "$spec_file" | head -n 1)"
+status_line="$(grep -m 1 '^\*\*Status\*\*: ' "$spec_file" | sed 's/^\*\*Status\*\*: //')"
 
 print_kv TARGET "development:$development_path"
 print_kv SPEC_FILE "$spec_file"
