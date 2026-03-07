@@ -146,6 +146,16 @@ Important constraints:
 - If you must escalate, leave a concise PR comment explaining the blocker and why automation stopped.
 EOF
 
+if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+  {
+    printf '## Autonomous PR Supervisor Prompt\n\n'
+    printf 'PR: #%s\n\n' "$pr_number"
+    printf '```\n'
+    cat "$prompt_file"
+    printf '```\n'
+  } >> "$GITHUB_STEP_SUMMARY"
+fi
+
 printenv OPENAI_API_KEY | codex login --with-api-key >/dev/null
 
 codex exec \
