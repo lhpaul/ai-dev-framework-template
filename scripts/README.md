@@ -94,6 +94,26 @@ Use this when:
 - A stage has pushed to a PR branch and must resolve automated review before requesting human review
 - The orchestrator is resuming a PR after a prior push or interruption
 
+### `autonomous-pr-supervisor.sh`
+
+Runs Codex non-interactively against an open workflow PR so the repository can continue the review loop from GitHub Actions.
+
+Usage:
+
+```bash
+./scripts/autonomous-pr-supervisor.sh --pr 42
+```
+
+What it does:
+- Reads PR state and current workflow-next-action classification
+- Logs into Codex using `OPENAI_API_KEY`
+- Runs `codex exec` with a prompt that resumes the workflow protocols on the PR branch
+- Lets Codex inspect Greptile comments, apply fixes, push, and continue PR readiness work
+
+Use this when:
+- A background runtime needs to continue the workflow without an interactive terminal session
+- Greptile has posted a new review and the repository should react automatically
+
 ### `workflow-next-action.sh`
 
 Classifies the next deterministic workflow action for a branch, PR, or development folder.

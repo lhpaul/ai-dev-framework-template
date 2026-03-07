@@ -42,6 +42,14 @@ These tools significantly improve the workflow but have fallbacks.
 
 For Greptile-specific setup, see [`integrations/greptile.md`](integrations/greptile.md).
 
+### Background AI Runtime (optional, for full autonomy)
+
+**Used for**: resuming PR fix loops after automated reviews complete, without requiring a foreground terminal session to stay open.
+
+**Example**: GitHub Actions running `scripts/autonomous-pr-supervisor.sh` with Codex CLI and repository secret `OPENAI_API_KEY`.
+
+**Without it**: the repository can still poll and classify review state, but a human or interactive agent session must restart the next fix cycle.
+
 ---
 
 ## Optional Tools

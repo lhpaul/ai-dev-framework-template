@@ -51,6 +51,10 @@ The setup agent will have a structured conversation with you to understand your 
 ├── AGENTS.md                              # Universal AI guidance (all tools read this)
 ├── CLAUDE.md -> AGENTS.md                 # Symlink for Claude Code
 ├── CHANGELOG.md
+├── .github/
+│   └── workflows/
+│       ├── auto-tag-release.yml           # Tags release branches after merge to main
+│       └── autonomous-pr-review-loop.yml  # Resumes Codex when Greptile submits a review
 │
 ├── docs/
 │   ├── README.md                          # Documentation index
@@ -98,7 +102,8 @@ The setup agent will have a structured conversation with you to understand your 
 │   ├── pr-review-loop.sh                # Polls automated PR review until clean / fix / escalate
 │   ├── pr-ci-loop.sh                    # Polls CI checks until green / red / timeout
 │   ├── workflow-next-action.sh          # Classifies the next deterministic workflow action
-│   └── workflow-resume.sh               # Resumes interrupted workflow runs from current state
+│   ├── workflow-resume.sh               # Resumes interrupted workflow runs from current state
+│   └── autonomous-pr-supervisor.sh      # Runs Codex headlessly to continue PR fix loops
 │
 ├── .claude/
 │   └── agents/                           # Claude Code subagent definitions
@@ -220,6 +225,16 @@ Use $workflow-orchestrator to start and advance work for [feature or issue name]
 
 - **Issue Tracker (e.g., Linear)**: See [`docs/ai/development-workflow/integrations/linear.md`](docs/ai/development-workflow/integrations/linear.md)
 - **Automated PR Review (e.g., Greptile)**: See [`docs/ai/development-workflow/integrations/greptile.md`](docs/ai/development-workflow/integrations/greptile.md)
+
+### Background autonomy
+
+To let the repository resume Greptile fix cycles without a foreground terminal session, configure:
+
+- repository secret `OPENAI_API_KEY`
+- optional repository variables `CODEX_MODEL` and `CODEX_REASONING_EFFORT`
+- GitHub Actions enabled for the repository
+
+The workflow at `.github/workflows/autonomous-pr-review-loop.yml` listens for Greptile review submissions and runs `scripts/autonomous-pr-supervisor.sh`, which launches Codex non-interactively on the PR branch.
 
 ---
 

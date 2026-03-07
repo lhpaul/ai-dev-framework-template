@@ -4,6 +4,8 @@ This document describes how to use [Greptile](https://greptile.com) as the autom
 
 Greptile is **optional**. The workflow functions without it — agents go directly to human review after opening a PR. See [`integrations/pr-review-platform.md`](pr-review-platform.md) for the platform-agnostic loop and requirements.
 
+For fully autonomous continuation after Greptile posts a review, pair this integration with `.github/workflows/autonomous-pr-review-loop.yml` and configure repository secret `OPENAI_API_KEY`.
+
 ---
 
 ## What Greptile Adds
