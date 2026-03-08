@@ -6,6 +6,19 @@
 
 ---
 
+## Reviewer-loop mode
+
+When this protocol is invoked on a pushed branch or open PR as part of an orchestrated fix loop:
+
+- Apply all fixable issues directly
+- Commit and push the fixes if any repo-tracked files changed
+- Return `APPROVED` only when no further fixable blocking issues remain
+- Return `NEEDS REVISION` only when a real architecture or product decision is required
+
+Do not stop after producing a report if the branch still needs deterministic fixes.
+
+---
+
 ## Prerequisites
 
 Before reviewing, read:
@@ -40,6 +53,7 @@ Priority order:
 - [ ] All required sections from `docs/ai/development-workflow/templates/implementation-plan-template.md` are present
 - [ ] Complexity estimate is provided with rationale
 - [ ] Dependencies are declared
+- [ ] **Documentation**: The plan has explicitly considered project documentation in `docs/` and either lists required doc updates (with files and what to update) or states "None" with a brief justification
 
 ### 3. Specificity & Implementability
 

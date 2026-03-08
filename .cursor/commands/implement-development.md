@@ -1,5 +1,5 @@
 ---
-description: In Development stage. Implements a feature via Full Pipeline (with spec+plan), Fast Track (bug/simple change), or Hotfix (critical production bug). Usage: /implement-development [dev folder path | brief description of fix | "hotfix: [description]"]
+description: In Development stage. Implements a feature via Full Pipeline (with spec+plan), Fast Track (bug/simple change), or Hotfix (critical production bug), then keeps the PR moving until reviewer and CI readiness are resolved. Usage: /implement-development [dev folder path | brief description of fix | "hotfix: [description]"]
 ---
 
 Follow the implementation protocol exactly as defined in:
@@ -17,3 +17,4 @@ Key rules:
 - Fast Track: stop and report if scope expands beyond the brief
 - Hotfix: branch from `main`, not `develop`
 - Always update CHANGELOG before opening the PR
+- Do not stop at "PR opened"; continue through code review, automated review, and CI until the PR is ready or escalated

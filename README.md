@@ -6,7 +6,7 @@ A tool-agnostic framework for AI-assisted software development. It structures th
 
 This template provides:
 
-- **A staged development workflow** (Spec → Plan → Implement → Review → Release) with clear human approval gates
+- **A staged development workflow** (Spec → Plan → Implement → Review → Release) with persistent orchestration until PRs are actually clean
 - **Canonical protocol documents** that AI agents execute — one per workflow stage
 - **Thin tool wrappers** for Claude Code (`.claude/agents/`), Cursor (`.cursor/commands/`), and Codex (`.codex/skills/`) that point to those protocols
 - **A guided project setup** so any AI assistant can help you fill in the project-specific docs
@@ -51,6 +51,9 @@ The setup agent will have a structured conversation with you to understand your 
 ├── AGENTS.md                              # Universal AI guidance (all tools read this)
 ├── CLAUDE.md -> AGENTS.md                 # Symlink for Claude Code
 ├── CHANGELOG.md
+├── .github/
+│   └── workflows/
+│       └── auto-tag-release.yml           # Tags release branches after merge to main
 │
 ├── docs/
 │   ├── README.md                          # Documentation index
@@ -92,9 +95,14 @@ The setup agent will have a structured conversation with you to understand your 
 │   └── skills/                           # Codex skills that wrap the workflow protocols and ship UI metadata
 │
 ├── scripts/
-│   ├── install-codex-skills.sh          # Installs repo skills into your local Codex config
-│   ├── discover-workflow-state.sh       # Summarizes branches, worktrees, and development folders
-│   └── check-workflow-branch.sh         # Checks whether a workflow branch already exists
+│   ├── development-workflow/            # AI workflow helpers (orchestrator, PR/CI loops, state discovery)
+│   │   ├── discover-workflow-state.sh   # Summarizes branches, worktrees, development folders, and open PRs
+│   │   ├── check-workflow-branch.sh     # Checks whether a workflow branch already exists
+│   │   ├── pr-review-loop.sh      # Polls Greptile PR review until clean / fix / escalate
+│   │   ├── pr-ci-loop.sh                # Polls CI checks until green / red / timeout
+│   │   ├── workflow-next-action.sh      # Classifies the next deterministic workflow action
+│   │   └── install-codex-skills.sh      # (Codex only) Installs repo skills into your local Codex config
+│   └── README.md                        # Points to development-workflow; add your own scripts here
 │
 ├── .claude/
 │   └── agents/                           # Claude Code subagent definitions
@@ -153,15 +161,15 @@ See [`docs/ai/development-workflow/README.md`](docs/ai/development-workflow/READ
 Example prompts:
 
 ```text
-Use the orchestrator agent to inspect this repository's AI development workflow state, determine what work can safely advance next, and execute the next eligible stage with minimal human intervention. Follow AGENTS.md and the workflow protocols exactly. If multiple items are eligible, prioritize by the documented rules and explain any blockers or required approval gates.
+Use the orchestrator agent to inspect this repository's AI development workflow state, determine what work can safely advance next, and keep advancing each eligible item until it reaches a real terminal condition. Follow AGENTS.md and the workflow protocols exactly. If multiple items are eligible, prioritize by the documented rules and explain any blockers or escalations.
 ```
 
 ```text
-Use the orchestrator agent to review the current backlog, specs, plans, branches, and open PRs in this repository, then advance the next workflow item that is eligible. Minimize human interaction, but stop at any documented approval gate or if the protocol requires a human decision.
+Use the orchestrator agent to review the current backlog, specs, plans, branches, and open PRs in this repository, then keep advancing eligible work until each item reaches a real terminal condition. Minimize human interaction, but stop for human decisions, merge review, blocked dependencies, or escalations.
 ```
 
 ```text
-Use the orchestrator agent to start and advance work for [feature or issue name]. Inspect the current workflow state first, then run the next eligible stage for that item. Keep going until you hit a required human approval gate.
+Use the orchestrator agent to start and advance work for [feature or issue name]. Inspect the current workflow state first, then keep progressing that item through creator, reviewer, PR, automated review, and CI until it is waiting on a human, blocked, or escalated.
 ```
 
 ### Cursor
@@ -176,15 +184,15 @@ Example commands:
 ```
 
 ```text
-/run-work Review the current backlog, specs, plans, branches, and open PRs in this repository, then advance the next workflow item that is eligible. Minimize human interaction, but stop at any documented approval gate or if the protocol requires a human decision.
+/run-work Review the current backlog, specs, plans, branches, and open PRs in this repository, then keep advancing eligible work until each item reaches a real terminal condition. Minimize human interaction, but stop for human decisions, merge review, blocked dependencies, or escalations.
 ```
 
 ```text
-/run-work Start and advance work for [feature or issue name]. Inspect the current workflow state first, then run the next eligible stage for that item. Keep going until you hit a required human approval gate.
+/run-work Start and advance work for [feature or issue name]. Inspect the current workflow state first, then keep progressing that item through creator, reviewer, PR, automated review, and CI until it is waiting on a human, blocked, or escalated.
 ```
 
 ### Codex
-- Install the bundled skills with `./scripts/install-codex-skills.sh`
+- Install the bundled skills with `./scripts/development-workflow/install-codex-skills.sh`
 - Start with `workflow-orchestrator` as the default entrypoint for the workflow
 - Run `workflow-orchestrator` on an `economy` tier by default; only escalate when the stage-specific skill recommends it
 - Use the other skills in `.codex/skills/` when you want to run a specific stage directly
@@ -194,15 +202,15 @@ Example commands:
 Example prompts:
 
 ```text
-Use $workflow-orchestrator to inspect this repository's AI development workflow state, determine what work can safely advance next, and execute the next eligible stage with minimal human intervention. Follow AGENTS.md and the workflow protocols exactly. If multiple items are eligible, prioritize by the documented rules and explain any blockers or required approval gates.
+Use $workflow-orchestrator to inspect this repository's AI development workflow state, determine what work can safely advance next, and keep advancing each eligible item until it reaches a real terminal condition. Follow AGENTS.md and the workflow protocols exactly. If multiple items are eligible, prioritize by the documented rules and explain any blockers or escalations.
 ```
 
 ```text
-Use $workflow-orchestrator to review the current backlog, specs, plans, branches, and open PRs in this repository, then advance the next workflow item that is eligible. Minimize human interaction, but stop at any documented approval gate or if the protocol requires a human decision.
+Use $workflow-orchestrator to review the current backlog, specs, plans, branches, and open PRs in this repository, then keep advancing eligible work until each item reaches a real terminal condition. Minimize human interaction, but stop for human decisions, merge review, blocked dependencies, or escalations.
 ```
 
 ```text
-Use $workflow-orchestrator to start and advance work for [feature or issue name]. Inspect the current workflow state first, then run the next eligible stage for that item. Keep going until you hit a required human approval gate.
+Use $workflow-orchestrator to start and advance work for [feature or issue name]. Inspect the current workflow state first, then keep progressing that item through creator, reviewer, PR, automated review, and CI until it is waiting on a human, blocked, or escalated.
 ```
 
 ### Other AI Tools (Gemini CLI, etc.)
@@ -222,7 +230,7 @@ Use $workflow-orchestrator to start and advance work for [feature or issue name]
 ## Mandatory Conventions
 
 - **CHANGELOG.md is required**: every feature/fix/hotfix PR must add an entry under `[Unreleased]` before merge. Never defer CHANGELOG entries to release time.
-- **Human approval gates**: PRs for spec, plan, and implementation are opened by agents but merged by humans.
+- **Human merge gates**: PRs for spec, plan, and implementation are opened by agents and kept moving until they are actually review-ready; humans still review and merge them.
 - **No destructive Git operations** without explicit human approval (no `--force`, `reset --hard`, `rebase` on shared branches).
 
 ---
@@ -259,9 +267,9 @@ Framework-level paths to propagate:
 - `.codex/skills/`
 - `.cursor/rules/`
 - `.cursor/commands/`
-- `scripts/install-codex-skills.sh`
-- `scripts/discover-workflow-state.sh`
-- `scripts/check-workflow-branch.sh`
+- `scripts/development-workflow/install-codex-skills.sh`
+- `scripts/development-workflow/discover-workflow-state.sh`
+- `scripts/development-workflow/check-workflow-branch.sh`
 - `docs/best-practices/1-general.md`
 - `docs/best-practices/2-version-control.md`
 - `docs/best-practices/3-testing.md`

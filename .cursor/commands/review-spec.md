@@ -6,6 +6,8 @@ Follow the spec review protocol exactly as defined in:
 
 `docs/ai/development-workflow/protocols/01-review-specs-protocol.md`
 
+If invoked as part of a reviewer loop, apply fixes, commit, and push until the protocol reaches approval or a real human decision is required.
+
 Locate the spec to review using this priority:
 1. Explicit path provided in the command argument
 2. Files changed in the current branch (`git diff main...HEAD`)

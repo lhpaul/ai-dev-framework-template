@@ -11,3 +11,4 @@ Recommended model tier: `balanced`
 2. Read `docs/ai/development-workflow/protocols/01-generate-specs-protocol.md`.
 3. Follow that protocol exactly.
 4. Keep the spec product-focused; implementation details belong in the plan stage.
+5. When the branch is created, continue through reviewer gate, PR creation, and PR readiness unless the protocol surfaces a real human decision.

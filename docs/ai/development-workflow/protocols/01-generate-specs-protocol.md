@@ -136,21 +136,21 @@ Use the current timestamp for `YYYYMMDDHHMMSS`.
 
 ---
 
-## Step 4: Approval Gate
+## Step 4: Human Review Shortcut (Optional)
 
-Before any Git operations, present the spec to the human and ask for explicit approval:
+Default behavior is **max autonomy**: once the alignment conversation is complete and there are no unresolved blocking product questions, continue through branch creation, reviewer gate, PR creation, and PR readiness without asking for an extra "review before PR" confirmation.
 
-> "I've drafted the spec. Would you like to review it before I create the branch and PR?"
+Pause only if:
 
-Wait for confirmation. Do not proceed to Git operations without approval.
-
-If the human requests changes, make them and re-present. Repeat until approved.
+- The human explicitly asked to review the draft before Git operations
+- The spec still contains a blocking product ambiguity
+- The reviewer gate returns `NEEDS REVISION` for a product decision you cannot make unilaterally
 
 ---
 
 ## Step 5: Git Execution
 
-Once the human approves the spec:
+If no blocking human decision remains:
 
 1. Determine the branch slug:
    - **With issue tracker**: `[issue-id]-[feature-slug]` (e.g., `ENG-123-user-auth`)
@@ -168,13 +168,20 @@ Once the human approves the spec:
 8. Open PR targeting `develop` with:
    - Title: `docs(spec): [feature-name]`
    - Body: summary of the feature, link to the spec file, list of open questions (if any)
+9. Resolve PR readiness to completion:
+   - Run `./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch spec/[branch-slug]` when an automated review platform is configured
+   - If blocking comments exist, continue fixing them on the same branch until the loop is clean or escalates
+   - Run `./scripts/development-workflow/pr-ci-loop.sh <pr_number>`
+   - Apply `agent:ready-for-review` only after CI is green and automated review is clean (or skipped)
 
 ---
 
 ## Step 6: PR Readiness
 
-Apply the `agent:ready-for-review` label to the PR once it is open and CI is green.
+Do not treat "PR opened" as completion. This stage is complete only when one of the following terminal conditions is reached:
 
-If CI fails, investigate and fix before applying the label.
+- `agent:ready-for-review` has been applied and the PR is waiting on a human merge decision
+- A blocking product question surfaced and the run has explicitly escalated to the human
+- The automated review or CI loop timed out and the run has escalated to the human
 
 See `docs/ai/development-workflow/protocols/91-pr-readiness-signal-protocol.md` for the full readiness definition.

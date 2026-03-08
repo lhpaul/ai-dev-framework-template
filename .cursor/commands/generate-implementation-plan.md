@@ -1,9 +1,9 @@
 ---
-description: Plan Ready stage. Reads the approved spec and codebase, discusses the technical approach, then writes the implementation plan and smoke test runbook. Usage: /generate-implementation-plan [optional feature slug or dev folder path]
+description: Plan Ready stage. Reads the approved spec and codebase, resolves technical approach questions, then writes the implementation plan, runs its reviewer gate, and resolves PR readiness. Usage: /generate-implementation-plan [optional feature slug or dev folder path]
 ---
 
 Follow the implementation plan generation protocol exactly as defined in:
 
 `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md`
 
-Always read the approved spec and relevant codebase sections before proposing an approach. Do not skip the approval gate before writing the plan.
+Always read the approved spec and relevant codebase sections before proposing an approach. Once ambiguity is resolved, continue through reviewer gate, PR creation, and PR readiness unless the protocol requires human input.

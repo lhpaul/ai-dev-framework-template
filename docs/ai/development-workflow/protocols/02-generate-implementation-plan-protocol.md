@@ -16,6 +16,7 @@ Before starting, read:
 - `docs/project/4-database-model.md` — data model (if applicable)
 - `docs/best-practices/` — all best practice docs
 - Relevant existing code — read actual files, don't assume structure
+- **Project documentation**: Scan `docs/` (e.g. `docs/project/`, `docs/best-practices/`, `AGENTS.md`, and any feature- or domain-specific docs) so the plan can explicitly list which of these need updates after implementation.
 - If an issue tracker exists for this item, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for `Plan Ready` expectations before planning.
 
 ---
@@ -60,17 +61,19 @@ For each layer affected, confirm what changes are needed:
 
 #### Documentation Updates
 
-- [ ] Which project docs need to be updated after implementation? (Note: docs are NOT updated during Plan Ready — only identified)
+- [ ] Which project docs in `docs/` need to be updated after implementation? Consider `docs/project/`, `docs/best-practices/`, `AGENTS.md`, and any feature-specific docs. (Note: docs are NOT updated during Plan Ready — only identified and listed in the plan.)
 
 ---
 
-## Step 2: Approval Gate
+## Step 2: Human Review Shortcut (Optional)
 
-Present the proposed approach to the human and ask for explicit approval:
+Default behavior is **max autonomy**: once you have read the approved spec, inspected the codebase, and there is no unresolved architectural ambiguity, continue through plan writing, reviewer gate, PR creation, and PR readiness without an extra pause.
 
-> "I've outlined the technical approach. Would you like to review it before I write the full plan?"
+Pause only if:
 
-Wait for confirmation. Do not write the plan until the approach is approved.
+- The human explicitly asked to review the approach before plan writing
+- The proposed approach has a material architecture tradeoff or ambiguity you cannot resolve safely
+- The reviewer gate returns `NEEDS REVISION` for a decision that requires human input
 
 ---
 
@@ -90,7 +93,7 @@ docs/specs/developments/[timestamp]_[feature-slug]/2_[feature-slug]_implementati
 - The implementation order must be logical and executable (no steps that require a later step to be done first)
 - Every change must reference an acceptance criterion from the spec
 - Seed data requirements must be explicit — what data, in which files, for which test scenarios
-- Do not plan documentation updates — only list them for the developer to execute
+- **Documentation**: Explicitly consider project documentation in `docs/`. The plan must list every doc in `docs/` (including `AGENTS.md` if relevant) that the developer must update after implementation, or state "None" only when the feature truly affects no project docs. Do not plan the doc edits — only list them for the developer to execute.
 
 ### Examples
 
@@ -115,17 +118,9 @@ The runbook must cover all acceptance criteria from the spec. Each criterion mus
 
 ---
 
-## Step 5: Approval Gate
+## Step 5: Git Execution
 
-Present the plan and runbook to the human:
-
-> "The implementation plan and smoke test runbook are ready. Would you like to review them before I create the PR?"
-
----
-
-## Step 6: Git Execution
-
-Once approved:
+If no blocking human decision remains:
 
 1. Determine the branch slug:
    - **With issue tracker**: `[issue-id]-[feature-slug]` (e.g., `ENG-123-user-auth`)
@@ -144,11 +139,20 @@ Once approved:
 9. Open PR targeting `develop` with:
    - Title: `docs(plan): [feature-name]`
    - Body: summary of the approach, complexity estimate, key risks, link to plan and runbook
+10. Resolve PR readiness to completion:
+   - Run `./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch implementation-plan/[branch-slug]` when an automated review platform is configured
+   - If blocking comments exist, continue fixing them on the same branch until the loop is clean or escalates
+   - Run `./scripts/development-workflow/pr-ci-loop.sh <pr_number>`
+   - Apply `agent:ready-for-review` only after CI is green and automated review is clean (or skipped)
 
 ---
 
-## Step 7: PR Readiness
+## Step 6: PR Readiness
 
-Apply `agent:ready-for-review` label once CI is green.
+Do not treat "plan written" or "PR opened" as completion. This stage is complete only when one of the following terminal conditions is reached:
+
+- `agent:ready-for-review` has been applied and the PR is waiting on a human merge decision
+- A blocking plan / architecture decision surfaced and the run has escalated to the human
+- The automated review or CI loop timed out and the run has escalated to the human
 
 See `docs/ai/development-workflow/protocols/91-pr-readiness-signal-protocol.md`.

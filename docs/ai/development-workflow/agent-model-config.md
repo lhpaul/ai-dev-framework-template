@@ -146,15 +146,15 @@ These examples are **current as of 2026-02-24** (model names/IDs change often). 
 
 ## Tool Restrictions
 
-Agents that don't require shell access have `Bash` removed from their tool list. This enforces least-privilege — these agents read and write documentation files only.
+Agents only get `Bash` when they need it to carry a stage through branch creation, commits, pushes, PR creation, or readiness loops.
 
 | Agent | Has Bash? | Reason |
 |---|---|---|
 | `orchestrator` | ✅ | Needs `git branch`, `git status`, and similar to read repo state |
-| `product-manager` | ❌ | Writes spec markdown files only |
-| `spec-reviewer` | ❌ | Reads and edits spec files only |
+| `product-manager` | ✅ | Creates spec branches / PRs and may run readiness helpers |
+| `spec-reviewer` | ✅ | May commit, push, and re-run fixes during spec review loops |
 | `tech-lead` | ✅ | May need to run commands to understand the codebase before planning |
-| `implementation-plan-reviewer` | ❌ | Reads spec, plan, and source files only |
+| `implementation-plan-reviewer` | ✅ | May commit, push, and re-run fixes during plan review loops |
 | `developer` | ✅ | Runs build, lint, and test commands as part of implementation |
 | `code-reviewer` | ✅ | May run lint or tests to verify applied fixes |
 | `project-setup` | ✅ | May need to initialize git, run project commands during setup |
