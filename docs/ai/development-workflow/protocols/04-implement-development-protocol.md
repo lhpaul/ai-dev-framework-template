@@ -38,13 +38,15 @@ Extract from your reading:
 
 **Dependency check**: Read the `Depends on` field in the spec. If any dependency is not yet Merged or Released, stop and report to the human.
 
-### Step 2: Approval Gate
+### Step 2: Human Review Shortcut (Optional)
 
-Before branching, present a brief execution plan to the human:
+Default behavior is **max autonomy**: once the approved spec and plan are understood and there is no unresolved product or architecture ambiguity, continue through implementation, reviewer gate, PR creation, and PR readiness without an extra pause.
 
-> "I've read the spec and plan. Here's what I'll do: [summary]. Shall I proceed?"
+Pause only if:
 
-Wait for explicit confirmation.
+- The human explicitly asked to review the execution plan before coding
+- The spec or plan is missing a decision you cannot safely invent
+- The reviewer gate returns `NEEDS REVISION` because a human decision is required
 
 ### Step 3: Branch
 
@@ -143,17 +145,19 @@ Open a PR targeting `develop` with:
 
 If an automated PR review tool is enabled (see `docs/ai/development-workflow/integrations/`):
 
-1. Wait for the automated review to complete
-2. For each **blocking** issue: fix it and push
-3. Re-trigger the review if needed (see the integration doc for how)
-4. Repeat until no blocking issues remain
+1. Run `./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch feature/[slug]` (or the matching `fix/` / `hotfix/` branch)
+2. If the result is `needs_fixes`, apply the fixes, push, and run the loop again
+3. If the result is `clean`, continue immediately to Step 12
+4. If the result is `escalate`, stop and report the latest blocking issues to the human
 5. Non-blocking suggestions: address at your discretion
 
 ### Step 12: PR Readiness Signal
 
-Apply `agent:ready-for-review` label when:
+Run `./scripts/development-workflow/pr-ci-loop.sh <pr_number>` and apply `agent:ready-for-review` only when:
 - CI checks are green
 - Automated review has no blocking issues (or is not configured)
+
+If CI fails, apply `agent:needs-fixes`, fix the branch, push, and return to Step 11.
 
 See `docs/ai/development-workflow/protocols/91-pr-readiness-signal-protocol.md`.
 
@@ -175,7 +179,7 @@ See `docs/ai/development-workflow/protocols/91-pr-readiness-signal-protocol.md`.
 ### Steps
 
 1. Read the brief. If the work item exists in an issue tracker, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for `In Development (Fast Track)` expectations.
-2. Present a brief execution plan and get approval
+2. If no blocking ambiguity remains, proceed without an extra approval pause; otherwise stop and ask the human
 3. Branch: `git checkout -b fix/[branch-slug]` from `develop` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without)
 4. Implement the fix
 5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area
@@ -185,7 +189,7 @@ See `docs/ai/development-workflow/protocols/91-pr-readiness-signal-protocol.md`.
 9. Run the reviewer gate (Step 9 above)
 10. Open PR targeting `develop`
 11. Follow automated review loop (Step 11 above) if configured
-12. Apply `agent:ready-for-review` label
+12. Run the automated review + CI loops to completion, then apply `agent:ready-for-review`
 
 ---
 
@@ -205,7 +209,7 @@ See `docs/ai/development-workflow/protocols/91-pr-readiness-signal-protocol.md`.
 8. Push branch to remote
 9. Run the reviewer gate (Step 9 above)
 10. Open PR targeting `main`
-11. Apply `agent:ready-for-review` label
+11. Run the automated review + CI loops to completion, then apply `agent:ready-for-review`
 12. **After merge**: notify the human that a backport PR (main → develop) must be opened to prevent branch drift
 
 ---

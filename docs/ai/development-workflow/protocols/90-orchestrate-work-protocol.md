@@ -1,7 +1,7 @@
 # Protocol: Orchestrate Work
 
 **Agent role**: Orchestrator
-**Purpose**: Discover what developments can advance, run safe parallel work, notify humans when outputs are ready for review
+**Purpose**: Discover what can advance, execute the next deterministic action, and keep each item moving until it reaches a real terminal condition
 
 This is a **supporting protocol** — the orchestrator does not own a workflow stage but coordinates across stages.
 
@@ -12,42 +12,68 @@ This is a **supporting protocol** — the orchestrator does not own a workflow s
 The orchestrator:
 1. Reads the current state of all in-flight and backlog items
 2. Determines what can be safely advanced to the next stage
-3. Executes parallel work where safe
-4. Signals humans when PRs are ready for review
+3. Executes creator, reviewer, PR, CI, and automated-review work as one continuous control loop
+4. Stops only when an item is truly waiting on a human, blocked, or escalated
+
+### Persistent orchestration contract
+
+A single orchestration run should keep advancing an item until it reaches one of these **terminal conditions**:
+
+- A PR is clean and waiting for human review / merge
+- A human product or architecture decision is required
+- The automated review loop or CI loop escalated after retry / timeout limits
+- The item is blocked by an unmet dependency
+- No eligible work remains
+
+These are **not** terminal conditions and must not stop the run:
+
+- A creator stage finished drafting its output
+- A reviewer found fixable issues
+- A branch was pushed and still needs a PR opened
+- A PR is open but still waiting for CI or automated review to finish
+- Automated review found blocking issues that the matching fixer agent can address
 
 ---
 
 ## Step 1: Gather State
 
-When running inside Codex with the repository skills installed, prefer the helper scripts in `scripts/` for deterministic state inspection before falling back to ad hoc shell commands.
+Prefer the helper scripts in `scripts/development-workflow/` for deterministic state inspection before falling back to ad hoc shell commands. They work with any model or tool (Codex, Cursor, Claude Code, etc.).
 
 Read from the following sources (in priority order):
 
 1. **Issue tracker** (if configured): current status of all issues and the latest brief. See [`integrations/`](../integrations/) for tracker-specific setup and [`integrations/issue-tracker.md`](../integrations/issue-tracker.md) for tracker-agnostic rules.
 2. **Development folders**: `docs/specs/developments/` — read the status field of each spec to determine the current stage
-3. **Open PRs**: `git branch -r` and/or the repository's PR list — which branches are open and their CI status
+3. **Open PRs**: `git branch -r` and/or the repository's PR list — which branches are open, their labels, and CI status
 
 If available, run:
 
 ```bash
-./scripts/discover-workflow-state.sh
+./scripts/development-workflow/discover-workflow-state.sh
 ```
 
-to collect the current branch, relevant local/remote branches, worktrees, and development folders in one pass.
+to collect the current branch, relevant local/remote branches, worktrees, development folders, and open PRs in one pass.
+
+Use these helpers while gathering state:
+
+```bash
+./scripts/development-workflow/workflow-next-action.sh --development <path>
+./scripts/development-workflow/workflow-next-action.sh --branch <branch>
+./scripts/development-workflow/workflow-next-action.sh --pr <number>
+```
 
 Build a mental map of:
 - Items in **Backlog** (no spec yet)
 - Items in **Spec In Review** (spec PR open, waiting for human to merge — do not re-dispatch)
-- Items in **Spec Ready** (spec merged, no plan yet)
+- Items in **Spec Ready** (spec PR merged, no plan yet)
 - Items in **Plan In Review** (plan PR open, waiting for human to merge — do not re-dispatch)
-- Items in **Plan Ready** (plan merged, not yet in development)
-- Items **In Development** (feature branch open, PR pending)
-- Items with a **pushed workflow branch but no PR yet** (reviewer gate pending before PR creation)
-- Items with pending review (PRs labeled `agent:ready-for-review`)
-- Open PRs with **unresolved automated reviewer comments** (the review platform posted comments after the last push — run Step 8)
+- Items in **Plan Ready** (plan PR merged, not yet in development)
+- Items with a **pushed workflow branch but no PR yet**
+- Items with an **open PR that still lacks a readiness label**
+- Items with **pending human review** (`agent:ready-for-review`)
+- Items with **pending fixes** (`agent:needs-fixes`)
 
 When dispatching a subagent for an item, include a short “Issue Tracker Summary” in the handoff:
-- What the issue is asking for (from description)
+- What the issue is asking for
 - Any scope changes / decisions in recent comments
 - Any flagged ambiguity or conflicts that require human confirmation
 
@@ -57,46 +83,45 @@ When dispatching a subagent for an item, include a short “Issue Tracker Summar
 
 ### What can advance now?
 
-| Current stage | Can advance if... | Next action |
+| Current state | Can advance if... | Next action |
 |---|---|---|
 | Backlog | Human has requested it | Run `01-generate-specs-protocol.md` |
-| Spec In Review | — | **Wait** — spec PR is open, human must review and merge. Do not re-dispatch. |
-| Spec branch pushed, no PR yet | Branch exists on remote | Run `01-review-specs-protocol.md` on the branch, then open the PR |
+| Spec In Review | — | **Wait** — PR is open and waiting on human review / merge |
+| Spec branch pushed, no PR yet | Branch exists on remote | Run `01-review-specs-protocol.md`, open the PR, then finish PR readiness |
 | Spec Ready | Spec PR is merged | Run `02-generate-implementation-plan-protocol.md` |
-| Plan In Review | — | **Wait** — plan PR is open, human must review and merge. Do not re-dispatch. |
-| Plan branch pushed, no PR yet | Branch exists on remote | Run `02-review-implementation-plan-protocol.md` on the branch, then open the PR |
+| Plan In Review | — | **Wait** — PR is open and waiting on human review / merge |
+| Plan branch pushed, no PR yet | Branch exists on remote | Run `02-review-implementation-plan-protocol.md`, open the PR, then finish PR readiness |
 | Plan Ready | Plan PR is merged | Run `04-implement-development-protocol.md` |
-| Dev branch pushed, no PR yet | Branch exists on remote | Run `04-review-implemented-development-protocol.md` on the branch, then open the PR |
-| In Development (PR open) | CI green, review loop clean | Apply `agent:ready-for-review`, notify human |
-| In Development (automated reviewer commented) | Review platform posted comments after last push | Run Step 8 (automated reviewer loop) |
-| In Development (feedback received) | Human requested changes on PR | Address feedback, re-push, then run Step 8 |
+| Dev branch pushed, no PR yet | Branch exists on remote | Run `04-review-implemented-development-protocol.md`, open the PR, then finish PR readiness |
+| PR open, no readiness label | PR exists and latest push has not fully cleared | Run Step 7 and Step 8 until clean or escalated |
+| PR labeled `agent:needs-fixes` | Human or automated systems requested changes | Address feedback, push, then run Step 7 and Step 8 |
+| PR labeled `agent:ready-for-review` | — | **Wait** — human review / merge required |
 
 ### Pre-dispatch branch check
 
-Before dispatching any agent, run all three checks below. An existing branch or active worktree means an agent is already working or has worked on this item — even if the work was never pushed.
+Before dispatching any creator-stage agent, run all three checks below. An existing branch or active worktree means work already exists and should be resumed rather than restarted.
 
 ```bash
-# 1. Remote branches (pushed work)
 git branch -r | grep "<branch-prefix>/<slug>"
-
-# 2. Local branches (unpushed work)
 git branch | grep "<branch-prefix>/<slug>"
-
-# 3. Active worktrees (work in progress in a worktree, may not be pushed or even committed)
 git worktree list | grep "<branch-prefix>/<slug>"
 ```
 
 | Stage about to dispatch | Branch / worktree to check for |
 |---|---|
-| Write spec (Backlog → Spec In Review) | `spec/[slug]` |
-| Write plan (Spec Ready → Plan In Review) | `implementation-plan/[slug]` |
-| Implement (Plan Ready → In Development) | `feature/[slug]` |
+| Write spec | `spec/[slug]` |
+| Write plan | `implementation-plan/[slug]` |
+| Implement | `feature/[slug]` |
 
-If any check returns a match: **do not re-dispatch**. Instead, report the item's actual state to the human — including whether a worktree is active, whether the branch has been pushed, and whether a PR is open.
+If any check returns a match: **do not re-dispatch**. Instead, resume from the existing branch or PR using:
+
+```bash
+./scripts/development-workflow/workflow-next-action.sh --branch <branch>
+```
 
 ### Dependency check
 
-Before advancing any item, check its spec's `Depends on` field. If any dependency is not yet Merged or Released, skip this item and report the blocked state to the human.
+Before advancing any item, check its spec's `Depends on` field. If any dependency is not yet `Merged` or `Released`, skip the item and report the blocked state to the human.
 
 ---
 
@@ -108,7 +133,7 @@ When multiple items are eligible, prioritize as follows:
 2. **Priority** — Urgent → High → Normal → Low
 3. **Creation date** — earlier items first within the same priority
 
-If a due date conflicts with priority ordering (e.g., a Low priority item is due tomorrow but a High priority item is due in 3 weeks), **flag it to the human** rather than silently choosing. Present both options.
+If a due date conflicts with priority ordering, flag it to the human rather than silently choosing.
 
 ---
 
@@ -117,38 +142,29 @@ If a due date conflicts with priority ordering (e.g., a Low priority item is due
 Multiple items can be advanced simultaneously, with restrictions:
 
 **Safe to parallelize**:
-- Spec creation for multiple items simultaneously
-- Plan creation for multiple items simultaneously
-- Implementation of items that touch different parts of the codebase
+- Spec creation for multiple items
+- Plan creation for multiple items
+- Implementations that touch different parts of the codebase
 
 **Avoid parallelizing**:
-- Two implementations that both require database schema migrations (apply sequentially to avoid conflicts)
+- Two implementations that both require database schema migrations
 - Two items where one depends on the other
 
-When in doubt about whether parallelization is safe, ask the human.
+When in doubt, ask the human.
 
 ---
 
 ## Step 5: Execute
 
-Group eligible items into **parallel batches** — items that pass the Step 4 parallelization rules and can run simultaneously. Then dispatch all items in the same batch as concurrent subagents rather than running them sequentially.
+Group eligible items into **parallel batches** — items that pass the Step 4 rules and can run simultaneously. Then dispatch all items in the same batch as concurrent subagents rather than running them sequentially.
 
 **How to parallelize with Claude Code:**
 
-Use the `Task` tool to spawn a subagent for each item in the batch. Launch all subagents in a **single message** so they run simultaneously. For example, if three features are ready for implementation:
-
-```
-[Single message with three Task tool calls]
-  Task 1: developer agent → feature/user-auth
-  Task 2: developer agent → feature/email-notifications
-  Task 3: product-manager agent → feature/billing (spec needed)
-```
-
-Wait for **all** subagents to complete before moving on to Step 6.
+Use the `Task` tool to spawn a subagent for each item in the batch. Launch all subagents in a single message so they run simultaneously.
 
 **How to execute with Codex skills:**
 
-Codex skills are thin wrappers over the same protocol files. If your Codex runner can invoke multiple skills concurrently, group a batch exactly as you would with subagents. If it cannot, process the batch sequentially in the current session, but preserve the same batching decision and state clearly in the summary that execution was serialized due to runner limitations.
+Codex skills are thin wrappers over the same protocol files. If your Codex runner can invoke multiple skills concurrently, group a batch exactly as you would with subagents. If it cannot, process the batch sequentially in the current session, but preserve the same batching decision and state clearly in the summary.
 
 **Subagent assignment by stage:**
 
@@ -162,100 +178,71 @@ Codex skills are thin wrappers over the same protocol files. If your Codex runne
 | Review code | `code-reviewer` |
 
 **Sequential fallback:**
-If only one item is eligible, or if items must be sequenced (e.g., both have DB migrations), run them one at a time. Document the reason in the summary.
+If only one item is eligible, or if items must be sequenced, run them one at a time. Document the reason in the summary.
 
-After all subagents finish, collect their outputs and document what each completed in the Step 6 summary.
+### Creator stages are subroutines, not end states
+
+After any subagent finishes, immediately determine whether the item still has a deterministic next action:
+
+```bash
+./scripts/development-workflow/workflow-next-action.sh --branch <branch>
+./scripts/development-workflow/workflow-next-action.sh --pr <number>
+./scripts/development-workflow/workflow-next-action.sh --development <path>
+```
+
+Expected chain:
+
+`creator -> reviewer -> PR opened -> automated review loop -> CI loop -> readiness label or escalation`
+
+Do not stop after a single creator or reviewer stage if the next action is deterministic.
 
 ---
 
 ## Step 6: Notify Humans
 
-After completing work, provide a clear summary:
+After all currently eligible work has reached a terminal condition, provide a clear summary:
 
-```
+```markdown
 ## Orchestration Run Summary
 
 ### Work Completed
-- [Item A]: Spec created → PR opened (spec/item-a)
-- [Item B]: Implementation started → PR opened (feature/item-b)
+- [Item A]: Spec created -> reviewed -> PR opened -> ready for human review
+- [Item B]: Implementation updated -> reviewer loop clean after 2 cycles -> CI green
 
 ### PRs Ready for Human Review
-- [PR link] — [feature name] — [stage] — Automated review: ✅ passed after N cycle(s) / ⏭️ skipped (not configured) / ⚠️ escalated (see Flagged section)
+- [PR link] — [feature name] — [stage] — Automated review: ✅ passed after N cycle(s) / ⏭️ skipped / ⚠️ escalated
 
-  > **Automated review status legend**: `✅ passed after N cycle(s)` — reviewer ran and found no blocking issues (N = number of fix cycles dispatched; 0 means it passed on the first review). `⏭️ skipped` — Step 8 was not run (no review platform configured). `⚠️ escalated` — loop could not complete autonomously; human action required.
+### Waiting on Human
+- [Item C]: plan reviewer surfaced an architecture choice that needs a decision
+- [Item D]: spec PR is already open and waiting to be merged
 
 ### Blocked Items
-- [Item C]: blocked by [Item D] (not yet Merged)
-
-### Flagged for Human Decision
-- [Item E]: Due date (2025-03-01) conflicts with Low priority — should I prioritize it over High priority [Item F] (due 2025-04-01)?
+- [Item E]: blocked by [Item F] (dependency not yet Merged)
 ```
 
 ---
 
-## Step 7: Feedback Loop
+## Step 7: Automated Reviewer Loop
 
-When a human requests changes on a PR:
+If an automated code review platform is configured (see [`integrations/pr-review-platform.md`](../integrations/pr-review-platform.md)), run this loop after **any push to a PR branch**. If no review platform is configured, skip this step and report `⏭️ skipped` in the Step 6 summary.
 
-1. Remove `agent:ready-for-review` label
-2. Add `agent:needs-fixes` label
-3. Address the feedback
-4. Push fixes
-5. Run Step 8 (automated reviewer loop)
-6. Reapply `agent:ready-for-review` when ready
+Initialize `cycle = 0` once per orchestration run for the PR. Increment `cycle` each time a fixer agent is dispatched. Do not reset `cycle` after a fixer push; escalate when the run reaches `max_cycles`.
 
-See `91-pr-readiness-signal-protocol.md` for label definitions.
+Prefer the helper script:
 
----
+```bash
+./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name>
+```
 
-## Step 8: Automated Reviewer Loop
-
-If an automated code review platform is configured (see [`integrations/pr-review-platform.md`](../integrations/pr-review-platform.md)), run this loop after **any push to a PR branch** — whether from a subagent or from the orchestrator directly — to resolve all findings before requesting human review. If no review platform is configured, skip this step and report `⏭️ skipped` in the Step 6 summary.
-
-> **Tool-specific details** (how to trigger a review, poll for a response, and fetch inline comments) live in your review platform's integration doc. See [`integrations/greptile.md`](../integrations/greptile.md) for Greptile.
-
-### Loop parameters
-
-| Parameter | Value | Description |
-|---|---|---|
-| `poll_interval` | 2 min | Time to wait between review status checks |
-| `max_wait` | 20 min | Max wait **per fix cycle** for the reviewer to respond (resets after each push) |
-| `max_cycles` | 3 | Max number of times a fixing agent is dispatched before escalating to human |
-
-### Step 8.1 — Trigger the reviewer
-
-Initialize before entering Step 8.1 for the first time: `cycle = 0`.
-
-After each push, record the current timestamp as `last_push_at` in ISO 8601 format, set `elapsed = 0`, then trigger a re-review using your platform's mechanism (see integration doc).
-
-> **Cycle counter**: `cycle` counts how many times a fixing agent has been dispatched. It starts at 0 and increments only when a fixer is dispatched in Step 8.3 — not on the initial push.
-
-### Step 8.2 — Poll for response
-
-Wait `poll_interval` (2 min), add `poll_interval` to `elapsed`, then check whether the reviewer has completed a new review after `last_push_at` using your platform's mechanism (see integration doc).
+Interpret the result as follows:
 
 | Result | Action |
 |---|---|
-| No review yet and `elapsed < max_wait` | Wait another `poll_interval` and poll again |
-| No review yet and `elapsed >= max_wait` | **Escalate to human** — see Step 8.5 (timeout) |
-| Reviewer completed a new review | Proceed to Step 8.3 |
-
-### Step 8.3 — Evaluate findings
-
-Fetch new inline comments posted after `last_push_at` using your platform's mechanism (see integration doc).
-
-**Classifying comments — blocking vs. suggestion:**
-
-Treat a comment as a **suggestion** (safe to skip) only if its body starts with clearly soft language, such as:
-- "Consider...", "You might...", "An alternative...", "Optionally...", "It could be cleaner to...", "Perhaps...", "Maybe...", "You could...", "One option is...", "Alternatively..."
-
-Treat everything else as **blocking** — including comments describing bugs, failures, or any imperative phrasing ("Use...", "Change...", "Replace..."). When in doubt, treat as blocking.
-
-| Finding | Action |
-|---|---|
-| No inline comments, or only suggestions | Proceed to Step 8.4 — reviewer is satisfied |
-| Blocking issues found and `cycle < max_cycles` | Increment `cycle`. Dispatch fixing agent (see table below), wait for push, go back to Step 8.1 |
-| Blocking issues found and `cycle >= max_cycles` | **Escalate to human** — see Step 8.5 (max cycles) |
+| `clean` | Continue immediately to Step 8 |
+| `skipped` | Continue immediately to Step 8 |
+| `needs_fixes` and `cycle < max_cycles` | Increment `cycle`, dispatch the matching fixer agent, wait for a push, then run Step 7 again |
+| `needs_fixes` and `cycle >= max_cycles` | Escalate to human |
+| `escalate` | Escalate to human |
 
 **Fixing agent by PR branch type:**
 
@@ -265,26 +252,46 @@ Treat everything else as **blocking** — including comments describing bugs, fa
 | `implementation-plan/*` | `implementation-plan-reviewer` |
 | `feature/*` / `fix/*` / `hotfix/*` | `code-reviewer` |
 
-### Step 8.4 — Mark PR ready for human review
+### Loop parameters
 
-The reviewer has no remaining blocking issues. Apply the readiness label and proceed to Step 6:
+| Parameter | Value | Description |
+|---|---|---|
+| `poll_interval` | 2 min | Time to wait between review status checks |
+| `max_wait` | 20 min | Max wait **per fix cycle** for the reviewer to respond |
+| `max_cycles` | 3 | Max number of times a fixing agent is dispatched before escalating |
+
+---
+
+## Step 8: CI Loop
+
+After Step 7 is clean or skipped, wait for required checks to settle.
+
+Prefer the helper script:
 
 ```bash
-gh pr edit <pr_number> --add-label "agent:ready-for-review"
+./scripts/development-workflow/pr-ci-loop.sh <pr_number>
 ```
 
-In the Step 6 summary, report: `Automated review: ✅ passed after N cycle(s)`.
+Interpret the result as follows:
 
-### Step 8.5 — Escalate to human
+| Result | Action |
+|---|---|
+| `green` | Apply `agent:ready-for-review`, remove `agent:needs-fixes` if present, and report the PR as ready |
+| `red` | Apply `agent:needs-fixes`, dispatch the matching fixer agent, wait for a push, then return to Step 7 |
+| `timeout` | Escalate to human; do not apply `agent:ready-for-review` |
 
-Triggered when either `max_wait` or `max_cycles` is exceeded. Include in the Step 6 summary:
+---
 
-```
-### Flagged for Human Decision
-- PR #N ([feature name]): Automated reviewer loop could not complete autonomously.
-  - Reason: timeout after `max_wait` waiting for reviewer response / max fixing agent dispatches (`max_cycles`) reached
-  - Reviewer's latest comments: [paste inline comment bodies here]
-  - Recommended action: human reviews comments and decides how to proceed
-```
+## Step 9: Feedback Loop
 
-Do **not** apply `agent:ready-for-review` until the human resolves the escalation.
+When a human requests changes on a PR:
+
+1. Remove `agent:ready-for-review`
+2. Add `agent:needs-fixes`
+3. Address the feedback
+4. Push fixes
+5. Run Step 7
+6. Run Step 8
+7. Reapply `agent:ready-for-review` only when both loops are clean again
+
+See `91-pr-readiness-signal-protocol.md` for label definitions.

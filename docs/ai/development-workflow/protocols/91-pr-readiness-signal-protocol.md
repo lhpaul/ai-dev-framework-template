@@ -41,9 +41,11 @@ Apply this label when **any** of the following is true:
 1. Push branch to remote
 2. Run the relevant reviewer-agent protocol **before** opening the PR (spec/plan/code review)
 3. Open PR
-4. Wait for CI to complete
-5. If CI passes and automated review is clean (or not configured): apply `agent:ready-for-review`
-6. If CI fails or automated review has blocking issues: fix issues, push, wait again
+4. Run `./scripts/development-workflow/pr-review-loop.sh <pr-number> --branch <branch>` when an automated review tool is configured
+5. If automated review reports blocking issues: apply fixes, push, and repeat Step 4
+6. Run `./scripts/development-workflow/pr-ci-loop.sh <pr-number>`
+7. If CI passes and automated review is clean (or not configured): apply `agent:ready-for-review`
+8. If CI fails: apply `agent:needs-fixes`, fix issues, push, and return to Step 4
 
 ### Human requests changes
 1. Human leaves review comments
@@ -73,6 +75,7 @@ When automation is not available, agents apply labels manually following the con
 
 ## Notes
 
+- Opening a PR is not, by itself, a terminal condition for a stage. The stage continues until the PR is ready for human review or has escalated.
 - Labels apply to PRs, not to the workflow stage — a PR in any stage can carry either label
 - The labels are signals for humans, not enforcement gates — merging is always a human decision
 - If no label tooling is available (no issue tracker, no GitHub labels configured), agents communicate readiness status in the PR comment thread instead

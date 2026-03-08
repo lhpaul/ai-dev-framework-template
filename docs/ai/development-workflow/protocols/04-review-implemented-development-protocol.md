@@ -6,6 +6,19 @@
 
 ---
 
+## Reviewer-loop mode
+
+When this protocol is invoked on a pushed branch or open PR as part of an orchestrated fix loop:
+
+- Apply all fixable blocking and important issues directly
+- Commit and push the fixes if any repo-tracked files changed
+- Return `APPROVED` only when no further fixable blocking issues remain
+- Return `NEEDS REVISION` only when a real product, design, or architecture decision is required
+
+Do not stop after producing a report if the branch still needs deterministic fixes.
+
+---
+
 ## Flow Overview
 
 Execute the steps below in order. The review checklist is always run; when the code-review command is available, run it first so its findings inform the rest of the review.
