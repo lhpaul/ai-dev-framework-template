@@ -60,8 +60,9 @@ cd_workflow_repo_root
 
 if [ -n "$pr_number" ]; then
   require_gh
-  branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"
-  labels="$(gh pr view "$pr_number" --json labels --jq '[.labels[].name] | join(",")')"
+  pr_json="$(gh pr view "$pr_number" --json headRefName,labels)"
+  branch_name="$(printf '%s\n' "$pr_json" | jq -r '.headRefName')"
+  labels="$(printf '%s\n' "$pr_json" | jq -r '[.labels[].name] | join(",")')"
 
   print_kv TARGET "pr:$pr_number"
   print_kv BRANCH "$branch_name"
@@ -91,7 +92,8 @@ if [ -n "$branch_name" ]; then
   print_kv REVIEW_AGENT "$(reviewer_for_branch "$branch_name")"
 
   if [ -n "$pr_number" ]; then
-    labels="$(gh pr view "$pr_number" --json labels --jq '[.labels[].name] | join(",")')"
+    pr_json="$(gh pr view "$pr_number" --json labels)"
+    labels="$(printf '%s\n' "$pr_json" | jq -r '[.labels[].name] | join(",")')"
     print_kv PR_NUMBER "$pr_number"
     case ",$labels," in
       *,agent:ready-for-review,*)

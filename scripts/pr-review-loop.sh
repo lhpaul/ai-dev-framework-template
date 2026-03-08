@@ -30,7 +30,7 @@ poll_interval=120
 max_wait=1200
 bot_login="greptile-apps[bot]"
 trigger_comment="@greptile review"
-trigger_author_login=""
+trigger_author_login="${PR_REVIEW_TRIGGER_AUTHOR_LOGIN:-}"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -87,29 +87,40 @@ cd_workflow_repo_root
 
 repo="$(repo_slug)"
 
-if [ -z "$trigger_author_login" ]; then
-  trigger_author_login="$(gh api user --jq '.login')"
-fi
-
 if [ -z "$branch_name" ]; then
   branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"
 fi
 
 review_comment_id=""
 review_window_start=""
-recent_trigger_comment="$(
-  gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-    --jq '
-      .[]
-      | select(
-          .user.login == "'"$trigger_author_login"'" and
-          .body == "'"$trigger_comment"'" and
-          ((now - (.created_at | fromdateiso8601)) <= '"$max_wait"')
-        )
-      | {id, created_at}
-    ' \
-  | jq -s 'sort_by(.created_at) | last // empty'
-)"
+if [ -n "$trigger_author_login" ]; then
+  recent_trigger_comment="$(
+    gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+      --jq '
+        .[]
+        | select(
+            .user.login == "'"$trigger_author_login"'" and
+            .body == "'"$trigger_comment"'" and
+            ((now - (.created_at | fromdateiso8601)) <= '"$max_wait"')
+          )
+        | {id, created_at}
+      ' \
+    | jq -s 'sort_by(.created_at) | last // empty'
+  )"
+else
+  recent_trigger_comment="$(
+    gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+      --jq '
+        .[]
+        | select(
+            .body == "'"$trigger_comment"'" and
+            ((now - (.created_at | fromdateiso8601)) <= '"$max_wait"')
+          )
+        | {id, created_at}
+      ' \
+    | jq -s 'sort_by(.created_at) | last // empty'
+  )"
+fi
 
 if [ -n "$recent_trigger_comment" ]; then
   review_comment_id="$(printf '%s\n' "$recent_trigger_comment" | jq -r '.id')"
@@ -176,6 +187,24 @@ comments="$(
     '
 )"
 
+blocking_reviews="$(
+  gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+    --jq '
+      .[]
+      | select(
+          .user.login == "'"$bot_login"'" and
+          .submitted_at > "'"$review_window_start"'" and
+          .state == "CHANGES_REQUESTED"
+        )
+      | {
+          path: "",
+          line: 0,
+          body: (.body // "CHANGES_REQUESTED review without body")
+        }
+      | @json
+    '
+)"
+
 blocking_count=0
 suggestion_count=0
 comment_count=0
@@ -196,6 +225,15 @@ while IFS= read -r comment_json; do
   blocking_count=$((blocking_count + 1))
   blocking_lines+=("$comment_json")
 done <<< "$comments"
+
+while IFS= read -r review_json; do
+  [ -z "${review_json:-}" ] && continue
+  body="$(printf '%s\n' "$review_json" | jq -r '.body')"
+  [ -z "$body" ] && continue
+  comment_count=$((comment_count + 1))
+  blocking_count=$((blocking_count + 1))
+  blocking_lines+=("$review_json")
+done <<< "$blocking_reviews"
 
 if [ "$blocking_count" -gt 0 ]; then
   print_kv RESULT needs_fixes
