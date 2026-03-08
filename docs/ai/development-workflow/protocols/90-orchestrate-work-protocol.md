@@ -37,7 +37,7 @@ These are **not** terminal conditions and must not stop the run:
 
 ## Step 1: Gather State
 
-When running inside Codex with the repository skills installed, prefer the helper scripts in `scripts/development-workflow/` for deterministic state inspection before falling back to ad hoc shell commands.
+Prefer the helper scripts in `scripts/development-workflow/` for deterministic state inspection before falling back to ad hoc shell commands. They work with any model or tool (Codex, Cursor, Claude Code, etc.).
 
 Read from the following sources (in priority order):
 
