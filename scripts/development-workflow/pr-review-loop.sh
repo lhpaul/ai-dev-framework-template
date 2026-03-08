@@ -96,29 +96,34 @@ review_window_start=""
 if [ -n "$trigger_author_login" ]; then
   recent_trigger_comment="$(
     gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-      --jq '
-        .[]
-        | select(
-            .user.login == "'"$trigger_author_login"'" and
-            .body == "'"$trigger_comment"'" and
-            ((now - (.created_at | fromdateiso8601)) <= '"$max_wait"')
-          )
-        | {id, created_at}
-      ' \
-    | jq -s 'sort_by(.created_at) | last // empty'
+      | jq --arg author "$trigger_author_login" \
+          --arg trigger "$trigger_comment" \
+          --argjson max_wait "$max_wait" \
+          '
+            .[]
+            | select(
+                .user.login == $author and
+                .body == $trigger and
+                ((now - (.created_at | fromdateiso8601)) <= $max_wait)
+              )
+            | {id, created_at}
+          ' \
+      | jq -s 'sort_by(.created_at) | last // empty'
   )"
 else
   recent_trigger_comment="$(
     gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-      --jq '
-        .[]
-        | select(
-            .body == "'"$trigger_comment"'" and
-            ((now - (.created_at | fromdateiso8601)) <= '"$max_wait"')
-          )
-        | {id, created_at}
-      ' \
-    | jq -s 'sort_by(.created_at) | last // empty'
+      | jq --arg trigger "$trigger_comment" \
+          --argjson max_wait "$max_wait" \
+          '
+            .[]
+            | select(
+                .body == $trigger and
+                ((now - (.created_at | fromdateiso8601)) <= $max_wait)
+              )
+            | {id, created_at}
+          ' \
+      | jq -s 'sort_by(.created_at) | last // empty'
   )"
 fi
 
@@ -127,7 +132,7 @@ if [ -n "$recent_trigger_comment" ]; then
   review_window_start="$(printf '%s\n' "$recent_trigger_comment" | jq -r '.created_at')"
   existing_thumbs_up="$(
     gh api "repos/$repo/issues/comments/$review_comment_id/reactions" \
-      --jq '[.[] | select(.content == "+1" and .user.login == "'"$bot_login"'")] | length'
+      | jq --arg bot "$bot_login" '[.[] | select(.content == "+1" and .user.login == $bot)] | length'
   )"
   if [ "$existing_thumbs_up" -gt 0 ]; then
     review_comment_id=""
@@ -154,7 +159,7 @@ elapsed=0
 while :; do
   thumbs_up="$(
     gh api "repos/$repo/issues/comments/$review_comment_id/reactions" \
-      --jq '[.[] | select(.content == "+1" and .user.login == "'"$bot_login"'")] | length'
+      | jq --arg bot "$bot_login" '[.[] | select(.content == "+1" and .user.login == $bot)] | length'
   )"
 
   if [ "$thumbs_up" -gt 0 ]; then
@@ -178,9 +183,9 @@ done
 
 comments="$(
   gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
-    --jq '
+    | jq --arg bot "$bot_login" --arg since "$review_window_start" '
       .[]
-      | select(.user.login == "'"$bot_login"'" and .created_at > "'"$review_window_start"'")
+      | select(.user.login == $bot and .created_at > $since)
       | {
           path,
           line: (.line // .original_line // 0),
@@ -192,11 +197,11 @@ comments="$(
 
 blocking_reviews="$(
   gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-    --jq '
+    | jq --arg bot "$bot_login" --arg since "$review_window_start" '
       .[]
       | select(
-          .user.login == "'"$bot_login"'" and
-          .submitted_at > "'"$review_window_start"'" and
+          .user.login == $bot and
+          .submitted_at > $since and
           .state == "CHANGES_REQUESTED"
         )
       | {
