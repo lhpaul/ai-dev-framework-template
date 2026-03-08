@@ -78,17 +78,11 @@ Implementation plans produced in the Plan Ready stage often omit or under-specif
 
 ---
 
-## UX Rules
-
-This feature has no end-user UI; it affects workflow artifacts (implementation plans) and reviewer behavior. No UX rules apply.
-
----
-
 ## Acceptance Criteria
 
 - [ ] When a tech lead produces an implementation plan, the plan includes a “Documentation Updates” section that either (a) lists specific project docs and what to update, or (b) explicitly states that no project documentation updates are required.
 - [ ] Plan reviewers reject or request revision of plans that lack a Documentation Updates section or that leave it empty or vague (e.g. “update docs as needed” with no specific files or “N/A” without stating no updates required).
-- [ ] The behavior is enforceable by human or automated review: a reviewer can determine from the plan document alone whether documentation updates were considered and recorded.
+- [ ] Given a plan with a missing or vague Documentation Updates section, a reviewer following the plan review protocol can identify it as a reason to request revision using only the plan document and the review checklist (no additional context required).
 
 ---
 
