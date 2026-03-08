@@ -4,8 +4,6 @@ This document describes how to use [Greptile](https://greptile.com) as the autom
 
 Greptile is **optional**. The workflow functions without it — agents go directly to human review after opening a PR. See [`integrations/pr-review-platform.md`](pr-review-platform.md) for the platform-agnostic loop and requirements.
 
-For fully autonomous continuation after Greptile posts a review, pair this integration with `.github/workflows/autonomous-pr-review-loop.yml` and configure repository secret `OPENAI_API_KEY`.
-
 ---
 
 ## What Greptile Adds
@@ -54,7 +52,7 @@ The orchestrator's Step 8 (Automated Reviewer Loop) requires platform-specific c
 When possible, call the repository helper instead of re-implementing the loop inline:
 
 ```bash
-./scripts/pr-review-loop.sh <pr_number> --branch <branch_name>
+./scripts/greptile-review-loop.sh <pr_number> --branch <branch_name>
 ```
 
 It encapsulates the trigger, polling, comment classification, and stable `RESULT=` output used by the orchestrator.

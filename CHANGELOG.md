@@ -10,7 +10,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Workflow helper scripts: `scripts/pr-review-loop.sh`, `scripts/pr-ci-loop.sh`, `scripts/workflow-next-action.sh`, `scripts/workflow-resume.sh`, and `scripts/workflow-lib.sh` so orchestrators can deterministically resume partial work, poll automated review, and poll CI.
-- Autonomous runtime pieces: `scripts/autonomous-pr-supervisor.sh` and `.github/workflows/autonomous-pr-review-loop.yml` so GitHub can resume Codex automatically when Greptile submits a review.
 
 ### Changed
 

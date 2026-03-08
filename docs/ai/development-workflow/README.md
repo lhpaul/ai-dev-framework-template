@@ -242,14 +242,9 @@ If an automated code review platform is configured, the orchestrator runs an aut
 Repository helpers:
 
 - `scripts/discover-workflow-state.sh`
-- `scripts/pr-review-loop.sh`
+- `scripts/greptile-review-loop.sh`
 - `scripts/pr-ci-loop.sh`
 - `scripts/workflow-next-action.sh`
-- `scripts/workflow-resume.sh`
-- `scripts/autonomous-pr-supervisor.sh`
-
-For fully autonomous continuation between review events, pair these helpers with `.github/workflows/autonomous-pr-review-loop.yml` and configure repository secret `OPENAI_API_KEY`.
-
 See [`integrations/pr-review-platform.md`](integrations/pr-review-platform.md) for platform-agnostic requirements and loop details.
 See [`integrations/greptile.md`](integrations/greptile.md) for setup with Greptile.
 

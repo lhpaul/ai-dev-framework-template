@@ -72,8 +72,6 @@ Installed skills are thin wrappers around the canonical workflow protocols. They
 
 For normal Codex usage, start with `workflow-orchestrator`. It is the primary entrypoint for advancing work with minimal human intervention. Run it on an `economy` tier by default, then escalate only when the routed stage recommends a higher tier. The other workflow skills are supporting stage executors that the orchestrator can route into, or that a human can invoke directly when they want to force a specific stage. Whether work is orchestrated or stage-specific, runs should continue until they reach a real terminal condition: waiting on human review / merge, blocked dependency, unresolved decision, or escalation.
 
-For fully autonomous PR fix loops, this template also supports a GitHub Actions runtime that launches Codex headlessly. Configure repository secret `OPENAI_API_KEY`; the workflow in `.github/workflows/autonomous-pr-review-loop.yml` will resume eligible PRs when Greptile submits a review.
-
 ### Maintenance Commands
 
 | Task | Claude Code | Cursor |
