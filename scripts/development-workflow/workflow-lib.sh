@@ -93,6 +93,7 @@ is_soft_suggestion() {
   local prefix
   local normalized_line
   local saw_content=0
+  local matched=0
 
   while IFS= read -r line; do
     normalized_line="${line%$'\r'}"
@@ -100,14 +101,15 @@ is_soft_suggestion() {
     [ -z "$normalized_line" ] && continue
     saw_content=1
 
+    matched=0
     while IFS= read -r prefix; do
       [ -z "$prefix" ] && continue
       case "$normalized_line" in
-        "$prefix"*) return 0 ;;
+        "$prefix"*) matched=1; break ;;
       esac
     done < <(soft_suggestion_prefixes)
 
-    return 1
+    [ "$matched" -eq 0 ] && return 1
   done <<< "$body"
 
   [ "$saw_content" -eq 1 ]
