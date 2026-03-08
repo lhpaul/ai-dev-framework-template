@@ -16,6 +16,7 @@ Before starting, read:
 - `docs/project/4-database-model.md` — data model (if applicable)
 - `docs/best-practices/` — all best practice docs
 - Relevant existing code — read actual files, don't assume structure
+- **Project documentation**: Scan `docs/` (e.g. `docs/project/`, `docs/best-practices/`, `AGENTS.md`, and any feature- or domain-specific docs) so the plan can explicitly list which of these need updates after implementation.
 - If an issue tracker exists for this item, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for `Plan Ready` expectations before planning.
 
 ---
@@ -60,7 +61,7 @@ For each layer affected, confirm what changes are needed:
 
 #### Documentation Updates
 
-- [ ] Which project docs need to be updated after implementation? (Note: docs are NOT updated during Plan Ready — only identified)
+- [ ] Which project docs in `docs/` need to be updated after implementation? Consider `docs/project/`, `docs/best-practices/`, `AGENTS.md`, and any feature-specific docs. (Note: docs are NOT updated during Plan Ready — only identified and listed in the plan.)
 
 ---
 
@@ -92,7 +93,7 @@ docs/specs/developments/[timestamp]_[feature-slug]/2_[feature-slug]_implementati
 - The implementation order must be logical and executable (no steps that require a later step to be done first)
 - Every change must reference an acceptance criterion from the spec
 - Seed data requirements must be explicit — what data, in which files, for which test scenarios
-- Do not plan documentation updates — only list them for the developer to execute
+- **Documentation**: Explicitly consider project documentation in `docs/`. The plan must list every doc in `docs/` (including `AGENTS.md` if relevant) that the developer must update after implementation, or state "None" only when the feature truly affects no project docs. Do not plan the doc edits — only list them for the developer to execute.
 
 ### Examples
 

@@ -53,6 +53,7 @@ Priority order:
 - [ ] All required sections from `docs/ai/development-workflow/templates/implementation-plan-template.md` are present
 - [ ] Complexity estimate is provided with rationale
 - [ ] Dependencies are declared
+- [ ] **Documentation**: The plan has explicitly considered project documentation in `docs/` and either lists required doc updates (with files and what to update) or states "None" with a brief justification
 
 ### 3. Specificity & Implementability
 
