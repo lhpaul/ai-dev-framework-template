@@ -103,7 +103,7 @@ is_soft_suggestion() {
     while IFS= read -r prefix; do
       [ -z "$prefix" ] && continue
       case "$normalized_line" in
-        "$prefix"*) continue 2 ;;
+        "$prefix"*) return 0 ;;
       esac
     done < <(soft_suggestion_prefixes)
 

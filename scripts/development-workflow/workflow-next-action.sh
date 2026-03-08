@@ -86,7 +86,11 @@ if [ -n "$pr_number" ]; then
 fi
 
 if [ -n "$branch_name" ]; then
-  pr_number="$(open_pr_number_for_branch "$branch_name" || true)"
+  if gh_available; then
+    pr_number="$(open_pr_number_for_branch "$branch_name")"
+  else
+    pr_number=""
+  fi
 
   print_kv TARGET "branch:$branch_name"
   print_kv BRANCH "$branch_name"
