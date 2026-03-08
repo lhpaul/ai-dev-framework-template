@@ -107,7 +107,7 @@ recent_trigger_comment="$(
           ((now - (.created_at | fromdateiso8601)) <= '"$max_wait"')
         )
       | {id, created_at}
-    '
+    ' \
   | jq -s 'sort_by(.created_at) | last // empty'
 )"
 
