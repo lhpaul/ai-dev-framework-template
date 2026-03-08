@@ -30,7 +30,7 @@ poll_interval=120
 max_wait=1200
 bot_login="greptile-apps[bot]"
 trigger_comment="@greptile review"
-trigger_author_login="${GITHUB_ACTOR:-}"
+trigger_author_login=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
