@@ -87,6 +87,10 @@ cd_workflow_repo_root
 
 repo="$(repo_slug)"
 
+if [ -z "$trigger_author_login" ]; then
+  trigger_author_login="$(gh api user --jq '.login')"
+fi
+
 if [ -z "$branch_name" ]; then
   branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"
 fi
@@ -142,8 +146,7 @@ fi
 
 if [ -z "$review_comment_id" ]; then
   review_window_start="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-  review_comment_url="$(gh pr comment "$pr_number" --body "$trigger_comment")"
-  review_comment_id="$(printf '%s\n' "$review_comment_url" | grep -oE '[0-9]+$')"
+  review_comment_id="$(gh api "repos/$repo/issues/$pr_number/comments" --method POST --field body="$trigger_comment" --jq '.id')"
 fi
 
 if [ -z "$review_comment_id" ]; then
