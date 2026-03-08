@@ -7,7 +7,7 @@ workflow_script_dir() {
 }
 
 workflow_repo_root() {
-  CDPATH= cd -- "$(workflow_script_dir)/.." && pwd
+  CDPATH= cd -- "$(workflow_script_dir)/../.." && pwd
 }
 
 cd_workflow_repo_root() {

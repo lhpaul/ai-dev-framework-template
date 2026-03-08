@@ -3,15 +3,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-# shellcheck source=scripts/workflow-lib.sh
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/workflow-next-action.sh --branch <branch>
-  ./scripts/workflow-next-action.sh --pr <number>
-  ./scripts/workflow-next-action.sh --development <path>
+  ./scripts/development-workflow/workflow-next-action.sh --branch <branch>
+  ./scripts/development-workflow/workflow-next-action.sh --pr <number>
+  ./scripts/development-workflow/workflow-next-action.sh --development <path>
 
 Classifies the next deterministic workflow action and prints stable key=value lines.
 EOF

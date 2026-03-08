@@ -41,9 +41,9 @@ Apply this label when **any** of the following is true:
 1. Push branch to remote
 2. Run the relevant reviewer-agent protocol **before** opening the PR (spec/plan/code review)
 3. Open PR
-4. Run `./scripts/pr-review-loop.sh <pr-number> --branch <branch>` when an automated review tool is configured
+4. Run `./scripts/development-workflow/pr-review-loop.sh <pr-number> --branch <branch>` when an automated review tool is configured
 5. If automated review reports blocking issues: apply fixes, push, and repeat Step 4
-6. Run `./scripts/pr-ci-loop.sh <pr-number>`
+6. Run `./scripts/development-workflow/pr-ci-loop.sh <pr-number>`
 7. If CI passes and automated review is clean (or not configured): apply `agent:ready-for-review`
 8. If CI fails: apply `agent:needs-fixes`, fix issues, push, and return to Step 4
 

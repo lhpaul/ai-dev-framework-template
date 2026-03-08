@@ -169,9 +169,9 @@ If no blocking human decision remains:
    - Title: `docs(spec): [feature-name]`
    - Body: summary of the feature, link to the spec file, list of open questions (if any)
 9. Resolve PR readiness to completion:
-   - Run `./scripts/pr-review-loop.sh <pr_number> --branch spec/[branch-slug]` when an automated review platform is configured
+   - Run `./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch spec/[branch-slug]` when an automated review platform is configured
    - If blocking comments exist, continue fixing them on the same branch until the loop is clean or escalates
-   - Run `./scripts/pr-ci-loop.sh <pr_number>`
+   - Run `./scripts/development-workflow/pr-ci-loop.sh <pr_number>`
    - Apply `agent:ready-for-review` only after CI is green and automated review is clean (or skipped)
 
 ---

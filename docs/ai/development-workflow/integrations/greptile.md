@@ -52,7 +52,7 @@ The orchestrator's Step 8 (Automated Reviewer Loop) requires platform-specific c
 When possible, call the repository helper instead of re-implementing the loop inline:
 
 ```bash
-./scripts/greptile-review-loop.sh <pr_number> --branch <branch_name>
+./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name>
 ```
 
 It encapsulates the trigger, polling, comment classification, and stable `RESULT=` output used by the orchestrator.

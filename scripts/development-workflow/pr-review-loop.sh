@@ -3,12 +3,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-# shellcheck source=scripts/workflow-lib.sh
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--poll-interval seconds] [--max-wait seconds]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--poll-interval seconds] [--max-wait seconds]
 
 Triggers an automated PR review, polls for completion, classifies findings, and reports a stable result.
 Outputs stable key=value lines and exits with:

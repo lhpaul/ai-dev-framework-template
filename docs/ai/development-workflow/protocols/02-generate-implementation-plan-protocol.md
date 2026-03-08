@@ -139,9 +139,9 @@ If no blocking human decision remains:
    - Title: `docs(plan): [feature-name]`
    - Body: summary of the approach, complexity estimate, key risks, link to plan and runbook
 10. Resolve PR readiness to completion:
-   - Run `./scripts/pr-review-loop.sh <pr_number> --branch implementation-plan/[branch-slug]` when an automated review platform is configured
+   - Run `./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch implementation-plan/[branch-slug]` when an automated review platform is configured
    - If blocking comments exist, continue fixing them on the same branch until the loop is clean or escalates
-   - Run `./scripts/pr-ci-loop.sh <pr_number>`
+   - Run `./scripts/development-workflow/pr-ci-loop.sh <pr_number>`
    - Apply `agent:ready-for-review` only after CI is green and automated review is clean (or skipped)
 
 ---

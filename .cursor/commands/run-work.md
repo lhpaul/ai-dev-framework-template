@@ -15,5 +15,5 @@ Key responsibilities:
 - Respect dependencies declared in specs
 - Prioritize: due within 2 weeks → priority level → creation date
 - Flag conflicts to the human rather than choosing silently
-- Use the helper scripts in `scripts/` to inspect state, resume partial work, poll automated review, and poll CI
+- Use the helper scripts in `scripts/development-workflow/` to inspect state, resume partial work, poll automated review, and poll CI
 - Report a summary of what was started, what is ready for review, and what is blocked

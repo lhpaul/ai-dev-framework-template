@@ -95,12 +95,14 @@ The setup agent will have a structured conversation with you to understand your 
 │   └── skills/                           # Codex skills that wrap the workflow protocols and ship UI metadata
 │
 ├── scripts/
-│   ├── discover-workflow-state.sh       # Summarizes branches, worktrees, development folders, and open PRs
-│   ├── check-workflow-branch.sh         # Checks whether a workflow branch already exists
-│   ├── greptile-review-loop.sh          # Polls Greptile PR review until clean / fix / escalate
-│   ├── pr-ci-loop.sh                    # Polls CI checks until green / red / timeout
-│   ├── workflow-next-action.sh          # Classifies the next deterministic workflow action
-│   └── install-codex-skills.sh          # (Codex only) Installs repo skills into your local Codex config
+│   ├── development-workflow/            # AI workflow helpers (orchestrator, PR/CI loops, state discovery)
+│   │   ├── discover-workflow-state.sh   # Summarizes branches, worktrees, development folders, and open PRs
+│   │   ├── check-workflow-branch.sh     # Checks whether a workflow branch already exists
+│   │   ├── pr-review-loop.sh      # Polls Greptile PR review until clean / fix / escalate
+│   │   ├── pr-ci-loop.sh                # Polls CI checks until green / red / timeout
+│   │   ├── workflow-next-action.sh      # Classifies the next deterministic workflow action
+│   │   └── install-codex-skills.sh      # (Codex only) Installs repo skills into your local Codex config
+│   └── README.md                        # Points to development-workflow; add your own scripts here
 │
 ├── .claude/
 │   └── agents/                           # Claude Code subagent definitions
@@ -190,7 +192,7 @@ Example commands:
 ```
 
 ### Codex
-- Install the bundled skills with `./scripts/install-codex-skills.sh`
+- Install the bundled skills with `./scripts/development-workflow/install-codex-skills.sh`
 - Start with `workflow-orchestrator` as the default entrypoint for the workflow
 - Run `workflow-orchestrator` on an `economy` tier by default; only escalate when the stage-specific skill recommends it
 - Use the other skills in `.codex/skills/` when you want to run a specific stage directly
@@ -265,9 +267,9 @@ Framework-level paths to propagate:
 - `.codex/skills/`
 - `.cursor/rules/`
 - `.cursor/commands/`
-- `scripts/install-codex-skills.sh`
-- `scripts/discover-workflow-state.sh`
-- `scripts/check-workflow-branch.sh`
+- `scripts/development-workflow/install-codex-skills.sh`
+- `scripts/development-workflow/discover-workflow-state.sh`
+- `scripts/development-workflow/check-workflow-branch.sh`
 - `docs/best-practices/1-general.md`
 - `docs/best-practices/2-version-control.md`
 - `docs/best-practices/3-testing.md`

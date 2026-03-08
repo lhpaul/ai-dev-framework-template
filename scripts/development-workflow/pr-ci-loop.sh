@@ -3,12 +3,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-# shellcheck source=scripts/workflow-lib.sh
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/pr-ci-loop.sh <pr-number> [--poll-interval seconds] [--max-wait seconds]
+Usage: ./scripts/development-workflow/pr-ci-loop.sh <pr-number> [--poll-interval seconds] [--max-wait seconds]
 
 Polls GitHub required status checks for a PR until they are green, failing, or timed out.
 Outputs stable key=value lines and exits with:

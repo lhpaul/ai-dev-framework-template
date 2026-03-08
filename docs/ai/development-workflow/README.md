@@ -89,7 +89,7 @@ The **Spec Ready** stage is intentionally **product-focused**: it defines what t
 | Review Code | `code-reviewer` agent | `/review-code` | `workflow-code-reviewer` skill | `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md` |
 | Orchestrate | `orchestrator` agent | `/run-work` | `workflow-orchestrator` skill | `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
 
-Codex skills are stored in `.codex/skills/` and can be installed into the local Codex environment with `./scripts/install-codex-skills.sh`. They are intentionally thin wrappers over the same protocol files used by every other tool.
+Codex skills are stored in `.codex/skills/` and can be installed into the local Codex environment with `./scripts/development-workflow/install-codex-skills.sh`. They are intentionally thin wrappers over the same protocol files used by every other tool.
 
 For low-human-interaction operation in Codex, treat `workflow-orchestrator` as the default entrypoint. It inspects workflow state, chooses the next eligible action, and keeps progressing until the item is waiting on a human, blocked, or escalated. The stage-specific skills remain available for direct use, but when invoked directly they should still continue through reviewer gate and PR readiness before returning.
 
@@ -241,10 +241,10 @@ If an automated code review platform is configured, the orchestrator runs an aut
 
 Repository helpers:
 
-- `scripts/discover-workflow-state.sh`
-- `scripts/greptile-review-loop.sh`
-- `scripts/pr-ci-loop.sh`
-- `scripts/workflow-next-action.sh`
+- `scripts/development-workflow/discover-workflow-state.sh`
+- `scripts/development-workflow/pr-review-loop.sh`
+- `scripts/development-workflow/pr-ci-loop.sh`
+- `scripts/development-workflow/workflow-next-action.sh`
 See [`integrations/pr-review-platform.md`](integrations/pr-review-platform.md) for platform-agnostic requirements and loop details.
 See [`integrations/greptile.md`](integrations/greptile.md) for setup with Greptile.
 

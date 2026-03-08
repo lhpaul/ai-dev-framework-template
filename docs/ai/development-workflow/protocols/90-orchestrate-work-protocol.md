@@ -37,7 +37,7 @@ These are **not** terminal conditions and must not stop the run:
 
 ## Step 1: Gather State
 
-When running inside Codex with the repository skills installed, prefer the helper scripts in `scripts/` for deterministic state inspection before falling back to ad hoc shell commands.
+When running inside Codex with the repository skills installed, prefer the helper scripts in `scripts/development-workflow/` for deterministic state inspection before falling back to ad hoc shell commands.
 
 Read from the following sources (in priority order):
 
@@ -48,7 +48,7 @@ Read from the following sources (in priority order):
 If available, run:
 
 ```bash
-./scripts/discover-workflow-state.sh
+./scripts/development-workflow/discover-workflow-state.sh
 ```
 
 to collect the current branch, relevant local/remote branches, worktrees, development folders, and open PRs in one pass.
@@ -56,9 +56,9 @@ to collect the current branch, relevant local/remote branches, worktrees, develo
 Use these helpers while gathering state:
 
 ```bash
-./scripts/workflow-next-action.sh --development <path>
-./scripts/workflow-next-action.sh --branch <branch>
-./scripts/workflow-next-action.sh --pr <number>
+./scripts/development-workflow/workflow-next-action.sh --development <path>
+./scripts/development-workflow/workflow-next-action.sh --branch <branch>
+./scripts/development-workflow/workflow-next-action.sh --pr <number>
 ```
 
 Build a mental map of:
@@ -116,7 +116,7 @@ git worktree list | grep "<branch-prefix>/<slug>"
 If any check returns a match: **do not re-dispatch**. Instead, resume from the existing branch or PR using:
 
 ```bash
-./scripts/workflow-resume.sh --branch <branch>
+./scripts/development-workflow/workflow-next-action.sh --branch <branch>
 ```
 
 ### Dependency check
@@ -185,9 +185,9 @@ If only one item is eligible, or if items must be sequenced, run them one at a t
 After any subagent finishes, immediately determine whether the item still has a deterministic next action:
 
 ```bash
-./scripts/workflow-resume.sh --branch <branch>
-./scripts/workflow-resume.sh --pr <number>
-./scripts/workflow-resume.sh --development <path>
+./scripts/development-workflow/workflow-next-action.sh --branch <branch>
+./scripts/development-workflow/workflow-next-action.sh --pr <number>
+./scripts/development-workflow/workflow-next-action.sh --development <path>
 ```
 
 Expected chain:
@@ -231,7 +231,7 @@ Initialize `cycle = 0` once per orchestration run for the PR. Increment `cycle` 
 Prefer the helper script:
 
 ```bash
-./scripts/pr-review-loop.sh <pr_number> --branch <branch_name>
+./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name>
 ```
 
 Interpret the result as follows:
@@ -269,7 +269,7 @@ After Step 7 is clean or skipped, wait for required checks to settle.
 Prefer the helper script:
 
 ```bash
-./scripts/pr-ci-loop.sh <pr_number>
+./scripts/development-workflow/pr-ci-loop.sh <pr_number>
 ```
 
 Interpret the result as follows:

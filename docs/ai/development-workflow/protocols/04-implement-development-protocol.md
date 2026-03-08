@@ -145,7 +145,7 @@ Open a PR targeting `develop` with:
 
 If an automated PR review tool is enabled (see `docs/ai/development-workflow/integrations/`):
 
-1. Run `./scripts/pr-review-loop.sh <pr_number> --branch feature/[slug]` (or the matching `fix/` / `hotfix/` branch)
+1. Run `./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch feature/[slug]` (or the matching `fix/` / `hotfix/` branch)
 2. If the result is `needs_fixes`, apply the fixes, push, and run the loop again
 3. If the result is `clean`, continue immediately to Step 12
 4. If the result is `escalate`, stop and report the latest blocking issues to the human
@@ -153,7 +153,7 @@ If an automated PR review tool is enabled (see `docs/ai/development-workflow/int
 
 ### Step 12: PR Readiness Signal
 
-Run `./scripts/pr-ci-loop.sh <pr_number>` and apply `agent:ready-for-review` only when:
+Run `./scripts/development-workflow/pr-ci-loop.sh <pr_number>` and apply `agent:ready-for-review` only when:
 - CI checks are green
 - Automated review has no blocking issues (or is not configured)
 
