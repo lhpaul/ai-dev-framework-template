@@ -65,6 +65,7 @@ if [ -n "$pr_number" ]; then
   labels="$(printf '%s\n' "$pr_json" | jq -r '[.labels[].name] | join(",")')"
 
   print_kv TARGET "pr:$pr_number"
+  print_kv PR_NUMBER "$pr_number"
   print_kv BRANCH "$branch_name"
   print_kv REVIEW_AGENT "$(reviewer_for_branch "$branch_name")"
 

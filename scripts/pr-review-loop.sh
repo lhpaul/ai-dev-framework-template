@@ -146,6 +146,9 @@ if [ -z "$review_comment_id" ]; then
   exit 65
 fi
 
+blocking_lines_file="$(mktemp)"
+trap 'rm -f "$blocking_lines_file"' EXIT
+
 elapsed=0
 
 while :; do
@@ -208,12 +211,9 @@ blocking_reviews="$(
 blocking_count=0
 suggestion_count=0
 comment_count=0
-blocking_lines=()
 
 while IFS= read -r comment_json; do
   [ -z "${comment_json:-}" ] && continue
-  path="$(printf '%s\n' "$comment_json" | jq -r '.path')"
-  line="$(printf '%s\n' "$comment_json" | jq -r '.line')"
   body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
   [ -z "$body" ] && continue
   comment_count=$((comment_count + 1))
@@ -223,7 +223,7 @@ while IFS= read -r comment_json; do
   fi
 
   blocking_count=$((blocking_count + 1))
-  blocking_lines+=("$comment_json")
+  printf '%s\n' "$comment_json" >> "$blocking_lines_file"
 done <<< "$comments"
 
 while IFS= read -r review_json; do
@@ -232,7 +232,7 @@ while IFS= read -r review_json; do
   [ -z "$body" ] && continue
   comment_count=$((comment_count + 1))
   blocking_count=$((blocking_count + 1))
-  blocking_lines+=("$review_json")
+  printf '%s\n' "$review_json" >> "$blocking_lines_file"
 done <<< "$blocking_reviews"
 
 if [ "$blocking_count" -gt 0 ]; then
@@ -246,12 +246,13 @@ if [ "$blocking_count" -gt 0 ]; then
   print_kv BLOCKING_COUNT "$blocking_count"
   print_kv SUGGESTION_COUNT "$suggestion_count"
   index=1
-  for blocking_json in "${blocking_lines[@]}"; do
+  while IFS= read -r blocking_json; do
+    [ -z "${blocking_json:-}" ] && continue
     print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
     print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
     print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
     index=$((index + 1))
-  done
+  done < "$blocking_lines_file"
   exit 1
 fi
 
