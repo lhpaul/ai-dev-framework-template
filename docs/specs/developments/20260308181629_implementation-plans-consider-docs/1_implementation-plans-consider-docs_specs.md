@@ -93,8 +93,3 @@ Implementation plans produced in the Plan Ready stage often omit or under-specif
 - Automating the actual editing of docs; the feature only requires that plans list what to update so the implementer can do it.
 - Adding or changing UI for plan authoring or review; workflow and protocol changes only.
 
----
-
-## Open Questions
-
-None at spec time. Any protocol or template wording changes are left to the implementation plan stage.
