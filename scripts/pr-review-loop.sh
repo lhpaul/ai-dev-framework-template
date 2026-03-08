@@ -100,18 +100,15 @@ review_window_start=""
 recent_trigger_comment="$(
   gh api "repos/$repo/issues/$pr_number/comments" --paginate \
     --jq '
-      [
-        .[]
-        | select(
-            .user.login == "'"$trigger_author_login"'" and
-            .body == "'"$trigger_comment"'" and
-            ((now - (.created_at | fromdateiso8601)) <= '"$max_wait"')
-          )
-        | {id, created_at}
-      ]
-      | sort_by(.created_at)
-      | last // empty
+      .[]
+      | select(
+          .user.login == "'"$trigger_author_login"'" and
+          .body == "'"$trigger_comment"'" and
+          ((now - (.created_at | fromdateiso8601)) <= '"$max_wait"')
+        )
+      | {id, created_at}
     '
+  | jq -s 'sort_by(.created_at) | last // empty'
 )"
 
 if [ -n "$recent_trigger_comment" ]; then

@@ -159,7 +159,7 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   } >> "$GITHUB_STEP_SUMMARY"
 fi
 
-printenv OPENAI_API_KEY | codex login --with-api-key >/dev/null
+printf '%s' "${OPENAI_API_KEY}" | codex login --with-api-key >/dev/null
 
 codex exec \
   --dangerously-bypass-approvals-and-sandbox \
