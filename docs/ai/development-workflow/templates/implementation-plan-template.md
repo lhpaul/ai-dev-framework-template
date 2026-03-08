@@ -72,10 +72,11 @@
 
 ## Documentation Updates
 
-> List docs that need to be updated after implementation. These are NOT performed during Plan Ready.
+> Consider project documentation in `docs/`: `docs/project/`, `docs/best-practices/`, `AGENTS.md`, and any feature- or domain-specific docs. List each file that the developer must update after implementation and what to change. Use "None" only when the feature truly affects no project docs. These updates are NOT performed during Plan Ready — only listed here for the developer to execute.
 
 - [ ] `docs/project/[file].md` — [what to update]
-- [ ] `AGENTS.md` — [if project overview needs updating]
+- [ ] `AGENTS.md` — [if project overview, commands, or conventions need updating]
+- [ ] *(or "None" with brief justification if no project docs are affected)*
 
 ---
 
@@ -98,4 +99,5 @@
 5. [Step 5: e.g., wire up routing]
 6. [Step 6: e.g., update seed data]
 7. [Step 7: e.g., verify smoke test runbook]
-8. [Step 8: e.g., update CHANGELOG]
+8. [Step 8: Update project docs per **Documentation Updates** section above (if any)]
+9. [Step 9: e.g., update CHANGELOG]
