@@ -1,7 +1,6 @@
 # Implementation Plans Consider Project Documentation — Spec
 
 **Status**: Spec Ready
-**Depends on**: (none)
 
 ---
 
