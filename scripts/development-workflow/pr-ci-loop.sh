@@ -66,6 +66,7 @@ cd_workflow_repo_root
 
 elapsed=0
 repo="$(repo_slug)"
+min_no_checks_wait=$((poll_interval * 2))
 
 while :; do
   checks_json="$(gh pr view "$pr_number" --json statusCheckRollup)"
@@ -144,7 +145,7 @@ while :; do
   fi
 
   if [ "$pending_count" -eq 0 ]; then
-    if [ "$total_check_count" -eq 0 ] && [ "$elapsed" -lt "$poll_interval" ]; then
+    if [ "$total_check_count" -eq 0 ] && [ "$elapsed" -lt "$min_no_checks_wait" ]; then
       sleep "$poll_interval"
       elapsed=$((elapsed + poll_interval))
       continue
