@@ -32,6 +32,7 @@ jobs:
       pull-requests: write
     env:
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       CODEX_MODEL: gpt-5.4
       CODEX_REASONING_EFFORT: medium
@@ -61,7 +62,7 @@ jobs:
         id: head
         if: steps.check_key.outputs.skip != 'true'
         run: |
-          head_ref="$(gh pr view "${{ steps.pr.outputs.pr_number }}" --json headRefName --jq '.headRefName')"
+          head_ref="$(gh pr view "${{ steps.pr.outputs.pr_number }}" --repo "$GH_REPO" --json headRefName --jq '.headRefName')"
           echo "head_ref=$head_ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout PR branch
