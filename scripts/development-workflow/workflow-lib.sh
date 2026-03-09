@@ -98,6 +98,8 @@ is_soft_suggestion() {
   while IFS= read -r line; do
     normalized_line="${line%$'\r'}"
     normalized_line="${normalized_line#"${normalized_line%%[![:space:]]*}"}"
+    normalized_line="${normalized_line#'**'}"
+    normalized_line="${normalized_line%'**'}"
     [ -z "$normalized_line" ] && continue
     saw_content=1
 

@@ -144,7 +144,7 @@ if [ -z "$spec_file" ]; then
   exit 66
 fi
 
-if ! status_line="$(grep -m 1 '^\*\*Status\*\*: ' "$spec_file" | sed 's/^\*\*Status\*\*: //')"; then
+if ! status_line="$(grep -m 1 '^\*\*Status\*\*: ' "$spec_file" | sed 's/^\*\*Status\*\*: //' | tr -d '\r')"; then
   echo "No **Status**: line found in $spec_file" >&2
   exit 66
 fi
