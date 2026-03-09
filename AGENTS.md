@@ -74,9 +74,10 @@ For normal Codex usage, start with `workflow-orchestrator`. It is the primary en
 
 ### Maintenance Commands
 
-| Task | Claude Code | Cursor |
-|---|---|---|
-| Sync framework updates from template | `/sync-template` | `/sync-template` |
+| Task | Claude Code | Cursor | Codex |
+|---|---|---|---|
+| Sync framework updates from template | `/sync-template` | `/sync-template` | — |
+| Post-merge cleanup (fetch, develop, pull, delete local branch) | `/post-merge-cleanup` | `/post-merge-cleanup` | `post-merge-cleanup` skill |
 
 ---
 
