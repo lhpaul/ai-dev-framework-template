@@ -68,9 +68,7 @@ After each push, record the timestamp and capture the comment ID (needed for Ste
 ```bash
 last_push_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-review_comment_url=$(gh pr comment <pr_number> --body "@greptile review")
-# Extract numeric comment ID from the URL (e.g. https://github.com/.../pull/18#issuecomment-12345678)
-review_comment_id=$(echo "$review_comment_url" | grep -oE '[0-9]+$')
+review_comment_id="$(gh api \"repos/{owner}/{repo}/issues/<pr_number>/comments\" --method POST --field body=\"@greptile review\" --jq '.id')"
 ```
 
 ### Step 8.2 — Detect review completion
@@ -80,7 +78,7 @@ Greptile signals that it has **finished** reviewing by adding a 👍 reaction to
 ```bash
 # Poll until Greptile reacts with 👍 on the trigger comment
 thumbs_up=$(gh api repos/{owner}/{repo}/issues/comments/{review_comment_id}/reactions \
-  --jq "[.[] | select(.content == \"+1\")] | length")
+  --jq "[.[] | select(.content == \"+1\" and .user.login == \"greptile-apps[bot]\")] | length")
 ```
 
 | Result | Action |

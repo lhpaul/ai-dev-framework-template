@@ -30,12 +30,7 @@ require_gh() {
 }
 
 repo_slug() {
-  local remote_url
-  remote_url="$(git remote get-url origin)"
-  remote_url="${remote_url#git@github.com:}"
-  remote_url="${remote_url#https://github.com/}"
-  remote_url="${remote_url%.git}"
-  printf '%s\n' "$remote_url"
+  gh repo view --json nameWithOwner --jq '.nameWithOwner'
 }
 
 branch_prefix() {
@@ -93,21 +88,33 @@ is_soft_suggestion() {
   local prefix
   local normalized_line
   local saw_content=0
+  local matched=0
+  local in_code_block=0
 
   while IFS= read -r line; do
     normalized_line="${line%$'\r'}"
     normalized_line="${normalized_line#"${normalized_line%%[![:space:]]*}"}"
+    normalized_line="${normalized_line#'**'}"
+    normalized_line="${normalized_line%'**'}"
     [ -z "$normalized_line" ] && continue
+    case "$normalized_line" in
+      '```'*)
+        in_code_block=$((1 - in_code_block))
+        continue
+        ;;
+    esac
+    [ "$in_code_block" -eq 1 ] && continue
     saw_content=1
 
+    matched=0
     while IFS= read -r prefix; do
       [ -z "$prefix" ] && continue
       case "$normalized_line" in
-        "$prefix"*) continue 2 ;;
+        "$prefix"*) matched=1; break ;;
       esac
     done < <(soft_suggestion_prefixes)
 
-    return 1
+    [ "$matched" -eq 0 ] && return 1
   done <<< "$body"
 
   [ "$saw_content" -eq 1 ]
