@@ -129,7 +129,7 @@ fi
 
 if [ -z "$review_comment_id" ]; then
   review_window_start="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-  review_comment_id="$(gh api "repos/$repo/issues/$pr_number/comments" --method POST --field body="$trigger_comment" --jq '.id')"
+  review_comment_id="$(gh api "repos/$repo/issues/$pr_number/comments" --method POST --raw-field body="$trigger_comment" --jq '.id')"
 fi
 
 if [ -z "$review_comment_id" ]; then
