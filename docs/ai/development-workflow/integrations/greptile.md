@@ -78,7 +78,7 @@ Greptile signals that it has **finished** reviewing by adding a 👍 reaction to
 ```bash
 # Poll until Greptile reacts with 👍 on the trigger comment
 thumbs_up=$(gh api repos/{owner}/{repo}/issues/comments/{review_comment_id}/reactions \
-  --jq "[.[] | select(.content == \"+1\")] | length")
+  --jq "[.[] | select(.content == \"+1\" and .user.login == \"greptile-apps[bot]\")] | length")
 ```
 
 | Result | Action |

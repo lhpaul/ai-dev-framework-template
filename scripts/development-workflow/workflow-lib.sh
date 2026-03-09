@@ -30,12 +30,7 @@ require_gh() {
 }
 
 repo_slug() {
-  local remote_url
-  remote_url="$(git remote get-url origin)"
-  remote_url="${remote_url#git@github.com:}"
-  remote_url="${remote_url#https://github.com/}"
-  remote_url="${remote_url%.git}"
-  printf '%s\n' "$remote_url"
+  gh repo view --json nameWithOwner --jq '.nameWithOwner'
 }
 
 branch_prefix() {
