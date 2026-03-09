@@ -138,11 +138,16 @@ if [ ! -d "$development_path" ]; then
   exit 66
 fi
 
-spec_file="$(find "$development_path" -maxdepth 1 -type f -name '1_*_specs.md' -print -quit)"
-if [ -z "$spec_file" ]; then
+spec_files=("$development_path"/1_*_specs.md)
+if [ "${#spec_files[@]}" -eq 0 ] || [ ! -f "${spec_files[0]}" ]; then
   echo "No spec file found in $development_path" >&2
   exit 66
 fi
+if [ "${#spec_files[@]}" -gt 1 ]; then
+  echo "Multiple spec files found in $development_path; cannot determine which to use" >&2
+  exit 66
+fi
+spec_file="${spec_files[0]}"
 
 if ! status_line="$(grep -m 1 '^\*\*Status\*\*: ' "$spec_file" | sed 's/^\*\*Status\*\*: //' | tr -d '\r')"; then
   echo "No **Status**: line found in $spec_file" >&2

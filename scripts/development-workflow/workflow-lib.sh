@@ -89,6 +89,7 @@ is_soft_suggestion() {
   local normalized_line
   local saw_content=0
   local matched=0
+  local in_code_block=0
 
   while IFS= read -r line; do
     normalized_line="${line%$'\r'}"
@@ -96,6 +97,13 @@ is_soft_suggestion() {
     normalized_line="${normalized_line#'**'}"
     normalized_line="${normalized_line%'**'}"
     [ -z "$normalized_line" ] && continue
+    case "$normalized_line" in
+      '```'*)
+        in_code_block=$((1 - in_code_block))
+        continue
+        ;;
+    esac
+    [ "$in_code_block" -eq 1 ] && continue
     saw_content=1
 
     matched=0
