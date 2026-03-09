@@ -97,39 +97,22 @@ fi
 
 review_comment_id=""
 review_window_start=""
-if [ -n "$trigger_author_login" ]; then
-  recent_trigger_comment="$(
-    gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-      | jq --arg author "$trigger_author_login" \
-          --arg trigger "$trigger_comment" \
-          --argjson max_wait "$max_wait" \
-          '
-            .[]
-            | select(
-                .user.login == $author and
-                .body == $trigger and
-                ((now - (.created_at | fromdateiso8601)) <= $max_wait)
-              )
-            | {id, created_at}
-          ' \
-      | jq -s 'sort_by(.created_at) | last // empty'
-  )"
-else
-  recent_trigger_comment="$(
-    gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-      | jq --arg trigger "$trigger_comment" \
-          --argjson max_wait "$max_wait" \
-          '
-            .[]
-            | select(
-                .body == $trigger and
-                ((now - (.created_at | fromdateiso8601)) <= $max_wait)
-              )
-            | {id, created_at}
-          ' \
-      | jq -s 'sort_by(.created_at) | last // empty'
-  )"
-fi
+recent_trigger_comment="$(
+  gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+    | jq --arg author "$trigger_author_login" \
+        --arg trigger "$trigger_comment" \
+        --argjson max_wait "$max_wait" \
+        '
+          .[]
+          | select(
+              .user.login == $author and
+              .body == $trigger and
+              ((now - (.created_at | fromdateiso8601)) <= $max_wait)
+            )
+          | {id, created_at}
+        ' \
+    | jq -s 'sort_by(.created_at) | last // empty'
+)"
 
 if [ -n "$recent_trigger_comment" ]; then
   review_comment_id="$(printf '%s\n' "$recent_trigger_comment" | jq -r '.id')"
