@@ -169,7 +169,7 @@ done
 
 comments="$(
   gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
-    | jq --arg bot "$bot_login" --arg since "$review_window_start" '
+    | jq -r --arg bot "$bot_login" --arg since "$review_window_start" '
       .[]
       | select(.user.login == $bot and .created_at > $since)
       | {
@@ -183,7 +183,7 @@ comments="$(
 
 blocking_reviews="$(
   gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-    | jq --arg bot "$bot_login" --arg since "$review_window_start" '
+    | jq -r --arg bot "$bot_login" --arg since "$review_window_start" '
       .[]
       | select(
           .user.login == $bot and
