@@ -68,7 +68,7 @@ After each push, record the timestamp and capture the comment ID (needed for Ste
 ```bash
 last_push_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-review_comment_id="$(gh api \"repos/{owner}/{repo}/issues/<pr_number>/comments\" --method POST --field body=\"@greptile review\" --jq '.id')"
+review_comment_id="$(gh api \"repos/{owner}/{repo}/issues/<pr_number>/comments\" --method POST --raw-field body=\"@greptile review\" --jq '.id')"
 ```
 
 ### Step 8.2 — Detect review completion
