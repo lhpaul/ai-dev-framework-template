@@ -46,7 +46,7 @@ Priority order:
 - [ ] Every use case in the spec has a corresponding implementation step
 - [ ] Every acceptance criterion in the spec is addressed somewhere in the plan
 - [ ] No changes planned that are not motivated by the spec (no unrelated refactoring)
-- [ ] When the issue tracker is the source of truth, the issue status is `Plan Ready`; otherwise or optionally, the spec status has been updated to `Plan Ready`
+- [ ] When the issue tracker is the source of truth, the issue status is `Plan Ready`. The spec file's status field is optional and need not be updated.
 
 ### 2. Template Completeness
 

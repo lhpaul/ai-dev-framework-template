@@ -173,7 +173,7 @@ if [ -z "${WORKFLOW_SKIP_FETCH:-}" ]; then
 fi
 # Only feature/ is checked; development folders are Full Pipeline only (fix/ and hotfix/ don't use this path).
 if [ -n "$slug" ]; then
-  if git show-ref -q "refs/remotes/origin/feature/$slug" 2>/dev/null; then
+  if git show-ref --verify -q "refs/remotes/origin/feature/$slug" 2>/dev/null; then
     feature_branch_exists=1
   else
     # Linear: feature/[issue-id]-[slug] (e.g. feature/ENG-123-user-auth); folder may be [timestamp]_[slug] only
