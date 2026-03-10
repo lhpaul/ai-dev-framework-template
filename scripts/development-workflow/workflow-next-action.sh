@@ -157,8 +157,18 @@ for f in "$development_path"/2_*_implementation-plan.md; do
 done
 feature_branch_exists=0
 git fetch --prune origin 2>/dev/null || true
-if [ -n "$slug" ] && git show-ref -q "refs/remotes/origin/feature/$slug" 2>/dev/null; then
-  feature_branch_exists=1
+if [ -n "$slug" ]; then
+  if git show-ref -q "refs/remotes/origin/feature/$slug" 2>/dev/null; then
+    feature_branch_exists=1
+  else
+    # Linear: feature/[issue-id]-[slug] (e.g. feature/ENG-123-user-auth); folder may be [timestamp]_[slug] only
+    for ref in $(git show-ref 2>/dev/null | sed -n 's|.*refs/remotes/origin/feature/||p'); do
+      if [ "$ref" = "$slug" ] || [ "${ref%-$slug}" != "$ref" ]; then
+        feature_branch_exists=1
+        break
+      fi
+    done
+  fi
 fi
 
 # NOTE: This logic cannot distinguish "branch not yet created" from "branch merged and cleaned up".
