@@ -62,9 +62,10 @@ git checkout -b feature/[branch-slug]
 
 ### Step 4: Mark Status
 
-Update the spec file's status field from `Plan Ready` to `In Development`.
+- **When the issue tracker is the source of truth**: update the issue status to `In Development`; optionally update the spec file's status field for backwards compatibility.
+- The spec file's **Status** field is optional and need not be set (workflow status is derived from the tracker or repo state).
 
-Commit: `docs: mark [feature-name] as In Development`
+If the spec file's status field was updated, commit: `docs: mark [feature-name] as In Development`
 
 ### Step 5: Implement
 

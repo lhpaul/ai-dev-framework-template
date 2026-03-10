@@ -42,7 +42,7 @@ Prefer the helper scripts in `scripts/development-workflow/` for deterministic s
 Read from the following sources (in priority order):
 
 1. **Issue tracker** (if configured): current status of all issues and the latest brief. See [`integrations/`](../integrations/) for tracker-specific setup and [`integrations/issue-tracker.md`](../integrations/issue-tracker.md) for tracker-agnostic rules.
-2. **Development folders**: `docs/specs/developments/` — read the status field of each spec to determine the current stage
+2. **Development folders**: `docs/specs/developments/` — use `workflow-next-action.sh --development <path>` (or the issue tracker when it is the source of truth) to determine the current stage; the spec file's status field is optional when the tracker is used
 3. **Open PRs**: `git branch -r` and/or the repository's PR list — which branches are open, their labels, and CI status
 
 If available, run:
@@ -226,7 +226,11 @@ After all currently eligible work has reached a terminal condition, provide a cl
 
 If an automated code review platform is configured (see [`integrations/pr-review-platform.md`](../integrations/pr-review-platform.md)), run this loop after **any push to a PR branch**. If no review platform is configured, skip this step and report `⏭️ skipped` in the Step 6 summary.
 
+**Standalone use:** This step (and Step 8) can be run for a single PR without full orchestration — see [`92-automated-reviewer-loop-protocol.md`](92-automated-reviewer-loop-protocol.md) and the `/run-reviewer-loop` command (Cursor) or `automated-reviewer-loop` agent (Claude Code) or `workflow-reviewer-loop` skill (Codex).
+
 **Important:** Run Step 7 **to completion** and use its result before running Step 8. Do not run Step 7 in the background while proceeding to Step 8. The review loop can take several minutes (poll interval × wait for bot). Only when the script exits with `clean` or `skipped` may you continue to Step 8.
+
+The helper script checks for **existing** blocking findings from the bot (e.g. from a review that already ran on PR open) before posting a new trigger. If it finds any, it exits with `needs_fixes` without triggering — so the fixer addresses them first; after a push, the next run triggers a fresh review. This avoids starting a new review while ignoring issues already raised.
 
 Initialize `cycle = 0` once per orchestration run for the PR. Increment `cycle` each time a fixer agent is dispatched. Do not reset `cycle` after a fixer push; escalate when the run reaches `max_cycles`.
 

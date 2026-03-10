@@ -40,7 +40,7 @@ Priority order:
 ### 1. Template Compliance
 
 - [ ] All required sections from `docs/ai/development-workflow/templates/spec-template.md` are present
-- [ ] Status field is correct (`Spec Ready`)
+- [ ] Status field, if present, is correct (`Spec Ready`). It may be omitted in all cases; workflow status is then taken from the issue tracker or from repo state (see `integrations/linear.md` and `workflow-next-action.sh`).
 - [ ] No placeholder text left unfilled (unless explicitly marked as Open Question)
 
 ### 2. Completeness & Clarity

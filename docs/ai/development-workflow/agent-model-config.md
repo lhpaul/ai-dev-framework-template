@@ -27,6 +27,7 @@ If you prefer different names (`small/medium/large`, `fast/standard/pro`, etc.),
 | Agent | Tier | Rationale |
 |---|---|---|
 | `orchestrator` | `economy` | Reads state and dispatches subagents — mechanical work that needs to be fast and cheap. No deep reasoning required. |
+| `automated-reviewer-loop` | `economy` | Runs review + CI loop for a PR; mechanical coordination like orchestrator, no deep reasoning required. |
 | `product-manager` | `balanced` | Spec writing requires creativity and structured thinking, but the spec template provides strong scaffolding. A balanced model handles this well at a reasonable cost. |
 | `spec-reviewer` | `balanced` | Review against a checklist. A balanced model is well within the capability required. |
 | `tech-lead` | `premium` | Architecture decisions and implementation planning are the highest-reasoning tasks in the workflow. A weak plan is expensive to fix downstream — this is where a premium model pays for itself. |
@@ -54,6 +55,16 @@ The goal here is **optionality**: for each agent, pick one model you can access 
 These examples are **current as of 2026-02-24** (model names/IDs change often). Prefer verifying against each provider’s “list models” docs/API.
 
 ### `orchestrator` (`economy`)
+
+- OpenAI: `gpt-5-nano`, `gpt-5-mini`
+- Anthropic: Claude Haiku (latest)
+- Google: Gemini Flash-Lite (latest)
+- Alibaba (Qwen): `qwen-flash`, `qwen-turbo`
+- DeepSeek: `deepseek-v3`
+- Baidu (ERNIE): `ernie-x1-turbo-32k`, `ernie-4.5-turbo-128k-preview`
+- Tencent (Hunyuan): Hunyuan Lite / Turbo (latest)
+
+### `automated-reviewer-loop` (`economy`)
 
 - OpenAI: `gpt-5-nano`, `gpt-5-mini`
 - Anthropic: Claude Haiku (latest)
@@ -151,6 +162,7 @@ Agents only get `Bash` when they need it to carry a stage through branch creatio
 | Agent | Has Bash? | Reason |
 |---|---|---|
 | `orchestrator` | ✅ | Needs `git branch`, `git status`, and similar to read repo state |
+| `automated-reviewer-loop` | ✅ | Runs pr-review-loop.sh, pr-ci-loop.sh, git; needs Bash for scripts and labels |
 | `product-manager` | ✅ | Creates spec branches / PRs and may run readiness helpers |
 | `spec-reviewer` | ✅ | May commit, push, and re-run fixes during spec review loops |
 | `tech-lead` | ✅ | May need to run commands to understand the codebase before planning |

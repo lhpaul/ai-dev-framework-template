@@ -14,7 +14,16 @@ Usage:
   ./scripts/development-workflow/workflow-next-action.sh --development <path>
 
 Classifies the next deterministic workflow action and prints stable key=value lines.
+
+For --development, the script runs 'git fetch --prune origin' unless WORKFLOW_SKIP_FETCH
+is set (e.g. run one fetch before looping over many development folders).
 EOF
+}
+
+# Escape string for use in extended regular expression (grep -E). POSIX sed: ] first in
+# bracket expression makes it literal; prefix each ERE metacharacter with backslash.
+ere_escape() {
+  printf '%s\n' "$1" | sed 's/[]\.^$*+?{}()|[\]/\\&/g'
 }
 
 branch_name=""
@@ -86,7 +95,11 @@ if [ -n "$pr_number" ]; then
 fi
 
 if [ -n "$branch_name" ]; then
-  pr_number="$(open_pr_number_for_branch "$branch_name" || true)"
+  if gh_available; then
+    pr_number="$(open_pr_number_for_branch "$branch_name")"
+  else
+    pr_number=""
+  fi
 
   print_kv TARGET "branch:$branch_name"
   print_kv BRANCH "$branch_name"
@@ -134,32 +147,70 @@ if [ ! -d "$development_path" ]; then
   exit 66
 fi
 
-spec_file="$(find "$development_path" -maxdepth 1 -type f -name '1_*_specs.md' -print -quit)"
-if [ -z "$spec_file" ]; then
+spec_files=("$development_path"/1_*_specs.md)
+if [ "${#spec_files[@]}" -eq 0 ] || [ ! -f "${spec_files[0]}" ]; then
   echo "No spec file found in $development_path" >&2
   exit 66
 fi
-
-if ! status_line="$(grep -m 1 '^\*\*Status\*\*: ' "$spec_file" | sed 's/^\*\*Status\*\*: //')"; then
-  echo "No **Status**: line found in $spec_file" >&2
+if [ "${#spec_files[@]}" -gt 1 ]; then
+  echo "Multiple spec files found in $development_path; cannot determine which to use" >&2
   exit 66
+fi
+spec_file="${spec_files[0]}"
+
+# Derive workflow status from repo state so issue tracker remains source of truth (no Status line in spec required)
+slug="$(basename "$development_path" | sed 's/^[0-9]\{14\}_//')"
+plan_file=""
+for f in "$development_path"/2_*_implementation-plan.md; do
+  [ -f "$f" ] && plan_file="$f" && break
+done
+feature_branch_exists=0
+# Refresh remote refs so feature branch check is accurate. Skip if caller set WORKFLOW_SKIP_FETCH (e.g. one fetch before a loop).
+if [ -z "${WORKFLOW_SKIP_FETCH:-}" ]; then
+  if ! git fetch --prune origin 2>/dev/null; then
+    echo "workflow-next-action.sh: warning: git fetch --prune origin failed; refs may be stale" >&2
+  fi
+fi
+# Only feature/ is checked; development folders are Full Pipeline only (fix/ and hotfix/ don't use this path).
+if [ -n "$slug" ]; then
+  if git show-ref --verify -q "refs/remotes/origin/feature/$slug" 2>/dev/null; then
+    feature_branch_exists=1
+  else
+    # Linear: feature/[issue-id]-[slug] (e.g. feature/ENG-123-user-auth); folder may be [timestamp]_[slug] only
+    slug_ere="$(ere_escape "$slug")"
+    while IFS= read -r ref; do
+      [ -z "$ref" ] && continue
+      if [ "$ref" = "$slug" ] || echo "$ref" | grep -qE "^[A-Z]+-[0-9]+-${slug_ere}$"; then
+        feature_branch_exists=1
+        break
+      fi
+    done < <(git show-ref 2>/dev/null | sed -n 's|.*refs/remotes/origin/feature/||p')
+  fi
+fi
+
+# NOTE: This logic cannot distinguish "branch not yet created" from "branch merged and cleaned up".
+# When the issue tracker is the source of truth (e.g. Linear), the orchestrator should only call
+# this script for items whose tracker status is Spec Ready, Plan Ready, or In Development.
+# For items already Merged or Released, skip this script entirely.
+if [ -z "$plan_file" ]; then
+  status_line="Spec Ready"
+  next_action="write-plan"
+elif [ "$feature_branch_exists" -eq 1 ]; then
+  status_line="In Development"
+  next_action="resolve-development-pr"
+else
+  status_line="Plan Ready"
+  next_action="implement"
 fi
 
 print_kv TARGET "development:$development_path"
 print_kv SPEC_FILE "$spec_file"
 print_kv STATUS "$status_line"
+print_kv NEXT_ACTION "$next_action"
 
-case "$status_line" in
-  "Spec Ready")
-    print_kv NEXT_ACTION write-plan
-    ;;
-  "Plan Ready")
-    print_kv NEXT_ACTION implement
-    ;;
-  "In Development")
-    print_kv NEXT_ACTION resolve-development-pr
-    ;;
-  *)
-    print_kv NEXT_ACTION unknown
-    ;;
-esac
+# Optional: read Linear issue ID from spec for orchestrator (tracker is source of truth for status)
+linear_issue=""
+if linear_line="$(grep -m 1 '^\*\*Linear Issue\*\*: ' "$spec_file" 2>/dev/null)"; then
+  linear_issue="$(printf '%s\n' "$linear_line" | sed 's/^\*\*Linear Issue\*\*: //' | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+fi
+[ -n "$linear_issue" ] && print_kv LINEAR_ISSUE "$linear_issue"

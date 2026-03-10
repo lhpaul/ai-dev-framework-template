@@ -1,6 +1,5 @@
 # [Feature Name] — Spec
 
-**Status**: Spec Ready
 **Depends on**: <!-- List feature slugs this depends on, or remove this line -->
 
 ---

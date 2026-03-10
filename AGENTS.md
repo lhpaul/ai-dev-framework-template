@@ -56,6 +56,7 @@ This project uses a staged AI-assisted development workflow. See [`docs/ai/devel
 | Review Plan | `implementation-plan-reviewer` agent | `/review-implementation-plan` | `workflow-plan-reviewer` skill | Follow `docs/ai/development-workflow/protocols/02-review-implementation-plan-protocol.md` |
 | Implement | `developer` agent | `/implement-development` | `workflow-implementer` skill | Follow `docs/ai/development-workflow/protocols/04-implement-development-protocol.md` |
 | Review Code | `code-reviewer` agent | `/review-code` | `workflow-code-reviewer` skill | Follow `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md` |
+| Run reviewer loop (PR) | `automated-reviewer-loop` agent | `/run-reviewer-loop` | `workflow-reviewer-loop` skill | Follow `docs/ai/development-workflow/protocols/92-automated-reviewer-loop-protocol.md` |
 | Prepare Commit | — | `/prepare-commit` | Follow `docs/best-practices/2-version-control.md` | Follow `docs/best-practices/2-version-control.md` |
 | Prepare Release | `/prepare-release` | `/prepare-release` | Follow `docs/ai/development-workflow/protocols/06-prepare-release-protocol.md` | Follow `docs/ai/development-workflow/protocols/06-prepare-release-protocol.md` |
 | Orchestrate Work | `orchestrator` agent | `/run-work` | `workflow-orchestrator` skill | Follow `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
@@ -74,9 +75,10 @@ For normal Codex usage, start with `workflow-orchestrator`. It is the primary en
 
 ### Maintenance Commands
 
-| Task | Claude Code | Cursor |
-|---|---|---|
-| Sync framework updates from template | `/sync-template` | `/sync-template` |
+| Task | Claude Code | Cursor | Codex |
+|---|---|---|---|
+| Sync framework updates from template | `/sync-template` | `/sync-template` | — |
+| Post-merge cleanup (fetch, develop, pull, delete local branch; update issue tracker) | `/post-merge-cleanup` | `/post-merge-cleanup` | `post-merge-cleanup` skill |
 
 ---
 
@@ -116,12 +118,10 @@ This repository follows the default template workflow (documented in `docs/ai/de
 
 ### CHANGELOG & Versioning
 
-> **This project overrides the default CHANGELOG convention.**
-
-- **Every merged PR releases a new version** — convert `[Unreleased]` to `[X.Y.Z]` before merging
-- Use [Semantic Versioning](https://semver.org/): patch for fixes/tweaks, minor for new features or meaningful improvements, major for breaking changes to the template structure
-- Never leave `[Unreleased]` entries after a merge; the PR itself is the release
-- Follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format
+- Follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format.
+- Use [Semantic Versioning](https://semver.org/): patch for fixes/tweaks, minor for new features or meaningful improvements, major for breaking changes to the template structure.
+- **Feature and fix PRs** merged into `develop` add entries under `[Unreleased]` in `CHANGELOG.md`; do not convert to a version number on merge.
+- **A new version is created only when releasing**: run the Prepare Release workflow (`/prepare-release` or `docs/ai/development-workflow/protocols/06-prepare-release-protocol.md`). That creates a `release/v[X.Y.Z]` branch, renames `[Unreleased]` to `[X.Y.Z]` in the CHANGELOG, and opens PRs to `main` and backport to `develop`.
 
 ### Stack Conventions
 

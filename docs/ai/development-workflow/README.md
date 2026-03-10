@@ -62,6 +62,8 @@ This document is the **canonical master reference** for how development is struc
 │                       MERGED                                    │
 │   PR merged into `develop`                                      │
 │   CI validates; deployed to staging if configured               │
+│   Optional: /post-merge-cleanup to fetch, checkout develop,    │
+│   pull, and delete the local branch (see AGENTS.md)             │
 └─────────────────────┬───────────────────────────────────────────┘
                       │  Human: prepare release
                       ▼
@@ -87,6 +89,7 @@ The **Spec Ready** stage is intentionally **product-focused**: it defines what t
 | Review Plan | `implementation-plan-reviewer` agent | `/review-implementation-plan` | `workflow-plan-reviewer` skill | `docs/ai/development-workflow/protocols/02-review-implementation-plan-protocol.md` |
 | Implement | `developer` agent | `/implement-development` | `workflow-implementer` skill | `docs/ai/development-workflow/protocols/04-implement-development-protocol.md` |
 | Review Code | `code-reviewer` agent | `/review-code` | `workflow-code-reviewer` skill | `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md` |
+| Run reviewer loop (PR) | `automated-reviewer-loop` agent | `/run-reviewer-loop` | `workflow-reviewer-loop` skill | `docs/ai/development-workflow/protocols/92-automated-reviewer-loop-protocol.md` |
 | Orchestrate | `orchestrator` agent | `/run-work` | `workflow-orchestrator` skill | `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
 
 Codex skills are stored in `.codex/skills/` and can be installed into the local Codex environment with `./scripts/development-workflow/install-codex-skills.sh`. They are intentionally thin wrappers over the same protocol files used by every other tool.

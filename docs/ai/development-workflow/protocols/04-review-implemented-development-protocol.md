@@ -112,7 +112,7 @@ If the `Task` tool is not available (e.g. in Cursor, Codex, Gemini CLI), skip th
 - [ ] CHANGELOG entry is present and correctly formatted
 - [ ] Seed data updated if the plan required it
 - [ ] Generated types updated if schema changed (if applicable)
-- [ ] Spec/plan status updated if required
+- [ ] Issue tracker (or spec/plan status) updated if required
 
 ---
 

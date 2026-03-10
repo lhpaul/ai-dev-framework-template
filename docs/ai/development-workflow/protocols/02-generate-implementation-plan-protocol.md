@@ -128,7 +128,9 @@ If no blocking human decision remains:
 2. Create branch: `git checkout -b implementation-plan/[branch-slug]` from `develop`
 3. Write the plan file
 4. Write the smoke test runbook
-5. Update the spec status from `Spec Ready` to `Plan Ready` (in the spec file's status field)
+5. Update status for the plan stage:
+   - **When the issue tracker is the source of truth**: update the issue status to `Plan Ready`; optionally also update the spec file's status field for backwards compatibility.
+   - The spec file's **Status** field is optional and need not be set (workflow status is derived from the tracker or repo state).
 6. Commit: `docs: add implementation plan for [feature-name]`
 7. Push: `git push -u origin implementation-plan/[branch-slug]`
 8. **Reviewer gate (before opening PR)**:
