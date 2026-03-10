@@ -39,10 +39,12 @@ else
   fi
 fi
 
-if [ "$TO_DELETE" = "$DEVELOP_BRANCH" ]; then
-  echo "Refusing to delete '$DEVELOP_BRANCH'." >&2
-  exit 2
-fi
+case "$TO_DELETE" in
+  "$DEVELOP_BRANCH"|main|master)
+    echo "Refusing to delete protected branch '$TO_DELETE'." >&2
+    exit 2
+    ;;
+esac
 
 if ! git show-ref --quiet "refs/heads/$TO_DELETE"; then
   echo "Local branch '$TO_DELETE' does not exist." >&2
@@ -53,7 +55,8 @@ echo "Post-merge cleanup: will switch to $DEVELOP_BRANCH, update it, and delete 
 echo ""
 
 echo "Fetching origin..."
-git fetch origin
+# --prune: remove stale remote-tracking refs (e.g. origin/<merged-branch>)
+git fetch origin --prune
 
 echo "Checking out $DEVELOP_BRANCH..."
 git checkout "$DEVELOP_BRANCH"
