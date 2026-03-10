@@ -230,6 +230,8 @@ If an automated code review platform is configured (see [`integrations/pr-review
 
 **Important:** Run Step 7 **to completion** and use its result before running Step 8. Do not run Step 7 in the background while proceeding to Step 8. The review loop can take several minutes (poll interval × wait for bot). Only when the script exits with `clean` or `skipped` may you continue to Step 8.
 
+The helper script checks for **existing** blocking findings from the bot (e.g. from a review that already ran on PR open) before posting a new trigger. If it finds any, it exits with `needs_fixes` without triggering — so the fixer addresses them first; after a push, the next run triggers a fresh review. This avoids starting a new review while ignoring issues already raised.
+
 Initialize `cycle = 0` once per orchestration run for the PR. Increment `cycle` each time a fixer agent is dispatched. Do not reset `cycle` after a fixer push; escalate when the run reaches `max_cycles`.
 
 Prefer the helper script:

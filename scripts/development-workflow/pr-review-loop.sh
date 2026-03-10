@@ -10,10 +10,14 @@ usage() {
   cat <<'EOF'
 Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--poll-interval seconds] [--max-wait seconds]
 
-Triggers an automated PR review, polls for completion, classifies findings, and reports a stable result.
+Runs the automated PR review loop. Before triggering a new review, checks for existing
+blocking findings from the bot (e.g. from a review that already ran on PR open). If any
+exist, reports needs_fixes and exits without triggering — so the fixer addresses them
+first. Otherwise triggers a review, polls for completion, classifies findings, and
+reports a stable result.
 Outputs stable key=value lines and exits with:
   0 -> clean or skipped
-  1 -> blocking findings present
+  1 -> blocking findings present (existing or from triggered review)
   2 -> timeout / escalation
 EOF
 }
@@ -127,7 +131,87 @@ if [ -n "$recent_trigger_comment" ]; then
   fi
 fi
 
+# When there is no in-flight trigger, check for existing blocking findings from the bot
+# (e.g. from a review that already ran on PR open or a previous push). If we find any,
+# report needs_fixes and exit without posting a new trigger — so the fixer addresses
+# them first; after push, the next run will trigger a fresh review.
 if [ -z "$review_comment_id" ]; then
+  head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
+  since_iso=""
+  if [ -n "$head_sha" ]; then
+    since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
+  fi
+  if [ -z "$since_iso" ]; then
+    # Fallback: 24h ago so we don't consider very old comments
+    since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  fi
+
+  existing_comments="$(
+    gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+          .[]
+          | select(.user.login == $bot and .created_at > $since)
+          | { path, line: (.line // .original_line // 0), body: (.body // "") }
+          | @json
+        '
+  )"
+  existing_reviews="$(
+    gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+          .[]
+          | select(
+              .user.login == $bot and
+              .submitted_at > $since and
+              .state == "CHANGES_REQUESTED"
+            )
+          | { path: "", line: 0, body: (.body // "CHANGES_REQUESTED review without body") }
+          | @json
+        '
+  )"
+
+  existing_blocking_file="$(mktemp)"
+  trap 'rm -f "$blocking_lines_file" "$existing_blocking_file"' EXIT
+  existing_blocking_count=0
+  while IFS= read -r comment_json; do
+    [ -z "${comment_json:-}" ] && continue
+    body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
+    [ -z "$body" ] && continue
+    if is_soft_suggestion "$body"; then
+      continue
+    fi
+    existing_blocking_count=$((existing_blocking_count + 1))
+    printf '%s\n' "$comment_json" >> "$existing_blocking_file"
+  done <<< "$existing_comments"
+  while IFS= read -r review_json; do
+    [ -z "${review_json:-}" ] && continue
+    body="$(printf '%s\n' "$review_json" | jq -r '.body')"
+    [ -z "$body" ] && continue
+    existing_blocking_count=$((existing_blocking_count + 1))
+    printf '%s\n' "$review_json" >> "$existing_blocking_file"
+  done <<< "$existing_reviews"
+
+  if [ "$existing_blocking_count" -gt 0 ]; then
+    print_kv RESULT needs_fixes
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv REASON "existing_findings"
+    print_kv COMMENT_COUNT "$existing_blocking_count"
+    print_kv BLOCKING_COUNT "$existing_blocking_count"
+    print_kv SUGGESTION_COUNT 0
+    index=1
+    while IFS= read -r blocking_json; do
+      [ -z "${blocking_json:-}" ] && continue
+      print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
+      print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
+      print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+      index=$((index + 1))
+    done < "$existing_blocking_file"
+    exit 1
+  fi
+
   review_window_start="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   review_comment_id="$(gh api "repos/$repo/issues/$pr_number/comments" --method POST --raw-field body="$trigger_comment" --jq '.id')"
 fi
@@ -138,7 +222,7 @@ if [ -z "$review_comment_id" ]; then
 fi
 
 blocking_lines_file="$(mktemp)"
-trap 'rm -f "$blocking_lines_file"' EXIT
+trap 'rm -f "$blocking_lines_file" "${existing_blocking_file:-}"' EXIT
 
 elapsed=0
 
