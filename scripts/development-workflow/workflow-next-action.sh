@@ -156,12 +156,15 @@ for f in "$development_path"/2_*_implementation-plan.md; do
   [ -f "$f" ] && plan_file="$f" && break
 done
 feature_branch_exists=0
+# Refresh remote refs so feature branch check is accurate; adds latency per call; if fetch fails, refs may be stale.
 git fetch --prune origin 2>/dev/null || true
+# Only feature/ is checked; development folders are Full Pipeline only (fix/ and hotfix/ don't use this path).
 if [ -n "$slug" ]; then
   if git show-ref -q "refs/remotes/origin/feature/$slug" 2>/dev/null; then
     feature_branch_exists=1
   else
     # Linear: feature/[issue-id]-[slug] (e.g. feature/ENG-123-user-auth); folder may be [timestamp]_[slug] only
+    # Escape slug for ERE: ] first in bracket expr makes it literal; prefix metacharacters with \ for grep -qE
     slug_ere="$(printf '%s\n' "$slug" | sed 's/[]\.^$*+?{}()|[\]/\\&/g')"
     for ref in $(git show-ref 2>/dev/null | sed -n 's|.*refs/remotes/origin/feature/||p'); do
       if [ "$ref" = "$slug" ] || echo "$ref" | grep -qE "^[A-Z]+-[0-9]+-${slug_ere}$"; then
