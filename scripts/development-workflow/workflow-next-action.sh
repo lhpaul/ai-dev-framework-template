@@ -149,26 +149,36 @@ if [ "${#spec_files[@]}" -gt 1 ]; then
 fi
 spec_file="${spec_files[0]}"
 
-if ! status_line="$(grep -m 1 '^\*\*Status\*\*: ' "$spec_file" | sed 's/^\*\*Status\*\*: //' | tr -d '\r')"; then
-  echo "No **Status**: line found in $spec_file" >&2
-  exit 66
+# Optional: read Linear issue ID from spec for orchestrator (tracker is source of truth for status)
+linear_issue=""
+if linear_line="$(grep -m 1 '^\*\*Linear Issue\*\*: ' "$spec_file" 2>/dev/null)"; then
+  linear_issue="$(printf '%s\n' "$linear_line" | sed 's/^\*\*Linear Issue\*\*: //' | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+fi
+[ -n "$linear_issue" ] && print_kv LINEAR_ISSUE "$linear_issue"
+
+# Derive workflow status from repo state so issue tracker remains source of truth (no Status line in spec required)
+slug="$(basename "$development_path" | sed 's/^[0-9]\{14\}_//')"
+plan_file=""
+for f in "$development_path"/2_*_implementation-plan.md; do
+  [ -f "$f" ] && plan_file="$f" && break
+done
+feature_branch_exists=0
+if [ -n "$slug" ] && git show-ref -q "refs/remotes/origin/feature/$slug" 2>/dev/null; then
+  feature_branch_exists=1
+fi
+
+if [ -z "$plan_file" ]; then
+  status_line="Spec Ready"
+  next_action="write-plan"
+elif [ "$feature_branch_exists" -eq 1 ]; then
+  status_line="In Development"
+  next_action="resolve-development-pr"
+else
+  status_line="Plan Ready"
+  next_action="implement"
 fi
 
 print_kv TARGET "development:$development_path"
 print_kv SPEC_FILE "$spec_file"
 print_kv STATUS "$status_line"
-
-case "$status_line" in
-  "Spec Ready")
-    print_kv NEXT_ACTION write-plan
-    ;;
-  "Plan Ready")
-    print_kv NEXT_ACTION implement
-    ;;
-  "In Development")
-    print_kv NEXT_ACTION resolve-development-pr
-    ;;
-  *)
-    print_kv NEXT_ACTION unknown
-    ;;
-esac
+print_kv NEXT_ACTION "$next_action"

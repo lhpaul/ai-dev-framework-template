@@ -56,6 +56,10 @@ Set due dates on issues that have a deadline. The orchestrator treats issues due
 
 ---
 
+## Status: Tracker as Source of Truth
+
+Workflow status (Spec Ready, Plan Ready, In Development) is **not** stored in the spec document. The issue tracker (Linear) is the source of truth. The helper script `workflow-next-action.sh --development <path>` derives the next action from **repo state** (presence of implementation plan file, feature branch) so it works without reading a status field from the spec. See `scripts/development-workflow/README.md` and `workflow-next-action.sh` for the logic. Orchestrators and agents with Linear access should read and update issue status in Linear at stage transitions.
+
 ## Orchestrator Instructions (with Linear)
 
 When the orchestrator has Linear access, it should:

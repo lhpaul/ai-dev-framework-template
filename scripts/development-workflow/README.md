@@ -107,10 +107,26 @@ Usage:
 What it does:
 - Detects whether a branch still needs reviewer-gate work or PR readiness work
 - Detects whether a PR is waiting on fixes or on human review
-- Maps spec status values to the next stage (`write-plan`, `implement`, etc.)
+- For `--development`: derives workflow status from repo state (presence of implementation plan file, feature branch) so the **issue tracker remains the source of truth**; no `**Status**` line in the spec is required. Outputs `LINEAR_ISSUE` when the spec has `**Linear Issue**:` for orchestrator use.
 
 Use this when:
 - The orchestrator needs to resume work after an interrupted run
 - A stage-specific agent needs to determine whether work is still in-progress or already waiting on a human
 
 For resume behavior, run `workflow-next-action.sh` with `--branch`, `--pr`, or `--development`; it reports the next deterministic action for a partially completed run.
+
+### `post-merge-cleanup.sh`
+
+After a development PR is merged and the remote branch deleted, sync with origin, switch to develop, pull, and delete the local branch.
+
+Usage:
+
+```bash
+./scripts/development-workflow/post-merge-cleanup.sh [BRANCH]
+```
+
+- No argument: use the current branch (run while still on the merged branch).
+- With `BRANCH`: branch name to delete (e.g. `feature/my-feature`).
+
+Use this when:
+- You have merged a feature/plan/spec PR and deleted the remote branch, and want to clean up the local branch and update develop.
