@@ -170,7 +170,7 @@ if [ -z "$review_comment_id" ]; then
   )"
 
   existing_blocking_file="$(mktemp)"
-  trap 'rm -f "$blocking_lines_file" "$existing_blocking_file"' EXIT
+  trap 'rm -f "${blocking_lines_file:-}" "$existing_blocking_file"' EXIT
   existing_blocking_count=0
   while IFS= read -r comment_json; do
     [ -z "${comment_json:-}" ] && continue
