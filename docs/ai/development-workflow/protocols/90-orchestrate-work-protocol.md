@@ -42,7 +42,7 @@ Prefer the helper scripts in `scripts/development-workflow/` for deterministic s
 Read from the following sources (in priority order):
 
 1. **Issue tracker** (if configured): current status of all issues and the latest brief. See [`integrations/`](../integrations/) for tracker-specific setup and [`integrations/issue-tracker.md`](../integrations/issue-tracker.md) for tracker-agnostic rules.
-2. **Development folders**: `docs/specs/developments/` — read the status field of each spec to determine the current stage
+2. **Development folders**: `docs/specs/developments/` — use `workflow-next-action.sh --development <path>` (or the issue tracker when it is the source of truth) to determine the current stage; the spec file's status field is optional when the tracker is used
 3. **Open PRs**: `git branch -r` and/or the repository's PR list — which branches are open, their labels, and CI status
 
 If available, run:

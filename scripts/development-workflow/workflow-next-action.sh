@@ -149,13 +149,6 @@ if [ "${#spec_files[@]}" -gt 1 ]; then
 fi
 spec_file="${spec_files[0]}"
 
-# Optional: read Linear issue ID from spec for orchestrator (tracker is source of truth for status)
-linear_issue=""
-if linear_line="$(grep -m 1 '^\*\*Linear Issue\*\*: ' "$spec_file" 2>/dev/null)"; then
-  linear_issue="$(printf '%s\n' "$linear_line" | sed 's/^\*\*Linear Issue\*\*: //' | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-fi
-[ -n "$linear_issue" ] && print_kv LINEAR_ISSUE "$linear_issue"
-
 # Derive workflow status from repo state so issue tracker remains source of truth (no Status line in spec required)
 slug="$(basename "$development_path" | sed 's/^[0-9]\{14\}_//')"
 plan_file=""
@@ -167,6 +160,10 @@ if [ -n "$slug" ] && git show-ref -q "refs/remotes/origin/feature/$slug" 2>/dev/
   feature_branch_exists=1
 fi
 
+# NOTE: This logic cannot distinguish "branch not yet created" from "branch merged and cleaned up".
+# When the issue tracker is the source of truth (e.g. Linear), the orchestrator should only call
+# this script for items whose tracker status is Spec Ready, Plan Ready, or In Development.
+# For items already Merged or Released, skip this script entirely.
 if [ -z "$plan_file" ]; then
   status_line="Spec Ready"
   next_action="write-plan"
@@ -182,3 +179,10 @@ print_kv TARGET "development:$development_path"
 print_kv SPEC_FILE "$spec_file"
 print_kv STATUS "$status_line"
 print_kv NEXT_ACTION "$next_action"
+
+# Optional: read Linear issue ID from spec for orchestrator (tracker is source of truth for status)
+linear_issue=""
+if linear_line="$(grep -m 1 '^\*\*Linear Issue\*\*: ' "$spec_file" 2>/dev/null)"; then
+  linear_issue="$(printf '%s\n' "$linear_line" | sed 's/^\*\*Linear Issue\*\*: //' | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+fi
+[ -n "$linear_issue" ] && print_kv LINEAR_ISSUE "$linear_issue"
