@@ -1,0 +1,7 @@
+interface:
+  display_name: "Workflow Reviewer Loop"
+  short_description: "Run automated reviewer and CI loop for a PR until ready or escalated."
+  default_prompt: "Use $workflow-reviewer-loop to run the automated reviewer loop for the current branch's PR (or the PR number I give you) until it is ready for human review or escalated."
+
+policy:
+  allow_implicit_invocation: false

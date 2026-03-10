@@ -56,6 +56,7 @@ This project uses a staged AI-assisted development workflow. See [`docs/ai/devel
 | Review Plan | `implementation-plan-reviewer` agent | `/review-implementation-plan` | `workflow-plan-reviewer` skill | Follow `docs/ai/development-workflow/protocols/02-review-implementation-plan-protocol.md` |
 | Implement | `developer` agent | `/implement-development` | `workflow-implementer` skill | Follow `docs/ai/development-workflow/protocols/04-implement-development-protocol.md` |
 | Review Code | `code-reviewer` agent | `/review-code` | `workflow-code-reviewer` skill | Follow `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md` |
+| Run reviewer loop (PR) | `automated-reviewer-loop` agent | `/run-reviewer-loop` | `workflow-reviewer-loop` skill | Follow `docs/ai/development-workflow/protocols/92-automated-reviewer-loop-protocol.md` |
 | Prepare Commit | — | `/prepare-commit` | Follow `docs/best-practices/2-version-control.md` | Follow `docs/best-practices/2-version-control.md` |
 | Prepare Release | `/prepare-release` | `/prepare-release` | Follow `docs/ai/development-workflow/protocols/06-prepare-release-protocol.md` | Follow `docs/ai/development-workflow/protocols/06-prepare-release-protocol.md` |
 | Orchestrate Work | `orchestrator` agent | `/run-work` | `workflow-orchestrator` skill | Follow `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
