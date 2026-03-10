@@ -163,7 +163,7 @@ if [ -n "$slug" ]; then
   else
     # Linear: feature/[issue-id]-[slug] (e.g. feature/ENG-123-user-auth); folder may be [timestamp]_[slug] only
     for ref in $(git show-ref 2>/dev/null | sed -n 's|.*refs/remotes/origin/feature/||p'); do
-      if [ "$ref" = "$slug" ] || [ "${ref%-$slug}" != "$ref" ]; then
+      if [ "$ref" = "$slug" ] || echo "$ref" | grep -qE "^[A-Z]+-[0-9]+-${slug}$"; then
         feature_branch_exists=1
         break
       fi
