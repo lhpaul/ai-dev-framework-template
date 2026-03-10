@@ -12,4 +12,4 @@ description: After a development PR is merged and the remote branch deleted, syn
 2. **No argument**: the current branch is the one to delete (user runs while still on the merged branch).
 3. **With `branch-name`**: delete that local branch (e.g. `feature/my-feature`).
 
-The script fetches origin, checks out `develop`, pulls, and deletes the local branch with `git branch -d`. Do not change the order or skip steps.
+The script fetches origin, checks out `develop`, pulls, and deletes the local branch with `git branch -D` (force-delete; safe because the branch is already merged on the remote). Do not change the order or skip steps.

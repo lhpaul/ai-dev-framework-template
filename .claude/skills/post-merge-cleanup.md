@@ -15,6 +15,6 @@ Run the post-merge cleanup script from the repository root.
 - **No argument**: use the current branch (user should run while still on the merged branch).
 - **With `branch-name`**: delete that local branch (e.g. `feature/my-feature`).
 
-The script will: fetch origin, checkout `develop`, pull, then delete the local branch with `git branch -d`. If the user is not in the repo root, change to the repo root first.
+The script will: fetch origin, checkout `develop`, pull, then delete the local branch with `git branch -D` (force-delete; safe because the branch is already merged on the remote). If the user is not in the repo root, change to the repo root first.
 
 Do not skip steps or change the order. If the script fails, show the error and stop.
