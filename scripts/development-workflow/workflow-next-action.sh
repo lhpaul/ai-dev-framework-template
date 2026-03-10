@@ -14,7 +14,16 @@ Usage:
   ./scripts/development-workflow/workflow-next-action.sh --development <path>
 
 Classifies the next deterministic workflow action and prints stable key=value lines.
+
+For --development, the script runs 'git fetch --prune origin' unless WORKFLOW_SKIP_FETCH
+is set (e.g. run one fetch before looping over many development folders).
 EOF
+}
+
+# Escape string for use in extended regular expression (grep -E). POSIX sed: ] first in
+# bracket expression makes it literal; prefix each ERE metacharacter with backslash.
+ere_escape() {
+  printf '%s\n' "$1" | sed 's/[]\.^$*+?{}()|[\]/\\&/g'
 }
 
 branch_name=""
@@ -156,22 +165,26 @@ for f in "$development_path"/2_*_implementation-plan.md; do
   [ -f "$f" ] && plan_file="$f" && break
 done
 feature_branch_exists=0
-# Refresh remote refs so feature branch check is accurate; adds latency per call; if fetch fails, refs may be stale.
-git fetch --prune origin 2>/dev/null || true
+# Refresh remote refs so feature branch check is accurate. Skip if caller set WORKFLOW_SKIP_FETCH (e.g. one fetch before a loop).
+if [ -z "${WORKFLOW_SKIP_FETCH:-}" ]; then
+  if ! git fetch --prune origin 2>/dev/null; then
+    echo "workflow-next-action.sh: warning: git fetch --prune origin failed; refs may be stale" >&2
+  fi
+fi
 # Only feature/ is checked; development folders are Full Pipeline only (fix/ and hotfix/ don't use this path).
 if [ -n "$slug" ]; then
   if git show-ref -q "refs/remotes/origin/feature/$slug" 2>/dev/null; then
     feature_branch_exists=1
   else
     # Linear: feature/[issue-id]-[slug] (e.g. feature/ENG-123-user-auth); folder may be [timestamp]_[slug] only
-    # Escape slug for ERE: ] first in bracket expr makes it literal; prefix metacharacters with \ for grep -qE
-    slug_ere="$(printf '%s\n' "$slug" | sed 's/[]\.^$*+?{}()|[\]/\\&/g')"
-    for ref in $(git show-ref 2>/dev/null | sed -n 's|.*refs/remotes/origin/feature/||p'); do
+    slug_ere="$(ere_escape "$slug")"
+    while IFS= read -r ref; do
+      [ -z "$ref" ] && continue
       if [ "$ref" = "$slug" ] || echo "$ref" | grep -qE "^[A-Z]+-[0-9]+-${slug_ere}$"; then
         feature_branch_exists=1
         break
       fi
-    done
+    done < <(git show-ref 2>/dev/null | sed -n 's|.*refs/remotes/origin/feature/||p')
   fi
 fi
 

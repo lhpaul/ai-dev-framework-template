@@ -107,7 +107,7 @@ Usage:
 What it does:
 - Detects whether a branch still needs reviewer-gate work or PR readiness work
 - Detects whether a PR is waiting on fixes or on human review
-- For `--development`: derives workflow status from repo state (presence of implementation plan file, feature branch) so the **issue tracker remains the source of truth**; no `**Status**` line in the spec is required. Outputs `LINEAR_ISSUE` when the spec has `**Linear Issue**: <id>` (note the space after the colon) for orchestrator use. Runs `git fetch --prune origin` so refs are up to date; each call has network latency, and if fetch fails refs may be stale. Without an issue tracker, items that were merged and had their branch deleted can appear as Plan Ready; prefer filtering by tracker status when available.
+- For `--development`: derives workflow status from repo state (presence of implementation plan file, feature branch) so the **issue tracker remains the source of truth**; no `**Status**` line in the spec is required. Outputs `LINEAR_ISSUE` when the spec has `**Linear Issue**: <id>` (note the space after the colon) for orchestrator use. Runs `git fetch --prune origin` unless `WORKFLOW_SKIP_FETCH` is set (e.g. run one fetch before looping over many development folders); if fetch fails, a warning is printed to stderr and refs may be stale. Without an issue tracker, items that were merged and had their branch deleted can appear as Plan Ready; prefer filtering by tracker status when available. The `--development` branch-detection logic has no automated tests; edge cases (slugs with regex metacharacters, Linear-prefixed branch names) should be validated manually when changing that path.
 
 Use this when:
 - The orchestrator needs to resume work after an interrupted run
