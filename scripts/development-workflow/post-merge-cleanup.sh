@@ -10,6 +10,9 @@
 # - No BRANCH: use current branch (run while still on the merged branch).
 # - BRANCH: name of the local branch to delete (e.g. feature/my-feature).
 #
+# Uses `git branch -D` (force delete) because squash/rebase merges (e.g. GitHub
+# default) do not have the branch tip in develop's history, so -d would fail.
+#
 
 set -euo pipefail
 
@@ -56,10 +59,12 @@ echo "Checking out $DEVELOP_BRANCH..."
 git checkout "$DEVELOP_BRANCH"
 
 echo "Pulling $DEVELOP_BRANCH..."
-git pull
+# --ff-only: fail cleanly if develop diverged (e.g. local commits) instead of creating a merge
+git pull --ff-only
 
 echo "Deleting local branch '$TO_DELETE'..."
-git branch -d "$TO_DELETE"
+# -D: branch is already merged on remote (squash/rebase merges don't leave tip in develop)
+git branch -D "$TO_DELETE"
 
 echo ""
 echo "Done. You are on $DEVELOP_BRANCH and '$TO_DELETE' has been removed locally."
