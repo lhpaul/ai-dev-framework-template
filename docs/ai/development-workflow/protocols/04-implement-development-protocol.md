@@ -64,7 +64,7 @@ git checkout -b feature/[branch-slug]
 
 When the issue tracker is the source of truth, update the issue status to `In Development`; optionally update the spec file's status field for backwards compatibility.
 
-Commit: `docs: mark [feature-name] as In Development`
+If the spec file's status field was updated, commit: `docs: mark [feature-name] as In Development`
 
 ### Step 5: Implement
 

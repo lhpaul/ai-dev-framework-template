@@ -156,6 +156,7 @@ for f in "$development_path"/2_*_implementation-plan.md; do
   [ -f "$f" ] && plan_file="$f" && break
 done
 feature_branch_exists=0
+git fetch --prune origin 2>/dev/null || true
 if [ -n "$slug" ] && git show-ref -q "refs/remotes/origin/feature/$slug" 2>/dev/null; then
   feature_branch_exists=1
 fi
