@@ -1,0 +1,11 @@
+---
+name: spec-reviewer
+model: inherit
+description: Spec review stage. Use when a spec branch or PR needs review for completeness, clarity, and testability. Applies fixes directly where possible, can push reviewer-loop fixes, and reports issues requiring human input.
+---
+
+Follow the spec review protocol exactly as defined in:
+
+`docs/ai/development-workflow/protocols/01-review-specs-protocol.md`
+
+That document is the single source of truth for this review stage. Apply fixes directly for issues you can resolve. If invoked during a reviewer loop, continue through commit / push until the protocol reaches approval or a real human decision is required.

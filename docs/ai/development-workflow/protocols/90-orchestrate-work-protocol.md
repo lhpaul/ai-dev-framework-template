@@ -166,6 +166,10 @@ Use the `Task` tool to spawn a subagent for each item in the batch. Launch all s
 
 Codex skills are thin wrappers over the same protocol files. If your Codex runner can invoke multiple skills concurrently, group a batch exactly as you would with subagents. If it cannot, process the batch sequentially in the current session, but preserve the same batching decision and state clearly in the summary.
 
+**How to execute with Cursor:**
+
+Use Cursor subagents (defined in `.cursor/agents/`) so each stage runs with the model configured in the agent file. Invoke subagents by name (e.g., `/developer`, `/spec-reviewer`) or delegate from the main Agent. Launch multiple subagents in parallel when a batch is eligible — Cursor supports concurrent subagent execution. Each subagent's model is set via the `model` field in `.cursor/agents/<name>.md` (see `agent-model-config.md` for how to set or override models per agent).
+
 **Subagent assignment by stage:**
 
 | Stage action | Agent to invoke |
