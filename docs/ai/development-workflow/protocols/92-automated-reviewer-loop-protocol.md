@@ -3,7 +3,7 @@
 **Agent role**: Runner of the automated reviewer loop
 **Purpose**: Run the automated reviewer loop and CI loop for one or more PRs until each PR is clean and ready for human review, or escalate to human
 
-This protocol is **standalone**: it can be invoked for any open PR (or set of PRs) without running full orchestration. It implements the same Step 7 and Step 8 logic as `90-orchestrate-work-protocol.md`, so it is suitable for "run the reviewer loop on this PR" or "run the reviewer loop on all my open workflow PRs."
+This protocol is **standalone**: it can be invoked for any open PR (or set of PRs) without full orchestration. It reuses **Step 7** and **Step 8** of `90-orchestrate-work-protocol.md` as-is; this document only adds how to choose the target PR(s) and how to report.
 
 ---
 
@@ -29,54 +29,9 @@ If no PR can be determined, ask the user to specify a PR number or to run from a
 
 ## Procedure (per PR)
 
-Execute **Step 7: Automated Reviewer Loop** and **Step 8: CI Loop** exactly as defined in `90-orchestrate-work-protocol.md`. Summary below; the orchestrator protocol is the source of truth for result interpretation, fixer mapping, and parameters.
+Execute **Step 7: Automated Reviewer Loop** and **Step 8: CI Loop** exactly as defined in `90-orchestrate-work-protocol.md` (scripts, result interpretation, fixer mapping, parameters, and labels). Do not duplicate that logic here — follow 90.
 
-### Step 7: Automated Reviewer Loop
-
-If an automated code review platform is configured (see `integrations/pr-review-platform.md`), run the loop. If not configured, skip and report `⏭️ skipped` for this PR, then continue to Step 8.
-
-- Initialize `cycle = 0` for this PR at the start of this run. Increment `cycle` each time you dispatch a fixer for this PR. Do not reset `cycle` after a fixer push.
-- Run to completion before proceeding to Step 8 (do not run Step 7 in the background).
-
-**Script:**
-
-```bash
-./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name>
-```
-
-**Interpret result** (see 90-orchestrate-work-protocol.md for full table):
-
-| Result | Action |
-|---|---|
-| `clean` | Continue to Step 8 |
-| `skipped` | Continue to Step 8 |
-| `needs_fixes` and `cycle < max_cycles` | Increment `cycle`, dispatch the matching fixer agent (see table in 90), wait for push, then run Step 7 again |
-| `needs_fixes` and `cycle >= max_cycles` | Escalate to human; report and stop for this PR |
-| `escalate` | Escalate to human; report and stop for this PR |
-
-**Fixer by branch prefix** (from 90): `spec/*` → spec-reviewer; `implementation-plan/*` → implementation-plan-reviewer; `feature/*` / `fix/*` / `hotfix/*` → code-reviewer.
-
-**Parameters** (from 90): `poll_interval` 2 min, `max_wait` 20 min per cycle, `max_cycles` 3.
-
-### Step 8: CI Loop
-
-Only after Step 7 has completed with `clean` or `skipped` for this PR:
-
-**Script:**
-
-```bash
-./scripts/development-workflow/pr-ci-loop.sh <pr_number>
-```
-
-**Interpret result** (see 90):
-
-| Result | Action |
-|---|---|
-| `green` | Apply `agent:ready-for-review`, remove `agent:needs-fixes` if present; report PR ready for human review |
-| `red` | Apply `agent:needs-fixes`, dispatch the matching fixer agent, wait for push, then **return to Step 7** for this PR |
-| `timeout` | Escalate to human; do not apply `agent:ready-for-review` |
-
-Labels are defined in `91-pr-readiness-signal-protocol.md`.
+For each PR, run Step 7 to completion, then Step 8; dispatch fixers and re-run as specified in 90 until the PR is clean and ready for human review or escalated.
 
 ---
 
