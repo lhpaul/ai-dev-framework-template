@@ -87,6 +87,8 @@ docs/ai/                          ← full tree, all files recursively
 .claude/skills/                   ← all *.md files (including this skill itself)
 .cursor/commands/                 ← all *.md files
 .cursor/rules/                    ← all *.mdc files
+scripts/development-workflow/     ← workflow helper scripts (discover state, PR/CI loops, etc.)
+scripts/README.md                 ← purpose and usage of scripts in scripts/
 docs/best-practices/1-general.md
 docs/best-practices/2-version-control.md
 docs/best-practices/3-testing.md
@@ -191,6 +193,7 @@ git diff --stat
 
 # 3. Stage and commit (only after you've reviewed the changes)
 git add docs/ai/ .claude/agents/ .claude/skills/ .cursor/ \
+  scripts/development-workflow/ scripts/README.md \
   docs/best-practices/1-general.md \
   docs/best-practices/2-version-control.md \
   docs/best-practices/3-testing.md
