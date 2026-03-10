@@ -107,7 +107,7 @@ Usage:
 What it does:
 - Detects whether a branch still needs reviewer-gate work or PR readiness work
 - Detects whether a PR is waiting on fixes or on human review
-- For `--development`: derives workflow status from repo state (presence of implementation plan file, feature branch) so the **issue tracker remains the source of truth**; no `**Status**` line in the spec is required. Outputs `LINEAR_ISSUE` when the spec has `**Linear Issue**:` for orchestrator use.
+- For `--development`: derives workflow status from repo state (presence of implementation plan file, feature branch) so the **issue tracker remains the source of truth**; no `**Status**` line in the spec is required. Outputs `LINEAR_ISSUE` when the spec has `**Linear Issue**: <id>` (note the space after the colon) for orchestrator use.
 
 Use this when:
 - The orchestrator needs to resume work after an interrupted run
