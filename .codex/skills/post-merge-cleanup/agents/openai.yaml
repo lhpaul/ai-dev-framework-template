@@ -1,0 +1,7 @@
+interface:
+  display_name: "Post-merge cleanup"
+  short_description: "Fetch, checkout develop, pull, delete merged branch."
+  default_prompt: "Run post-merge cleanup (fetch, develop, pull, delete local merged branch)."
+
+policy:
+  allow_implicit_invocation: false

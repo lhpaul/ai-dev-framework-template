@@ -1,6 +1,5 @@
 # [Feature Name] — Implementation Plan
 
-**Status**: Plan Ready
 **Spec**: [Link to spec file]
 **Smoke test runbook**: [Link to runbook file]
 
