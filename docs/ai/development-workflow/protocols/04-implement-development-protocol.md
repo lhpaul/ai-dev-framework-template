@@ -40,7 +40,7 @@ Extract from your reading:
 
 ### Step 2: Human Review Shortcut (Optional)
 
-Default behavior is **max autonomy**: once the approved spec and plan are understood and there is no unresolved product or architecture ambiguity, continue through implementation, reviewer gate, PR creation, and PR readiness without an extra pause.
+Default behavior is **max autonomy**: once the approved spec and plan are understood and there is no unresolved product or architecture ambiguity, continue through implementation, the review gate, PR creation, and PR readiness without an extra pause.
 
 Pause only if:
 
@@ -125,9 +125,9 @@ Use Conventional Commits (see `docs/best-practices/2-version-control.md`).
 
 ### Step 9: Reviewer Gate (before opening PR)
 
-Before opening a PR, run the code reviewer protocol on this branch: `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md`.
+Before opening a PR, run the code review gate on this branch using `REVIEW.md`.
 
-- If your runner supports it, dispatch a dedicated `code-reviewer` agent; otherwise self-review using the protocol checklist.
+- If your runner has a native review feature, use it against `REVIEW.md`; otherwise use the compatibility wrapper `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md`.
 - Apply fixes directly on the branch, commit, and push again if needed.
 - If the verdict is **NEEDS REVISION** due to product/design decisions, stop and request human input before opening a PR.
 

@@ -14,7 +14,7 @@ The portfolio-wide batch launcher is defined separately in `89-batch-orchestrate
 The item orchestrator:
 1. Resolves the request to exactly one workflow item
 2. Determines the next deterministic action for that item
-3. Executes creator, reviewer, PR, CI, and automated-review work as one continuous control loop
+3. Executes creator, review-gate, PR, CI, and automated-review work as one continuous control loop
 4. Stops only when the item is truly waiting on a human, blocked, or escalated
 
 ### Persistent orchestration contract
@@ -80,12 +80,12 @@ When dispatching a subagent for this item, include a short “Issue Tracker Summ
 |---|---|---|
 | Backlog | Human has requested this specific item | Run `01-generate-specs-protocol.md` |
 | Spec In Review | Spec PR is still open | Wait — spec PR is open, pending human review / merge |
-| Spec branch pushed, no PR yet | Branch exists on local / remote / worktree | Run `01-review-specs-protocol.md`, open the PR, then finish PR readiness |
+| Spec branch pushed, no PR yet | Branch exists on local / remote / worktree | Run the spec review gate via `REVIEW.md` / `01-review-specs-protocol.md`, open the PR, then finish PR readiness |
 | Spec Ready | Spec PR is merged | Run `02-generate-implementation-plan-protocol.md` |
 | Plan In Review | Plan PR is still open | Wait — plan PR is open, pending human review / merge |
-| Plan branch pushed, no PR yet | Branch exists on local / remote / worktree | Run `02-review-implementation-plan-protocol.md`, open the PR, then finish PR readiness |
+| Plan branch pushed, no PR yet | Branch exists on local / remote / worktree | Run the plan review gate via `REVIEW.md` / `02-review-implementation-plan-protocol.md`, open the PR, then finish PR readiness |
 | Plan Ready | Plan PR is merged | Run `04-implement-development-protocol.md` |
-| Dev branch pushed, no PR yet | Branch exists on local / remote / worktree | Run `04-review-implemented-development-protocol.md`, open the PR, then finish PR readiness |
+| Dev branch pushed, no PR yet | Branch exists on local / remote / worktree | Run the code review gate via `REVIEW.md` / `04-review-implemented-development-protocol.md`, open the PR, then finish PR readiness |
 | PR open, no readiness label | PR exists and latest push has not fully cleared | Run Step 7 and Step 8 until clean or escalated |
 | PR labeled `agent:needs-fixes` | Human or automated systems requested changes | Address feedback, push, then run Step 7 and Step 8 |
 | PR labeled `agent:ready-for-review` | — | Wait — human review / merge required |
@@ -120,14 +120,14 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 
 **Subagent assignment by stage:**
 
-| Stage action | Agent to invoke |
+| Stage action | Preferred execution path |
 |---|---|
 | Write spec | `product-manager` |
-| Review spec | `spec-reviewer` |
+| Review spec | Native review against `REVIEW.md` or the compatibility wrapper `01-review-specs-protocol.md` |
 | Write plan | `tech-lead` |
-| Review plan | `implementation-plan-reviewer` |
+| Review plan | Native review against `REVIEW.md` or the compatibility wrapper `02-review-implementation-plan-protocol.md` |
 | Implement feature | `developer` |
-| Review code | `code-reviewer` |
+| Review code | Native review against `REVIEW.md` or the compatibility wrapper `04-review-implemented-development-protocol.md` |
 
 This protocol stays scoped to one item. It may call different stage agents over time, but it must not start scanning or dispatching unrelated items.
 
@@ -139,7 +139,7 @@ Run the next deterministic action for the selected item, then immediately re-eva
 
 Expected chain:
 
-`creator -> reviewer -> PR opened -> automated review loop -> CI loop -> readiness label or escalation`
+`creator -> review gate -> PR opened -> automated reviewer loop -> CI loop -> readiness label or escalation`
 
 After any subagent finishes, determine whether the item still has a deterministic next action:
 
@@ -183,13 +183,13 @@ After the selected item reaches a terminal condition, provide a concise summary:
 
 ## Step 7: Automated Reviewer Loop
 
-If an automated code review platform is configured (see [`integrations/pr-review-platform.md`](../integrations/pr-review-platform.md)), run this loop after **any push to a PR branch**. If no review platform is configured, skip this step and report `⏭️ skipped` in the Step 6 summary.
+If one or more automated code review platforms are configured (see [`integrations/pr-review-platform.md`](../integrations/pr-review-platform.md)), run this loop after **any push to a PR branch**. If no review platform is configured, skip this step and report `⏭️ skipped` in the Step 6 summary.
 
 **Standalone use:** This step (and Step 8) can be run for a single PR without full orchestration — see [`92-automated-reviewer-loop-protocol.md`](92-automated-reviewer-loop-protocol.md) and the `/run-reviewer-loop` command (Cursor) or `automated-reviewer-loop` agent (Claude Code) or `workflow-reviewer-loop` skill (Codex).
 
 **Important:** Run Step 7 **to completion** and use its result before running Step 8. Do not run Step 7 in the background while proceeding to Step 8. The review loop can take several minutes (poll interval × wait for bot). Only when the script exits with `clean` or `skipped` may you continue to Step 8.
 
-The helper script checks for **existing** blocking findings from the bot (e.g. from a review that already ran on PR open) before posting a new trigger. If it finds any, it exits with `needs_fixes` without triggering — so the fixer addresses them first; after a push, the next run triggers a fresh review. This avoids starting a new review while ignoring issues already raised.
+The helper script evaluates configured platforms sequentially. For each platform it checks for **existing** blocking findings from the bot (e.g. from a review that already ran on PR open) before posting a new trigger. If it finds any, it exits with `needs_fixes` without moving on to later platforms — so the fixer addresses them first; after a push, the next run starts again from the first configured platform.
 
 Initialize `cycle = 0` once per orchestration run for the PR. Increment `cycle` each time a fixer agent is dispatched. Do not reset `cycle` after a fixer push; escalate when the run reaches `max_cycles`.
 
@@ -211,17 +211,17 @@ Interpret the result as follows:
 
 ### Blocking vs. suggestion classification
 
-When the automated review platform returns inline comments, classify them before deciding whether the PR needs fixes.
+When an automated review platform returns inline comments, classify them before deciding whether the PR needs fixes.
 
 - Treat a comment as a **soft suggestion** only when every non-empty, non-code line starts with an advisory prefix such as `Consider`, `You might`, `An alternative`, `Optionally`, `It could be cleaner to`, `Perhaps`, `Maybe`, `You could`, `One option is`, or `Alternatively`.
 - Treat any other inline comment as **blocking**.
-- Treat `CHANGES_REQUESTED` reviews from the automated reviewer as **blocking**.
+- Treat `CHANGES_REQUESTED` reviews from an automated reviewer as **blocking**.
 
 Soft suggestions may be reported in summaries, but they do not change the loop result to `needs_fixes`. Any blocking finding does.
 
 **Fixing agent by PR branch type:**
 
-| PR branch prefix | Agent to dispatch |
+| PR branch prefix | Compatibility fixer to dispatch when direct fixes are needed |
 |---|---|
 | `spec/*` | `spec-reviewer` |
 | `implementation-plan/*` | `implementation-plan-reviewer` |

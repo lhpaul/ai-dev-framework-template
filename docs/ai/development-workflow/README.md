@@ -4,9 +4,9 @@ This document is the **canonical master reference** for how development is struc
 
 **Core principle**: AI agents handle execution; humans give direction at the start, then review only when a PR is actually clean or when the workflow escalates.
 
-**Persistent execution contract**: A workflow run should continue through creator stage, reviewer gate, PR creation, automated review, and CI. It should stop only at a real terminal condition: waiting on human review / merge, blocked dependency, unresolved product decision, or escalation.
+**Persistent execution contract**: A workflow run should continue through creator stage, review gate, PR creation, automated review, and CI. It should stop only at a real terminal condition: waiting on human review / merge, blocked dependency, unresolved product decision, or escalation.
 
-**Pre-PR reviewer gate**: For any stage that produces a branch intended for a PR (spec, plan, implementation), run the corresponding reviewer-agent protocol **before** opening the PR. After the PR is opened, continue through automated review and CI until the PR is actually ready for human review.
+**Pre-PR review gate**: For any stage that produces a branch intended for a PR (spec, plan, implementation), run a review against [`REVIEW.md`](../../../REVIEW.md) **before** opening the PR. Prefer the runner's native review capability when available; otherwise perform a manual/self-review using the same contract. After the PR is opened, continue through automated reviewers and CI until the PR is actually ready for human review.
 
 ---
 
@@ -48,7 +48,7 @@ This document is the **canonical master reference** for how development is struc
 │   Plan merged; ready for implementation                         │
 │   AI: developer agent dispatched                                │
 └─────────────────────┬───────────────────────────────────────────┘
-                      │  AI: PR opened + reviewer / CI loops run
+                      │  AI: PR opened + automated reviewer / CI loops run
                       ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                    IN DEVELOPMENT                               │
@@ -84,18 +84,16 @@ The **Spec Ready** stage is intentionally **product-focused**: it defines what t
 | Stage | Claude Code | Cursor | Codex | Any AI tool |
 |---|---|---|---|---|
 | Write Spec | `product-manager` agent | `/generate-new-feature` | `workflow-spec-writer` skill | `docs/ai/development-workflow/protocols/01-generate-specs-protocol.md` |
-| Review Spec | `spec-reviewer` agent | `/review-spec` | `workflow-spec-reviewer` skill | `docs/ai/development-workflow/protocols/01-review-specs-protocol.md` |
 | Write Plan | `tech-lead` agent | `/generate-implementation-plan` | `workflow-plan-writer` skill | `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
-| Review Plan | `implementation-plan-reviewer` agent | `/review-implementation-plan` | `workflow-plan-reviewer` skill | `docs/ai/development-workflow/protocols/02-review-implementation-plan-protocol.md` |
 | Implement | `developer` agent | `/implement-development` | `workflow-implementer` skill | `docs/ai/development-workflow/protocols/04-implement-development-protocol.md` |
-| Review Code | `code-reviewer` agent | `/review-code` | `workflow-code-reviewer` skill | `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md` |
+| Review Gate (Spec / Plan / Code) | Native review against `REVIEW.md` | `/review-spec`, `/review-implementation-plan`, `/review-code` | Native review against `REVIEW.md` | `REVIEW.md` plus compatibility wrappers in `docs/ai/development-workflow/protocols/` |
 | Run reviewer loop (PR) | `automated-reviewer-loop` agent | `/run-reviewer-loop` | `workflow-reviewer-loop` skill | `docs/ai/development-workflow/protocols/92-automated-reviewer-loop-protocol.md` |
 | Advance One Item | `item-orchestrator` agent | `/run-item-work` | `workflow-item-orchestrator` skill | `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
 | Orchestrate | `orchestrator` agent | `/run-work` | `workflow-orchestrator` skill | `docs/ai/development-workflow/protocols/89-batch-orchestrate-work-protocol.md` |
 
 Codex skills are stored in `.codex/skills/` and can be installed into the local Codex environment with `./scripts/development-workflow/install-codex-skills.sh`. They are intentionally thin wrappers over the same protocol files used by every other tool.
 
-For low-human-interaction operation in Codex, treat `workflow-orchestrator` as the default portfolio-wide entrypoint. It inspects workflow state, chooses safe parallel batches, and routes each item into `workflow-item-orchestrator`. Use `workflow-item-orchestrator` when you want to resume or advance one specific development, branch, or PR without rescanning the whole portfolio. Stage-specific skills remain available for direct use, but when invoked directly they should still continue through reviewer gate and PR readiness before returning.
+For low-human-interaction operation in Codex, treat `workflow-orchestrator` as the default portfolio-wide entrypoint. It inspects workflow state, chooses safe parallel batches, and routes each item into `workflow-item-orchestrator`. Use `workflow-item-orchestrator` when you want to resume or advance one specific development, branch, or PR without rescanning the whole portfolio. Stage-specific skills remain available for direct use, but when invoked directly they should still continue through the review gate and PR readiness before returning.
 
 ---
 
@@ -150,7 +148,7 @@ For bugs or simple changes that don't need a spec or plan:
 - No new database migrations
 - Human provides a clear, self-contained brief
 
-**Path**: branch `fix/[slug]` from `develop` → implement → reviewer gate → open PR → merge
+**Path**: branch `fix/[slug]` from `develop` → implement → review gate → open PR → merge
 
 **Important**: If the change turns out to be larger than described, **stop and report** to the human. Don't silently expand scope. The developer agent should surface this immediately.
 
@@ -160,7 +158,7 @@ For critical bugs that need immediate production deployment, bypassing the norma
 
 **Criteria**: Active production incident or critical security issue.
 
-**Path**: branch `hotfix/[slug]` from `main` → implement → reviewer gate → open PR targeting `main` → merge → **mandatory backport to `develop`**
+**Path**: branch `hotfix/[slug]` from `main` → implement → review gate → open PR targeting `main` → merge → **mandatory backport to `develop`**
 
 The backport (main → develop) is non-negotiable to prevent branch drift.
 
@@ -252,6 +250,7 @@ Repository helpers:
 - `scripts/development-workflow/workflow-next-action.sh`
 See [`integrations/pr-review-platform.md`](integrations/pr-review-platform.md) for platform-agnostic requirements and loop details.
 See [`integrations/greptile.md`](integrations/greptile.md) for setup with Greptile.
+See [`integrations/devin.md`](integrations/devin.md) for the planned Devin adapter contract.
 
 ---
 
@@ -271,10 +270,10 @@ See [`protocols/91-pr-readiness-signal-protocol.md`](protocols/91-pr-readiness-s
 | Agent | Operates on items in... | Advances item to... | Protocol |
 |---|---|---|---|
 | Product Manager | Backlog | Spec In Review | `01-generate-specs-protocol.md` |
-| Spec Reviewer | Spec In Review | Spec Ready | `01-review-specs-protocol.md` |
+| Review Gate (Spec) | Spec In Review | Spec Ready | `REVIEW.md` + `01-review-specs-protocol.md` |
 | Tech Lead | Spec Ready | Plan In Review | `02-generate-implementation-plan-protocol.md` |
-| Implementation Plan Reviewer | Plan In Review | Plan Ready | `02-review-implementation-plan-protocol.md` |
+| Review Gate (Plan) | Plan In Review | Plan Ready | `REVIEW.md` + `02-review-implementation-plan-protocol.md` |
 | Developer | Plan Ready | In Development | `04-implement-development-protocol.md` |
-| Code Reviewer | In Development | Merged (via human) | `04-review-implemented-development-protocol.md` |
+| Review Gate (Code) | In Development | Merged (via human) | `REVIEW.md` + `04-review-implemented-development-protocol.md` |
 | Item Orchestrator | Any single workflow item | — (coordination only) | `90-orchestrate-work-protocol.md` |
 | Orchestrator | All stages / multiple items | — (batch coordination only) | `89-batch-orchestrate-work-protocol.md` |

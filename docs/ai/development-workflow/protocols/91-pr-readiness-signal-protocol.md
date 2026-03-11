@@ -10,8 +10,8 @@ This is a **repo-wide definition**. All agents apply these labels consistently.
 
 | Label | Meaning |
 |---|---|
-| `agent:ready-for-review` | The agent has completed its work. CI is green. Automated review (if enabled) is clean. Ready for human review. |
-| `agent:needs-fixes` | The human has requested changes on the PR, OR CI is failing, OR the automated review has blocking issues. |
+| `agent:ready-for-review` | The agent has completed its work. CI is green. The `REVIEW.md` gate is satisfied. Every configured automated reviewer is clean or skipped. Ready for human review. |
+| `agent:needs-fixes` | The human has requested changes on the PR, OR CI is failing, OR any automated reviewer has blocking issues. |
 
 ---
 
@@ -20,7 +20,8 @@ This is a **repo-wide definition**. All agents apply these labels consistently.
 Apply this label when **all** of the following are true:
 
 - [ ] CI checks are green (build, lint, tests all pass)
-- [ ] Automated PR review tool has no blocking issues (or no automated review tool is configured)
+- [ ] The relevant pre-PR review gate from `REVIEW.md` has been completed
+- [ ] Every configured automated PR reviewer has no blocking issues (or is skipped)
 - [ ] All feedback from a previous human review cycle has been addressed
 
 ---
@@ -30,7 +31,7 @@ Apply this label when **all** of the following are true:
 Apply this label when **any** of the following is true:
 
 - CI checks are failing
-- The automated PR review tool reports blocking issues
+- Any automated PR reviewer reports blocking issues
 - A human has requested changes on the PR (and those changes have not yet been addressed)
 
 ---
@@ -39,10 +40,10 @@ Apply this label when **any** of the following is true:
 
 ### Agent opens PR
 1. Push branch to remote
-2. Run the relevant reviewer-agent protocol **before** opening the PR (spec/plan/code review)
+2. Run the relevant review gate from `REVIEW.md` **before** opening the PR (spec/plan/code review). Compatibility wrapper protocols remain available for legacy commands.
 3. Open PR
-4. Run `./scripts/development-workflow/pr-review-loop.sh <pr-number> --branch <branch>` when an automated review tool is configured
-5. If automated review reports blocking issues: apply fixes, push, and repeat Step 4
+4. Run `./scripts/development-workflow/pr-review-loop.sh <pr-number> --branch <branch> [--platform <platform> ...]` when automated review tooling is configured
+5. If any automated reviewer reports blocking issues: apply fixes, push, and repeat Step 4
 6. Run `./scripts/development-workflow/pr-ci-loop.sh <pr-number>`
 7. If CI passes and automated review is clean (or not configured): apply `agent:ready-for-review`
 8. If CI fails: apply `agent:needs-fixes`, fix issues, push, and return to Step 4
@@ -67,6 +68,7 @@ These labels can be applied automatically via CI/CD pipeline rules:
 
 **Apply `agent:ready-for-review` automatically when**:
 - All required CI checks pass
+- The pre-PR review gate is complete
 - (And no human review has been requested on the PR)
 
 When automation is not available, agents apply labels manually following the conditions above.
