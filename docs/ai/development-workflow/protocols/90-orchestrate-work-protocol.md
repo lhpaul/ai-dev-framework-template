@@ -201,6 +201,16 @@ Interpret the result as follows:
 | `needs_fixes` and `cycle >= max_cycles` | Escalate to human |
 | `escalate` | Escalate to human |
 
+### Blocking vs. suggestion classification
+
+When the automated review platform returns inline comments, classify them before deciding whether the PR needs fixes.
+
+- Treat a comment as a **soft suggestion** only when every non-empty, non-code line starts with an advisory prefix such as `Consider`, `You might`, `An alternative`, `Optionally`, `It could be cleaner to`, `Perhaps`, `Maybe`, `You could`, `One option is`, or `Alternatively`.
+- Treat any other inline comment as **blocking**.
+- Treat `CHANGES_REQUESTED` reviews from the automated reviewer as **blocking**.
+
+Soft suggestions may be reported in summaries, but they do not change the loop result to `needs_fixes`. Any blocking finding does.
+
 **Fixing agent by PR branch type:**
 
 | PR branch prefix | Agent to dispatch |

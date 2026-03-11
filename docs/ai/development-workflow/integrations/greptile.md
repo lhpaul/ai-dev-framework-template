@@ -94,4 +94,4 @@ gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
   --jq "[.[] | select(.user.login == \"greptile-apps[bot]\" and .created_at > \"$last_push_at\") | {path, line, body}]"
 ```
 
-Apply the blocking vs. suggestion classification rules defined in Step 7 of `90-orchestrate-work-protocol.md`.
+Apply the blocking-vs-suggestion classification rules defined in Step 7 of `90-orchestrate-work-protocol.md` under `Blocking vs. suggestion classification`.
