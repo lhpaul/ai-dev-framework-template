@@ -8,7 +8,7 @@ This document defines **platform-agnostic** expectations for how agents use an a
 
 ## What the Platform Must Provide
 
-For the orchestrator's automated reviewer loop (Step 8 of `90-orchestrate-work-protocol.md`) to work, the platform must:
+For the item orchestrator's automated reviewer loop (Step 7 of `90-orchestrate-work-protocol.md`) to work, the platform must:
 
 1. **Post a review automatically** when a PR is opened or updated
 2. **Allow re-triggering** after fixes are pushed (e.g., via a comment or webhook)
@@ -32,6 +32,6 @@ Each platform-specific integration doc (e.g., `greptile.md`) must specify:
 
 ## Without an Automated Reviewer
 
-If no automated review platform is configured, skip Step 8 in the orchestrator protocol. In the Step 6 summary, report: `Automated review: ⏭️ skipped (not configured)`.
+If no automated review platform is configured, skip Step 7 in the item-orchestrator protocol. In the Step 6 summary, report: `Automated review: ⏭️ skipped (not configured)`.
 
 The code reviewer agent (`04-review-implemented-development-protocol.md`) can partially substitute — run it before flagging the PR for human review.

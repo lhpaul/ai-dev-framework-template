@@ -20,7 +20,8 @@ This project follows a staged AI-assisted development workflow. The canonical re
 | Review plan | `docs/ai/development-workflow/protocols/02-review-implementation-plan-protocol.md` |
 | Implement | `docs/ai/development-workflow/protocols/04-implement-development-protocol.md` |
 | Review code | `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md` |
-| Orchestrate | `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
+| Batch orchestrate | `docs/ai/development-workflow/protocols/89-batch-orchestrate-work-protocol.md` |
+| Orchestrate one item | `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
 
 ### Key rules
 

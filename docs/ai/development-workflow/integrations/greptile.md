@@ -43,9 +43,9 @@ review:
 
 ---
 
-## Step 8 — Greptile-Specific Implementation
+## Step 7 — Greptile-Specific Implementation
 
-The orchestrator's Step 8 (Automated Reviewer Loop) requires platform-specific commands. Below are the Greptile implementations for each step.
+The item orchestrator's Step 7 (Automated Reviewer Loop) requires platform-specific commands. Below are the Greptile implementations for each step.
 
 ### Preferred helper
 
@@ -61,9 +61,9 @@ It encapsulates the trigger, polling, comment classification, and stable `RESULT
 
 Greptile posts as `greptile-apps[bot]`. Use this login to filter its comments and reviews from human activity.
 
-### Step 8.1 — Trigger a re-review
+### Step 7.1 — Trigger a re-review
 
-After each push, record the timestamp and capture the comment ID (needed for Step 8.2):
+After each push, record the timestamp and capture the comment ID (needed for Step 7.2):
 
 ```bash
 last_push_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -71,7 +71,7 @@ last_push_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 review_comment_id="$(gh api \"repos/{owner}/{repo}/issues/<pr_number>/comments\" --method POST --raw-field body=\"@greptile review\" --jq '.id')"
 ```
 
-### Step 8.2 — Detect review completion
+### Step 7.2 — Detect review completion
 
 Greptile signals that it has **finished** reviewing by adding a 👍 reaction to the `@greptile review` comment. This is the reliable completion signal regardless of whether it found issues.
 
@@ -83,15 +83,15 @@ thumbs_up=$(gh api repos/{owner}/{repo}/issues/comments/{review_comment_id}/reac
 
 | Result | Action |
 |---|---|
-| `thumbs_up > 0` | Review complete — proceed to Step 8.3 to check for inline comments |
+| `thumbs_up > 0` | Review complete — proceed to Step 7.3 to check for inline comments |
 | `thumbs_up == 0` and `elapsed < max_wait` | Not finished yet — wait another `poll_interval` and poll again |
-| `thumbs_up == 0` and `elapsed >= max_wait` | Timeout — escalate to human (Step 8.5) |
+| `thumbs_up == 0` and `elapsed >= max_wait` | Timeout — escalate to human |
 
-### Step 8.3 — Fetch inline comments
+### Step 7.3 — Fetch inline comments
 
 ```bash
 gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
   --jq "[.[] | select(.user.login == \"greptile-apps[bot]\" and .created_at > \"$last_push_at\") | {path, line, body}]"
 ```
 
-Apply the blocking vs. suggestion classification rules defined in Step 8.3 of `90-orchestrate-work-protocol.md`.
+Apply the blocking-vs-suggestion classification rules defined in Step 7 of `90-orchestrate-work-protocol.md` under `Blocking vs. suggestion classification`.

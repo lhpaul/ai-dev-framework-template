@@ -115,6 +115,26 @@ Use this when:
 
 For resume behavior, run `workflow-next-action.sh` with `--branch`, `--pr`, or `--development`; it reports the next deterministic action for a partially completed run.
 
+### `workflow-batch-plan.sh`
+
+Classifies development folders into batch-planning candidates for the batch orchestrator.
+
+Usage:
+
+```bash
+./scripts/development-workflow/workflow-batch-plan.sh
+./scripts/development-workflow/workflow-batch-plan.sh docs/specs/developments/20260307120000_my-feature
+```
+
+What it does:
+- Scans one or more development folders
+- Uses `workflow-next-action.sh --development` to derive the next deterministic action
+- Emits stable `key=value` records including `BATCH_HINT` and `PARALLEL_SAFE`
+
+Use this when:
+- The batch orchestrator needs a deterministic first-pass list of development-folder candidates
+- You want to separate portfolio-level batch planning from single-item orchestration
+
 ### `post-merge-cleanup.sh`
 
 After a development PR is merged and the remote branch deleted, sync with origin, switch to develop, pull, and delete the local branch.
