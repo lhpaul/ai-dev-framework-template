@@ -58,6 +58,14 @@ if [ "${#development_paths[@]}" -eq 0 ]; then
   exit 0
 fi
 
+# Refresh remote refs once before looping so workflow-next-action.sh skips redundant fetches.
+if [ -z "${WORKFLOW_SKIP_FETCH:-}" ]; then
+  if ! git fetch --prune origin 2>/dev/null; then
+    echo "workflow-batch-plan.sh: warning: git fetch --prune origin failed; branch refs may be stale" >&2
+  fi
+  export WORKFLOW_SKIP_FETCH=1
+fi
+
 for development_path in "${development_paths[@]}"; do
   if [ ! -d "$development_path" ]; then
     echo "Skipping missing development path: $development_path" >&2
@@ -65,7 +73,10 @@ for development_path in "${development_paths[@]}"; do
   fi
 
   slug="$(basename "$development_path" | sed 's/^[0-9]\{14\}_//')"
-  next_action_output="$("$SCRIPT_DIR/workflow-next-action.sh" --development "$development_path")"
+  if ! next_action_output="$("$SCRIPT_DIR/workflow-next-action.sh" --development "$development_path" 2>&1)"; then
+    echo "Skipping $development_path: $next_action_output" >&2
+    continue
+  fi
 
   status=""
   next_action=""
