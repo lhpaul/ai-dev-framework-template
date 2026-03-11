@@ -90,11 +90,12 @@ The **Spec Ready** stage is intentionally **product-focused**: it defines what t
 | Implement | `developer` agent | `/implement-development` | `workflow-implementer` skill | `docs/ai/development-workflow/protocols/04-implement-development-protocol.md` |
 | Review Code | `code-reviewer` agent | `/review-code` | `workflow-code-reviewer` skill | `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md` |
 | Run reviewer loop (PR) | `automated-reviewer-loop` agent | `/run-reviewer-loop` | `workflow-reviewer-loop` skill | `docs/ai/development-workflow/protocols/92-automated-reviewer-loop-protocol.md` |
-| Orchestrate | `orchestrator` agent | `/run-work` | `workflow-orchestrator` skill | `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
+| Advance One Item | `item-orchestrator` agent | `/run-item-work` | `workflow-item-orchestrator` skill | `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
+| Orchestrate | `orchestrator` agent | `/run-work` | `workflow-orchestrator` skill | `docs/ai/development-workflow/protocols/89-batch-orchestrate-work-protocol.md` |
 
 Codex skills are stored in `.codex/skills/` and can be installed into the local Codex environment with `./scripts/development-workflow/install-codex-skills.sh`. They are intentionally thin wrappers over the same protocol files used by every other tool.
 
-For low-human-interaction operation in Codex, treat `workflow-orchestrator` as the default entrypoint. It inspects workflow state, chooses the next eligible action, and keeps progressing until the item is waiting on a human, blocked, or escalated. The stage-specific skills remain available for direct use, but when invoked directly they should still continue through reviewer gate and PR readiness before returning.
+For low-human-interaction operation in Codex, treat `workflow-orchestrator` as the default portfolio-wide entrypoint. It inspects workflow state, chooses safe parallel batches, and routes each item into `workflow-item-orchestrator`. Use `workflow-item-orchestrator` when you want to resume or advance one specific development, branch, or PR without rescanning the whole portfolio. Stage-specific skills remain available for direct use, but when invoked directly they should still continue through reviewer gate and PR readiness before returning.
 
 ---
 
@@ -182,7 +183,7 @@ See [`integrations/issue-tracker.md`](integrations/issue-tracker.md) for full tr
 
 ## Prioritization Logic
 
-When the orchestrator selects what to work on next:
+When the batch orchestrator selects what to work on next:
 
 1. Items with a due date within 2 weeks take precedence (sorted by due date)
 2. Remaining items sorted by priority (Urgent → High → Normal → Low)
@@ -240,11 +241,12 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## Automated PR Review Integration
 
-If an automated code review platform is configured, the orchestrator runs an automated reviewer loop after every push to a PR branch. The loop resolves all findings before the PR is flagged for human review. After the review loop is clean, the orchestrator continues into CI polling rather than stopping at "PR opened".
+If an automated code review platform is configured, the item orchestrator runs an automated reviewer loop after every push to a PR branch. The loop resolves all findings before the PR is flagged for human review. After the review loop is clean, the item orchestrator continues into CI polling rather than stopping at "PR opened". The batch orchestrator supervises these item-level runs and consolidates the results.
 
 Repository helpers:
 
 - `scripts/development-workflow/discover-workflow-state.sh`
+- `scripts/development-workflow/workflow-batch-plan.sh`
 - `scripts/development-workflow/pr-review-loop.sh`
 - `scripts/development-workflow/pr-ci-loop.sh`
 - `scripts/development-workflow/workflow-next-action.sh`
@@ -274,4 +276,5 @@ See [`protocols/91-pr-readiness-signal-protocol.md`](protocols/91-pr-readiness-s
 | Implementation Plan Reviewer | Plan In Review | Plan Ready | `02-review-implementation-plan-protocol.md` |
 | Developer | Plan Ready | In Development | `04-implement-development-protocol.md` |
 | Code Reviewer | In Development | Merged (via human) | `04-review-implemented-development-protocol.md` |
-| Orchestrator | All stages | — (coordination only) | `90-orchestrate-work-protocol.md` |
+| Item Orchestrator | Any single workflow item | — (coordination only) | `90-orchestrate-work-protocol.md` |
+| Orchestrator | All stages / multiple items | — (batch coordination only) | `89-batch-orchestrate-work-protocol.md` |

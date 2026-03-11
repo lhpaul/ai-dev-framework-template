@@ -39,7 +39,7 @@ Always refer to these docs for authoritative guidance:
 | [`docs/ai/development-workflow/README.md`](docs/ai/development-workflow/README.md) | AI development workflow (master doc) |
 | [`docs/ai/development-workflow/agent-model-config.md`](docs/ai/development-workflow/agent-model-config.md) | Model assignments, tool restrictions, and override guide for all agents |
 
-> **Note for Cursor users**: Workflow agents are also available as Cursor subagents in `.cursor/agents/`. Invoke them directly (e.g., `/developer`, `/orchestrator`) or let Agent delegate to them. Each subagent's model is configured in its file — see [`docs/ai/development-workflow/agent-model-config.md`](docs/ai/development-workflow/agent-model-config.md) for how to set or override models.
+> **Note for Cursor users**: Workflow agents are also available as Cursor subagents in `.cursor/agents/`. Invoke them directly (e.g., `/developer`, `/orchestrator`, `/item-orchestrator`) or let Agent delegate to them. Each subagent's model is configured in its file — see [`docs/ai/development-workflow/agent-model-config.md`](docs/ai/development-workflow/agent-model-config.md) for how to set or override models.
 
 ---
 
@@ -59,9 +59,10 @@ This project uses a staged AI-assisted development workflow. See [`docs/ai/devel
 | Implement | `developer` agent | `/implement-development` | `workflow-implementer` skill | Follow `docs/ai/development-workflow/protocols/04-implement-development-protocol.md` |
 | Review Code | `code-reviewer` agent | `/review-code` | `workflow-code-reviewer` skill | Follow `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md` |
 | Run reviewer loop (PR) | `automated-reviewer-loop` agent | `/run-reviewer-loop` | `workflow-reviewer-loop` skill | Follow `docs/ai/development-workflow/protocols/92-automated-reviewer-loop-protocol.md` |
+| Advance One Item | `item-orchestrator` agent | `/run-item-work` | `workflow-item-orchestrator` skill | Follow `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
 | Prepare Commit | — | `/prepare-commit` | Follow `docs/best-practices/2-version-control.md` | Follow `docs/best-practices/2-version-control.md` |
 | Prepare Release | `/prepare-release` | `/prepare-release` | Follow `docs/ai/development-workflow/protocols/06-prepare-release-protocol.md` | Follow `docs/ai/development-workflow/protocols/06-prepare-release-protocol.md` |
-| Orchestrate Work | `orchestrator` agent | `/run-work` | `workflow-orchestrator` skill | Follow `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
+| Orchestrate Work | `orchestrator` agent | `/run-work` | `workflow-orchestrator` skill | Follow `docs/ai/development-workflow/protocols/89-batch-orchestrate-work-protocol.md` |
 
 ### Codex Skills
 
@@ -73,7 +74,7 @@ The repository ships Codex skill definitions in `.codex/skills/`. Install them i
 
 Installed skills are thin wrappers around the canonical workflow protocols. They do not redefine the workflow; they load the same documents used by other tools and, for orchestration, rely on the helper scripts in `scripts/development-workflow/` to inspect state, resume partial work, and resolve PR readiness deterministically. The bundled skills also include optional `agents/openai.yaml` metadata so downstream projects created from this template have cleaner Codex skill labels and default prompts out of the box.
 
-For normal Codex usage, start with `workflow-orchestrator`. It is the primary entrypoint for advancing work with minimal human intervention. Run it on an `economy` tier by default, then escalate only when the routed stage recommends a higher tier. The other workflow skills are supporting stage executors that the orchestrator can route into, or that a human can invoke directly when they want to force a specific stage. Whether work is orchestrated or stage-specific, runs should continue until they reach a real terminal condition: waiting on human review / merge, blocked dependency, unresolved decision, or escalation.
+For normal Codex usage, start with `workflow-orchestrator`. It is the primary portfolio-wide entrypoint: it discovers eligible items, builds safe parallel batches, and routes each item into `workflow-item-orchestrator`. Run it on an `economy` tier by default, then escalate only when the routed stage recommends a higher tier. Use `workflow-item-orchestrator` when you already know the exact development / branch / PR to resume. Whether work is batch-orchestrated or item-scoped, runs should continue until they reach a real terminal condition: waiting on human review / merge, blocked dependency, unresolved decision, or escalation.
 
 ### Maintenance Commands
 

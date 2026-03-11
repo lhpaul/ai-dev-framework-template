@@ -81,6 +81,7 @@ The setup agent will have a structured conversation with you to understand your 
 │           │   ├── 02-review-implementation-plan-protocol.md
 │           │   ├── 04-implement-development-protocol.md
 │           │   ├── 04-review-implemented-development-protocol.md
+│           │   ├── 89-batch-orchestrate-work-protocol.md
 │           │   ├── 90-orchestrate-work-protocol.md
 │           │   └── 91-pr-readiness-signal-protocol.md
 │           ├── templates/                 # Spec, plan, and test templates
@@ -100,6 +101,7 @@ The setup agent will have a structured conversation with you to understand your 
 │   │   ├── check-workflow-branch.sh     # Checks whether a workflow branch already exists
 │   │   ├── pr-review-loop.sh      # Polls Greptile PR review until clean / fix / escalate
 │   │   ├── pr-ci-loop.sh                # Polls CI checks until green / red / timeout
+│   │   ├── workflow-batch-plan.sh       # Classifies development folders into batch-planning candidates
 │   │   ├── workflow-next-action.sh      # Classifies the next deterministic workflow action
 │   │   └── install-codex-skills.sh      # (Codex only) Installs repo skills into your local Codex config
 │   └── README.md                        # Points to development-workflow; add your own scripts here
@@ -113,11 +115,12 @@ The setup agent will have a structured conversation with you to understand your 
 │       ├── implementation-plan-reviewer.md
 │       ├── developer.md
 │       ├── code-reviewer.md
+│       ├── item-orchestrator.md
 │       └── orchestrator.md
 │
 └── .cursor/
     ├── rules/                            # Cursor context rules
-    ├── agents/                           # Cursor workflow subagents (orchestrator, developer, etc.)
+    ├── agents/                           # Cursor workflow subagents (orchestrator, item-orchestrator, developer, etc.)
     └── commands/                         # Cursor slash commands
 ```
 
@@ -170,13 +173,13 @@ Use the orchestrator agent to review the current backlog, specs, plans, branches
 ```
 
 ```text
-Use the orchestrator agent to start and advance work for [feature or issue name]. Inspect the current workflow state first, then keep progressing that item through creator, reviewer, PR, automated review, and CI until it is waiting on a human, blocked, or escalated.
+Use the item-orchestrator agent to start and advance work for [feature or issue name]. Resolve the request to one workflow item, then keep progressing that item through creator, reviewer, PR, automated review, and CI until it is waiting on a human, blocked, or escalated.
 ```
 
 ### Cursor
 - Rules in `.cursor/rules/` provide automatic context
 - Commands in `.cursor/commands/` are invoked with `/command-name`
-- Workflow agents in `.cursor/agents/` (e.g. `/developer`, `/orchestrator`) run stage-specific protocols; see `docs/ai/development-workflow/agent-model-config.md` for model config
+- Workflow agents in `.cursor/agents/` (e.g. `/developer`, `/orchestrator`, `/item-orchestrator`) run stage-specific protocols; see `docs/ai/development-workflow/agent-model-config.md` for model config
 - MCP servers can be configured in `.cursor/.mcp.json`
 
 Example commands:
@@ -193,10 +196,15 @@ Example commands:
 /run-work Start and advance work for [feature or issue name]. Inspect the current workflow state first, then keep progressing that item through creator, reviewer, PR, automated review, and CI until it is waiting on a human, blocked, or escalated.
 ```
 
+```text
+/run-item-work Start and advance work for [feature or issue name]. Resolve the request to one workflow item, then keep progressing that item through creator, reviewer, PR, automated review, and CI until it is waiting on a human, blocked, or escalated.
+```
+
 ### Codex
 - Install the bundled skills with `./scripts/development-workflow/install-codex-skills.sh`
-- Start with `workflow-orchestrator` as the default entrypoint for the workflow
+- Start with `workflow-orchestrator` as the default portfolio-wide entrypoint for the workflow
 - Run `workflow-orchestrator` on an `economy` tier by default; only escalate when the stage-specific skill recommends it
+- Use `workflow-item-orchestrator` when you want to resume or advance one specific development, branch, or PR
 - Use the other skills in `.codex/skills/` when you want to run a specific stage directly
 - The skills are thin wrappers around the same protocol docs used by the other tools
 - Each skill can also ship `agents/openai.yaml` metadata for cleaner labels and starter prompts in Codex-compatible UIs
@@ -212,7 +220,7 @@ Use $workflow-orchestrator to review the current backlog, specs, plans, branches
 ```
 
 ```text
-Use $workflow-orchestrator to start and advance work for [feature or issue name]. Inspect the current workflow state first, then keep progressing that item through creator, reviewer, PR, automated review, and CI until it is waiting on a human, blocked, or escalated.
+Use $workflow-item-orchestrator to start and advance work for [feature or issue name]. Resolve the request to one workflow item, then keep progressing that item through creator, reviewer, PR, automated review, and CI until it is waiting on a human, blocked, or escalated.
 ```
 
 ### Other AI Tools (Gemini CLI, etc.)
