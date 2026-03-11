@@ -204,6 +204,8 @@ else
   next_action="implement"
 fi
 
+# PLAN_FILE is intentionally not emitted; callers that need the path should scan
+# "$development_path"/2_*_implementation-plan.md directly.
 print_kv TARGET "development:$development_path"
 print_kv SPEC_FILE "$spec_file"
 print_kv STATUS "$status_line"

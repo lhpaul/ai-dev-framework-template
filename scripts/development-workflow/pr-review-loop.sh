@@ -142,8 +142,8 @@ if [ -z "$review_comment_id" ]; then
     since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
   fi
   if [ -z "$since_iso" ]; then
-    # Fallback: 24h ago so we don't consider very old comments
-    since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    # Fallback: 24h ago so we don't consider very old comments. If neither BSD nor GNU date works, use epoch so all comments are considered.
+    since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
   fi
 
   existing_comments="$(
