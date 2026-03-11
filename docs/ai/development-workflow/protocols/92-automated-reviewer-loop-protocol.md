@@ -29,7 +29,7 @@ If no PR can be determined, ask the user to specify a PR number or to run from a
 
 ## Procedure (per PR)
 
-Execute **Step 7: Automated Reviewer Loop** and **Step 8: CI Loop** exactly as defined in `90-orchestrate-work-protocol.md` (scripts, result interpretation, fixer mapping, parameters, and labels). Do not duplicate that logic here — follow 90.
+Execute **Step 7: Automated Reviewer Loop** and **Step 8: CI Loop** exactly as defined in `90-orchestrate-work-protocol.md` (scripts, result interpretation, sequential platform policy, fixer mapping, parameters, and labels). Do not duplicate that logic here — follow 90.
 
 For each PR, run Step 7 to completion, then Step 8; dispatch fixers and re-run as specified in 90 until the PR is clean and ready for human review or escalated.
 
@@ -39,6 +39,6 @@ For each PR, run Step 7 to completion, then Step 8; dispatch fixers and re-run a
 
 After processing the requested PR(s), report:
 
-- **Ready for human review**: PR link, branch, and that automated review and CI are clean (or review skipped).
+- **Ready for human review**: PR link, branch, and that every configured automated reviewer plus CI are clean (or skipped).
 - **Escalated**: PR link, reason (max cycles, timeout, or review platform escalate).
-- **Skipped**: If no review platform is configured, note that automated review was skipped for the listed PR(s).
+- **Skipped**: If no review platform is configured, or a configured platform is currently unsupported and therefore skipped, note that in the result for the listed PR(s).

@@ -36,6 +36,7 @@ Always refer to these docs for authoritative guidance:
 | [`docs/best-practices/2-version-control.md`](docs/best-practices/2-version-control.md) | Git conventions |
 | [`docs/best-practices/3-testing.md`](docs/best-practices/3-testing.md) | Testing standards |
 | [`docs/best-practices/STACK-SPECIFIC.md`](docs/best-practices/STACK-SPECIFIC.md) | Stack-specific conventions |
+| [`REVIEW.md`](REVIEW.md) | Canonical review contract for spec, plan, and code review gates |
 | [`docs/ai/development-workflow/README.md`](docs/ai/development-workflow/README.md) | AI development workflow (master doc) |
 | [`docs/ai/development-workflow/agent-model-config.md`](docs/ai/development-workflow/agent-model-config.md) | Model assignments, tool restrictions, and override guide for all agents |
 
@@ -53,11 +54,9 @@ This project uses a staged AI-assisted development workflow. See [`docs/ai/devel
 |---|---|---|---|---|
 | Project Setup | `project-setup` agent | `/setup-project` | `workflow-project-setup` skill | Follow `docs/ai/setup/protocol.md` |
 | Write Spec | `product-manager` agent | `/generate-new-feature` | `workflow-spec-writer` skill | Follow `docs/ai/development-workflow/protocols/01-generate-specs-protocol.md` |
-| Review Spec | `spec-reviewer` agent | `/review-spec` | `workflow-spec-reviewer` skill | Follow `docs/ai/development-workflow/protocols/01-review-specs-protocol.md` |
 | Write Plan | `tech-lead` agent | `/generate-implementation-plan` | `workflow-plan-writer` skill | Follow `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
-| Review Plan | `implementation-plan-reviewer` agent | `/review-implementation-plan` | `workflow-plan-reviewer` skill | Follow `docs/ai/development-workflow/protocols/02-review-implementation-plan-protocol.md` |
 | Implement | `developer` agent | `/implement-development` | `workflow-implementer` skill | Follow `docs/ai/development-workflow/protocols/04-implement-development-protocol.md` |
-| Review Code | `code-reviewer` agent | `/review-code` | `workflow-code-reviewer` skill | Follow `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md` |
+| Review Gate (Spec / Plan / Code) | Native review against `REVIEW.md` | `/review-spec`, `/review-implementation-plan`, `/review-code` | Native review against `REVIEW.md` | Follow `REVIEW.md` and the compatibility wrapper protocols under `docs/ai/development-workflow/protocols/` when needed |
 | Run reviewer loop (PR) | `automated-reviewer-loop` agent | `/run-reviewer-loop` | `workflow-reviewer-loop` skill | Follow `docs/ai/development-workflow/protocols/92-automated-reviewer-loop-protocol.md` |
 | Advance One Item | `item-orchestrator` agent | `/run-item-work` | `workflow-item-orchestrator` skill | Follow `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
 | Prepare Commit | — | `/prepare-commit` | Follow `docs/best-practices/2-version-control.md` | Follow `docs/best-practices/2-version-control.md` |
@@ -74,7 +73,7 @@ The repository ships Codex skill definitions in `.codex/skills/`. Install them i
 
 Installed skills are thin wrappers around the canonical workflow protocols. They do not redefine the workflow; they load the same documents used by other tools and, for orchestration, rely on the helper scripts in `scripts/development-workflow/` to inspect state, resume partial work, and resolve PR readiness deterministically. The bundled skills also include optional `agents/openai.yaml` metadata so downstream projects created from this template have cleaner Codex skill labels and default prompts out of the box.
 
-For normal Codex usage, start with `workflow-orchestrator`. It is the primary portfolio-wide entrypoint: it discovers eligible items, builds safe parallel batches, and routes each item into `workflow-item-orchestrator`. Run it on an `economy` tier by default, then escalate only when the routed stage recommends a higher tier. Use `workflow-item-orchestrator` when you already know the exact development / branch / PR to resume. Whether work is batch-orchestrated or item-scoped, runs should continue until they reach a real terminal condition: waiting on human review / merge, blocked dependency, unresolved decision, or escalation.
+For normal Codex usage, start with `workflow-orchestrator`. It is the primary portfolio-wide entrypoint: it discovers eligible items, builds safe parallel batches, and routes each item into `workflow-item-orchestrator`. Run it on an `economy` tier by default, then escalate only when the routed stage recommends a higher tier. Use `workflow-item-orchestrator` when you already know the exact development / branch / PR to resume. Whether work is batch-orchestrated or item-scoped, runs should continue until they reach a real terminal condition: waiting on human review / merge, blocked dependency, unresolved decision, or escalation. For review gates, prefer the runner's native review capability against `REVIEW.md`; use the compatibility wrapper protocols only when a command, skill, or legacy workflow explicitly points to them.
 
 ### Maintenance Commands
 

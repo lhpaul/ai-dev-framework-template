@@ -1,8 +1,8 @@
 # Integration: Greptile (Automated PR Review)
 
-This document describes how to use [Greptile](https://greptile.com) as the automated code review platform in the workflow.
+This document describes how to use [Greptile](https://greptile.com) as one automated code review platform in the workflow.
 
-Greptile is **optional**. The workflow functions without it — agents go directly to human review after opening a PR. See [`integrations/pr-review-platform.md`](pr-review-platform.md) for the platform-agnostic loop and requirements.
+Greptile is **optional**. The workflow functions without it. See [`integrations/pr-review-platform.md`](pr-review-platform.md) for the multi-platform loop and aggregation rules.
 
 ---
 
@@ -45,17 +45,17 @@ review:
 
 ## Step 7 — Greptile-Specific Implementation
 
-The item orchestrator's Step 7 (Automated Reviewer Loop) requires platform-specific commands. Below are the Greptile implementations for each step.
+The item orchestrator's Step 7 (Automated Reviewer Loop) requires platform-specific commands. Below are the Greptile adapter details used by the shared helper.
 
 ### Preferred helper
 
 When possible, call the repository helper instead of re-implementing the loop inline:
 
 ```bash
-./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name>
+./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name> --platform greptile
 ```
 
-It encapsulates the trigger, polling, comment classification, and stable `RESULT=` output used by the orchestrator.
+It encapsulates the trigger, polling, comment classification, and stable aggregate `RESULT=` output used by the orchestrator.
 
 ### Bot identity
 

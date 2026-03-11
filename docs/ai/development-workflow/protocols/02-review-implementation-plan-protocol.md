@@ -1,118 +1,45 @@
-# Protocol: Review Implementation Plan (Plan Review)
+# Protocol: Review Implementation Plan (Compatibility Wrapper)
 
-**Agent role**: Implementation Plan Reviewer
-**Stage**: Plan Review (before opening PR; can also be used after PR is opened)
-**Output**: Fixes applied directly + review report
+**Purpose**: Run the implementation-plan review gate using the repository's canonical review contract in [`REVIEW.md`](../../../../REVIEW.md).
 
----
-
-## Reviewer-loop mode
-
-When this protocol is invoked on a pushed branch or open PR as part of an orchestrated fix loop:
-
-- Apply all fixable issues directly
-- Commit and push the fixes if any repo-tracked files changed
-- Return `APPROVED` only when no further fixable blocking issues remain
-- Return `NEEDS REVISION` only when a real architecture or product decision is required
-
-Do not stop after producing a report if the branch still needs deterministic fixes.
+Use this protocol when:
+- A workflow stage says to run the plan review gate
+- A legacy command or agent still points to this file
+- You want a repo-specific wrapper around a tool's native review feature
 
 ---
 
-## Prerequisites
+## Source of Truth
 
-Before reviewing, read:
-- The corresponding spec: `docs/specs/developments/[folder]/1_[slug]_specs.md`
-- The plan to be reviewed: `docs/specs/developments/[folder]/2_[slug]_implementation-plan.md`
-- The smoke test runbook: `docs/testing/[section]/[slug].smoke-test.md`
-- `docs/project/2-repo-architecture.md`
-- `docs/project/3-software-architecture.md`
-- `docs/best-practices/` — all best practice docs
-- Relevant existing code — read actual files to validate feasibility
+Read and follow:
+- [`REVIEW.md`](../../../../REVIEW.md) → `Plan Review Checklist`
+- The corresponding spec
+- The target implementation plan
+- Relevant code, architecture docs, and smoke-test runbook when present
 
-### Locating the plan to review
-
-Priority order:
-1. Explicit path provided by the human
-2. Files changed in the current branch (`git diff main...HEAD`)
-3. Ask the human
+`REVIEW.md` is authoritative. If this wrapper and `REVIEW.md` ever differ, follow `REVIEW.md`.
 
 ---
 
-## Review Checklist
+## Runner Guidance
 
-### 1. Spec Alignment
+- Claude Code: prefer the native review flow against `REVIEW.md`.
+- Codex: prefer the native review flow against `REVIEW.md`.
+- Cursor: use `/review-implementation-plan`, which should manually review the plan against `REVIEW.md`.
+- Other tools: perform a manual review against `REVIEW.md`.
 
-- [ ] Every use case in the spec has a corresponding implementation step
-- [ ] Every acceptance criterion in the spec is addressed somewhere in the plan
-- [ ] No changes planned that are not motivated by the spec (no unrelated refactoring)
-- [ ] When the issue tracker is the source of truth, the issue status is `Plan Ready`. The spec file's status field is optional and need not be updated.
-
-### 2. Template Completeness
-
-- [ ] All required sections from `docs/ai/development-workflow/templates/implementation-plan-template.md` are present
-- [ ] Complexity estimate is provided with rationale
-- [ ] Dependencies are declared
-- [ ] **Documentation**: The plan has explicitly considered project documentation in `docs/` and either lists required doc updates (with files and what to update) or states "None" with a brief justification
-
-### 3. Specificity & Implementability
-
-- [ ] Each step is specific enough that a developer can execute it without guessing
-- [ ] The implementation order is logical (no step requires a later step to be done first)
-- [ ] Seed data requirements are explicit (what data, which files, which scenarios)
-- [ ] No vague steps like "update UI as needed" — each UI change is described
-
-### 4. Architecture & Feasibility
-
-- [ ] The approach is consistent with `docs/project/3-software-architecture.md`
-- [ ] No invented patterns or abstractions that don't exist in the codebase
-- [ ] Database changes are safe (no destructive migrations without explicit justification)
-- [ ] No steps that would violate the security model in `docs/project/4-database-model.md`
-
-### 5. Testing & Smoke Test Coverage
-
-- [ ] The smoke test runbook exists and is linked from the plan
-- [ ] The runbook covers all acceptance criteria from the spec
-- [ ] Seed data needed for smoke tests is included in the seed data section of the plan
+If invoked in a fix loop for a pushed branch or open PR:
+- Apply all deterministic `blocking` and `important` fixes directly
+- Commit and push if repo-tracked files changed
+- Return approval only when no fixable `blocking` issues remain
+- Escalate only when a real product or architecture decision is required
 
 ---
 
-## How to Apply Fixes
+## Output
 
-**Fix directly** (without asking) for:
-- Missing sections (add with a `TODO` placeholder if content requires human input)
-- Implementation steps that are too vague (make them more specific based on the codebase)
-- Missing seed data entries that can be inferred from the spec
-- Formatting and link issues
-
-**Report only** (do not fix) when:
-- The approach requires a product/design decision
-- The plan contradicts the spec and the resolution is ambiguous
-- A feasibility concern requires a human decision (e.g., the planned approach would be significantly more complex than estimated)
-
----
-
-## Output Format
-
-```
-## Implementation Plan Review: [feature-name]
-
-### Overall Assessment
-[One paragraph — is the plan ready to move to In Development?]
-
-### Spec Alignment
-[Table mapping spec acceptance criteria to plan steps]
-
-### Template Coverage
-[Checklist of required sections]
-
-### Issues Fixed
-[List of changes made directly to the plan]
-
-### Issues Requiring Human Input
-[List of items needing a human decision]
-
-### Verdict
-[ ] APPROVED — ready to move to In Development
-[ ] NEEDS REVISION — human input required on the items listed above
-```
+Produce a concise review report with:
+- Overall assessment
+- Direct fixes applied
+- Remaining issues requiring human input
+- Verdict: `APPROVED` or `NEEDS REVISION`

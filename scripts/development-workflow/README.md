@@ -73,24 +73,25 @@ Use this when:
 
 ### `pr-review-loop.sh`
 
-Triggers and polls the automated PR review tool, then classifies findings into blocking vs suggestion.
+Runs one or more automated PR review platforms in order, then classifies findings into blocking vs suggestion.
 
 Usage:
 
 ```bash
-./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch feature/my-branch]
+./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch feature/my-branch] [--platform greptile] [--platform devin]
 ```
 
 What it does:
-- Posts the Greptile trigger comment
-- Polls for the completion signal
-- Fetches new inline comments after the trigger
-- Reports a stable `RESULT=clean|needs_fixes|escalate|skipped`
-- Emits the matching fixer agent (`spec-reviewer`, `implementation-plan-reviewer`, or `code-reviewer`)
+- Evaluates configured review platforms sequentially
+- Runs the platform adapter for each supported platform
+- Stops on the first platform that reports blocking findings or escalation
+- Reports a stable aggregate `RESULT=clean|needs_fixes|escalate|skipped`
+- Emits ordered per-platform `PLATFORM_<n>_*` records plus the matching compatibility fixer
 
 Use this when:
 - A stage has pushed to a PR branch and must resolve automated review before requesting human review
 - The orchestrator is resuming a PR after a prior push or interruption
+- More than one automated reviewer is configured for a repository
 
 ### `workflow-next-action.sh`
 

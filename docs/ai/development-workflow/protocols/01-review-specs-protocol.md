@@ -1,140 +1,45 @@
-# Protocol: Review Feature Spec (Spec Review)
+# Protocol: Review Feature Spec (Compatibility Wrapper)
 
-**Agent role**: Spec Reviewer
-**Stage**: Spec Review (before opening PR; can also be used after PR is opened)
-**Output**: Fixes applied directly + review report
+**Purpose**: Run the spec review gate using the repository's canonical review contract in [`REVIEW.md`](../../../../REVIEW.md).
 
----
-
-## Reviewer-loop mode
-
-When this protocol is invoked on a pushed branch or open PR as part of an orchestrated fix loop:
-
-- Apply all fixable issues directly
-- Commit and push the fixes if any repo-tracked files changed
-- Return `APPROVED` only when no further fixable blocking issues remain
-- Return `NEEDS REVISION` only when a real product decision is required
-
-Do not stop after producing a report if the branch still needs deterministic fixes.
+Use this protocol when:
+- A workflow stage says to run the spec review gate
+- A legacy command or agent still points to this file
+- You want a repo-specific wrapper around a tool's native review feature
 
 ---
 
-## Prerequisites
+## Source of Truth
 
-Before reviewing, read:
-- `docs/project/1-business-domain.md` — domain context and glossary
-- `docs/project/3-software-architecture.md` — architecture constraints
-- The spec to be reviewed
+Read and follow:
+- [`REVIEW.md`](../../../../REVIEW.md) → `Spec Review Checklist`
+- `docs/project/1-business-domain.md`
+- `docs/project/3-software-architecture.md`
+- The target spec
 
-### Locating the spec to review
-
-Priority order:
-1. Explicit path provided by the human (`docs/specs/developments/[folder]/1_[slug]_specs.md`)
-2. The spec file changed in the current branch (`git diff main...HEAD`)
-3. Ask the human
+`REVIEW.md` is authoritative. If this wrapper and `REVIEW.md` ever differ, follow `REVIEW.md`.
 
 ---
 
-## Review Checklist
+## Runner Guidance
 
-### 1. Template Compliance
+- Claude Code: prefer the native review flow against `REVIEW.md`.
+- Codex: prefer the native review flow against `REVIEW.md`.
+- Cursor: use `/review-spec`, which should manually review the spec against `REVIEW.md`.
+- Other tools: perform a manual review against `REVIEW.md`.
 
-- [ ] All required sections from `docs/ai/development-workflow/templates/spec-template.md` are present
-- [ ] Status field, if present, is correct (`Spec Ready`). It may be omitted in all cases; workflow status is then taken from the issue tracker or from repo state (see `integrations/linear.md` and `workflow-next-action.sh`).
-- [ ] No placeholder text left unfilled (unless explicitly marked as Open Question)
-
-### 2. Completeness & Clarity
-
-- [ ] The feature name and slug are clear
-- [ ] At least one use case is fully defined (actor, preconditions, steps, postconditions)
-- [ ] Every use case has a clear actor and trigger
-- [ ] Error cases and edge cases are addressed or explicitly deferred to a later iteration
-- [ ] The MVP scope boundary is explicit (what's out of scope)
-
-### 3. Business Rules
-
-- [ ] Business rules are listed and unambiguous
-- [ ] No two rules contradict each other
-- [ ] Rules are enforceable (not vague aspirations)
-
-### 4. Acceptance Criteria
-
-- [ ] At least one acceptance criterion per use case
-- [ ] Every criterion is testable — a human can verify it by following a smoke test
-- [ ] No criterion is ambiguous ("it works" is not a valid criterion)
-
-### 5. Status & Enum Discipline
-
-- [ ] If the feature introduces statuses or enum values, each has a defined UI display label
-- [ ] Status transitions are defined (from → to, trigger)
-- [ ] No raw code values exposed in the spec as if they were the display labels
-
-### 6. Product-first boundary (critical)
-
-Specs in this repo are intentionally **product-focused**. The spec should describe:
-
-- user-facing behavior and UX expectations,
-- permissions/roles,
-- business rules,
-- acceptance criteria.
-
-The spec should generally **avoid** prescribing technical design:
-
-- DB table/column names, migrations, triggers/functions
-- specific endpoints/handlers/services/classes
-- file paths and concrete module layouts
-
-If technical details appear, prefer to:
-
-1) rewrite them into **product constraints** (what must be true, not how), and
-2) record any remaining engineering decisions as **Open Questions** to be resolved in the Implementation Plan stage.
-
-### 7. Consistency with Project Conventions
-
-- [ ] Entity names match `docs/project/1-business-domain.md`
-- [ ] No new entities introduced without a description
-- [ ] The feature doesn't contradict existing business rules
+If invoked in a fix loop for a pushed branch or open PR:
+- Apply all deterministic `blocking` and `important` fixes directly
+- Commit and push if repo-tracked files changed
+- Return approval only when no fixable `blocking` issues remain
+- Escalate only when a real product decision is required
 
 ---
 
-## How to Apply Fixes
+## Output
 
-**Fix directly** (without asking) for:
-- Missing required sections (add them with placeholder content marked `TODO`)
-- Ambiguous acceptance criteria (rewrite to be testable)
-- Missing display labels for enums/statuses
-- Typos, formatting issues, broken links
-
-**Report only** (do not fix) when:
-- A product decision is needed (e.g., "should this also apply to admin users?")
-- The scope boundary is unclear and needs human input
-- A business rule is missing or contradictory and requires clarification
-
----
-
-## Output Format
-
-Deliver a review report with:
-
-```
-## Spec Review: [feature-name]
-
-### Overall Assessment
-[One paragraph summary — is the spec ready to move to Plan Ready?]
-
-### Template Coverage
-[Table or checklist showing which sections are present/missing]
-
-### Issues Fixed
-[List of changes made directly to the spec]
-
-### Issues Requiring Human Input
-[List of items that need a product/design decision]
-
-### Open Questions
-[Carry over any open questions from the spec, plus any new ones surfaced during review]
-
-### Verdict
-[ ] APPROVED — ready to move to Plan Ready
-[ ] NEEDS REVISION — human input required on the items listed above
-```
+Produce a concise review report with:
+- Overall assessment
+- Direct fixes applied
+- Remaining issues requiring human input
+- Verdict: `APPROVED` or `NEEDS REVISION`

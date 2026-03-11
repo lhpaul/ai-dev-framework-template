@@ -1,8 +1,10 @@
 ---
-description: Review a spec PR for completeness, clarity, and testability. Applies fixes directly where possible. Usage: /review-spec [optional path to dev folder]
+description: Run the spec review gate by manually reviewing against REVIEW.md. Applies fixes directly where possible. Usage: /review-spec [optional path to dev folder]
 ---
 
-Follow the spec review protocol exactly as defined in:
+Use `REVIEW.md` as the primary review contract.
+
+For compatibility with the repo workflow, also follow:
 
 `docs/ai/development-workflow/protocols/01-review-specs-protocol.md`
 
