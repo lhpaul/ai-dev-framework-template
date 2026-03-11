@@ -113,6 +113,8 @@ run_greptile_review() {
   local index=1
   local blocking_json=""
 
+  trap 'rm -f "${existing_blocking_file:-}" "${blocking_lines_file:-}"' RETURN
+
   require_gh
   cd_workflow_repo_root
   repo="$(repo_slug)"
@@ -509,12 +511,6 @@ if [ -z "$last_platform" ]; then
   print_kv BLOCKING_COUNT 0
   print_kv SUGGESTION_COUNT 0
   exit 0
-fi
-
-if [ "$aggregate_result" = "clean" ]; then
-  if [ "${#platforms[@]}" -eq 0 ]; then
-    aggregate_result="skipped"
-  fi
 fi
 
 print_kv RESULT "$aggregate_result"
