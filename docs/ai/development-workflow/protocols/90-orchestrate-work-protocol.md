@@ -58,6 +58,12 @@ Use these helpers while resolving and resuming work:
 
 If the request is portfolio-wide or refers to multiple items, stop using this protocol and switch to `89-batch-orchestrate-work-protocol.md`.
 
+Important for `development folder` targets:
+
+- `workflow-next-action.sh --development` is only reliable once the item is already `Spec Ready`, `Plan Ready`, or `In Development`.
+- A development folder by itself cannot distinguish `Spec In Review` / `Plan In Review` from the corresponding merged state.
+- If the target may still be waiting on a spec or plan PR merge, confirm the state via the issue tracker or by inspecting the workflow branch / PR directly before advancing.
+
 When dispatching a subagent for this item, include a short “Issue Tracker Summary” in the handoff:
 
 - What the issue is asking for
@@ -73,8 +79,10 @@ When dispatching a subagent for this item, include a short “Issue Tracker Summ
 | Current state / detection | Can advance if... | Next action |
 |---|---|---|
 | Backlog | Human has requested this specific item | Run `01-generate-specs-protocol.md` |
+| Spec In Review | Spec PR is still open | Wait — spec PR is open, pending human review / merge |
 | Spec branch pushed, no PR yet | Branch exists on local / remote / worktree | Run `01-review-specs-protocol.md`, open the PR, then finish PR readiness |
 | Spec Ready | Spec PR is merged | Run `02-generate-implementation-plan-protocol.md` |
+| Plan In Review | Plan PR is still open | Wait — plan PR is open, pending human review / merge |
 | Plan branch pushed, no PR yet | Branch exists on local / remote / worktree | Run `02-review-implementation-plan-protocol.md`, open the PR, then finish PR readiness |
 | Plan Ready | Plan PR is merged | Run `04-implement-development-protocol.md` |
 | Dev branch pushed, no PR yet | Branch exists on local / remote / worktree | Run `04-review-implemented-development-protocol.md`, open the PR, then finish PR readiness |
