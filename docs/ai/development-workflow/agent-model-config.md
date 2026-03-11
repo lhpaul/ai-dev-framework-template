@@ -44,7 +44,15 @@ If you’re using Claude Code with Anthropic models, this repo’s current `.cla
 - `balanced` → `claude-sonnet-*`
 - `premium` → `claude-opus-*`
 
-Treat this as a *starting point*, not a requirement.
+If you're using Cursor, this repo's `.cursor/agents/*.md` defaults map like this:
+
+- `economy` → `fast` (Cursor's fast model)
+- `balanced` → `inherit` (uses Composer's current model)
+- `premium` → `inherit` (uses Composer's current model; see note below)
+
+For premium-tier agents in Cursor, ensure your Composer is using a high-reasoning model when invoking the subagent, or edit the agent file to set `model:` to a specific premium model ID.
+
+Treat these as *starting points*, not requirements.
 
 ---
 
@@ -185,8 +193,24 @@ Claude Code example (if applicable):
 claude --agent developer --model claude-opus-4-5-20251101
 ```
 
+**Cursor:**
+Cursor subagents use the `model` field in `.cursor/agents/<agent>.md`. To override for a single run:
+- Switch your Composer's model before invoking the subagent (e.g., `/developer`), or
+- Create a duplicate agent file (e.g., `developer-premium.md`) with a different `model` value
+
 **Option 2 — Permanent change:**
-Edit the model configuration for the agent (for Claude Code, this is the `model` field in `.claude/agents/*.md`). This affects all future invocations until changed back.
+Edit the model configuration for the agent:
+- **Claude Code**: Edit the `model` field in `.claude/agents/*.md`
+- **Cursor**: Edit the `model` field in `.cursor/agents/*.md` (values: `fast`, `inherit`, or a specific model ID)
+
+This affects all future invocations until changed back.
+
+**Cursor model field values:**
+- `fast`: Uses Cursor's fast model (recommended for economy-tier agents)
+- `inherit`: Uses the current Composer model (recommended for balanced/premium-tier agents)
+- Specific model ID: Uses that exact model (e.g., `claude-opus-4-6`, `gpt-4-turbo`)
+
+**Precedence**: When multiple agent locations exist (`.cursor/agents/`, `.claude/agents/`, `.codex/agents/`), Cursor uses `.cursor/agents/` first, then `.claude/agents/`, then `.codex/agents/`.
 
 ---
 

@@ -39,6 +39,8 @@ Always refer to these docs for authoritative guidance:
 | [`docs/ai/development-workflow/README.md`](docs/ai/development-workflow/README.md) | AI development workflow (master doc) |
 | [`docs/ai/development-workflow/agent-model-config.md`](docs/ai/development-workflow/agent-model-config.md) | Model assignments, tool restrictions, and override guide for all agents |
 
+> **Note for Cursor users**: Workflow agents are also available as Cursor subagents in `.cursor/agents/`. Invoke them directly (e.g., `/developer`, `/orchestrator`) or let Agent delegate to them. Each subagent's model is configured in its file — see [`docs/ai/development-workflow/agent-model-config.md`](docs/ai/development-workflow/agent-model-config.md) for how to set or override models.
+
 ---
 
 ## Development Workflow
