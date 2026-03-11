@@ -8,7 +8,7 @@ This template provides:
 
 - **A staged development workflow** (Spec → Plan → Implement → Review → Release) with persistent orchestration until PRs are actually clean
 - **Canonical protocol documents** that AI agents execute — one per workflow stage
-- **Thin tool wrappers** for Claude Code (`.claude/agents/`), Cursor (`.cursor/commands/`), and Codex (`.codex/skills/`) that point to those protocols
+- **Thin tool wrappers** for Claude Code (`.claude/agents/`), Cursor (`.cursor/agents/`, `.cursor/commands/`), and Codex (`.codex/skills/`) that point to those protocols
 - **A guided project setup** so any AI assistant can help you fill in the project-specific docs
 
 The key principle: **protocols live in `docs/`** and are tool-agnostic. Tool-specific configs (`.claude/`, `.cursor/`) are thin wrappers that reference those protocols. Add support for a new AI tool by creating a thin wrapper — no protocol duplication needed.
@@ -117,6 +117,7 @@ The setup agent will have a structured conversation with you to understand your 
 │
 └── .cursor/
     ├── rules/                            # Cursor context rules
+    ├── agents/                           # Cursor workflow subagents (orchestrator, developer, etc.)
     └── commands/                         # Cursor slash commands
 ```
 
@@ -175,6 +176,7 @@ Use the orchestrator agent to start and advance work for [feature or issue name]
 ### Cursor
 - Rules in `.cursor/rules/` provide automatic context
 - Commands in `.cursor/commands/` are invoked with `/command-name`
+- Workflow agents in `.cursor/agents/` (e.g. `/developer`, `/orchestrator`) run stage-specific protocols; see `docs/ai/development-workflow/agent-model-config.md` for model config
 - MCP servers can be configured in `.cursor/.mcp.json`
 
 Example commands:
@@ -266,6 +268,7 @@ Framework-level paths to propagate:
 - `.claude/skills/`
 - `.codex/skills/`
 - `.cursor/rules/`
+- `.cursor/agents/`
 - `.cursor/commands/`
 - `scripts/development-workflow/install-codex-skills.sh`
 - `scripts/development-workflow/discover-workflow-state.sh`
