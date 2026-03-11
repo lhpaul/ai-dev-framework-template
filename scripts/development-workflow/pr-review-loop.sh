@@ -172,11 +172,13 @@ if [ -z "$review_comment_id" ]; then
   existing_blocking_file="$(mktemp)"
   trap 'rm -f "${blocking_lines_file:-}" "$existing_blocking_file"' EXIT
   existing_blocking_count=0
+  existing_suggestion_count=0
   while IFS= read -r comment_json; do
     [ -z "${comment_json:-}" ] && continue
     body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
     [ -z "$body" ] && continue
     if is_soft_suggestion "$body"; then
+      existing_suggestion_count=$((existing_suggestion_count + 1))
       continue
     fi
     existing_blocking_count=$((existing_blocking_count + 1))
@@ -198,9 +200,9 @@ if [ -z "$review_comment_id" ]; then
     print_kv REVIEW_COMMENT_ID ""
     print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
     print_kv REASON "existing_findings"
-    print_kv COMMENT_COUNT "$existing_blocking_count"
+    print_kv COMMENT_COUNT "$((existing_blocking_count + existing_suggestion_count))"
     print_kv BLOCKING_COUNT "$existing_blocking_count"
-    print_kv SUGGESTION_COUNT 0
+    print_kv SUGGESTION_COUNT "$existing_suggestion_count"
     index=1
     while IFS= read -r blocking_json; do
       [ -z "${blocking_json:-}" ] && continue

@@ -177,6 +177,7 @@ if [ -n "$slug" ]; then
     feature_branch_exists=1
   else
     # Linear: feature/[issue-id]-[slug] (e.g. feature/ENG-123-user-auth); folder may be [timestamp]_[slug] only
+    # Anchor to end: branch must end with the slug (no extra suffixes like -v2 or -phase-2).
     slug_ere="$(ere_escape "$slug")"
     while IFS= read -r ref; do
       [ -z "$ref" ] && continue
