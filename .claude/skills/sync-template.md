@@ -86,6 +86,7 @@ docs/ai/                          ← full tree, all files recursively
 .claude/commands/                 ← all *.md files
 .claude/skills/                   ← all *.md files (including this skill itself)
 .cursor/commands/                 ← all *.md files
+.cursor/agents/                   ← all *.md files
 .cursor/rules/                    ← all *.mdc files
 scripts/development-workflow/     ← workflow helper scripts (discover state, PR/CI loops, etc.)
 scripts/README.md                 ← purpose and usage of scripts in scripts/

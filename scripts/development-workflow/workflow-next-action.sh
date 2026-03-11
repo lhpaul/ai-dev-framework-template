@@ -177,6 +177,7 @@ if [ -n "$slug" ]; then
     feature_branch_exists=1
   else
     # Linear: feature/[issue-id]-[slug] (e.g. feature/ENG-123-user-auth); folder may be [timestamp]_[slug] only
+    # Anchor to end: branch must end with the slug (no extra suffixes like -v2 or -phase-2).
     slug_ere="$(ere_escape "$slug")"
     while IFS= read -r ref; do
       [ -z "$ref" ] && continue
@@ -203,6 +204,8 @@ else
   next_action="implement"
 fi
 
+# PLAN_FILE is intentionally not emitted; callers that need the path should scan
+# "$development_path"/2_*_implementation-plan.md directly.
 print_kv TARGET "development:$development_path"
 print_kv SPEC_FILE "$spec_file"
 print_kv STATUS "$status_line"

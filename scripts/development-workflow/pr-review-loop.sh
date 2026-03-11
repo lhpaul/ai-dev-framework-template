@@ -142,8 +142,8 @@ if [ -z "$review_comment_id" ]; then
     since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
   fi
   if [ -z "$since_iso" ]; then
-    # Fallback: 24h ago so we don't consider very old comments
-    since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    # Fallback: 24h ago so we don't consider very old comments. If neither BSD nor GNU date works, use epoch so all comments are considered.
+    since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
   fi
 
   existing_comments="$(
@@ -172,11 +172,13 @@ if [ -z "$review_comment_id" ]; then
   existing_blocking_file="$(mktemp)"
   trap 'rm -f "${blocking_lines_file:-}" "$existing_blocking_file"' EXIT
   existing_blocking_count=0
+  existing_suggestion_count=0
   while IFS= read -r comment_json; do
     [ -z "${comment_json:-}" ] && continue
     body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
     [ -z "$body" ] && continue
     if is_soft_suggestion "$body"; then
+      existing_suggestion_count=$((existing_suggestion_count + 1))
       continue
     fi
     existing_blocking_count=$((existing_blocking_count + 1))
@@ -198,9 +200,9 @@ if [ -z "$review_comment_id" ]; then
     print_kv REVIEW_COMMENT_ID ""
     print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
     print_kv REASON "existing_findings"
-    print_kv COMMENT_COUNT "$existing_blocking_count"
+    print_kv COMMENT_COUNT "$((existing_blocking_count + existing_suggestion_count))"
     print_kv BLOCKING_COUNT "$existing_blocking_count"
-    print_kv SUGGESTION_COUNT 0
+    print_kv SUGGESTION_COUNT "$existing_suggestion_count"
     index=1
     while IFS= read -r blocking_json; do
       [ -z "${blocking_json:-}" ] && continue
