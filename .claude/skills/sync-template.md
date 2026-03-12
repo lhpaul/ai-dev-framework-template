@@ -111,7 +111,11 @@ For each file in these paths:
 
 For each of these: show the full diff and ask the user explicitly whether to apply it.
 
-### Never touch (project-specific — always skip, no mention needed)
+### Project-specific files (review for additive updates — never overwrite)
+
+These paths are project-specific and must **not** be overwritten by the template. The agent should still **read and compare** the template versions with the project's versions. Many of these files in downstream projects will have come from this template, so template improvements (new sections, clarified wording, updated links) may be useful. When the template has content that could benefit the project, the agent may **propose additive updates**: suggest adding or merging that content while **preserving all project-specific information** and avoiding inconsistencies.
+
+**Critical:** Do not remove or replace content that is specific to the project. Only suggest additions or merges that clearly originate from the template and do not conflict with project-only content. When in doubt, list the difference under "Optional additive update" and let the user decide.
 
 ```
 AGENTS.md
@@ -125,7 +129,9 @@ CLAUDE.md
 GEMINI.md
 ```
 
-Everything else not listed above (application code, project configs, etc.) is also never touched.
+For each of these: if template and project differ, show what the template has that the project might want to add; classify as ⚠️ **Optional additive update** (user decides). Do not apply changes to these paths without explicit user approval.
+
+Everything else not listed above (application code, project configs, etc.) is also never overwritten.
 
 ---
 
@@ -156,12 +162,14 @@ Template version: v0.4.0  |  Project branch: develop
   .claude/settings.json
     [full diff shown here]
 
-### 🚫 Skipped (project-specific — never overwritten)
-  AGENTS.md, README.md, CHANGELOG.md, docs/project/, ...
+### ⚠️ Optional additive updates (project-specific — you decide)
+  AGENTS.md — template has [brief description]; project keeps its own content; suggest adding: …
+  README.md — no template additions suggested
+  …
 ```
 
 Then ask:
-> "Ready to apply the changes above? For the files marked ✅ and 📝, I'll apply them automatically. For ⚠️ files, please tell me which ones to apply."
+> "Ready to apply the changes above? For the files marked ✅ and 📝, I'll apply them automatically. For ⚠️ files (including optional additive updates for project-specific files), please tell me which ones to apply."
 
 **Do not modify any files until you have explicit confirmation.**
 
@@ -170,9 +178,9 @@ Then ask:
 ## Step 4 — Apply changes (only after approval)
 
 - Copy/overwrite all ✅ (Add) and 📝 (Update) files from the template source into the project
-- For ⚠️ files: apply only those the user explicitly approved
+- For ⚠️ files: apply only those the user explicitly approved (including any optional additive updates to project-specific files — merge or add only, never remove project-specific content)
 - Do **not** delete any file
-- Do **not** modify any path in the "Never touch" list
+- Do **not** overwrite project-specific files; for those paths only additive/merge changes are allowed, and only with explicit approval
 
 If the template source was a remote clone, clean it up now:
 ```bash
@@ -213,9 +221,9 @@ Sync framework-level files from [ai-dev-framework-template](TEMPLATE_URL) v{TEMP
 ### Changes included
 [Paste the relevant section from the template's CHANGELOG.md here]
 
-### What was NOT changed
+### What was NOT overwritten
 Project-specific files (AGENTS.md, README.md, CHANGELOG.md, docs/project/, etc.)
-are intentionally excluded from this sync.
+were not overwritten; optional additive updates from the template may have been applied where you approved them, with project-specific content preserved.
 ```
 
 Paste the relevant section from the template's `CHANGELOG.md` into the PR description placeholder.

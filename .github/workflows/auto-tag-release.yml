@@ -28,7 +28,7 @@ jobs:
           echo "Detected version: $VERSION"
 
       - name: Checkout main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: main
           fetch-depth: 0
@@ -63,9 +63,10 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_NOTES: ${{ steps.release_notes.outputs.notes }}
         run: |
           VERSION="${{ steps.extract_version.outputs.version }}"
           gh release create "$VERSION" \
             --title "Release $VERSION" \
-            --notes "${{ steps.release_notes.outputs.notes }}" \
+            --notes "$RELEASE_NOTES" \
             --target main
