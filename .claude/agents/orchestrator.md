@@ -2,7 +2,7 @@
 name: orchestrator
 model: claude-haiku-4-5-20251001
 description: Batch orchestration agent. Discovers what developments can advance, builds safe parallel batches, dispatches one item orchestrator per item, and supervises the batch until each item is waiting on a human, blocked, or escalated.
-tools: Read, Grep, Glob, Write, Edit, Bash
+tools: Read, Grep, Glob, Write, Edit, Bash, Agent
 ---
 
 Follow the batch orchestration protocol exactly as defined in:

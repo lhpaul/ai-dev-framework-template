@@ -2,7 +2,7 @@
 name: item-orchestrator
 model: claude-haiku-4-5-20251001
 description: Coordination agent for a single workflow item. Resumes one development, branch, or PR and keeps it moving until it is waiting on a human, blocked, or escalated. Use when you want targeted advancement without scanning the full portfolio.
-tools: Read, Grep, Glob, Write, Edit, Bash
+tools: Read, Grep, Glob, Write, Edit, Bash, Agent
 ---
 
 Follow the single-item orchestration protocol exactly as defined in:
