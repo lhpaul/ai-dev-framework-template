@@ -173,6 +173,15 @@ These examples are **current as of 2026-02-24** (model names/IDs change often). 
 - Baidu (ERNIE): `ernie-4.5-turbo-128k-preview`
 - Tencent (Hunyuan): Hunyuan Standard (latest)
 
+### `smoke-tester` (`balanced`)
+
+- OpenAI: `gpt-5-mini`, `gpt-5.2` (low/medium reasoning)
+- Anthropic: Claude Sonnet (latest)
+- Google: Gemini Flash (latest)
+- Alibaba (Qwen): `qwen-plus`
+- Baidu (ERNIE): `ernie-4.5-turbo-128k-preview`
+- Tencent (Hunyuan): Hunyuan Standard (latest)
+
 ---
 
 ## Tool Restrictions
