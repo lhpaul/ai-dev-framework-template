@@ -176,20 +176,20 @@ These examples are **current as of 2026-02-24** (model names/IDs change often). 
 
 ## Tool Restrictions
 
-Agents only get `Bash` when they need it to carry a stage through branch creation, commits, pushes, PR creation, or readiness loops.
+Agents only get `Bash` when they need it to carry a stage through branch creation, commits, pushes, PR creation, or readiness loops. Agents only get `Agent` when they need to dispatch sub-agents to handle stage-specific work.
 
-| Agent | Has Bash? | Reason |
-|---|---|---|
-| `orchestrator` | ✅ | Needs `git branch`, `git status`, helper scripts, and issue / PR inspection to build and supervise batches |
-| `item-orchestrator` | ✅ | Needs helper scripts, git / PR inspection, and readiness loops to keep one item moving end to end |
-| `automated-reviewer-loop` | ✅ | Runs pr-review-loop.sh, pr-ci-loop.sh, git; needs Bash for scripts and labels |
-| `product-manager` | ✅ | Creates spec branches / PRs and may run readiness helpers |
-| `spec-reviewer` | ✅ | May commit, push, and re-run fixes during spec review loops |
-| `tech-lead` | ✅ | May need to run commands to understand the codebase before planning |
-| `implementation-plan-reviewer` | ✅ | May commit, push, and re-run fixes during plan review loops |
-| `developer` | ✅ | Runs build, lint, and test commands as part of implementation |
-| `code-reviewer` | ✅ | May run lint or tests to verify applied fixes |
-| `project-setup` | ✅ | May need to initialize git, run project commands during setup |
+| Agent | Has Bash? | Has Agent? | Reason |
+|---|---|---|---|
+| `orchestrator` | ✅ | ✅ | Needs `git branch`, `git status`, helper scripts, and issue / PR inspection to build and supervise batches; dispatches `item-orchestrator` sub-agents |
+| `item-orchestrator` | ✅ | ✅ | Needs helper scripts, git / PR inspection, and readiness loops to keep one item moving end to end; dispatches stage agents (developer, code-reviewer, etc.) |
+| `automated-reviewer-loop` | ✅ | ✅ | Runs pr-review-loop.sh, pr-ci-loop.sh, git; dispatches fixer agents (spec-reviewer, implementation-plan-reviewer, code-reviewer) when needs_fixes |
+| `product-manager` | ✅ | ❌ | Creates spec branches / PRs and may run readiness helpers |
+| `spec-reviewer` | ✅ | ❌ | May commit, push, and re-run fixes during spec review loops |
+| `tech-lead` | ✅ | ❌ | May need to run commands to understand the codebase before planning |
+| `implementation-plan-reviewer` | ✅ | ❌ | May commit, push, and re-run fixes during plan review loops |
+| `developer` | ✅ | ❌ | Runs build, lint, and test commands as part of implementation |
+| `code-reviewer` | ✅ | ❌ | May run lint or tests to verify applied fixes |
+| `project-setup` | ✅ | ❌ | May need to initialize git, run project commands during setup |
 
 ---
 
