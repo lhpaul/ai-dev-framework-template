@@ -36,6 +36,7 @@ If you prefer different names (`small/medium/large`, `fast/standard/pro`, etc.),
 | `developer` | `balanced` | Code generation at scale. A balanced model is typically the cost/quality sweet spot for coding tasks, especially with a strong spec + plan. |
 | `code-reviewer` | `balanced` | Code review against known standards and a completed spec. A balanced model is capable here. |
 | `project-setup` | `balanced` | Structured onboarding conversation with clear protocol guidance. A balanced model is sufficient. |
+| `smoke-tester` | `balanced` | Executes the smoke test runbook using browser automation. A balanced model is sufficient for following step-by-step testing instructions. |
 
 ### Example Mapping (Optional)
 
@@ -190,6 +191,7 @@ Agents only get `Bash` when they need it to carry a stage through branch creatio
 | `developer` | ✅ | ❌ | Runs build, lint, and test commands as part of implementation |
 | `code-reviewer` | ✅ | ❌ | May run lint or tests to verify applied fixes |
 | `project-setup` | ✅ | ❌ | May need to initialize git, run project commands during setup |
+| `smoke-tester` | ✅ | ❌ | Runs browser automation and test scripts; needs Bash for execution |
 
 ---
 
