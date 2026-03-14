@@ -444,7 +444,7 @@ if [ -z "$branch_name" ]; then
   branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"
 fi
 
-aggregate_result="clean"
+aggregate_result="skipped"
 aggregate_reason=""
 last_platform=""
 aggregate_output=""
@@ -482,7 +482,12 @@ for index in "${!platforms[@]}"; do
   emit_prefixed_platform_output "$platform_index" "$platform_output"
 
   case "$platform_result" in
-    clean|skipped)
+    clean)
+      aggregate_result="clean"
+      aggregate_output="$platform_output"
+      aggregate_status=$platform_status
+      ;;
+    skipped)
       aggregate_output="$platform_output"
       aggregate_status=$platform_status
       ;;
