@@ -250,7 +250,7 @@ Repository helpers:
 - `scripts/development-workflow/workflow-next-action.sh`
 See [`integrations/pr-review-platform.md`](integrations/pr-review-platform.md) for platform-agnostic requirements and loop details.
 See [`integrations/greptile.md`](integrations/greptile.md) for setup with Greptile.
-See [`integrations/devin.md`](integrations/devin.md) for the planned Devin adapter contract.
+See [`integrations/devin.md`](integrations/devin.md) for the Devin adapter.
 
 ---
 

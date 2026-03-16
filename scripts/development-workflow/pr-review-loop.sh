@@ -354,6 +354,247 @@ run_greptile_review() {
   return 0
 }
 
+run_devin_review() {
+  local pr_number="$1"
+  local branch_name="$2"
+  local poll_interval="$3"
+  local max_wait="$4"
+  local platform="devin"
+  local bot_login="devin-ai-integration[bot]"
+  local repo
+  local head_sha=""
+  local since_iso=""
+  local existing_comments=""
+  local existing_reviews=""
+  local existing_blocking_file=""
+  local existing_blocking_count=0
+  local comment_json=""
+  local review_json=""
+  local body=""
+  local blocking_lines_file=""
+  local elapsed=0
+  local check_completed=0
+  local comments=""
+  local blocking_reviews=""
+  local blocking_count=0
+  local comment_count=0
+  local index=1
+  local blocking_json=""
+  local review_window_start=""
+
+  trap 'rm -f "${existing_blocking_file:-}" "${blocking_lines_file:-}"' RETURN
+
+  require_gh
+  cd_workflow_repo_root
+  repo="$(repo_slug)"
+
+  head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
+  if [ -n "$head_sha" ]; then
+    since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
+  fi
+  if [ -z "$since_iso" ]; then
+    since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
+  fi
+
+  # --- Phase 1: Check for existing blocking findings ---
+  existing_comments="$(
+    gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+          .[]
+          | select(.user.login == $bot and .created_at > $since)
+          | { path, line: (.line // .original_line // 0), body: (.body // "") }
+          | @json
+        '
+  )"
+  existing_reviews="$(
+    gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+          .[]
+          | select(
+              .user.login == $bot and
+              .submitted_at > $since and
+              .state == "CHANGES_REQUESTED"
+            )
+          | { path: "", line: 0, body: (.body // "CHANGES_REQUESTED review without body") }
+          | @json
+        '
+  )"
+
+  existing_blocking_file="$(mktemp)"
+  while IFS= read -r comment_json; do
+    [ -z "${comment_json:-}" ] && continue
+    body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
+    [ -z "$body" ] && continue
+    # Skip Devin's "No Issues Found" summary comments
+    if printf '%s\n' "$body" | grep -qi "No Issues Found"; then
+      continue
+    fi
+    existing_blocking_count=$((existing_blocking_count + 1))
+    printf '%s\n' "$comment_json" >> "$existing_blocking_file"
+  done <<< "$existing_comments"
+
+  while IFS= read -r review_json; do
+    [ -z "${review_json:-}" ] && continue
+    body="$(printf '%s\n' "$review_json" | jq -r '.body')"
+    [ -z "$body" ] && continue
+    if printf '%s\n' "$body" | grep -qi "No Issues Found"; then
+      continue
+    fi
+    existing_blocking_count=$((existing_blocking_count + 1))
+    printf '%s\n' "$review_json" >> "$existing_blocking_file"
+  done <<< "$existing_reviews"
+
+  if [ "$existing_blocking_count" -gt 0 ]; then
+    print_kv RESULT needs_fixes
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv REASON existing_findings
+    print_kv COMMENT_COUNT "$existing_blocking_count"
+    print_kv BLOCKING_COUNT "$existing_blocking_count"
+    print_kv SUGGESTION_COUNT 0
+    while IFS= read -r blocking_json; do
+      [ -z "${blocking_json:-}" ] && continue
+      print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
+      print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
+      print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+      index=$((index + 1))
+    done < "$existing_blocking_file"
+    rm -f "$existing_blocking_file"
+    return 1
+  fi
+
+  rm -f "$existing_blocking_file"
+
+  # --- Phase 2: Poll for Devin check run completion (no trigger needed) ---
+  review_window_start="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+  while :; do
+    check_completed="$(
+      gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
+        | jq '
+            [.check_runs[] | select(
+              (.app.slug == "devin-ai-integration") or
+              (.name | test("devin"; "i"))
+            )] | map(select(.status == "completed")) | length
+          '
+    )"
+
+    if [ "$check_completed" -gt 0 ]; then
+      break
+    fi
+
+    if [ "$elapsed" -ge "$max_wait" ]; then
+      print_kv RESULT escalate
+      print_kv REASON timeout
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      return 2
+    fi
+
+    sleep "$poll_interval"
+    elapsed=$((elapsed + poll_interval))
+  done
+
+  # --- Phase 3: Collect results after completion ---
+  blocking_lines_file="$(mktemp)"
+
+  comments="$(
+    gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+      | jq -r --arg bot "$bot_login" --arg since "$review_window_start" '
+        .[]
+        | select(.user.login == $bot and .created_at > $since)
+        | {
+            path,
+            line: (.line // .original_line // 0),
+            body: (.body // "")
+          }
+        | @json
+      '
+  )"
+
+  blocking_reviews="$(
+    gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+      | jq -r --arg bot "$bot_login" --arg since "$review_window_start" '
+        .[]
+        | select(
+            .user.login == $bot and
+            .submitted_at > $since and
+            .state == "CHANGES_REQUESTED"
+          )
+        | {
+            path: "",
+            line: 0,
+            body: (.body // "CHANGES_REQUESTED review without body")
+          }
+        | @json
+      '
+  )"
+
+  while IFS= read -r comment_json; do
+    [ -z "${comment_json:-}" ] && continue
+    body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
+    [ -z "$body" ] && continue
+    # Skip Devin's "No Issues Found" summary comments
+    if printf '%s\n' "$body" | grep -qi "No Issues Found"; then
+      continue
+    fi
+    comment_count=$((comment_count + 1))
+    blocking_count=$((blocking_count + 1))
+    printf '%s\n' "$comment_json" >> "$blocking_lines_file"
+  done <<< "$comments"
+
+  while IFS= read -r review_json; do
+    [ -z "${review_json:-}" ] && continue
+    body="$(printf '%s\n' "$review_json" | jq -r '.body')"
+    [ -z "$body" ] && continue
+    if printf '%s\n' "$body" | grep -qi "No Issues Found"; then
+      continue
+    fi
+    comment_count=$((comment_count + 1))
+    blocking_count=$((blocking_count + 1))
+    printf '%s\n' "$review_json" >> "$blocking_lines_file"
+  done <<< "$blocking_reviews"
+
+  if [ "$blocking_count" -gt 0 ]; then
+    print_kv RESULT needs_fixes
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT "$comment_count"
+    print_kv BLOCKING_COUNT "$blocking_count"
+    print_kv SUGGESTION_COUNT 0
+    while IFS= read -r blocking_json; do
+      [ -z "${blocking_json:-}" ] && continue
+      print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
+      print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
+      print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+      index=$((index + 1))
+    done < "$blocking_lines_file"
+    rm -f "$blocking_lines_file"
+    return 1
+  fi
+
+  rm -f "$blocking_lines_file"
+  print_kv RESULT clean
+  print_kv PLATFORM "$platform"
+  print_kv PR_NUMBER "$pr_number"
+  print_kv BRANCH "$branch_name"
+  print_kv REVIEW_COMMENT_ID ""
+  print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+  print_kv COMMENT_COUNT "$comment_count"
+  print_kv BLOCKING_COUNT 0
+  print_kv SUGGESTION_COUNT 0
+  return 0
+}
+
 run_platform_review() {
   local platform="$1"
   local pr_number="$2"
@@ -364,6 +605,9 @@ run_platform_review() {
   case "$platform" in
     greptile)
       run_greptile_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      ;;
+    devin)
+      run_devin_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
       ;;
     *)
       print_kv RESULT skipped

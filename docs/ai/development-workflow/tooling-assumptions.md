@@ -42,7 +42,7 @@ These tools significantly improve the workflow but have fallbacks.
 
 See [`integrations/pr-review-platform.md`](integrations/pr-review-platform.md) for the generic multi-platform contract.
 See [`integrations/greptile.md`](integrations/greptile.md) for the current implemented adapter.
-See [`integrations/devin.md`](integrations/devin.md) for the planned Devin adapter contract.
+See [`integrations/devin.md`](integrations/devin.md) for the Devin adapter.
 
 ---
 
