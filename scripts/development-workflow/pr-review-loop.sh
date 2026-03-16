@@ -480,12 +480,13 @@ run_devin_review() {
     check_completed="$(
       gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
         | jq '
-            [.check_runs[] | select(
+            [(.check_runs // .)[] | select(
               (.app.slug == "devin-ai-integration") or
               (.name | test("devin"; "i"))
             )] | map(select(.status == "completed")) | length
           '
     )"
+    check_completed="${check_completed:-0}"
 
     if [ "$check_completed" -gt 0 ]; then
       break
