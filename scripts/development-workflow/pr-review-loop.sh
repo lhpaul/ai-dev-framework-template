@@ -385,7 +385,6 @@ run_devin_review() {
   local comment_count=0
   local index=1
   local blocking_json=""
-  local review_window_start=""
 
   trap 'rm -f "${existing_blocking_file:-}" "${blocking_lines_file:-}"' RETURN
 
@@ -474,8 +473,6 @@ run_devin_review() {
   rm -f "$existing_blocking_file"
 
   # --- Phase 2: Poll for Devin check run completion (no trigger needed) ---
-  review_window_start="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-
   while :; do
     check_completed="$(
       gh api "repos/$repo/commits/$head_sha/check-runs" \
@@ -507,11 +504,15 @@ run_devin_review() {
   done
 
   # --- Phase 3: Collect results after completion ---
+  # Use since_iso (commit timestamp) not review_window_start (current time)
+  # to avoid a race where Devin posts findings between Phase 1's API snapshot
+  # and Phase 2's timestamp. Phase 1 already confirmed zero blocking findings
+  # from since_iso, so re-querying from the same timestamp won't double-count.
   blocking_lines_file="$(mktemp)"
 
   comments="$(
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$review_window_start" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
         .[]
         | select(.user.login == $bot and .created_at > $since)
         | {
@@ -525,7 +526,7 @@ run_devin_review() {
 
   blocking_reviews="$(
     gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$review_window_start" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
         .[]
         | select(
             .user.login == $bot and
