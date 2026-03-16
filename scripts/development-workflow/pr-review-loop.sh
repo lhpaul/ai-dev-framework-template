@@ -473,7 +473,7 @@ run_devin_review() {
 
   while :; do
     check_completed="$(
-      gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
+      gh api "repos/$repo/commits/$head_sha/check-runs" \
         | jq '
             [.check_runs[] | select(
               (.app.slug == "devin-ai-integration") or

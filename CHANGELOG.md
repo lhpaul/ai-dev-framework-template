@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Devin automated PR review adapter: `pr-review-loop.sh` now supports `--platform devin`, polling Devin check runs for completion and collecting inline findings. Added `docs/ai/development-workflow/integrations/devin.md` with setup, bot identity, and adapter contract details.
+
 ## [0.16.0] - 2026-03-14
 
 ### Changed
