@@ -478,7 +478,7 @@ run_devin_review() {
   # --- Phase 2: Poll for Devin check run completion (no trigger needed) ---
   while :; do
     check_completed="$(
-      gh api "repos/$repo/commits/$head_sha/check-runs" \
+      gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
         | jq '
             [.check_runs[] | select(
               (.app.slug == "devin-ai-integration") or
