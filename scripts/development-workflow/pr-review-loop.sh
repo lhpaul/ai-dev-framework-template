@@ -489,9 +489,12 @@ for index in "${!platforms[@]}"; do
       ;;
     skipped)
       # Per pr-review-platform.md: aggregate is "clean" when every reviewer is clean or skipped
+      # Only overwrite aggregate_output when we haven't seen a clean platform (preserve REVIEW_COMMENT_ID)
+      if [ "$aggregate_result" = "skipped" ]; then
+        aggregate_output="$platform_output"
+        aggregate_status=$platform_status
+      fi
       aggregate_result="clean"
-      aggregate_output="$platform_output"
-      aggregate_status=$platform_status
       ;;
     needs_fixes|escalate)
       aggregate_result="$platform_result"
