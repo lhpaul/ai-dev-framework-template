@@ -40,8 +40,10 @@ These tools significantly improve the workflow but have fallbacks.
 
 **Fallback**: Agent skips the automated review step and goes directly to human review after the `REVIEW.md` gate. See the workflow protocols for how to handle this case.
 
+Active review platforms are declared in `.ai-dev-workflow.yaml` at the repo root. The helper script reads this file automatically.
+
 See [`integrations/pr-review-platform.md`](integrations/pr-review-platform.md) for the generic multi-platform contract.
-See [`integrations/greptile.md`](integrations/greptile.md) for the current implemented adapter.
+See [`integrations/greptile.md`](integrations/greptile.md) for the Greptile adapter.
 See [`integrations/devin.md`](integrations/devin.md) for the Devin adapter.
 
 ---

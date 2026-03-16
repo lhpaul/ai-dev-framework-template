@@ -248,6 +248,7 @@ Repository helpers:
 - `scripts/development-workflow/pr-review-loop.sh`
 - `scripts/development-workflow/pr-ci-loop.sh`
 - `scripts/development-workflow/workflow-next-action.sh`
+Active review platforms are declared in `.ai-dev-workflow.yaml` at the repo root. The helper script reads this file automatically when no `--platform` flag is passed.
 See [`integrations/pr-review-platform.md`](integrations/pr-review-platform.md) for platform-agnostic requirements and loop details.
 See [`integrations/greptile.md`](integrations/greptile.md) for setup with Greptile.
 See [`integrations/devin.md`](integrations/devin.md) for the Devin adapter.

@@ -54,11 +54,29 @@ Additional rules:
 
 ---
 
+## Platform Configuration
+
+The active review platforms for a repository are declared in `.ai-dev-workflow.yaml` at the repo root:
+
+```yaml
+review_platforms:
+  - greptile
+  - devin
+```
+
+The helper script reads this file automatically when no `--platform` flag is passed. If the file is absent or the list is empty, the script falls back to `greptile` only. Explicit `--platform` flags always override the config file.
+
+---
+
 ## Script Interface
 
 The repository helper supports ordered multi-platform review:
 
 ```bash
+# Uses platforms from .ai-dev-workflow.yaml (recommended)
+./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name>
+
+# Explicit override via flags
 ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name> --platform greptile --platform devin
 ```
 

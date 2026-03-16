@@ -16,6 +16,11 @@ any platform reports blocking findings, the script stops immediately and exits 1
 If a platform times out or escalates, the script exits 2. If all configured
 platforms are clean or skipped, the script exits 0.
 
+Platform selection (in priority order):
+  1. --platform flag(s) passed on the command line
+  2. review_platforms list in .ai-dev-workflow.yaml at the repo root
+  3. Fallback: greptile
+
 Outputs stable key=value lines including:
   RESULT=clean|needs_fixes|escalate|skipped
   PLATFORM_<n>_NAME / PLATFORM_<n>_RESULT
@@ -678,7 +683,16 @@ if [ -z "$pr_number" ]; then
 fi
 
 if [ "${#platforms[@]}" -eq 0 ]; then
-  platforms=("greptile")
+  config_file="$(cd_workflow_repo_root && pwd)/.ai-dev-workflow.yaml"
+  if [ -f "$config_file" ]; then
+    while IFS= read -r line; do
+      line="$(trim "$line")"
+      [ -n "$line" ] && platforms+=("$line")
+    done < <(sed -n '/^review_platforms:/,/^[^[:space:]-]/{/^[[:space:]]*-/{s/^[[:space:]]*-[[:space:]]*//;p;}}' "$config_file")
+  fi
+  if [ "${#platforms[@]}" -eq 0 ]; then
+    platforms=("greptile")
+  fi
 fi
 
 require_gh
