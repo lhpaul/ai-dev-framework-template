@@ -488,8 +488,10 @@ for index in "${!platforms[@]}"; do
       aggregate_status=$platform_status
       ;;
     skipped)
-      aggregate_output="$platform_output"
-      aggregate_status=$platform_status
+      if [ "$aggregate_result" = "skipped" ]; then
+        aggregate_output="$platform_output"
+        aggregate_status=$platform_status
+      fi
       ;;
     needs_fixes|escalate)
       aggregate_result="$platform_result"
