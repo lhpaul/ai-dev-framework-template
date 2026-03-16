@@ -26,7 +26,8 @@ If you prefer different names (`small/medium/large`, `fast/standard/pro`, etc.),
 
 | Agent | Tier | Rationale |
 |---|---|---|
-| `orchestrator` | `economy` | Reads state and dispatches subagents — mechanical work that needs to be fast and cheap. No deep reasoning required. |
+| `orchestrator` | `economy` | Portfolio-level batch launcher and supervisor. Reads state, builds batches, and dispatches item orchestrators; mechanical work that should stay fast and cheap. |
+| `item-orchestrator` | `economy` | Single-item control loop. Mostly routing, resume logic, and readiness supervision rather than deep reasoning. |
 | `automated-reviewer-loop` | `economy` | Runs review + CI loop for a PR; mechanical coordination like orchestrator, no deep reasoning required. |
 | `product-manager` | `balanced` | Spec writing requires creativity and structured thinking, but the spec template provides strong scaffolding. A balanced model handles this well at a reasonable cost. |
 | `spec-reviewer` | `balanced` | Review against a checklist. A balanced model is well within the capability required. |
@@ -35,6 +36,7 @@ If you prefer different names (`small/medium/large`, `fast/standard/pro`, etc.),
 | `developer` | `balanced` | Code generation at scale. A balanced model is typically the cost/quality sweet spot for coding tasks, especially with a strong spec + plan. |
 | `code-reviewer` | `balanced` | Code review against known standards and a completed spec. A balanced model is capable here. |
 | `project-setup` | `balanced` | Structured onboarding conversation with clear protocol guidance. A balanced model is sufficient. |
+| `smoke-tester` | `balanced` | Executes the smoke test runbook using browser automation. A balanced model is sufficient for following step-by-step testing instructions. |
 
 ### Example Mapping (Optional)
 
@@ -44,7 +46,15 @@ If you’re using Claude Code with Anthropic models, this repo’s current `.cla
 - `balanced` → `claude-sonnet-*`
 - `premium` → `claude-opus-*`
 
-Treat this as a *starting point*, not a requirement.
+If you're using Cursor, this repo's `.cursor/agents/*.md` defaults map like this:
+
+- `economy` → `fast` (Cursor's fast model)
+- `balanced` → `inherit` (uses Composer's current model)
+- `premium` → `inherit` (uses Composer's current model; see note below)
+
+For premium-tier agents in Cursor, ensure your Composer is using a high-reasoning model when invoking the subagent, or edit the agent file to set `model:` to a specific premium model ID.
+
+Treat these as *starting points*, not requirements.
 
 ---
 
@@ -55,6 +65,16 @@ The goal here is **optionality**: for each agent, pick one model you can access 
 These examples are **current as of 2026-02-24** (model names/IDs change often). Prefer verifying against each provider’s “list models” docs/API.
 
 ### `orchestrator` (`economy`)
+
+- OpenAI: `gpt-5-nano`, `gpt-5-mini`
+- Anthropic: Claude Haiku (latest)
+- Google: Gemini Flash-Lite (latest)
+- Alibaba (Qwen): `qwen-flash`, `qwen-turbo`
+- DeepSeek: `deepseek-v3`
+- Baidu (ERNIE): `ernie-x1-turbo-32k`, `ernie-4.5-turbo-128k-preview`
+- Tencent (Hunyuan): Hunyuan Lite / Turbo (latest)
+
+### `item-orchestrator` (`economy`)
 
 - OpenAI: `gpt-5-nano`, `gpt-5-mini`
 - Anthropic: Claude Haiku (latest)
@@ -153,23 +173,34 @@ These examples are **current as of 2026-02-24** (model names/IDs change often). 
 - Baidu (ERNIE): `ernie-4.5-turbo-128k-preview`
 - Tencent (Hunyuan): Hunyuan Standard (latest)
 
+### `smoke-tester` (`balanced`)
+
+- OpenAI: `gpt-5-mini`, `gpt-5.2` (low/medium reasoning)
+- Anthropic: Claude Sonnet (latest)
+- Google: Gemini Flash (latest)
+- Alibaba (Qwen): `qwen-plus`
+- Baidu (ERNIE): `ernie-4.5-turbo-128k-preview`
+- Tencent (Hunyuan): Hunyuan Standard (latest)
+
 ---
 
 ## Tool Restrictions
 
-Agents only get `Bash` when they need it to carry a stage through branch creation, commits, pushes, PR creation, or readiness loops.
+Agents only get `Bash` when they need it to carry a stage through branch creation, commits, pushes, PR creation, or readiness loops. Agents only get `Agent` when they need to dispatch sub-agents to handle stage-specific work.
 
-| Agent | Has Bash? | Reason |
-|---|---|---|
-| `orchestrator` | ✅ | Needs `git branch`, `git status`, and similar to read repo state |
-| `automated-reviewer-loop` | ✅ | Runs pr-review-loop.sh, pr-ci-loop.sh, git; needs Bash for scripts and labels |
-| `product-manager` | ✅ | Creates spec branches / PRs and may run readiness helpers |
-| `spec-reviewer` | ✅ | May commit, push, and re-run fixes during spec review loops |
-| `tech-lead` | ✅ | May need to run commands to understand the codebase before planning |
-| `implementation-plan-reviewer` | ✅ | May commit, push, and re-run fixes during plan review loops |
-| `developer` | ✅ | Runs build, lint, and test commands as part of implementation |
-| `code-reviewer` | ✅ | May run lint or tests to verify applied fixes |
-| `project-setup` | ✅ | May need to initialize git, run project commands during setup |
+| Agent | Has Bash? | Has Agent? | Reason |
+|---|---|---|---|
+| `orchestrator` | ✅ | ✅ | Needs `git branch`, `git status`, helper scripts, and issue / PR inspection to build and supervise batches; dispatches `item-orchestrator` sub-agents |
+| `item-orchestrator` | ✅ | ✅ | Needs helper scripts, git / PR inspection, and readiness loops to keep one item moving end to end; dispatches stage agents (developer, code-reviewer, etc.) |
+| `automated-reviewer-loop` | ✅ | ✅ | Runs pr-review-loop.sh, pr-ci-loop.sh, git; dispatches fixer agents (spec-reviewer, implementation-plan-reviewer, code-reviewer) when needs_fixes |
+| `product-manager` | ✅ | ❌ | Creates spec branches / PRs and may run readiness helpers |
+| `spec-reviewer` | ✅ | ❌ | May commit, push, and re-run fixes during spec review loops |
+| `tech-lead` | ✅ | ❌ | May need to run commands to understand the codebase before planning |
+| `implementation-plan-reviewer` | ✅ | ❌ | May commit, push, and re-run fixes during plan review loops |
+| `developer` | ✅ | ❌ | Runs build, lint, and test commands as part of implementation |
+| `code-reviewer` | ✅ | ❌ | May run lint or tests to verify applied fixes |
+| `project-setup` | ✅ | ❌ | May need to initialize git, run project commands during setup |
+| `smoke-tester` | ✅ | ❌ | Runs browser automation and test scripts; needs Bash for execution |
 
 ---
 
@@ -185,8 +216,24 @@ Claude Code example (if applicable):
 claude --agent developer --model claude-opus-4-5-20251101
 ```
 
+**Cursor:**
+Cursor subagents use the `model` field in `.cursor/agents/<agent>.md`. To override for a single run:
+- Switch your Composer's model before invoking the subagent (e.g., `/developer`), or
+- Create a duplicate agent file (e.g., `developer-premium.md`) with a different `model` value
+
 **Option 2 — Permanent change:**
-Edit the model configuration for the agent (for Claude Code, this is the `model` field in `.claude/agents/*.md`). This affects all future invocations until changed back.
+Edit the model configuration for the agent:
+- **Claude Code**: Edit the `model` field in `.claude/agents/*.md`
+- **Cursor**: Edit the `model` field in `.cursor/agents/*.md` (values: `fast`, `inherit`, or a specific model ID)
+
+This affects all future invocations until changed back.
+
+**Cursor model field values:**
+- `fast`: Uses Cursor's fast model (recommended for economy-tier agents)
+- `inherit`: Uses the current Composer model (recommended for balanced/premium-tier agents)
+- Specific model ID: Uses that exact model (e.g., `claude-opus-4-6`, `gpt-4-turbo`)
+
+**Precedence**: When multiple agent locations exist (`.cursor/agents/`, `.claude/agents/`, `.codex/agents/`), Cursor uses `.cursor/agents/` first, then `.claude/agents/`, then `.codex/agents/`.
 
 ---
 

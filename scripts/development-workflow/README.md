@@ -73,24 +73,25 @@ Use this when:
 
 ### `pr-review-loop.sh`
 
-Triggers and polls the automated PR review tool, then classifies findings into blocking vs suggestion.
+Runs one or more automated PR review platforms in order, then classifies findings into blocking vs suggestion.
 
 Usage:
 
 ```bash
-./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch feature/my-branch]
+./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch feature/my-branch] [--platform greptile] [--platform devin]
 ```
 
 What it does:
-- Posts the Greptile trigger comment
-- Polls for the completion signal
-- Fetches new inline comments after the trigger
-- Reports a stable `RESULT=clean|needs_fixes|escalate|skipped`
-- Emits the matching fixer agent (`spec-reviewer`, `implementation-plan-reviewer`, or `code-reviewer`)
+- Evaluates configured review platforms sequentially
+- Runs the platform adapter for each supported platform
+- Stops on the first platform that reports blocking findings or escalation
+- Reports a stable aggregate `RESULT=clean|needs_fixes|escalate|skipped`
+- Emits ordered per-platform `PLATFORM_<n>_*` records plus the matching compatibility fixer
 
 Use this when:
 - A stage has pushed to a PR branch and must resolve automated review before requesting human review
 - The orchestrator is resuming a PR after a prior push or interruption
+- More than one automated reviewer is configured for a repository
 
 ### `workflow-next-action.sh`
 
@@ -114,6 +115,26 @@ Use this when:
 - A stage-specific agent needs to determine whether work is still in-progress or already waiting on a human
 
 For resume behavior, run `workflow-next-action.sh` with `--branch`, `--pr`, or `--development`; it reports the next deterministic action for a partially completed run.
+
+### `workflow-batch-plan.sh`
+
+Classifies development folders into batch-planning candidates for the batch orchestrator.
+
+Usage:
+
+```bash
+./scripts/development-workflow/workflow-batch-plan.sh
+./scripts/development-workflow/workflow-batch-plan.sh docs/specs/developments/20260307120000_my-feature
+```
+
+What it does:
+- Scans one or more development folders
+- Uses `workflow-next-action.sh --development` to derive the next deterministic action
+- Emits stable `key=value` records including `BATCH_HINT` and `PARALLEL_SAFE`
+
+Use this when:
+- The batch orchestrator needs a deterministic first-pass list of development-folder candidates
+- You want to separate portfolio-level batch planning from single-item orchestration
 
 ### `post-merge-cleanup.sh`
 

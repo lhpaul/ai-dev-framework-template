@@ -67,7 +67,7 @@ For each layer affected, confirm what changes are needed:
 
 ## Step 2: Human Review Shortcut (Optional)
 
-Default behavior is **max autonomy**: once you have read the approved spec, inspected the codebase, and there is no unresolved architectural ambiguity, continue through plan writing, reviewer gate, PR creation, and PR readiness without an extra pause.
+Default behavior is **max autonomy**: once you have read the approved spec, inspected the codebase, and there is no unresolved architectural ambiguity, continue through plan writing, the review gate, PR creation, and PR readiness without an extra pause.
 
 Pause only if:
 
@@ -134,8 +134,8 @@ If no blocking human decision remains:
 6. Commit: `docs: add implementation plan for [feature-name]`
 7. Push: `git push -u origin implementation-plan/[branch-slug]`
 8. **Reviewer gate (before opening PR)**:
-   - Run the implementation plan reviewer protocol on this branch: `docs/ai/development-workflow/protocols/02-review-implementation-plan-protocol.md`
-   - If your runner supports it, dispatch a dedicated `implementation-plan-reviewer` agent; otherwise self-review using the protocol checklist
+   - Run the implementation-plan review gate on this branch using `REVIEW.md`
+   - If your runner has a native review feature, use it against `REVIEW.md`; otherwise use the compatibility wrapper `docs/ai/development-workflow/protocols/02-review-implementation-plan-protocol.md`
    - Apply fixes directly on the branch, commit, and push again if needed
    - If the verdict is **NEEDS REVISION** due to plan/approach decisions, stop and request human input before opening a PR
 9. Open PR targeting `develop` with:

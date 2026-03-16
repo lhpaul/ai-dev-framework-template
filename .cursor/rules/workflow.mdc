@@ -15,17 +15,16 @@ This project follows a staged AI-assisted development workflow. The canonical re
 | Stage | Protocol |
 |---|---|
 | Write spec | `docs/ai/development-workflow/protocols/01-generate-specs-protocol.md` |
-| Review spec | `docs/ai/development-workflow/protocols/01-review-specs-protocol.md` |
 | Write plan | `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
-| Review plan | `docs/ai/development-workflow/protocols/02-review-implementation-plan-protocol.md` |
 | Implement | `docs/ai/development-workflow/protocols/04-implement-development-protocol.md` |
-| Review code | `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md` |
-| Orchestrate | `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
+| Review gate | `REVIEW.md` and the compatibility wrappers under `docs/ai/development-workflow/protocols/` |
+| Batch orchestrate | `docs/ai/development-workflow/protocols/89-batch-orchestrate-work-protocol.md` |
+| Orchestrate one item | `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
 
 ### Key rules
 
 - Always read the spec and plan before implementing
-- Continue through reviewer gate, PR readiness, and CI unless the protocol surfaces a real human decision
+- Continue through the review gate, PR readiness, and CI unless the protocol surfaces a real human decision
 - Always update CHANGELOG under `[Unreleased]` before opening a PR
 - No `git push --force`, `reset --hard`, or rebase on shared branches without explicit human approval
 - Humans merge PRs — agents open them

@@ -1,37 +1,82 @@
-# Integration: Automated Code Review Platform (Generic)
+# Integration: Automated PR Review Platforms (Generic)
 
-This document defines **platform-agnostic** expectations for how agents use an automated code review tool in this workflow.
+This document defines **platform-agnostic** expectations for how agents use one or more automated PR review tools in this workflow.
 
-> Platform-specific setup (how to trigger, poll, and fetch comments) lives in the platform's own integration doc. See [`integrations/greptile.md`](greptile.md) for Greptile.
-
----
-
-## What the Platform Must Provide
-
-For the orchestrator's automated reviewer loop (Step 8 of `90-orchestrate-work-protocol.md`) to work, the platform must:
-
-1. **Post a review automatically** when a PR is opened or updated
-2. **Allow re-triggering** after fixes are pushed (e.g., via a comment or webhook)
-3. **Post inline comments** for each finding
-4. **Post a review summary** when the analysis is complete — this is the reliable signal that the review cycle is done (even when no issues are found)
+Platform-specific setup lives in each platform's own integration doc. See:
+- [`integrations/greptile.md`](greptile.md)
+- [`integrations/devin.md`](devin.md)
 
 ---
 
-## What Each Integration Doc Must Define
+## Review Model
 
-Each platform-specific integration doc (e.g., `greptile.md`) must specify:
+Automated PR reviewers are **post-push validation**. They do not replace the pre-PR review gate defined in [`REVIEW.md`](../../../../REVIEW.md).
 
-| Requirement | Description |
-|---|---|
-| **Bot / app identity** | Username or login used to filter the platform's comments from human comments |
-| **How to trigger a re-review** | Command or comment to post after pushing fixes |
-| **How to detect review completion** | API call or query to check whether a new review summary has been posted after `last_push_at` |
-| **How to fetch inline comments** | API call or query to retrieve new inline comments after `last_push_at` |
+Default policy is **sequential gating**:
+- Configure reviewers in a fixed order
+- Run the first configured reviewer
+- Only continue to the next reviewer when the current reviewer is `clean` or `skipped`
+- If any reviewer returns blocking findings, stop the loop, fix the branch, push, and start again from the first configured reviewer
+- If any reviewer escalates, the overall loop escalates
+
+Readiness requires every configured reviewer to be `clean` or `skipped`.
 
 ---
 
-## Without an Automated Reviewer
+## What a Platform Must Provide
 
-If no automated review platform is configured, skip Step 8 in the orchestrator protocol. In the Step 6 summary, report: `Automated review: ⏭️ skipped (not configured)`.
+For `scripts/development-workflow/pr-review-loop.sh` to support a platform, the platform integration must define:
 
-The code reviewer agent (`04-review-implemented-development-protocol.md`) can partially substitute — run it before flagging the PR for human review.
+1. How the platform identifies itself on the PR
+2. How to trigger a re-review after fixes are pushed
+3. How to detect review completion
+4. How to fetch new inline comments or blocking review summaries
+5. How to distinguish platform findings from human comments
+
+If a platform does not yet meet that contract in this repository, it should be documented as **planned but unsupported** and the helper script should report it as `skipped`.
+
+---
+
+## Aggregation Rules
+
+The aggregate loop result is:
+
+- `clean` when every configured reviewer is `clean` or `skipped`
+- `needs_fixes` when the first unfinished reviewer reports blocking findings
+- `escalate` when the first unfinished reviewer times out or otherwise escalates
+- `skipped` when no automated reviewer is configured at all
+
+Additional rules:
+- Suggestions are non-blocking regardless of platform
+- `needs_fixes` summaries should include the blocking platform identity
+- Unsupported configured platforms may be reported as `skipped` with a reason such as `unsupported-platform`
+- CI starts only after the aggregate reviewer result is `clean` or `skipped`
+
+---
+
+## Script Interface
+
+The repository helper supports ordered multi-platform review:
+
+```bash
+./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name> --platform greptile --platform devin
+```
+
+It also accepts comma-separated platform lists:
+
+```bash
+./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name> --platform greptile,devin
+```
+
+The script emits:
+- One aggregate `RESULT=...`
+- Ordered `PLATFORM_<n>_NAME` / `PLATFORM_<n>_RESULT` records
+- Platform-specific counts and blocking summaries for the platform that stopped the loop
+
+---
+
+## Without Automated Reviewers
+
+If no automated review platform is configured, skip the PR review loop and report `Automated review: ⏭️ skipped (not configured)`.
+
+The pre-PR review gate from [`REVIEW.md`](../../../../REVIEW.md) still applies.

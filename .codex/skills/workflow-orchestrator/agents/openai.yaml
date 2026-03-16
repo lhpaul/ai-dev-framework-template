@@ -1,7 +1,7 @@
 interface:
   display_name: "Workflow Orchestrator"
-  short_description: "Advance workflow items until they reach a real terminal condition."
-  default_prompt: "Use $workflow-orchestrator to inspect workflow state and keep advancing eligible items until they are waiting on a human, blocked, or escalated."
+  short_description: "Batch and supervise workflow items until each reaches a terminal condition."
+  default_prompt: "Use $workflow-orchestrator to inspect workflow state, build safe parallel batches, and supervise each eligible item until it is waiting on a human, blocked, or escalated."
 
 policy:
   allow_implicit_invocation: true

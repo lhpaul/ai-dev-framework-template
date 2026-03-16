@@ -138,7 +138,7 @@ Use the current timestamp for `YYYYMMDDHHMMSS`.
 
 ## Step 4: Human Review Shortcut (Optional)
 
-Default behavior is **max autonomy**: once the alignment conversation is complete and there are no unresolved blocking product questions, continue through branch creation, reviewer gate, PR creation, and PR readiness without asking for an extra "review before PR" confirmation.
+Default behavior is **max autonomy**: once the alignment conversation is complete and there are no unresolved blocking product questions, continue through branch creation, the review gate, PR creation, and PR readiness without asking for an extra "review before PR" confirmation.
 
 Pause only if:
 
@@ -161,8 +161,8 @@ If no blocking human decision remains:
 5. Commit: `docs: add spec for [feature-name]`
 6. Push: `git push -u origin spec/[branch-slug]`
 7. **Reviewer gate (before opening PR)**:
-   - Run the spec reviewer protocol on this branch: `docs/ai/development-workflow/protocols/01-review-specs-protocol.md`
-   - If your runner supports it, dispatch a dedicated `spec-reviewer` agent; otherwise self-review using the protocol checklist
+   - Run the spec review gate on this branch using `REVIEW.md`
+   - If your runner has a native review feature, use it against `REVIEW.md`; otherwise use the compatibility wrapper `docs/ai/development-workflow/protocols/01-review-specs-protocol.md`
    - Apply fixes directly on the branch, commit, and push again if needed
    - If the verdict is **NEEDS REVISION** due to product decisions, stop and request human input before opening a PR
 8. Open PR targeting `develop` with:

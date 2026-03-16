@@ -147,21 +147,19 @@ if [ ! -d "$development_path" ]; then
   exit 66
 fi
 
-spec_files=("$development_path"/1_*_specs.md)
-if [ "${#spec_files[@]}" -eq 0 ] || [ ! -f "${spec_files[0]}" ]; then
+spec_file=""
+for f in "$development_path"/1_*_specs.md "$development_path"/1_*_specs.doc.md; do
+  [ -f "$f" ] && spec_file="$f" && break
+done
+if [ -z "$spec_file" ] || [ ! -f "$spec_file" ]; then
   echo "No spec file found in $development_path" >&2
   exit 66
 fi
-if [ "${#spec_files[@]}" -gt 1 ]; then
-  echo "Multiple spec files found in $development_path; cannot determine which to use" >&2
-  exit 66
-fi
-spec_file="${spec_files[0]}"
 
 # Derive workflow status from repo state so issue tracker remains source of truth (no Status line in spec required)
 slug="$(basename "$development_path" | sed 's/^[0-9]\{14\}_//')"
 plan_file=""
-for f in "$development_path"/2_*_implementation-plan.md; do
+for f in "$development_path"/2_*_implementation-plan.md "$development_path"/2_*_implementation-plan.doc.md; do
   [ -f "$f" ] && plan_file="$f" && break
 done
 feature_branch_exists=0
@@ -177,6 +175,7 @@ if [ -n "$slug" ]; then
     feature_branch_exists=1
   else
     # Linear: feature/[issue-id]-[slug] (e.g. feature/ENG-123-user-auth); folder may be [timestamp]_[slug] only
+    # Anchor to end: branch must end with the slug (no extra suffixes like -v2 or -phase-2).
     slug_ere="$(ere_escape "$slug")"
     while IFS= read -r ref; do
       [ -z "$ref" ] && continue
@@ -203,6 +202,8 @@ else
   next_action="implement"
 fi
 
+# PLAN_FILE is intentionally not emitted; callers that need the path should scan
+# "$development_path"/2_*_implementation-plan.md directly.
 print_kv TARGET "development:$development_path"
 print_kv SPEC_FILE "$spec_file"
 print_kv STATUS "$status_line"
