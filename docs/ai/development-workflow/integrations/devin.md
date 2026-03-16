@@ -71,10 +71,14 @@ check_completed=$(gh api repos/{owner}/{repo}/commits/{head_sha}/check-runs \
 
 ```bash
 gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
-  --jq "[.[] | select(.user.login == \"devin-ai-integration[bot]\" and .created_at > \"$review_window_start\") | {path, line, body}]"
+  --jq "[.[] | select(.user.login == \"devin-ai-integration[bot]\" and .created_at > \"$since_iso\" and .in_reply_to_id == null) | {path, line, body}]"
 ```
 
 **All Devin findings are blocking.** Unlike Greptile, there is no `is_soft_suggestion()` heuristic — both severe (red) and non-severe (yellow) findings block the PR.
+
+### Reply thread handling
+
+Devin posts findings as inline comments on code lines, sometimes with a reply thread containing additional detail. The adapter filters out reply comments (`in_reply_to_id != null`) to avoid double-counting a finding and its reply as separate blocking items. Only top-level inline comments are counted.
 
 ### "No Issues Found" handling
 

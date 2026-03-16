@@ -401,11 +401,14 @@ run_devin_review() {
   fi
 
   # --- Phase 1: Check for existing blocking findings ---
+  # Devin posts findings as inline comments, sometimes with replies containing
+  # details. Filter out reply comments (in_reply_to_id != null) to avoid
+  # double-counting a finding and its reply as separate blocking items.
   existing_comments="$(
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
           .[]
-          | select(.user.login == $bot and .created_at > $since)
+          | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null)
           | { path, line: (.line // .original_line // 0), body: (.body // "") }
           | @json
         '
@@ -514,7 +517,7 @@ run_devin_review() {
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
         .[]
-        | select(.user.login == $bot and .created_at > $since)
+        | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null)
         | {
             path,
             line: (.line // .original_line // 0),
