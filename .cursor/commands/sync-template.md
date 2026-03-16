@@ -82,6 +82,7 @@ Compare the following **framework-level paths** from the template against the cu
 ```
 docs/ai/                          ← full tree, all files recursively
 .claude/agents/                   ← all *.md files
+.claude/commands/                 ← all *.md files
 .claude/skills/                   ← all *.md files (including this skill itself)
 .cursor/commands/                 ← all *.md files
 .cursor/agents/                   ← all *.md files

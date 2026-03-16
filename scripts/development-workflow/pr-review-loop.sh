@@ -488,10 +488,10 @@ for index in "${!platforms[@]}"; do
       aggregate_status=$platform_status
       ;;
     skipped)
-      if [ "$aggregate_result" = "skipped" ]; then
-        aggregate_output="$platform_output"
-        aggregate_status=$platform_status
-      fi
+      # Per pr-review-platform.md: aggregate is "clean" when every reviewer is clean or skipped
+      aggregate_result="clean"
+      aggregate_output="$platform_output"
+      aggregate_status=$platform_status
       ;;
     needs_fixes|escalate)
       aggregate_result="$platform_result"
