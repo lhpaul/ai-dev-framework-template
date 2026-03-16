@@ -201,7 +201,7 @@ git checkout -b feature/sync-template-v{TEMPLATE_VERSION}
 git diff --stat
 
 # 3. Stage and commit (only after you've reviewed the changes)
-git add docs/ai/ .claude/agents/ .claude/skills/ .cursor/ \
+git add docs/ai/ .claude/agents/ .claude/commands/ .claude/skills/ .cursor/ \
   scripts/development-workflow/ scripts/README.md \
   docs/best-practices/1-general.md \
   docs/best-practices/2-version-control.md \

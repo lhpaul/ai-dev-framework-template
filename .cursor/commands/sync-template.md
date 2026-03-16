@@ -82,8 +82,10 @@ Compare the following **framework-level paths** from the template against the cu
 ```
 docs/ai/                          ← full tree, all files recursively
 .claude/agents/                   ← all *.md files
+.claude/commands/                 ← all *.md files
 .claude/skills/                   ← all *.md files (including this skill itself)
 .cursor/commands/                 ← all *.md files
+.cursor/agents/                   ← all *.md files
 .cursor/rules/                    ← all *.mdc files
 scripts/development-workflow/     ← workflow helper scripts (discover state, PR/CI loops, etc.)
 scripts/README.md                 ← purpose and usage of scripts in scripts/
@@ -101,8 +103,9 @@ For each file in these paths:
 ### Special handling (show full diff, user decides per file)
 
 ```
-.claude/settings.json             ← may have project-specific permissions
+.claude/settings.json                          ← may have project-specific permissions
 .claude/settings.local.json.example
+.github/workflows/auto-tag-release.yml         ← automated release tagging; add if CI is set up
 ```
 
 For each of these: show the full diff and ask the user explicitly whether to apply it.
@@ -197,7 +200,7 @@ git checkout -b feature/sync-template-v{TEMPLATE_VERSION}
 git diff --stat
 
 # 3. Stage and commit (only after you've reviewed the changes)
-git add docs/ai/ .claude/agents/ .claude/skills/ .cursor/ \
+git add docs/ai/ .claude/agents/ .claude/commands/ .claude/skills/ .cursor/ \
   scripts/development-workflow/ scripts/README.md \
   docs/best-practices/1-general.md \
   docs/best-practices/2-version-control.md \
