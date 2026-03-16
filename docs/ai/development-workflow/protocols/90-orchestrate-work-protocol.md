@@ -193,7 +193,7 @@ The helper script evaluates configured platforms sequentially. For each platform
 
 Initialize `cycle = 0` once per orchestration run for the PR. Increment `cycle` each time a fixer agent is dispatched. Do not reset `cycle` after a fixer push; escalate when the run reaches `max_cycles`.
 
-Prefer the helper script:
+Prefer the helper script (it reads `.ai-dev-workflow.yaml` for the platform list automatically):
 
 ```bash
 ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name>

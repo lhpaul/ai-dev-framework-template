@@ -141,12 +141,14 @@ Name each file after the specific technology, not the category (e.g., `typescrip
 
 Ask:
 - Do you use an issue tracker? (Linear, GitHub Issues, Jira, Notion, other, none)
-- Do you want to use automated PR review? (Greptile, CodeRabbit, other, none)
+- Do you want to use automated PR review? (Greptile, Devin, both, other, none)
 - Do you use any MCP servers with your AI tool? (for context: Supabase, database access, etc.)
 
 Document the answers and point to the relevant integration docs:
 - Issue tracker → `docs/ai/development-workflow/integrations/linear.md` (or note the alternative)
-- Automated review → `docs/ai/development-workflow/integrations/greptile.md` (or note the alternative)
+- Automated review → `docs/ai/development-workflow/integrations/greptile.md` and/or `docs/ai/development-workflow/integrations/devin.md`
+
+If the user selects one or more automated PR review platforms, generate `.ai-dev-workflow.yaml` at the repo root listing them under `review_platforms:`. This file is read by `pr-review-loop.sh` to determine which platforms to run. If no review platform is selected, do not create the file (the script falls back to `greptile` only).
 
 ---
 

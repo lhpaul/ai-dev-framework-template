@@ -1,0 +1,16 @@
+# AI Development Workflow Configuration
+#
+# This file configures repository-specific settings for the AI development
+# workflow. It is read by scripts and agents to determine which integrations
+# are active for this repository.
+#
+# See docs/ai/development-workflow/integrations/ for platform-specific setup.
+
+# Ordered list of automated PR review platforms to run sequentially.
+# Platforms are evaluated in the order listed; the first blocking result
+# stops the loop. Supported values: greptile, devin
+# If this file is absent or review_platforms is empty, the script falls
+# back to "greptile" only.
+review_platforms:
+  - greptile
+  - devin
