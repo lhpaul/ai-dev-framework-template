@@ -120,6 +120,7 @@ These paths are project-specific and must **not** be overwritten by the template
 AGENTS.md
 README.md
 CHANGELOG.md
+.ai-dev-workflow.yaml
 docs/project/
 docs/best-practices/STACK-SPECIFIC.md
 docs/best-practices/stack/
