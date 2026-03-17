@@ -476,12 +476,15 @@ run_devin_review() {
   rm -f "$existing_blocking_file"
 
   # --- Phase 2: Poll for Devin review completion ---
-  # Devin's CI check run completes BEFORE it finishes posting review comments.
-  # We must wait for Devin's summary review (body contains "**Devin Review**")
-  # to appear after the commit timestamp. This is the reliable signal that
-  # Devin has finished posting all inline comments and the summary.
+  # Devin's CI check run may complete BEFORE it finishes posting review
+  # comments. After the check run completes, we wait for Devin's summary
+  # review (body contains "**Devin Review**") OR a grace period, whichever
+  # comes first. The grace period handles cases where Devin only posts
+  # inline "resolved" comments without a summary review.
+  local check_completed_at=0
+  local devin_post_check_grace=120  # seconds to wait after check completes
+
   while :; do
-    # First check if the check run itself has completed (prerequisite)
     check_completed="$(
       gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
         | jq '
@@ -494,9 +497,12 @@ run_devin_review() {
     check_completed="${check_completed:-0}"
 
     if [ "$check_completed" -gt 0 ]; then
-      # Check run completed — now wait for Devin's summary review.
-      # Devin always posts a final review with body starting with
-      # "**Devin Review**" after all inline comments are posted.
+      # Record when we first saw the check complete
+      if [ "$check_completed_at" -eq 0 ]; then
+        check_completed_at="$elapsed"
+      fi
+
+      # Check for Devin's summary review (the reliable completion signal)
       local devin_summary_count
       devin_summary_count="$(
         gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
@@ -511,7 +517,17 @@ run_devin_review() {
             '
       )"
       devin_summary_count="${devin_summary_count:-0}"
+
       if [ "$devin_summary_count" -gt 0 ]; then
+        # Summary review found — Devin is definitely done
+        break
+      fi
+
+      # Grace period: if enough time has passed since check completed
+      # without a summary review, assume Devin is done (it may have only
+      # posted inline resolved/no-issue comments without a summary)
+      local since_check_completed=$(( elapsed - check_completed_at ))
+      if [ "$since_check_completed" -ge "$devin_post_check_grace" ]; then
         break
       fi
     fi
