@@ -81,6 +81,7 @@ Compare the following **framework-level paths** from the template against the cu
 ### Always sync (apply automatically after approval)
 
 ```
+REVIEW.md                         ← canonical review contract for spec, plan, and code review gates
 docs/ai/                          ← full tree, all files recursively
 .claude/agents/                   ← all *.md files
 .claude/commands/                 ← all *.md files
@@ -121,6 +122,7 @@ These paths are project-specific and must **not** be overwritten by the template
 AGENTS.md
 README.md
 CHANGELOG.md
+.ai-dev-workflow.yaml
 docs/project/
 docs/best-practices/STACK-SPECIFIC.md
 docs/best-practices/stack/
@@ -201,7 +203,7 @@ git checkout -b feature/sync-template-v{TEMPLATE_VERSION}
 git diff --stat
 
 # 3. Stage and commit (only after you've reviewed the changes)
-git add docs/ai/ .claude/agents/ .claude/commands/ .claude/skills/ .cursor/ \
+git add REVIEW.md docs/ai/ .claude/agents/ .claude/commands/ .claude/skills/ .cursor/ \
   scripts/development-workflow/ scripts/README.md \
   docs/best-practices/1-general.md \
   docs/best-practices/2-version-control.md \

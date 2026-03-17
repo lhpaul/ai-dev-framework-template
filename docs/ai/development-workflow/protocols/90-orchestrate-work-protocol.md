@@ -193,7 +193,7 @@ The helper script evaluates configured platforms sequentially. For each platform
 
 Initialize `cycle = 0` once per orchestration run for the PR. Increment `cycle` each time a fixer agent is dispatched. Do not reset `cycle` after a fixer push; escalate when the run reaches `max_cycles`.
 
-Prefer the helper script:
+Prefer the helper script (it reads `.ai-dev-workflow.yaml` for the platform list automatically):
 
 ```bash
 ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name>
@@ -233,7 +233,7 @@ Soft suggestions may be reported in summaries, but they do not change the loop r
 |---|---|---|
 | `poll_interval` | 2 min | Time to wait between review status checks |
 | `max_wait` | 20 min | Max wait **per fix cycle** for the reviewer to respond |
-| `max_cycles` | 3 | Max number of times a fixing agent is dispatched before escalating |
+| `max_cycles` | 10 | Max number of times a fixing agent is dispatched before escalating |
 
 ---
 
