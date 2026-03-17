@@ -19,7 +19,7 @@ platforms are clean or skipped, the script exits 0.
 Platform selection (in priority order):
   1. --platform flag(s) passed on the command line
   2. review_platforms list in .ai-dev-workflow.yaml at the repo root
-  3. Fallback: greptile
+  3. Fallback: greptile (only when .ai-dev-workflow.yaml is absent)
 
 Outputs stable key=value lines including:
   RESULT=clean|needs_fixes|escalate|skipped

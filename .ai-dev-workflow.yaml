@@ -9,8 +9,8 @@
 # Ordered list of automated PR review platforms to run sequentially.
 # Platforms are evaluated in the order listed; the first blocking result
 # stops the loop. Supported values: greptile, devin
-# If this file is absent or review_platforms is empty, the script falls
-# back to "greptile" only.
+# If this file is absent, the script falls back to "greptile" only.
+# If the file exists but review_platforms is empty, no reviewer runs.
 review_platforms:
   - greptile
   - devin
