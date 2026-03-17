@@ -475,8 +475,13 @@ run_devin_review() {
 
   rm -f "$existing_blocking_file"
 
-  # --- Phase 2: Poll for Devin check run completion (no trigger needed) ---
+  # --- Phase 2: Poll for Devin review completion ---
+  # Devin's CI check run completes BEFORE it finishes posting review comments.
+  # We must wait for Devin's summary review (body contains "**Devin Review**")
+  # to appear after the commit timestamp. This is the reliable signal that
+  # Devin has finished posting all inline comments and the summary.
   while :; do
+    # First check if the check run itself has completed (prerequisite)
     check_completed="$(
       gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
         | jq '
@@ -489,7 +494,26 @@ run_devin_review() {
     check_completed="${check_completed:-0}"
 
     if [ "$check_completed" -gt 0 ]; then
-      break
+      # Check run completed — now wait for Devin's summary review.
+      # Devin always posts a final review with body starting with
+      # "**Devin Review**" after all inline comments are posted.
+      local devin_summary_count
+      devin_summary_count="$(
+        gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+          | jq --arg bot "$bot_login" --arg since "$since_iso" '
+              [.[]
+               | select(
+                   .user.login == $bot and
+                   .submitted_at > $since and
+                   (.body // "" | test("\\*\\*Devin Review\\*\\*|Devin Review has completed"; "i"))
+                 )
+              ] | length
+            '
+      )"
+      devin_summary_count="${devin_summary_count:-0}"
+      if [ "$devin_summary_count" -gt 0 ]; then
+        break
+      fi
     fi
 
     if [ "$elapsed" -ge "$max_wait" ]; then
