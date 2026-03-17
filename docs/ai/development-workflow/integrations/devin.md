@@ -50,20 +50,36 @@ Devin posts as `devin-ai-integration[bot]`. Use this login to filter its comment
 
 ### Step 7.2 — Detect review completion
 
-Devin signals completion via a GitHub **check run**. Poll the check-runs API for the head SHA until a Devin check run reaches `completed` status:
+Devin signals completion in **two stages**:
+
+1. A GitHub **check run** reaches `completed` status
+2. Devin finishes posting all inline review comments and (optionally) a **summary review** with body containing `**Devin Review**`
+
+**Important**: The check run may complete **before** Devin finishes posting review comments. Collecting results immediately after the check run completes can produce a false `clean` result while Devin is still posting blocking findings.
+
+The helper script handles this with a two-part wait:
 
 ```bash
-# Poll until Devin's check run completes
+# 1. Poll until Devin's check run completes
 check_completed=$(gh api repos/{owner}/{repo}/commits/{head_sha}/check-runs \
   --jq '[.check_runs[] | select(
     (.app.slug == "devin-ai-integration") or
     (.name | test("devin"; "i"))
   )] | map(select(.status == "completed")) | length')
+
+# 2. After check completes, wait for Devin's summary review OR a grace period
+devin_summary_count=$(gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews \
+  --jq '[.[] | select(
+    .user.login == "devin-ai-integration[bot]" and
+    .submitted_at > "'$since_iso'" and
+    (.body // "" | test("\\*\\*Devin Review\\*\\*|Devin Review has completed"; "i"))
+  )] | length')
 ```
 
 | Result | Action |
 |---|---|
-| `check_completed > 0` | Review complete — proceed to Step 7.3 to check for inline comments |
+| `check_completed > 0` and `devin_summary_count > 0` | Review fully complete — proceed to Step 7.3 |
+| `check_completed > 0` and `devin_summary_count == 0` and grace period (120s) elapsed | Assume complete — Devin may have only posted inline resolved/no-issue comments without a summary |
 | `check_completed == 0` and `elapsed < max_wait` | Not finished yet — wait another `poll_interval` and poll again |
 | `check_completed == 0` and `elapsed >= max_wait` | Timeout — escalate to human (also covers the case where Devin is not installed) |
 

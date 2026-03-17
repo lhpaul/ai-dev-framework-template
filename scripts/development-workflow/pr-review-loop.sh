@@ -475,7 +475,17 @@ run_devin_review() {
 
   rm -f "$existing_blocking_file"
 
-  # --- Phase 2: Poll for Devin check run completion (no trigger needed) ---
+  # --- Phase 2: Poll for Devin review completion ---
+  # Devin's CI check run may complete BEFORE it finishes posting review
+  # comments. After the check run completes, we wait for Devin's summary
+  # review (body contains "**Devin Review**") OR a grace period, whichever
+  # comes first. The grace period handles cases where Devin only posts
+  # inline "resolved" comments without a summary review.
+  local check_completed_at=-1   # -1 = not yet seen; record first-seen time
+  local devin_post_check_grace=120  # seconds to wait after check completes
+  local devin_summary_count=0
+  local since_check_completed=0
+
   while :; do
     check_completed="$(
       gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
@@ -489,7 +499,38 @@ run_devin_review() {
     check_completed="${check_completed:-0}"
 
     if [ "$check_completed" -gt 0 ]; then
-      break
+      # Record when we first saw the check complete
+      if [ "$check_completed_at" -eq -1 ]; then
+        check_completed_at="$elapsed"
+      fi
+
+      # Check for Devin's summary review (the reliable completion signal)
+      devin_summary_count="$(
+        gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+          | jq --arg bot "$bot_login" --arg since "$since_iso" '
+              [.[]
+               | select(
+                   .user.login == $bot and
+                   .submitted_at > $since and
+                   (.body // "" | test("\\*\\*Devin Review\\*\\*|Devin Review has completed"; "i"))
+                 )
+              ] | length
+            '
+      )"
+      devin_summary_count="${devin_summary_count:-0}"
+
+      if [ "$devin_summary_count" -gt 0 ]; then
+        # Summary review found — Devin is definitely done
+        break
+      fi
+
+      # Grace period: if enough time has passed since check completed
+      # without a summary review, assume Devin is done (it may have only
+      # posted inline resolved/no-issue comments without a summary)
+      since_check_completed=$(( elapsed - check_completed_at ))
+      if [ "$since_check_completed" -ge "$devin_post_check_grace" ]; then
+        break
+      fi
     fi
 
     if [ "$elapsed" -ge "$max_wait" ]; then
