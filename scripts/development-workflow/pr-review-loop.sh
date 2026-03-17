@@ -481,8 +481,10 @@ run_devin_review() {
   # review (body contains "**Devin Review**") OR a grace period, whichever
   # comes first. The grace period handles cases where Devin only posts
   # inline "resolved" comments without a summary review.
-  local check_completed_at=0
+  local check_completed_at=-1   # -1 = not yet seen; record first-seen time
   local devin_post_check_grace=120  # seconds to wait after check completes
+  local devin_summary_count=0
+  local since_check_completed=0
 
   while :; do
     check_completed="$(
@@ -498,12 +500,11 @@ run_devin_review() {
 
     if [ "$check_completed" -gt 0 ]; then
       # Record when we first saw the check complete
-      if [ "$check_completed_at" -eq 0 ]; then
+      if [ "$check_completed_at" -eq -1 ]; then
         check_completed_at="$elapsed"
       fi
 
       # Check for Devin's summary review (the reliable completion signal)
-      local devin_summary_count
       devin_summary_count="$(
         gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
           | jq --arg bot "$bot_login" --arg since "$since_iso" '
@@ -526,7 +527,7 @@ run_devin_review() {
       # Grace period: if enough time has passed since check completed
       # without a summary review, assume Devin is done (it may have only
       # posted inline resolved/no-issue comments without a summary)
-      local since_check_completed=$(( elapsed - check_completed_at ))
+      since_check_completed=$(( elapsed - check_completed_at ))
       if [ "$since_check_completed" -ge "$devin_post_check_grace" ]; then
         break
       fi
