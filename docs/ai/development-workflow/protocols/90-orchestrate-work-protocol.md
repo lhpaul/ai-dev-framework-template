@@ -233,7 +233,7 @@ Soft suggestions may be reported in summaries, but they do not change the loop r
 |---|---|---|
 | `poll_interval` | 2 min | Time to wait between review status checks |
 | `max_wait` | 20 min | Max wait **per fix cycle** for the reviewer to respond |
-| `max_cycles` | 3 | Max number of times a fixing agent is dispatched before escalating |
+| `max_cycles` | 10 | Max number of times a fixing agent is dispatched before escalating |
 
 ---
 
