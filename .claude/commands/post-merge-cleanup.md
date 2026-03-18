@@ -3,6 +3,7 @@ description: >
   After a development PR is merged and the remote branch deleted, sync with origin,
   switch to develop, pull, delete the local branch, and update the related issue in the issue tracker.
   Usage: /post-merge-cleanup [branch-name]
+allowed-tools: Bash(./scripts/development-workflow/post-merge-cleanup.sh:*), Bash(git branch:*), mcp__claude_ai_Linear__get_issue, mcp__claude_ai_Linear__save_issue, mcp__claude_ai_Linear__list_issue_statuses
 ---
 
 Run the post-merge cleanup script from the repository root.
