@@ -284,7 +284,7 @@ When an automated review platform returns inline comments, classify them before 
 
 - Treat a comment as a **soft suggestion** only when every non-empty, non-code line starts with an advisory prefix such as `Consider`, `You might`, `An alternative`, `Optionally`, `It could be cleaner to`, `Perhaps`, `Maybe`, `You could`, `One option is`, or `Alternatively`.
 - Treat any other inline comment as **blocking**.
-- Treat `CHANGES_REQUESTED` reviews from an automated reviewer as **blocking**.
+- Treat `CHANGES_REQUESTED` and `COMMENTED` reviews from an automated reviewer as **blocking**.
 
 Soft suggestions may be reported in summaries, but they do not change the loop result to `needs_fixes`. Any blocking finding does.
 
