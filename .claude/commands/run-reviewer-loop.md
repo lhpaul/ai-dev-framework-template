@@ -2,7 +2,7 @@
 description: Run the automated reviewer loop (and CI loop) for a PR until clean or escalate. Usage: /run-reviewer-loop [PR number or "current"]
 ---
 
-# Cursor Command: Run Reviewer Loop
+# Claude Code Command: Run Reviewer Loop
 
 Follow the standalone automated reviewer loop protocol:
 

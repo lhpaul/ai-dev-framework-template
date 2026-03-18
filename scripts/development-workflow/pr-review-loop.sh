@@ -495,6 +495,37 @@ run_devin_review() {
   # 2. A "No Issues Found" review when it finds nothing to report (often no check run in that case), or
   # 3. Check run completed plus a grace period (for inline-only or no summary).
   # We check for (1) and (2) every iteration so we notice as soon as Devin posts.
+  #
+  # Early-exit: if Devin has no check run at all for the HEAD commit (queued, in_progress, or
+  # completed), it is not going to review this push — treat as skipped. Devin only triggers a check
+  # run when it intends to review (e.g. on PR open or when tagged); subsequent pushes to an already-
+  # reviewed PR often have no check run. Since Phase 1 already confirmed zero existing blocking
+  # findings, skipping is safe.
+  local devin_any_check_count=0
+  devin_any_check_count="$(
+    gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
+      | jq -s '
+          [.[].check_runs[] | select(
+            (.app.slug == "devin-ai-integration") or
+            (.name | test("devin"; "i"))
+          )] | length
+        '
+  )"
+  devin_any_check_count="${devin_any_check_count:-0}"
+  if [ "$devin_any_check_count" -eq 0 ]; then
+    print_kv RESULT skipped
+    print_kv REASON no_check_run
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 0
+  fi
+
   local check_completed_at=-1   # -1 = not yet seen; record first-seen time
   local devin_post_check_grace=120  # seconds to wait after check completes
   local devin_summary_count=0

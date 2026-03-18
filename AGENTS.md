@@ -58,8 +58,8 @@ This project uses a staged AI-assisted development workflow. See [`docs/ai/devel
 | Implement | `developer` agent | `/implement-development` | `workflow-implementer` skill | Follow `docs/ai/development-workflow/protocols/04-implement-development-protocol.md` |
 | Review Gate (Spec / Plan / Code) | Native review against `REVIEW.md` | `/review-spec`, `/review-implementation-plan`, `/review-code` | Native review against `REVIEW.md` | Follow `REVIEW.md` and the compatibility wrapper protocols under `docs/ai/development-workflow/protocols/` when needed |
 | Smoke Test | `smoke-tester` agent | `/smoke-tester` | — | Follow `docs/ai/development-workflow/protocols/05-smoke-test-protocol.md` |
-| Run reviewer loop (PR) | `automated-reviewer-loop` agent | `/run-reviewer-loop` | `workflow-reviewer-loop` skill | Follow `docs/ai/development-workflow/protocols/92-automated-reviewer-loop-protocol.md` |
-| Advance One Item | `item-orchestrator` agent | `/run-item-work` | `workflow-item-orchestrator` skill | Follow `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
+| Run reviewer loop (PR) | `/run-reviewer-loop` command (or `automated-reviewer-loop` agent) | `/run-reviewer-loop` | `workflow-reviewer-loop` skill | Follow `docs/ai/development-workflow/protocols/92-automated-reviewer-loop-protocol.md` |
+| Advance One Item | `/run-item-work` command (or `item-orchestrator` agent) | `/run-item-work` | `workflow-item-orchestrator` skill | Follow `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
 | Prepare Commit | — | `/prepare-commit` | Follow `docs/best-practices/2-version-control.md` | Follow `docs/best-practices/2-version-control.md` |
 | Prepare Release | `/prepare-release` | `/prepare-release` | Follow `docs/ai/development-workflow/protocols/06-prepare-release-protocol.md` | Follow `docs/ai/development-workflow/protocols/06-prepare-release-protocol.md` |
 | Orchestrate Work | `orchestrator` agent | `/run-work` | `workflow-orchestrator` skill | Follow `docs/ai/development-workflow/protocols/89-batch-orchestrate-work-protocol.md` |
