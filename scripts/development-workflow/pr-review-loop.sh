@@ -430,7 +430,7 @@ run_devin_review() {
               .submitted_at > $since and
               (.state == "CHANGES_REQUESTED" or .state == "COMMENTED")
             )
-          | { path: "", line: 0, body: (.body // "CHANGES_REQUESTED review without body") }
+          | { path: "", line: 0, body: (.body // "review without body") }
           | @json
         '
   )"
@@ -583,7 +583,7 @@ run_devin_review() {
         | {
             path: "",
             line: 0,
-            body: (.body // "CHANGES_REQUESTED review without body")
+            body: (.body // "review without body")
           }
         | @json
       '
