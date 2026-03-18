@@ -56,19 +56,21 @@ Devin signals completion in one of these ways:
 2. **No-issues review** — body contains "No Issues Found" (Devin posts this when it finds nothing to report; it may not create a check run in that case)
 3. **Check run + grace period** — a Devin check run reaches `completed` and 120s have passed without a summary (handles inline-only or no summary)
 
-**Important**: The check run may complete **before** Devin finishes posting review comments. The helper script therefore checks for completion **reviews first** on every poll (including "No Issues Found") so it does not depend on the check run when Devin explicitly reports no issues.
+**Important**: The check run may complete **before** Devin finishes posting review comments, and in some cases Devin may post review output later than expected or without a visible check run at the start of polling. The helper script therefore checks for completion **reviews first** on every poll (including "No Issues Found") and does **not** immediately skip just because no check run is visible yet.
 
 The helper script:
 
 - On each poll, looks for any Devin review since the commit with body matching `**Devin Review**`, "Devin Review has completed", or "No Issues Found". If found, treats review as complete and proceeds to Step 7.3.
-- If no such review is seen, checks for a completed Devin check run and, once seen, applies a 120s grace period before treating the run as complete.
+- If no such review is seen, checks for Devin check runs and, once a completed check run is seen, applies a 120s grace period before treating the run as complete.
+- If no Devin review and no Devin check run appear during the full `max_wait` window, returns `skipped` with reason `no_check_run` instead of skipping immediately at the start.
 
 | Result | Action |
-|---|---|
+| --- | --- |
 | Any Devin review with "**Devin Review**", "Devin Review has completed", or "No Issues Found" | Review complete — proceed to Step 7.3 |
 | `check_completed > 0` and grace period (120s) elapsed | Assume complete — proceed to Step 7.3 |
-| `check_completed == 0` and `elapsed < max_wait` | Not finished yet — wait another `poll_interval` and poll again |
-| `elapsed >= max_wait` | Timeout — escalate to human (also covers the case where Devin is not installed) |
+| No completion review yet and `elapsed < max_wait` | Not finished yet — wait another `poll_interval` and poll again |
+| `elapsed >= max_wait` and no Devin check run was ever seen | Skip as `no_check_run` |
+| `elapsed >= max_wait` and a Devin check run was seen | Timeout — escalate to human |
 
 ### Step 7.3 — Fetch inline comments
 
