@@ -19,7 +19,7 @@ platforms are clean or skipped, the script exits 0.
 Platform selection (in priority order):
   1. --platform flag(s) passed on the command line
   2. review_platforms list in .ai-dev-workflow.yaml at the repo root
-  3. Fallback: greptile
+  3. Fallback: greptile (only when .ai-dev-workflow.yaml is absent)
 
 Outputs stable key=value lines including:
   RESULT=clean|needs_fixes|escalate|skipped
@@ -393,9 +393,17 @@ run_devin_review() {
   repo="$(repo_slug)"
 
   head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
-  if [ -n "$head_sha" ]; then
-    since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
+  if [ -z "$head_sha" ]; then
+    print_kv RESULT escalate
+    print_kv REASON "head-sha-unavailable"
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    return 2
   fi
+  since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
   if [ -z "$since_iso" ]; then
     since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
   fi
@@ -476,21 +484,40 @@ run_devin_review() {
   rm -f "$existing_blocking_file"
 
   # --- Phase 2: Poll for Devin review completion ---
-  # Devin's CI check run may complete BEFORE it finishes posting review
-  # comments. After the check run completes, we wait for Devin's summary
-  # review (body contains "**Devin Review**") OR a grace period, whichever
-  # comes first. The grace period handles cases where Devin only posts
-  # inline "resolved" comments without a summary review.
+  # Devin signals completion by either:
+  # 1. A summary review (body contains "**Devin Review**" or "Devin Review has completed"), or
+  # 2. A "No Issues Found" review when it finds nothing to report (often no check run in that case), or
+  # 3. Check run completed plus a grace period (for inline-only or no summary).
+  # We check for (1) and (2) every iteration so we notice as soon as Devin posts.
   local check_completed_at=-1   # -1 = not yet seen; record first-seen time
   local devin_post_check_grace=120  # seconds to wait after check completes
   local devin_summary_count=0
   local since_check_completed=0
 
   while :; do
+    # Check for any Devin completion review every iteration (so "No Issues Found" is detected)
+    devin_summary_count="$(
+      gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+        | jq --arg bot "$bot_login" --arg since "$since_iso" '
+            [.[]
+             | select(
+                 .user.login == $bot and
+                 .submitted_at > $since and
+                 (.body // "" | test("\\*\\*Devin Review\\*\\*|Devin Review has completed|No Issues Found"; "i"))
+               )
+            ] | length
+          '
+    )"
+    devin_summary_count="${devin_summary_count:-0}"
+    if [ "$devin_summary_count" -gt 0 ]; then
+      # Summary or "No Issues Found" review — Devin is done
+      break
+    fi
+
     check_completed="$(
       gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
-        | jq '
-            [(.check_runs // .)[] | select(
+        | jq -s '
+            [.[].check_runs[] | select(
               (.app.slug == "devin-ai-integration") or
               (.name | test("devin"; "i"))
             )] | map(select(.status == "completed")) | length
@@ -499,34 +526,9 @@ run_devin_review() {
     check_completed="${check_completed:-0}"
 
     if [ "$check_completed" -gt 0 ]; then
-      # Record when we first saw the check complete
       if [ "$check_completed_at" -eq -1 ]; then
         check_completed_at="$elapsed"
       fi
-
-      # Check for Devin's summary review (the reliable completion signal)
-      devin_summary_count="$(
-        gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-          | jq --arg bot "$bot_login" --arg since "$since_iso" '
-              [.[]
-               | select(
-                   .user.login == $bot and
-                   .submitted_at > $since and
-                   (.body // "" | test("\\*\\*Devin Review\\*\\*|Devin Review has completed"; "i"))
-                 )
-              ] | length
-            '
-      )"
-      devin_summary_count="${devin_summary_count:-0}"
-
-      if [ "$devin_summary_count" -gt 0 ]; then
-        # Summary review found — Devin is definitely done
-        break
-      fi
-
-      # Grace period: if enough time has passed since check completed
-      # without a summary review, assume Devin is done (it may have only
-      # posted inline resolved/no-issue comments without a summary)
       since_check_completed=$(( elapsed - check_completed_at ))
       if [ "$since_check_completed" -ge "$devin_post_check_grace" ]; then
         break
@@ -734,10 +736,14 @@ if [ "${#platforms[@]}" -eq 0 ]; then
     while IFS= read -r line; do
       line="$(trim "$line")"
       [ -n "$line" ] && platforms+=("$line")
-    done < <(sed -n '/^review_platforms:/,/^[^[:space:]-]/{/^[[:space:]]*-/{s/^[[:space:]]*-[[:space:]]*//;p;}}' "$config_file")
+    done < <(sed -n '/^review_platforms:/,/^[^[:space:]-]/{/^[[:space:]]*-/{s/^[[:space:]]*-[[:space:]]*//;p;};}' "$config_file")
   fi
+  # Only fall back to greptile when config file is absent. If the file exists but
+  # we parsed zero platforms (empty list or parse issue), do not use greptile.
   if [ "${#platforms[@]}" -eq 0 ]; then
-    platforms=("greptile")
+    if [ ! -f "${config_file:-}" ]; then
+      platforms=("greptile")
+    fi
   fi
 fi
 
@@ -761,6 +767,8 @@ print_kv PR_NUMBER "$pr_number"
 print_kv BRANCH "$branch_name"
 print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
 print_kv PLATFORM_COUNT "${#platforms[@]}"
+# So callers can verify config was respected (e.g. no greptile when only devin is in .ai-dev-workflow.yaml)
+print_kv PLATFORM_LIST "$(IFS=,; printf '%s' "${platforms[*]}")"
 
 for index in "${!platforms[@]}"; do
   platform_index=$((index + 1))

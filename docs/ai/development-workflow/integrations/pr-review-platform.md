@@ -64,7 +64,7 @@ review_platforms:
   - devin
 ```
 
-The helper script reads this file automatically when no `--platform` flag is passed. If the file is absent or the list is empty, the script falls back to `greptile` only. Explicit `--platform` flags always override the config file.
+The helper script reads this file automatically when no `--platform` flag is passed. If the file is absent, the script falls back to `greptile` only. If the file exists but the platform list is empty, no reviewer runs and the result is skipped. Explicit `--platform` flags always override the config file.
 
 ---
 

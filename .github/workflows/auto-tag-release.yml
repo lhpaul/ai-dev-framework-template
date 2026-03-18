@@ -21,22 +21,24 @@ jobs:
     steps:
       - name: Extract version from branch name
         id: extract_version
+        env:
+          BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
-          BRANCH="${{ github.event.pull_request.head.ref }}"
           VERSION="${BRANCH#release/}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Detected version: $VERSION"
 
-      - name: Checkout main
+      - name: Checkout merged commit
         uses: actions/checkout@v5
         with:
-          ref: main
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
 
       - name: Extract release notes from CHANGELOG
         id: release_notes
+        env:
+          VERSION: ${{ steps.extract_version.outputs.version }}
         run: |
-          VERSION="${{ steps.extract_version.outputs.version }}"
           # Strip leading 'v' to match CHANGELOG format (e.g., v1.2.0 → [1.2.0])
           VERSION_CLEAN="${VERSION#v}"
           # Escape dots so they match literal '.' not any character in the awk regex
@@ -53,10 +55,11 @@ jobs:
           echo "$EOF" >> $GITHUB_OUTPUT
 
       - name: Create and push tag
+        env:
+          TAG: ${{ steps.extract_version.outputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          TAG="${{ steps.extract_version.outputs.version }}"
           git tag "$TAG"
           git push origin "$TAG"
 
@@ -64,9 +67,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_NOTES: ${{ steps.release_notes.outputs.notes }}
+          VERSION: ${{ steps.extract_version.outputs.version }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
         run: |
-          VERSION="${{ steps.extract_version.outputs.version }}"
           gh release create "$VERSION" \
             --title "Release $VERSION" \
             --notes "$RELEASE_NOTES" \
-            --target main
+            --target "$MERGE_SHA"
