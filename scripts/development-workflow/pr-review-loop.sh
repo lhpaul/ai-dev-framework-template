@@ -428,7 +428,13 @@ run_devin_review() {
           | select(
               .user.login == $bot and
               .submitted_at > $since and
-              (.state == "CHANGES_REQUESTED" or .state == "COMMENTED")
+              (
+                .state == "CHANGES_REQUESTED" or
+                (
+                  .state == "COMMENTED" and
+                  (.body // "" | test("\\*\\*Devin Review\\*\\*"; "i"))
+                )
+              )
             )
           | { path: "", line: 0, body: (.body // "review without body") }
           | @json
@@ -578,7 +584,13 @@ run_devin_review() {
         | select(
             .user.login == $bot and
             .submitted_at > $since and
-            (.state == "CHANGES_REQUESTED" or .state == "COMMENTED")
+            (
+              .state == "CHANGES_REQUESTED" or
+              (
+                .state == "COMMENTED" and
+                (.body // "" | test("\\*\\*Devin Review\\*\\*"; "i"))
+              )
+            )
           )
         | {
             path: "",
