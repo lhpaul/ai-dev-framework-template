@@ -193,6 +193,75 @@ The helper script evaluates configured platforms sequentially. For each platform
 
 Initialize `cycle = 0` once per orchestration run for the PR. Increment `cycle` each time a fixer agent is dispatched. Do not reset `cycle` after a fixer push; escalate when the run reaches `max_cycles`.
 
+### Issue tracking and PR comments
+
+Maintain an **issue ledger** alongside the cycle counter. Each entry tracks:
+
+| Field | Description |
+|---|---|
+| `id` | Sequential integer assigned in discovery order |
+| `platform` | Review platform name (e.g. `greptile`, `devin`) |
+| `path` | File path |
+| `line` | Line number (display-only — can shift between commits) |
+| `body_snippet` | First 120 chars of the finding body (used as matching key — line-shift-safe) |
+| `discovered_cycle` | Cycle when first seen |
+| `status` | `open` · `resolved` · `unresolved` |
+| `resolved_commit` | Short SHA (set when resolved) |
+
+**Matching key**: `(platform, path, body_snippet)` — not line number, since lines shift after fixes. If a finding looks like a restatement of an existing open issue (same platform, same file, similar description), match it rather than creating a duplicate.
+
+**Ledger updates:**
+
+- After each review run with `needs_fixes`: parse `BLOCKING_N_*` output, add new entries or leave existing open ones unchanged.
+- After each fixer push + re-review: any open entry whose key no longer appears in the new output is marked `resolved` with the fixer's commit SHA.
+- When the loop terminates: any still-open entry is marked `unresolved`.
+
+#### Fix commit comment
+
+Post via `gh pr comment` immediately after updating the ledger following a fixer push:
+
+````markdown
+### Automated Fix: commit `<short_sha>`
+
+Addressed **N** issue(s) from cycle M:
+
+| # | Platform | File | Description |
+|---|----------|------|-------------|
+| 1 | greptile | `src/foo.ts:42` | First 80 chars of body... |
+
+<details><summary>Remaining open issues: K</summary>
+
+| # | Platform | File | Description |
+|---|----------|------|-------------|
+| 3 | greptile | `src/baz.ts:5` | First 80 chars of body... |
+
+</details>
+````
+
+If 0 issues were resolved: post a shorter note — "Pushed fixes for cycle M. 0 issues resolved so far — re-running review to check."
+
+#### Final summary comment
+
+Post via `gh pr comment` when the loop reaches a terminal condition (`clean`, `escalate`, or `max_cycles`):
+
+````markdown
+### Automated Reviewer Loop Summary
+
+**Result:** clean | escalated (reason) | max cycles reached
+**Cycles:** N / `max_cycles`
+**Platforms:** greptile, devin
+
+| # | Platform | File | Line | Description | Status | Resolved In |
+|---|----------|------|------|-------------|--------|-------------|
+| 1 | greptile | `src/foo.ts` | 42 | First 80 chars... | Resolved | `abc1234` |
+| 2 | greptile | `src/baz.ts` | 5 | First 80 chars... | Unresolved | -- |
+
+**Resolved:** 1 / 2 issues
+````
+
+- If no issues were ever raised (clean on first run): post a simpler comment — "No blocking issues were raised by any configured review platform."
+- If result is `skipped` (no platforms configured): do **not** post a summary comment.
+
 Prefer the helper script (it reads `.ai-dev-workflow.yaml` for the platform list automatically):
 
 ```bash
@@ -215,7 +284,7 @@ When an automated review platform returns inline comments, classify them before 
 
 - Treat a comment as a **soft suggestion** only when every non-empty, non-code line starts with an advisory prefix such as `Consider`, `You might`, `An alternative`, `Optionally`, `It could be cleaner to`, `Perhaps`, `Maybe`, `You could`, `One option is`, or `Alternatively`.
 - Treat any other inline comment as **blocking**.
-- Treat `CHANGES_REQUESTED` reviews from an automated reviewer as **blocking**.
+- Treat `CHANGES_REQUESTED` reviews from any automated reviewer as **blocking**. Treat `COMMENTED` reviews from Devin (identified by a `**Devin Review**` body prefix) as **blocking**; for other platforms, `COMMENTED` reviews are not automatically blocking.
 
 Soft suggestions may be reported in summaries, but they do not change the loop result to `needs_fixes`. Any blocking finding does.
 

@@ -29,9 +29,33 @@ If no PR can be determined, ask the user to specify a PR number or to run from a
 
 ## Procedure (per PR)
 
+### Pre-flight: check for existing unresolved review findings
+
+Before running any scripts, inspect the PR's current review state:
+
+```bash
+gh pr view <number> --json reviews
+gh api repos/{owner}/{repo}/pulls/<number>/comments
+```
+
+For each configured review platform (listed in `.ai-dev-workflow.yaml` under `review_platforms`), check whether the platform has already posted a review with blocking findings that have **not** been addressed in a commit pushed after that review. This situation arises when a platform posts its review after a previous run timed out and the agent moved on.
+
+If unresolved findings exist: dispatch a fixer agent, wait for the push, then proceed to the scripts. Do not re-trigger the reviewer loop against stale findings — fix first.
+
+### Run the loops
+
 Execute **Step 7: Automated Reviewer Loop** and **Step 8: CI Loop** exactly as defined in `90-orchestrate-work-protocol.md` (scripts, result interpretation, sequential platform policy, fixer mapping, parameters, and labels). Do not duplicate that logic here — follow 90.
 
 For each PR, run Step 7 to completion, then Step 8; dispatch fixers and re-run as specified in 90 until the PR is clean and ready for human review or escalated.
+
+### Issue tracking and PR comments
+
+Follow the "Issue tracking and PR comments" subsection of Step 7 in `90-orchestrate-work-protocol.md`:
+
+- Maintain an issue ledger tracking all blocking findings across cycles (keyed by `(platform, path, body_snippet)`).
+- After each fixer push, post a **fix commit comment** on the PR listing which issues that commit resolved and any remaining open issues.
+- When the loop terminates, post a **final summary table** on the PR with all issues and their statuses (`resolved` / `unresolved`).
+- If the result is `skipped` (no platforms configured), do not post a summary comment.
 
 ---
 
@@ -42,3 +66,5 @@ After processing the requested PR(s), report:
 - **Ready for human review**: PR link, branch, and that every configured automated reviewer plus CI are clean (or skipped).
 - **Escalated**: PR link, reason (max cycles, timeout, or review platform escalate).
 - **Skipped**: If no review platform is configured, or a configured platform is currently unsupported and therefore skipped, note that in the result for the listed PR(s).
+
+The final summary comment posted on the PR (per the issue tracking subsection) serves as the durable record; the summary to the user is a concise pointer to the PR and its outcome.

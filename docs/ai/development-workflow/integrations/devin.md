@@ -50,38 +50,25 @@ Devin posts as `devin-ai-integration[bot]`. Use this login to filter its comment
 
 ### Step 7.2 — Detect review completion
 
-Devin signals completion in **two stages**:
+Devin signals completion in one of these ways:
 
-1. A GitHub **check run** reaches `completed` status
-2. Devin finishes posting all inline review comments and (optionally) a **summary review** with body containing `**Devin Review**`
+1. **Summary review** — body contains `**Devin Review**` or "Devin Review has completed"
+2. **No-issues review** — body contains "No Issues Found" (Devin posts this when it finds nothing to report; it may not create a check run in that case)
+3. **Check run + grace period** — a Devin check run reaches `completed` and 120s have passed without a summary (handles inline-only or no summary)
 
-**Important**: The check run may complete **before** Devin finishes posting review comments. Collecting results immediately after the check run completes can produce a false `clean` result while Devin is still posting blocking findings.
+**Important**: The check run may complete **before** Devin finishes posting review comments. The helper script therefore checks for completion **reviews first** on every poll (including "No Issues Found") so it does not depend on the check run when Devin explicitly reports no issues.
 
-The helper script handles this with a two-part wait:
+The helper script:
 
-```bash
-# 1. Poll until Devin's check run completes
-check_completed=$(gh api repos/{owner}/{repo}/commits/{head_sha}/check-runs \
-  --jq '[.check_runs[] | select(
-    (.app.slug == "devin-ai-integration") or
-    (.name | test("devin"; "i"))
-  )] | map(select(.status == "completed")) | length')
-
-# 2. After check completes, wait for Devin's summary review OR a grace period
-devin_summary_count=$(gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews \
-  --jq '[.[] | select(
-    .user.login == "devin-ai-integration[bot]" and
-    .submitted_at > "'$since_iso'" and
-    (.body // "" | test("\\*\\*Devin Review\\*\\*|Devin Review has completed"; "i"))
-  )] | length')
-```
+- On each poll, looks for any Devin review since the commit with body matching `**Devin Review**`, "Devin Review has completed", or "No Issues Found". If found, treats review as complete and proceeds to Step 7.3.
+- If no such review is seen, checks for a completed Devin check run and, once seen, applies a 120s grace period before treating the run as complete.
 
 | Result | Action |
 |---|---|
-| `check_completed > 0` and `devin_summary_count > 0` | Review fully complete — proceed to Step 7.3 |
-| `check_completed > 0` and `devin_summary_count == 0` and grace period (120s) elapsed | Assume complete — Devin may have only posted inline resolved/no-issue comments without a summary |
+| Any Devin review with "**Devin Review**", "Devin Review has completed", or "No Issues Found" | Review complete — proceed to Step 7.3 |
+| `check_completed > 0` and grace period (120s) elapsed | Assume complete — proceed to Step 7.3 |
 | `check_completed == 0` and `elapsed < max_wait` | Not finished yet — wait another `poll_interval` and poll again |
-| `check_completed == 0` and `elapsed >= max_wait` | Timeout — escalate to human (also covers the case where Devin is not installed) |
+| `elapsed >= max_wait` | Timeout — escalate to human (also covers the case where Devin is not installed) |
 
 ### Step 7.3 — Fetch inline comments
 
