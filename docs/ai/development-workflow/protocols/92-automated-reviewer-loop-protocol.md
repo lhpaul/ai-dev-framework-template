@@ -33,6 +33,15 @@ Execute **Step 7: Automated Reviewer Loop** and **Step 8: CI Loop** exactly as d
 
 For each PR, run Step 7 to completion, then Step 8; dispatch fixers and re-run as specified in 90 until the PR is clean and ready for human review or escalated.
 
+### Issue tracking and PR comments
+
+Follow the "Issue tracking and PR comments" subsection of Step 7 in `90-orchestrate-work-protocol.md`:
+
+- Maintain an issue ledger tracking all blocking findings across cycles (keyed by `(platform, path, body_snippet)`).
+- After each fixer push, post a **fix commit comment** on the PR listing which issues that commit resolved and any remaining open issues.
+- When the loop terminates, post a **final summary table** on the PR with all issues and their statuses (`resolved` / `unresolved`).
+- If the result is `skipped` (no platforms configured), do not post a summary comment.
+
 ---
 
 ## Summary to the user
@@ -42,3 +51,5 @@ After processing the requested PR(s), report:
 - **Ready for human review**: PR link, branch, and that every configured automated reviewer plus CI are clean (or skipped).
 - **Escalated**: PR link, reason (max cycles, timeout, or review platform escalate).
 - **Skipped**: If no review platform is configured, or a configured platform is currently unsupported and therefore skipped, note that in the result for the listed PR(s).
+
+The final summary comment posted on the PR (per the issue tracking subsection) serves as the durable record; the summary to the user is a concise pointer to the PR and its outcome.
