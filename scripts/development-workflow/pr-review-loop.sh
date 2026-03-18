@@ -432,7 +432,7 @@ run_devin_review() {
                 .state == "CHANGES_REQUESTED" or
                 (
                   .state == "COMMENTED" and
-                  (.body // "" | test("\\*\\*Devin Review\\*\\*"; "i"))
+                  (.body // "" | test("^\\*\\*Devin Review\\*\\*"; "i"))
                 )
               )
             )
