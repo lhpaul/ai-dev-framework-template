@@ -203,7 +203,7 @@ Maintain an **issue ledger** alongside the cycle counter. Each entry tracks:
 | `platform` | Review platform name (e.g. `greptile`, `devin`) |
 | `path` | File path |
 | `line` | Line number (display-only — can shift between commits) |
-| `body_snippet` | First 120 chars of the finding body |
+| `body_snippet` | First 120 chars of the finding body (used as matching key — line-shift-safe) |
 | `discovered_cycle` | Cycle when first seen |
 | `status` | `open` · `resolved` · `unresolved` |
 | `resolved_commit` | Short SHA (set when resolved) |
@@ -248,7 +248,7 @@ Post via `gh pr comment` when the loop reaches a terminal condition (`clean`, `e
 ### Automated Reviewer Loop Summary
 
 **Result:** clean | escalated (reason) | max cycles reached
-**Cycles:** N / 10
+**Cycles:** N / `max_cycles`
 **Platforms:** greptile, devin
 
 | # | Platform | File | Line | Description | Status | Resolved In |
