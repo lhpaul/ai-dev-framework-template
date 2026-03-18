@@ -516,8 +516,8 @@ run_devin_review() {
 
     check_completed="$(
       gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
-        | jq '
-            [(.check_runs // .)[] | select(
+        | jq -s '
+            [.[].check_runs[] | select(
               (.app.slug == "devin-ai-integration") or
               (.name | test("devin"; "i"))
             )] | map(select(.status == "completed")) | length
@@ -768,7 +768,7 @@ print_kv BRANCH "$branch_name"
 print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
 print_kv PLATFORM_COUNT "${#platforms[@]}"
 # So callers can verify config was respected (e.g. no greptile when only devin is in .ai-dev-workflow.yaml)
-printf 'PLATFORM_LIST=%s\n' "$(IFS=,; printf '%s' "${platforms[*]}")"
+print_kv PLATFORM_LIST "$(IFS=,; printf '%s' "${platforms[*]}")"
 
 for index in "${!platforms[@]}"; do
   platform_index=$((index + 1))
