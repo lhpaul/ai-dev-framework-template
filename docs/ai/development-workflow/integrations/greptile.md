@@ -1,6 +1,6 @@
 # Integration: Greptile (Automated PR Review)
 
-This document describes how to use [Greptile](https://greptile.com) as one automated code review platform in the workflow.
+This document describes how to use [Greptile](https://greptile.com) as one automated PR reviewer tool in the workflow.
 
 Greptile is **optional**. The workflow functions without it. See [`integrations/pr-review-platform.md`](pr-review-platform.md) for the multi-platform loop and aggregation rules.
 
@@ -9,7 +9,7 @@ Greptile is **optional**. The workflow functions without it. See [`integrations/
 ## What Greptile Adds
 
 - Automated code review on every PR, triggered on open/update
-- Catches spec deviations, best practice violations, and security issues before human review
+- Catches spec deviations, best practice violations, and security vulnerabilities before human review
 - Reduces human review cycles by closing the feedback loop faster
 
 ---
@@ -73,7 +73,7 @@ review_comment_id="$(gh api \"repos/{owner}/{repo}/issues/<pr_number>/comments\"
 
 ### Step 7.2 — Detect review completion
 
-Greptile signals that it has **finished** reviewing by adding a 👍 reaction to the `@greptile review` comment. This is the reliable completion signal regardless of whether it found issues.
+Greptile signals that it has **finished** reviewing by adding a 👍 reaction to the `@greptile review` comment. This is the reliable completion signal regardless of whether it found blocking PR feedback.
 
 ```bash
 # Poll until Greptile reacts with 👍 on the trigger comment

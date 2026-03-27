@@ -1,6 +1,6 @@
 # Integration: Devin (Automated PR Review)
 
-This document describes how to use [Devin](https://devin.ai) as one automated code review platform in the workflow.
+This document describes how to use [Devin](https://devin.ai) as one automated PR reviewer tool in the workflow.
 
 Devin is **optional**. The workflow functions without it. See [`integrations/pr-review-platform.md`](pr-review-platform.md) for the multi-platform loop and aggregation rules.
 
@@ -9,7 +9,7 @@ Devin is **optional**. The workflow functions without it. See [`integrations/pr-
 ## What Devin Adds
 
 - Automated code review on every push — no trigger comment needed
-- AI-powered analysis that catches bugs, security issues, and logic errors
+- AI-powered analysis that catches bugs, security vulnerabilities, and logic errors
 - Complements Greptile by providing a second independent review perspective
 
 ---
@@ -53,7 +53,7 @@ Devin posts as `devin-ai-integration[bot]`. Use this login to filter its comment
 Devin signals completion in one of these ways:
 
 1. **Summary review** — body contains `**Devin Review**` or "Devin Review has completed"
-2. **No-issues review** — body contains "No Issues Found" (Devin posts this when it finds nothing to report; it may not create a check run in that case)
+2. **No-findings review** — body contains "No Issues Found" (Devin posts this when it finds no blocking PR feedback; it may not create a check run in that case)
 3. **Check run + grace period** — a Devin check run reaches `completed` and 120s have passed without a summary (handles inline-only or no summary)
 
 **Important**: The check run may complete **before** Devin finishes posting review comments, and in some cases Devin may post review output later than expected or without a visible check run at the start of polling. The helper script therefore checks for completion **reviews first** on every poll (including "No Issues Found") and does **not** immediately skip just because no check run is visible yet.
@@ -87,4 +87,4 @@ Devin posts findings as inline comments on code lines, sometimes with a reply th
 
 ### "No Issues Found" handling
 
-When Devin finds no issues, it posts a summary comment containing "No Issues Found". These comments are excluded from the blocking count so the review correctly resolves as `clean`.
+When Devin finds no blocking PR feedback, it may post a summary comment containing "No Issues Found". These comments are excluded from the blocking count so the review correctly resolves as `clean`.
