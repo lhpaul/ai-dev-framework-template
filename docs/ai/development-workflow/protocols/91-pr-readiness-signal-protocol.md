@@ -11,7 +11,7 @@ This is a **repo-wide definition**. All agents apply these labels consistently.
 | Label | Meaning |
 |---|---|
 | `agent:ready-for-review` | The agent has completed its work. CI is green. The `REVIEW.md` gate is satisfied. Every configured automated reviewer is clean or skipped. Ready for human review. |
-| `agent:needs-fixes` | The human has requested changes on the PR, OR CI is failing, OR any automated reviewer has blocking issues. |
+| `agent:needs-fixes` | The human has requested changes on the PR, OR CI is failing, OR any automated reviewer has blocking PR feedback. |
 
 ---
 
@@ -21,7 +21,7 @@ Apply this label when **all** of the following are true:
 
 - [ ] CI checks are green (build, lint, tests all pass)
 - [ ] The relevant pre-PR review gate from `REVIEW.md` has been completed
-- [ ] Every configured automated PR reviewer has no blocking issues (or is skipped)
+- [ ] Every configured automated PR reviewer has no blocking PR feedback (or is skipped)
 - [ ] All feedback from a previous human review cycle has been addressed
 
 ---
@@ -31,7 +31,7 @@ Apply this label when **all** of the following are true:
 Apply this label when **any** of the following is true:
 
 - CI checks are failing
-- Any automated PR reviewer reports blocking issues
+- Any automated PR reviewer reports blocking PR feedback
 - A human has requested changes on the PR (and those changes have not yet been addressed)
 
 ---
@@ -40,13 +40,16 @@ Apply this label when **any** of the following is true:
 
 ### Agent opens PR
 1. Push branch to remote
-2. Run the relevant review gate from `REVIEW.md` **before** opening the PR (spec/plan/code review). Compatibility wrapper protocols remain available for legacy commands.
-3. Open PR
+2. Open PR **as draft** (`gh pr create --draft ...`) — spec/plan/hotfix PRs targeting `main` or `develop` as appropriate; implementation PRs targeting `develop`
+3. Run the relevant review gate from `REVIEW.md` on the draft PR (spec/plan/code review):
+   - **Claude Code**: use the `code-reviewer` agent (or `/code-review` command); for spec/plan use `spec-reviewer` / `tech-lead`
+   - **Other runners**: use the compatibility wrapper protocols under `docs/ai/development-workflow/protocols/`
+   - Apply fixes, commit, push; repeat until clean
 4. Run `./scripts/development-workflow/pr-review-loop.sh <pr-number> --branch <branch> [--platform <platform> ...]` when automated review tooling is configured
-5. If any automated reviewer reports blocking issues: apply fixes, push, and repeat Step 4
+5. If any automated reviewer reports blocking PR feedback: apply fixes, push, and repeat Step 4
 6. Run `./scripts/development-workflow/pr-ci-loop.sh <pr-number>`
-7. If CI passes and automated review is clean (or not configured): apply `agent:ready-for-review`
-8. If CI fails: apply `agent:needs-fixes`, fix issues, push, and return to Step 4
+7. If CI passes and all reviews are clean (or not configured): run `gh pr ready <pr-number>` to convert the draft to ready, then apply `agent:ready-for-review`
+8. If CI fails: apply `agent:needs-fixes`, fix PR feedback or failing checks, push, and return to Step 4
 
 ### Human requests changes
 1. Human leaves review comments

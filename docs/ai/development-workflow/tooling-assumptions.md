@@ -34,9 +34,9 @@ These tools significantly improve the workflow but have fallbacks.
 
 **Fallback**: Agent provides the PR URL and all necessary information for the human to open the PR via the web UI.
 
-### Automated PR Review Tooling (e.g., Greptile, Devin, CodeRabbit)
+### Automated PR Reviewer Tools (e.g., Greptile, Devin Review, CodeRabbit)
 
-**Used for**: one or more automated reviewers that catch issues before human review, closing the feedback loop faster after the pre-PR review gate from `REVIEW.md`.
+**Used for**: one or more reviewer tools that catch blocking PR feedback before human review, closing the feedback loop faster after the pre-PR review gate from `REVIEW.md`.
 
 **Fallback**: Agent skips the automated review step and goes directly to human review after the `REVIEW.md` gate. See the workflow protocols for how to handle this case.
 

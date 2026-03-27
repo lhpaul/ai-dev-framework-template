@@ -30,10 +30,10 @@ A single item-orchestration run should keep advancing the selected item until it
 These are **not** terminal conditions and must not stop the run:
 
 - A creator stage finished drafting its output
-- A reviewer found fixable issues
+- A reviewer found fixable PR feedback
 - A branch was pushed and still needs a PR opened
 - A PR is open but still waiting for CI or automated review to finish
-- Automated review found blocking issues that the matching fixer agent can address
+- Automated review found blocking PR feedback that the matching fixer agent can address
 
 ---
 
@@ -43,7 +43,7 @@ Prefer the helper scripts in `scripts/development-workflow/` for deterministic s
 
 Resolve the request to exactly one of the following:
 
-1. **Backlog / issue tracker item** — use when a human explicitly requests a not-yet-started item
+1. **Backlog / tracker work item** — use when a human explicitly requests a not-yet-started item
 2. **Development folder** — `docs/specs/developments/<timestamp>_<slug>`
 3. **Workflow branch** — `spec/*`, `implementation-plan/*`, `feature/*`, `fix/*`, `hotfix/*`
 4. **Open PR**
@@ -64,9 +64,9 @@ Important for `development folder` targets:
 - A development folder by itself cannot distinguish `Spec In Review` / `Plan In Review` from the corresponding merged state.
 - If the target may still be waiting on a spec or plan PR merge, confirm the state via the issue tracker or by inspecting the workflow branch / PR directly before advancing.
 
-When dispatching a subagent for this item, include a short “Issue Tracker Summary” in the handoff:
+When dispatching a subagent for this item, include a short “Tracker Work Item Summary” in the handoff:
 
-- What the issue is asking for
+- What the work item is asking for
 - Any scope changes / decisions in recent comments
 - Any ambiguity or conflict that still requires human confirmation
 
@@ -85,9 +85,11 @@ When dispatching a subagent for this item, include a short “Issue Tracker Summ
 | Plan In Review | Plan PR is still open | Wait — plan PR is open, pending human review / merge |
 | Plan branch pushed, no PR yet | Branch exists on local / remote / worktree | Run the plan review gate via `REVIEW.md` / `02-review-implementation-plan-protocol.md`, open the PR, then finish PR readiness |
 | Plan Ready | Plan PR is merged | Run `04-implement-development-protocol.md` |
-| Dev branch pushed, no PR yet | Branch exists on local / remote / worktree | Run the code review gate via `REVIEW.md` / `04-review-implemented-development-protocol.md`, open the PR, then finish PR readiness |
-| PR open, no readiness label | PR exists and latest push has not fully cleared | Run Step 7 and Step 8 until clean or escalated |
-| PR labeled `agent:needs-fixes` | Human or automated systems requested changes | Address feedback, push, then run Step 7 and Step 8 |
+| Dev branch pushed, no PR yet | Branch exists on local / remote / worktree | Open draft PR, run Claude code review (Step 7a), then run automated reviewer loop (Step 7) and CI loop (Step 8), then mark PR as ready |
+| Draft PR open, Claude review pending | PR is draft and Claude review has not run yet or has open findings | Run Claude code review (Step 7a); apply fixes, push, repeat until clean |
+| Draft PR open, Claude review clean | PR is draft, Claude review clean, external review not yet run | Run Step 7 (external automated reviewers) and Step 8 (CI), then mark PR as ready |
+| PR open (non-draft), no readiness label | PR exists and latest push has not fully cleared | Run Step 7 and Step 8 until clean or escalated |
+| PR labeled `agent:needs-fixes` | Human or automated systems requested changes | Address feedback, push, then run Step 7a (if draft), Step 7, and Step 8 |
 | PR labeled `agent:ready-for-review` | — | Wait — human review / merge required |
 
 ### Pre-dispatch branch check
@@ -127,7 +129,7 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 | Write plan | `tech-lead` |
 | Review plan | Native review against `REVIEW.md` or the compatibility wrapper `02-review-implementation-plan-protocol.md` |
 | Implement feature | `developer` |
-| Review code | Native review against `REVIEW.md` or the compatibility wrapper `04-review-implemented-development-protocol.md` |
+| Review code (post-draft-PR) | `code-reviewer` agent (Claude Code: `/code-review`); for other runners use compatibility wrapper `04-review-implemented-development-protocol.md` |
 
 This protocol stays scoped to one item. It may call different stage agents over time, but it must not start scanning or dispatching unrelated items.
 
@@ -139,7 +141,7 @@ Run the next deterministic action for the selected item, then immediately re-eva
 
 Expected chain:
 
-`creator -> review gate -> PR opened -> automated reviewer loop -> CI loop -> readiness label or escalation`
+`creator -> draft PR opened -> Claude code review (Step 7a) -> automated reviewer loop (Step 7) -> CI loop (Step 8) -> gh pr ready -> readiness label or escalation`
 
 After any subagent finishes, determine whether the item still has a deterministic next action:
 
@@ -181,6 +183,22 @@ After the selected item reaches a terminal condition, provide a concise summary:
 
 ---
 
+## Step 7a: Claude Code Review
+
+Run this step immediately after opening a draft PR, and again after any push that addresses Claude-review findings.
+
+Dispatch the `code-reviewer` agent (Claude Code) or invoke the `/code-review` command (Cursor / Codex compatibility wrapper: `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md`). The agent reviews the PR against `REVIEW.md`, applies fixes directly, and commits + pushes.
+
+| Outcome | Action |
+|---|---|
+| `APPROVED` | Continue to Step 7 (external automated reviewers) |
+| `NEEDS REVISION` (fixable) | Fixes already applied by the agent; re-run Step 7a |
+| `NEEDS REVISION` (product/design decision) | Stop and escalate to human before proceeding |
+
+Step 7a runs **before** Step 7 (external reviewers). Only proceed to Step 7 once Step 7a produces `APPROVED`. After any fixer push triggered by Step 7 (external reviewers), re-run Step 7a only if the fixer agent introduced new code changes that have not yet been reviewed by Claude.
+
+---
+
 ## Step 7: Automated Reviewer Loop
 
 If one or more automated code review platforms are configured (see [`integrations/pr-review-platform.md`](../integrations/pr-review-platform.md)), run this loop after **any push to a PR branch**. If no review platform is configured, skip this step and report `⏭️ skipped` in the Step 6 summary.
@@ -193,9 +211,9 @@ The helper script evaluates configured platforms sequentially. For each platform
 
 Initialize `cycle = 0` once per orchestration run for the PR. Increment `cycle` each time a fixer agent is dispatched. Do not reset `cycle` after a fixer push; escalate when the run reaches `max_cycles`.
 
-### Issue tracking and PR comments
+### PR feedback tracking and comments
 
-Maintain an **issue ledger** alongside the cycle counter. Each entry tracks:
+Maintain a **PR feedback ledger** alongside the cycle counter. Each entry tracks:
 
 | Field | Description |
 |---|---|
@@ -208,7 +226,7 @@ Maintain an **issue ledger** alongside the cycle counter. Each entry tracks:
 | `status` | `open` · `resolved` · `unresolved` |
 | `resolved_commit` | Short SHA (set when resolved) |
 
-**Matching key**: `(platform, path, body_snippet)` — not line number, since lines shift after fixes. If a finding looks like a restatement of an existing open issue (same platform, same file, similar description), match it rather than creating a duplicate.
+**Matching key**: `(platform, path, body_snippet)` — not line number, since lines shift after fixes. If a finding looks like a restatement of existing open PR feedback (same platform, same file, similar description), match it rather than creating a duplicate.
 
 **Ledger updates:**
 
@@ -223,13 +241,13 @@ Post via `gh pr comment` immediately after updating the ledger following a fixer
 ````markdown
 ### Automated Fix: commit `<short_sha>`
 
-Addressed **N** issue(s) from cycle M:
+Addressed **N** finding(s) from cycle M:
 
 | # | Platform | File | Description |
 |---|----------|------|-------------|
 | 1 | greptile | `src/foo.ts:42` | First 80 chars of body... |
 
-<details><summary>Remaining open issues: K</summary>
+<details><summary>Remaining open findings: K</summary>
 
 | # | Platform | File | Description |
 |---|----------|------|-------------|
@@ -238,7 +256,7 @@ Addressed **N** issue(s) from cycle M:
 </details>
 ````
 
-If 0 issues were resolved: post a shorter note — "Pushed fixes for cycle M. 0 issues resolved so far — re-running review to check."
+If 0 findings were resolved: post a shorter note — "Pushed fixes for cycle M. 0 findings resolved so far — re-running review to check."
 
 #### Final summary comment
 
@@ -256,10 +274,10 @@ Post via `gh pr comment` when the loop reaches a terminal condition (`clean`, `e
 | 1 | greptile | `src/foo.ts` | 42 | First 80 chars... | Resolved | `abc1234` |
 | 2 | greptile | `src/baz.ts` | 5 | First 80 chars... | Unresolved | -- |
 
-**Resolved:** 1 / 2 issues
+**Resolved:** 1 / 2 findings
 ````
 
-- If no issues were ever raised (clean on first run): post a simpler comment — "No blocking issues were raised by any configured review platform."
+- If no findings were ever raised (clean on first run): post a simpler comment — "No blocking PR feedback was raised by any configured reviewer tool."
 - If result is `skipped` (no platforms configured): do **not** post a summary comment.
 
 Prefer the helper script (it reads `.ai-dev-workflow.yaml` for the platform list automatically):
@@ -320,7 +338,7 @@ Interpret the result as follows:
 
 | Result | Action |
 |---|---|
-| `green` | Apply `agent:ready-for-review`, remove `agent:needs-fixes` if present, and report the PR as ready |
+| `green` | Run `gh pr ready <pr_number>` to convert the draft PR to ready, then apply `agent:ready-for-review`, remove `agent:needs-fixes` if present, and report the PR as ready |
 | `red` | Apply `agent:needs-fixes`, dispatch the matching fixer agent, wait for a push, then return to Step 7 |
 | `timeout` | Escalate to human; do not apply `agent:ready-for-review` |
 

@@ -123,17 +123,9 @@ git push -u origin feature/[slug]
 
 Use Conventional Commits (see `docs/best-practices/2-version-control.md`).
 
-### Step 9: Reviewer Gate (before opening PR)
+### Step 9: Open PR (Draft)
 
-Before opening a PR, run the code review gate on this branch using `REVIEW.md`.
-
-- If your runner has a native review feature, use it against `REVIEW.md`; otherwise use the compatibility wrapper `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md`.
-- Apply fixes directly on the branch, commit, and push again if needed.
-- If the verdict is **NEEDS REVISION** due to product/design decisions, stop and request human input before opening a PR.
-
-### Step 10: Open PR
-
-Open a PR targeting `develop` with:
+Open a **draft** PR targeting `develop` with:
 - **Title**: `feat([scope]): [feature-name]`
 - **Description**:
   - What was implemented
@@ -142,6 +134,21 @@ Open a PR targeting `develop` with:
   - Any deviations from the plan (with justification)
   - CHANGELOG entry preview
 
+```bash
+gh pr create --draft --title "feat([scope]): [feature-name]" --body "..."
+```
+
+### Step 10: Internal Code Review
+
+Run the code review gate on the draft PR using `REVIEW.md`:
+
+- **Claude Code**: Use the `code-reviewer` agent (or `/code-review` command)
+- **Other runners**: Use the compatibility wrapper `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md`
+
+Apply fixes directly on the branch, commit, and push if needed. Repeat until the review is clean.
+
+If the verdict is **NEEDS REVISION** due to product/design decisions, stop and request human input before proceeding.
+
 ### Step 11: Automated Review Loop (if configured)
 
 If an automated PR review tool is enabled (see `docs/ai/development-workflow/integrations/`):
@@ -149,14 +156,21 @@ If an automated PR review tool is enabled (see `docs/ai/development-workflow/int
 1. Run `./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch feature/[slug]` (or the matching `fix/` / `hotfix/` branch)
 2. If the result is `needs_fixes`, apply the fixes, push, and run the loop again
 3. If the result is `clean`, continue immediately to Step 12
-4. If the result is `escalate`, stop and report the latest blocking issues to the human
+4. If the result is `escalate`, stop and report the latest blocking PR feedback to the human
 5. Non-blocking suggestions: address at your discretion
 
 ### Step 12: PR Readiness Signal
 
-Run `./scripts/development-workflow/pr-ci-loop.sh <pr_number>` and apply `agent:ready-for-review` only when:
+Run `./scripts/development-workflow/pr-ci-loop.sh <pr_number>`. When CI is green and all reviews are clean:
+
+```bash
+gh pr ready <pr_number>
+```
+
+Then apply `agent:ready-for-review` only when:
 - CI checks are green
-- Automated review has no blocking issues (or is not configured)
+- Claude code review has no blocking findings
+- Automated review has no blocking PR feedback (or is not configured)
 
 If CI fails, apply `agent:needs-fixes`, fix the branch, push, and return to Step 11.
 
@@ -187,10 +201,10 @@ See `docs/ai/development-workflow/protocols/91-pr-readiness-signal-protocol.md`.
 6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry
 7. Commit: `fix([scope]): [description]`
 8. Push branch to remote
-9. Run the reviewer gate (Step 9 above)
-10. Open PR targeting `develop`
+9. Open draft PR targeting `develop` (Step 9 above)
+10. Run Claude code review (Step 10 above)
 11. Follow automated review loop (Step 11 above) if configured
-12. Run the automated review + CI loops to completion, then apply `agent:ready-for-review`
+12. Run CI loop to completion, then run `gh pr ready` and apply `agent:ready-for-review`
 
 ---
 
@@ -208,9 +222,9 @@ See `docs/ai/development-workflow/protocols/91-pr-readiness-signal-protocol.md`.
 6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry
 7. Commit: `fix([scope]): [description] (hotfix)`
 8. Push branch to remote
-9. Run the reviewer gate (Step 9 above)
-10. Open PR targeting `main`
-11. Run the automated review + CI loops to completion, then apply `agent:ready-for-review`
+9. Open draft PR targeting `main` (Step 9 above)
+10. Run Claude code review (Step 10 above)
+11. Run automated review + CI loops to completion, then run `gh pr ready` and apply `agent:ready-for-review`
 12. **After merge**: notify the human that a backport PR (main → develop) must be opened to prevent branch drift
 
 ---

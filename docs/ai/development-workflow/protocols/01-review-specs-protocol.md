@@ -31,7 +31,7 @@ Read and follow:
 If invoked in a fix loop for a pushed branch or open PR:
 - Apply all deterministic `blocking` and `important` fixes directly
 - Commit and push if repo-tracked files changed
-- Return approval only when no fixable `blocking` issues remain
+- Return approval only when no fixable `blocking` findings remain
 - Escalate only when a real product decision is required
 
 ---
@@ -41,5 +41,5 @@ If invoked in a fix loop for a pushed branch or open PR:
 Produce a concise review report with:
 - Overall assessment
 - Direct fixes applied
-- Remaining issues requiring human input
+- Remaining findings requiring human input
 - Verdict: `APPROVED` or `NEEDS REVISION`

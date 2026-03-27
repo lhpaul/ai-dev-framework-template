@@ -44,17 +44,17 @@ If unresolved findings exist: dispatch a fixer agent, wait for the push, then pr
 
 ### Run the loops
 
-Execute **Step 7: Automated Reviewer Loop** and **Step 8: CI Loop** exactly as defined in `90-orchestrate-work-protocol.md` (scripts, result interpretation, sequential platform policy, fixer mapping, parameters, and labels). Do not duplicate that logic here — follow 90.
+Execute **Step 7a: Claude Code Review**, **Step 7: Automated Reviewer Loop**, and **Step 8: CI Loop** exactly as defined in `90-orchestrate-work-protocol.md` (scripts, result interpretation, sequential platform policy, fixer mapping, parameters, and labels). Do not duplicate that logic here — follow 90.
 
-For each PR, run Step 7 to completion, then Step 8; dispatch fixers and re-run as specified in 90 until the PR is clean and ready for human review or escalated.
+For each PR: run Step 7a first (Claude code review), then Step 7 to completion, then Step 8. Dispatch fixers and re-run as specified in 90 until the PR is clean and ready for human review or escalated. After Step 8 returns `green`, run `gh pr ready <pr_number>` before applying `agent:ready-for-review`.
 
-### Issue tracking and PR comments
+### PR feedback tracking and comments
 
-Follow the "Issue tracking and PR comments" subsection of Step 7 in `90-orchestrate-work-protocol.md`:
+Follow the "PR feedback tracking and comments" subsection of Step 7 in `90-orchestrate-work-protocol.md`:
 
-- Maintain an issue ledger tracking all blocking findings across cycles (keyed by `(platform, path, body_snippet)`).
-- After each fixer push, post a **fix commit comment** on the PR listing which issues that commit resolved and any remaining open issues.
-- When the loop terminates, post a **final summary table** on the PR with all issues and their statuses (`resolved` / `unresolved`).
+- Maintain a PR feedback ledger tracking all blocking findings across cycles (keyed by `(platform, path, body_snippet)`).
+- After each fixer push, post a **fix commit comment** on the PR listing which findings that commit resolved and any remaining open findings.
+- When the loop terminates, post a **final summary table** on the PR with all findings and their statuses (`resolved` / `unresolved`).
 - If the result is `skipped` (no platforms configured), do not post a summary comment.
 
 ---
@@ -63,8 +63,8 @@ Follow the "Issue tracking and PR comments" subsection of Step 7 in `90-orchestr
 
 After processing the requested PR(s), report:
 
-- **Ready for human review**: PR link, branch, and that every configured automated reviewer plus CI are clean (or skipped).
+- **Ready for human review**: PR link, branch, and that Claude code review, every configured automated reviewer, and CI are all clean (or skipped). Confirm that `gh pr ready` was run to convert the draft PR to ready.
 - **Escalated**: PR link, reason (max cycles, timeout, or review platform escalate).
 - **Skipped**: If no review platform is configured, or a configured platform is currently unsupported and therefore skipped, note that in the result for the listed PR(s).
 
-The final summary comment posted on the PR (per the issue tracking subsection) serves as the durable record; the summary to the user is a concise pointer to the PR and its outcome.
+The final summary comment posted on the PR (per the PR feedback tracking subsection) serves as the durable record; the summary to the user is a concise pointer to the PR and its outcome.

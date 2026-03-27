@@ -10,6 +10,27 @@ This document is the **canonical master reference** for how development is struc
 
 ---
 
+## Glossary (workflow terminology)
+
+The word **issue** is overloaded. In diagrams and protocols below, use the terms below unless context explicitly says otherwise.
+
+**Work item (tracker item)**  
+The canonical row in your **issue tracker** (Linear, Jira, GitHub Issues, ClickUp, etc.): it has an ID, assignee, and workflow status (for example Backlog → Spec in Review → Spec Ready). Prefer **work item** or **tracker item** when you mean the board—not a GitHub Issue on the repo, and not review feedback.
+
+**PR feedback (review findings)**  
+Anything that must be resolved on the pull request itself: inline comments, review threads, “request changes,” summaries from bots, or **check failures** that block merge. When this doc says the PR is “clean of issues” or mentions “open bot issues,” it means **no unresolved PR feedback** (and typically green required checks), not that the tracker work item is closed.
+
+**Third-party PR reviewer (reviewer tool)**  
+An external product integrated with your Git host (examples: [CodeRabbit](https://coderabbit.ai), [Greptile](https://greptile.com), [Devin Review](https://cognition.ai/blog/devin-review)) that posts automated review comments, summaries, or suggestions on PRs. These tools are **reviewer tools** in this workflow: they augment humans and CI; they are **not** the same as this repository’s **internal AI agents** (`spec-reviewer`, `code-reviewer`, etc.), which follow repo protocols and `REVIEW.md`.
+
+**Internal AI review**  
+Review performed by a workflow agent using repository documents (for example `spec-reviewer` running `01-review-specs-protocol.md`). It may run in the IDE or via your AI runner **before** or **while** the PR is still draft; it is governed by your team’s protocols, not by a vendor’s product UI.
+
+**CI (continuous integration)**  
+Automated pipelines on the PR (build, test, lint, typecheck, security scans). CI is distinct from reviewer tools: CI usually **pass/fail** gates; reviewer tools usually **comment** and still need a human or agent to triage, fix, and resolve threads.
+
+---
+
 ## Workflow Stages
 
 ```
@@ -21,12 +42,37 @@ This document is the **canonical master reference** for how development is struc
                       │  AI: product-manager agent dispatched
                       ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    SPEC IN REVIEW                               │
-│   Spec PR open; pending human review and merge                  │
-│   Branch: spec/[feature-slug]                                   │
-│   Protocol: 01-generate-specs-protocol.md                       │
+│                  SPEC PR — DRAFT (GENERATING)                     │
+│   product-manager executes 01-generate-specs-protocol.md        │
+│   Branch: spec/[feature-slug]; spec PR opened in draft mode     │
 └─────────────────────┬───────────────────────────────────────────┘
-                      │  Human: merge spec PR
+                      │  AI: spec-reviewer agent dispatched
+                      ▼
+┌─────────────────────────────────────────────────────────────────┐
+│            INTERNAL SPEC REVIEW (DRAFT PR)                      │
+│   spec-reviewer executes 01-review-specs-protocol.md            │
+│   Address findings on the draft PR until internal review is     │
+│   clean                                                         │
+└─────────────────────┬───────────────────────────────────────────┘
+                      │  Mark PR ready for review; run PR review loop
+                      ▼
+┌─────────────────────────────────────────────────────────────────┐
+│           AUTOMATED SPEC PR REVIEW (READY PR)                   │
+│   Reviewer tools (Greptile, Devin Review, CodeRabbit, etc.)     │
+│   raise PR feedback; product-manager resolves until PR is clean  │
+│   Typical protocol: 92-automated-reviewer-loop-protocol.md      │
+└─────────────────────┬───────────────────────────────────────────┘
+                      │  Automated review clean (no unresolved bot feedback)
+                      │  Issue tracker: work item → "Spec in Review"
+                      ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    SPEC IN REVIEW                               │
+│   Spec PR ready for humans; pending review and merge            │
+│   Branch: spec/[feature-slug]                                   │
+│   Human: merge when satisfied                                   │
+└─────────────────────┬───────────────────────────────────────────┘
+                      │  Human: merge spec PR (all feedback correct)
+                      │  Issue tracker: work item → "Spec Ready"
                       ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                       SPEC READY                                │
@@ -166,7 +212,7 @@ The backport (main → develop) is non-negotiable to prevent branch drift.
 
 ## Issue Tracker Integration
 
-The workflow can be paired with any issue tracker. For each development unit, the issue tracks:
+The workflow can be paired with any issue tracker. For each development unit, the tracker work item tracks:
 
 - **Status**: maps to the workflow stage (Backlog → Spec In Review → Spec Ready → Plan In Review → Plan Ready → In Development → Merged → Released)
 - **Type**: Feature / Bug / Improvement / Chore
@@ -260,7 +306,7 @@ See [`integrations/devin.md`](integrations/devin.md) for the Devin adapter.
 Two labels signal agent work status:
 
 - `agent:ready-for-review` — CI green, automated review clean, ready for human review
-- `agent:needs-fixes` — human requested changes, CI failing, or automated review has blocking issues
+- `agent:needs-fixes` — human requested changes, CI failing, or automated review has blocking PR feedback
 
 See [`protocols/91-pr-readiness-signal-protocol.md`](protocols/91-pr-readiness-signal-protocol.md) for full definition.
 
