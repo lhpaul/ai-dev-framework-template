@@ -81,9 +81,12 @@ The setup agent will have a structured conversation with you to understand your 
 │           │   ├── 02-review-implementation-plan-protocol.md
 │           │   ├── 03-implement-development-protocol.md
 │           │   ├── 03-review-implementation-protocol.md
+│           │   ├── 04-smoke-test-protocol.md
+│           │   ├── 05-prepare-release-protocol.md
 │           │   ├── 90-batch-orchestrate-work-protocol.md
 │           │   ├── 91-orchestrate-work-protocol.md
-│           │   └── 92-pr-readiness-signal-protocol.md
+│           │   ├── 92-pr-readiness-signal-protocol.md
+│           │   └── 93-automated-reviewer-loop-protocol.md
 │           ├── templates/                 # Spec, plan, and test templates
 │           │   ├── spec-template.md
 │           │   ├── implementation-plan-template.md
