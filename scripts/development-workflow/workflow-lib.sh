@@ -168,6 +168,7 @@ workflow_config_review_platforms() {
     in_review && in_platforms && /^[[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ {
       line = $0
       sub(/^[[:space:]]*-[[:space:]]*/, "", line)
+      sub(/[[:space:]]+#.*$/, "", line)
       print trim(line)
       next
     }
