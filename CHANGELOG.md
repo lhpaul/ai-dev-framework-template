@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Automated reviewer-loop protocol pre-flight now explicitly defines unresolved findings and blocking Devin outcomes, and documents ledger bootstrap from full PR history before fix cycles.
+- Workflow protocols were renumbered and normalized (`04-*` -> `03-*`, `05-*` -> `04-*`, `06-*` -> `05-*`, `89-*` -> `90-*`, `90-*` -> `91-*`, `91-*` -> `92-*`, `92-*` -> `93-*`) and several protocol filenames were standardized (`generate-specs` -> `generate-spec`, `review-specs` -> `review-spec`, `review-implemented-development` -> `review-implementation`).
+- PR readiness labels were renamed to simpler defaults: `agent:ready-for-review` -> `ready-for-human-review` and `agent:needs-fixes` -> `needs-fixes`.
+- `.ai-dev-workflow.yaml` now uses a versioned nested schema (`review.platforms`) and includes declarative sections for `issue_tracker`, `vcs`, and `browser_automation`.
+- Stage protocols now open draft PRs first, then mark them ready with `gh pr ready` only after internal review, automated review, and CI all pass.
+- Orchestration now includes an explicit Step 7a internal review gate before external automated reviewers.
+- Workflow docs were refreshed, including a full rewrite of `docs/ai/development-workflow/README.md` and terminology updates to "Portfolio Orchestrator" and "Work Item Runner".
+
+### Removed
+
+- `docs/ai/development-workflow/tooling-assumptions.md`; capability assumptions and fallback guidance now live in the workflow README.
 
 ## [0.18.0] - 2026-03-18
 
