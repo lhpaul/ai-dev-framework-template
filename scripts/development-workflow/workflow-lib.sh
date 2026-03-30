@@ -145,7 +145,7 @@ workflow_config_review_platforms() {
       return value
     }
 
-    /^review:[[:space:]]*$/ {
+    /^review:[[:space:]]*(#.*)?$/ {
       in_review = 1
       in_platforms = 0
       next
@@ -156,7 +156,7 @@ workflow_config_review_platforms() {
       in_platforms = 0
     }
 
-    in_review && /^[[:space:]][[:space:]]platforms:[[:space:]]*$/ {
+    in_review && /^[[:space:]][[:space:]]platforms:[[:space:]]*(#.*)?$/ {
       in_platforms = 1
       next
     }
@@ -172,7 +172,7 @@ workflow_config_review_platforms() {
       next
     }
 
-    in_review && in_platforms && !/^[[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ {
+    in_review && in_platforms && !/^[[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ && !/^[[:space:]]*#/ && !/^[[:space:]]*$/ {
       in_platforms = 0
     }
   ' "$config_file"
