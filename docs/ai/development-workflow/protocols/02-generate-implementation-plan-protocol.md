@@ -17,7 +17,9 @@ Before starting, read:
 - `docs/best-practices/` — all best practice docs
 - Relevant existing code — read actual files, don't assume structure
 - **Project documentation**: Scan `docs/` (e.g. `docs/project/`, `docs/best-practices/`, `AGENTS.md`, and any feature- or domain-specific docs) so the plan can explicitly list which of these need updates after implementation.
-- If an issue tracker exists for this item, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for `Plan Ready` expectations before planning.
+- If an issue tracker exists for this item, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for expectations while the work item is **Spec Ready** (spec merged) and you are entering **Writing Plan**.
+
+**Tracker workflow status**: The **Work Item Runner** owns workflow-status transitions for this stage. When this protocol is run under normal orchestration, expect the runner to set **Writing Plan** before dispatch, **Plan in Review** when the PR is human-ready, and **Plan Ready** only after merge. If you invoke this protocol standalone, mirror the same status progression manually.
 
 ---
 
@@ -67,13 +69,13 @@ For each layer affected, confirm what changes are needed:
 
 ## Step 2: Human Review Shortcut (Optional)
 
-Default behavior is **max autonomy**: once you have read the approved spec, inspected the codebase, and there is no unresolved architectural ambiguity, continue through plan writing, the review gate, PR creation, and PR readiness without an extra pause.
+Default behavior is **max autonomy**: once you have read the approved spec, inspected the codebase, and there is no unresolved architectural ambiguity, continue through plan writing, commit, push, and draft-PR creation without an extra pause.
 
 Pause only if:
 
 - The human explicitly asked to review the approach before plan writing
 - The proposed approach has a material architecture tradeoff or ambiguity you cannot resolve safely
-- The reviewer gate returns `NEEDS REVISION` for a decision that requires human input
+- A blocking architecture decision prevents opening the draft PR
 
 ---
 
@@ -128,33 +130,24 @@ If no blocking human decision remains:
 2. Create branch: `git checkout -b implementation-plan/[branch-slug]` from `develop`
 3. Write the plan file
 4. Write the smoke test runbook
-5. Update status for the plan stage:
-   - **When the issue tracker is the source of truth**: update the issue status to `Plan Ready`; optionally also update the spec file's status field for backwards compatibility.
-   - The spec file's **Status** field is optional and need not be set (workflow status is derived from the tracker or repo state).
-6. Commit: `docs: add implementation plan for [feature-name]`
-7. Push: `git push -u origin implementation-plan/[branch-slug]`
-8. **Reviewer gate (before opening PR)**:
-   - Run the implementation-plan review gate on this branch using `REVIEW.md`
-   - If your runner has a native review feature, use it against `REVIEW.md`; otherwise use the compatibility wrapper `docs/ai/development-workflow/protocols/02-review-implementation-plan-protocol.md`
-   - Apply fixes directly on the branch, commit, and push again if needed
-   - If the verdict is **NEEDS REVISION** due to plan/approach decisions, stop and request human input before opening a PR
-9. Open PR targeting `develop` with:
+5. Commit: `docs: add implementation plan for [feature-name]`
+6. Push: `git push -u origin implementation-plan/[branch-slug]`
+7. Open a **draft** PR targeting `develop` with:
    - Title: `docs(plan): [feature-name]`
    - Body: summary of the approach, complexity estimate, key risks, link to plan and runbook
-10. Resolve PR readiness to completion:
-   - Run `./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch implementation-plan/[branch-slug]` when an automated review platform is configured
-   - If blocking comments exist, continue fixing them on the same branch until the loop is clean or escalates
-   - Run `./scripts/development-workflow/pr-ci-loop.sh <pr_number>`
-   - Apply `agent:ready-for-review` only after CI is green and automated review is clean (or skipped)
+8. Return the branch + PR details to the **Work Item Runner**
 
 ---
 
-## Step 6: PR Readiness
+## Step 6: Handoff to Work Item Runner
 
-Do not treat "plan written" or "PR opened" as completion. This stage is complete only when one of the following terminal conditions is reached:
+After the draft PR exists, the **Work Item Runner** owns the rest of the lifecycle for this item:
 
-- `agent:ready-for-review` has been applied and the PR is waiting on a human merge decision
-- A blocking plan / architecture decision surfaced and the run has escalated to the human
-- The automated review or CI loop timed out and the run has escalated to the human
+- Run the internal plan review gate (`implementation-plan-reviewer` / `02-review-implementation-plan-protocol.md`) on the draft PR
+- Run the automated reviewer loop and CI loop to completion
+- Apply `ready-for-human-review` and move the tracker to **Plan in Review** when the PR is human-ready
+- Stop only when the PR is waiting on human review / merge or the run has escalated
 
-See `docs/ai/development-workflow/protocols/91-pr-readiness-signal-protocol.md`.
+If this protocol is invoked **standalone** rather than through the Work Item Runner, hand off manually by following `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` from the newly opened draft PR.
+
+See `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/ai/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.

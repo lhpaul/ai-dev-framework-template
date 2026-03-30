@@ -45,7 +45,7 @@ review:
 
 ## Step 7 — Greptile-Specific Implementation
 
-The item orchestrator's Step 7 (Automated Reviewer Loop) requires platform-specific commands. Below are the Greptile adapter details used by the shared helper.
+The **Work Item Runner's** Step 7 (Automated Reviewer Loop) requires platform-specific commands. Below are the Greptile adapter details used by the shared helper.
 
 ### Preferred helper
 
@@ -55,7 +55,7 @@ When possible, call the repository helper instead of re-implementing the loop in
 ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name> --platform greptile
 ```
 
-It encapsulates the trigger, polling, comment classification, and stable aggregate `RESULT=` output used by the orchestrator.
+It encapsulates the trigger, polling, comment classification, and stable aggregate `RESULT=` output used by the **Work Item Runner** (and by the **Portfolio Orchestrator** when it supervises item-level runs).
 
 ### Bot identity
 
@@ -94,4 +94,4 @@ gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
   --jq "[.[] | select(.user.login == \"greptile-apps[bot]\" and .created_at > \"$last_push_at\") | {path, line, body}]"
 ```
 
-Apply the blocking-vs-suggestion classification rules defined in Step 7 of `90-orchestrate-work-protocol.md` under `Blocking vs. suggestion classification`.
+Apply the blocking-vs-suggestion classification rules defined in Step 7 of `91-orchestrate-work-protocol.md` under `Blocking vs. suggestion classification`.

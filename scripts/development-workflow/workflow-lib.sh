@@ -10,6 +10,14 @@ workflow_repo_root() {
   CDPATH= cd -- "$(workflow_script_dir)/../.." && pwd
 }
 
+workflow_config_file() {
+  printf '%s/.ai-dev-workflow.yaml\n' "$(workflow_repo_root)"
+}
+
+workflow_config_exists() {
+  [ -f "$(workflow_config_file)" ]
+}
+
 cd_workflow_repo_root() {
   cd -- "$(workflow_repo_root)"
 }
@@ -123,4 +131,80 @@ is_soft_suggestion() {
 open_pr_number_for_branch() {
   require_gh
   gh pr list --head "$1" --state open --json number --jq '.[0].number // empty'
+}
+
+workflow_config_review_platforms() {
+  local config_file="${1:-$(workflow_config_file)}"
+
+  [ -f "$config_file" ] || return 0
+
+  awk '
+    function trim(value) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      gsub(/^["'"'"']|["'"'"']$/, "", value)
+      return value
+    }
+
+    /^review:[[:space:]]*$/ {
+      in_review = 1
+      in_platforms = 0
+      next
+    }
+
+    in_review && /^[^[:space:]#].*:[[:space:]]*$/ {
+      in_review = 0
+      in_platforms = 0
+    }
+
+    in_review && /^[[:space:]]{2}platforms:[[:space:]]*$/ {
+      in_platforms = 1
+      next
+    }
+
+    in_review && in_platforms && /^[[:space:]]{2}[A-Za-z0-9_-]+:[[:space:]]*/ {
+      in_platforms = 0
+    }
+
+    in_review && in_platforms && /^[[:space:]]{4}-[[:space:]]*/ {
+      line = $0
+      sub(/^[[:space:]]*-[[:space:]]*/, "", line)
+      print trim(line)
+      next
+    }
+
+    in_review && in_platforms && /^[[:space:]]{0,3}[^[:space:]#]/ {
+      in_platforms = 0
+    }
+  ' "$config_file"
+}
+
+workflow_config_provider() {
+  local section="$1"
+  local config_file="${2:-$(workflow_config_file)}"
+
+  [ -f "$config_file" ] || return 0
+
+  awk -v section="$section" '
+    function trim(value) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      gsub(/^["'"'"']|["'"'"']$/, "", value)
+      return value
+    }
+
+    $0 ~ ("^" section ":[[:space:]]*$") {
+      in_section = 1
+      next
+    }
+
+    in_section && /^[^[:space:]#].*:[[:space:]]*$/ {
+      exit
+    }
+
+    in_section && /^[[:space:]]{2}provider:[[:space:]]*/ {
+      line = $0
+      sub(/^[[:space:]]*provider:[[:space:]]*/, "", line)
+      print trim(line)
+      exit
+    }
+  ' "$config_file"
 }

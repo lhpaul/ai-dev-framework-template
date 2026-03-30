@@ -59,12 +59,17 @@ Additional rules:
 The active review platforms for a repository are declared in `.ai-dev-workflow.yaml` at the repo root:
 
 ```yaml
-review_platforms:
-  - greptile
-  - devin
+schema_version: 1
+
+review:
+  platforms:
+    - greptile
+    - devin
 ```
 
-The helper script reads this file automatically when no `--platform` flag is passed. If the file is absent, the script falls back to `greptile` only. If the file exists but the platform list is empty, no reviewer tool runs and the result is skipped. Explicit `--platform` flags always override the config file.
+The helper script reads this file automatically when no `--platform` flag is passed. If the file is absent, or if `review.platforms` is omitted or the platform list is empty, no reviewer tool runs and the result is skipped. Explicit `--platform` flags always override the config file.
+
+Use the nested `review.platforms` form so `.ai-dev-workflow.yaml` can also declare other workflow integrations such as `issue_tracker`, `vcs`, and `browser_automation`.
 
 ---
 

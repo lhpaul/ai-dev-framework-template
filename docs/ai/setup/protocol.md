@@ -141,6 +141,8 @@ Name each file after the specific technology, not the category (e.g., `typescrip
 
 Ask:
 - Do you use an issue tracker? (Linear, GitHub Issues, Jira, Notion, other, none)
+- What Git hosting / pull-request platform do you use? (GitHub, GitLab, Bitbucket, other)
+- What browser automation tool, if any, should the workflow assume for smoke tests? (Cursor browser MCP, Playwright MCP, Playwright CLI, other, none)
 - Do you want to use automated PR review? (Greptile, Devin, both, other, none)
 - Do you use any MCP servers with your AI tool? (for context: Supabase, database access, etc.)
 
@@ -148,7 +150,30 @@ Document the answers and point to the relevant integration docs:
 - Issue tracker → `docs/ai/development-workflow/integrations/linear.md` (or note the alternative)
 - Automated review → `docs/ai/development-workflow/integrations/greptile.md` and/or `docs/ai/development-workflow/integrations/devin.md`
 
-If the user selects one or more automated PR review platforms, generate `.ai-dev-workflow.yaml` at the repo root listing them under `review_platforms:`. This file is read by `pr-review-loop.sh` to determine which platforms to run. If no review platform is selected, do not create the file (the script falls back to `greptile` only).
+If the user selects any workflow integration providers, generate `.ai-dev-workflow.yaml` at the repo root. Prefer the versioned nested schema:
+
+```yaml
+schema_version: 1
+
+review:
+  platforms:
+    - greptile
+
+issue_tracker:
+  provider: linear
+
+vcs:
+  provider: github
+
+browser_automation:
+  provider: cursor_ide_browser_mcp
+```
+
+Rules:
+- Include only the sections the user actually chose.
+- Keep the file declarative; do not store secrets or tokens in it.
+- `pr-review-loop.sh` currently consumes only `review.platforms`.
+- If the file is absent, or `review.platforms` is omitted or empty, automated PR review is treated as not configured and the review loop reports `skipped`.
 
 ---
 
@@ -235,4 +260,4 @@ After the PR is opened, tell the human:
 > Once merged, you're ready to start development. To kick off your first feature:
 > - Claude Code: use the `product-manager` agent
 > - Cursor: run `/generate-new-feature`
-> - Any other tool: ask your AI to follow `docs/ai/development-workflow/protocols/01-generate-specs-protocol.md`"
+> - Any other tool: ask your AI to follow `docs/ai/development-workflow/protocols/01-generate-spec-protocol.md`"

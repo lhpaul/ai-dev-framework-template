@@ -151,7 +151,7 @@ Template version: v0.4.0  |  Project branch: develop
   .claude/agents/developer.md
     Line 3: model: claude-sonnet-4-5 → model: claude-sonnet-4-6
 
-  docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md
+  docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md
     [diff summary]
 
 ### ⏭ Already up to date (no changes)

@@ -27,7 +27,8 @@ Coding standards and conventions. Stack-specific practices are generated during 
 | File | Description |
 |---|---|
 | [ai/development-workflow/README.md](ai/development-workflow/README.md) | Master workflow document — start here |
-| [ai/development-workflow/tooling-assumptions.md](ai/development-workflow/tooling-assumptions.md) | Required vs optional tools |
+| [ai/development-workflow/agent-model-config.md](ai/development-workflow/agent-model-config.md) | Model tier policy and override guidance |
+| [.ai-dev-workflow.yaml](../.ai-dev-workflow.yaml) | Repo-level workflow integration manifest |
 | [ai/development-workflow/protocols/](ai/development-workflow/protocols/) | Canonical stage-by-stage protocols |
 | [ai/development-workflow/templates/](ai/development-workflow/templates/) | Document templates (spec, plan, smoke test) |
 | [ai/development-workflow/integrations/](ai/development-workflow/integrations/) | Optional tool integrations |

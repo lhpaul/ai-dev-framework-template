@@ -1,17 +1,22 @@
-# Protocol: Orchestrate One Workflow Item
+# Protocol: Run One Workflow Item
 
-**Agent role**: Item Orchestrator
+**Agent role**: Work Item Runner (`item-orchestrator`)
 **Purpose**: Advance one workflow item, execute the next deterministic action, and keep that item moving until it reaches a real terminal condition
 
-This is a **supporting protocol**. The item orchestrator does not own a workflow stage, but it coordinates the stage-specific protocols for one development item at a time.
+This is a **supporting protocol**. The Work Item Runner does not own a workflow stage, but it coordinates the stage-specific protocols for one development item at a time.
 
-The portfolio-wide batch launcher is defined separately in `89-batch-orchestrate-work-protocol.md`.
+The portfolio-wide launcher is defined separately in `90-batch-orchestrate-work-protocol.md` as the **Portfolio Orchestrator** (`orchestrator`).
+
+This protocol may be entered in either of two ways:
+
+- A human invokes the Work Item Runner directly for one specific work item, branch, development folder, or PR
+- The Portfolio Orchestrator dispatches the Work Item Runner after scanning the broader portfolio
 
 ---
 
 ## Overview
 
-The item orchestrator:
+The Work Item Runner:
 1. Resolves the request to exactly one workflow item
 2. Determines the next deterministic action for that item
 3. Executes creator, review-gate, PR, CI, and automated-review work as one continuous control loop
@@ -19,7 +24,7 @@ The item orchestrator:
 
 ### Persistent orchestration contract
 
-A single item-orchestration run should keep advancing the selected item until it reaches one of these **terminal conditions**:
+A single Work Item Runner run should keep advancing the selected item until it reaches one of these **terminal conditions**:
 
 - A PR is clean and waiting for human review / merge
 - A human product or architecture decision is required
@@ -56,12 +61,12 @@ Use these helpers while resolving and resuming work:
 ./scripts/development-workflow/workflow-next-action.sh --pr <number>
 ```
 
-If the request is portfolio-wide or refers to multiple items, stop using this protocol and switch to `89-batch-orchestrate-work-protocol.md`.
+If the request is portfolio-wide or refers to multiple items, stop using this protocol and switch to `90-batch-orchestrate-work-protocol.md`.
 
 Important for `development folder` targets:
 
 - `workflow-next-action.sh --development` is only reliable once the item is already `Spec Ready`, `Plan Ready`, or `In Development`.
-- A development folder by itself cannot distinguish `Spec In Review` / `Plan In Review` from the corresponding merged state.
+- A development folder by itself cannot distinguish `Spec in Review` / `Plan in Review` from the corresponding merged state.
 - If the target may still be waiting on a spec or plan PR merge, confirm the state via the issue tracker or by inspecting the workflow branch / PR directly before advancing.
 
 When dispatching a subagent for this item, include a short “Tracker Work Item Summary” in the handoff:
@@ -78,19 +83,23 @@ When dispatching a subagent for this item, include a short “Tracker Work Item 
 
 | Current state / detection | Can advance if... | Next action |
 |---|---|---|
-| Backlog | Human has requested this specific item | Run `01-generate-specs-protocol.md` |
-| Spec In Review | Spec PR is still open | Wait — spec PR is open, pending human review / merge |
-| Spec branch pushed, no PR yet | Branch exists on local / remote / worktree | Run the spec review gate via `REVIEW.md` / `01-review-specs-protocol.md`, open the PR, then finish PR readiness |
-| Spec Ready | Spec PR is merged | Run `02-generate-implementation-plan-protocol.md` |
-| Plan In Review | Plan PR is still open | Wait — plan PR is open, pending human review / merge |
+| Backlog | Human has requested this specific item | Set tracker status to **Writing Spec**, then run `01-generate-spec-protocol.md` |
+| Writing Spec | Tracker **Writing Spec** — spec PR not yet human-ready | Continue spec branch/PR work (generate, internal review, reviewer tools, CI) until tracker moves to **Spec in Review** |
+| Spec in Review | Tracker **Spec in Review** — spec PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
+| Spec branch pushed, no PR yet | Branch exists on local / remote / worktree | Run the spec review gate via `REVIEW.md` / `01-review-spec-protocol.md`, open the PR, then finish PR readiness |
+| Spec Ready | Spec PR is merged | Set tracker status to **Writing Plan**, then run `02-generate-implementation-plan-protocol.md` |
+| Writing Plan | Tracker **Writing Plan** — plan PR not yet human-ready | Continue plan branch/PR work until tracker moves to **Plan in Review** |
+| Plan in Review | Tracker **Plan in Review** — plan PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
 | Plan branch pushed, no PR yet | Branch exists on local / remote / worktree | Run the plan review gate via `REVIEW.md` / `02-review-implementation-plan-protocol.md`, open the PR, then finish PR readiness |
-| Plan Ready | Plan PR is merged | Run `04-implement-development-protocol.md` |
-| Dev branch pushed, no PR yet | Branch exists on local / remote / worktree | Open draft PR, run Claude code review (Step 7a), then run automated reviewer loop (Step 7) and CI loop (Step 8), then mark PR as ready |
-| Draft PR open, Claude review pending | PR is draft and Claude review has not run yet or has open findings | Run Claude code review (Step 7a); apply fixes, push, repeat until clean |
-| Draft PR open, Claude review clean | PR is draft, Claude review clean, external review not yet run | Run Step 7 (external automated reviewers) and Step 8 (CI), then mark PR as ready |
+| Plan Ready | Plan PR is merged | Set tracker status to **In Development**, then run `03-implement-development-protocol.md` |
+| In Development | Tracker **In Development** — feature/fix PR not yet human-ready | Continue implementation branch/PR work (Step 7a, 7, 8) until tracker moves to **Implementation in Review** |
+| Implementation in Review | Tracker **Implementation in Review** — feature/fix PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
+| Dev branch pushed, no PR yet | Branch exists on local / remote / worktree | Open draft PR, run the internal review gate (Step 7a), then run automated reviewer loop (Step 7) and CI loop (Step 8), then mark PR as ready |
+| Draft PR open, internal review pending | PR is draft and the relevant internal review gate has not run yet or has open findings | Run the stage-specific internal review gate (Step 7a); apply fixes, push, repeat until clean |
+| Draft PR open, internal review clean | PR is draft, internal review clean, external review not yet run | Run Step 7 (external automated reviewers) and Step 8 (CI), then mark PR as ready |
 | PR open (non-draft), no readiness label | PR exists and latest push has not fully cleared | Run Step 7 and Step 8 until clean or escalated |
-| PR labeled `agent:needs-fixes` | Human or automated systems requested changes | Address feedback, push, then run Step 7a (if draft), Step 7, and Step 8 |
-| PR labeled `agent:ready-for-review` | — | Wait — human review / merge required |
+| PR labeled `needs-fixes` | Human or automated systems requested changes | Address feedback, push, then run Step 7a (if draft), Step 7, and Step 8 |
+| PR labeled `ready-for-human-review` | — | Wait — human review / merge required |
 
 ### Pre-dispatch branch check
 
@@ -125,11 +134,11 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 | Stage action | Preferred execution path |
 |---|---|
 | Write spec | `product-manager` |
-| Review spec | Native review against `REVIEW.md` or the compatibility wrapper `01-review-specs-protocol.md` |
+| Review spec | Native review against `REVIEW.md` or the compatibility wrapper `01-review-spec-protocol.md` |
 | Write plan | `tech-lead` |
 | Review plan | Native review against `REVIEW.md` or the compatibility wrapper `02-review-implementation-plan-protocol.md` |
 | Implement feature | `developer` |
-| Review code (post-draft-PR) | `code-reviewer` agent (Claude Code: `/code-review`); for other runners use compatibility wrapper `04-review-implemented-development-protocol.md` |
+| Review code (post-draft-PR) | `code-reviewer` agent (Claude Code: `/code-review`); for other runners use compatibility wrapper `03-review-implementation-protocol.md` |
 
 This protocol stays scoped to one item. It may call different stage agents over time, but it must not start scanning or dispatching unrelated items.
 
@@ -141,7 +150,7 @@ Run the next deterministic action for the selected item, then immediately re-eva
 
 Expected chain:
 
-`creator -> draft PR opened -> Claude code review (Step 7a) -> automated reviewer loop (Step 7) -> CI loop (Step 8) -> gh pr ready -> readiness label or escalation`
+`creator -> draft PR opened -> internal review gate (Step 7a) -> automated reviewer loop (Step 7) -> CI loop (Step 8) -> gh pr ready -> readiness label / tracker status -> wait or escalation`
 
 After any subagent finishes, determine whether the item still has a deterministic next action:
 
@@ -162,9 +171,9 @@ When work already exists, resume rather than restart.
 - If a development folder already maps to `Spec Ready`, `Plan Ready`, or `In Development`, continue from that state
 - If a workflow branch already exists, use `workflow-next-action.sh --branch <branch>`
 - If a PR already exists, use `workflow-next-action.sh --pr <number>`
-- If labels indicate `agent:needs-fixes`, enter the fix loop instead of reopening the stage from scratch
+- If labels indicate `needs-fixes`, enter the fix loop instead of reopening the stage from scratch
 
-The item orchestrator owns the full control loop for this item until it reaches a terminal condition.
+The Work Item Runner owns the full control loop for this item until it reaches a terminal condition.
 
 ---
 
@@ -173,7 +182,7 @@ The item orchestrator owns the full control loop for this item until it reaches 
 After the selected item reaches a terminal condition, provide a concise summary:
 
 ```markdown
-## Item Orchestration Summary
+## Work Item Runner Summary
 
 - Item: [identifier]
 - Final state: ready for human review / waiting on human decision / blocked / escalated
@@ -183,11 +192,19 @@ After the selected item reaches a terminal condition, provide a concise summary:
 
 ---
 
-## Step 7a: Claude Code Review
+## Step 7a: Internal Review Gate (Draft PR)
 
-Run this step immediately after opening a draft PR, and again after any push that addresses Claude-review findings.
+Run this step immediately after opening a draft PR, and again after any push that addresses internal-review findings.
 
-Dispatch the `code-reviewer` agent (Claude Code) or invoke the `/code-review` command (Cursor / Codex compatibility wrapper: `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md`). The agent reviews the PR against `REVIEW.md`, applies fixes directly, and commits + pushes.
+Dispatch the stage-appropriate internal reviewer for the draft PR:
+
+| PR branch prefix | Internal reviewer to dispatch |
+|---|---|
+| `spec/*` | `spec-reviewer` or `01-review-spec-protocol.md` |
+| `implementation-plan/*` | `implementation-plan-reviewer` or `02-review-implementation-plan-protocol.md` |
+| `feature/*` / `fix/*` / `hotfix/*` | `code-reviewer` or `03-review-implementation-protocol.md` |
+
+The reviewer runs against `REVIEW.md`, applies deterministic fixes directly, and commits + pushes if needed.
 
 | Outcome | Action |
 |---|---|
@@ -195,7 +212,7 @@ Dispatch the `code-reviewer` agent (Claude Code) or invoke the `/code-review` co
 | `NEEDS REVISION` (fixable) | Fixes already applied by the agent; re-run Step 7a |
 | `NEEDS REVISION` (product/design decision) | Stop and escalate to human before proceeding |
 
-Step 7a runs **before** Step 7 (external reviewers). Only proceed to Step 7 once Step 7a produces `APPROVED`. After any fixer push triggered by Step 7 (external reviewers), re-run Step 7a only if the fixer agent introduced new code changes that have not yet been reviewed by Claude.
+Step 7a runs **before** Step 7 (external reviewers). Only proceed to Step 7 once Step 7a produces `APPROVED`. After any fixer push triggered by Step 7 (external reviewers), re-run Step 7a to ensure the stage-specific internal review gate is still clean.
 
 ---
 
@@ -203,7 +220,7 @@ Step 7a runs **before** Step 7 (external reviewers). Only proceed to Step 7 once
 
 If one or more automated code review platforms are configured (see [`integrations/pr-review-platform.md`](../integrations/pr-review-platform.md)), run this loop after **any push to a PR branch**. If no review platform is configured, skip this step and report `⏭️ skipped` in the Step 6 summary.
 
-**Standalone use:** This step (and Step 8) can be run for a single PR without full orchestration — see [`92-automated-reviewer-loop-protocol.md`](92-automated-reviewer-loop-protocol.md) and the `/run-reviewer-loop` command (Cursor) or `automated-reviewer-loop` agent (Claude Code) or `workflow-reviewer-loop` skill (Codex).
+**Standalone use:** This step (and Step 8) can be run for a single PR without full orchestration — see [`93-automated-reviewer-loop-protocol.md`](93-automated-reviewer-loop-protocol.md) and the `/run-reviewer-loop` command (Cursor) or `automated-reviewer-loop` agent (Claude Code) or `workflow-reviewer-loop` skill (Codex).
 
 **Important:** Run Step 7 **to completion** and use its result before running Step 8. Do not run Step 7 in the background while proceeding to Step 8. The review loop can take several minutes (poll interval × wait for bot). Only when the script exits with `clean` or `skipped` may you continue to Step 8.
 
@@ -338,9 +355,9 @@ Interpret the result as follows:
 
 | Result | Action |
 |---|---|
-| `green` | Run `gh pr ready <pr_number>` to convert the draft PR to ready, then apply `agent:ready-for-review`, remove `agent:needs-fixes` if present, and report the PR as ready |
-| `red` | Apply `agent:needs-fixes`, dispatch the matching fixer agent, wait for a push, then return to Step 7 |
-| `timeout` | Escalate to human; do not apply `agent:ready-for-review` |
+| `green` | Run `gh pr ready <pr_number>` to convert the draft PR to ready; apply `ready-for-human-review`; update the tracker status to `Spec in Review`, `Plan in Review`, or `Implementation in Review` based on branch type; remove `needs-fixes` if present; and report the PR as ready |
+| `red` | Apply `needs-fixes`, dispatch the matching fixer agent, wait for a push, then return to Step 7 |
+| `timeout` | Escalate to human; do not apply `ready-for-human-review` |
 
 ---
 
@@ -348,12 +365,12 @@ Interpret the result as follows:
 
 When a human requests changes on a PR:
 
-1. Remove `agent:ready-for-review`
-2. Add `agent:needs-fixes`
+1. Remove `ready-for-human-review`
+2. Add `needs-fixes`
 3. Address the feedback
 4. Push fixes
 5. Run Step 7
 6. Run Step 8
-7. Reapply `agent:ready-for-review` only when both loops are clean again
+7. Reapply `ready-for-human-review` only when both loops are clean again
 
-See `91-pr-readiness-signal-protocol.md` for label definitions.
+See `92-pr-readiness-signal-protocol.md` for label definitions.

@@ -42,7 +42,7 @@ A PR is ready for human review only when all of the following are true:
 - Every configured automated PR reviewer is `clean` or `skipped`
 - No unresolved human-requested changes remain
 
-If any blocking finding remains, the PR must stay out of `agent:ready-for-review`.
+If any blocking finding remains, the PR must stay out of `ready-for-human-review`.
 
 ---
 
@@ -157,5 +157,5 @@ Typical `important` issues:
 
 - Treat automated PR reviewers as post-push validation.
 - Default aggregation policy is sequential: run configured reviewers in order and do not continue to the next reviewer until the current one is `clean` or `skipped`.
-- Any blocking finding from any configured reviewer keeps the PR out of `agent:ready-for-review`.
+- Any blocking finding from any configured reviewer keeps the PR out of `ready-for-human-review`.
 - Suggestions remain non-blocking unless they are restated as a blocking review decision.

@@ -18,8 +18,7 @@ platforms are clean or skipped, the script exits 0.
 
 Platform selection (in priority order):
   1. --platform flag(s) passed on the command line
-  2. review_platforms list in .ai-dev-workflow.yaml at the repo root
-  3. Fallback: greptile (only when .ai-dev-workflow.yaml is absent)
+  2. review.platforms list in .ai-dev-workflow.yaml at the repo root
 
 Outputs stable key=value lines including:
   RESULT=clean|needs_fixes|escalate|skipped
@@ -769,27 +768,22 @@ if [ -z "$pr_number" ]; then
 fi
 
 if [ "${#platforms[@]}" -eq 0 ]; then
-  config_file="$(cd_workflow_repo_root && pwd)/.ai-dev-workflow.yaml"
-  if [ -f "$config_file" ]; then
+  config_file="$(workflow_config_file)"
+  if workflow_config_exists; then
     while IFS= read -r line; do
       line="$(trim "$line")"
       [ -n "$line" ] && platforms+=("$line")
-    done < <(sed -n '/^review_platforms:/,/^[^[:space:]-]/{/^[[:space:]]*-/{s/^[[:space:]]*-[[:space:]]*//;p;};}' "$config_file")
-  fi
-  # Only fall back to greptile when config file is absent. If the file exists but
-  # we parsed zero platforms (empty list or parse issue), do not use greptile.
-  if [ "${#platforms[@]}" -eq 0 ]; then
-    if [ ! -f "${config_file:-}" ]; then
-      platforms=("greptile")
-    fi
+    done < <(workflow_config_review_platforms "$config_file")
   fi
 fi
 
-require_gh
-cd_workflow_repo_root
+if [ "${#platforms[@]}" -gt 0 ]; then
+  require_gh
+  cd_workflow_repo_root
 
-if [ -z "$branch_name" ]; then
-  branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"
+  if [ -z "$branch_name" ]; then
+    branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"
+  fi
 fi
 
 aggregate_result="skipped"

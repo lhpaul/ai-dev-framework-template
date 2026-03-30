@@ -1,9 +1,10 @@
-# Protocol: Review Implemented Development (Compatibility Wrapper)
+# Protocol: Review Feature Spec
 
-**Purpose**: Run the implementation review gate using the repository's canonical review contract in [`REVIEW.md`](../../../../REVIEW.md).
+**Purpose**: Run the spec review gate using the repository's canonical review contract in [`REVIEW.md`](../../../../REVIEW.md).
 
 Use this protocol when:
-- A workflow stage says to run the implementation review gate before opening a PR
+
+- A workflow stage says to run the spec review gate
 - A legacy command or agent still points to this file
 - You want a repo-specific wrapper around a tool's native review feature
 
@@ -12,11 +13,11 @@ Use this protocol when:
 ## Source of Truth
 
 Read and follow:
-- [`REVIEW.md`](../../../../REVIEW.md) → `Code Review Checklist`
-- The corresponding spec
-- The implementation plan
-- Relevant best-practice docs
-- The changed code
+
+- [`REVIEW.md`](../../../../REVIEW.md) → `Spec Review Checklist`
+- `docs/project/1-business-domain.md`
+- `docs/project/3-software-architecture.md`
+- The target spec
 
 `REVIEW.md` is authoritative. If this wrapper and `REVIEW.md` ever differ, follow `REVIEW.md`.
 
@@ -26,22 +27,22 @@ Read and follow:
 
 - Claude Code: prefer the native review flow against `REVIEW.md`.
 - Codex: prefer the native review flow against `REVIEW.md`.
-- Cursor: use `/review-code`, which should manually review the branch against `REVIEW.md`.
+- Cursor: use `/review-spec`, which should manually review the spec against `REVIEW.md`.
 - Other tools: perform a manual review against `REVIEW.md`.
 
-If a runner also has a stronger built-in PR/code-review feature, use it first and then normalize the findings through `REVIEW.md`.
-
 If invoked in a fix loop for a pushed branch or open PR:
+
 - Apply all deterministic `blocking` and `important` fixes directly
 - Commit and push if repo-tracked files changed
 - Return approval only when no fixable `blocking` findings remain
-- Escalate only when a real product, design, or architecture decision is required
+- Escalate only when a real product decision is required
 
 ---
 
 ## Output
 
 Produce a concise review report with:
+
 - Overall assessment
 - Direct fixes applied
 - Remaining findings requiring human input

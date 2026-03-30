@@ -3,7 +3,7 @@
 **Agent role**: Runner of the automated reviewer loop
 **Purpose**: Run the automated reviewer loop and CI loop for one or more PRs until each PR is clean and ready for human review, or escalate to human
 
-This protocol is **standalone**: it can be invoked for any open PR (or set of PRs) without full orchestration. It reuses **Step 7** and **Step 8** of `90-orchestrate-work-protocol.md` as-is; this document only adds how to choose the target PR(s) and how to report.
+This protocol is **standalone**: it can be invoked for any open PR (or set of PRs) without full orchestration. It reuses **Step 7** and **Step 8** of `91-orchestrate-work-protocol.md` as-is; this document only adds how to choose the target PR(s) and how to report.
 
 ---
 
@@ -38,19 +38,19 @@ gh pr view <number> --json reviews
 gh api repos/{owner}/{repo}/pulls/<number>/comments
 ```
 
-For each configured review platform (listed in `.ai-dev-workflow.yaml` under `review_platforms`), check whether the platform has already posted a review with blocking findings that have **not** been addressed in a commit pushed after that review. This situation arises when a platform posts its review after a previous run timed out and the agent moved on.
+For each configured review platform (listed in `.ai-dev-workflow.yaml` under `review.platforms`), check whether the platform has already posted a review with blocking findings that have **not** been addressed in a commit pushed after that review. This situation arises when a platform posts its review after a previous run timed out and the agent moved on.
 
 If unresolved findings exist: dispatch a fixer agent, wait for the push, then proceed to the scripts. Do not re-trigger the reviewer loop against stale findings — fix first.
 
 ### Run the loops
 
-Execute **Step 7a: Claude Code Review**, **Step 7: Automated Reviewer Loop**, and **Step 8: CI Loop** exactly as defined in `90-orchestrate-work-protocol.md` (scripts, result interpretation, sequential platform policy, fixer mapping, parameters, and labels). Do not duplicate that logic here — follow 90.
+Execute **Step 7a: Internal Review Gate**, **Step 7: Automated Reviewer Loop**, and **Step 8: CI Loop** exactly as defined in `91-orchestrate-work-protocol.md` (scripts, result interpretation, sequential platform policy, fixer mapping, parameters, and labels). Do not duplicate that logic here — follow 90.
 
-For each PR: run Step 7a first (Claude code review), then Step 7 to completion, then Step 8. Dispatch fixers and re-run as specified in 90 until the PR is clean and ready for human review or escalated. After Step 8 returns `green`, run `gh pr ready <pr_number>` before applying `agent:ready-for-review`.
+For each PR: run Step 7a first (the stage-appropriate internal review gate), then Step 7 to completion, then Step 8. Dispatch fixers and re-run as specified in 90 until the PR is clean and ready for human review or escalated. After Step 8 returns `green`, run `gh pr ready <pr_number>` before applying `ready-for-human-review`.
 
 ### PR feedback tracking and comments
 
-Follow the "PR feedback tracking and comments" subsection of Step 7 in `90-orchestrate-work-protocol.md`:
+Follow the "PR feedback tracking and comments" subsection of Step 7 in `91-orchestrate-work-protocol.md`:
 
 - Maintain a PR feedback ledger tracking all blocking findings across cycles (keyed by `(platform, path, body_snippet)`).
 - After each fixer push, post a **fix commit comment** on the PR listing which findings that commit resolved and any remaining open findings.
@@ -63,7 +63,7 @@ Follow the "PR feedback tracking and comments" subsection of Step 7 in `90-orche
 
 After processing the requested PR(s), report:
 
-- **Ready for human review**: PR link, branch, and that Claude code review, every configured automated reviewer, and CI are all clean (or skipped). Confirm that `gh pr ready` was run to convert the draft PR to ready.
+- **Ready for human review**: PR link, branch, and that the internal review gate, every configured automated reviewer, and CI are all clean (or skipped). Confirm that `gh pr ready` was run to convert the draft PR to ready.
 - **Escalated**: PR link, reason (max cycles, timeout, or review platform escalate).
 - **Skipped**: If no review platform is configured, or a configured platform is currently unsupported and therefore skipped, note that in the result for the listed PR(s).
 

@@ -9,13 +9,13 @@ This is a **repo-wide definition**. All agents apply these labels consistently.
 ## Labels
 
 | Label | Meaning |
-|---|---|
-| `agent:ready-for-review` | The agent has completed its work. CI is green. The `REVIEW.md` gate is satisfied. Every configured automated reviewer is clean or skipped. Ready for human review. |
-| `agent:needs-fixes` | The human has requested changes on the PR, OR CI is failing, OR any automated reviewer has blocking PR feedback. |
+| --- | --- |
+| `ready-for-human-review` | The PR is ready for a human reviewer. CI is green. The `REVIEW.md` gate is satisfied. Every configured automated reviewer is clean or skipped. |
+| `needs-fixes` | The PR still needs fixes before it is ready for human review. This may be due to human-requested changes, failing CI, or blocking automated PR feedback. |
 
 ---
 
-## Conditions for `agent:ready-for-review`
+## Conditions for `ready-for-human-review`
 
 Apply this label when **all** of the following are true:
 
@@ -26,7 +26,7 @@ Apply this label when **all** of the following are true:
 
 ---
 
-## Conditions for `agent:needs-fixes`
+## Conditions for `needs-fixes`
 
 Apply this label when **any** of the following is true:
 
@@ -38,26 +38,29 @@ Apply this label when **any** of the following is true:
 
 ## Workflow
 
-### Agent opens PR
+### Work Item Runner advances a draft PR
+
 1. Push branch to remote
 2. Open PR **as draft** (`gh pr create --draft ...`) — spec/plan/hotfix PRs targeting `main` or `develop` as appropriate; implementation PRs targeting `develop`
-3. Run the relevant review gate from `REVIEW.md` on the draft PR (spec/plan/code review):
-   - **Claude Code**: use the `code-reviewer` agent (or `/code-review` command); for spec/plan use `spec-reviewer` / `tech-lead`
-   - **Other runners**: use the compatibility wrapper protocols under `docs/ai/development-workflow/protocols/`
+3. Run the relevant internal review gate from `REVIEW.md` on the draft PR (spec/plan/code review):
+   - `spec/*` → `spec-reviewer` / `01-review-spec-protocol.md`
+   - `implementation-plan/*` → `implementation-plan-reviewer` / `02-review-implementation-plan-protocol.md`
+   - `feature/*` / `fix/*` / `hotfix/*` → `code-reviewer` / `03-review-implementation-protocol.md`
    - Apply fixes, commit, push; repeat until clean
 4. Run `./scripts/development-workflow/pr-review-loop.sh <pr-number> --branch <branch> [--platform <platform> ...]` when automated review tooling is configured
 5. If any automated reviewer reports blocking PR feedback: apply fixes, push, and repeat Step 4
 6. Run `./scripts/development-workflow/pr-ci-loop.sh <pr-number>`
-7. If CI passes and all reviews are clean (or not configured): run `gh pr ready <pr-number>` to convert the draft to ready, then apply `agent:ready-for-review`
-8. If CI fails: apply `agent:needs-fixes`, fix PR feedback or failing checks, push, and return to Step 4
+7. If CI passes and all reviews are clean (or not configured): run `gh pr ready <pr-number>` to convert the draft to ready, then apply `ready-for-human-review` and move the tracker status to the matching human-review stage (`Spec in Review`, `Plan in Review`, or `Implementation in Review`) when the tracker is the source of truth
+8. If CI fails: apply `needs-fixes`, fix PR feedback or failing checks, push, and return to Step 4
 
 ### Human requests changes
+
 1. Human leaves review comments
-2. Agent receives notification (or is manually pointed to the PR)
-3. Remove `agent:ready-for-review`, add `agent:needs-fixes`
+2. Work Item Runner receives notification (or is manually pointed to the PR)
+3. Remove `ready-for-human-review`, add `needs-fixes`
 4. Address all requested changes
 5. Push fixes
-6. Remove `agent:needs-fixes`, add `agent:ready-for-review`
+6. Remove `needs-fixes`, add `ready-for-human-review`
 7. Notify human that feedback has been addressed
 
 ---
@@ -66,10 +69,12 @@ Apply this label when **any** of the following is true:
 
 These labels can be applied automatically via CI/CD pipeline rules:
 
-**Apply `agent:needs-fixes` automatically when**:
+**Apply `needs-fixes` automatically when**:
+
 - Any required CI check fails
 
-**Apply `agent:ready-for-review` automatically when**:
+**Apply `ready-for-human-review` automatically when**:
+
 - All required CI checks pass
 - The pre-PR review gate is complete
 - (And no human review has been requested on the PR)

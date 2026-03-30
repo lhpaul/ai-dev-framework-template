@@ -28,7 +28,7 @@ After installation, push a commit to an open PR and confirm that Devin posts rev
 
 ## Step 7 — Devin-Specific Implementation
 
-The item orchestrator's Step 7 (Automated Reviewer Loop) requires platform-specific commands. Below are the Devin adapter details used by the shared helper.
+The **Work Item Runner's** Step 7 (Automated Reviewer Loop) requires platform-specific commands. Below are the Devin adapter details used by the shared helper.
 
 ### Preferred helper
 
@@ -38,7 +38,7 @@ When possible, call the repository helper instead of re-implementing the loop in
 ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name> --platform devin
 ```
 
-It encapsulates the polling, comment classification, and stable aggregate `RESULT=` output used by the orchestrator.
+It encapsulates the polling, comment classification, and stable aggregate `RESULT=` output used by the **Work Item Runner** (and by the **Portfolio Orchestrator** when it supervises item-level runs).
 
 ### Bot identity
 

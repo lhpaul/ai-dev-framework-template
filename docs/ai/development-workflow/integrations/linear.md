@@ -2,13 +2,13 @@
 
 This document describes how to connect the AI development workflow with [Linear](https://linear.app) as the tracker system for workflow work items.
 
-Linear is **optional**. The workflow functions without it — the orchestrator simply requires human input to determine what to work on next.
+Linear is **optional**. The workflow functions without it — the **Portfolio Orchestrator** simply requires human input to determine what to work on next.
 
 ---
 
 ## What Linear Adds
 
-- The orchestrator can read work item status, priority, and due dates autonomously
+- The **Portfolio Orchestrator** can read work item status, priority, and due dates autonomously
 - Status fields in Linear map directly to workflow stages
 - Labels in Linear map to work item types and scope
 - Priority and due date drive automated prioritization
@@ -25,11 +25,16 @@ Configure the following statuses in your Linear team settings:
 | Linear Status | Workflow Stage |
 |---|---|
 | Backlog | Backlog |
-| Spec Ready | Spec Ready |
-| Plan Ready | Plan Ready |
-| In Development | In Development |
-| Merged | Merged |
-| Released | Released |
+| Writing Spec | Spec is being drafted and driven to human-ready (draft PR, internal review, reviewer tools, CI) |
+| Spec in Review | Spec PR is ready for human review / merge |
+| Spec Ready | Spec PR is merged |
+| Writing Plan | Implementation plan is being drafted and driven to human-ready (same PR-readiness pattern as spec) |
+| Plan in Review | Plan PR is ready for human review / merge |
+| Plan Ready | Plan PR is merged |
+| In Development | Feature/fix PR in progress (draft through PR readiness, until human-ready) |
+| Implementation in Review | Feature/fix PR is ready for human review / merge |
+| Merged | Feature/fix PR merged to `develop` |
+| Released | Released to production |
 
 ### Labels
 
@@ -52,7 +57,7 @@ Use Linear's built-in priority field:
 
 ### Due Date
 
-Set due dates on work items that have a deadline. The orchestrator treats work items due within 2 weeks as higher priority than the abstract priority field.
+Set due dates on work items that have a deadline. The **Portfolio Orchestrator** treats work items due within 2 weeks as higher priority than the abstract priority field.
 
 ---
 
@@ -64,7 +69,7 @@ Workflow status (Spec Ready, Plan Ready, In Development) is **not** stored in th
 
 ## Orchestrator Instructions (with Linear)
 
-When the orchestrator has Linear access, it should:
+When the **Portfolio Orchestrator** has Linear access, it should:
 
 1. Query work items by status to find items eligible for advancement
 2. Check the `Depends on` field (or linked work item relationships) for dependencies
@@ -91,14 +96,19 @@ The `[slug]` is a short kebab-case description derived from the work item title 
 
 ## Workflow: Advancing Statuses
 
-The orchestrator or developer agent updates the Linear work item status at each stage transition:
+The **Portfolio Orchestrator**, **Work Item Runner**, or stage agent updates the Linear work item status at each stage transition:
 
 | Action | Status transition |
 |---|---|
-| Spec branch created | → Spec Ready |
-| Plan branch created | → Plan Ready |
-| Feature branch created | → In Development |
-| Feature PR merged to develop | → Merged |
+| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `product-manager` | → Writing Spec |
+| Spec PR is human-ready (automation clean; ready for humans) | → Spec in Review |
+| Spec PR merged | → Spec Ready |
+| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `tech-lead` | → Writing Plan |
+| Plan PR is human-ready (automation clean) | → Plan in Review |
+| Plan PR merged | → Plan Ready |
+| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `developer` | → In Development |
+| Feature/fix PR is human-ready (automation clean) | → Implementation in Review |
+| Feature/fix PR merged to develop | → Merged |
 | Release deployed to production | → Released |
 
 ---
@@ -128,7 +138,7 @@ With the MCP server, agents can read and update work items directly without the 
 
 ## Without Linear
 
-If you don't use Linear, the orchestrator asks the human:
+If you don't use Linear, the **Portfolio Orchestrator** asks the human:
 
 > "What should I work on next? Please provide:
 > - Feature name and slug
