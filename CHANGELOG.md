@@ -7,15 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-03-30
+
 ### Fixed
 
-- `pr-review-loop.sh`: Devin adapter now recovers stale unresolved findings when Devin does not review the current HEAD (e.g. after merging the base branch). Before reporting `skipped (no_check_run)`, the script scans the full PR history for unresolved Devin inline comments and reports `needs_fixes` with reason `stale_findings` if any exist. This prevents blocking code bugs from being silently dropped after a merge.
-- `pr-review-loop.sh`: Devin `✅ **Resolved**` confirmation comments are now excluded from the blocking count in Phase 1 (existing findings) and Phase 3 (new results), preventing resolved confirmations from being misclassified as new blocking findings.
-- `pr-review-loop.sh`: Devin adapter now counts GitHub Status Contexts (in addition to Check Runs) when detecting Devin review activity and completion, preventing false `no_check_run` skips when Devin signals via a commit status instead of a check run. Status counts are deduplicated by context (latest entry per context) to avoid inflated counts when the same context transitions through multiple states.
+- Automated Devin review loops now recover stale unresolved findings from PR history when the latest HEAD has no fresh Devin review, preventing blocking issues from being dropped after base-branch merges.
+- Devin resolved-confirmation comments (`✅ **Resolved**`) are excluded from blocking issue counts so previously fixed findings are not reclassified as new blockers.
+- Devin review detection now considers both GitHub Check Runs and Status Contexts (deduplicated by context), avoiding false `no_check_run` skips when Devin reports via statuses.
 
 ### Changed
 
-- `93-automated-reviewer-loop-protocol.md`: Pre-flight section now defines **unresolved finding** (full PR history, merge/rebase trap, matching ✅ to the same finding), states Devin `COMMENTED` + `**Devin Review**` as blocking, and documents **ledger bootstrap** (seed the ledger from full PR history before Step 7).
+- Automated reviewer-loop protocol pre-flight now explicitly defines unresolved findings and blocking Devin outcomes, and documents ledger bootstrap from full PR history before fix cycles.
 
 ## [0.18.0] - 2026-03-18
 
@@ -267,7 +269,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.18.1...HEAD
+[0.18.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.15.0...v0.16.0
