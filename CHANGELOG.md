@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `pr-review-loop.sh`: Existing-findings detection for Greptile and Devin now anchors on the **first commit on the PR branch** (relative to the PR base), not the HEAD commit timestamp. A merge commit (e.g. merging `develop`) no longer postdates and hides blocking inline comments from earlier commits on the branch.
+- `pr-review-loop.sh`: Devin adapter now recovers stale unresolved findings when Devin does not review the current HEAD (e.g. after merging the base branch). Before reporting `skipped (no_check_run)`, the script scans the full PR history for unresolved Devin inline comments and reports `needs_fixes` with reason `stale_findings` if any exist. This prevents blocking code bugs from being silently dropped after a merge.
+- `pr-review-loop.sh`: Devin `✅ **Resolved**` confirmation comments are now excluded from the blocking count in Phase 1 (existing findings) and Phase 3 (new results), preventing resolved confirmations from being misclassified as new blocking findings.
 - `pr-review-loop.sh`: Devin adapter now counts GitHub Status Contexts (in addition to Check Runs) when detecting Devin review activity and completion, preventing false `no_check_run` skips when Devin signals via a commit status instead of a check run. Status counts are deduplicated by context (latest entry per context) to avoid inflated counts when the same context transitions through multiple states.
 
 ### Changed

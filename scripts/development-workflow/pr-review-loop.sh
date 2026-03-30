@@ -43,29 +43,6 @@ append_platforms() {
   done
 }
 
-# ISO-8601 committer date of the first commit on the PR branch after the PR base
-# (oldest commit in base..head). Anchors "existing findings" queries so a merge
-# commit on HEAD cannot postdate and hide bot comments from earlier commits.
-pr_branch_first_commit_since_iso() {
-  local repo="$1"
-  local pr_number="$2"
-  local head_sha="$3"
-  local base_sha
-  local first_sha
-
-  base_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.base.sha // empty')"
-  if [ -z "$base_sha" ] || [ -z "$head_sha" ]; then
-    printf '%s\n' ""
-    return 0
-  fi
-  first_sha="$(git rev-list --reverse "${base_sha}..${head_sha}" 2>/dev/null | head -n 1)"
-  if [ -z "$first_sha" ]; then
-    printf '%s\n' ""
-    return 0
-  fi
-  gh api "repos/$repo/commits/$first_sha" --jq '.commit.committer.date // empty'
-}
-
 kv_value() {
   local key="$1"
   local kv_output="$2"
@@ -120,8 +97,7 @@ run_greptile_review() {
   local recent_trigger_comment
   local existing_thumbs_up
   local head_sha=""
-  local head_since_iso=""
-  local existing_findings_since_iso=""
+  local since_iso=""
   local existing_comments=""
   local existing_reviews=""
   local existing_blocking_file=""
@@ -184,19 +160,15 @@ run_greptile_review() {
   if [ -z "$review_comment_id" ]; then
     head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
     if [ -n "$head_sha" ]; then
-      head_since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
-      existing_findings_since_iso="$(pr_branch_first_commit_since_iso "$repo" "$pr_number" "$head_sha")"
+      since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
     fi
-    if [ -z "$head_since_iso" ]; then
-      head_since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
-    fi
-    if [ -z "$existing_findings_since_iso" ]; then
-      existing_findings_since_iso="$head_since_iso"
+    if [ -z "$since_iso" ]; then
+      since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
     fi
 
     existing_comments="$(
       gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
-        | jq -r --arg bot "$bot_login" --arg since "$existing_findings_since_iso" '
+        | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
             .[]
             | select(.user.login == $bot and .created_at > $since)
             | { path, line: (.line // .original_line // 0), body: (.body // "") }
@@ -205,7 +177,7 @@ run_greptile_review() {
     )"
     existing_reviews="$(
       gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-        | jq -r --arg bot "$bot_login" --arg since "$existing_findings_since_iso" '
+        | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
             .[]
             | select(
                 .user.login == $bot and
@@ -395,8 +367,7 @@ run_devin_review() {
   local bot_login="devin-ai-integration[bot]"
   local repo
   local head_sha=""
-  local head_since_iso=""
-  local existing_findings_since_iso=""
+  local since_iso=""
   local existing_comments=""
   local existing_reviews=""
   local existing_blocking_file=""
@@ -413,8 +384,9 @@ run_devin_review() {
   local comment_count=0
   local index=1
   local blocking_json=""
+  local stale_file=""
 
-  trap 'rm -f "${existing_blocking_file:-}" "${blocking_lines_file:-}"' RETURN
+  trap 'rm -f "${existing_blocking_file:-}" "${blocking_lines_file:-}" "${stale_file:-}"' RETURN
 
   require_gh
   cd_workflow_repo_root
@@ -431,24 +403,15 @@ run_devin_review() {
     print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
     return 2
   fi
-  head_since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
-  if [ -z "$head_since_iso" ]; then
-    head_since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
-  fi
-  existing_findings_since_iso="$(pr_branch_first_commit_since_iso "$repo" "$pr_number" "$head_sha")"
-  if [ -z "$existing_findings_since_iso" ]; then
-    existing_findings_since_iso="$head_since_iso"
+  since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
+  if [ -z "$since_iso" ]; then
+    since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
   fi
 
-  # --- Phase 1: Check for existing blocking findings ---
-  # Devin posts findings as inline comments, sometimes with replies containing
-  # details. Filter out reply comments (in_reply_to_id != null) to avoid
-  # double-counting a finding and its reply as separate blocking items.
-  # Anchor on the first commit on the PR branch (not HEAD) so merge commits
-  # cannot hide older bot comments (see pr_branch_first_commit_since_iso).
+  # --- Phase 1: Check for existing blocking findings on the current HEAD ---
   existing_comments="$(
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$existing_findings_since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
           .[]
           | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null)
           | { path, line: (.line // .original_line // 0), body: (.body // "") }
@@ -457,7 +420,7 @@ run_devin_review() {
   )"
   existing_reviews="$(
     gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$existing_findings_since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
           .[]
           | select(
               .user.login == $bot and
@@ -480,10 +443,8 @@ run_devin_review() {
     [ -z "${comment_json:-}" ] && continue
     body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
     [ -z "$body" ] && continue
-    # Skip Devin's "No Issues Found" summary comments
-    if printf '%s\n' "$body" | grep -qi "No Issues Found"; then
-      continue
-    fi
+    if printf '%s\n' "$body" | grep -qi "No Issues Found"; then continue; fi
+    if printf '%s\n' "$body" | grep -q "^✅"; then continue; fi
     existing_blocking_count=$((existing_blocking_count + 1))
     printf '%s\n' "$comment_json" >> "$existing_blocking_file"
   done <<< "$existing_comments"
@@ -492,9 +453,8 @@ run_devin_review() {
     [ -z "${review_json:-}" ] && continue
     body="$(printf '%s\n' "$review_json" | jq -r '.body')"
     [ -z "$body" ] && continue
-    if printf '%s\n' "$body" | grep -qi "No Issues Found"; then
-      continue
-    fi
+    if printf '%s\n' "$body" | grep -qi "No Issues Found"; then continue; fi
+    if printf '%s\n' "$body" | grep -q "^✅"; then continue; fi
     existing_blocking_count=$((existing_blocking_count + 1))
     printf '%s\n' "$review_json" >> "$existing_blocking_file"
   done <<< "$existing_reviews"
@@ -542,7 +502,7 @@ run_devin_review() {
     # Check for any Devin completion review every iteration (so "No Issues Found" is detected)
     devin_summary_count="$(
       gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-        | jq --arg bot "$bot_login" --arg since "$head_since_iso" '
+        | jq --arg bot "$bot_login" --arg since "$since_iso" '
             [.[]
              | select(
                  .user.login == $bot and
@@ -623,6 +583,55 @@ run_devin_review() {
 
     if [ "$elapsed" -ge "$max_wait" ]; then
       if [ "$devin_any_check_count" -eq 0 ]; then
+        # Devin didn't review this HEAD (common after merging the base branch
+        # when the diff didn't change). Before reporting "skipped", scan the
+        # full PR history for unresolved Devin findings from prior reviews.
+        local stale_count=0
+        local stale_comments
+        stale_comments="$(
+          gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+            | jq -r --arg bot "$bot_login" '
+                .[]
+                | select(
+                    .user.login == $bot and
+                    .in_reply_to_id == null and
+                    ((.body // "") | test("^✅") | not) and
+                    ((.body // "") | test("No Issues Found"; "i") | not)
+                  )
+                | { path, line: (.line // .original_line // 0), body: (.body // "") }
+                | @json
+              '
+        )"
+        stale_file="$(mktemp)"
+        while IFS= read -r comment_json; do
+          [ -z "${comment_json:-}" ] && continue
+          stale_count=$((stale_count + 1))
+          printf '%s\n' "$comment_json" >> "$stale_file"
+        done <<< "$stale_comments"
+
+        if [ "$stale_count" -gt 0 ]; then
+          print_kv RESULT needs_fixes
+          print_kv PLATFORM "$platform"
+          print_kv PR_NUMBER "$pr_number"
+          print_kv BRANCH "$branch_name"
+          print_kv REVIEW_COMMENT_ID ""
+          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          print_kv REASON stale_findings
+          print_kv COMMENT_COUNT "$stale_count"
+          print_kv BLOCKING_COUNT "$stale_count"
+          print_kv SUGGESTION_COUNT 0
+          while IFS= read -r blocking_json; do
+            [ -z "${blocking_json:-}" ] && continue
+            print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
+            print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
+            print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+            index=$((index + 1))
+          done < "$stale_file"
+          rm -f "$stale_file"
+          return 1
+        fi
+        rm -f "$stale_file"
+
         print_kv RESULT skipped
         print_kv REASON no_check_run
         print_kv PLATFORM "$platform"
@@ -650,15 +659,11 @@ run_devin_review() {
   done
 
   # --- Phase 3: Collect results after completion ---
-  # Use head_since_iso (HEAD commit timestamp) so the poll loop only counts
-  # completion reviews and inline comments from the current push (not older
-  # runs on the branch). Phase 1 uses existing_findings_since_iso to catch
-  # stale pre-merge findings.
   blocking_lines_file="$(mktemp)"
 
   comments="$(
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$head_since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
         .[]
         | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null)
         | {
@@ -672,7 +677,7 @@ run_devin_review() {
 
   blocking_reviews="$(
     gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$head_since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
         .[]
         | select(
             .user.login == $bot and
@@ -698,10 +703,8 @@ run_devin_review() {
     [ -z "${comment_json:-}" ] && continue
     body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
     [ -z "$body" ] && continue
-    # Skip Devin's "No Issues Found" summary comments
-    if printf '%s\n' "$body" | grep -qi "No Issues Found"; then
-      continue
-    fi
+    if printf '%s\n' "$body" | grep -qi "No Issues Found"; then continue; fi
+    if printf '%s\n' "$body" | grep -q "^✅"; then continue; fi
     comment_count=$((comment_count + 1))
     blocking_count=$((blocking_count + 1))
     printf '%s\n' "$comment_json" >> "$blocking_lines_file"
@@ -711,9 +714,8 @@ run_devin_review() {
     [ -z "${review_json:-}" ] && continue
     body="$(printf '%s\n' "$review_json" | jq -r '.body')"
     [ -z "$body" ] && continue
-    if printf '%s\n' "$body" | grep -qi "No Issues Found"; then
-      continue
-    fi
+    if printf '%s\n' "$body" | grep -qi "No Issues Found"; then continue; fi
+    if printf '%s\n' "$body" | grep -q "^✅"; then continue; fi
     comment_count=$((comment_count + 1))
     blocking_count=$((blocking_count + 1))
     printf '%s\n' "$review_json" >> "$blocking_lines_file"

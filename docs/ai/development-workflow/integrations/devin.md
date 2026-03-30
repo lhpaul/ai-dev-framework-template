@@ -62,14 +62,14 @@ The helper script:
 
 - On each poll, looks for any Devin review since the commit with body matching `**Devin Review**`, "Devin Review has completed", or "No Issues Found". If found, treats review as complete and proceeds to Step 7.3.
 - If no such review is seen, checks for Devin check runs and, once a completed check run is seen, applies a 120s grace period before treating the run as complete.
-- If no Devin review and no Devin check run appear during the full `max_wait` window, returns `skipped` with reason `no_check_run` instead of skipping immediately at the start.
+- If no Devin review and no Devin check run appear during the full `max_wait` window, checks for stale findings (see below) before returning `skipped`.
 
 | Result | Action |
 | --- | --- |
 | Any Devin review with "**Devin Review**", "Devin Review has completed", or "No Issues Found" | Review complete — proceed to Step 7.3 |
 | `check_completed > 0` and grace period (120s) elapsed | Assume complete — proceed to Step 7.3 |
 | No completion review yet and `elapsed < max_wait` | Not finished yet — wait another `poll_interval` and poll again |
-| `elapsed >= max_wait` and no Devin check run was ever seen | Skip as `no_check_run` |
+| `elapsed >= max_wait` and no Devin check run was ever seen | Stale findings recovery, then skip as `no_check_run` if none found |
 | `elapsed >= max_wait` and a Devin check run was seen | Timeout — escalate to human |
 
 ### Step 7.3 — Fetch inline comments
@@ -79,7 +79,7 @@ gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
   --jq "[.[] | select(.user.login == \"devin-ai-integration[bot]\" and .created_at > \"$since_iso\" and .in_reply_to_id == null) | {path, line, body}]"
 ```
 
-**Phase 1 “existing findings” anchor:** Before polling, the helper uses a `since_iso` derived from the **first commit on the PR branch** (after the PR base), not only the HEAD commit time, so a merge commit (e.g. merging `develop`) cannot postdate and hide older Devin inline comments. Phase 2 completion polling and Phase 3 result collection still use the HEAD commit timestamp to scope the **current** push’s review.
+**Stale findings recovery:** When Devin does not review the current HEAD (no check run within `max_wait`), the helper scans the full PR history for unresolved Devin inline comments before reporting `skipped`. If unresolved findings exist from a prior review cycle (e.g. before a merge of the base branch), the helper reports `needs_fixes` with reason `stale_findings` so the agent dispatches a fixer. Devin's `✅ **Resolved**` confirmations and "No Issues Found" comments are excluded from this scan.
 
 **All Devin findings are blocking.** Unlike Greptile, there is no `is_soft_suggestion()` heuristic — both severe (red) and non-severe (yellow) findings block the PR.
 
@@ -90,3 +90,7 @@ Devin posts findings as inline comments on code lines, sometimes with a reply th
 ### "No Issues Found" handling
 
 When Devin finds no blocking PR feedback, it may post a summary comment containing "No Issues Found". These comments are excluded from the blocking count so the review correctly resolves as `clean`.
+
+### Resolved comment handling
+
+Devin posts `✅ **Resolved**:` comments when it detects a commit that fixes a previously reported issue. These confirmations are excluded from the blocking count so they are not misclassified as new findings.
