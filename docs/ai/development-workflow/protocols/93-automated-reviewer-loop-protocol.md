@@ -38,7 +38,24 @@ gh pr view <number> --json reviews
 gh api repos/{owner}/{repo}/pulls/<number>/comments
 ```
 
-For each configured review platform (listed in `.ai-dev-workflow.yaml` under `review.platforms`), check whether the platform has already posted a review with blocking findings that have **not** been addressed in a commit pushed after that review. This situation arises when a platform posts its review after a previous run timed out and the agent moved on.
+#### Blocking classification (Devin)
+
+Treat GitHub `COMMENTED` reviews from Devin (`devin-ai-integration`) whose body starts with `**Devin Review**` as **blocking**, the same as `CHANGES_REQUESTED`. Do not treat a `COMMENTED` Devin review as non-blocking just because the state is not `CHANGES_REQUESTED`.
+
+#### What counts as an unresolved finding
+
+A **blocking** inline comment or review from a configured platform (see `.ai-dev-workflow.yaml` under `review.platforms`) counts as **unresolved** when:
+
+1. It applies to **any commit in this PR’s history** (not only commits after the current `HEAD`). After merging the base branch (e.g. `develop`) into the PR branch, older bot comments are still open unless the **substantive issue** they describe is fixed in the codebase. A merge commit does not dismiss them.
+2. There is no later ✅ / resolved confirmation **for that same finding** (match by `(platform, path, body_snippet)` or Devin’s inline comment id in the body, not by “most recent comment on the PR”). A ✅ from Devin about *one* issue does not resolve a different 🔴 finding.
+
+#### Merge / rebase trap
+
+Do not assume the latest bot comment is the only active issue. A fixer may address a doc-only or secondary item while leaving an earlier code bug untouched. After each fixer push, verify the change fixes the **substantive problem** described in each open finding (e.g. the referenced file and behavior), not only a stale reference or a single resolved thread.
+
+#### Stale review after timeout
+
+Also handle the case where a platform posted blocking findings after a previous run timed out and the agent moved on: if those findings are still unresolved per the rules above, dispatch a fixer, wait for the push, then run the scripts.
 
 If unresolved findings exist: dispatch a fixer agent, wait for the push, then proceed to the scripts. Do not re-trigger the reviewer loop against stale findings — fix first.
 
@@ -52,6 +69,7 @@ For each PR: run Step 7a first (the stage-appropriate internal review gate), the
 
 Follow the "PR feedback tracking and comments" subsection of Step 7 in `91-orchestrate-work-protocol.md`:
 
+- **Ledger bootstrap:** Before starting Step 7, seed the PR feedback ledger with **all** open blocking findings visible on the PR across its full history (not only comments timestamped after the current `HEAD`). That way a fresh run does not declare clean while a code bug from an earlier commit on the branch is still open. Align with the pre-flight rules above and with `pr-review-loop.sh`, which anchors “existing findings” from the first commit on the PR branch relative to the base.
 - Maintain a PR feedback ledger tracking all blocking findings across cycles (keyed by `(platform, path, body_snippet)`).
 - After each fixer push, post a **fix commit comment** on the PR listing which findings that commit resolved and any remaining open findings.
 - When the loop terminates, post a **final summary table** on the PR with all findings and their statuses (`resolved` / `unresolved`).

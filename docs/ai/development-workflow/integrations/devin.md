@@ -79,6 +79,8 @@ gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
   --jq "[.[] | select(.user.login == \"devin-ai-integration[bot]\" and .created_at > \"$since_iso\" and .in_reply_to_id == null) | {path, line, body}]"
 ```
 
+**Phase 1 “existing findings” anchor:** Before polling, the helper uses a `since_iso` derived from the **first commit on the PR branch** (after the PR base), not only the HEAD commit time, so a merge commit (e.g. merging `develop`) cannot postdate and hide older Devin inline comments. Phase 2 completion polling and Phase 3 result collection still use the HEAD commit timestamp to scope the **current** push’s review.
+
 **All Devin findings are blocking.** Unlike Greptile, there is no `is_soft_suggestion()` heuristic — both severe (red) and non-severe (yellow) findings block the PR.
 
 ### Reply thread handling
