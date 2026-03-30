@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `pr-review-loop.sh`: Devin adapter now counts GitHub Status Contexts (in addition to Check Runs) when detecting Devin review activity and completion, preventing false `no_check_run` skips when Devin signals via a commit status instead of a check run. Status counts are deduplicated by context (latest entry per context) to avoid inflated counts when the same context transitions through multiple states.
+
 ## [0.18.0] - 2026-03-18
 
 ### Added
