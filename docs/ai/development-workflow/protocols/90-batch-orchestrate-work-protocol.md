@@ -85,6 +85,8 @@ Build a portfolio map of:
 
 When available, use `workflow-batch-plan.sh` as the initial candidate list for development folders, then enrich it with tracker and PR data.
 
+When an issue tracker is configured and accessible, use it to pre-filter the candidate list: exclude items whose tracker status is already `Done`, `Merged`, `Cancelled`, or equivalent before calling `workflow-next-action.sh --development`. This is an optional optimization — the script performs its own VCS-level check to detect merged items, but skipping them at the tracker layer avoids unnecessary `gh` calls in large portfolios.
+
 ---
 
 ## Step 2: Determine Eligibility and Priority
