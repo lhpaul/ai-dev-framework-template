@@ -28,12 +28,12 @@ review:
 
 issue_tracker:
   # Supported examples: linear, github_issues, jira, clickup, notion, none
-  # provider: linear
+  provider: github_issues
 
 vcs:
   # Supported examples: github, gitlab, bitbucket, other
-  # provider: github
+  provider: github
 
 browser_automation:
   # Supported examples: cursor_ide_browser_mcp, playwright_mcp, playwright_cli, none
-  # provider: cursor_ide_browser_mcp
+  provider: playwright_cli
