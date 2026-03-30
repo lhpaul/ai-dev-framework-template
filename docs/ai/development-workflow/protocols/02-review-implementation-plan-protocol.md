@@ -1,8 +1,9 @@
-# Protocol: Review Implementation Plan (Compatibility Wrapper)
+# Protocol: Review Implementation Plan
 
 **Purpose**: Run the implementation-plan review gate using the repository's canonical review contract in [`REVIEW.md`](../../../../REVIEW.md).
 
 Use this protocol when:
+
 - A workflow stage says to run the plan review gate
 - A legacy command or agent still points to this file
 - You want a repo-specific wrapper around a tool's native review feature
@@ -12,6 +13,7 @@ Use this protocol when:
 ## Source of Truth
 
 Read and follow:
+
 - [`REVIEW.md`](../../../../REVIEW.md) → `Plan Review Checklist`
 - The corresponding spec
 - The target implementation plan
@@ -29,9 +31,10 @@ Read and follow:
 - Other tools: perform a manual review against `REVIEW.md`.
 
 If invoked in a fix loop for a pushed branch or open PR:
+
 - Apply all deterministic `blocking` and `important` fixes directly
 - Commit and push if repo-tracked files changed
-- Return approval only when no fixable `blocking` issues remain
+- Return approval only when no fixable `blocking` findings remain
 - Escalate only when a real product or architecture decision is required
 
 ---
@@ -39,7 +42,8 @@ If invoked in a fix loop for a pushed branch or open PR:
 ## Output
 
 Produce a concise review report with:
+
 - Overall assessment
 - Direct fixes applied
-- Remaining issues requiring human input
+- Remaining findings requiring human input
 - Verdict: `APPROVED` or `NEEDS REVISION`

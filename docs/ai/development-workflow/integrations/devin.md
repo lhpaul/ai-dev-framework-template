@@ -1,6 +1,6 @@
 # Integration: Devin (Automated PR Review)
 
-This document describes how to use [Devin](https://devin.ai) as one automated code review platform in the workflow.
+This document describes how to use [Devin](https://devin.ai) as one automated PR reviewer tool in the workflow.
 
 Devin is **optional**. The workflow functions without it. See [`integrations/pr-review-platform.md`](pr-review-platform.md) for the multi-platform loop and aggregation rules.
 
@@ -9,7 +9,7 @@ Devin is **optional**. The workflow functions without it. See [`integrations/pr-
 ## What Devin Adds
 
 - Automated code review on every push — no trigger comment needed
-- AI-powered analysis that catches bugs, security issues, and logic errors
+- AI-powered analysis that catches bugs, security vulnerabilities, and logic errors
 - Complements Greptile by providing a second independent review perspective
 
 ---
@@ -28,7 +28,7 @@ After installation, push a commit to an open PR and confirm that Devin posts rev
 
 ## Step 7 — Devin-Specific Implementation
 
-The item orchestrator's Step 7 (Automated Reviewer Loop) requires platform-specific commands. Below are the Devin adapter details used by the shared helper.
+The **Work Item Runner's** Step 7 (Automated Reviewer Loop) requires platform-specific commands. Below are the Devin adapter details used by the shared helper.
 
 ### Preferred helper
 
@@ -38,7 +38,7 @@ When possible, call the repository helper instead of re-implementing the loop in
 ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name> --platform devin
 ```
 
-It encapsulates the polling, comment classification, and stable aggregate `RESULT=` output used by the orchestrator.
+It encapsulates the polling, comment classification, and stable aggregate `RESULT=` output used by the **Work Item Runner** (and by the **Portfolio Orchestrator** when it supervises item-level runs).
 
 ### Bot identity
 
@@ -53,22 +53,24 @@ Devin posts as `devin-ai-integration[bot]`. Use this login to filter its comment
 Devin signals completion in one of these ways:
 
 1. **Summary review** — body contains `**Devin Review**` or "Devin Review has completed"
-2. **No-issues review** — body contains "No Issues Found" (Devin posts this when it finds nothing to report; it may not create a check run in that case)
+2. **No-findings review** — body contains "No Issues Found" (Devin posts this when it finds no blocking PR feedback; it may not create a check run in that case)
 3. **Check run + grace period** — a Devin check run reaches `completed` and 120s have passed without a summary (handles inline-only or no summary)
 
-**Important**: The check run may complete **before** Devin finishes posting review comments. The helper script therefore checks for completion **reviews first** on every poll (including "No Issues Found") so it does not depend on the check run when Devin explicitly reports no issues.
+**Important**: The check run may complete **before** Devin finishes posting review comments, and in some cases Devin may post review output later than expected or without a visible check run at the start of polling. The helper script therefore checks for completion **reviews first** on every poll (including "No Issues Found") and does **not** immediately skip just because no check run is visible yet.
 
 The helper script:
 
 - On each poll, looks for any Devin review since the commit with body matching `**Devin Review**`, "Devin Review has completed", or "No Issues Found". If found, treats review as complete and proceeds to Step 7.3.
-- If no such review is seen, checks for a completed Devin check run and, once seen, applies a 120s grace period before treating the run as complete.
+- If no such review is seen, checks for Devin check runs and, once a completed check run is seen, applies a 120s grace period before treating the run as complete.
+- If no Devin review and no Devin check run appear during the full `max_wait` window, checks for stale findings (see below) before returning `skipped`.
 
 | Result | Action |
-|---|---|
+| --- | --- |
 | Any Devin review with "**Devin Review**", "Devin Review has completed", or "No Issues Found" | Review complete — proceed to Step 7.3 |
 | `check_completed > 0` and grace period (120s) elapsed | Assume complete — proceed to Step 7.3 |
-| `check_completed == 0` and `elapsed < max_wait` | Not finished yet — wait another `poll_interval` and poll again |
-| `elapsed >= max_wait` | Timeout — escalate to human (also covers the case where Devin is not installed) |
+| No completion review yet and `elapsed < max_wait` | Not finished yet — wait another `poll_interval` and poll again |
+| `elapsed >= max_wait` and no Devin check run was ever seen | Stale findings recovery, then skip as `no_check_run` if none found |
+| `elapsed >= max_wait` and a Devin check run was seen | Timeout — escalate to human |
 
 ### Step 7.3 — Fetch inline comments
 
@@ -76,6 +78,8 @@ The helper script:
 gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
   --jq "[.[] | select(.user.login == \"devin-ai-integration[bot]\" and .created_at > \"$since_iso\" and .in_reply_to_id == null) | {path, line, body}]"
 ```
+
+**Stale findings recovery:** When Devin does not review the current HEAD (no check run within `max_wait`), the helper scans the full PR history for unresolved Devin inline comments before reporting `skipped`. If unresolved findings exist from a prior review cycle (e.g. before a merge of the base branch), the helper reports `needs_fixes` with reason `stale_findings` so the agent dispatches a fixer. Devin's `✅ **Resolved**` confirmations and "No Issues Found" comments are excluded from this scan.
 
 **All Devin findings are blocking.** Unlike Greptile, there is no `is_soft_suggestion()` heuristic — both severe (red) and non-severe (yellow) findings block the PR.
 
@@ -85,4 +89,8 @@ Devin posts findings as inline comments on code lines, sometimes with a reply th
 
 ### "No Issues Found" handling
 
-When Devin finds no issues, it posts a summary comment containing "No Issues Found". These comments are excluded from the blocking count so the review correctly resolves as `clean`.
+When Devin finds no blocking PR feedback, it may post a summary comment containing "No Issues Found". These comments are excluded from the blocking count so the review correctly resolves as `clean`.
+
+### Resolved comment handling
+
+Devin posts `✅ **Resolved**:` comments when it detects a commit that fixes a previously reported issue. These confirmations are excluded from the blocking count so they are not misclassified as new findings.

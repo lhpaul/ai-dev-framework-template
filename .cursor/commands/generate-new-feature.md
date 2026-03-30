@@ -4,6 +4,6 @@ description: Spec Ready stage. Conducts an alignment conversation and writes the
 
 Follow the spec generation protocol exactly as defined in:
 
-`docs/ai/development-workflow/protocols/01-generate-specs-protocol.md`
+`docs/ai/development-workflow/protocols/01-generate-spec-protocol.md`
 
 Do not skip the alignment conversation. Once ambiguity is resolved, continue through reviewer gate, PR creation, and PR readiness unless the protocol requires human input.

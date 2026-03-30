@@ -10,16 +10,18 @@ This project follows a staged AI-assisted development workflow. The canonical re
 
 `docs/ai/development-workflow/README.md`
 
+Repository-specific workflow providers live in `.ai-dev-workflow.yaml`. Today, helper scripts consume `review.platforms` directly; other sections are advisory until more tooling adopts them.
+
 ### Stages and protocols
 
 | Stage | Protocol |
 |---|---|
-| Write spec | `docs/ai/development-workflow/protocols/01-generate-specs-protocol.md` |
+| Write spec | `docs/ai/development-workflow/protocols/01-generate-spec-protocol.md` |
 | Write plan | `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
-| Implement | `docs/ai/development-workflow/protocols/04-implement-development-protocol.md` |
+| Implement | `docs/ai/development-workflow/protocols/03-implement-development-protocol.md` |
 | Review gate | `REVIEW.md` and the compatibility wrappers under `docs/ai/development-workflow/protocols/` |
-| Batch orchestrate | `docs/ai/development-workflow/protocols/89-batch-orchestrate-work-protocol.md` |
-| Orchestrate one item | `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
+| Batch orchestrate | `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
+| Orchestrate one item | `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` |
 
 ### Key rules
 

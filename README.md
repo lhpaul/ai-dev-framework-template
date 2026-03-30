@@ -73,17 +73,20 @@ The setup agent will have a structured conversation with you to understand your 
 │   └── ai/
 │       └── development-workflow/
 │           ├── README.md                  # Master workflow document
-│           ├── tooling-assumptions.md     # Required vs optional tools
+│           ├── agent-model-config.md      # Model tier policy and overrides
 │           ├── protocols/                 # Canonical stage protocols
-│           │   ├── 01-generate-specs-protocol.md
-│           │   ├── 01-review-specs-protocol.md
+│           │   ├── 01-generate-spec-protocol.md
+│           │   ├── 01-review-spec-protocol.md
 │           │   ├── 02-generate-implementation-plan-protocol.md
 │           │   ├── 02-review-implementation-plan-protocol.md
-│           │   ├── 04-implement-development-protocol.md
-│           │   ├── 04-review-implemented-development-protocol.md
-│           │   ├── 89-batch-orchestrate-work-protocol.md
-│           │   ├── 90-orchestrate-work-protocol.md
-│           │   └── 91-pr-readiness-signal-protocol.md
+│           │   ├── 03-implement-development-protocol.md
+│           │   ├── 03-review-implementation-protocol.md
+│           │   ├── 04-smoke-test-protocol.md
+│           │   ├── 05-prepare-release-protocol.md
+│           │   ├── 90-batch-orchestrate-work-protocol.md
+│           │   ├── 91-orchestrate-work-protocol.md
+│           │   ├── 92-pr-readiness-signal-protocol.md
+│           │   └── 93-automated-reviewer-loop-protocol.md
 │           ├── templates/                 # Spec, plan, and test templates
 │           │   ├── spec-template.md
 │           │   ├── implementation-plan-template.md

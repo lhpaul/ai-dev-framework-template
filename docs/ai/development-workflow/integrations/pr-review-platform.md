@@ -10,16 +10,16 @@ Platform-specific setup lives in each platform's own integration doc. See:
 
 ## Review Model
 
-Automated PR reviewers are **post-push validation**. They do not replace the pre-PR review gate defined in [`REVIEW.md`](../../../../REVIEW.md).
+Automated PR reviewer tools are **post-push validation**. They do not replace the pre-PR review gate defined in [`REVIEW.md`](../../../../REVIEW.md).
 
 Default policy is **sequential gating**:
-- Configure reviewers in a fixed order
-- Run the first configured reviewer
-- Only continue to the next reviewer when the current reviewer is `clean` or `skipped`
-- If any reviewer returns blocking findings, stop the loop, fix the branch, push, and start again from the first configured reviewer
-- If any reviewer escalates, the overall loop escalates
+- Configure reviewer tools in a fixed order
+- Run the first configured reviewer tool
+- Only continue to the next reviewer tool when the current one is `clean` or `skipped`
+- If any reviewer tool returns blocking PR feedback, stop the loop, fix the branch, push, and start again from the first configured reviewer tool
+- If any reviewer tool escalates, the overall loop escalates
 
-Readiness requires every configured reviewer to be `clean` or `skipped`.
+Readiness requires every configured reviewer tool to be `clean` or `skipped`.
 
 ---
 
@@ -41,14 +41,14 @@ If a platform does not yet meet that contract in this repository, it should be d
 
 The aggregate loop result is:
 
-- `clean` when every configured reviewer is `clean` or `skipped`
-- `needs_fixes` when the first unfinished reviewer reports blocking findings
-- `escalate` when the first unfinished reviewer times out or otherwise escalates
-- `skipped` when no automated reviewer is configured at all
+- `clean` when every configured reviewer tool is `clean` or `skipped`
+- `needs_fixes` when the first unfinished reviewer tool reports blocking PR feedback
+- `escalate` when the first unfinished reviewer tool times out or otherwise escalates
+- `skipped` when no automated reviewer tool is configured at all
 
 Additional rules:
 - Suggestions are non-blocking regardless of platform
-- `needs_fixes` summaries should include the blocking platform identity
+- `needs_fixes` summaries should include the blocking reviewer tool identity
 - Unsupported configured platforms may be reported as `skipped` with a reason such as `unsupported-platform`
 - CI starts only after the aggregate reviewer result is `clean` or `skipped`
 
@@ -59,12 +59,17 @@ Additional rules:
 The active review platforms for a repository are declared in `.ai-dev-workflow.yaml` at the repo root:
 
 ```yaml
-review_platforms:
-  - greptile
-  - devin
+schema_version: 1
+
+review:
+  platforms:
+    - greptile
+    - devin
 ```
 
-The helper script reads this file automatically when no `--platform` flag is passed. If the file is absent, the script falls back to `greptile` only. If the file exists but the platform list is empty, no reviewer runs and the result is skipped. Explicit `--platform` flags always override the config file.
+The helper script reads this file automatically when no `--platform` flag is passed. If the file is absent, or if `review.platforms` is omitted or the platform list is empty, no reviewer tool runs and the result is skipped. Explicit `--platform` flags always override the config file.
+
+Use the nested `review.platforms` form so `.ai-dev-workflow.yaml` can also declare other workflow integrations such as `issue_tracker`, `vcs`, and `browser_automation`.
 
 ---
 
@@ -93,8 +98,8 @@ The script emits:
 
 ---
 
-## Without Automated Reviewers
+## Without Automated Reviewer Tools
 
-If no automated review platform is configured, skip the PR review loop and report `Automated review: ⏭️ skipped (not configured)`.
+If no automated reviewer tool is configured, skip the PR review loop and report `Automated review: ⏭️ skipped (not configured)`.
 
 The pre-PR review gate from [`REVIEW.md`](../../../../REVIEW.md) still applies.

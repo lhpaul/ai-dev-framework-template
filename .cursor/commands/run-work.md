@@ -6,7 +6,7 @@ description: Batch-orchestrate and supervise multiple developments. Reads curren
 
 Follow the batch orchestration protocol exactly as defined in:
 
-`docs/ai/development-workflow/protocols/89-batch-orchestrate-work-protocol.md`
+`docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
 
 Key responsibilities:
 

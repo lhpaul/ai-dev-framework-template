@@ -1,16 +1,39 @@
 # AI Development Workflow Configuration
 #
-# This file configures repository-specific settings for the AI development
-# workflow. It is read by scripts and agents to determine which integrations
-# are active for this repository.
+# This file declares which workflow integrations this repository uses.
+# Keep it declarative and repo-safe: select providers here, but do not store
+# secrets, tokens, hostnames, or other environment-specific credentials.
 #
-# See docs/ai/development-workflow/integrations/ for platform-specific setup.
+# See docs/ai/development-workflow/README.md and
+# docs/ai/development-workflow/integrations/ for integration-specific setup.
+#
+# Important:
+# - scripts/development-workflow/pr-review-loop.sh currently consumes only
+#   review.platforms.
+# - Other sections are advisory until additional scripts or agents adopt them.
+#
+# Behavior for automated PR review:
+# - If this file is absent, or review.platforms is omitted or empty, the review
+#   loop reports skipped (not configured).
 
-# Ordered list of automated PR review platforms to run sequentially.
-# Platforms are evaluated in the order listed; the first blocking result
-# stops the loop. Supported values: greptile, devin
-# If this file is absent, the script falls back to "greptile" only.
-# If the file exists but review_platforms is empty, no reviewer runs.
-review_platforms:
-  - greptile
-  - devin
+schema_version: 1
+
+review:
+  # Ordered list of automated PR review platforms to run sequentially.
+  # Platforms are evaluated in order; the first blocking result stops the loop.
+  # Supported today by pr-review-loop.sh: greptile, devin
+  platforms:
+    - greptile
+    - devin
+
+issue_tracker:
+  # Supported examples: linear, github_issues, jira, clickup, notion, none
+  provider: github_issues
+
+vcs:
+  # Supported examples: github, gitlab, bitbucket, other
+  provider: github
+
+browser_automation:
+  # Supported examples: cursor_ide_browser_mcp, playwright_mcp, playwright_cli, none
+  provider: playwright_cli

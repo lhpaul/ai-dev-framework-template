@@ -1,280 +1,460 @@
 # AI-Assisted Development Workflow
 
-This document is the **canonical master reference** for how development is structured in this project. AI agents and human team members follow this workflow.
+This document is the canonical reference for how development moves through this repository.
 
-**Core principle**: AI agents handle execution; humans give direction at the start, then review only when a PR is actually clean or when the workflow escalates.
+The goal of this workflow is simple: AI agents should do most of the execution work, while humans focus on the parts that matter most from a human perspective: choosing direction, making decisions when the requirements are unclear, and reviewing the final result before merge or release.
 
-**Persistent execution contract**: A workflow run should continue through creator stage, review gate, PR creation, automated review, and CI. It should stop only at a real terminal condition: waiting on human review / merge, blocked dependency, unresolved product decision, or escalation.
-
-**Pre-PR review gate**: For any stage that produces a branch intended for a PR (spec, plan, implementation), run a review against [`REVIEW.md`](../../../REVIEW.md) **before** opening the PR. Prefer the runner's native review capability when available; otherwise perform a manual/self-review using the same contract. After the PR is opened, continue through automated reviewers and CI until the PR is actually ready for human review.
+The workflow is designed around a persistent execution contract. Once a run starts, it should keep advancing the work until it reaches a real stopping point: the pull request is ready for human review, a human decision is required, a dependency blocks progress, or an automated loop escalates after retry or timeout limits. Opening a branch, opening a PR, or finishing one sub-step is not enough by itself.
 
 ---
 
-## Workflow Stages
+## Why This Workflow Exists
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         BACKLOG                                 │
-│   Ideas, bugs, improvements tracked in your issue tracker       │
-└─────────────────────┬───────────────────────────────────────────┘
-                      │  Human: decide to start a feature
-                      │  AI: product-manager agent dispatched
-                      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    SPEC IN REVIEW                               │
-│   Spec PR open; pending human review and merge                  │
-│   Branch: spec/[feature-slug]                                   │
-│   Protocol: 01-generate-specs-protocol.md                       │
-└─────────────────────┬───────────────────────────────────────────┘
-                      │  Human: merge spec PR
-                      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                       SPEC READY                                │
-│   Spec merged; implementation plan pending                      │
-│   AI: tech-lead agent dispatched                                │
-└─────────────────────┬───────────────────────────────────────────┘
-                      │  AI: tech-lead opens plan PR
-                      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    PLAN IN REVIEW                               │
-│   Implementation plan PR open; pending human review and merge   │
-│   Branch: implementation-plan/[feature-slug]                    │
-│   Protocol: 02-generate-implementation-plan-protocol.md         │
-└─────────────────────┬───────────────────────────────────────────┘
-                      │  Human: merge plan PR
-                      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      PLAN READY                                 │
-│   Plan merged; ready for implementation                         │
-│   AI: developer agent dispatched                                │
-└─────────────────────┬───────────────────────────────────────────┘
-                      │  AI: PR opened + automated reviewer / CI loops run
-                      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    IN DEVELOPMENT                               │
-│   Implementation in progress; PR open                           │
-│   Branch: feature/[feature-slug]                                │
-│   Protocol: 04-implement-development-protocol.md                │
-└─────────────────────┬───────────────────────────────────────────┘
-                      │  Human: merge implementation PR
-                      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                       MERGED                                    │
-│   PR merged into `develop`                                      │
-│   CI validates; deployed to staging if configured               │
-│   Optional: /post-merge-cleanup to fetch, checkout develop,    │
-│   pull, and delete the local branch (see AGENTS.md)             │
-└─────────────────────┬───────────────────────────────────────────┘
-                      │  Human: prepare release
-                      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      RELEASED                                   │
-│   Merged to main, tagged, deployed to production                │
-└─────────────────────────────────────────────────────────────────┘
-```
+Software delivery gets more reliable when each stage answers a different question:
+
+- **Backlog**: Is this the right thing to work on now?
+- **Spec**: What should be built, and how will we know it is correct?
+- **Implementation plan**: How should we build it in this codebase?
+- **Implementation**: Does the code, its supporting tests, and its documentation match the agreed plan?
+- **Merge**: Is the change ready to join the integration branch?
+- **Release**: Is the integrated work ready to ship to production?
+
+Each piece of tracked work usually starts as a row in an issue tracker such as Linear, Jira, GitHub Issues, or ClickUp. From this point on, this document calls that tracked unit a **work item**.
+
+Comments, review threads, automated findings, and failing checks on a pull request are a different kind of issue entirely. From this point on, this document calls that pull-request-side work **PR feedback**.
 
 ---
 
-## Product-first boundary (important)
+## The Stages And Their Value
 
-The **Spec Ready** stage is intentionally **product-focused**: it defines what the feature should do (actors, rules, UX, acceptance criteria). Avoid prescribing technical design (DB/schema details, file paths, specific endpoints/classes). Those decisions belong in the **Plan Ready (Implementation Plan)** stage.
+The process moves through the stages below in order. The point of this section is not automation yet; it is to explain what each stage does and why it exists.
 
-## Commands by Stage
+| Stage | What this stage does | Why it matters |
+| --- | --- | --- |
+| **Backlog** | Collects candidate work items, priorities, dependencies, and deadlines. | Keeps the team from starting work without context or priority. |
+| **Spec** | Defines the user-facing or business-facing outcome: behavior, rules, acceptance criteria, and scope. | Prevents building the wrong thing or solving the wrong problem. |
+| **Implementation plan** | Converts the spec into a technical approach for this repository: files, sequencing, risks, migrations, rollout details, the edge cases and test approach the implementation must cover, and any observability or analytics work needed to operate and understand the feature. | Prevents costly implementation churn and keeps design decisions explicit. |
+| **Implementation** | Produces the actual code, supporting automated tests, and documentation changes. | Turns approved intent into a concrete change set while keeping developer-facing verification close to the work. |
+| **Merge** | Moves the approved change into `develop`. | Creates a stable integration point for completed work. |
+| **Release** | Ships integrated work from `develop` to `main` using the release flow. | Separates "merged" from "in production" and keeps release discipline explicit. |
+
+### Backlog
+
+The backlog is where work starts. A work item exists here before the team commits to a solution. This stage is about priority, timing, dependencies, and clarity of the request.
+
+### Spec
+
+The spec explains **what** should happen and **why** it matters. It should describe actors, workflows, business rules, acceptance criteria, scope boundaries, and any product-facing measurement requirements in product terms.
+
+This workflow intentionally keeps the spec product-first. The spec should not lock in detailed technical design unless the product decision genuinely depends on it.
+
+When user-behavior analytics matter, the spec should define the product intent behind them: which user actions or outcomes matter, what questions the team wants to answer, and what privacy or consent constraints apply. The implementation plan should then translate those requirements into concrete instrumentation, data pipelines, dashboards, or alerting.
+
+### Implementation Plan
+
+The implementation plan picks up after the spec is merged. It explains **how** the repository should satisfy the spec: which files change, what order the work should happen in, what risks exist, what data or migration steps are needed, which edge cases must be validated, what observability and analytics support the feature requires, and what smoke test runbook should prove the change works.
+
+This stage protects the codebase from "understood in my head" engineering. It also gives future reviewers a concrete basis for deciding whether the implementation stayed on course, including whether the testing strategy covers the tricky or failure-prone cases rather than only the happy path.
+
+When relevant, the plan should make observability and analytics explicit instead of leaving them implicit. That can include frontend crash reporting, backend logging and alerting, product analytics events, and any downstream analytical-data handling needed to make the feature measurable and supportable in production.
+
+### Implementation
+
+Implementation turns the approved plan into code, tests, docs, and changelog updates. This is where the repository changes, but it is not a license to improvise on scope. If implementation reveals a missing requirement or a design gap that the plan cannot safely answer, the workflow stops and asks for a decision instead of silently inventing one.
+
+This stage also includes the validation work needed to prove the implementation is truly ready. That means keeping automated tests in sync during development and, later, running the final smoke-test checkpoint before humans treat the change as ready.
+
+The final implementation-validation checkpoint in this workflow is the smoke test: a targeted run driven by a smoke test runbook or an existing committed automated spec.
+
+### Merge
+
+Merge is the point where a change joins `develop`. A merged change is integrated, but not necessarily released. Treating merge as its own stage keeps integration quality and production release quality from getting conflated.
+
+### Release
+
+Release is the step where the team decides that `develop` is ready to ship. The workflow uses a dedicated release branch and a controlled PR flow so versioning, changelog curation, tagging, and backports happen deliberately.
+
+---
+
+## Workflow At A Glance
+
+```mermaid
+flowchart TD
+    backlog[Backlog] --> spec[Spec]
+    spec --> plan[ImplementationPlan]
+    plan --> implement[Implementation]
+    implement --> validate[SmokeTestCheckpoint]
+    validate --> merge[MergedToDevelop]
+    merge --> release[ReleasedToMain]
+```
+
+For the three authored artifacts in the middle of the workflow, the same review pattern repeats:
+
+1. Draft the artifact or code on a workflow branch.
+2. Run an internal review gate.
+3. Resolve automated PR feedback and CI findings.
+4. Hand the PR to a human only when it is actually ready.
+5. Merge, then move to the next stage.
+
+After implementation is code-review ready, the workflow can still run a smoke test as a final validation checkpoint. That checkpoint is intentionally different from the spec, plan, and implementation review loops: it produces a pass/fail validation result, not another reviewed artifact PR.
+
+That repeated pattern is one of the main reasons the workflow scales well with AI assistance: it creates a predictable loop for authored artifacts without pretending every checkpoint has the same review semantics.
+
+---
+
+## How AI Agents Fit Into The Process
+
+The sections above describe the process in human terms. This section explains how AI agents are layered onto that process.
+
+At the broadest level, humans still choose what matters. A human decides which work item should start, clarifies ambiguous requirements, reviews the final PR, and decides whether to merge or release. The automation exists to compress the execution between those human touchpoints.
+
+### Entry Modes
+
+Humans usually enter the workflow in one of two ways:
+
+1. **Targeted mode**: start or resume one known item.
+2. **Portfolio mode**: ask the system to scan the portfolio and advance all safe eligible work.
+
+The portfolio-wide coordinator is the **Portfolio Orchestrator** (`orchestrator`). From this point on, this document uses that name for the agent that inspects the whole portfolio, selects eligible items, groups parallel-safe work, and dispatches one item-level runner per item.
+
+The single-item coordinator is the **Work Item Runner** (`item-orchestrator`). From this point on, this document uses that name for the agent that owns one work item, branch, development folder, or PR and keeps it moving until it reaches a real terminal condition.
+
+Stage agents such as `product-manager`, `tech-lead`, and `developer` do not decide portfolio priority on their own. They are dispatched for a specific item by a human or by the Work Item Runner.
+
+### Agent Layers
+
+| Layer | Role in the workflow |
+| --- | --- |
+| **Portfolio Orchestrator** | Scans the portfolio, selects safe work, and dispatches item-level runs. |
+| **Work Item Runner** | Resolves exactly one item and drives it through the next deterministic steps without stopping early. |
+| **Stage agent** | Produces the stage output itself, such as a spec, plan, or implementation. |
+| **Internal review agent** | Reviews the draft output against the repository's review contract before the PR is handed to external systems or humans. |
+| **Automated reviewer loop** | Resolves third-party PR review findings until the PR is clean or escalated. |
+| **CI loop** | Waits for required checks to pass and handles fix cycles when they fail. |
+| **Human reviewer** | Reviews the final PR when the automated work is already clean. |
+
+### Stage Agents
+
+The main stage agents map to the authored stages and the final validation checkpoint:
+
+| Stage | Primary agent | Purpose |
+| --- | --- | --- |
+| **Spec** | `product-manager` | Produces the spec PR. |
+| **Implementation plan** | `tech-lead` | Produces the plan PR. |
+| **Implementation** | `developer` | Produces the implementation PR. |
+| **Smoke test** | `smoke-tester` | Executes the smoke test runbook and reports pass/fail. |
+
+### Internal Review And External Review
+
+This workflow uses two kinds of review that are easy to confuse, so it is worth naming them clearly.
+
+Review performed by repository-managed agents using local protocols such as `REVIEW.md`, `01-review-spec-protocol.md`, `02-review-implementation-plan-protocol.md`, or `03-review-implementation-protocol.md` is called **internal AI review**.
+
+Review performed by external PR review products such as CodeRabbit, Greptile, Devin Review, or similar Git-hosted tools is called a **third-party reviewer**. These tools are useful, but they are not the same thing as the repository's internal review agents.
+
+### The Execution Loop
+
+For a typical spec, plan, or implementation item, the AI-assisted flow looks like this:
+
+1. A human starts a work item directly or asks for portfolio-wide advancement.
+2. The appropriate orchestrator resolves the next deterministic action.
+3. A stage agent creates or updates the branch and draft PR.
+4. An internal review agent drives the draft PR to a clean review state.
+5. The automated reviewer loop resolves third-party PR feedback.
+6. The CI loop waits for required checks to pass.
+7. The PR is marked ready for human review.
+8. A human reviews and either merges or requests changes.
+
+This means the AI system is not just writing a first draft. It is responsible for most of the execution between the initial brief and the point where a human is justified in spending review time.
+
+---
+
+## Key Boundaries And Rules
+
+### Spec Versus Plan
+
+The spec defines what should happen. The implementation plan defines how this repository should make it happen. If a document needs detailed file paths, architecture sequencing, migration steps, or low-level technical trade-offs, it belongs in the implementation plan rather than the spec.
+
+### Ready For Review Versus Still In Progress
+
+Opening a PR does not mean a stage is done. A PR is only ready when the internal review gate is clean, configured automated reviewers are clean or intentionally skipped, CI is green, and previous human feedback has been addressed. The operational `PR Readiness` section below defines how to signal that state.
+
+### Spec Gaps
+
+When implementation reveals a missing requirement or unresolved choice, the workflow should stop and report the gap. The fix is to update the spec or plan and then resume, not to let an agent silently invent product or architecture decisions.
+
+---
+
+## Operational Reference
+
+The sections below keep this document usable as a master reference after the narrative introduction.
+
+### Commands By Stage
 
 | Stage | Claude Code | Cursor | Codex | Any AI tool |
-|---|---|---|---|---|
-| Write Spec | `product-manager` agent | `/generate-new-feature` | `workflow-spec-writer` skill | `docs/ai/development-workflow/protocols/01-generate-specs-protocol.md` |
-| Write Plan | `tech-lead` agent | `/generate-implementation-plan` | `workflow-plan-writer` skill | `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
-| Implement | `developer` agent | `/implement-development` | `workflow-implementer` skill | `docs/ai/development-workflow/protocols/04-implement-development-protocol.md` |
-| Review Gate (Spec / Plan / Code) | Native review against `REVIEW.md` | `/review-spec`, `/review-implementation-plan`, `/review-code` | Native review against `REVIEW.md` | `REVIEW.md` plus compatibility wrappers in `docs/ai/development-workflow/protocols/` |
-| Run reviewer loop (PR) | `automated-reviewer-loop` agent | `/run-reviewer-loop` | `workflow-reviewer-loop` skill | `docs/ai/development-workflow/protocols/92-automated-reviewer-loop-protocol.md` |
-| Advance One Item | `item-orchestrator` agent | `/run-item-work` | `workflow-item-orchestrator` skill | `docs/ai/development-workflow/protocols/90-orchestrate-work-protocol.md` |
-| Orchestrate | `orchestrator` agent | `/run-work` | `workflow-orchestrator` skill | `docs/ai/development-workflow/protocols/89-batch-orchestrate-work-protocol.md` |
+| --- | --- | --- | --- | --- |
+| Write spec | `product-manager` agent | `/generate-new-feature` | `workflow-spec-writer` skill | `docs/ai/development-workflow/protocols/01-generate-spec-protocol.md` |
+| Write plan | `tech-lead` agent | `/generate-implementation-plan` | `workflow-plan-writer` skill | `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
+| Implement | `developer` agent | `/implement-development` | `workflow-implementer` skill | `docs/ai/development-workflow/protocols/03-implement-development-protocol.md` |
+| Review gate (spec / plan / code) | Native review against `REVIEW.md` | `/review-spec`, `/review-implementation-plan`, `/review-code` | Native review against `REVIEW.md` | `REVIEW.md` plus compatibility wrappers in `docs/ai/development-workflow/protocols/` |
+| Smoke test | `smoke-tester` agent | `/smoke-tester` | — | `docs/ai/development-workflow/protocols/04-smoke-test-protocol.md` |
+| Run reviewer loop | `automated-reviewer-loop` agent | `/run-reviewer-loop` | `workflow-reviewer-loop` skill | `docs/ai/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` |
+| Advance one item | `item-orchestrator` agent | `/run-item-work` | `workflow-item-orchestrator` skill | `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` |
+| Orchestrate portfolio | `orchestrator` agent | `/run-work` | `workflow-orchestrator` skill | `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
+| Prepare release | `/prepare-release` | `/prepare-release` | — | `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md` |
 
-Codex skills are stored in `.codex/skills/` and can be installed into the local Codex environment with `./scripts/development-workflow/install-codex-skills.sh`. They are intentionally thin wrappers over the same protocol files used by every other tool.
+Codex skills are stored in `.codex/skills/`. Install them into the local Codex environment with:
 
-For low-human-interaction operation in Codex, treat `workflow-orchestrator` as the default portfolio-wide entrypoint. It inspects workflow state, chooses safe parallel batches, and routes each item into `workflow-item-orchestrator`. Use `workflow-item-orchestrator` when you want to resume or advance one specific development, branch, or PR without rescanning the whole portfolio. Stage-specific skills remain available for direct use, but when invoked directly they should still continue through the review gate and PR readiness before returning.
+```bash
+./scripts/development-workflow/install-codex-skills.sh
+```
 
----
+These skills are thin wrappers around the same workflow protocols used by the other tools.
 
-## Branch Naming
+### Workflow Capabilities And Fallbacks
+
+This workflow depends on a few capabilities more than on any specific vendor or product:
+
+- Git plus a remote pull-request workflow are required so agents can create branches, push work, and hand off reviewable PRs.
+- CI is required so build, lint, and test checks can act as the automated merge gate.
+- A repository CLI such as `gh` is recommended. Without one, agents can still prepare the branch locally and hand the human the information needed to open or update the PR manually.
+- Automated PR reviewers are optional. Without them, the workflow proceeds from the internal review gate directly to CI and then to human review.
+- An issue tracker is optional. Without one, portfolio-wide prioritization and "current brief" lookup require more direct human guidance.
+- Browser automation is optional. Without it, smoke tests should be run manually from the committed smoke test runbook.
+
+### Branch Naming
 
 | Branch type | Pattern | Base branch |
-|---|---|---|
+| --- | --- | --- |
 | Spec | `spec/[slug]` | `develop` |
 | Implementation plan | `implementation-plan/[slug]` | `develop` |
 | Feature | `feature/[slug]` | `develop` |
-| Bug / simple fix | `fix/[slug]` | `develop` |
+| Bug or simple fix | `fix/[slug]` | `develop` |
 | Hotfix | `hotfix/[slug]` | `main` |
 | Release | `release/v[X.Y.Z]` | `develop` |
 
-**Slug format:**
-- **With issue tracker** → `[issue-id]-[short-description]` (e.g., `feature/ENG-123-user-auth`)
-- **Without issue tracker** → `[short-description]` (e.g., `feature/user-auth`)
+Slug format:
 
-See `docs/best-practices/2-version-control.md` for the full slug convention.
+- With an issue tracker: `[issue-id]-[short-description]`
+- Without an issue tracker: `[short-description]`
 
----
+### Development Artifacts
 
-## Development Artifacts
+The spec and implementation plan for a development live under `docs/specs/developments/`:
 
-Feature development creates a folder structure under `docs/specs/`:
-
-```
+```text
 docs/specs/developments/
 └── [YYYYMMDDHHMMSS]_[feature-slug]/
-    ├── 1_[feature-slug]_specs.md              ← Created in Spec Ready
-    └── 2_[feature-slug]_implementation-plan.md ← Created in Plan Ready
+    ├── 1_[feature-slug]_specs.md
+    └── 2_[feature-slug]_implementation-plan.md
 ```
 
-Smoke test runbooks are created in:
+Smoke test runbooks live under `docs/testing/`:
 
-```
+```text
 docs/testing/[app-or-section]/[feature-slug].smoke-test.md
 ```
 
+### Tracker Status Model
+
+If an issue tracker is configured, the work item status usually maps to the workflow like this:
+
+`Backlog -> Writing Spec -> Spec in Review -> Spec Ready -> Writing Plan -> Plan in Review -> Plan Ready -> In Development -> Implementation in Review -> Merged -> Released`
+
+Typical tracker fields worth keeping current:
+
+- Status
+- Type
+- Priority
+- Due date
+- Dependency links
+- Brief and decision history
+
+### Prioritization And Dependencies
+
+When multiple items could advance, use this order:
+
+1. Due date within the next two weeks, earliest first.
+2. Priority: Urgent -> High -> Normal -> Low.
+3. Earlier-created items before newer items.
+
+Dependencies override priority. If a work item depends on another item that is not yet `Merged` or `Released`, it should wait.
+
+### Parallel Work
+
+Parallel work is encouraged when it is safe:
+
+- Different stages can usually proceed in parallel without conflict.
+- Multiple implementations can proceed in parallel if they touch different areas of the codebase.
+- Parallel database schema work should usually be serialized to avoid migration conflicts.
+
+### Special Paths
+
+#### Fast Track
+
+Fast track is the shortened path for bugs or simple changes that do not need the full spec-and-plan pipeline.
+
+Use it only when all of the following are true:
+
+- The scope is clear from the start.
+- The change is expected to touch three files or fewer.
+- No new architectural pattern is being introduced.
+- No database migration is involved.
+- The human brief is self-contained.
+
+Path: `fix/[slug]` from `develop` -> implement -> review gate -> smoke test as needed -> merge.
+
+If the change turns out to be larger than expected, stop and expand back into the normal staged workflow instead of silently widening scope.
+
+#### Hotfix
+
+Hotfix is the path for critical production bugs or urgent security issues.
+
+Path: `hotfix/[slug]` from `main` -> implement -> review gate -> smoke test as needed -> PR to `main` -> merge -> mandatory backport to `develop`.
+
+The backport is not optional. It prevents `main` and `develop` from drifting apart.
+
+### PR Readiness
+
+Use the following labels consistently when label tooling is available:
+
+| Label | Meaning |
+| --- | --- |
+| `ready-for-human-review` | Internal review is clean, configured automated reviewers are clean or skipped, CI is green, and the PR is ready for a human reviewer. |
+| `needs-fixes` | CI is failing, blocking automated feedback exists, or human requested changes are still unresolved. |
+
+Opening a PR is not a terminal condition. A workflow run should continue until the PR is ready for a human checkpoint or the process escalates.
+
+### Workflow Configuration
+
+Repository-specific workflow integrations are declared in `.ai-dev-workflow.yaml` at the repo root.
+
+The file is versioned and intentionally declarative. It is the right place to record which workflow providers this repository uses for:
+
+- Automated PR review
+- Issue tracking
+- Git hosting / pull-request workflow
+- Browser automation for smoke tests or similar validation
+
+Current schema:
+
+```yaml
+schema_version: 1
+
+review:
+  platforms:
+    - greptile
+    - devin
+
+issue_tracker:
+  provider: linear
+
+vcs:
+  provider: github
+
+browser_automation:
+  provider: playwright_mcp
+```
+
+Important implementation note:
+
+- Today, the repository helpers only consume `review.platforms`, and only `scripts/development-workflow/pr-review-loop.sh` reads the file directly.
+- If the config file is absent, or `review.platforms` is omitted or empty, automated PR review is treated as not configured and the review loop reports `skipped`.
+
+Provider-specific setup still lives in the integration guides under `docs/ai/development-workflow/integrations/`.
+
+### Automated Review And CI
+
+When an automated PR review platform is configured, the Work Item Runner should keep operating after each push instead of stopping at "PR opened".
+
+The expected sequence is:
+
+1. Run the stage-appropriate internal review gate.
+2. Run the automated reviewer loop until blocking PR feedback is resolved or the process escalates.
+3. Run the CI loop until required checks are green or the process escalates.
+4. Mark the PR ready for human review only after both loops are clean.
+
+Review platforms are declared in `.ai-dev-workflow.yaml` under `review.platforms`. The repository helpers that support this loop are:
+
+- `scripts/development-workflow/pr-review-loop.sh`
+- `scripts/development-workflow/pr-ci-loop.sh`
+
+### Release Summary
+
+Release is triggered by a human when `develop` is ready to ship.
+
+Summary:
+
+1. Create `release/v[X.Y.Z]` from `develop`.
+2. Curate `CHANGELOG.md`, move `[Unreleased]` into the versioned release section, and bump any versioned manifests.
+3. Open two PRs from the release branch: one to `main`, one back to `develop`.
+4. Merge the `main` PR first so the release tag is created, then merge the backport PR.
+
+Versioning follows Semantic Versioning:
+
+- `PATCH`: backwards-compatible fixes
+- `MINOR`: backwards-compatible features or improvements
+- `MAJOR`: breaking changes
+
 ---
 
-## Special Development Paths
+## Protocol And Integration Index
 
-### Fast Track (Bugs & Simple Changes)
+Use these documents when you need the detailed rules behind a part of the workflow:
 
-For bugs or simple changes that don't need a spec or plan:
+### Protocol Numbering
 
-**Criteria** (all must be true):
-- The scope is clear and bounded from the start
-- ≤ 3 files affected (estimate)
-- No new architectural patterns introduced
-- No new database migrations
-- Human provides a clear, self-contained brief
+Protocol prefixes are stable family identifiers, not a promise of contiguous numbering.
 
-**Path**: branch `fix/[slug]` from `develop` → implement → review gate → open PR → merge
+- `01`-`05` are the current primary stage families in workflow order.
+- Generate and review protocols for the same stage share the same family number.
+- `90`-`99` are orchestration, readiness, and other cross-cutting operational protocols.
+- The numbering was normalized after an older stage was removed, so the current primary stages are contiguous again.
 
-**Important**: If the change turns out to be larger than described, **stop and report** to the human. Don't silently expand scope. The developer agent should surface this immediately.
+### Core Protocols
 
-### Hotfix (Critical Production Bugs)
+- `docs/ai/development-workflow/protocols/01-generate-spec-protocol.md`
+- `docs/ai/development-workflow/protocols/01-review-spec-protocol.md`
+- `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md`
+- `docs/ai/development-workflow/protocols/02-review-implementation-plan-protocol.md`
+- `docs/ai/development-workflow/protocols/03-implement-development-protocol.md`
+- `docs/ai/development-workflow/protocols/03-review-implementation-protocol.md`
+- `docs/ai/development-workflow/protocols/04-smoke-test-protocol.md`
+- `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md`
+- `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
+- `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`
+- `docs/ai/development-workflow/protocols/92-pr-readiness-signal-protocol.md`
+- `docs/ai/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`
 
-For critical bugs that need immediate production deployment, bypassing the normal staged workflow:
+### Review Contract
 
-**Criteria**: Active production incident or critical security issue.
+- `REVIEW.md`
 
-**Path**: branch `hotfix/[slug]` from `main` → implement → review gate → open PR targeting `main` → merge → **mandatory backport to `develop`**
+### Tooling And Configuration
 
-The backport (main → develop) is non-negotiable to prevent branch drift.
-
----
-
-## Issue Tracker Integration
-
-The workflow can be paired with any issue tracker. For each development unit, the issue tracks:
-
-- **Status**: maps to the workflow stage (Backlog → Spec In Review → Spec Ready → Plan In Review → Plan Ready → In Development → Merged → Released)
-- **Type**: Feature / Bug / Improvement / Chore
-- **Priority**: Urgent → High → Normal → Low
-- **Due date**: items due within 2 weeks take priority over abstract priority levels
-- **Brief & decisions**: treated as the current brief per `integrations/issue-tracker.md`
-
-See [`integrations/linear.md`](integrations/linear.md) for setup with Linear.
-See [`integrations/issue-tracker.md`](integrations/issue-tracker.md) for full tracker-agnostic rules and agent expectations.
-
----
-
-## Prioritization Logic
-
-When the batch orchestrator selects what to work on next:
-
-1. Items with a due date within 2 weeks take precedence (sorted by due date)
-2. Remaining items sorted by priority (Urgent → High → Normal → Low)
-3. Within the same priority, earlier-created items first
-4. Dependencies must be Merged or Released before a dependent item can start
-
-If a due date conflicts with priority ordering, flag it to the human rather than silently choosing.
-
----
-
-## Parallel Developments
-
-Multiple features can advance simultaneously across different stages. Rules:
-
-- Parallel work across different stages is safe (e.g., one feature in Plan Ready while another is In Development)
-- Parallel implementations are safe if they touch different areas of the codebase
-- Avoid parallelizing implementations that both include database schema migrations — apply sequentially to avoid conflicts
-
-Dependency declarations in specs (e.g., "Depends on: feature-X") must be respected.
-
----
-
-## Spec Gaps & Workflow Hardening Loop
-
-When implementation reveals something not covered by the spec or plan:
-
-1. **Stop** — do not make unilateral decisions on spec-level questions
-2. **Report** to the human: "The spec doesn't cover X. Here are my options: A, B, C."
-3. Human provides the delta (clarification or decision)
-4. **Update the spec/plan** with the clarification
-5. **Resume** implementation
-6. If the gap reveals a recurring spec weakness, update the relevant protocol or template to prevent it in the future
-
----
-
-## Release Process
-
-See the full protocol: [`protocols/06-prepare-release-protocol.md`](protocols/06-prepare-release-protocol.md)
-
-**Summary**:
-1. Branch `release/v[X.Y.Z]` from `develop`
-2. Update `CHANGELOG.md` and manifest versions
-3. Open **two** PRs: one to `main` (production), one to `develop` (mandatory backport)
-4. Merge `main` first — tag is created automatically by CI; then merge the backport PR
-
-### Version Numbering
-
-This project follows [Semantic Versioning](https://semver.org/):
-- `MAJOR.MINOR.PATCH`
-- MAJOR: breaking changes
-- MINOR: new features, backwards-compatible
-- PATCH: bug fixes, backwards-compatible
-
----
-
-## Automated PR Review Integration
-
-If an automated code review platform is configured, the item orchestrator runs an automated reviewer loop after every push to a PR branch. The loop resolves all findings before the PR is flagged for human review. After the review loop is clean, the item orchestrator continues into CI polling rather than stopping at "PR opened". The batch orchestrator supervises these item-level runs and consolidates the results.
+- `docs/ai/development-workflow/agent-model-config.md`
+- `.ai-dev-workflow.yaml` - repo-level workflow integration manifest (`review.platforms`, `issue_tracker.provider`, `vcs.provider`, `browser_automation.provider`)
 
 Repository helpers:
 
 - `scripts/development-workflow/discover-workflow-state.sh`
 - `scripts/development-workflow/workflow-batch-plan.sh`
+- `scripts/development-workflow/workflow-next-action.sh`
 - `scripts/development-workflow/pr-review-loop.sh`
 - `scripts/development-workflow/pr-ci-loop.sh`
-- `scripts/development-workflow/workflow-next-action.sh`
-Active review platforms are declared in `.ai-dev-workflow.yaml` at the repo root. The helper script reads this file automatically when no `--platform` flag is passed.
-See [`integrations/pr-review-platform.md`](integrations/pr-review-platform.md) for platform-agnostic requirements and loop details.
-See [`integrations/greptile.md`](integrations/greptile.md) for setup with Greptile.
-See [`integrations/devin.md`](integrations/devin.md) for the Devin adapter.
+
+### Integration Guides
+
+- `docs/ai/development-workflow/integrations/issue-tracker.md`
+- `docs/ai/development-workflow/integrations/linear.md`
+- `docs/ai/development-workflow/integrations/pr-review-platform.md`
+- `docs/ai/development-workflow/integrations/greptile.md`
+- `docs/ai/development-workflow/integrations/devin.md`
 
 ---
 
-## PR Labels
+## Final Reminder
 
-Two labels signal agent work status:
+This workflow is intentionally opinionated.
 
-- `agent:ready-for-review` — CI green, automated review clean, ready for human review
-- `agent:needs-fixes` — human requested changes, CI failing, or automated review has blocking issues
-
-See [`protocols/91-pr-readiness-signal-protocol.md`](protocols/91-pr-readiness-signal-protocol.md) for full definition.
-
----
-
-## Agent Roles Summary
-
-| Agent | Operates on items in... | Advances item to... | Protocol |
-|---|---|---|---|
-| Product Manager | Backlog | Spec In Review | `01-generate-specs-protocol.md` |
-| Review Gate (Spec) | Spec In Review | Spec Ready | `REVIEW.md` + `01-review-specs-protocol.md` |
-| Tech Lead | Spec Ready | Plan In Review | `02-generate-implementation-plan-protocol.md` |
-| Review Gate (Plan) | Plan In Review | Plan Ready | `REVIEW.md` + `02-review-implementation-plan-protocol.md` |
-| Developer | Plan Ready | In Development | `04-implement-development-protocol.md` |
-| Review Gate (Code) | In Development | Merged (via human) | `REVIEW.md` + `04-review-implemented-development-protocol.md` |
-| Item Orchestrator | Any single workflow item | — (coordination only) | `90-orchestrate-work-protocol.md` |
-| Orchestrator | All stages / multiple items | — (batch coordination only) | `89-batch-orchestrate-work-protocol.md` |
+Humans should choose direction, resolve ambiguity, review high-quality PRs, and decide when to merge or release. Agents should draft, revise, fix, test, and keep advancing the work until it reaches a real human checkpoint.
