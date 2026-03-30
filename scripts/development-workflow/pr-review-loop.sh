@@ -591,12 +591,24 @@ run_devin_review() {
         stale_comments="$(
           gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
             | jq -r --arg bot "$bot_login" '
-                .[]
+                (
+                  [
+                    .[]
+                    | select(
+                        .user.login == $bot and
+                        .in_reply_to_id != null and
+                        ((.body // "") | test("^✅"))
+                      )
+                    | .in_reply_to_id
+                  ]
+                ) as $resolved_ids
+                | .[]
                 | select(
                     .user.login == $bot and
                     .in_reply_to_id == null and
                     ((.body // "") | test("^✅") | not) and
-                    ((.body // "") | test("No Issues Found"; "i") | not)
+                    ((.body // "") | test("No Issues Found"; "i") | not) and
+                    (.id as $comment_id | ($resolved_ids | index($comment_id) | not))
                   )
                 | { path, line: (.line // .original_line // 0), body: (.body // "") }
                 | @json
