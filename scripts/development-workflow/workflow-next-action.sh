@@ -79,11 +79,11 @@ if [ -n "$pr_number" ]; then
   print_kv REVIEW_AGENT "$(reviewer_for_branch "$branch_name")"
 
   case ",$labels," in
-    *,agent:ready-for-review,*)
+    *,ready-for-human-review,*)
       print_kv NEXT_ACTION wait-human-review
       exit 0
       ;;
-    *,agent:needs-fixes,*)
+    *,needs-fixes,*)
       print_kv NEXT_ACTION resume-fix-loop
       exit 0
       ;;
@@ -110,11 +110,11 @@ if [ -n "$branch_name" ]; then
     labels="$(printf '%s\n' "$pr_json" | jq -r '[.labels[].name] | join(",")')"
     print_kv PR_NUMBER "$pr_number"
     case ",$labels," in
-      *,agent:ready-for-review,*)
+      *,ready-for-human-review,*)
         print_kv NEXT_ACTION wait-human-review
         exit 0
         ;;
-      *,agent:needs-fixes,*)
+      *,needs-fixes,*)
         print_kv NEXT_ACTION resume-fix-loop
         exit 0
         ;;

@@ -31,6 +31,7 @@ Read **all** of the following before writing a single line of code. Do not skip.
 7. If an issue tracker exists for this item, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for `In Development (Full Pipeline)` expectations before coding.
 
 Extract from your reading:
+
 - The full list of acceptance criteria
 - Every file or area you will touch
 - The implementation order from the plan
@@ -51,6 +52,7 @@ Pause only if:
 ### Step 3: Branch
 
 Determine the branch slug:
+
 - **With issue tracker**: `[issue-id]-[slug]` (e.g., `ENG-123-user-auth`)
 - **Without issue tracker**: `[slug]` (e.g., `user-auth`)
 
@@ -60,14 +62,7 @@ git pull origin develop
 git checkout -b feature/[branch-slug]
 ```
 
-### Step 4: Mark Status
-
-- **When the issue tracker is the source of truth**: update the issue status to `In Development`; optionally update the spec file's status field for backwards compatibility.
-- The spec file's **Status** field is optional and need not be set (workflow status is derived from the tracker or repo state).
-
-If the spec file's status field was updated, commit: `docs: mark [feature-name] as In Development`
-
-### Step 5: Implement
+### Step 4: Implement
 
 Execute each step from the implementation plan in order.
 
@@ -80,6 +75,7 @@ Execute each step from the implementation plan in order.
 - After each logical chunk of work, verify your changes are still building
 
 **After schema/model changes** (if applicable):
+
 - Run type generation if your project uses generated types from the schema
 - Verify generated types are committed
 
@@ -87,7 +83,7 @@ Execute each step from the implementation plan in order.
 
 **End-to-end spec maintenance**: If a committed automated spec exists for the feature under test, keep it in sync with your changes. If the feature is new and a smoke test runbook exists, create the corresponding spec as part of the implementation. See `docs/project/3-software-architecture.md` → Testing Strategy for the two-tier approach.
 
-### Step 6: Pre-Commit Verification
+### Step 5: Pre-Commit Verification
 
 Before committing, verify:
 
@@ -107,13 +103,14 @@ Before committing, verify:
 
 Fix any failures before committing. Do not push a broken build.
 
-### Step 7: Update CHANGELOG
+### Step 6: Update CHANGELOG
 
 Add an entry under `[Unreleased]` in `CHANGELOG.md`:
+
 - Use the appropriate category: `Added`, `Changed`, `Fixed`, `Security`, `Deprecated`, `Removed`
 - Write from the user's perspective: what can they now do / what is now fixed?
 
-### Step 8: Commit & Push
+### Step 7: Commit & Push
 
 ```bash
 git add [files]
@@ -123,17 +120,10 @@ git push -u origin feature/[slug]
 
 Use Conventional Commits (see `docs/best-practices/2-version-control.md`).
 
-### Step 9: Reviewer Gate (before opening PR)
+### Step 8: Open PR (Draft)
 
-Before opening a PR, run the code review gate on this branch using `REVIEW.md`.
+Open a **draft** PR targeting `develop` with:
 
-- If your runner has a native review feature, use it against `REVIEW.md`; otherwise use the compatibility wrapper `docs/ai/development-workflow/protocols/04-review-implemented-development-protocol.md`.
-- Apply fixes directly on the branch, commit, and push again if needed.
-- If the verdict is **NEEDS REVISION** due to product/design decisions, stop and request human input before opening a PR.
-
-### Step 10: Open PR
-
-Open a PR targeting `develop` with:
 - **Title**: `feat([scope]): [feature-name]`
 - **Description**:
   - What was implemented
@@ -142,31 +132,29 @@ Open a PR targeting `develop` with:
   - Any deviations from the plan (with justification)
   - CHANGELOG entry preview
 
-### Step 11: Automated Review Loop (if configured)
+```bash
+gh pr create --draft --title "feat([scope]): [feature-name]" --body "..."
+```
 
-If an automated PR review tool is enabled (see `docs/ai/development-workflow/integrations/`):
+### Step 9: Handoff to Work Item Runner
 
-1. Run `./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch feature/[slug]` (or the matching `fix/` / `hotfix/` branch)
-2. If the result is `needs_fixes`, apply the fixes, push, and run the loop again
-3. If the result is `clean`, continue immediately to Step 12
-4. If the result is `escalate`, stop and report the latest blocking issues to the human
-5. Non-blocking suggestions: address at your discretion
+After the draft PR exists, the **Work Item Runner** owns the rest of the lifecycle for this item:
 
-### Step 12: PR Readiness Signal
+- Run the internal code review gate (`code-reviewer` / `03-review-implementation-protocol.md`) on the draft PR
+- Run the automated reviewer loop and CI loop to completion
+- Apply `ready-for-human-review` and move the tracker to **Implementation in Review** when the PR is human-ready
+- Stop only when the PR is waiting on human review / merge or the run has escalated
 
-Run `./scripts/development-workflow/pr-ci-loop.sh <pr_number>` and apply `agent:ready-for-review` only when:
-- CI checks are green
-- Automated review has no blocking issues (or is not configured)
+If this protocol is invoked **standalone** rather than through the Work Item Runner, hand off manually by following `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` from the newly opened draft PR.
 
-If CI fails, apply `agent:needs-fixes`, fix the branch, push, and return to Step 11.
-
-See `docs/ai/development-workflow/protocols/91-pr-readiness-signal-protocol.md`.
+See `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/ai/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
 
 ---
 
 ## Path 2: Fast Track (Bug / Simple Change)
 
 **Criteria check — all must be true**:
+
 - [ ] The scope is clear and bounded from the start
 - [ ] ≤ 3 files will be modified (estimate before starting)
 - [ ] No new database schema migrations
@@ -177,7 +165,7 @@ See `docs/ai/development-workflow/protocols/91-pr-readiness-signal-protocol.md`.
 
 **If scope expands during implementation**: Stop immediately. Report to the human. Do not silently expand scope.
 
-### Steps
+### Fast Track Steps
 
 1. Read the brief. If the work item exists in an issue tracker, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for `In Development (Fast Track)` expectations.
 2. If no blocking ambiguity remains, proceed without an extra approval pause; otherwise stop and ask the human
@@ -187,10 +175,8 @@ See `docs/ai/development-workflow/protocols/91-pr-readiness-signal-protocol.md`.
 6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry
 7. Commit: `fix([scope]): [description]`
 8. Push branch to remote
-9. Run the reviewer gate (Step 9 above)
-10. Open PR targeting `develop`
-11. Follow automated review loop (Step 11 above) if configured
-12. Run the automated review + CI loops to completion, then apply `agent:ready-for-review`
+9. Open draft PR targeting `develop` (Step 8 above)
+10. Hand off to the Work Item Runner (Step 9 above)
 
 ---
 
@@ -198,7 +184,7 @@ See `docs/ai/development-workflow/protocols/91-pr-readiness-signal-protocol.md`.
 
 **Criteria**: Active production incident or critical security issue.
 
-### Steps
+### Hotfix Steps
 
 1. Read the incident brief from the human
 2. Confirm it's a production-only issue (not a dev/staging issue)
@@ -208,10 +194,9 @@ See `docs/ai/development-workflow/protocols/91-pr-readiness-signal-protocol.md`.
 6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry
 7. Commit: `fix([scope]): [description] (hotfix)`
 8. Push branch to remote
-9. Run the reviewer gate (Step 9 above)
-10. Open PR targeting `main`
-11. Run the automated review + CI loops to completion, then apply `agent:ready-for-review`
-12. **After merge**: notify the human that a backport PR (main → develop) must be opened to prevent branch drift
+9. Open draft PR targeting `main` (Step 8 above)
+10. Hand off to the Work Item Runner (Step 9 above)
+11. **After merge**: notify the human that a backport PR (main → develop) must be opened to prevent branch drift
 
 ---
 

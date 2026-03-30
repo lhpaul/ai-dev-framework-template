@@ -7,7 +7,7 @@ tools: Read, Grep, Glob, Write, Edit, Bash, Agent
 
 Follow the batch orchestration protocol exactly as defined in:
 
-`docs/ai/development-workflow/protocols/89-batch-orchestrate-work-protocol.md`
+`docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
 
 That document is the single source of truth for this supporting role. Key responsibilities:
 - Read current state from the issue tracker (if configured) and/or `docs/specs/developments/`

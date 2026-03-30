@@ -19,7 +19,7 @@ It should **not** prescribe technical design (DB schema changes, table/column na
 
 If the human brings up technical details during alignment, reframe them into **product constraints** and record the technical choice as “to be decided in the implementation plan”.
 
-### Examples
+### Product Constraint Examples
 
 - ✅ Good (product constraint): “An agent can belong to multiple broker companies in the future; this module is scoped to the selected company.”
 - ❌ Too technical for spec: “Use `public.agents` + `public.agent_memberships` and keep the API 1:1 under the hood.”
@@ -31,6 +31,8 @@ Before starting, read:
 - `docs/project/1-business-domain.md` — domain context, entities, glossary
 - `docs/project/3-software-architecture.md` — architecture constraints
 - The feature brief. If you have an issue tracker configured, follow `docs/ai/development-workflow/integrations/issue-tracker.md` to get the current brief.
+
+**Tracker workflow status**: The **Work Item Runner** owns workflow-status transitions for this stage. When this protocol is run under normal orchestration, expect the runner to set **Writing Spec** before dispatch, **Spec in Review** when the PR is human-ready, and **Spec Ready** only after merge. If you invoke this protocol standalone, mirror the same status progression manually.
 
 ---
 
@@ -87,6 +89,12 @@ Work through the following checklist. Ask about each item. If the human can't an
 - [ ] How does an admin or operator know the action happened?
 - [ ] Are there notifications, logs, or audit events?
 
+#### Measurement Requirements (if product analytics matter)
+
+- [ ] Which user actions, funnels, or outcomes should be measured?
+- [ ] What product questions should this feature help answer?
+- [ ] Are there privacy, consent, retention, or anonymization constraints that must shape the analytics requirements?
+
 #### Success Criteria
 
 - [ ] How do we know when this feature is done?
@@ -127,7 +135,7 @@ Use the current timestamp for `YYYYMMDDHHMMSS`.
 - Explicitly list what is **out of scope** for this feature (MVP boundary)
 - Keep spec decisions **product-facing**; defer technical design to the implementation plan
 
-### Examples
+### Spec Snippet Example
 
 ```markdown
 # Spec: [feature-name]
@@ -138,13 +146,13 @@ Use the current timestamp for `YYYYMMDDHHMMSS`.
 
 ## Step 4: Human Review Shortcut (Optional)
 
-Default behavior is **max autonomy**: once the alignment conversation is complete and there are no unresolved blocking product questions, continue through branch creation, the review gate, PR creation, and PR readiness without asking for an extra "review before PR" confirmation.
+Default behavior is **max autonomy**: once the alignment conversation is complete and there are no unresolved blocking product questions, continue through branch creation, commit, push, and draft-PR creation without asking for an extra "review before PR" confirmation.
 
 Pause only if:
 
 - The human explicitly asked to review the draft before Git operations
 - The spec still contains a blocking product ambiguity
-- The reviewer gate returns `NEEDS REVISION` for a product decision you cannot make unilaterally
+- A blocking product decision prevents opening the draft PR
 
 ---
 
@@ -160,28 +168,22 @@ If no blocking human decision remains:
 4. Write the spec file: `1_[feature-slug]_specs.md`
 5. Commit: `docs: add spec for [feature-name]`
 6. Push: `git push -u origin spec/[branch-slug]`
-7. **Reviewer gate (before opening PR)**:
-   - Run the spec review gate on this branch using `REVIEW.md`
-   - If your runner has a native review feature, use it against `REVIEW.md`; otherwise use the compatibility wrapper `docs/ai/development-workflow/protocols/01-review-specs-protocol.md`
-   - Apply fixes directly on the branch, commit, and push again if needed
-   - If the verdict is **NEEDS REVISION** due to product decisions, stop and request human input before opening a PR
-8. Open PR targeting `develop` with:
+7. Open a **draft** PR targeting `develop` with:
    - Title: `docs(spec): [feature-name]`
    - Body: summary of the feature, link to the spec file, list of open questions (if any)
-9. Resolve PR readiness to completion:
-   - Run `./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch spec/[branch-slug]` when an automated review platform is configured
-   - If blocking comments exist, continue fixing them on the same branch until the loop is clean or escalates
-   - Run `./scripts/development-workflow/pr-ci-loop.sh <pr_number>`
-   - Apply `agent:ready-for-review` only after CI is green and automated review is clean (or skipped)
+8. Return the branch + PR details to the **Work Item Runner**
 
 ---
 
-## Step 6: PR Readiness
+## Step 6: Handoff to Work Item Runner
 
-Do not treat "PR opened" as completion. This stage is complete only when one of the following terminal conditions is reached:
+After the draft PR exists, the **Work Item Runner** owns the rest of the lifecycle for this item:
 
-- `agent:ready-for-review` has been applied and the PR is waiting on a human merge decision
-- A blocking product question surfaced and the run has explicitly escalated to the human
-- The automated review or CI loop timed out and the run has escalated to the human
+- Run the internal spec review gate (`spec-reviewer` / `01-review-spec-protocol.md`) on the draft PR
+- Run the automated reviewer loop and CI loop to completion
+- Apply `ready-for-human-review` and move the tracker to **Spec in Review** when the PR is human-ready
+- Stop only when the PR is waiting on human review / merge or the run has escalated
 
-See `docs/ai/development-workflow/protocols/91-pr-readiness-signal-protocol.md` for the full readiness definition.
+If this protocol is invoked **standalone** rather than through the Work Item Runner, hand off manually by following `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` from the newly opened draft PR.
+
+See `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/ai/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.

@@ -1,8 +1,9 @@
-# Protocol: Review Implemented Development (Compatibility Wrapper)
+# Protocol: Review Implemented Development
 
 **Purpose**: Run the implementation review gate using the repository's canonical review contract in [`REVIEW.md`](../../../../REVIEW.md).
 
 Use this protocol when:
+
 - A workflow stage says to run the implementation review gate before opening a PR
 - A legacy command or agent still points to this file
 - You want a repo-specific wrapper around a tool's native review feature
@@ -12,6 +13,7 @@ Use this protocol when:
 ## Source of Truth
 
 Read and follow:
+
 - [`REVIEW.md`](../../../../REVIEW.md) → `Code Review Checklist`
 - The corresponding spec
 - The implementation plan
@@ -32,9 +34,10 @@ Read and follow:
 If a runner also has a stronger built-in PR/code-review feature, use it first and then normalize the findings through `REVIEW.md`.
 
 If invoked in a fix loop for a pushed branch or open PR:
+
 - Apply all deterministic `blocking` and `important` fixes directly
 - Commit and push if repo-tracked files changed
-- Return approval only when no fixable `blocking` issues remain
+- Return approval only when no fixable `blocking` findings remain
 - Escalate only when a real product, design, or architecture decision is required
 
 ---
@@ -42,7 +45,8 @@ If invoked in a fix loop for a pushed branch or open PR:
 ## Output
 
 Produce a concise review report with:
+
 - Overall assessment
 - Direct fixes applied
-- Remaining issues requiring human input
+- Remaining findings requiring human input
 - Verdict: `APPROVED` or `NEEDS REVISION`

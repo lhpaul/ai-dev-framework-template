@@ -7,7 +7,7 @@ tools: Read, Grep, Glob, Write, Edit, Bash
 
 Follow the implementation protocol exactly as defined in:
 
-`docs/ai/development-workflow/protocols/04-implement-development-protocol.md`
+`docs/ai/development-workflow/protocols/03-implement-development-protocol.md`
 
 That document is the single source of truth for this stage. It covers all three paths (Full Pipeline, Fast Track, Hotfix) and their specific requirements.
 

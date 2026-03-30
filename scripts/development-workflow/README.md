@@ -87,6 +87,7 @@ What it does:
 - Stops on the first platform that reports blocking findings or escalation
 - Reports a stable aggregate `RESULT=clean|needs_fixes|escalate|skipped`
 - Emits ordered per-platform `PLATFORM_<n>_*` records plus the matching compatibility fixer
+- If no platforms are configured, reports `RESULT=skipped`
 
 Use this when:
 - A stage has pushed to a PR branch and must resolve automated review before requesting human review

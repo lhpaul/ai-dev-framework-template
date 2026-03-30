@@ -18,8 +18,7 @@ platforms are clean or skipped, the script exits 0.
 
 Platform selection (in priority order):
   1. --platform flag(s) passed on the command line
-  2. review_platforms list in .ai-dev-workflow.yaml at the repo root
-  3. Fallback: greptile (only when .ai-dev-workflow.yaml is absent)
+  2. review.platforms list in .ai-dev-workflow.yaml at the repo root
 
 Outputs stable key=value lines including:
   RESULT=clean|needs_fixes|escalate|skipped
@@ -385,8 +384,9 @@ run_devin_review() {
   local comment_count=0
   local index=1
   local blocking_json=""
+  local stale_file=""
 
-  trap 'rm -f "${existing_blocking_file:-}" "${blocking_lines_file:-}"' RETURN
+  trap 'rm -f "${existing_blocking_file:-}" "${blocking_lines_file:-}" "${stale_file:-}"' RETURN
 
   require_gh
   cd_workflow_repo_root
@@ -408,10 +408,7 @@ run_devin_review() {
     since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
   fi
 
-  # --- Phase 1: Check for existing blocking findings ---
-  # Devin posts findings as inline comments, sometimes with replies containing
-  # details. Filter out reply comments (in_reply_to_id != null) to avoid
-  # double-counting a finding and its reply as separate blocking items.
+  # --- Phase 1: Check for existing blocking findings on the current HEAD ---
   existing_comments="$(
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
@@ -446,10 +443,8 @@ run_devin_review() {
     [ -z "${comment_json:-}" ] && continue
     body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
     [ -z "$body" ] && continue
-    # Skip Devin's "No Issues Found" summary comments
-    if printf '%s\n' "$body" | grep -qi "No Issues Found"; then
-      continue
-    fi
+    if printf '%s\n' "$body" | grep -qi "No Issues Found"; then continue; fi
+    if printf '%s\n' "$body" | grep -q "^✅"; then continue; fi
     existing_blocking_count=$((existing_blocking_count + 1))
     printf '%s\n' "$comment_json" >> "$existing_blocking_file"
   done <<< "$existing_comments"
@@ -458,9 +453,8 @@ run_devin_review() {
     [ -z "${review_json:-}" ] && continue
     body="$(printf '%s\n' "$review_json" | jq -r '.body')"
     [ -z "$body" ] && continue
-    if printf '%s\n' "$body" | grep -qi "No Issues Found"; then
-      continue
-    fi
+    if printf '%s\n' "$body" | grep -qi "No Issues Found"; then continue; fi
+    if printf '%s\n' "$body" | grep -q "^✅"; then continue; fi
     existing_blocking_count=$((existing_blocking_count + 1))
     printf '%s\n' "$review_json" >> "$existing_blocking_file"
   done <<< "$existing_reviews"
@@ -589,6 +583,67 @@ run_devin_review() {
 
     if [ "$elapsed" -ge "$max_wait" ]; then
       if [ "$devin_any_check_count" -eq 0 ]; then
+        # Devin didn't review this HEAD (common after merging the base branch
+        # when the diff didn't change). Before reporting "skipped", scan the
+        # full PR history for unresolved Devin findings from prior reviews.
+        local stale_count=0
+        local stale_comments
+        stale_comments="$(
+          gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+            | jq -r --arg bot "$bot_login" '
+                (
+                  [
+                    .[]
+                    | select(
+                        .user.login == $bot and
+                        .in_reply_to_id != null and
+                        ((.body // "") | test("^✅"))
+                      )
+                    | .in_reply_to_id
+                  ]
+                ) as $resolved_ids
+                | .[]
+                | select(
+                    .user.login == $bot and
+                    .in_reply_to_id == null and
+                    ((.body // "") | test("^✅") | not) and
+                    ((.body // "") | test("No Issues Found"; "i") | not) and
+                    (.id as $comment_id | ($resolved_ids | index($comment_id) | not))
+                  )
+                | { path, line: (.line // .original_line // 0), body: (.body // "") }
+                | @json
+              '
+        )"
+        stale_file="$(mktemp)"
+        while IFS= read -r comment_json; do
+          [ -z "${comment_json:-}" ] && continue
+          stale_count=$((stale_count + 1))
+          printf '%s\n' "$comment_json" >> "$stale_file"
+        done <<< "$stale_comments"
+
+        if [ "$stale_count" -gt 0 ]; then
+          print_kv RESULT needs_fixes
+          print_kv PLATFORM "$platform"
+          print_kv PR_NUMBER "$pr_number"
+          print_kv BRANCH "$branch_name"
+          print_kv REVIEW_COMMENT_ID ""
+          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          print_kv REASON stale_findings
+          print_kv COMMENT_COUNT "$stale_count"
+          print_kv BLOCKING_COUNT "$stale_count"
+          print_kv SUGGESTION_COUNT 0
+          while IFS= read -r blocking_json; do
+            [ -z "${blocking_json:-}" ] && continue
+            print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
+            print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
+            print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+            index=$((index + 1))
+          done < "$stale_file"
+          rm -f "$stale_file"
+          return 1
+        fi
+        rm -f "$stale_file"
+
         print_kv RESULT skipped
         print_kv REASON no_check_run
         print_kv PLATFORM "$platform"
@@ -616,10 +671,6 @@ run_devin_review() {
   done
 
   # --- Phase 3: Collect results after completion ---
-  # Use since_iso (commit timestamp) not review_window_start (current time)
-  # to avoid a race where Devin posts findings between Phase 1's API snapshot
-  # and Phase 2's timestamp. Phase 1 already confirmed zero blocking findings
-  # from since_iso, so re-querying from the same timestamp won't double-count.
   blocking_lines_file="$(mktemp)"
 
   comments="$(
@@ -664,10 +715,8 @@ run_devin_review() {
     [ -z "${comment_json:-}" ] && continue
     body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
     [ -z "$body" ] && continue
-    # Skip Devin's "No Issues Found" summary comments
-    if printf '%s\n' "$body" | grep -qi "No Issues Found"; then
-      continue
-    fi
+    if printf '%s\n' "$body" | grep -qi "No Issues Found"; then continue; fi
+    if printf '%s\n' "$body" | grep -q "^✅"; then continue; fi
     comment_count=$((comment_count + 1))
     blocking_count=$((blocking_count + 1))
     printf '%s\n' "$comment_json" >> "$blocking_lines_file"
@@ -677,9 +726,8 @@ run_devin_review() {
     [ -z "${review_json:-}" ] && continue
     body="$(printf '%s\n' "$review_json" | jq -r '.body')"
     [ -z "$body" ] && continue
-    if printf '%s\n' "$body" | grep -qi "No Issues Found"; then
-      continue
-    fi
+    if printf '%s\n' "$body" | grep -qi "No Issues Found"; then continue; fi
+    if printf '%s\n' "$body" | grep -q "^✅"; then continue; fi
     comment_count=$((comment_count + 1))
     blocking_count=$((blocking_count + 1))
     printf '%s\n' "$review_json" >> "$blocking_lines_file"
@@ -802,27 +850,22 @@ if [ -z "$pr_number" ]; then
 fi
 
 if [ "${#platforms[@]}" -eq 0 ]; then
-  config_file="$(cd_workflow_repo_root && pwd)/.ai-dev-workflow.yaml"
-  if [ -f "$config_file" ]; then
+  config_file="$(workflow_config_file)"
+  if workflow_config_exists; then
     while IFS= read -r line; do
       line="$(trim "$line")"
       [ -n "$line" ] && platforms+=("$line")
-    done < <(sed -n '/^review_platforms:/,/^[^[:space:]-]/{/^[[:space:]]*-/{s/^[[:space:]]*-[[:space:]]*//;p;};}' "$config_file")
-  fi
-  # Only fall back to greptile when config file is absent. If the file exists but
-  # we parsed zero platforms (empty list or parse issue), do not use greptile.
-  if [ "${#platforms[@]}" -eq 0 ]; then
-    if [ ! -f "${config_file:-}" ]; then
-      platforms=("greptile")
-    fi
+    done < <(workflow_config_review_platforms "$config_file")
   fi
 fi
 
-require_gh
-cd_workflow_repo_root
+if [ "${#platforms[@]}" -gt 0 ]; then
+  require_gh
+  cd_workflow_repo_root
 
-if [ -z "$branch_name" ]; then
-  branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"
+  if [ -z "$branch_name" ]; then
+    branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"
+  fi
 fi
 
 aggregate_result="skipped"

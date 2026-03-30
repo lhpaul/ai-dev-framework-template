@@ -7,6 +7,6 @@ tools: Read, Grep, Glob, Write, Edit, Bash
 
 Follow the spec review protocol exactly as defined in:
 
-`docs/ai/development-workflow/protocols/01-review-specs-protocol.md`
+`docs/ai/development-workflow/protocols/01-review-spec-protocol.md`
 
 That document is the single source of truth for this review stage. Apply fixes directly for issues you can resolve. If invoked during a reviewer loop, continue through commit / push until the protocol reaches approval or a real human decision is required.

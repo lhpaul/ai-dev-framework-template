@@ -39,9 +39,19 @@ git checkout -b release/v[X.Y.Z]
 
 In `CHANGELOG.md`:
 
-1. Rename `## [Unreleased]` → `## [X.Y.Z] - YYYY-MM-DD` (use today's date)
-2. Add a new empty `## [Unreleased]` section at the top (above the versioned entry)
-3. **Reference-style link definitions** (Keep a Changelog): at the bottom of the file, update or add link definitions so version headers remain clickable comparison links on GitHub. **Do not remove** existing definitions; update them to include the new version.
+1. **Polish or trim the `[Unreleased]` content** (do this before renaming the section). Accumulated entries often read like a raw merge log: too long, repetitive, or full of implementation detail. Tighten them so the release is easy to scan:
+   - Prefer **short, scannable bullets**: one clear outcome or change per line where possible.
+   - **Merge or drop** near-duplicates; keep a single bullet for a feature or fix instead of one per PR or sub-task unless each line adds distinct user value.
+   - **User- or operator-facing language**: what changed for readers of the changelog, not file names or refactors unless those matter externally.
+   - **Drop or shorten** internal-only notes (e.g., test-only, doc nits) unless they are meaningful to consumers of the release.
+   - If a subsection (Added, Changed, Fixed, etc.) is crowded, **summarize** into fewer high-signal bullets rather than listing every incremental commit.
+   - Stay faithful to what shipped: polish for clarity, do not invent or remove substantive release notes without human agreement.
+
+2. Rename `## [Unreleased]` → `## [X.Y.Z] - YYYY-MM-DD` (use today's date)
+
+3. Add a new empty `## [Unreleased]` section at the top (above the versioned entry)
+
+4. **Reference-style link definitions** (Keep a Changelog): at the bottom of the file, update or add link definitions so version headers remain clickable comparison links on GitHub. **Do not remove** existing definitions; update them to include the new version.
    - `[Unreleased]`: `https://github.com/<owner>/<repo>/compare/vX.Y.Z...HEAD`
    - `[X.Y.Z]`: `https://github.com/<owner>/<repo>/compare/v<previous>...vX.Y.Z`
    - Retain (or add) definitions for all other version headers. Use the same tag format as your CI (e.g. `v1.2.0` if auto-tag-release uses that).

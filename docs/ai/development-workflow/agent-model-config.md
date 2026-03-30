@@ -26,9 +26,9 @@ If you prefer different names (`small/medium/large`, `fast/standard/pro`, etc.),
 
 | Agent | Tier | Rationale |
 |---|---|---|
-| `orchestrator` | `economy` | Portfolio-level batch launcher and supervisor. Reads state, builds batches, and dispatches item orchestrators; mechanical work that should stay fast and cheap. |
-| `item-orchestrator` | `economy` | Single-item control loop. Mostly routing, resume logic, and readiness supervision rather than deep reasoning. |
-| `automated-reviewer-loop` | `economy` | Runs review + CI loop for a PR; mechanical coordination like orchestrator, no deep reasoning required. |
+| `orchestrator` | `economy` | **Portfolio Orchestrator**. Reads state, builds batches, and dispatches Work Item Runners; mechanical coordination that should stay fast and cheap. |
+| `item-orchestrator` | `economy` | **Work Item Runner**. Single-item control loop; mostly routing, resume logic, and readiness supervision rather than deep reasoning. |
+| `automated-reviewer-loop` | `economy` | Runs review + CI loop for a PR; mechanical coordination like the orchestration agents, no deep reasoning required. |
 | `product-manager` | `balanced` | Spec writing requires creativity and structured thinking, but the spec template provides strong scaffolding. A balanced model handles this well at a reasonable cost. |
 | `spec-reviewer` | `balanced` | Review against a checklist. A balanced model is well within the capability required. |
 | `tech-lead` | `premium` | Architecture decisions and implementation planning are the highest-reasoning tasks in the workflow. A weak plan is expensive to fix downstream — this is where a premium model pays for itself. |
@@ -38,149 +38,13 @@ If you prefer different names (`small/medium/large`, `fast/standard/pro`, etc.),
 | `project-setup` | `balanced` | Structured onboarding conversation with clear protocol guidance. A balanced model is sufficient. |
 | `smoke-tester` | `balanced` | Executes the smoke test runbook using browser automation. A balanced model is sufficient for following step-by-step testing instructions. |
 
-### Example Mapping (Optional)
+### Runner Notes
 
-If you’re using Claude Code with Anthropic models, this repo’s current `.claude/agents/*.md` defaults map roughly like this:
+Use the tier names as stable policy and map them to whatever your current runner and provider support.
 
-- `economy` → `claude-haiku-*`
-- `balanced` → `claude-sonnet-*`
-- `premium` → `claude-opus-*`
-
-If you're using Cursor, this repo's `.cursor/agents/*.md` defaults map like this:
-
-- `economy` → `fast` (Cursor's fast model)
-- `balanced` → `inherit` (uses Composer's current model)
-- `premium` → `inherit` (uses Composer's current model; see note below)
-
-For premium-tier agents in Cursor, ensure your Composer is using a high-reasoning model when invoking the subagent, or edit the agent file to set `model:` to a specific premium model ID.
-
-Treat these as *starting points*, not requirements.
-
----
-
-## Per-Agent Model Recommendations (Cross-Provider Examples)
-
-The goal here is **optionality**: for each agent, pick one model you can access that matches the tier’s intent.
-
-These examples are **current as of 2026-02-24** (model names/IDs change often). Prefer verifying against each provider’s “list models” docs/API.
-
-### `orchestrator` (`economy`)
-
-- OpenAI: `gpt-5-nano`, `gpt-5-mini`
-- Anthropic: Claude Haiku (latest)
-- Google: Gemini Flash-Lite (latest)
-- Alibaba (Qwen): `qwen-flash`, `qwen-turbo`
-- DeepSeek: `deepseek-v3`
-- Baidu (ERNIE): `ernie-x1-turbo-32k`, `ernie-4.5-turbo-128k-preview`
-- Tencent (Hunyuan): Hunyuan Lite / Turbo (latest)
-
-### `item-orchestrator` (`economy`)
-
-- OpenAI: `gpt-5-nano`, `gpt-5-mini`
-- Anthropic: Claude Haiku (latest)
-- Google: Gemini Flash-Lite (latest)
-- Alibaba (Qwen): `qwen-flash`, `qwen-turbo`
-- DeepSeek: `deepseek-v3`
-- Baidu (ERNIE): `ernie-x1-turbo-32k`, `ernie-4.5-turbo-128k-preview`
-- Tencent (Hunyuan): Hunyuan Lite / Turbo (latest)
-
-### `automated-reviewer-loop` (`economy`)
-
-- OpenAI: `gpt-5-nano`, `gpt-5-mini`
-- Anthropic: Claude Haiku (latest)
-- Google: Gemini Flash-Lite (latest)
-- Alibaba (Qwen): `qwen-flash`, `qwen-turbo`
-- DeepSeek: `deepseek-v3`
-- Baidu (ERNIE): `ernie-x1-turbo-32k`, `ernie-4.5-turbo-128k-preview`
-- Tencent (Hunyuan): Hunyuan Lite / Turbo (latest)
-
-### `product-manager` (`balanced`)
-
-- OpenAI: `gpt-5-mini`, `gpt-5.2` (low/medium reasoning)
-- Anthropic: Claude Sonnet (latest)
-- Google: Gemini Flash (latest)
-- xAI: Grok (latest)
-- Alibaba (Qwen): `qwen-plus`, `qwen3-max-2026-01-23`
-- DeepSeek: `deepseek-v3.2`
-- Baidu (ERNIE): `ernie-4.5-turbo-128k-preview`, `ernie-4.5-21b-a3b-preview`
-- Tencent (Hunyuan): Hunyuan TurboS / Standard (latest)
-- Moonshot (Kimi): Kimi (latest) for long-context spec work
-
-### `spec-reviewer` (`balanced`)
-
-- OpenAI: `gpt-5-mini`, `gpt-5.2` (low/medium reasoning)
-- Anthropic: Claude Sonnet (latest)
-- Google: Gemini Flash (latest)
-- DeepSeek: `deepseek-v3.2` (with/without “thinking” depending on latency)
-- Alibaba (Qwen): `qwen-plus`, `qwen3-max-2026-01-23`
-- Baidu (ERNIE): `ernie-4.5-turbo-128k-preview`
-- Tencent (Hunyuan): Hunyuan Standard (latest)
-
-### `tech-lead` (`premium`)
-
-- OpenAI: `gpt-5.2` / `gpt-5.2-pro` (high reasoning)
-- Anthropic: Claude Opus (latest)
-- Google: Gemini Pro (latest)
-- xAI: Grok (latest)
-- DeepSeek: `deepseek-v3.2` (thinking)
-- Alibaba (Qwen): `qwen3-max-2026-01-23` (reasoning-capable)
-- Baidu (ERNIE): `ernie-5.0-thinking-preview`, `ernie-4.5-21b-a3b-thinking-preview`
-- Tencent (Hunyuan): Hunyuan T1 (latest)
-- Zhipu (GLM): `glm-4.7`, `glm-4.6`
-- Cohere: `command-a-reasoning-08-2025`
-- Mistral: Magistral Medium (latest)
-- Open-weight/self-host: Llama 4 Maverick / Scout (pick the larger one for planning)
-
-### `implementation-plan-reviewer` (`balanced`)
-
-- OpenAI: `gpt-5-mini`, `gpt-5.2` (low/medium reasoning)
-- Anthropic: Claude Sonnet (latest)
-- Google: Gemini Flash (latest)
-- DeepSeek: `deepseek-v3.2`
-- Alibaba (Qwen): `qwen-plus`, `qwen3-max-2026-01-23`
-- Baidu (ERNIE): `ernie-4.5-turbo-128k-preview`
-- Tencent (Hunyuan): Hunyuan Standard / TurboS (latest)
-
-### `developer` (`balanced`)
-
-- OpenAI: `gpt-5-mini`, `gpt-5.2` (low reasoning for speed; raise if stuck)
-- Anthropic: Claude Sonnet (latest)
-- Google: Gemini Flash (latest)
-- xAI: Grok (latest)
-- Mistral: Codestral (latest) for heavy coding; Mistral Small for cheaper tasks
-- Cohere: Command R+ (latest) for tool-heavy / retrieval-style coding
-- Alibaba (Qwen): `qwen3-coder-plus`, `qwen3-coder-flash`
-- DeepSeek: `deepseek-v3.2` (strong coding; optionally “thinking” for gnarly refactors)
-- Zhipu (GLM): `glm-4.7`, `glm-4.7-flash`
-- Open-weight/self-host: Llama 4 Scout/Maverick (larger for complex tasks)
-
-### `code-reviewer` (`balanced`)
-
-- OpenAI: `gpt-5-mini`, `gpt-5.2` (medium reasoning)
-- Anthropic: Claude Sonnet (latest)
-- Google: Gemini Flash (latest)
-- DeepSeek: `deepseek-v3.2` (thinking optional)
-- Alibaba (Qwen): `qwen3-coder-plus-2026-01-23`, `qwen-plus`
-- Baidu (ERNIE): `ernie-4.5-turbo-128k-preview`
-- Tencent (Hunyuan): Hunyuan Standard (latest)
-
-### `project-setup` (`balanced`)
-
-- OpenAI: `gpt-5-mini`, `gpt-5.2` (low/medium reasoning)
-- Anthropic: Claude Sonnet (latest)
-- Google: Gemini Flash (latest)
-- Alibaba (Qwen): `qwen-plus`
-- Baidu (ERNIE): `ernie-4.5-turbo-128k-preview`
-- Tencent (Hunyuan): Hunyuan Standard (latest)
-
-### `smoke-tester` (`balanced`)
-
-- OpenAI: `gpt-5-mini`, `gpt-5.2` (low/medium reasoning)
-- Anthropic: Claude Sonnet (latest)
-- Google: Gemini Flash (latest)
-- Alibaba (Qwen): `qwen-plus`
-- Baidu (ERNIE): `ernie-4.5-turbo-128k-preview`
-- Tencent (Hunyuan): Hunyuan Standard (latest)
+- In Claude Code, map the tier to the model family or explicit model ID configured in `.claude/agents/*.md`.
+- In Cursor, `fast` is usually a good fit for `economy`, while `inherit` or a pinned high-reasoning model is usually a better fit for `balanced` and `premium`.
+- In any runner, prefer keeping the tier intent stable even when provider model names change.
 
 ---
 
@@ -190,8 +54,8 @@ Agents only get `Bash` when they need it to carry a stage through branch creatio
 
 | Agent | Has Bash? | Has Agent? | Reason |
 |---|---|---|---|
-| `orchestrator` | ✅ | ✅ | Needs `git branch`, `git status`, helper scripts, and issue / PR inspection to build and supervise batches; dispatches `item-orchestrator` sub-agents |
-| `item-orchestrator` | ✅ | ✅ | Needs helper scripts, git / PR inspection, and readiness loops to keep one item moving end to end; dispatches stage agents (developer, code-reviewer, etc.) |
+| `orchestrator` | ✅ | ✅ | Portfolio Orchestrator: needs `git branch`, `git status`, helper scripts, and issue / PR inspection to build and supervise batches; dispatches `item-orchestrator` sub-agents |
+| `item-orchestrator` | ✅ | ✅ | Work Item Runner: needs helper scripts, git / PR inspection, and readiness loops to keep one item moving end to end; dispatches stage agents (developer, code-reviewer, etc.) |
 | `automated-reviewer-loop` | ✅ | ✅ | Runs pr-review-loop.sh, pr-ci-loop.sh, git; dispatches fixer agents (spec-reviewer, implementation-plan-reviewer, code-reviewer) when needs_fixes |
 | `product-manager` | ✅ | ❌ | Creates spec branches / PRs and may run readiness helpers |
 | `spec-reviewer` | ✅ | ❌ | May commit, push, and re-run fixes during spec review loops |
@@ -212,23 +76,27 @@ If a specific task is unusually complex and you want a `premium` model for the `
 Use your runner’s “one-off model override” mechanism.
 
 Claude Code example (if applicable):
-```
+
+```bash
 claude --agent developer --model claude-opus-4-5-20251101
 ```
 
 **Cursor:**
 Cursor subagents use the `model` field in `.cursor/agents/<agent>.md`. To override for a single run:
+
 - Switch your Composer's model before invoking the subagent (e.g., `/developer`), or
 - Create a duplicate agent file (e.g., `developer-premium.md`) with a different `model` value
 
 **Option 2 — Permanent change:**
 Edit the model configuration for the agent:
+
 - **Claude Code**: Edit the `model` field in `.claude/agents/*.md`
 - **Cursor**: Edit the `model` field in `.cursor/agents/*.md` (values: `fast`, `inherit`, or a specific model ID)
 
 This affects all future invocations until changed back.
 
 **Cursor model field values:**
+
 - `fast`: Uses Cursor's fast model (recommended for economy-tier agents)
 - `inherit`: Uses the current Composer model (recommended for balanced/premium-tier agents)
 - Specific model ID: Uses that exact model (e.g., `claude-opus-4-6`, `gpt-4-turbo`)
