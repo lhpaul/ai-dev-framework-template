@@ -23,8 +23,8 @@ review:
   # Platforms are evaluated in order; the first blocking result stops the loop.
   # Supported today by pr-review-loop.sh: greptile, devin
   platforms:
-    # - greptile
-    # - devin
+    - greptile
+    - devin
 
 issue_tracker:
   # Supported examples: linear, github_issues, jira, clickup, notion, none
