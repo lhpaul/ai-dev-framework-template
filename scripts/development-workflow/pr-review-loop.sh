@@ -584,10 +584,10 @@ run_devin_review() {
         local stale_reviews
         stale_comments="$(
           gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
-            | jq -r --arg bot "$bot_login" '
+            | jq -s -r --arg bot "$bot_login" '
                 (
                   [
-                    .[]
+                    .[][]
                     | select(
                         .user.login == $bot and
                         .in_reply_to_id != null and
@@ -596,7 +596,7 @@ run_devin_review() {
                     | .in_reply_to_id
                   ]
                 ) as $resolved_ids
-                | .[]
+                | .[][]
                 | select(
                     .user.login == $bot and
                     .in_reply_to_id == null and
