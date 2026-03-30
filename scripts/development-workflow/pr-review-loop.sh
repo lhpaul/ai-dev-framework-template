@@ -518,16 +518,20 @@ run_devin_review() {
       break
     fi
 
-    devin_any_check_count="$(
+    read -r devin_any_check_count check_completed < <(
       gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
-        | jq -s '
+        | jq -s -r '
             [.[].check_runs[] | select(
               (.app.slug == "devin-ai-integration") or
               (.name | test("devin"; "i"))
-            )] | length
-          '
-    )"
+            )] as $runs
+            | ($runs | length),
+              ($runs | map(select(.status == "completed")) | length)
+            | tostring
+          ' | tr '\n' ' '; echo
+    )
     devin_any_check_count="${devin_any_check_count:-0}"
+    check_completed="${check_completed:-0}"
 
     # Also count Devin status contexts (Devin sometimes signals via a GitHub Status
     # Context on the commit rather than a Check Run — both mean Devin has completed).
@@ -547,24 +551,13 @@ run_devin_review() {
               | map(select(.state == "success" or .state == "failure" or .state == "error"))
               | length )
             | tostring
-          ' | tr '\n' ' '
+          ' | tr '\n' ' '; echo
     )
     devin_status_count="${devin_status_count:-0}"
     devin_completed_status_count="${devin_completed_status_count:-0}"
     if [ "$devin_status_count" -gt 0 ]; then
       devin_any_check_count=$(( devin_any_check_count + devin_status_count ))
     fi
-
-    check_completed="$(
-      gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
-        | jq -s '
-            [.[].check_runs[] | select(
-              (.app.slug == "devin-ai-integration") or
-              (.name | test("devin"; "i"))
-            )] | map(select(.status == "completed")) | length
-          '
-    )"
-    check_completed="${check_completed:-0}"
 
     # Only count status contexts in terminal states toward check_completed.
     if [ "$devin_completed_status_count" -gt 0 ]; then
@@ -588,6 +581,7 @@ run_devin_review() {
         # full PR history for unresolved Devin findings from prior reviews.
         local stale_count=0
         local stale_comments
+        local stale_reviews
         stale_comments="$(
           gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
             | jq -r --arg bot "$bot_login" '
@@ -614,12 +608,37 @@ run_devin_review() {
                 | @json
               '
         )"
+        stale_reviews="$(
+          gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+            | jq -r --arg bot "$bot_login" '
+                .[]
+                | select(
+                    .user.login == $bot and
+                    (
+                      .state == "CHANGES_REQUESTED" or
+                      (
+                        .state == "COMMENTED" and
+                        (.body // "" | test("^\\*\\*Devin Review\\*\\*"; "i"))
+                      )
+                    ) and
+                    ((.body // "") | test("No Issues Found"; "i") | not) and
+                    ((.body // "") | test("^✅") | not)
+                  )
+                | { path: "", line: 0, body: (.body // "review without body") }
+                | @json
+              '
+        )"
         stale_file="$(mktemp)"
         while IFS= read -r comment_json; do
           [ -z "${comment_json:-}" ] && continue
           stale_count=$((stale_count + 1))
           printf '%s\n' "$comment_json" >> "$stale_file"
         done <<< "$stale_comments"
+        while IFS= read -r review_json; do
+          [ -z "${review_json:-}" ] && continue
+          stale_count=$((stale_count + 1))
+          printf '%s\n' "$review_json" >> "$stale_file"
+        done <<< "$stale_reviews"
 
         if [ "$stale_count" -gt 0 ]; then
           print_kv RESULT needs_fixes

@@ -172,19 +172,7 @@ workflow_config_review_platforms() {
       next
     }
 
-    in_review && in_platforms && /^[^[:space:]#]/ {
-      in_platforms = 0
-    }
-
-    in_review && in_platforms && /^[[:space:]][^[:space:]#]/ {
-      in_platforms = 0
-    }
-
-    in_review && in_platforms && /^[[:space:]][[:space:]][^[:space:]#]/ {
-      in_platforms = 0
-    }
-
-    in_review && in_platforms && /^[[:space:]][[:space:]][[:space:]][^[:space:]#]/ {
+    in_review && in_platforms && !/^[[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ {
       in_platforms = 0
     }
   ' "$config_file"
