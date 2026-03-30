@@ -501,6 +501,8 @@ run_devin_review() {
   local devin_post_check_grace=120  # seconds to wait after check completes
   local devin_summary_count=0
   local since_check_completed=0
+  local devin_status_count=0
+  local devin_completed_status_count=0
 
   while :; do
     # Check for any Devin completion review every iteration (so "No Issues Found" is detected)
@@ -533,6 +535,32 @@ run_devin_review() {
     )"
     devin_any_check_count="${devin_any_check_count:-0}"
 
+    # Also count Devin status contexts (Devin sometimes signals via a GitHub Status
+    # Context on the commit rather than a Check Run — both mean Devin has completed).
+    # devin_status_count: any Devin status context (including pending) — used for
+    #   devin_any_check_count so we know Devin is configured and active.
+    # devin_completed_status_count: only terminal states (success/failure/error) — used
+    #   for check_completed so a pending status never starts the grace timer prematurely.
+    # Deduplicate by context (keep latest entry per context) to avoid double-counting
+    # when the same context transitions through multiple states (e.g. pending → success).
+    read -r devin_status_count devin_completed_status_count < <(
+      gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
+        | jq -s -r '
+            ( [.[].[] | select(.context | test("devin"; "i"))]
+              | group_by(.context) | map(max_by(.updated_at)) | length ),
+            ( [.[].[] | select(.context | test("devin"; "i"))]
+              | group_by(.context) | map(max_by(.updated_at))
+              | map(select(.state == "success" or .state == "failure" or .state == "error"))
+              | length )
+            | tostring
+          ' | tr '\n' ' '
+    )
+    devin_status_count="${devin_status_count:-0}"
+    devin_completed_status_count="${devin_completed_status_count:-0}"
+    if [ "$devin_status_count" -gt 0 ]; then
+      devin_any_check_count=$(( devin_any_check_count + devin_status_count ))
+    fi
+
     check_completed="$(
       gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
         | jq -s '
@@ -543,6 +571,11 @@ run_devin_review() {
           '
     )"
     check_completed="${check_completed:-0}"
+
+    # Only count status contexts in terminal states toward check_completed.
+    if [ "$devin_completed_status_count" -gt 0 ]; then
+      check_completed=$(( check_completed + devin_completed_status_count ))
+    fi
 
     if [ "$check_completed" -gt 0 ]; then
       if [ "$check_completed_at" -eq -1 ]; then
