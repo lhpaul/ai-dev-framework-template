@@ -156,23 +156,35 @@ workflow_config_review_platforms() {
       in_platforms = 0
     }
 
-    in_review && /^[[:space:]]{2}platforms:[[:space:]]*$/ {
+    in_review && /^[[:space:]][[:space:]]platforms:[[:space:]]*$/ {
       in_platforms = 1
       next
     }
 
-    in_review && in_platforms && /^[[:space:]]{2}[A-Za-z0-9_-]+:[[:space:]]*/ {
+    in_review && in_platforms && /^[[:space:]][[:space:]][A-Za-z0-9_-]+:[[:space:]]*/ {
       in_platforms = 0
     }
 
-    in_review && in_platforms && /^[[:space:]]{4}-[[:space:]]*/ {
+    in_review && in_platforms && /^[[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ {
       line = $0
       sub(/^[[:space:]]*-[[:space:]]*/, "", line)
       print trim(line)
       next
     }
 
-    in_review && in_platforms && /^[[:space:]]{0,3}[^[:space:]#]/ {
+    in_review && in_platforms && /^[^[:space:]#]/ {
+      in_platforms = 0
+    }
+
+    in_review && in_platforms && /^[[:space:]][^[:space:]#]/ {
+      in_platforms = 0
+    }
+
+    in_review && in_platforms && /^[[:space:]][[:space:]][^[:space:]#]/ {
+      in_platforms = 0
+    }
+
+    in_review && in_platforms && /^[[:space:]][[:space:]][[:space:]][^[:space:]#]/ {
       in_platforms = 0
     }
   ' "$config_file"
@@ -200,7 +212,7 @@ workflow_config_provider() {
       exit
     }
 
-    in_section && /^[[:space:]]{2}provider:[[:space:]]*/ {
+    in_section && /^[[:space:]][[:space:]]provider:[[:space:]]*/ {
       line = $0
       sub(/^[[:space:]]*provider:[[:space:]]*/, "", line)
       print trim(line)
