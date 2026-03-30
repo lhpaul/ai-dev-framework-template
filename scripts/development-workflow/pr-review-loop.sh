@@ -501,6 +501,8 @@ run_devin_review() {
   local devin_post_check_grace=120  # seconds to wait after check completes
   local devin_summary_count=0
   local since_check_completed=0
+  local devin_status_count=0
+  local devin_completed_status_count=0
 
   while :; do
     # Check for any Devin completion review every iteration (so "No Issues Found" is detected)
@@ -539,17 +541,21 @@ run_devin_review() {
     #   devin_any_check_count so we know Devin is configured and active.
     # devin_completed_status_count: only terminal states (success/failure/error) — used
     #   for check_completed so a pending status never starts the grace timer prematurely.
-    local devin_status_count=0
-    local devin_completed_status_count=0
-    devin_status_count="$(
+    # Deduplicate by context (keep latest entry per context) to avoid double-counting
+    # when the same context transitions through multiple states (e.g. pending → success).
+    read -r devin_status_count devin_completed_status_count < <(
       gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
-        | jq -s '[.[].[] | select(.context | test("devin"; "i"))] | length'
-    )"
+        | jq -s -r '
+            ( [.[].[] | select(.context | test("devin"; "i"))]
+              | group_by(.context) | map(max_by(.updated_at)) | length ),
+            ( [.[].[] | select(.context | test("devin"; "i"))]
+              | group_by(.context) | map(max_by(.updated_at))
+              | map(select(.state == "success" or .state == "failure" or .state == "error"))
+              | length )
+            | tostring
+          ' | tr '\n' ' '
+    )
     devin_status_count="${devin_status_count:-0}"
-    devin_completed_status_count="$(
-      gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
-        | jq -s '[.[].[] | select((.context | test("devin"; "i")) and (.state == "success" or .state == "failure" or .state == "error"))] | length'
-    )"
     devin_completed_status_count="${devin_completed_status_count:-0}"
     if [ "$devin_status_count" -gt 0 ]; then
       devin_any_check_count=$(( devin_any_check_count + devin_status_count ))
