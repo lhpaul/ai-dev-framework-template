@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Automated reviewer-loop now recovers stale unresolved findings from full PR history, preventing blocking issues from being dropped when Devin does not review the latest HEAD (e.g., after base-branch merges).
+- Workflow next-action detection now identifies merged feature branches via VCS (GitHub PR merged status + slug match) to avoid false `Plan Ready` classification when branches are cleaned up after merge.
+
+### Changed
+
+- Greptile removed from default configured review platforms for this repository.
+
 ## [0.18.1] - 2026-03-30
 
 ### Fixed

@@ -187,16 +187,40 @@ if [ -n "$slug" ]; then
   fi
 fi
 
-# NOTE: This logic cannot distinguish "branch not yet created" from "branch merged and cleaned up".
-# When the issue tracker is the source of truth (e.g. Linear), the orchestrator should only call
-# this script for items whose tracker status is Spec Ready, Plan Ready, or In Development.
-# For items already Merged or Released, skip this script entirely.
+# When no live feature branch exists and a plan is present, the item could be either
+# "Plan Ready (not yet started)" or "Done (branch merged and cleaned up)".
+# Disambiguate with a VCS-level merged-PR check — no issue tracker required.
+# Falls back gracefully to "Plan Ready" when gh is unavailable (non-GitHub VCS).
+feature_branch_merged=0
+if [ "$feature_branch_exists" -eq 0 ] && [ -n "$plan_file" ] && gh_available; then
+  # Try exact branch name first: feature/<slug>
+  merged_count="$(gh pr list --state merged --head "feature/$slug" --json number --jq 'length' 2>/dev/null || echo 0)"
+  if [ "${merged_count:-0}" -gt 0 ]; then
+    feature_branch_merged=1
+  else
+    # Try issue-tracker-prefixed pattern: feature/<ISSUE-ID>-<slug>
+    # Matches Linear (ENG-123), Jira (PROJ-456), and similar [A-Z]+-[0-9]+ prefixes.
+    if gh pr list --state merged --limit 500 --json headRefName 2>/dev/null \
+        | jq -r '.[].headRefName' 2>/dev/null \
+        | sed -n 's|^feature/||p' \
+        | grep -qE "^[A-Z]+-[0-9]+-${slug_ere}$"; then
+      feature_branch_merged=1
+    fi
+  fi
+fi
+
+# NOTE: This logic still cannot distinguish "spec/plan PR not yet merged" from "spec/plan PR merged".
+# When the issue tracker is configured, the orchestrator should pre-filter items whose tracker
+# status is already Done/Merged/Cancelled and skip this script for them entirely.
 if [ -z "$plan_file" ]; then
   status_line="Spec Ready"
   next_action="write-plan"
 elif [ "$feature_branch_exists" -eq 1 ]; then
   status_line="In Development"
   next_action="resolve-development-pr"
+elif [ "$feature_branch_merged" -eq 1 ]; then
+  status_line="Done"
+  next_action="skip"
 else
   status_line="Plan Ready"
   next_action="implement"

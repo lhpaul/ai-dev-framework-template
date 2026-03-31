@@ -66,8 +66,9 @@ If the request is portfolio-wide or refers to multiple items, stop using this pr
 Important for `development folder` targets:
 
 - `workflow-next-action.sh --development` is only reliable once the item is already `Spec Ready`, `Plan Ready`, or `In Development`.
-- A development folder by itself cannot distinguish `Spec in Review` / `Plan in Review` from the corresponding merged state.
-- If the target may still be waiting on a spec or plan PR merge, confirm the state via the issue tracker or by inspecting the workflow branch / PR directly before advancing.
+- The script uses a VCS-level merged-PR check to distinguish `Plan Ready` (not yet started) from `Done` (branch merged and cleaned up). This is tracker-agnostic and requires only `gh`.
+- The script **cannot** distinguish `Spec in Review` / `Plan in Review` from the corresponding merged state. If the target may still be waiting on a spec or plan PR merge, confirm the state via the issue tracker or by inspecting the workflow branch / PR directly before advancing.
+- If `NEXT_ACTION=skip` is returned, the item is already done — do not redispatch.
 
 When dispatching a subagent for this item, include a short “Tracker Work Item Summary” in the handoff:
 
