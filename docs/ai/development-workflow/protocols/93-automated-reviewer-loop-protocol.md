@@ -63,7 +63,7 @@ If unresolved findings exist: dispatch a fixer agent, wait for the push, then pr
 
 Execute **Step 7a: Internal Review Gate**, **Step 7: Automated Reviewer Loop**, and **Step 8: CI Loop** exactly as defined in `91-orchestrate-work-protocol.md` (scripts, result interpretation, sequential platform policy, fixer mapping, parameters, and labels). Do not duplicate that logic here — follow 91.
 
-For each PR: run Step 7a first (the stage-appropriate internal review gate), then Step 7 to completion, then Step 8. Dispatch fixers and re-run as specified in 91 until the PR is clean and ready for human review or escalated. After Step 8 returns `green`, run `gh pr ready <pr_number>` before applying `ready-for-human-review`.
+For each PR: run Step 7a first (the stage-appropriate internal review gate). Once Step 7a produces `APPROVED`, run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then run Step 7 to completion, then Step 8. Dispatch fixers and re-run as specified in 91 until the PR is clean and ready for human review or escalated. After Step 8 returns `green`, apply `ready-for-human-review` (the PR is already non-draft from the step after 7a).
 
 ### PR feedback tracking and comments
 
@@ -81,7 +81,7 @@ Follow the "PR feedback tracking and comments" subsection of Step 7 in `91-orche
 
 After processing the requested PR(s), report:
 
-- **Ready for human review**: PR link, branch, and that the internal review gate, every configured automated reviewer, and CI are all clean (or skipped). Confirm that `gh pr ready` was run to convert the draft PR to ready.
+- **Ready for human review**: PR link, branch, and that the internal review gate, every configured automated reviewer, and CI are all clean (or skipped). Confirm that `gh pr ready` was run (after Step 7a APPROVED, before Step 7) to convert the draft PR to non-draft.
 - **Escalated**: PR link, reason (max cycles, timeout, or review platform escalate).
 - **Skipped**: If no review platform is configured, or a configured platform is currently unsupported and therefore skipped, note that in the result for the listed PR(s).
 

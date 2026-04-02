@@ -32,7 +32,7 @@ Configure the following statuses in your Linear team settings:
 | Plan in Review | Plan PR is ready for human review / merge |
 | Plan Ready | Plan PR is merged |
 | In Development | Feature/fix PR in progress (draft through PR readiness, until human-ready) |
-| Implementation in Review | Feature/fix PR is ready for human review / merge |
+| Development in Review | Feature/fix PR is ready for human review / merge |
 | Merged | Feature/fix PR merged to `develop` |
 | Released | Released to production |
 
@@ -42,7 +42,6 @@ Configure the following statuses in your Linear team settings:
 - `Feature` — new capability
 - `Bug` — something broken
 - `Refactor` — code restructuring or tech-debt cleanup
-- `Chore` — non-functional work (deps, tooling, docs)
 
 **Scope labels** (one or more per work item):
 - Add labels matching your app/service names (e.g., `Admin Portal`, `API`, `Mobile`)
@@ -108,7 +107,7 @@ The **Portfolio Orchestrator**, **Work Item Runner**, or stage agent updates the
 | Plan PR is human-ready (automation clean) | → Plan in Review |
 | Plan PR merged | → Plan Ready |
 | Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `developer` | → In Development |
-| Feature/fix PR is human-ready (automation clean) | → Implementation in Review |
+| Feature/fix PR is human-ready (automation clean) | → Development in Review |
 | Feature/fix PR merged to develop | → Merged |
 | Release deployed to production | → Released |
 

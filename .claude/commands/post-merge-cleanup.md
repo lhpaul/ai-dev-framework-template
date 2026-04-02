@@ -3,7 +3,7 @@ description: >
   After a development PR is merged and the remote branch deleted, sync with origin,
   switch to develop, pull, delete the local branch, and update the related issue in the issue tracker.
   Usage: /post-merge-cleanup [branch-name]
-allowed-tools: Bash(./scripts/development-workflow/post-merge-cleanup.sh:*), Bash(git branch:*), mcp__claude_ai_Linear__get_issue, mcp__claude_ai_Linear__save_issue, mcp__claude_ai_Linear__list_issue_statuses
+allowed-tools: Bash(./scripts/development-workflow/post-merge-cleanup.sh:*), Bash(git branch:*), Bash(gh issue:*), Bash(gh api:*), Bash(gh project:*), mcp__claude_ai_Linear__get_issue, mcp__claude_ai_Linear__save_issue, mcp__claude_ai_Linear__list_issue_statuses
 # If using a different issue tracker, add its MCP tool names here (e.g. mcp__jira__update_issue).
 ---
 
@@ -21,4 +21,4 @@ The script will: fetch origin, checkout `develop`, pull, then delete the local b
 Do not skip steps or change the order. If the script fails, show the error and stop.
 
 **After the script succeeds — update the issue tracker (if configured):**
-The merged branch name often contains an issue identifier (e.g. `feature/ENG-123-user-auth` → `ENG-123`). If so, update that issue in the project's issue tracker to the merged/done state. For **Linear**, use the Linear MCP to set the issue status to **Merged** (see `docs/ai/development-workflow/integrations/linear.md`). For other trackers, set the equivalent "PR merged" status (e.g. Done, Closed, Merged); see `docs/ai/development-workflow/integrations/issue-tracker.md` and the tracker-specific doc under `docs/ai/development-workflow/integrations/`. If the branch has no issue ID or no tracker is in use, skip this step.
+The merged branch name often contains an issue identifier (e.g. `feature/ENG-123-user-auth` → `ENG-123`, or `feature/42-user-auth` → `#42`). If so, update that issue in the project's issue tracker to the merged/done state. For **Linear**, use the Linear MCP to set the issue status to **Merged** (see `docs/ai/development-workflow/integrations/linear.md`). For **GitHub Projects**, close the issue with `gh issue close <number>` and update the project item Status field to **Merged** via the `gh` CLI / GraphQL (see `docs/ai/development-workflow/integrations/github-projects.md`). For other trackers, set the equivalent "PR merged" status (e.g. Done, Closed, Merged); see `docs/ai/development-workflow/integrations/issue-tracker.md` and the tracker-specific doc under `docs/ai/development-workflow/integrations/`. If the branch has no issue ID or no tracker is in use, skip this step.

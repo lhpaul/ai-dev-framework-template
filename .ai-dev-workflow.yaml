@@ -26,8 +26,8 @@ review:
     - devin
 
 issue_tracker:
-  # Supported examples: linear, github_issues, jira, clickup, notion, none
-  provider: github_issues
+  # Supported examples: linear, github_projects, github_issues, jira, clickup, notion, none
+  provider: github_projects
 
 vcs:
   # Supported examples: github, gitlab, bitbucket, other

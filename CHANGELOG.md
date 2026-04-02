@@ -12,11 +12,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Automated reviewer-loop now recovers stale unresolved findings from full PR history, preventing blocking issues from being dropped when Devin does not review the latest HEAD (e.g., after base-branch merges).
 - Workflow next-action detection now identifies merged feature branches via VCS (GitHub PR merged status + slug match) to avoid false `Plan Ready` classification when branches are cleaned up after merge.
 
+### Added
+
+- GitHub Projects v2 integration doc with status mapping, custom fields, `gh` CLI/GraphQL commands, and branch naming conventions.
+- Regression suite checklist note in implementation plan template.
+
 ### Changed
 
 - Renamed `Improvement` issue tracker label to `Refactor` (code restructuring / tech-debt cleanup).
 - Added new **Refactor** workflow path (`refactor/[slug]`): plan → implementation, skipping the spec stage entirely. Development folders can now contain only a plan file (no spec) for refactor items.
 - Greptile removed from default configured review platforms for this repository.
+- Renamed `Implementation in Review` workflow stage to `Development in Review` across all protocols and integration docs.
+- `gh pr ready` now runs after the internal review gate (Step 7a APPROVED), before external automated reviewers (Step 7) and CI (Step 8), so external reviewers see a non-draft PR while internal quality gates remain mandatory.
+- Default issue tracker provider changed from `github_issues` to `github_projects`.
+
+### Removed
+
+- `Chore` type label removed from tracker integrations; chore-type work is tracked as `Refactor`.
 
 ## [0.18.1] - 2026-03-30
 
@@ -32,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Workflow protocols were renumbered and normalized (`04-*` -> `03-*`, `05-*` -> `04-*`, `06-*` -> `05-*`, `89-*` -> `90-*`, `90-*` -> `91-*`, `91-*` -> `92-*`, `92-*` -> `93-*`) and several protocol filenames were standardized (`generate-specs` -> `generate-spec`, `review-specs` -> `review-spec`, `review-implemented-development` -> `review-implementation`).
 - PR readiness labels were renamed to simpler defaults: `agent:ready-for-review` -> `ready-for-human-review` and `agent:needs-fixes` -> `needs-fixes`.
 - `.ai-dev-workflow.yaml` now uses a versioned nested schema (`review.platforms`) and includes declarative sections for `issue_tracker`, `vcs`, and `browser_automation`.
-- Stage protocols now open draft PRs first, then mark them ready with `gh pr ready` only after internal review, automated review, and CI all pass.
+- Stage protocols now open draft PRs first, then mark them ready with `gh pr ready` after the internal review gate (Step 7a) passes.
 - Orchestration now includes an explicit Step 7a internal review gate before external automated reviewers.
 - Workflow docs were refreshed, including a full rewrite of `docs/ai/development-workflow/README.md` and terminology updates to "Portfolio Orchestrator" and "Work Item Runner".
 

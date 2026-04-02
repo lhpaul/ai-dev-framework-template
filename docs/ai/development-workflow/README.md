@@ -260,9 +260,9 @@ docs/testing/[app-or-section]/[feature-slug].smoke-test.md
 
 If an issue tracker is configured, the work item status usually maps to the workflow like this:
 
-`Backlog -> Writing Spec -> Spec in Review -> Spec Ready -> Writing Plan -> Plan in Review -> Plan Ready -> In Development -> Implementation in Review -> Merged -> Released`
+`Backlog -> Writing Spec -> Spec in Review -> Spec Ready -> Writing Plan -> Plan in Review -> Plan Ready -> In Development -> Development in Review -> Merged -> Released`
 
-Refactor items skip the spec stages: `Backlog -> Writing Plan -> Plan in Review -> Plan Ready -> In Development -> Implementation in Review -> Merged -> Released`
+Refactor items skip the spec stages: `Backlog -> Writing Plan -> Plan in Review -> Plan Ready -> In Development -> Development in Review -> Merged -> Released`
 
 Typical tracker fields worth keeping current:
 

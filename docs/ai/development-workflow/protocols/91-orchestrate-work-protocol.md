@@ -94,11 +94,11 @@ When dispatching a subagent for this item, include a short “Tracker Work Item 
 | Plan in Review | Tracker **Plan in Review** — plan PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
 | Plan branch pushed, no PR yet | Branch exists on local / remote / worktree | Run the plan review gate via `REVIEW.md` / `02-review-implementation-plan-protocol.md`, open the PR, then finish PR readiness |
 | Plan Ready | Plan PR is merged | Set tracker status to **In Development**, then run `03-implement-development-protocol.md` |
-| In Development | Tracker **In Development** — feature/fix PR not yet human-ready | Continue implementation branch/PR work (Step 7a, 7, 8) until tracker moves to **Implementation in Review** |
-| Implementation in Review | Tracker **Implementation in Review** — feature/fix PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
-| Dev branch pushed, no PR yet | Branch exists on local / remote / worktree | Open draft PR, run the internal review gate (Step 7a), then run automated reviewer loop (Step 7) and CI loop (Step 8), then mark PR as ready |
-| Draft PR open, internal review pending | PR is draft and the relevant internal review gate has not run yet or has open findings | Run the stage-specific internal review gate (Step 7a); apply fixes, push, repeat until clean |
-| Draft PR open, internal review clean | PR is draft, internal review clean, external review not yet run | Run Step 7 (external automated reviewers) and Step 8 (CI), then mark PR as ready |
+| In Development | Tracker **In Development** — feature/fix PR not yet human-ready | Continue implementation branch/PR work (Step 7a, 7, 8) until tracker moves to **Development in Review** |
+| Development in Review | Tracker **Development in Review** — feature/fix PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
+| Dev branch pushed, no PR yet | Branch exists on local / remote / worktree | Open draft PR, run the internal review gate (Step 7a), run `gh pr ready` to convert to non-draft, then run automated reviewer loop (Step 7) and CI loop (Step 8) |
+| Draft PR open, internal review pending | PR is draft and the relevant internal review gate has not run yet or has open findings | Run the stage-specific internal review gate (Step 7a); apply fixes, push, repeat until clean. Once APPROVED, run `gh pr ready` to convert to non-draft |
+| Non-draft PR open, no readiness label, external review not yet run | PR is non-draft (converted after Step 7a APPROVED), external review not yet run | Run Step 7 (external automated reviewers) and Step 8 (CI) |
 | PR open (non-draft), no readiness label | PR exists and latest push has not fully cleared | Run Step 7 and Step 8 until clean or escalated |
 | PR labeled `needs-fixes` | Human or automated systems requested changes | Address feedback, push, then run Step 7a (if draft), Step 7, and Step 8 |
 | PR labeled `ready-for-human-review` | — | Wait — human review / merge required |
@@ -153,7 +153,7 @@ Run the next deterministic action for the selected item, then immediately re-eva
 
 Expected chain:
 
-`creator -> draft PR opened -> internal review gate (Step 7a) -> automated reviewer loop (Step 7) -> CI loop (Step 8) -> gh pr ready -> readiness label / tracker status -> wait or escalation`
+`creator -> draft PR opened -> internal review gate (Step 7a) -> gh pr ready -> automated reviewer loop (Step 7) -> CI loop (Step 8) -> readiness label / tracker status -> wait or escalation`
 
 After any subagent finishes, determine whether the item still has a deterministic next action:
 
@@ -211,7 +211,7 @@ The reviewer runs against `REVIEW.md`, applies deterministic fixes directly, and
 
 | Outcome | Action |
 |---|---|
-| `APPROVED` | Continue to Step 7 (external automated reviewers) |
+| `APPROVED` | Run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then continue to Step 7 (external automated reviewers) |
 | `NEEDS REVISION` (fixable) | Fixes already applied by the agent; re-run Step 7a |
 | `NEEDS REVISION` (product/design decision) | Stop and escalate to human before proceeding |
 
@@ -358,7 +358,7 @@ Interpret the result as follows:
 
 | Result | Action |
 |---|---|
-| `green` | Run `gh pr ready <pr_number>` to convert the draft PR to ready; apply `ready-for-human-review`; update the tracker status to `Spec in Review`, `Plan in Review`, or `Implementation in Review` based on branch type; remove `needs-fixes` if present; and report the PR as ready |
+| `green` | Apply `ready-for-human-review` (the PR is already non-draft from Step 7a); update the tracker status to `Spec in Review`, `Plan in Review`, or `Development in Review` based on branch type; remove `needs-fixes` if present; and report the PR as ready |
 | `red` | Apply `needs-fixes`, dispatch the matching fixer agent, wait for a push, then return to Step 7 |
 | `timeout` | Escalate to human; do not apply `ready-for-human-review` |
 

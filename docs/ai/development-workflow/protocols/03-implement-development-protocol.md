@@ -143,7 +143,7 @@ After the draft PR exists, the **Work Item Runner** owns the rest of the lifecyc
 
 - Run the internal code review gate (`code-reviewer` / `03-review-implementation-protocol.md`) on the draft PR
 - Run the automated reviewer loop and CI loop to completion
-- Apply `ready-for-human-review` and move the tracker to **Implementation in Review** when the PR is human-ready
+- Apply `ready-for-human-review` and move the tracker to **Development in Review** when the PR is human-ready
 - Stop only when the PR is waiting on human review / merge or the run has escalated
 
 If this protocol is invoked **standalone** rather than through the Work Item Runner, hand off manually by following `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` from the newly opened draft PR.
