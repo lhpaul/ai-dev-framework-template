@@ -68,7 +68,7 @@ Add these custom fields to the project (via project settings UI or GraphQL):
 |---|---|---|
 | Priority | Single select: `Urgent`, `High`, `Medium`, `Low` | Drives orchestrator prioritization |
 | Due date | Date | Items due within 2 weeks get priority boost |
-| Type | Single select: `Feature`, `Bug`, `Improvement` | Maps to workflow path (Full Pipeline vs Fast Track) |
+| Type | Single select: `Feature`, `Bug`, `Refactor` | Maps to workflow path (Full Pipeline, Refactor, or Fast Track) |
 
 ### 4. Issue Labels (on the Repository)
 
@@ -85,7 +85,7 @@ Type labels are optional if you use the project-level **Type** field instead. If
 ```bash
 gh label create "type:feature" --description "New capability"
 gh label create "type:bug" --description "Something broken"
-gh label create "type:improvement" --description "Enhancement to existing capability"
+gh label create "type:refactor" --description "Code restructuring or tech-debt cleanup"
 ```
 
 ---
@@ -163,6 +163,7 @@ When a GitHub issue exists, use the issue number as the branch slug prefix:
 | Spec | `spec/<issue-number>-<slug>` | `spec/42-user-auth` |
 | Implementation plan | `implementation-plan/<issue-number>-<slug>` | `implementation-plan/42-user-auth` |
 | Feature | `feature/<issue-number>-<slug>` | `feature/42-user-auth` |
+| Refactor | `refactor/<issue-number>-<slug>` | `refactor/33-extract-auth-service` |
 | Bug fix | `fix/<issue-number>-<slug>` | `fix/56-login-redirect` |
 | Hotfix | `hotfix/<issue-number>-<slug>` | `hotfix/89-payment-crash` |
 
@@ -179,7 +180,7 @@ The **Portfolio Orchestrator**, **Work Item Runner**, or stage agent updates the
 | Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `product-manager` | -> Writing Spec |
 | Spec PR is human-ready (automation clean; ready for humans) | -> Spec in Review |
 | Spec PR merged | -> Spec Ready |
-| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `tech-lead` | -> Writing Plan |
+| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `tech-lead` | -> Writing Plan (Refactor items skip directly here from Backlog) |
 | Plan PR is human-ready (automation clean) | -> Plan in Review |
 | Plan PR merged | -> Plan Ready |
 | Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `developer` | -> In Development |
@@ -217,7 +218,7 @@ If you don't use GitHub Projects, the **Portfolio Orchestrator** asks the human:
 
 > "What should I work on next? Please provide:
 > - Feature name and slug
-> - Path: Full Pipeline / Fast Track / Hotfix
+> - Path: Full Pipeline / Refactor / Fast Track / Hotfix
 > - Priority context (if any)
 > - Dependencies (if any)"
 
