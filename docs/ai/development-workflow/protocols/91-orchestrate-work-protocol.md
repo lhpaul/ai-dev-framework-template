@@ -50,7 +50,7 @@ Resolve the request to exactly one of the following:
 
 1. **Backlog / tracker work item** — use when a human explicitly requests a not-yet-started item
 2. **Development folder** — `docs/specs/developments/<timestamp>_<slug>`
-3. **Workflow branch** — `spec/*`, `implementation-plan/*`, `feature/*`, `fix/*`, `hotfix/*`
+3. **Workflow branch** — `spec/*`, `implementation-plan/*`, `feature/*`, `refactor/*`, `fix/*`, `hotfix/*`
 4. **Open PR**
 
 Use these helpers while resolving and resuming work:
