@@ -22,7 +22,7 @@ Prints a compact snapshot of the repository's workflow-related state.
 
 What it does:
 - Shows `git status --short --branch`
-- Lists workflow branches (`spec/`, `implementation-plan/`, `feature/`, `fix/`, `hotfix/`, `release/`)
+- Lists workflow branches (`spec/`, `implementation-plan/`, `feature/`, `refactor/`, `fix/`, `hotfix/`, `release/`)
 - Lists active git worktrees
 - Lists directories under `docs/specs/developments/` if they exist
 - Lists open pull requests, labels, and check summaries when `gh` is available
