@@ -42,7 +42,6 @@ Configure the following statuses in your Linear team settings:
 - `Feature` — new capability
 - `Bug` — something broken
 - `Refactor` — code restructuring or tech-debt cleanup
-- `Chore` — non-functional work (deps, tooling, docs)
 
 **Scope labels** (one or more per work item):
 - Add labels matching your app/service names (e.g., `Admin Portal`, `API`, `Mobile`)
