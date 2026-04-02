@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Renamed `Improvement` issue tracker label to `Refactor` (code restructuring / tech-debt cleanup).
+- Added new **Refactor** workflow path (`refactor/[slug]`): plan → implementation, skipping the spec stage entirely. Development folders can now contain only a plan file (no spec) for refactor items.
 - Greptile removed from default configured review platforms for this repository.
 
 ## [0.18.1] - 2026-03-30

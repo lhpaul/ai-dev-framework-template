@@ -17,7 +17,7 @@ echo
 echo "== workflow branches =="
 branch_refs="$(git for-each-ref --format='%(refname:short)' refs/heads refs/remotes)"
 if [ -n "$branch_refs" ]; then
-  printf '%s\n' "$branch_refs" | grep -E '(^|/)(spec|implementation-plan|feature|fix|hotfix|release)/' || true
+  printf '%s\n' "$branch_refs" | grep -E '(^|/)(spec|implementation-plan|feature|refactor|fix|hotfix|release)/' || true
 fi
 
 echo

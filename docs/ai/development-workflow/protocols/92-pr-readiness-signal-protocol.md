@@ -45,7 +45,7 @@ Apply this label when **any** of the following is true:
 3. Run the relevant internal review gate from `REVIEW.md` on the draft PR (spec/plan/code review):
    - `spec/*` → `spec-reviewer` / `01-review-spec-protocol.md`
    - `implementation-plan/*` → `implementation-plan-reviewer` / `02-review-implementation-plan-protocol.md`
-   - `feature/*` / `fix/*` / `hotfix/*` → `code-reviewer` / `03-review-implementation-protocol.md`
+   - `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` → `code-reviewer` / `03-review-implementation-protocol.md`
    - Apply fixes, commit, push; repeat until clean
 4. Run `./scripts/development-workflow/pr-review-loop.sh <pr-number> --branch <branch> [--platform <platform> ...]` when automated review tooling is configured
 5. If any automated reviewer reports blocking PR feedback: apply fixes, push, and repeat Step 4

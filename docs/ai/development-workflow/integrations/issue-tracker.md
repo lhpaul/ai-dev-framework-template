@@ -35,9 +35,12 @@ If the agent does not have direct tracker access, it must ask the human to paste
 ## Stage-Specific Rules
 
 - **Writing Spec**: treat the work item as “in flight” until the spec PR is human-ready; keep the brief and any new comments in sync with the spec branch/PR.
-- **Writing Plan**: same as **Writing Spec**, but for the implementation-plan branch/PR after the spec is merged.
+- **Writing Plan (Full Pipeline)**: same as **Writing Spec**, but for the implementation-plan branch/PR after the spec is merged.
+- **Writing Plan (Refactor)**: treat the work item as "in flight" until the plan PR is human-ready; keep the brief and any new comments in sync with the plan branch/PR. There is no spec — the work item brief is the starting input.
 - **Implementation in Review**: treat the work item as waiting on a human merge decision for the feature/fix PR; address `needs-fixes` promptly if the human requests changes.
 - **Spec Ready**: use the work item description/comments as the starting point for the alignment checklist; any decision captured in comments must be reflected in the spec (or surfaced as an Open Question if still unresolved).
-- **Plan Ready**: if comments contain new constraints after the spec was merged, flag the discrepancy and request a spec update before proceeding.
+- **Plan Ready (Full Pipeline)**: if comments contain new constraints after the spec was merged, flag the discrepancy and request a spec update before proceeding.
+- **Plan Ready (Refactor)**: if comments contain new constraints after the plan was written, flag the discrepancy and request a plan update before proceeding. There is no spec — the plan and work item brief are the authoritative sources.
 - **In Development (Full Pipeline)**: scan recent comments for post-plan scope changes. If anything conflicts with the spec or plan, stop and request an update before coding.
+- **In Development (Refactor)**: scan recent comments for post-plan scope changes. If anything conflicts with the plan, stop and request an update before coding. There is no spec for refactor items — the plan and work item brief are the authoritative sources.
 - **In Development (Fast Track)**: the work item description/comments can be the brief; confirm scope is bounded and stop if it expands beyond the brief.
