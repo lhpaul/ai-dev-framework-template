@@ -7,11 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- Automated reviewer-loop now recovers stale unresolved findings from full PR history, preventing blocking issues from being dropped when Devin does not review the latest HEAD (e.g., after base-branch merges).
-- Workflow next-action detection now identifies merged feature branches via VCS (GitHub PR merged status + slug match) to avoid false `Plan Ready` classification when branches are cleaned up after merge.
-
 ### Added
 
 - GitHub Projects v2 integration doc with status mapping, custom fields, `gh` CLI/GraphQL commands, and branch naming conventions.
@@ -19,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- AI Workflow: orchestrator protocol now treats the issue tracker (e.g., Linear) as the primary source of truth for work item status; development folders and VCS state are supplementary detail only.
 - Renamed `Improvement` issue tracker label to `Refactor` (code restructuring / tech-debt cleanup).
 - Added new **Refactor** workflow path (`refactor/[slug]`): plan → implementation, skipping the spec stage entirely. Development folders can now contain only a plan file (no spec) for refactor items.
 - Greptile removed from default configured review platforms for this repository.
@@ -29,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - `Chore` type label removed from tracker integrations; chore-type work is tracked as `Refactor`.
+
+### Fixed
+
+- Automated reviewer-loop now recovers stale unresolved findings from full PR history, preventing blocking issues from being dropped when Devin does not review the latest HEAD (e.g., after base-branch merges).
+- Workflow next-action detection now identifies merged feature branches via VCS (GitHub PR merged status + slug match) to avoid false `Plan Ready` classification when branches are cleaned up after merge.
 
 ## [0.18.1] - 2026-03-30
 
