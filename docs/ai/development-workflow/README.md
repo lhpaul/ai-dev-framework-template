@@ -467,6 +467,7 @@ Repository helpers:
 - `docs/ai/development-workflow/integrations/pr-review-platform.md`
 - `docs/ai/development-workflow/integrations/greptile.md`
 - `docs/ai/development-workflow/integrations/devin.md`
+- `docs/ai/development-workflow/integrations/github-projects.md`
 
 ---
 
