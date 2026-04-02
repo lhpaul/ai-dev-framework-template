@@ -10,6 +10,15 @@ source "$SCRIPT_DIR/workflow-lib.sh"
 
 cd "$REPO_ROOT"
 
+# Check if an issue tracker is configured and remind the caller
+tracker_provider="$(workflow_config_provider issue_tracker)"
+if [ -n "$tracker_provider" ] && [ "$tracker_provider" != "none" ]; then
+  echo "== issue tracker =="
+  echo "Provider: $tracker_provider (query the tracker for authoritative item status)"
+  echo "NOTE: Development folders and VCS state below are supplementary — the tracker is the primary source of truth."
+  echo
+fi
+
 echo "== git status =="
 git status --short --branch
 
@@ -17,7 +26,7 @@ echo
 echo "== workflow branches =="
 branch_refs="$(git for-each-ref --format='%(refname:short)' refs/heads refs/remotes)"
 if [ -n "$branch_refs" ]; then
-  printf '%s\n' "$branch_refs" | grep -E '(^|/)(spec|implementation-plan|feature|fix|hotfix|release)/' || true
+  printf '%s\n' "$branch_refs" | grep -E '(^|/)(spec|implementation-plan|feature|refactor|fix|hotfix|release)/' || true
 fi
 
 echo

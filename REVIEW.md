@@ -78,13 +78,13 @@ Typical `important` issues:
 ## Plan Review Checklist
 
 Read before reviewing:
-- The corresponding spec
+- The corresponding spec (Full Pipeline only — Refactor items have no spec; use the work item brief instead)
 - The implementation plan
 - Relevant code and architecture docs
 - The smoke test runbook when one exists
 
 Check:
-- Every use case and acceptance criterion from the spec is addressed
+- Every use case and acceptance criterion from the spec (or from the work item brief for Refactor items) is addressed
 - Steps are specific enough to execute without guessing
 - Ordering is feasible and dependencies are explicit
 - Documentation updates are listed or intentionally declared unnecessary
@@ -107,13 +107,13 @@ Typical `important` issues:
 ## Code Review Checklist
 
 Read before reviewing:
-- The corresponding spec
+- The corresponding spec (Full Pipeline only — Refactor items have no spec; use the work item brief instead)
 - The implementation plan
 - Relevant best-practice docs
 - The changed code
 
 Check:
-- Implementation matches the approved spec and plan, or any deviations are documented
+- Implementation matches the approved spec and plan (or the plan and work item brief for Refactor items), or any deviations are documented
 - Project and stack conventions are followed
 - Logic and edge cases are correct
 - Security boundaries and validation are respected

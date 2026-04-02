@@ -49,6 +49,7 @@ chore(deps): upgrade eslint to v9
 | Branch type | Naming | Branch from | Merges into |
 |---|---|---|---|
 | Feature (full pipeline) | `feature/[slug]` | `develop` | `develop` |
+| Refactor | `refactor/[slug]` | `develop` | `develop` |
 | Bug / simple fix | `fix/[slug]` | `develop` | `develop` |
 | Hotfix (critical prod) | `hotfix/[slug]` | `main` | `main` + `develop` |
 | Spec | `spec/[slug]` | `develop` | `develop` |

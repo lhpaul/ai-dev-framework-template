@@ -2,7 +2,7 @@
 
 **Agent role**: Developer
 **Stage**: In Development
-**Paths**: Full Pipeline | Fast Track | Hotfix
+**Paths**: Full Pipeline | Refactor | Fast Track | Hotfix
 
 ---
 
@@ -11,6 +11,7 @@
 | Path | Branch | Use when |
 |---|---|---|
 | **Full Pipeline** | `feature/[slug]` from `develop` | Feature with approved spec + plan |
+| **Refactor** | `refactor/[slug]` from `develop` | Code restructuring with approved plan (no spec) |
 | **Fast Track** | `fix/[slug]` from `develop` | Bug or simple change — clear scope, ≤3 files, no schema changes, no new patterns |
 | **Hotfix** | `hotfix/[slug]` from `main` | Critical production bug requiring immediate deployment |
 
@@ -142,7 +143,7 @@ After the draft PR exists, the **Work Item Runner** owns the rest of the lifecyc
 
 - Run the internal code review gate (`code-reviewer` / `03-review-implementation-protocol.md`) on the draft PR
 - Run the automated reviewer loop and CI loop to completion
-- Apply `ready-for-human-review` and move the tracker to **Implementation in Review** when the PR is human-ready
+- Apply `ready-for-human-review` and move the tracker to **Development in Review** when the PR is human-ready
 - Stop only when the PR is waiting on human review / merge or the run has escalated
 
 If this protocol is invoked **standalone** rather than through the Work Item Runner, hand off manually by following `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` from the newly opened draft PR.
@@ -151,7 +152,45 @@ See `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` and
 
 ---
 
-## Path 2: Fast Track (Bug / Simple Change)
+## Path 2: Refactor (Code Restructuring / Tech Debt)
+
+**Criteria**: Code restructuring, tech-debt cleanup, or internal reorganization that has an approved implementation plan but no product spec.
+
+### Step 1: Non-Negotiable Prep
+
+Read **all** of the following before writing a single line of code. Do not skip.
+
+1. `docs/specs/developments/[timestamp]_[slug]/2_[slug]_implementation-plan.md` — plan (what to restructure, in what order)
+2. `docs/testing/[section]/[slug].smoke-test.md` — smoke test runbook (what "done" looks like)
+3. `docs/project/3-software-architecture.md` — architecture patterns
+4. `docs/best-practices/` — all best practice docs
+5. Relevant existing code — read actual files for the areas you will modify
+6. If an issue tracker exists for this item, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for `In Development (Refactor)` expectations before coding.
+
+Extract from your reading:
+
+- Every file or area you will touch
+- The implementation order from the plan
+- The acceptance criteria from the plan
+
+**Dependency check**: Read the `Depends on` field in the plan. If any dependency is not yet Merged or Released, stop and report to the human.
+
+### Refactor Steps
+
+1. If no blocking ambiguity remains, proceed without an extra approval pause; otherwise stop and ask the human
+2. Branch: `git checkout -b refactor/[branch-slug]` from `develop` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without)
+3. Implement following the plan order. Follow `docs/best-practices/` for all code written.
+4. If scope is larger than the plan described, **stop and report**
+5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area
+6. Update CHANGELOG under `[Unreleased]` with a `Changed` entry
+7. Commit: `refactor([scope]): [description]`
+8. Push branch to remote
+9. Open draft PR targeting `develop` (Step 8 from Path 1)
+10. Hand off to the Work Item Runner (Step 9 from Path 1)
+
+---
+
+## Path 3: Fast Track (Bug / Simple Change)
 
 **Criteria check — all must be true**:
 
@@ -180,7 +219,7 @@ See `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` and
 
 ---
 
-## Path 3: Hotfix (Critical Production Bug)
+## Path 4: Hotfix (Critical Production Bug)
 
 **Criteria**: Active production incident or critical security issue.
 

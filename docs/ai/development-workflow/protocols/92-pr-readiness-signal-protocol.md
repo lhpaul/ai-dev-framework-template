@@ -45,12 +45,13 @@ Apply this label when **any** of the following is true:
 3. Run the relevant internal review gate from `REVIEW.md` on the draft PR (spec/plan/code review):
    - `spec/*` → `spec-reviewer` / `01-review-spec-protocol.md`
    - `implementation-plan/*` → `implementation-plan-reviewer` / `02-review-implementation-plan-protocol.md`
-   - `feature/*` / `fix/*` / `hotfix/*` → `code-reviewer` / `03-review-implementation-protocol.md`
+   - `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` → `code-reviewer` / `03-review-implementation-protocol.md`
    - Apply fixes, commit, push; repeat until clean
+   - Once the internal review gate is clean, run `gh pr ready <pr-number>` to convert the draft to non-draft
 4. Run `./scripts/development-workflow/pr-review-loop.sh <pr-number> --branch <branch> [--platform <platform> ...]` when automated review tooling is configured
 5. If any automated reviewer reports blocking PR feedback: apply fixes, push, and repeat Step 4
 6. Run `./scripts/development-workflow/pr-ci-loop.sh <pr-number>`
-7. If CI passes and all reviews are clean (or not configured): run `gh pr ready <pr-number>` to convert the draft to ready, then apply `ready-for-human-review` and move the tracker status to the matching human-review stage (`Spec in Review`, `Plan in Review`, or `Implementation in Review`) when the tracker is the source of truth
+7. If CI passes and all reviews are clean (or not configured): apply `ready-for-human-review` (the PR is already non-draft from Step 3) and move the tracker status to the matching human-review stage (`Spec in Review`, `Plan in Review`, or `Development in Review`) when the tracker is the source of truth
 8. If CI fails: apply `needs-fixes`, fix PR feedback or failing checks, push, and return to Step 4
 
 ### Human requests changes

@@ -93,7 +93,8 @@ The setup agent will have a structured conversation with you to understand your 
 │           │   └── smoke-test-runbook-template.md
 │           └── integrations/             # Optional tool integrations
 │               ├── linear.md             # Issue tracker integration (Linear)
-│               └── greptile.md           # Automated PR review (Greptile)
+│               ├── greptile.md           # Automated PR review (Greptile)
+│               └── github-projects.md    # GitHub Projects board integration
 │
 ├── .codex/
 │   └── skills/                           # Codex skills that wrap the workflow protocols and ship UI metadata
@@ -151,7 +152,8 @@ Released
 ```
 
 **Special paths:**
-- **Fast Track** (`fix/[slug]` from default branch): bugs and simple changes that don't need a spec or plan
+- **Refactor** (`refactor/[slug]` from develop): code restructuring or tech-debt cleanup with a plan but no spec
+- **Fast Track** (`fix/[slug]` from develop): bugs and simple changes that don't need a spec or plan
 - **Hotfix** (`hotfix/[slug]` from main): critical production bugs that need immediate deployment
 
 See [`docs/ai/development-workflow/README.md`](docs/ai/development-workflow/README.md) for the full workflow specification.
@@ -237,6 +239,7 @@ Use $workflow-item-orchestrator to start and advance work for [feature or issue 
 
 - **Issue Tracker (e.g., Linear)**: See [`docs/ai/development-workflow/integrations/linear.md`](docs/ai/development-workflow/integrations/linear.md)
 - **Automated PR Review (e.g., Greptile)**: See [`docs/ai/development-workflow/integrations/greptile.md`](docs/ai/development-workflow/integrations/greptile.md)
+- **GitHub Projects board**: See [`docs/ai/development-workflow/integrations/github-projects.md`](docs/ai/development-workflow/integrations/github-projects.md)
 
 ---
 

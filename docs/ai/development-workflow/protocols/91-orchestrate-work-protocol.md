@@ -50,7 +50,7 @@ Resolve the request to exactly one of the following:
 
 1. **Backlog / tracker work item** — use when a human explicitly requests a not-yet-started item
 2. **Development folder** — `docs/specs/developments/<timestamp>_<slug>`
-3. **Workflow branch** — `spec/*`, `implementation-plan/*`, `feature/*`, `fix/*`, `hotfix/*`
+3. **Workflow branch** — `spec/*`, `implementation-plan/*`, `feature/*`, `refactor/*`, `fix/*`, `hotfix/*`
 4. **Open PR**
 
 Use these helpers while resolving and resuming work:
@@ -66,8 +66,9 @@ If the request is portfolio-wide or refers to multiple items, stop using this pr
 Important for `development folder` targets:
 
 - `workflow-next-action.sh --development` is only reliable once the item is already `Spec Ready`, `Plan Ready`, or `In Development`.
-- A development folder by itself cannot distinguish `Spec in Review` / `Plan in Review` from the corresponding merged state.
-- If the target may still be waiting on a spec or plan PR merge, confirm the state via the issue tracker or by inspecting the workflow branch / PR directly before advancing.
+- The script uses a VCS-level merged-PR check to distinguish `Plan Ready` (not yet started) from `Done` (branch merged and cleaned up). This is tracker-agnostic and requires only `gh`.
+- The script **cannot** distinguish `Spec in Review` / `Plan in Review` from the corresponding merged state. If the target may still be waiting on a spec or plan PR merge, confirm the state via the issue tracker or by inspecting the workflow branch / PR directly before advancing.
+- If `NEXT_ACTION=skip` is returned, the item is already done — do not redispatch.
 
 When dispatching a subagent for this item, include a short “Tracker Work Item Summary” in the handoff:
 
@@ -83,7 +84,8 @@ When dispatching a subagent for this item, include a short “Tracker Work Item 
 
 | Current state / detection | Can advance if... | Next action |
 |---|---|---|
-| Backlog | Human has requested this specific item | Set tracker status to **Writing Spec**, then run `01-generate-spec-protocol.md` |
+| Backlog (Feature) | Human has requested this specific item | Set tracker status to **Writing Spec**, then run `01-generate-spec-protocol.md` |
+| Backlog (Refactor) | Human has requested this specific item as a Refactor | Set tracker status to **Writing Plan**, then run `02-generate-implementation-plan-protocol.md` (skip spec) |
 | Writing Spec | Tracker **Writing Spec** — spec PR not yet human-ready | Continue spec branch/PR work (generate, internal review, reviewer tools, CI) until tracker moves to **Spec in Review** |
 | Spec in Review | Tracker **Spec in Review** — spec PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
 | Spec branch pushed, no PR yet | Branch exists on local / remote / worktree | Run the spec review gate via `REVIEW.md` / `01-review-spec-protocol.md`, open the PR, then finish PR readiness |
@@ -92,11 +94,11 @@ When dispatching a subagent for this item, include a short “Tracker Work Item 
 | Plan in Review | Tracker **Plan in Review** — plan PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
 | Plan branch pushed, no PR yet | Branch exists on local / remote / worktree | Run the plan review gate via `REVIEW.md` / `02-review-implementation-plan-protocol.md`, open the PR, then finish PR readiness |
 | Plan Ready | Plan PR is merged | Set tracker status to **In Development**, then run `03-implement-development-protocol.md` |
-| In Development | Tracker **In Development** — feature/fix PR not yet human-ready | Continue implementation branch/PR work (Step 7a, 7, 8) until tracker moves to **Implementation in Review** |
-| Implementation in Review | Tracker **Implementation in Review** — feature/fix PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
-| Dev branch pushed, no PR yet | Branch exists on local / remote / worktree | Open draft PR, run the internal review gate (Step 7a), then run automated reviewer loop (Step 7) and CI loop (Step 8), then mark PR as ready |
-| Draft PR open, internal review pending | PR is draft and the relevant internal review gate has not run yet or has open findings | Run the stage-specific internal review gate (Step 7a); apply fixes, push, repeat until clean |
-| Draft PR open, internal review clean | PR is draft, internal review clean, external review not yet run | Run Step 7 (external automated reviewers) and Step 8 (CI), then mark PR as ready |
+| In Development | Tracker **In Development** — feature/fix PR not yet human-ready | Continue implementation branch/PR work (Step 7a, 7, 8) until tracker moves to **Development in Review** |
+| Development in Review | Tracker **Development in Review** — feature/fix PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
+| Dev branch pushed, no PR yet | Branch exists on local / remote / worktree | Open draft PR, run the internal review gate (Step 7a), run `gh pr ready` to convert to non-draft, then run automated reviewer loop (Step 7) and CI loop (Step 8) |
+| Draft PR open, internal review pending | PR is draft and the relevant internal review gate has not run yet or has open findings | Run the stage-specific internal review gate (Step 7a); apply fixes, push, repeat until clean. Once APPROVED, run `gh pr ready` to convert to non-draft |
+| Non-draft PR open, no readiness label, external review not yet run | PR is non-draft (converted after Step 7a APPROVED), external review not yet run | Run Step 7 (external automated reviewers) and Step 8 (CI) |
 | PR open (non-draft), no readiness label | PR exists and latest push has not fully cleared | Run Step 7 and Step 8 until clean or escalated |
 | PR labeled `needs-fixes` | Human or automated systems requested changes | Address feedback, push, then run Step 7a (if draft), Step 7, and Step 8 |
 | PR labeled `ready-for-human-review` | — | Wait — human review / merge required |
@@ -115,7 +117,8 @@ git worktree list | grep "<branch-prefix>/<slug>"
 |---|---|
 | Write spec | `spec/[slug]` |
 | Write plan | `implementation-plan/[slug]` |
-| Implement | `feature/[slug]` |
+| Implement (Feature) | `feature/[slug]` |
+| Implement (Refactor) | `refactor/[slug]` |
 
 If any check returns a match: **do not re-dispatch**. Resume from the existing branch or PR with `workflow-next-action.sh`.
 
@@ -150,7 +153,7 @@ Run the next deterministic action for the selected item, then immediately re-eva
 
 Expected chain:
 
-`creator -> draft PR opened -> internal review gate (Step 7a) -> automated reviewer loop (Step 7) -> CI loop (Step 8) -> gh pr ready -> readiness label / tracker status -> wait or escalation`
+`creator -> draft PR opened -> internal review gate (Step 7a) -> gh pr ready -> automated reviewer loop (Step 7) -> CI loop (Step 8) -> readiness label / tracker status -> wait or escalation`
 
 After any subagent finishes, determine whether the item still has a deterministic next action:
 
@@ -202,13 +205,13 @@ Dispatch the stage-appropriate internal reviewer for the draft PR:
 |---|---|
 | `spec/*` | `spec-reviewer` or `01-review-spec-protocol.md` |
 | `implementation-plan/*` | `implementation-plan-reviewer` or `02-review-implementation-plan-protocol.md` |
-| `feature/*` / `fix/*` / `hotfix/*` | `code-reviewer` or `03-review-implementation-protocol.md` |
+| `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `code-reviewer` or `03-review-implementation-protocol.md` |
 
 The reviewer runs against `REVIEW.md`, applies deterministic fixes directly, and commits + pushes if needed.
 
 | Outcome | Action |
 |---|---|
-| `APPROVED` | Continue to Step 7 (external automated reviewers) |
+| `APPROVED` | Run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then continue to Step 7 (external automated reviewers) |
 | `NEEDS REVISION` (fixable) | Fixes already applied by the agent; re-run Step 7a |
 | `NEEDS REVISION` (product/design decision) | Stop and escalate to human before proceeding |
 
@@ -329,7 +332,7 @@ Soft suggestions may be reported in summaries, but they do not change the loop r
 |---|---|
 | `spec/*` | `spec-reviewer` |
 | `implementation-plan/*` | `implementation-plan-reviewer` |
-| `feature/*` / `fix/*` / `hotfix/*` | `code-reviewer` |
+| `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `code-reviewer` |
 
 ### Loop parameters
 
@@ -355,7 +358,7 @@ Interpret the result as follows:
 
 | Result | Action |
 |---|---|
-| `green` | Run `gh pr ready <pr_number>` to convert the draft PR to ready; apply `ready-for-human-review`; update the tracker status to `Spec in Review`, `Plan in Review`, or `Implementation in Review` based on branch type; remove `needs-fixes` if present; and report the PR as ready |
+| `green` | Apply `ready-for-human-review` (the PR is already non-draft from Step 7a); update the tracker status to `Spec in Review`, `Plan in Review`, or `Development in Review` based on branch type; remove `needs-fixes` if present; and report the PR as ready |
 | `red` | Apply `needs-fixes`, dispatch the matching fixer agent, wait for a push, then return to Step 7 |
 | `timeout` | Escalate to human; do not apply `ready-for-human-review` |
 

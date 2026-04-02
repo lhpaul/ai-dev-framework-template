@@ -32,7 +32,7 @@ Configure the following statuses in your Linear team settings:
 | Plan in Review | Plan PR is ready for human review / merge |
 | Plan Ready | Plan PR is merged |
 | In Development | Feature/fix PR in progress (draft through PR readiness, until human-ready) |
-| Implementation in Review | Feature/fix PR is ready for human review / merge |
+| Development in Review | Feature/fix PR is ready for human review / merge |
 | Merged | Feature/fix PR merged to `develop` |
 | Released | Released to production |
 
@@ -41,8 +41,7 @@ Configure the following statuses in your Linear team settings:
 **Type labels** (one per work item):
 - `Feature` — new capability
 - `Bug` — something broken
-- `Improvement` — enhancement to existing capability
-- `Chore` — non-functional work (deps, tooling, docs)
+- `Refactor` — code restructuring or tech-debt cleanup
 
 **Scope labels** (one or more per work item):
 - Add labels matching your app/service names (e.g., `Admin Portal`, `API`, `Mobile`)
@@ -87,6 +86,7 @@ When a Linear work item exists, use the Linear identifier as the branch slug pre
 | Spec | `spec/[work-item-id]-[slug]` | `spec/ENG-123-user-auth` |
 | Implementation plan | `implementation-plan/[work-item-id]-[slug]` | `implementation-plan/ENG-123-user-auth` |
 | Feature | `feature/[work-item-id]-[slug]` | `feature/ENG-123-user-auth` |
+| Refactor | `refactor/[work-item-id]-[slug]` | `refactor/ENG-321-extract-auth-service` |
 | Bug fix | `fix/[work-item-id]-[slug]` | `fix/ENG-456-login-redirect` |
 | Hotfix | `hotfix/[work-item-id]-[slug]` | `hotfix/ENG-789-payment-crash` |
 
@@ -103,11 +103,11 @@ The **Portfolio Orchestrator**, **Work Item Runner**, or stage agent updates the
 | Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `product-manager` | → Writing Spec |
 | Spec PR is human-ready (automation clean; ready for humans) | → Spec in Review |
 | Spec PR merged | → Spec Ready |
-| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `tech-lead` | → Writing Plan |
+| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `tech-lead` | → Writing Plan (Refactor items skip directly here from Backlog) |
 | Plan PR is human-ready (automation clean) | → Plan in Review |
 | Plan PR merged | → Plan Ready |
 | Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `developer` | → In Development |
-| Feature/fix PR is human-ready (automation clean) | → Implementation in Review |
+| Feature/fix PR is human-ready (automation clean) | → Development in Review |
 | Feature/fix PR merged to develop | → Merged |
 | Release deployed to production | → Released |
 
@@ -142,7 +142,7 @@ If you don't use Linear, the **Portfolio Orchestrator** asks the human:
 
 > "What should I work on next? Please provide:
 > - Feature name and slug
-> - Path: Full Pipeline / Fast Track / Hotfix
+> - Path: Full Pipeline / Refactor / Fast Track / Hotfix
 > - Priority context (if any)
 > - Dependencies (if any)"
 

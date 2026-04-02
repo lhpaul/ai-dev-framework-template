@@ -132,7 +132,7 @@ if [ -n "$branch_name" ]; then
     implementation-plan)
       print_kv NEXT_ACTION run-plan-review-and-open-pr
       ;;
-    feature|fix|hotfix)
+    feature|refactor|fix|hotfix)
       print_kv NEXT_ACTION run-code-review-and-open-pr
       ;;
     *)
@@ -151,10 +151,6 @@ spec_file=""
 for f in "$development_path"/1_*_specs.md "$development_path"/1_*_specs.doc.md; do
   [ -f "$f" ] && spec_file="$f" && break
 done
-if [ -z "$spec_file" ] || [ ! -f "$spec_file" ]; then
-  echo "No spec file found in $development_path" >&2
-  exit 66
-fi
 
 # Derive workflow status from repo state so issue tracker remains source of truth (no Status line in spec required)
 slug="$(basename "$development_path" | sed 's/^[0-9]\{14\}_//')"
@@ -162,6 +158,14 @@ plan_file=""
 for f in "$development_path"/2_*_implementation-plan.md "$development_path"/2_*_implementation-plan.doc.md; do
   [ -f "$f" ] && plan_file="$f" && break
 done
+
+# A development folder must contain at least a spec or a plan file.
+# Spec-only (Full Pipeline not yet at plan stage) and plan-only (Refactor path) are both valid.
+if [ -z "$spec_file" ] && [ -z "$plan_file" ]; then
+  echo "No spec or plan file found in $development_path" >&2
+  exit 66
+fi
+
 feature_branch_exists=0
 # Refresh remote refs so feature branch check is accurate. Skip if caller set WORKFLOW_SKIP_FETCH (e.g. one fetch before a loop).
 if [ -z "${WORKFLOW_SKIP_FETCH:-}" ]; then
@@ -169,35 +173,77 @@ if [ -z "${WORKFLOW_SKIP_FETCH:-}" ]; then
     echo "workflow-next-action.sh: warning: git fetch --prune origin failed; refs may be stale" >&2
   fi
 fi
-# Only feature/ is checked; development folders are Full Pipeline only (fix/ and hotfix/ don't use this path).
+# Check for feature/ or refactor/ branches (fix/ and hotfix/ don't use development folders).
 if [ -n "$slug" ]; then
-  if git show-ref --verify -q "refs/remotes/origin/feature/$slug" 2>/dev/null; then
-    feature_branch_exists=1
-  else
-    # Linear: feature/[issue-id]-[slug] (e.g. feature/ENG-123-user-auth); folder may be [timestamp]_[slug] only
+  slug_ere="$(ere_escape "$slug")"
+  for dev_prefix in feature refactor; do
+    if git show-ref --verify -q "refs/remotes/origin/${dev_prefix}/$slug" 2>/dev/null; then
+      feature_branch_exists=1
+      break
+    fi
+    # Issue-tracker-prefixed branches: [prefix]/[issue-id]-[slug]
+    #   Linear/Jira: ENG-123-user-auth  (pattern: [A-Z]+-[0-9]+-)
+    #   GitHub Issues: 42-user-auth     (pattern: [0-9]+-)
     # Anchor to end: branch must end with the slug (no extra suffixes like -v2 or -phase-2).
-    slug_ere="$(ere_escape "$slug")"
     while IFS= read -r ref; do
       [ -z "$ref" ] && continue
-      if [ "$ref" = "$slug" ] || echo "$ref" | grep -qE "^[A-Z]+-[0-9]+-${slug_ere}$"; then
+      if [ "$ref" = "$slug" ] || echo "$ref" | grep -qE "^([A-Z]+-)?[0-9]+-${slug_ere}$"; then
         feature_branch_exists=1
-        break
+        break 2
       fi
-    done < <(git show-ref 2>/dev/null | sed -n 's|.*refs/remotes/origin/feature/||p')
-  fi
+    done < <(git show-ref 2>/dev/null | sed -n "s|.*refs/remotes/origin/${dev_prefix}/||p")
+  done
 fi
 
-# NOTE: This logic cannot distinguish "branch not yet created" from "branch merged and cleaned up".
-# When the issue tracker is the source of truth (e.g. Linear), the orchestrator should only call
-# this script for items whose tracker status is Spec Ready, Plan Ready, or In Development.
-# For items already Merged or Released, skip this script entirely.
-if [ -z "$plan_file" ]; then
+# When no live dev branch exists and a plan is present, the item could be either
+# "Plan Ready (not yet started)" or "Done (branch merged and cleaned up)".
+# Disambiguate with a VCS-level merged-PR check — no issue tracker required.
+# Falls back gracefully to "Plan Ready" when gh is unavailable (non-GitHub VCS).
+feature_branch_merged=0
+if [ "$feature_branch_exists" -eq 0 ] && [ -n "$plan_file" ] && gh_available; then
+  for dev_prefix in feature refactor; do
+    # Try exact branch name first: [prefix]/<slug>
+    merged_count="$(gh pr list --state merged --head "${dev_prefix}/$slug" --json number --jq 'length' 2>/dev/null || echo 0)"
+    if [ "${merged_count:-0}" -gt 0 ]; then
+      feature_branch_merged=1
+      break
+    fi
+    # Try issue-tracker-prefixed pattern: [prefix]/<ISSUE-ID>-<slug>
+    # Matches Linear (ENG-123), Jira (PROJ-456), and GitHub Issues (42) prefixes.
+    if gh pr list --state merged --limit 500 --json headRefName 2>/dev/null \
+        | jq -r '.[].headRefName' 2>/dev/null \
+        | sed -n "s|^${dev_prefix}/||p" \
+        | grep -qE "^([A-Z]+-)?[0-9]+-${slug_ere}$"; then
+      feature_branch_merged=1
+      break
+    fi
+  done
+fi
+
+# IMPORTANT: The VCS-derived status below is a best-effort heuristic. It cannot reliably
+# distinguish "spec/plan PR not yet merged" from "spec/plan PR merged", and development
+# folders may be stale (items completed or cancelled in the tracker without folder updates).
+# When an issue tracker is configured (e.g., Linear), the orchestrator MUST use the tracker
+# as the primary source of truth for item status and should only call this script to enrich
+# tracker data with VCS-level detail (branch existence, PR state). Do not use the STATUS
+# output from this script to override the tracker status.
+if [ -z "$plan_file" ] && [ -n "$spec_file" ]; then
+  # Full Pipeline: spec exists but no plan yet
   status_line="Spec Ready"
   next_action="write-plan"
+elif [ -z "$plan_file" ] && [ -z "$spec_file" ]; then
+  # Should not reach here (guarded above), but be defensive
+  status_line="Unknown"
+  next_action="unknown"
 elif [ "$feature_branch_exists" -eq 1 ]; then
   status_line="In Development"
   next_action="resolve-development-pr"
+elif [ "$feature_branch_merged" -eq 1 ]; then
+  status_line="Done"
+  next_action="skip"
 else
+  # Plan exists, no live or merged dev branch — ready to implement.
+  # Covers both Full Pipeline (spec + plan) and Refactor (plan only).
   status_line="Plan Ready"
   next_action="implement"
 fi
@@ -205,13 +251,13 @@ fi
 # PLAN_FILE is intentionally not emitted; callers that need the path should scan
 # "$development_path"/2_*_implementation-plan.md directly.
 print_kv TARGET "development:$development_path"
-print_kv SPEC_FILE "$spec_file"
+[ -n "$spec_file" ] && print_kv SPEC_FILE "$spec_file"
 print_kv STATUS "$status_line"
 print_kv NEXT_ACTION "$next_action"
 
 # Optional: read Linear issue ID from spec for orchestrator (tracker is source of truth for status)
 linear_issue=""
-if linear_line="$(grep -m 1 '^\*\*Linear Issue\*\*: ' "$spec_file" 2>/dev/null)"; then
+if [ -n "$spec_file" ] && linear_line="$(grep -m 1 '^\*\*Linear Issue\*\*: ' "$spec_file" 2>/dev/null)"; then
   linear_issue="$(printf '%s\n' "$linear_line" | sed 's/^\*\*Linear Issue\*\*: //' | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
 fi
 [ -n "$linear_issue" ] && print_kv LINEAR_ISSUE "$linear_issue"

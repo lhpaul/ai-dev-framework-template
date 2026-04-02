@@ -581,7 +581,9 @@ run_devin_review() {
         # full PR history for unresolved Devin findings from prior reviews.
         local stale_count=0
         local stale_comments
-        local stale_reviews
+        # Only consider unresolved inline comments here. Historical review-level
+        # summaries (e.g., CHANGES_REQUESTED/COMMENTED) may have been superseded
+        # by later clean runs and can cause false stale blockers.
         stale_comments="$(
           gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
             | jq -s -r --arg bot "$bot_login" '
@@ -608,37 +610,12 @@ run_devin_review() {
                 | @json
               '
         )"
-        stale_reviews="$(
-          gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-            | jq -r --arg bot "$bot_login" '
-                .[]
-                | select(
-                    .user.login == $bot and
-                    (
-                      .state == "CHANGES_REQUESTED" or
-                      (
-                        .state == "COMMENTED" and
-                        (.body // "" | test("^\\*\\*Devin Review\\*\\*"; "i"))
-                      )
-                    ) and
-                    ((.body // "") | test("No Issues Found"; "i") | not) and
-                    ((.body // "") | test("^✅") | not)
-                  )
-                | { path: "", line: 0, body: (.body // "review without body") }
-                | @json
-              '
-        )"
         stale_file="$(mktemp)"
         while IFS= read -r comment_json; do
           [ -z "${comment_json:-}" ] && continue
           stale_count=$((stale_count + 1))
           printf '%s\n' "$comment_json" >> "$stale_file"
         done <<< "$stale_comments"
-        while IFS= read -r review_json; do
-          [ -z "${review_json:-}" ] && continue
-          stale_count=$((stale_count + 1))
-          printf '%s\n' "$review_json" >> "$stale_file"
-        done <<< "$stale_reviews"
 
         if [ "$stale_count" -gt 0 ]; then
           print_kv RESULT needs_fixes
