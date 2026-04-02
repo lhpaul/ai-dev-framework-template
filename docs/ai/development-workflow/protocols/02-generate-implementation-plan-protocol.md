@@ -17,7 +17,7 @@ Before starting, read:
 - `docs/best-practices/` — all best practice docs
 - Relevant existing code — read actual files, don't assume structure
 - **Project documentation**: Scan `docs/` (e.g. `docs/project/`, `docs/best-practices/`, `AGENTS.md`, and any feature- or domain-specific docs) so the plan can explicitly list which of these need updates after implementation.
-- If an issue tracker exists for this item, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for expectations while the work item is **Spec Ready** (spec merged) and you are entering **Writing Plan**.
+- If an issue tracker exists for this item, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for expectations while the work item is entering **Writing Plan** (Full Pipeline: after spec is merged; Refactor: directly from Backlog).
 
 **Tracker workflow status**: The **Work Item Runner** owns workflow-status transitions for this stage. When this protocol is run under normal orchestration, expect the runner to set **Writing Plan** before dispatch, **Plan in Review** when the PR is human-ready, and **Plan Ready** only after merge. If you invoke this protocol standalone, mirror the same status progression manually.
 
@@ -69,7 +69,7 @@ For each layer affected, confirm what changes are needed:
 
 ## Step 2: Human Review Shortcut (Optional)
 
-Default behavior is **max autonomy**: once you have read the approved spec, inspected the codebase, and there is no unresolved architectural ambiguity, continue through plan writing, commit, push, and draft-PR creation without an extra pause.
+Default behavior is **max autonomy**: once you have read the approved spec (or the work item brief for Refactor items), inspected the codebase, and there is no unresolved architectural ambiguity, continue through plan writing, commit, push, and draft-PR creation without an extra pause.
 
 Pause only if:
 
