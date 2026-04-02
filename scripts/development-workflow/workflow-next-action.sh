@@ -181,11 +181,13 @@ if [ -n "$slug" ]; then
       feature_branch_exists=1
       break
     fi
-    # Linear: [prefix]/[issue-id]-[slug] (e.g. feature/ENG-123-user-auth); folder may be [timestamp]_[slug] only
+    # Issue-tracker-prefixed branches: [prefix]/[issue-id]-[slug]
+    #   Linear/Jira: ENG-123-user-auth  (pattern: [A-Z]+-[0-9]+-)
+    #   GitHub Issues: 42-user-auth     (pattern: [0-9]+-)
     # Anchor to end: branch must end with the slug (no extra suffixes like -v2 or -phase-2).
     while IFS= read -r ref; do
       [ -z "$ref" ] && continue
-      if [ "$ref" = "$slug" ] || echo "$ref" | grep -qE "^[A-Z]+-[0-9]+-${slug_ere}$"; then
+      if [ "$ref" = "$slug" ] || echo "$ref" | grep -qE "^([A-Z]+-)?[0-9]+-${slug_ere}$"; then
         feature_branch_exists=1
         break 2
       fi
@@ -207,11 +209,11 @@ if [ "$feature_branch_exists" -eq 0 ] && [ -n "$plan_file" ] && gh_available; th
       break
     fi
     # Try issue-tracker-prefixed pattern: [prefix]/<ISSUE-ID>-<slug>
-    # Matches Linear (ENG-123), Jira (PROJ-456), and similar [A-Z]+-[0-9]+ prefixes.
+    # Matches Linear (ENG-123), Jira (PROJ-456), and GitHub Issues (42) prefixes.
     if gh pr list --state merged --limit 500 --json headRefName 2>/dev/null \
         | jq -r '.[].headRefName' 2>/dev/null \
         | sed -n "s|^${dev_prefix}/||p" \
-        | grep -qE "^[A-Z]+-[0-9]+-${slug_ere}$"; then
+        | grep -qE "^([A-Z]+-)?[0-9]+-${slug_ere}$"; then
       feature_branch_merged=1
       break
     fi
