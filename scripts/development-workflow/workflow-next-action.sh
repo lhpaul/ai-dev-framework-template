@@ -235,11 +235,9 @@ elif [ "$feature_branch_exists" -eq 1 ]; then
 elif [ "$feature_branch_merged" -eq 1 ]; then
   status_line="Done"
   next_action="skip"
-elif [ -z "$spec_file" ] && [ -n "$plan_file" ]; then
-  # Refactor path: plan-only folder, no spec — already at Plan Ready
-  status_line="Plan Ready"
-  next_action="implement"
 else
+  # Plan exists, no live or merged dev branch — ready to implement.
+  # Covers both Full Pipeline (spec + plan) and Refactor (plan only).
   status_line="Plan Ready"
   next_action="implement"
 fi
