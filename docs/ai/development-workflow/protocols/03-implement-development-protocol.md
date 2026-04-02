@@ -185,8 +185,20 @@ Extract from your reading:
 6. Update CHANGELOG under `[Unreleased]` with a `Changed` entry
 7. Commit: `refactor([scope]): [description]`
 8. Push branch to remote
-9. Open draft PR targeting `develop` (Step 8 from Path 1)
-10. Hand off to the Work Item Runner (Step 9 from Path 1)
+9. Open a **draft** PR targeting `develop` with refactor-appropriate metadata (do **not** reuse Path 1 Step 8 verbatim — that path uses `feat(...)` and a spec link):
+   - **Title**: `refactor([scope]): [short description]`
+   - **Description**:
+     - What was refactored and why
+     - Link to the **implementation plan** only (no spec)
+     - Test plan (how to validate)
+     - Any deviations from the plan (with justification)
+     - CHANGELOG entry preview
+
+```bash
+gh pr create --draft --title "refactor([scope]): [short description]" --body "..."
+```
+
+10. Hand off to the Work Item Runner with the same lifecycle expectations as Path 1 Step 9 (internal review gate, automated reviewer loop, CI, labels). See `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/ai/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
 
 ---
 
