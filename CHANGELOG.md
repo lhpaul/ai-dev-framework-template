@@ -7,29 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-04-02
+
 ### Added
 
-- GitHub Projects v2 integration doc with status mapping, custom fields, `gh` CLI/GraphQL commands, and branch naming conventions.
-- Regression suite checklist note in implementation plan template.
+- GitHub Projects v2 integration guide (status mapping, custom fields, `gh`/GraphQL, branch naming).
+- Implementation plan template: regression suite checklist reminder.
 
 ### Changed
 
-- AI Workflow: orchestrator protocol now treats the issue tracker (e.g., Linear) as the primary source of truth for work item status; development folders and VCS state are supplementary detail only.
-- Renamed `Improvement` issue tracker label to `Refactor` (code restructuring / tech-debt cleanup).
-- Added new **Refactor** workflow path (`refactor/[slug]`): plan → implementation, skipping the spec stage entirely. Development folders can now contain only a plan file (no spec) for refactor items.
-- Greptile removed from default configured review platforms for this repository.
-- Renamed `Implementation in Review` workflow stage to `Development in Review` across all protocols and integration docs.
-- `gh pr ready` now runs after the internal review gate (Step 7a APPROVED), before external automated reviewers (Step 7) and CI (Step 8), so external reviewers see a non-draft PR while internal quality gates remain mandatory.
-- Default issue tracker provider changed from `github_issues` to `github_projects`.
+- Orchestration treats the issue tracker as the source of truth for work-item status; development folders and Git state supplement it.
+- **Refactor** path: `refactor/[slug]` (plan → implement, no spec); plan-only development folders supported. Renamed `Improvement` label to `Refactor`.
+- Default issue tracker: `github_projects` (was `github_issues`). Greptile removed from default review platforms in this repo.
+- Renamed stage `Implementation in Review` → `Development in Review` across protocols and integration docs.
+- `gh pr ready` runs after the internal review gate (Step 7a), before external reviewers and CI, so automation sees a ready PR after internal approval.
 
 ### Removed
 
-- `Chore` type label removed from tracker integrations; chore-type work is tracked as `Refactor`.
+- `Chore` tracker label; track that work as **Refactor**.
 
 ### Fixed
 
-- Automated reviewer-loop now recovers stale unresolved findings from full PR history, preventing blocking issues from being dropped when Devin does not review the latest HEAD (e.g., after base-branch merges).
-- Workflow next-action detection now identifies merged feature branches via VCS (GitHub PR merged status + slug match) to avoid false `Plan Ready` classification when branches are cleaned up after merge.
+- Automated reviewer loop recovers stale unresolved findings from full PR history so blockers are not dropped when the latest HEAD has no fresh automated review (e.g. after base-branch merges).
+- Next-action detection uses merged GitHub PRs (and slug match) so items are not misclassified as Plan Ready after the feature branch is deleted.
 
 ## [0.18.1] - 2026-03-30
 
@@ -303,7 +303,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.18.1...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.16.0...v0.17.0
