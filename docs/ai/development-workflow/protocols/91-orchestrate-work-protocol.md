@@ -44,6 +44,8 @@ These are **not** terminal conditions and must not stop the run:
 
 ## Step 1: Resolve the Target Item
 
+When an issue tracker is configured in `.ai-dev-workflow.yaml`, **always query the tracker first** to get the item's current status before relying on VCS state. If the tracker is unavailable (API unreachable, no MCP server), **you MUST immediately warn the human** that status is being inferred from VCS and may be stale — do not silently proceed.
+
 Prefer the helper scripts in `scripts/development-workflow/` for deterministic state inspection before falling back to ad hoc shell commands.
 
 Resolve the request to exactly one of the following:
