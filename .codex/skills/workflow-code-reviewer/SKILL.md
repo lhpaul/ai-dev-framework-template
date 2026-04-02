@@ -1,6 +1,6 @@
 ---
 name: workflow-code-reviewer
-description: Review implemented changes against the repository's code review workflow. Use when a feature, fix, or hotfix PR needs review or reviewer feedback needs to be addressed.
+description: Review implemented changes against the repository's code review workflow. Use when a feature, refactor, fix, or hotfix PR needs review or reviewer feedback needs to be addressed.
 ---
 
 # Workflow Code Reviewer
