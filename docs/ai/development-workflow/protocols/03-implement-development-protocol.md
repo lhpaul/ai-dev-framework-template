@@ -152,56 +152,7 @@ See `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` and
 
 ---
 
-## Path 2: Fast Track (Bug / Simple Change)
-
-**Criteria check — all must be true**:
-
-- [ ] The scope is clear and bounded from the start
-- [ ] ≤ 3 files will be modified (estimate before starting)
-- [ ] No new database schema migrations
-- [ ] No new architectural patterns
-- [ ] Human provided a clear, self-contained brief
-
-**If any criterion fails**: Use the Full Pipeline instead.
-
-**If scope expands during implementation**: Stop immediately. Report to the human. Do not silently expand scope.
-
-### Fast Track Steps
-
-1. Read the brief. If the work item exists in an issue tracker, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for `In Development (Fast Track)` expectations.
-2. If no blocking ambiguity remains, proceed without an extra approval pause; otherwise stop and ask the human
-3. Branch: `git checkout -b fix/[branch-slug]` from `develop` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without)
-4. Implement the fix
-5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area
-6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry
-7. Commit: `fix([scope]): [description]`
-8. Push branch to remote
-9. Open draft PR targeting `develop` (Step 8 above)
-10. Hand off to the Work Item Runner (Step 9 above)
-
----
-
-## Path 3: Hotfix (Critical Production Bug)
-
-**Criteria**: Active production incident or critical security issue.
-
-### Hotfix Steps
-
-1. Read the incident brief from the human
-2. Confirm it's a production-only issue (not a dev/staging issue)
-3. Branch: `git checkout -b hotfix/[branch-slug]` from `main` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without)
-4. Implement the minimal fix (do not bundle unrelated changes)
-5. Verify: build, lint, tests pass
-6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry
-7. Commit: `fix([scope]): [description] (hotfix)`
-8. Push branch to remote
-9. Open draft PR targeting `main` (Step 8 above)
-10. Hand off to the Work Item Runner (Step 9 above)
-11. **After merge**: notify the human that a backport PR (main → develop) must be opened to prevent branch drift
-
----
-
-## Path 4: Refactor (Code Restructuring / Tech Debt)
+## Path 2: Refactor (Code Restructuring / Tech Debt)
 
 **Criteria**: Code restructuring, tech-debt cleanup, or internal reorganization that has an approved implementation plan but no product spec.
 
@@ -236,6 +187,55 @@ Extract from your reading:
 8. Push branch to remote
 9. Open draft PR targeting `develop` (Step 8 from Path 1)
 10. Hand off to the Work Item Runner (Step 9 from Path 1)
+
+---
+
+## Path 3: Fast Track (Bug / Simple Change)
+
+**Criteria check — all must be true**:
+
+- [ ] The scope is clear and bounded from the start
+- [ ] ≤ 3 files will be modified (estimate before starting)
+- [ ] No new database schema migrations
+- [ ] No new architectural patterns
+- [ ] Human provided a clear, self-contained brief
+
+**If any criterion fails**: Use the Full Pipeline instead.
+
+**If scope expands during implementation**: Stop immediately. Report to the human. Do not silently expand scope.
+
+### Fast Track Steps
+
+1. Read the brief. If the work item exists in an issue tracker, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for `In Development (Fast Track)` expectations.
+2. If no blocking ambiguity remains, proceed without an extra approval pause; otherwise stop and ask the human
+3. Branch: `git checkout -b fix/[branch-slug]` from `develop` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without)
+4. Implement the fix
+5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area
+6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry
+7. Commit: `fix([scope]): [description]`
+8. Push branch to remote
+9. Open draft PR targeting `develop` (Step 8 above)
+10. Hand off to the Work Item Runner (Step 9 above)
+
+---
+
+## Path 4: Hotfix (Critical Production Bug)
+
+**Criteria**: Active production incident or critical security issue.
+
+### Hotfix Steps
+
+1. Read the incident brief from the human
+2. Confirm it's a production-only issue (not a dev/staging issue)
+3. Branch: `git checkout -b hotfix/[branch-slug]` from `main` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without)
+4. Implement the minimal fix (do not bundle unrelated changes)
+5. Verify: build, lint, tests pass
+6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry
+7. Commit: `fix([scope]): [description] (hotfix)`
+8. Push branch to remote
+9. Open draft PR targeting `main` (Step 8 above)
+10. Hand off to the Work Item Runner (Step 9 above)
+11. **After merge**: notify the human that a backport PR (main → develop) must be opened to prevent branch drift
 
 ---
 
