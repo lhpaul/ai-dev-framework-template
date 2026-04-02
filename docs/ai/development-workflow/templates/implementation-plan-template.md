@@ -57,6 +57,8 @@
 
 **Smoke test runbook**: [`docs/testing/[section]/[slug].smoke-test.md`](../../testing/[section]/[slug].smoke-test.md)
 
+**Regression suite**: If the repository has an automated regression test suite, include a checklist item in the relevant layer for a new regression spec that covers the smoke test runbook scenarios above. Omit this if no regression suite exists in the repository.
+
 ---
 
 ## Seed Data
