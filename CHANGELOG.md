@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `03-implement-development-protocol.md` (Path 2 Refactor): spell out refactor draft PR metadata and `gh pr create` example instead of reusing Path 1 Step 8 (`feat(...)` / spec link); handoff step references the same Work Item Runner lifecycle and protocols 91/92.
+- `03-implement-development-protocol.md` (Fast Track / Hotfix): draft PR and handoff steps now reference Path 1 Step 8–9 explicitly with `fix(...)` titles and fix- or incident-focused bodies (omit spec/plan when absent); removes the incorrect “Step 8 above” pointer (that step was push, not PR).
 
 ## [0.19.0] - 2026-04-02
 

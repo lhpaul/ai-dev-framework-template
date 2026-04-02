@@ -226,8 +226,8 @@ gh pr create --draft --title "refactor([scope]): [short description]" --body "..
 6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry
 7. Commit: `fix([scope]): [description]`
 8. Push branch to remote
-9. Open draft PR targeting `develop` (Step 8 above)
-10. Hand off to the Work Item Runner (Step 9 above)
+9. Open a **draft** PR targeting `develop` using the same structure as Path 1 `### Step 8: Open PR (Draft)`, but with a **`fix(...)`** title and a fix-focused description (omit spec/plan links when none exist).
+10. Hand off to the Work Item Runner per Path 1 `### Step 9: Handoff to Work Item Runner`.
 
 ---
 
@@ -245,8 +245,8 @@ gh pr create --draft --title "refactor([scope]): [short description]" --body "..
 6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry
 7. Commit: `fix([scope]): [description] (hotfix)`
 8. Push branch to remote
-9. Open draft PR targeting `main` (Step 8 above)
-10. Hand off to the Work Item Runner (Step 9 above)
+9. Open a **draft** PR targeting `main` by adapting Path 1 `### Step 8: Open PR (Draft)` for hotfix (`fix(...)` title with `(hotfix)` as needed, incident-focused body, target branch `main`).
+10. Hand off to the Work Item Runner per Path 1 `### Step 9: Handoff to Work Item Runner`.
 11. **After merge**: notify the human that a backport PR (main → develop) must be opened to prevent branch drift
 
 ---
