@@ -94,8 +94,8 @@ When dispatching a subagent for this item, include a short “Tracker Work Item 
 | Plan in Review | Tracker **Plan in Review** — plan PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
 | Plan branch pushed, no PR yet | Branch exists on local / remote / worktree | Run the plan review gate via `REVIEW.md` / `02-review-implementation-plan-protocol.md`, open the PR, then finish PR readiness |
 | Plan Ready | Plan PR is merged | Set tracker status to **In Development**, then run `03-implement-development-protocol.md` |
-| In Development | Tracker **In Development** — feature/fix PR not yet human-ready | Continue implementation branch/PR work (Step 7a, 7, 8) until tracker moves to **Implementation in Review** |
-| Implementation in Review | Tracker **Implementation in Review** — feature/fix PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
+| In Development | Tracker **In Development** — feature/fix PR not yet human-ready | Continue implementation branch/PR work (Step 7a, 7, 8) until tracker moves to **Development in Review** |
+| Development in Review | Tracker **Development in Review** — feature/fix PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
 | Dev branch pushed, no PR yet | Branch exists on local / remote / worktree | Open draft PR, run the internal review gate (Step 7a), then run automated reviewer loop (Step 7) and CI loop (Step 8), then mark PR as ready |
 | Draft PR open, internal review pending | PR is draft and the relevant internal review gate has not run yet or has open findings | Run the stage-specific internal review gate (Step 7a); apply fixes, push, repeat until clean |
 | Draft PR open, internal review clean | PR is draft, internal review clean, external review not yet run | Run Step 7 (external automated reviewers) and Step 8 (CI), then mark PR as ready |
@@ -358,7 +358,7 @@ Interpret the result as follows:
 
 | Result | Action |
 |---|---|
-| `green` | Run `gh pr ready <pr_number>` to convert the draft PR to ready; apply `ready-for-human-review`; update the tracker status to `Spec in Review`, `Plan in Review`, or `Implementation in Review` based on branch type; remove `needs-fixes` if present; and report the PR as ready |
+| `green` | Run `gh pr ready <pr_number>` to convert the draft PR to ready; apply `ready-for-human-review`; update the tracker status to `Spec in Review`, `Plan in Review`, or `Development in Review` based on branch type; remove `needs-fixes` if present; and report the PR as ready |
 | `red` | Apply `needs-fixes`, dispatch the matching fixer agent, wait for a push, then return to Step 7 |
 | `timeout` | Escalate to human; do not apply `ready-for-human-review` |
 

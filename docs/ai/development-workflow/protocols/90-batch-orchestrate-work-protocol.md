@@ -78,7 +78,7 @@ Build a portfolio map of:
 
 - Backlog items that a human explicitly requested to start
 - Work items in **Writing Spec** / **Writing Plan** / **In Development** (PR not yet human-ready), or branches/PRs still in PR-readiness loops
-- Work items in **Spec in Review** / **Plan in Review** / **Implementation in Review**, or PRs labeled `ready-for-human-review` (human merge queue unless `needs-fixes`)
+- Work items in **Spec in Review** / **Plan in Review** / **Development in Review**, or PRs labeled `ready-for-human-review` (human merge queue unless `needs-fixes`)
 - Development folders that are `Spec Ready`, `Plan Ready`, or already in development
 - Branches that were pushed but still have no PR
 - PRs that still need readiness work or fix loops
@@ -105,7 +105,7 @@ When an issue tracker is configured and accessible, use it to pre-filter the can
 | Pushed workflow branch, no PR yet | Branch exists on local/remote/worktree | Work Item Runner on the branch |
 | PR open, no readiness label | PR exists and latest push has not fully cleared | Work Item Runner on the PR |
 | PR labeled `needs-fixes` | Human or automated systems requested changes | Work Item Runner on the PR |
-| Spec in Review / Plan in Review / Implementation in Review or `ready-for-human-review` | — | Wait; do not redispatch (unless human feedback requires a fix loop) |
+| Spec in Review / Plan in Review / Development in Review or `ready-for-human-review` | — | Wait; do not redispatch (unless human feedback requires a fix loop) |
 
 ### Priority order
 
