@@ -262,7 +262,7 @@ If an issue tracker is configured, the work item status usually maps to the work
 
 `Backlog -> Writing Spec -> Spec in Review -> Spec Ready -> Writing Plan -> Plan in Review -> Plan Ready -> In Development -> Development in Review -> Merged -> Released`
 
-Refactor items skip the spec stages: `Backlog -> Writing Plan -> Plan in Review -> Plan Ready -> In Development -> Implementation in Review -> Merged -> Released`
+Refactor items skip the spec stages: `Backlog -> Writing Plan -> Plan in Review -> Plan Ready -> In Development -> Development in Review -> Merged -> Released`
 
 Typical tracker fields worth keeping current:
 
