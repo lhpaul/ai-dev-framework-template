@@ -84,7 +84,8 @@ When dispatching a subagent for this item, include a short “Tracker Work Item 
 
 | Current state / detection | Can advance if... | Next action |
 |---|---|---|
-| Backlog | Human has requested this specific item | Set tracker status to **Writing Spec**, then run `01-generate-spec-protocol.md` |
+| Backlog (Feature) | Human has requested this specific item | Set tracker status to **Writing Spec**, then run `01-generate-spec-protocol.md` |
+| Backlog (Refactor) | Human has requested this specific item as a Refactor | Set tracker status to **Writing Plan**, then run `02-generate-implementation-plan-protocol.md` (skip spec) |
 | Writing Spec | Tracker **Writing Spec** — spec PR not yet human-ready | Continue spec branch/PR work (generate, internal review, reviewer tools, CI) until tracker moves to **Spec in Review** |
 | Spec in Review | Tracker **Spec in Review** — spec PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
 | Spec branch pushed, no PR yet | Branch exists on local / remote / worktree | Run the spec review gate via `REVIEW.md` / `01-review-spec-protocol.md`, open the PR, then finish PR readiness |
@@ -116,7 +117,8 @@ git worktree list | grep "<branch-prefix>/<slug>"
 |---|---|
 | Write spec | `spec/[slug]` |
 | Write plan | `implementation-plan/[slug]` |
-| Implement | `feature/[slug]` |
+| Implement (Feature) | `feature/[slug]` |
+| Implement (Refactor) | `refactor/[slug]` |
 
 If any check returns a match: **do not re-dispatch**. Resume from the existing branch or PR with `workflow-next-action.sh`.
 
@@ -203,7 +205,7 @@ Dispatch the stage-appropriate internal reviewer for the draft PR:
 |---|---|
 | `spec/*` | `spec-reviewer` or `01-review-spec-protocol.md` |
 | `implementation-plan/*` | `implementation-plan-reviewer` or `02-review-implementation-plan-protocol.md` |
-| `feature/*` / `fix/*` / `hotfix/*` | `code-reviewer` or `03-review-implementation-protocol.md` |
+| `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `code-reviewer` or `03-review-implementation-protocol.md` |
 
 The reviewer runs against `REVIEW.md`, applies deterministic fixes directly, and commits + pushes if needed.
 
@@ -330,7 +332,7 @@ Soft suggestions may be reported in summaries, but they do not change the loop r
 |---|---|
 | `spec/*` | `spec-reviewer` |
 | `implementation-plan/*` | `implementation-plan-reviewer` |
-| `feature/*` / `fix/*` / `hotfix/*` | `code-reviewer` |
+| `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `code-reviewer` |
 
 ### Loop parameters
 

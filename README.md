@@ -151,7 +151,8 @@ Released
 ```
 
 **Special paths:**
-- **Fast Track** (`fix/[slug]` from default branch): bugs and simple changes that don't need a spec or plan
+- **Refactor** (`refactor/[slug]` from develop): code restructuring or tech-debt cleanup with a plan but no spec
+- **Fast Track** (`fix/[slug]` from develop): bugs and simple changes that don't need a spec or plan
 - **Hotfix** (`hotfix/[slug]` from main): critical production bugs that need immediate deployment
 
 See [`docs/ai/development-workflow/README.md`](docs/ai/development-workflow/README.md) for the full workflow specification.

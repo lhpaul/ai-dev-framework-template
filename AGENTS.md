@@ -118,6 +118,7 @@ This repository follows the default template workflow (documented in `docs/ai/de
 - Release branch: `main` (release PR targets `main`, plus a mandatory backport PR to `develop`)
 - Branch naming:
   - Features / improvements: `feature/[feature-slug]` (from `develop`)
+  - Refactors: `refactor/[slug]` (from `develop`)
   - Bug fixes (fast track): `fix/[slug]` (from `develop`)
   - Hotfixes: `hotfix/[slug]` (from `main`, then backport to `develop`)
   - Releases: `release/v[X.Y.Z]` (from `develop`)

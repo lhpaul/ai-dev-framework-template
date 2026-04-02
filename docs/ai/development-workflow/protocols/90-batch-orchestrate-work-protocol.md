@@ -95,7 +95,8 @@ When an issue tracker is configured and accessible, use it to pre-filter the can
 
 | Portfolio item state | Can advance if... | Dispatch target |
 |---|---|---|
-| Backlog | Human explicitly requested it | Work Item Runner on the tracker item / brief |
+| Backlog (Feature) | Human explicitly requested it | Work Item Runner on the tracker item / brief (starts at spec stage) |
+| Backlog (Refactor) | Human explicitly requested it as a Refactor | Work Item Runner on the tracker item / brief (starts at plan stage, skips spec) |
 | Writing Spec | Tracker **Writing Spec**; spec PR not yet human-ready | Work Item Runner on the tracker item / branch / PR |
 | Writing Plan | Tracker **Writing Plan**; plan PR not yet human-ready | Work Item Runner on the tracker item / branch / PR |
 | In Development | Tracker **In Development**; feature/fix PR not yet human-ready | Work Item Runner on the tracker item / branch / PR |

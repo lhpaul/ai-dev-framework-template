@@ -40,4 +40,5 @@ If the agent does not have direct tracker access, it must ask the human to paste
 - **Spec Ready**: use the work item description/comments as the starting point for the alignment checklist; any decision captured in comments must be reflected in the spec (or surfaced as an Open Question if still unresolved).
 - **Plan Ready**: if comments contain new constraints after the spec was merged, flag the discrepancy and request a spec update before proceeding.
 - **In Development (Full Pipeline)**: scan recent comments for post-plan scope changes. If anything conflicts with the spec or plan, stop and request an update before coding.
+- **In Development (Refactor)**: scan recent comments for post-plan scope changes. If anything conflicts with the plan, stop and request an update before coding. There is no spec for refactor items — the plan and work item brief are the authoritative sources.
 - **In Development (Fast Track)**: the work item description/comments can be the brief; confirm scope is bounded and stop if it expands beyond the brief.

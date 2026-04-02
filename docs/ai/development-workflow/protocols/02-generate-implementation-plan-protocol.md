@@ -10,7 +10,7 @@
 
 Before starting, read:
 
-- The approved spec: `docs/specs/developments/[timestamp]_[feature-slug]/1_[feature-slug]_specs.md`
+- The approved spec: `docs/specs/developments/[timestamp]_[feature-slug]/1_[feature-slug]_specs.md` (Full Pipeline only — Refactor items have no spec; use the work item brief from the tracker or human instead)
 - `docs/project/2-repo-architecture.md` — repository structure
 - `docs/project/3-software-architecture.md` — tech stack and design patterns
 - `docs/project/4-database-model.md` — data model (if applicable)
@@ -93,7 +93,7 @@ docs/specs/developments/[timestamp]_[feature-slug]/2_[feature-slug]_implementati
 
 - All layers that will change must be covered
 - The implementation order must be logical and executable (no steps that require a later step to be done first)
-- Every change must reference an acceptance criterion from the spec
+- Every change must reference an acceptance criterion from the spec (for Refactor items, reference the work item brief or stated restructuring goals instead)
 - Seed data requirements must be explicit — what data, in which files, for which test scenarios
 - **Documentation**: Explicitly consider project documentation in `docs/`. The plan must list every doc in `docs/` (including `AGENTS.md` if relevant) that the developer must update after implementation, or state "None" only when the feature truly affects no project docs. Do not plan the doc edits — only list them for the developer to execute.
 
@@ -116,7 +116,7 @@ Create the smoke test runbook using the template at `docs/ai/development-workflo
 docs/testing/[app-or-section]/[feature-slug].smoke-test.md
 ```
 
-The runbook must cover all acceptance criteria from the spec. Each criterion must have at least one testable step.
+The runbook must cover all acceptance criteria from the spec (or from the work item brief for Refactor items). Each criterion must have at least one testable step.
 
 ---
 

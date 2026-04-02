@@ -229,6 +229,7 @@ This workflow depends on a few capabilities more than on any specific vendor or 
 | Spec | `spec/[slug]` | `develop` |
 | Implementation plan | `implementation-plan/[slug]` | `develop` |
 | Feature | `feature/[slug]` | `develop` |
+| Refactor | `refactor/[slug]` | `develop` |
 | Bug or simple fix | `fix/[slug]` | `develop` |
 | Hotfix | `hotfix/[slug]` | `main` |
 | Release | `release/v[X.Y.Z]` | `develop` |
@@ -261,6 +262,8 @@ If an issue tracker is configured, the work item status usually maps to the work
 
 `Backlog -> Writing Spec -> Spec in Review -> Spec Ready -> Writing Plan -> Plan in Review -> Plan Ready -> In Development -> Implementation in Review -> Merged -> Released`
 
+Refactor items skip the spec stages: `Backlog -> Writing Plan -> Plan in Review -> Plan Ready -> In Development -> Implementation in Review -> Merged -> Released`
+
 Typical tracker fields worth keeping current:
 
 - Status
@@ -289,6 +292,20 @@ Parallel work is encouraged when it is safe:
 - Parallel database schema work should usually be serialized to avoid migration conflicts.
 
 ### Special Paths
+
+#### Refactor
+
+Refactor is the path for code restructuring or tech-debt cleanup that does not need a product spec but benefits from a planned approach.
+
+Use it when all of the following are true:
+
+- The change is code restructuring, tech-debt cleanup, or internal reorganization — not a new user-facing feature.
+- The scope is understood well enough to write an implementation plan without a product spec.
+- The work item brief (from a tracker or human) is sufficient context for the tech lead to plan the work.
+
+Path: `refactor/[slug]` from `develop` -> write plan -> plan review gate -> implement -> code review gate -> smoke test as needed -> merge.
+
+The development folder contains only a plan file (no spec). The tech lead uses the work item brief as input instead of an approved spec.
 
 #### Fast Track
 

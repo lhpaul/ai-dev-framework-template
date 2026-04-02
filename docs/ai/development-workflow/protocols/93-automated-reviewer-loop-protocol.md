@@ -21,7 +21,7 @@ Determine the target PR(s) in this order:
 
 1. **Explicit PR number** — from the command or user message (e.g. "run reviewer loop on PR 42")
 2. **Current branch** — if the user said "current" or "this PR" or did not specify: resolve the PR for the current branch, e.g. `gh pr view --json number --jq '.number'` from the repo root (or equivalent)
-3. **Multiple PRs** — only if the user explicitly asked for "all open workflow PRs" or similar; then discover open PRs (e.g. branches `spec/*`, `implementation-plan/*`, `feature/*`, `fix/*`, `hotfix/*`) and run the loop for each, one at a time unless the tool supports parallel runs
+3. **Multiple PRs** — only if the user explicitly asked for "all open workflow PRs" or similar; then discover open PRs (e.g. branches `spec/*`, `implementation-plan/*`, `feature/*`, `refactor/*`, `fix/*`, `hotfix/*`) and run the loop for each, one at a time unless the tool supports parallel runs
 
 If no PR can be determined, ask the user to specify a PR number or to run from a branch that has an open PR.
 

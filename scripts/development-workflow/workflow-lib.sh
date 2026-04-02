@@ -46,6 +46,7 @@ branch_prefix() {
     spec/*) printf 'spec\n' ;;
     implementation-plan/*) printf 'implementation-plan\n' ;;
     feature/*) printf 'feature\n' ;;
+    refactor/*) printf 'refactor\n' ;;
     fix/*) printf 'fix\n' ;;
     hotfix/*) printf 'hotfix\n' ;;
     release/*) printf 'release\n' ;;
@@ -57,7 +58,7 @@ reviewer_for_branch() {
   case "$(branch_prefix "$1")" in
     spec) printf 'spec-reviewer\n' ;;
     implementation-plan) printf 'implementation-plan-reviewer\n' ;;
-    feature|fix|hotfix) printf 'code-reviewer\n' ;;
+    feature|refactor|fix|hotfix) printf 'code-reviewer\n' ;;
     *) printf 'none\n' ;;
   esac
 }
