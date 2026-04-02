@@ -92,7 +92,9 @@ gh label create "type:refactor" --description "Code restructuring or tech-debt c
 
 ## Status: Tracker as Source of Truth
 
-Workflow status (Spec Ready, Plan Ready, In Development) is **not** stored in the spec document. The project item's Status field is the source of truth. The helper script `workflow-next-action.sh --development <path>` derives the next action from **repo state** (presence of implementation plan file, feature branch) so it works without reading a status field from the spec. See `scripts/development-workflow/README.md` and `workflow-next-action.sh` for the logic. Orchestrators and agents with `gh` CLI access should read and update work item status in the project at stage transitions. **Do not call this script for work items in Merged or Released status;** the script cannot distinguish a not-yet-created branch from a deleted one.
+Workflow status (Spec Ready, Plan Ready, In Development) is **not** stored in the spec document. The project item's Status field is the source of truth. The helper script `workflow-next-action.sh --development <path>` derives the next action from **repo state** (presence of implementation plan file, feature branch) so it works without reading a status field from the spec. See `scripts/development-workflow/README.md` and `workflow-next-action.sh` for the logic. Orchestrators and agents with `gh` CLI access should read and update work item status in the project at stage transitions.
+
+When `gh` is available, the script detects merged PRs via `gh pr list --state merged` and returns `NEXT_ACTION=skip` for items whose branch has already been merged — so calling it on Merged or Released items is safe in that configuration. Without `gh` CLI access, the script cannot distinguish a not-yet-created branch from a deleted one; in that case, prefer filtering work items by tracker status (e.g. exclude Merged/Released) before invoking the script.
 
 ---
 
