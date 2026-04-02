@@ -220,9 +220,13 @@ if [ "$feature_branch_exists" -eq 0 ] && [ -n "$plan_file" ] && gh_available; th
   done
 fi
 
-# NOTE: This logic still cannot distinguish "spec/plan PR not yet merged" from "spec/plan PR merged".
-# When the issue tracker is configured, the orchestrator should pre-filter items whose tracker
-# status is already Done/Merged/Cancelled and skip this script for them entirely.
+# IMPORTANT: The VCS-derived status below is a best-effort heuristic. It cannot reliably
+# distinguish "spec/plan PR not yet merged" from "spec/plan PR merged", and development
+# folders may be stale (items completed or cancelled in the tracker without folder updates).
+# When an issue tracker is configured (e.g., Linear), the orchestrator MUST use the tracker
+# as the primary source of truth for item status and should only call this script to enrich
+# tracker data with VCS-level detail (branch existence, PR state). Do not use the STATUS
+# output from this script to override the tracker status.
 if [ -z "$plan_file" ] && [ -n "$spec_file" ]; then
   # Full Pipeline: spec exists but no plan yet
   status_line="Spec Ready"

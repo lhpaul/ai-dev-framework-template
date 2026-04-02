@@ -51,22 +51,30 @@ If the request is explicitly about a single development, branch, or PR, skip thi
 
 ## Step 1: Gather Portfolio State
 
-Prefer the helper scripts in `scripts/development-workflow/` for deterministic state inspection before falling back to ad hoc shell commands.
+### 1a. Query the issue tracker (primary source of truth)
 
-Read from the following sources:
+When an issue tracker is configured in `.ai-dev-workflow.yaml` (e.g., `issue_tracker.provider: linear`), it is the **primary and authoritative source** for which work items exist and their current status. **Always query the tracker first** — do not infer item status from development folders or git state alone, as those artifacts may be stale or incomplete.
 
-1. **Issue tracker** (if configured): current status, due date, priority, dependencies, and latest brief
-2. **Development folders**: `docs/specs/developments/`
-3. **Workflow branches / PRs**: local branches, remote branches, active worktrees, open PRs
+From the tracker, collect for each open item:
 
-If available, run:
+- Current status (e.g., Backlog, Writing Spec, Spec Ready, Writing Plan, Plan Ready, In Development, In Review, Done)
+- Due date, priority, dependencies, and latest brief/description
+- Linked branch or PR identifiers (if the tracker stores them)
+
+**Exclude** items whose tracker status is already `Done`, `Merged`, `Cancelled`, or equivalent — these are not candidates for advancement.
+
+**If the tracker is unavailable** (no provider configured, API unreachable, or no MCP server available), fall back to the VCS-based discovery in Step 1b below. In this fallback mode, flag to the human that status may be stale.
+
+### 1b. Enrich with VCS state (supplementary detail)
+
+Use the helper scripts in `scripts/development-workflow/` for deterministic VCS state inspection:
 
 ```bash
 ./scripts/development-workflow/discover-workflow-state.sh
 ./scripts/development-workflow/workflow-batch-plan.sh
 ```
 
-Use these helpers while gathering detail:
+Use these helpers to gather detail on specific items:
 
 ```bash
 ./scripts/development-workflow/workflow-next-action.sh --development <path>
@@ -74,18 +82,18 @@ Use these helpers while gathering detail:
 ./scripts/development-workflow/workflow-next-action.sh --pr <number>
 ```
 
-Build a portfolio map of:
+These scripts read from development folders (`docs/specs/developments/`), workflow branches, worktrees, and open PRs. Use their output to **enrich** tracker data with VCS-level detail (e.g., whether a branch exists, whether a PR is open, PR labels), but **do not use VCS-derived status to override the tracker status**. Development folders contain spec and plan documents but are not reliable indicators of item status — items may be completed, cancelled, or reorganized in the tracker without corresponding changes to these folders.
+
+### 1c. Build the portfolio map
+
+Combine tracker and VCS data into a portfolio map of:
 
 - Backlog items that a human explicitly requested to start
 - Work items in **Writing Spec** / **Writing Plan** / **In Development** (PR not yet human-ready), or branches/PRs still in PR-readiness loops
 - Work items in **Spec in Review** / **Plan in Review** / **Development in Review**, or PRs labeled `ready-for-human-review` (human merge queue unless `needs-fixes`)
-- Development folders that are `Spec Ready`, `Plan Ready`, or already in development
+- Items that are **Spec Ready** or **Plan Ready** per the tracker
 - Branches that were pushed but still have no PR
 - PRs that still need readiness work or fix loops
-
-When available, use `workflow-batch-plan.sh` as the initial candidate list for development folders, then enrich it with tracker and PR data.
-
-When an issue tracker is configured and accessible, use it to pre-filter the candidate list: exclude items whose tracker status is already `Done`, `Merged`, `Cancelled`, or equivalent before calling `workflow-next-action.sh --development`. This is an optional optimization — the script performs its own VCS-level check to detect merged items, but skipping them at the tracker layer avoids unnecessary `gh` calls in large portfolios.
 
 ---
 
@@ -93,18 +101,20 @@ When an issue tracker is configured and accessible, use it to pre-filter the can
 
 ### What can advance now?
 
-| Portfolio item state | Can advance if... | Dispatch target |
+Use the **tracker status** as the canonical state for each item. VCS signals (branch existence, PR labels) provide supplementary detail but do not override the tracker. When no tracker is configured, fall back to VCS-derived status.
+
+| Portfolio item state (per tracker) | Can advance if... | Dispatch target |
 |---|---|---|
 | Backlog (Feature) | Human explicitly requested it | Work Item Runner on the tracker item / brief (starts at spec stage) |
 | Backlog (Refactor) | Human explicitly requested it as a Refactor | Work Item Runner on the tracker item / brief (starts at plan stage, skips spec) |
 | Writing Spec | Tracker **Writing Spec**; spec PR not yet human-ready | Work Item Runner on the tracker item / branch / PR |
 | Writing Plan | Tracker **Writing Plan**; plan PR not yet human-ready | Work Item Runner on the tracker item / branch / PR |
 | In Development | Tracker **In Development**; feature/fix PR not yet human-ready | Work Item Runner on the tracker item / branch / PR |
-| Spec Ready | Spec PR is merged | Work Item Runner on the development folder |
-| Plan Ready | Plan PR is merged | Work Item Runner on the development folder |
-| Pushed workflow branch, no PR yet | Branch exists on local/remote/worktree | Work Item Runner on the branch |
-| PR open, no readiness label | PR exists and latest push has not fully cleared | Work Item Runner on the PR |
-| PR labeled `needs-fixes` | Human or automated systems requested changes | Work Item Runner on the PR |
+| Spec Ready | Tracker **Spec Ready** | Work Item Runner on the development folder |
+| Plan Ready | Tracker **Plan Ready** | Work Item Runner on the development folder |
+| Pushed workflow branch, no PR yet | Branch exists on local/remote/worktree (VCS supplementary) | Work Item Runner on the branch |
+| PR open, no readiness label | PR exists and latest push has not fully cleared (VCS supplementary) | Work Item Runner on the PR |
+| PR labeled `needs-fixes` | Human or automated systems requested changes (VCS supplementary) | Work Item Runner on the PR |
 | Spec in Review / Plan in Review / Development in Review or `ready-for-human-review` | — | Wait; do not redispatch (unless human feedback requires a fix loop) |
 
 ### Priority order
@@ -178,9 +188,10 @@ The Portfolio Orchestrator remains responsible for the batch after dispatch.
 
 After a Work Item Runner returns:
 
-1. Re-check the item with `workflow-next-action.sh` when a branch, PR, or development folder exists
-2. If the next action is still deterministic because the Work Item Runner returned early or was interrupted, redispatch / resume that same item
-3. Stop supervising that item only when it is waiting on a human, blocked, or escalated
+1. **Re-check tracker status first** when an issue tracker is configured — query the tracker for the item's current status before consulting VCS state. Do not rely solely on `workflow-next-action.sh` to determine whether an item should advance, as VCS-derived status cannot reliably distinguish certain states (e.g., a spec PR awaiting review vs. one already merged). Use `workflow-next-action.sh` only for VCS-level enrichment (branch existence, PR labels) after the tracker status is known.
+2. If the tracker is unavailable, fall back to `workflow-next-action.sh` but flag to the human that status may be stale.
+3. If the next action is still deterministic because the Work Item Runner returned early or was interrupted, redispatch / resume that same item.
+4. Stop supervising that item only when it is waiting on a human, blocked, or escalated.
 
 Do not consider the batch complete until every dispatched item has reached a real terminal condition.
 

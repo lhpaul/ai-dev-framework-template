@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- AI Workflow: orchestrator protocol now treats the issue tracker (e.g., Linear) as the primary source of truth for work item status; development folders and VCS state are supplementary detail only.
+
 ### Fixed
 
 - Automated reviewer-loop now recovers stale unresolved findings from full PR history, preventing blocking issues from being dropped when Devin does not review the latest HEAD (e.g., after base-branch merges).
