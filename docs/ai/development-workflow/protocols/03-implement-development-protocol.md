@@ -165,7 +165,7 @@ Read **all** of the following before writing a single line of code. Do not skip.
 3. `docs/project/3-software-architecture.md` — architecture patterns
 4. `docs/best-practices/` — all best practice docs
 5. Relevant existing code — read actual files for the areas you will modify
-6. If an issue tracker exists for this item, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for `In Development` expectations before coding.
+6. If an issue tracker exists for this item, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for `In Development (Refactor)` expectations before coding.
 
 Extract from your reading:
 
