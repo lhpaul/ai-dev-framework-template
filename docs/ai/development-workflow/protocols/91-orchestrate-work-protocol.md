@@ -153,7 +153,7 @@ Run the next deterministic action for the selected item, then immediately re-eva
 
 Expected chain:
 
-`creator -> draft PR opened -> internal review gate (Step 7a) -> automated reviewer loop (Step 7) -> CI loop (Step 8) -> gh pr ready -> readiness label / tracker status -> wait or escalation`
+`creator -> draft PR opened -> internal review gate (Step 7a) -> gh pr ready -> automated reviewer loop (Step 7) -> CI loop (Step 8) -> readiness label / tracker status -> wait or escalation`
 
 After any subagent finishes, determine whether the item still has a deterministic next action:
 
@@ -211,7 +211,7 @@ The reviewer runs against `REVIEW.md`, applies deterministic fixes directly, and
 
 | Outcome | Action |
 |---|---|
-| `APPROVED` | Continue to Step 7 (external automated reviewers) |
+| `APPROVED` | Run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then continue to Step 7 (external automated reviewers) |
 | `NEEDS REVISION` (fixable) | Fixes already applied by the agent; re-run Step 7a |
 | `NEEDS REVISION` (product/design decision) | Stop and escalate to human before proceeding |
 
@@ -358,7 +358,7 @@ Interpret the result as follows:
 
 | Result | Action |
 |---|---|
-| `green` | Run `gh pr ready <pr_number>` to convert the draft PR to ready; apply `ready-for-human-review`; update the tracker status to `Spec in Review`, `Plan in Review`, or `Development in Review` based on branch type; remove `needs-fixes` if present; and report the PR as ready |
+| `green` | Apply `ready-for-human-review` (the PR is already non-draft from Step 7a); update the tracker status to `Spec in Review`, `Plan in Review`, or `Development in Review` based on branch type; remove `needs-fixes` if present; and report the PR as ready |
 | `red` | Apply `needs-fixes`, dispatch the matching fixer agent, wait for a push, then return to Step 7 |
 | `timeout` | Escalate to human; do not apply `ready-for-human-review` |
 
