@@ -91,7 +91,7 @@ The issue ID prefix is the canonical identifier when a tracker is in use. The sl
 - Write a clear title following the commit message convention
 - Include context in the PR description: what, why, how to test
 - Link the relevant issue if one exists
-- Every PR must update `CHANGELOG.md` under `[Unreleased]` before merge
+- Every PR must update `CHANGELOG.md` under `[Unreleased]` before merge (except spec/plan-only PRs and fixes to unreleased work — see the CHANGELOG section below)
 
 ## Safety Rules
 
@@ -112,3 +112,6 @@ This project uses [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) forma
 - Never defer CHANGELOG entries to release time
 - Use the appropriate category: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`
 - Release PRs move `[Unreleased]` entries to a versioned section: `[X.Y.Z] - YYYY-MM-DD`
+- **Exempt from CHANGELOG updates**:
+  - Spec-only or plan-only PRs (documentation artifacts for upcoming work)
+  - Fixes or changes to developments that have not been released yet — update the existing `[Unreleased]` entry instead of adding a new one; if the original entry already describes the corrected behavior, no change is needed

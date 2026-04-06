@@ -127,7 +127,7 @@ This repository follows the default template workflow (documented in `docs/ai/de
 
 - Follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format.
 - Use [Semantic Versioning](https://semver.org/): patch for fixes/tweaks, minor for new features or meaningful improvements, major for breaking changes to the template structure.
-- **Feature and fix PRs** merged into `develop` add entries under `[Unreleased]` in `CHANGELOG.md`; do not convert to a version number on merge.
+- **Feature and fix PRs** merged into `develop` add entries under `[Unreleased]` in `CHANGELOG.md`; do not convert to a version number on merge. Spec-only and plan-only PRs are exempt. Fixes or changes to unreleased work should update the existing entry rather than adding a new one.
 - **A new version is created only when releasing**: run the Prepare Release workflow (`/prepare-release` or `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md`). That creates a `release/v[X.Y.Z]` branch, renames `[Unreleased]` to `[X.Y.Z]` in the CHANGELOG, and opens PRs to `main` and backport to `develop`.
 
 ### Stack Conventions
