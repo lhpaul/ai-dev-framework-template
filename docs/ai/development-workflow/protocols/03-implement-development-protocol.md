@@ -110,7 +110,6 @@ Add an entry under `[Unreleased]` in `CHANGELOG.md`:
 
 - Use the appropriate category: `Added`, `Changed`, `Fixed`, `Security`, `Deprecated`, `Removed`
 - Write from the user's perspective: what can they now do / what is now fixed?
-- **Skip this step** if the PR only adds spec or plan documentation
 - If this PR fixes or adjusts an unreleased development that already has an `[Unreleased]` entry, update the existing entry instead of adding a new one; if the entry already describes the corrected behavior, no change is needed
 
 ### Step 7: Commit & Push
@@ -244,7 +243,7 @@ gh pr create --draft --title "refactor([scope]): [short description]" --body "..
 3. Branch: `git checkout -b hotfix/[branch-slug]` from `main` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without)
 4. Implement the minimal fix (do not bundle unrelated changes)
 5. Verify: build, lint, tests pass
-6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (skip if this fixes unreleased work that already has an entry — update the existing entry instead, or leave it unchanged if it already describes the correct behavior)
+6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (hotfixes always fix released code, so a new entry is always required)
 7. Commit: `fix([scope]): [description] (hotfix)`
 8. Push branch to remote
 9. Open a **draft** PR targeting `main` by adapting Path 1 `### Step 8: Open PR (Draft)` for hotfix (`fix(...)` title with `(hotfix)` as needed, incident-focused body, target branch `main`).
