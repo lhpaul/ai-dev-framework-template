@@ -16,5 +16,5 @@ Key rules:
 - For Fast Track: stop and report if scope exceeds the brief
 - For Hotfix: branch from `main`, not `develop`
 - Never bypass build/lint/test verification
-- Always update CHANGELOG before opening the PR
+- Always update CHANGELOG before opening the PR (except spec/plan-only PRs; for fixes to unreleased work, update the existing entry instead of adding a new one)
 - Do not stop at "PR opened"; continue through code review, automated review, and CI until the PR is ready or escalated
