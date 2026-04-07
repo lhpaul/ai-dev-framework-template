@@ -56,6 +56,21 @@
 | Staging / Dev | Team testing | [URL] |
 | Production | Live users | [URL] |
 
+### Deployment Mapping (Template Convention)
+
+> Document your actual branch-to-environment deployment rules and approval gates.
+> The template convention is:
+>
+> - `develop` -> `develop` (non-production)
+> - `main` -> `production`
+
+| Branch | Target environment | Deployment workflow | Approval / protections |
+|---|---|---|---|
+| develop | develop | `.github/workflows/deploy-template.yml` (customized downstream) | [e.g. required checks only] |
+| main | production | `.github/workflows/deploy-template.yml` (customized downstream) | [e.g. required reviewers + environment protection rules] |
+
+> Also list environment-specific variables/secrets by **name only** (never values).
+
 ## External Integrations
 
 > List third-party services integrated with the product.

@@ -144,11 +144,16 @@ Ask:
 - What Git hosting / pull-request platform do you use? (GitHub, GitLab, Bitbucket, other)
 - What browser automation tool, if any, should the workflow assume for smoke tests? (Cursor browser MCP, Playwright MCP, Playwright CLI, other, none)
 - Do you want to use automated PR review? (Greptile, Devin, both, other, none)
+- Do you want branch-based CI/CD deployments? (yes/no)
+  - If yes: what is the deploy branch strategy (`develop` -> non-production, `main` -> production, or custom)?
+  - What deployment provider/tool should downstream repos wire in? (or `TBD`)
+  - What GitHub Environments and secret names are required? (names only, never secret values)
 - Do you use any MCP servers with your AI tool? (for context: Supabase, database access, etc.)
 
 Document the answers and point to the relevant integration docs:
 - Issue tracker → `docs/ai/development-workflow/integrations/linear.md` (or note the alternative)
 - Automated review → `docs/ai/development-workflow/integrations/greptile.md` and/or `docs/ai/development-workflow/integrations/devin.md`
+- CI/CD deployment placeholders → `docs/ai/development-workflow/integrations/ci-cd-deployment.md` (if enabled)
 
 If the user selects any workflow integration providers, generate `.ai-dev-workflow.yaml` at the repo root. Prefer the versioned nested schema:
 
@@ -200,6 +205,7 @@ Summarize everything collected:
 > - **Database**: [yes/no + engine]
 > - **Integrations**: [list]
 > - **Branch strategy**: [develop / main]
+> - **Deployment strategy**: [enabled/disabled + branch->environment mapping + provider/tool + required environment secret names]
 >
 > I'll now generate the following files:
 > - `docs/project/1-business-domain.md`
@@ -209,6 +215,7 @@ Summarize everything collected:
 > - `docs/best-practices/STACK-SPECIFIC.md` (coordinator)
 > - `docs/best-practices/stack/[technology].md` × [N] files (one per technology area)
 > - Updated `AGENTS.md`
+> - `.ai-dev-workflow.yaml` (if integrations were selected)
 >
 > Shall I proceed?"
 
