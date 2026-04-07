@@ -53,7 +53,8 @@ The setup agent will have a structured conversation with you to understand your 
 ├── CHANGELOG.md
 ├── .github/
 │   └── workflows/
-│       └── auto-tag-release.yml           # Tags release branches after merge to main
+│       ├── auto-tag-release.yml           # Tags release branches after merge to main
+│       └── deploy-template.yml            # Placeholder branch-based deployment workflow
 │
 ├── docs/
 │   ├── README.md                          # Documentation index
@@ -94,7 +95,8 @@ The setup agent will have a structured conversation with you to understand your 
 │           └── integrations/             # Optional tool integrations
 │               ├── linear.md             # Issue tracker integration (Linear)
 │               ├── greptile.md           # Automated PR review (Greptile)
-│               └── github-projects.md    # GitHub Projects board integration
+│               ├── github-projects.md    # GitHub Projects board integration
+│               └── ci-cd-deployment.md   # CI/CD deployment placeholders and customization
 │
 ├── .codex/
 │   └── skills/                           # Codex skills that wrap the workflow protocols and ship UI metadata
@@ -240,6 +242,7 @@ Use $workflow-item-orchestrator to start and advance work for [feature or issue 
 - **Issue Tracker (e.g., Linear)**: See [`docs/ai/development-workflow/integrations/linear.md`](docs/ai/development-workflow/integrations/linear.md)
 - **Automated PR Review (e.g., Greptile)**: See [`docs/ai/development-workflow/integrations/greptile.md`](docs/ai/development-workflow/integrations/greptile.md)
 - **GitHub Projects board**: See [`docs/ai/development-workflow/integrations/github-projects.md`](docs/ai/development-workflow/integrations/github-projects.md)
+- **CI/CD deployment placeholders**: See [`docs/ai/development-workflow/integrations/ci-cd-deployment.md`](docs/ai/development-workflow/integrations/ci-cd-deployment.md)
 
 ---
 
