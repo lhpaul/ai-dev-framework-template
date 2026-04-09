@@ -397,8 +397,8 @@ When a human requests changes on a PR:
 3. Address the feedback
 4. Push fixes
 5. Run Step 7
-5b. Run Step 7b (implementation PRs only)
-6. Run Step 8
-7. Reapply `ready-for-human-review` only when both loops are clean again
+6. Run Step 7b (implementation PRs only)
+7. Run Step 8
+8. Reapply `ready-for-human-review` only when both loops are clean again
 
 See `92-pr-readiness-signal-protocol.md` for label definitions.
