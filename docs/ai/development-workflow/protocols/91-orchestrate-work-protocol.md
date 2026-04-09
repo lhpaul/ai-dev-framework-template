@@ -360,7 +360,7 @@ gh pr edit <pr_number> --add-label "ready-for-regression"
 
 This label triggers the `e2e-regression.yml` workflow (or project-specific equivalents). Step 8's CI loop (`pr-ci-loop.sh`) will then naturally pick up the e2e check as part of its green/red polling via `statusCheckRollup`.
 
-If the PR already has the `ready-for-regression` label (e.g. from a previous cycle where Step 7 was re-run after fixes), skip the label application — the `synchronize` event from the latest push will have already re-triggered the workflow.
+The `gh pr edit --add-label` command is idempotent — applying a label that already exists is a no-op. When the label is already present from a previous cycle, the `synchronize` event from the latest push will have already re-triggered the workflow.
 
 Skip this step entirely for spec and plan PRs.
 

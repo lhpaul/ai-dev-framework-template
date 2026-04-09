@@ -60,7 +60,7 @@ The setup agent will have a structured conversation with you to understand your 
 │   └── workflows/
 │       ├── auto-tag-release.yml           # Tags release branches after merge to main
 │       ├── deploy.yml                     # Placeholder branch-based deployment workflow
-│       └── e2e-regression.yml            # Label-gated e2e/regression placeholder
+│       └── e2e-regression.yml             # Label-gated e2e/regression placeholder
 │
 ├── docs/
 │   ├── README.md                          # Documentation index
