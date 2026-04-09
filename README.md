@@ -51,10 +51,16 @@ The setup agent will have a structured conversation with you to understand your 
 ├── AGENTS.md                              # Universal AI guidance (all tools read this)
 ├── CLAUDE.md -> AGENTS.md                 # Symlink for Claude Code
 ├── CHANGELOG.md
+├── e2e/                                   # Placeholder e2e/regression test project (Playwright)
+│   ├── playwright.config.ts               # Minimal Playwright config
+│   ├── tests/
+│   │   └── baseline.spec.ts               # Always-passing placeholder test
+│   └── package.json
 ├── .github/
 │   └── workflows/
 │       ├── auto-tag-release.yml           # Tags release branches after merge to main
-│       └── deploy.yml                     # Placeholder branch-based deployment workflow
+│       ├── deploy.yml                     # Placeholder branch-based deployment workflow
+│       └── e2e-regression.yml             # Label-gated e2e/regression placeholder
 │
 ├── docs/
 │   ├── README.md                          # Documentation index
@@ -96,7 +102,8 @@ The setup agent will have a structured conversation with you to understand your 
 │               ├── linear.md             # Issue tracker integration (Linear)
 │               ├── greptile.md           # Automated PR review (Greptile)
 │               ├── github-projects.md    # GitHub Projects board integration
-│               └── ci-cd-deployment.md   # CI/CD deployment placeholders and customization
+│               ├── ci-cd-deployment.md   # CI/CD deployment placeholders and customization
+│               └── e2e-regression.md     # E2E/regression test integration
 │
 ├── .codex/
 │   └── skills/                           # Codex skills that wrap the workflow protocols and ship UI metadata

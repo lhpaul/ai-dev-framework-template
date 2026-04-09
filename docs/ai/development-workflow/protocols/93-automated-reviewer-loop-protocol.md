@@ -63,7 +63,7 @@ If unresolved findings exist: dispatch a fixer agent, wait for the push, then pr
 
 Execute **Step 7a: Internal Review Gate**, **Step 7: Automated Reviewer Loop**, and **Step 8: CI Loop** exactly as defined in `91-orchestrate-work-protocol.md` (scripts, result interpretation, sequential platform policy, fixer mapping, parameters, and labels). Do not duplicate that logic here — follow 91.
 
-For each PR: run Step 7a first (the stage-appropriate internal review gate). Once Step 7a produces `APPROVED`, run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then run Step 7 to completion, then Step 8. Dispatch fixers and re-run as specified in 91 until the PR is clean and ready for human review or escalated. After Step 8 returns `green`, apply `ready-for-human-review` (the PR is already non-draft from the step after 7a).
+For each PR: run Step 7a first (the stage-appropriate internal review gate). Once Step 7a produces `APPROVED`, run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then run Step 7 to completion, then Step 7b (regression label, implementation PRs only), then Step 8. Dispatch fixers and re-run as specified in 91 until the PR is clean and ready for human review or escalated. After Step 8 returns `green`, apply `ready-for-human-review` (the PR is already non-draft from the step after 7a).
 
 ### PR feedback tracking and comments
 

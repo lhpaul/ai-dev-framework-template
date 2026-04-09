@@ -155,7 +155,7 @@ Run the next deterministic action for the selected item, then immediately re-eva
 
 Expected chain:
 
-`creator -> draft PR opened -> internal review gate (Step 7a) -> gh pr ready -> automated reviewer loop (Step 7) -> CI loop (Step 8) -> readiness label / tracker status -> wait or escalation`
+`creator -> draft PR opened -> internal review gate (Step 7a) -> gh pr ready -> automated reviewer loop (Step 7) -> regression label (Step 7b, implementation PRs only) -> CI loop (Step 8) -> readiness label / tracker status -> wait or escalation`
 
 After any subagent finishes, determine whether the item still has a deterministic next action:
 
@@ -312,8 +312,8 @@ Interpret the result as follows:
 
 | Result | Action |
 |---|---|
-| `clean` | Continue immediately to Step 8 |
-| `skipped` | Continue immediately to Step 8 |
+| `clean` | Continue to Step 7b (implementation PRs) then Step 8 |
+| `skipped` | Continue to Step 7b (implementation PRs) then Step 8 |
 | `needs_fixes` and `cycle < max_cycles` | Increment `cycle`, dispatch the matching fixer agent, wait for a push, then run Step 7 again |
 | `needs_fixes` and `cycle >= max_cycles` | Escalate to human |
 | `escalate` | Escalate to human |
@@ -346,9 +346,31 @@ Soft suggestions may be reported in summaries, but they do not change the loop r
 
 ---
 
+## Step 7b: Regression Label (Implementation PRs Only)
+
+After Step 7 completes with result `clean` or `skipped`, and **before** entering Step 8, apply the `ready-for-regression` label on implementation PRs to trigger label-gated e2e/regression CI checks.
+
+**Applies to**: PRs on branches `feature/*`, `fix/*`, `hotfix/*`, `refactor/*`
+**Does not apply to**: PRs on branches `spec/*`, `implementation-plan/*`
+
+```bash
+# Only for implementation PRs:
+gh pr edit <pr_number> --add-label "ready-for-regression"
+```
+
+This label triggers the `e2e-regression.yml` workflow (or project-specific equivalents). Step 8's CI loop (`pr-ci-loop.sh`) will then naturally pick up the e2e check as part of its green/red polling via `statusCheckRollup`.
+
+The `gh pr edit --add-label` command is idempotent — applying a label that already exists is a no-op. When the label is already present from a previous cycle, the `synchronize` event from the latest push will have already re-triggered the workflow.
+
+Skip this step entirely for spec and plan PRs.
+
+See [`integrations/e2e-regression.md`](../integrations/e2e-regression.md) for the full integration guide, including downstream customization.
+
+---
+
 ## Step 8: CI Loop
 
-**Only after Step 7 has completed** with result `clean` or `skipped`, wait for required checks to settle.
+**Only after Step 7 (and Step 7b for implementation PRs) has completed**, wait for required checks to settle.
 
 Prefer the helper script:
 
@@ -375,7 +397,8 @@ When a human requests changes on a PR:
 3. Address the feedback
 4. Push fixes
 5. Run Step 7
-6. Run Step 8
-7. Reapply `ready-for-human-review` only when both loops are clean again
+6. Run Step 7b (implementation PRs only)
+7. Run Step 8
+8. Reapply `ready-for-human-review` only when both loops are clean again
 
 See `92-pr-readiness-signal-protocol.md` for label definitions.
