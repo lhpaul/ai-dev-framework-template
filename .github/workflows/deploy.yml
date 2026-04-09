@@ -16,10 +16,6 @@ on:
           - develop
           - production
 
-concurrency:
-  group: deploy-${{ github.ref }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
   id-token: write
@@ -32,6 +28,9 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.environment == 'develop')
     runs-on: ubuntu-latest
     environment: develop
+    concurrency:
+      group: deploy-develop
+      cancel-in-progress: true
 
     steps:
       - name: Checkout
@@ -50,6 +49,9 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
     runs-on: ubuntu-latest
     environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
 
     steps:
       - name: Checkout

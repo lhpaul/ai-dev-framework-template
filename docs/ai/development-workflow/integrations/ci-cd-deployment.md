@@ -34,6 +34,19 @@ You should also configure repository/environment secrets and protection rules in
 
 ---
 
+## Concurrency Design
+
+Each job uses its own fixed concurrency group (`deploy-develop` and `deploy-production`) rather than a single `deploy-${{ github.ref }}` group. This matters for two reasons:
+
+- **Environment isolation**: develop and production deploys never cancel each other, even when both branches are active simultaneously.
+- **Production safety**: the `deploy-production` job sets `cancel-in-progress: false`. Two rapid pushes to `main` will queue the second production deploy rather than aborting the first mid-flight, avoiding inconsistent states such as migrations applied without a corresponding code rollout.
+
+The `deploy-develop` job keeps `cancel-in-progress: true` so redundant staging deploys are discarded quickly.
+
+Note: `workflow_dispatch` sets `github.ref` to the branch selected in the "Use workflow from" dropdown, not the target environment. Using fixed group names (`deploy-develop` / `deploy-production`) prevents a manual production deploy triggered from `develop` from being cancelled by a subsequent push to `develop`.
+
+---
+
 ## Notes
 
 - This template does not store deployment credentials or provider-specific commands.
