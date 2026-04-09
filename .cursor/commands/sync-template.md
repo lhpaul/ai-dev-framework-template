@@ -107,6 +107,7 @@ For each file in these paths:
 .claude/settings.json                          ← may have project-specific permissions
 .claude/settings.local.json.example
 .github/workflows/auto-tag-release.yml         ← automated release tagging; add if CI is set up
+.github/workflows/deploy.yml                   ← placeholder deployment workflow; customize with project-specific deploy logic
 ```
 
 For each of these: show the full diff and ask the user explicitly whether to apply it.
