@@ -103,7 +103,7 @@ The setup agent will have a structured conversation with you to understand your 
 │               ├── greptile.md           # Automated PR review (Greptile)
 │               ├── github-projects.md    # GitHub Projects board integration
 │               ├── ci-cd-deployment.md   # CI/CD deployment placeholders and customization
-│               └── e2e-regression.md    # E2E/regression test integration
+│               └── e2e-regression.md     # E2E/regression test integration
 │
 ├── .codex/
 │   └── skills/                           # Codex skills that wrap the workflow protocols and ship UI metadata
