@@ -1,0 +1,64 @@
+name: Deploy (Template Placeholder)
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy"
+        required: true
+        default: "develop"
+        type: choice
+        options:
+          - develop
+          - production
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy-develop:
+    name: Deploy to develop (placeholder)
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/develop') ||
+      (github.event_name == 'workflow_dispatch' && inputs.environment == 'develop')
+    runs-on: ubuntu-latest
+    environment: develop
+    concurrency:
+      group: deploy-develop
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Placeholder deploy step (develop)
+        run: |
+          echo "Template placeholder: deploy to develop environment."
+          echo "Replace this step with project-specific deployment logic."
+          echo "Suggested: install dependencies, build artifacts, authenticate provider, deploy."
+
+  deploy-production:
+    name: Deploy to production (placeholder)
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Placeholder deploy step (production)
+        run: |
+          echo "Template placeholder: deploy to production environment."
+          echo "Replace this step with project-specific deployment logic."
+          echo "Suggested: install dependencies, build artifacts, authenticate provider, deploy."
