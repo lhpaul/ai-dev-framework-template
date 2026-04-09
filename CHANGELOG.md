@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Label-gated e2e/regression test workflow: `.github/workflows/e2e-regression.yml` triggers on implementation PRs when `ready-for-regression` label is present; ships with a Playwright-based `e2e/` placeholder project (one always-passing baseline test) for downstream projects to customize.
+- E2e/regression integration guide: `docs/ai/development-workflow/integrations/e2e-regression.md` documents the label-gate pattern, workflow placement between Step 7 and Step 8, and downstream customization.
+- `ready-for-regression` label and Step 7b: applied automatically by the orchestrator on implementation PRs after automated review is clean, gating expensive e2e tests until the PR is reviewer-ready. Documented in protocol 92 (PR readiness signal) and protocol 91 (orchestrate work).
 - Template deployment workflow scaffold: `.github/workflows/deploy.yml` triggers on `develop` and `main`, maps to `develop`/`production` environments, and keeps deploy steps as explicit no-op placeholders for downstream repository customization.
 - CI/CD deployment integration guide: `docs/ai/development-workflow/integrations/ci-cd-deployment.md` documents placeholder behavior and how downstream projects should replace it with provider-specific deploy logic and environment configuration.
 - Setup and architecture docs now explicitly capture CI/CD onboarding details: deployment integration prompts in `docs/ai/setup/protocol.md` and branch-to-environment mapping guidance in `docs/project/3-software-architecture.md`.

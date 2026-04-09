@@ -12,6 +12,7 @@ This is a **repo-wide definition**. All agents apply these labels consistently.
 | --- | --- |
 | `ready-for-human-review` | The PR is ready for a human reviewer. CI is green. The `REVIEW.md` gate is satisfied. Every configured automated reviewer is clean or skipped. |
 | `needs-fixes` | The PR still needs fixes before it is ready for human review. This may be due to human-requested changes, failing CI, or blocking automated PR feedback. |
+| `ready-for-regression` | Automated code reviews are clean (or skipped). E2e/regression tests should now run. Applied automatically by the orchestrator (Step 7b) on implementation PRs only (`feature/*`, `fix/*`, `hotfix/*`, `refactor/*`). |
 
 ---
 
@@ -36,6 +37,20 @@ Apply this label when **any** of the following is true:
 
 ---
 
+## Conditions for `ready-for-regression`
+
+Apply this label when **all** of the following are true:
+
+- [ ] The PR is an implementation PR (branch prefix `feature/*`, `fix/*`, `hotfix/*`, or `refactor/*`)
+- [ ] Step 7a (internal review gate) previously produced `APPROVED`
+- [ ] Step 7 (automated reviewer loop) has completed with `clean` or `skipped`
+
+This label is **not removed** after e2e tests pass — it persists on the PR. The `ready-for-human-review` label is what ultimately signals human readiness after CI (including e2e) is green.
+
+This label is **not applied** to spec or plan PRs (`spec/*`, `implementation-plan/*`).
+
+---
+
 ## Workflow
 
 ### Work Item Runner advances a draft PR
@@ -50,6 +65,7 @@ Apply this label when **any** of the following is true:
    - Once the internal review gate is clean, run `gh pr ready <pr-number>` to convert the draft to non-draft
 4. Run `./scripts/development-workflow/pr-review-loop.sh <pr-number> --branch <branch> [--platform <platform> ...]` when automated review tooling is configured
 5. If any automated reviewer reports blocking PR feedback: apply fixes, push, and repeat Step 4
+5b. For implementation PRs only: apply `ready-for-regression` label to trigger e2e/regression CI checks
 6. Run `./scripts/development-workflow/pr-ci-loop.sh <pr-number>`
 7. If CI passes and all reviews are clean (or not configured): apply `ready-for-human-review` (the PR is already non-draft from Step 3) and move the tracker status to the matching human-review stage (`Spec in Review`, `Plan in Review`, or `Development in Review`) when the tracker is the source of truth
 8. If CI fails: apply `needs-fixes`, fix PR feedback or failing checks, push, and return to Step 4

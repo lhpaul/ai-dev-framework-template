@@ -1,0 +1,44 @@
+name: E2E / Regression Tests (Template Placeholder)
+
+on:
+  pull_request:
+    types: [labeled, synchronize, reopened]
+    branches:
+      - develop
+      - main
+
+concurrency:
+  group: e2e-regression-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: E2E regression (placeholder)
+    if: >-
+      (github.event.action == 'labeled' && github.event.label.name == 'ready-for-regression') ||
+      (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'ready-for-regression'))
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: e2e
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Run e2e tests
+        working-directory: e2e
+        run: npx playwright test
