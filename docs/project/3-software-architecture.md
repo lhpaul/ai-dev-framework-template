@@ -66,8 +66,8 @@
 
 | Branch | Target environment | Deployment workflow | Approval / protections |
 |---|---|---|---|
-| develop | develop | `.github/workflows/deploy-template.yml` (customized downstream) | [e.g. required checks only] |
-| main | production | `.github/workflows/deploy-template.yml` (customized downstream) | [e.g. required reviewers + environment protection rules] |
+| develop | develop | `.github/workflows/deploy.yml` (customized downstream) | [e.g. required checks only] |
+| main | production | `.github/workflows/deploy.yml` (customized downstream) | [e.g. required reviewers + environment protection rules] |
 
 > Also list environment-specific variables/secrets by **name only** (never values).
 

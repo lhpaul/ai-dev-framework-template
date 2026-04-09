@@ -54,7 +54,7 @@ The setup agent will have a structured conversation with you to understand your 
 ├── .github/
 │   └── workflows/
 │       ├── auto-tag-release.yml           # Tags release branches after merge to main
-│       └── deploy-template.yml            # Placeholder branch-based deployment workflow
+│       └── deploy.yml                     # Placeholder branch-based deployment workflow
 │
 ├── docs/
 │   ├── README.md                          # Documentation index

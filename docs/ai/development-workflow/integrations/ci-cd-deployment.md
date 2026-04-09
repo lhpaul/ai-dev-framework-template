@@ -2,7 +2,7 @@
 
 This template includes a placeholder GitHub Actions deploy workflow at:
 
-- `.github/workflows/deploy-template.yml`
+- `.github/workflows/deploy.yml`
 
 The workflow is intentionally generic so downstream repositories can implement their own provider-specific deployment logic (for example AWS, GCP, Azure, Vercel, Fly.io, Kubernetes, or custom infrastructure).
 

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Template deployment workflow scaffold: `.github/workflows/deploy-template.yml` triggers on `develop` and `main`, maps to `develop`/`production` environments, and keeps deploy steps as explicit no-op placeholders for downstream repository customization.
+- Template deployment workflow scaffold: `.github/workflows/deploy.yml` triggers on `develop` and `main`, maps to `develop`/`production` environments, and keeps deploy steps as explicit no-op placeholders for downstream repository customization.
 - CI/CD deployment integration guide: `docs/ai/development-workflow/integrations/ci-cd-deployment.md` documents placeholder behavior and how downstream projects should replace it with provider-specific deploy logic and environment configuration.
 - Setup and architecture docs now explicitly capture CI/CD onboarding details: deployment integration prompts in `docs/ai/setup/protocol.md` and branch-to-environment mapping guidance in `docs/project/3-software-architecture.md`.
 
