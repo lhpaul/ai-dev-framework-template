@@ -210,3 +210,38 @@ workflow_config_provider() {
     }
   ' "$config_file"
 }
+
+workflow_issue_tracker_provider_raw() {
+  workflow_config_provider issue_tracker
+}
+
+workflow_normalize_issue_tracker_provider() {
+  local raw="$1"
+  printf '%s' "$raw" | tr '[:upper:]' '[:lower:]'
+}
+
+# Prints a coarse destination bucket for backlog creation: github | linear | other | none
+# none: missing provider, none, or empty string
+workflow_backlog_destination_kind() {
+  local raw normalized
+  raw="$(workflow_issue_tracker_provider_raw)"
+  normalized="$(workflow_normalize_issue_tracker_provider "$raw")"
+  if [ -z "$normalized" ] && [ -z "$raw" ]; then
+    printf 'none\n'
+    return 0
+  fi
+  case "$normalized" in
+    ''|'none')
+      printf 'none\n'
+      ;;
+    linear)
+      printf 'linear\n'
+      ;;
+    github_issues|github-issues|github_projects|github-projects)
+      printf 'github\n'
+      ;;
+    *)
+      printf 'other\n'
+      ;;
+  esac
+}

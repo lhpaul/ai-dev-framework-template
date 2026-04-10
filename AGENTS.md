@@ -38,6 +38,7 @@ Always refer to these docs for authoritative guidance:
 | [`docs/best-practices/STACK-SPECIFIC.md`](docs/best-practices/STACK-SPECIFIC.md) | Stack-specific conventions |
 | [`REVIEW.md`](REVIEW.md) | Canonical review contract for spec, plan, and code review gates |
 | [`docs/ai/development-workflow/README.md`](docs/ai/development-workflow/README.md) | AI development workflow (master doc) |
+| [`docs/ai/development-workflow/protocols/00-add-backlog-item-protocol.md`](docs/ai/development-workflow/protocols/00-add-backlog-item-protocol.md) | Create backlog work items in a configured tracker (before spec/plan work) |
 | [`docs/ai/development-workflow/agent-model-config.md`](docs/ai/development-workflow/agent-model-config.md) | Model assignments, tool restrictions, and override guide for all agents |
 | [`.ai-dev-workflow.yaml`](.ai-dev-workflow.yaml) | Repo-level workflow integration manifest (review tools, issue tracker, VCS, browser automation) |
 
@@ -56,6 +57,7 @@ Repository-specific workflow providers are declared in [`.ai-dev-workflow.yaml`]
 | Stage | Claude Code | Cursor | Codex | Any other tool |
 |---|---|---|---|---|
 | Project Setup | `project-setup` agent | `/setup-project` | `workflow-project-setup` skill | Follow `docs/ai/setup/protocol.md` |
+| Add backlog item | `/add-backlog-item` | `/add-backlog-item` | — | Follow `docs/ai/development-workflow/protocols/00-add-backlog-item-protocol.md` |
 | Write Spec | `product-manager` agent | `/generate-new-feature` | `workflow-spec-writer` skill | Follow `docs/ai/development-workflow/protocols/01-generate-spec-protocol.md` |
 | Write Plan | `tech-lead` agent | `/generate-implementation-plan` | `workflow-plan-writer` skill | Follow `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
 | Implement | `developer` agent | `/implement-development` | `workflow-implementer` skill | Follow `docs/ai/development-workflow/protocols/03-implement-development-protocol.md` |

@@ -110,6 +110,7 @@ The setup agent will have a structured conversation with you to understand your 
 │
 ├── scripts/
 │   ├── development-workflow/            # AI workflow helpers (orchestrator, PR/CI loops, state discovery)
+│   │   ├── add-backlog-item.sh          # Resolves tracker destination; creates GitHub issues when configured
 │   │   ├── discover-workflow-state.sh   # Summarizes branches, worktrees, development folders, and open PRs
 │   │   ├── check-workflow-branch.sh     # Checks whether a workflow branch already exists
 │   │   ├── pr-review-loop.sh      # Polls Greptile PR review until clean / fix / escalate
@@ -295,6 +296,7 @@ Framework-level paths to propagate:
 - `.cursor/agents/`
 - `.cursor/commands/`
 - `scripts/development-workflow/install-codex-skills.sh`
+- `scripts/development-workflow/add-backlog-item.sh`
 - `scripts/development-workflow/discover-workflow-state.sh`
 - `scripts/development-workflow/check-workflow-branch.sh`
 - `docs/best-practices/1-general.md`

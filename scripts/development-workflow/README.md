@@ -16,6 +16,29 @@ Use this when:
 - You want to make the template's bundled Codex skills available in your local Codex environment
 - You are testing the workflow skills in a downstream repository created from this template
 
+### `add-backlog-item.sh`
+
+Resolves the configured issue tracker destination for backlog creation and can create a GitHub issue when `issue_tracker.provider` maps to GitHub Issues / GitHub Projects.
+
+Usage:
+
+```bash
+./scripts/development-workflow/add-backlog-item.sh resolve
+./scripts/development-workflow/add-backlog-item.sh create --title "Title" --body "Body"
+./scripts/development-workflow/add-backlog-item.sh create --title "Title" --body-file path/to/body.md
+```
+
+What it does:
+
+- `resolve` prints `ISSUE_TRACKER_PROVIDER`, `DESTINATION_KIND` (`github`, `linear`, `other`, `none`), and a `CREATE_VIA` hint for agents.
+- `create` runs `gh issue create` when the destination kind is `github` (requires authenticated `gh`).
+- For Linear or unsupported providers, exits non-zero with guidance so agents follow `docs/ai/development-workflow/protocols/00-add-backlog-item-protocol.md` instead of guessing.
+
+Use this when:
+
+- An agent needs a deterministic destination check before creating a backlog item.
+- You want to create a GitHub issue from a shell environment without manual `gh` typing.
+
 ### `discover-workflow-state.sh`
 
 Prints a compact snapshot of the repository's workflow-related state.
