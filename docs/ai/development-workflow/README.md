@@ -193,6 +193,7 @@ The sections below keep this document usable as a master reference after the nar
 
 | Stage | Claude Code | Cursor | Codex | Any AI tool |
 | --- | --- | --- | --- | --- |
+| Add backlog item | `/add-backlog-item` | `/add-backlog-item` | — | `docs/ai/development-workflow/protocols/00-add-backlog-item-protocol.md` |
 | Write spec | `product-manager` agent | `/generate-new-feature` | `workflow-spec-writer` skill | `docs/ai/development-workflow/protocols/01-generate-spec-protocol.md` |
 | Write plan | `tech-lead` agent | `/generate-implementation-plan` | `workflow-plan-writer` skill | `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
 | Implement | `developer` agent | `/implement-development` | `workflow-implementer` skill | `docs/ai/development-workflow/protocols/03-implement-development-protocol.md` |
@@ -424,12 +425,14 @@ Use these documents when you need the detailed rules behind a part of the workfl
 Protocol prefixes are stable family identifiers, not a promise of contiguous numbering.
 
 - `01`-`05` are the current primary stage families in workflow order.
+- `00` is reserved for pre-stage backlog intake (creating tracker work items before spec work).
 - Generate and review protocols for the same stage share the same family number.
 - `90`-`99` are orchestration, readiness, and other cross-cutting operational protocols.
 - The numbering was normalized after an older stage was removed, so the current primary stages are contiguous again.
 
 ### Core Protocols
 
+- `docs/ai/development-workflow/protocols/00-add-backlog-item-protocol.md`
 - `docs/ai/development-workflow/protocols/01-generate-spec-protocol.md`
 - `docs/ai/development-workflow/protocols/01-review-spec-protocol.md`
 - `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md`
@@ -454,6 +457,7 @@ Protocol prefixes are stable family identifiers, not a promise of contiguous num
 
 Repository helpers:
 
+- `scripts/development-workflow/add-backlog-item.sh`
 - `scripts/development-workflow/discover-workflow-state.sh`
 - `scripts/development-workflow/workflow-batch-plan.sh`
 - `scripts/development-workflow/workflow-next-action.sh`
