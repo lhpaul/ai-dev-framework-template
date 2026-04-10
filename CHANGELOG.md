@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Prepare release protocol (`05-prepare-release-protocol.md`): after opening release PRs, drive automated reviewer loop, apply `ready-for-regression` on the PR targeting `main`, and run CI (including label-gated e2e/regression) before handoff; `/prepare-release` command docs updated accordingly.
+
 - Backlog intake: protocol `docs/ai/development-workflow/protocols/00-add-backlog-item-protocol.md`, Cursor and Claude `/add-backlog-item` commands, and `scripts/development-workflow/add-backlog-item.sh` (`resolve` / `create` for GitHub when configured). Extends `workflow-lib.sh` with issue-tracker destination helpers.
 - Label-gated e2e/regression test workflow: `.github/workflows/e2e-regression.yml` triggers on implementation PRs when `ready-for-regression` label is present; ships with a Playwright-based `e2e/` placeholder project (one always-passing baseline test) for downstream projects to customize.
 - E2e/regression integration guide: `docs/ai/development-workflow/integrations/e2e-regression.md` documents the label-gate pattern, workflow placement between Step 7 and Step 8, and downstream customization.

@@ -69,6 +69,8 @@ Repository-specific workflow providers are declared in [`.ai-dev-workflow.yaml`]
 | Prepare Release | `/prepare-release` | `/prepare-release` | Follow `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md` | Follow `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md` |
 | Orchestrate Work | `orchestrator` agent | `/run-work` | `workflow-orchestrator` skill | Follow `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
 
+**Prepare release** does not stop after opening PRs: protocol `05` requires running the automated reviewer loop, applying `ready-for-regression` on the **production PR to `main`**, and completing the CI loop (including label-gated e2e/regression when configured) before handoff to merge.
+
 ### Codex Skills
 
 The repository ships Codex skill definitions in `.codex/skills/`. Install them into your local Codex skill directory before first use:
@@ -130,7 +132,7 @@ This repository follows the default template workflow (documented in `docs/ai/de
 - Follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format.
 - Use [Semantic Versioning](https://semver.org/): patch for fixes/tweaks, minor for new features or meaningful improvements, major for breaking changes to the template structure.
 - **Feature and fix PRs** merged into `develop` add entries under `[Unreleased]` in `CHANGELOG.md`; do not convert to a version number on merge. Spec-only and plan-only PRs are exempt. Fixes or changes to unreleased work should update the existing entry rather than adding a new one.
-- **A new version is created only when releasing**: run the Prepare Release workflow (`/prepare-release` or `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md`). That creates a `release/v[X.Y.Z]` branch, renames `[Unreleased]` to `[X.Y.Z]` in the CHANGELOG, and opens PRs to `main` and backport to `develop`.
+- **A new version is created only when releasing**: run the Prepare Release workflow (`/prepare-release` or `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md`). That creates a `release/v[X.Y.Z]` branch, renames `[Unreleased]` to `[X.Y.Z]` in the CHANGELOG, opens PRs to `main` and backport to `develop`, then drives reviewer + regression + CI readiness on the **main** release PR before merge.
 
 ### Stack Conventions
 

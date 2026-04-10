@@ -66,6 +66,8 @@ You may also:
 
 The `ready-for-regression` label is applied only to implementation PRs (`feature/*`, `fix/*`, `hotfix/*`, `refactor/*`). Spec and plan PRs skip regression testing.
 
+Release PRs (`release/*` → `main`) also use this label on the **production** PR only, per [`05-prepare-release-protocol.md`](../protocols/05-prepare-release-protocol.md) Step 7.4, so e2e/regression runs before the release merges to `main`.
+
 ---
 
 ## Notes

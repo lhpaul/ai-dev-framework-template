@@ -204,6 +204,8 @@ The sections below keep this document usable as a master reference after the nar
 | Orchestrate portfolio | `orchestrator` agent | `/run-work` | `workflow-orchestrator` skill | `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
 | Prepare release | `/prepare-release` | `/prepare-release` | — | `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md` |
 
+After opening release PRs, protocol `05` runs the automated reviewer loop, applies `ready-for-regression` on the **PR targeting `main`**, and runs the CI loop until checks are green (or escalation) — same persistence contract as other PR readiness work.
+
 Codex skills are stored in `.codex/skills/`. Install them into the local Codex environment with:
 
 ```bash
