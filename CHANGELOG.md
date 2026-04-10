@@ -7,28 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-04-10
+
 ### Added
 
-- Prepare release protocol (`05-prepare-release-protocol.md`): after opening release PRs, drive automated reviewer loop, apply `ready-for-regression` on the PR targeting `main`, and run CI (including label-gated e2e/regression) before handoff; `/prepare-release` command docs updated accordingly.
-
-- Backlog intake: protocol `docs/ai/development-workflow/protocols/00-add-backlog-item-protocol.md`, Cursor and Claude `/add-backlog-item` commands, and `scripts/development-workflow/add-backlog-item.sh` (`resolve` / `create` for GitHub when configured). Extends `workflow-lib.sh` with issue-tracker destination helpers.
-- Label-gated e2e/regression test workflow: `.github/workflows/e2e-regression.yml` triggers on implementation PRs when `ready-for-regression` label is present; ships with a Playwright-based `e2e/` placeholder project (one always-passing baseline test) for downstream projects to customize.
-- E2e/regression integration guide: `docs/ai/development-workflow/integrations/e2e-regression.md` documents the label-gate pattern, workflow placement between Step 7 and Step 8, and downstream customization.
-- `ready-for-regression` label and Step 7b: applied automatically by the orchestrator on implementation PRs after automated review is clean, gating expensive e2e tests until the PR is reviewer-ready. Documented in protocol 92 (PR readiness signal) and protocol 91 (orchestrate work).
-- Template deployment workflow scaffold: `.github/workflows/deploy.yml` triggers on `develop` and `main`, maps to `develop`/`production` environments, and keeps deploy steps as explicit no-op placeholders for downstream repository customization.
-- CI/CD deployment integration guide: `docs/ai/development-workflow/integrations/ci-cd-deployment.md` documents placeholder behavior and how downstream projects should replace it with provider-specific deploy logic and environment configuration.
-- Setup and architecture docs now explicitly capture CI/CD onboarding details: deployment integration prompts in `docs/ai/setup/protocol.md` and branch-to-environment mapping guidance in `docs/project/3-software-architecture.md`.
-
-### Fixed
-
-- `workflow-next-action.sh --development`: branch existence and merged-PR checks use `feature/` when the folder has a spec (full pipeline) and `refactor/` when plan-only, so parallel items with the same slug are not cross-matched across prefixes.
+- **Label-gated e2e/regression test workflow**: new `.github/workflows/e2e-regression.yml` runs only when the `ready-for-regression` label is applied, with a Playwright-based `e2e/` placeholder project for downstream projects to customize. The orchestrator applies the label automatically on implementation PRs after automated review is clean (new Step 7b, documented in protocols 91 and 92), and the release protocol applies it on production PRs targeting `main`. See `docs/ai/development-workflow/integrations/e2e-regression.md` for the label-gate pattern.
+- **Backlog intake stage**: new protocol `docs/ai/development-workflow/protocols/00-add-backlog-item-protocol.md` and `/add-backlog-item` command (Cursor + Claude Code) create work items in the configured issue tracker, backed by `scripts/development-workflow/add-backlog-item.sh` (`resolve` / `create` for GitHub) and destination helpers in `workflow-lib.sh`.
+- **Template deployment scaffold**: new `.github/workflows/deploy.yml` triggers on `develop` and `main`, maps to `develop`/`production` environments, and keeps deploy steps as explicit no-op placeholders. Accompanied by `docs/ai/development-workflow/integrations/ci-cd-deployment.md` and new CI/CD onboarding prompts in `docs/ai/setup/protocol.md` plus branch-to-environment guidance in `docs/project/3-software-architecture.md`.
+- **Prepare release drives production PR readiness**: after opening release PRs, `05-prepare-release-protocol.md` and `/prepare-release` run the automated reviewer loop, apply `ready-for-regression` on the PR targeting `main`, and run the CI loop (including label-gated e2e/regression) before handing off for human merge.
 
 ### Changed
 
-- `92-pr-readiness-signal-protocol.md` and `integrations/e2e-regression.md`: align `ready-for-regression` conditions with production release PRs (`release/*` → `main`) per protocol `05`, removing contradiction with implementation-only wording.
-- CHANGELOG policy: spec-only and plan-only PRs are now exempt from CHANGELOG updates; fixes to unreleased work should update the existing `[Unreleased]` entry instead of adding a new one. Hotfixes always require a new entry since they fix released code.
-- `03-implement-development-protocol.md` (Path 2 Refactor): spell out refactor draft PR metadata and `gh pr create` example instead of reusing Path 1 Step 8 (`feat(...)` / spec link); handoff step references the same Work Item Runner lifecycle and protocols 91/92.
-- `03-implement-development-protocol.md` (Fast Track / Hotfix): draft PR and handoff steps now reference Path 1 Step 8–9 explicitly with `fix(...)` titles and fix- or incident-focused bodies (omit spec/plan when absent); removes the incorrect “Step 8 above” pointer (that step was push, not PR).
+- `92-pr-readiness-signal-protocol.md` and `integrations/e2e-regression.md`: align `ready-for-regression` conditions with production release PRs (`release/*` → `main`) per protocol `05`, removing the implementation-only contradiction.
+- CHANGELOG policy: spec-only and plan-only PRs are exempt from CHANGELOG updates; fixes to unreleased work update the existing `[Unreleased]` entry instead of adding a new one. Hotfixes still require a new entry since they fix released code.
+- `03-implement-development-protocol.md`: Path 2 (Refactor) and Fast Track / Hotfix paths now spell out their own draft PR metadata and `gh pr create` examples (`feat(...)` with spec/plan link for refactor; `fix(...)` with incident-focused body for hotfix) instead of reusing Path 1 Step 8; handoff steps correctly reference Step 8–9 and the Work Item Runner lifecycle.
+
+### Fixed
+
+- `workflow-next-action.sh --development`: branch existence and merged-PR checks now use `feature/` when the folder has a spec (full pipeline) and `refactor/` when plan-only, so parallel items with the same slug are not cross-matched across prefixes.
 
 ## [0.19.0] - 2026-04-02
 
@@ -326,7 +322,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.17.0...v0.18.0
