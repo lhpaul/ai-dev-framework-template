@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Prepare release protocol (`05-prepare-release-protocol.md`): after opening release PRs, drive automated reviewer loop, apply `ready-for-regression` on the PR targeting `main`, and run CI (including label-gated e2e/regression) before handoff; `/prepare-release` command docs updated accordingly.
+
 - Backlog intake: protocol `docs/ai/development-workflow/protocols/00-add-backlog-item-protocol.md`, Cursor and Claude `/add-backlog-item` commands, and `scripts/development-workflow/add-backlog-item.sh` (`resolve` / `create` for GitHub when configured). Extends `workflow-lib.sh` with issue-tracker destination helpers.
 - Label-gated e2e/regression test workflow: `.github/workflows/e2e-regression.yml` triggers on implementation PRs when `ready-for-regression` label is present; ships with a Playwright-based `e2e/` placeholder project (one always-passing baseline test) for downstream projects to customize.
 - E2e/regression integration guide: `docs/ai/development-workflow/integrations/e2e-regression.md` documents the label-gate pattern, workflow placement between Step 7 and Step 8, and downstream customization.
@@ -23,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `92-pr-readiness-signal-protocol.md` and `integrations/e2e-regression.md`: align `ready-for-regression` conditions with production release PRs (`release/*` → `main`) per protocol `05`, removing contradiction with implementation-only wording.
 - CHANGELOG policy: spec-only and plan-only PRs are now exempt from CHANGELOG updates; fixes to unreleased work should update the existing `[Unreleased]` entry instead of adding a new one. Hotfixes always require a new entry since they fix released code.
 - `03-implement-development-protocol.md` (Path 2 Refactor): spell out refactor draft PR metadata and `gh pr create` example instead of reusing Path 1 Step 8 (`feat(...)` / spec link); handoff step references the same Work Item Runner lifecycle and protocols 91/92.
 - `03-implement-development-protocol.md` (Fast Track / Hotfix): draft PR and handoff steps now reference Path 1 Step 8–9 explicitly with `fix(...)` titles and fix- or incident-focused bodies (omit spec/plan when absent); removes the incorrect “Step 8 above” pointer (that step was push, not PR).

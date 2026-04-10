@@ -10,7 +10,7 @@ The workflow triggers on PRs targeting `develop` or `main` when the `ready-for-r
 
 ## How It Fits Into the Workflow
 
-The `ready-for-regression` label is applied by the orchestrator (Step 7b in `91-orchestrate-work-protocol.md`) after the automated reviewer loop (Step 7) is clean, and before the CI loop (Step 8). This means:
+The `ready-for-regression` label is applied by the orchestrator (Step 7b in `91-orchestrate-work-protocol.md`) after the automated reviewer loop (Step 7) is clean, and before the CI loop (Step 8). The prepare-release flow applies the same label on production release PRs per `05-prepare-release-protocol.md` Step 7.4. This means:
 
 1. Step 7a: Internal review gate passes
 2. Step 7: External automated reviewers are clean
@@ -64,7 +64,7 @@ You may also:
 
 ## Scope
 
-The `ready-for-regression` label is applied only to implementation PRs (`feature/*`, `fix/*`, `hotfix/*`, `refactor/*`). Spec and plan PRs skip regression testing.
+The `ready-for-regression` label is applied to implementation PRs (`feature/*`, `fix/*`, `hotfix/*`, `refactor/*`) and to **production** release PRs (`release/*` → `main`) per [`05-prepare-release-protocol.md`](../protocols/05-prepare-release-protocol.md) Step 7.4, so e2e/regression can run before merge. Spec and plan PRs (`spec/*`, `implementation-plan/*`) skip this label and regression testing.
 
 ---
 
