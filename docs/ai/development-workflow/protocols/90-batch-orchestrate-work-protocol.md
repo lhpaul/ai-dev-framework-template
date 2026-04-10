@@ -63,7 +63,11 @@ From the tracker, collect for each open item:
 
 **Exclude** items whose tracker status is already `Done`, `Merged`, `Cancelled`, or equivalent — these are not candidates for advancement.
 
-**If the tracker is unavailable** (no provider configured, API unreachable, or no MCP server available), fall back to the VCS-based discovery in Step 1b below. In this fallback mode, flag to the human that status may be stale.
+**If the tracker is unavailable** (no provider configured, API unreachable, or no MCP server available), **you MUST immediately warn the human** with a clear message such as:
+
+> ⚠️ **Issue tracker unavailable** — could not reach the configured tracker (`<provider>`). Falling back to VCS-based status inference, which may be stale or inaccurate. Statuses shown below are best-effort only.
+
+Do **not** silently proceed as if VCS-derived status is authoritative. After displaying the warning, fall back to the VCS-based discovery in Step 1b below.
 
 ### 1b. Enrich with VCS state (supplementary detail)
 

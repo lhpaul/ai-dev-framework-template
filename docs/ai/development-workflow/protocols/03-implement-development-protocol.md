@@ -110,6 +110,7 @@ Add an entry under `[Unreleased]` in `CHANGELOG.md`:
 
 - Use the appropriate category: `Added`, `Changed`, `Fixed`, `Security`, `Deprecated`, `Removed`
 - Write from the user's perspective: what can they now do / what is now fixed?
+- If this PR fixes or adjusts an unreleased development that already has an `[Unreleased]` entry, update the existing entry instead of adding a new one; if the entry already describes the corrected behavior, no change is needed
 
 ### Step 7: Commit & Push
 
@@ -182,11 +183,23 @@ Extract from your reading:
 3. Implement following the plan order. Follow `docs/best-practices/` for all code written.
 4. If scope is larger than the plan described, **stop and report**
 5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area
-6. Update CHANGELOG under `[Unreleased]` with a `Changed` entry
+6. Update CHANGELOG under `[Unreleased]` with a `Changed` entry (skip if this refactor adjusts unreleased work that already has an entry — update the existing entry instead, or leave it unchanged if it already describes the correct behavior)
 7. Commit: `refactor([scope]): [description]`
 8. Push branch to remote
-9. Open draft PR targeting `develop` (Step 8 from Path 1)
-10. Hand off to the Work Item Runner (Step 9 from Path 1)
+9. Open a **draft** PR targeting `develop` with refactor-appropriate metadata (do **not** reuse Path 1 Step 8 verbatim — that path uses `feat(...)` and a spec link):
+   - **Title**: `refactor([scope]): [short description]`
+   - **Description**:
+     - What was refactored and why
+     - Link to the **implementation plan** only (no spec)
+     - Test plan (how to validate)
+     - Any deviations from the plan (with justification)
+     - CHANGELOG entry preview
+
+```bash
+gh pr create --draft --title "refactor([scope]): [short description]" --body "..."
+```
+
+10. Hand off to the Work Item Runner with the same lifecycle expectations as Path 1 Step 9 (internal review gate, automated reviewer loop, CI, labels). See `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/ai/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
 
 ---
 
@@ -211,11 +224,11 @@ Extract from your reading:
 3. Branch: `git checkout -b fix/[branch-slug]` from `develop` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without)
 4. Implement the fix
 5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area
-6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry
+6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (skip if this fixes unreleased work that already has an entry — update the existing entry instead, or leave it unchanged if it already describes the correct behavior)
 7. Commit: `fix([scope]): [description]`
 8. Push branch to remote
-9. Open draft PR targeting `develop` (Step 8 above)
-10. Hand off to the Work Item Runner (Step 9 above)
+9. Open a **draft** PR targeting `develop` using the same structure as Path 1 `### Step 8: Open PR (Draft)`, but with a **`fix(...)`** title and a fix-focused description (omit spec/plan links when none exist).
+10. Hand off to the Work Item Runner per Path 1 `### Step 9: Handoff to Work Item Runner`.
 
 ---
 
@@ -230,11 +243,11 @@ Extract from your reading:
 3. Branch: `git checkout -b hotfix/[branch-slug]` from `main` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without)
 4. Implement the minimal fix (do not bundle unrelated changes)
 5. Verify: build, lint, tests pass
-6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry
+6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (hotfixes always fix released code, so a new entry is always required)
 7. Commit: `fix([scope]): [description] (hotfix)`
 8. Push branch to remote
-9. Open draft PR targeting `main` (Step 8 above)
-10. Hand off to the Work Item Runner (Step 9 above)
+9. Open a **draft** PR targeting `main` by adapting Path 1 `### Step 8: Open PR (Draft)` for hotfix (`fix(...)` title with `(hotfix)` as needed, incident-focused body, target branch `main`).
+10. Hand off to the Work Item Runner per Path 1 `### Step 9: Handoff to Work Item Runner`.
 11. **After merge**: notify the human that a backport PR (main → develop) must be opened to prevent branch drift
 
 ---

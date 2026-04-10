@@ -107,6 +107,9 @@ For each file in these paths:
 .claude/settings.json                          ← may have project-specific permissions
 .claude/settings.local.json.example
 .github/workflows/auto-tag-release.yml         ← automated release tagging; add if CI is set up
+.github/workflows/deploy.yml                   ← placeholder deployment workflow; customize with project-specific deploy logic
+.github/workflows/e2e-regression.yml           ← label-gated e2e/regression placeholder; customize with project-specific test logic
+e2e/                                              ← placeholder e2e/regression test project (Playwright); customize with project-specific tests
 ```
 
 For each of these: show the full diff and ask the user explicitly whether to apply it.

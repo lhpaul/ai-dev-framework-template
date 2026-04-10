@@ -51,9 +51,16 @@ The setup agent will have a structured conversation with you to understand your 
 ├── AGENTS.md                              # Universal AI guidance (all tools read this)
 ├── CLAUDE.md -> AGENTS.md                 # Symlink for Claude Code
 ├── CHANGELOG.md
+├── e2e/                                   # Placeholder e2e/regression test project (Playwright)
+│   ├── playwright.config.ts               # Minimal Playwright config
+│   ├── tests/
+│   │   └── baseline.spec.ts               # Always-passing placeholder test
+│   └── package.json
 ├── .github/
 │   └── workflows/
-│       └── auto-tag-release.yml           # Tags release branches after merge to main
+│       ├── auto-tag-release.yml           # Tags release branches after merge to main
+│       ├── deploy.yml                     # Placeholder branch-based deployment workflow
+│       └── e2e-regression.yml             # Label-gated e2e/regression placeholder
 │
 ├── docs/
 │   ├── README.md                          # Documentation index
@@ -94,13 +101,16 @@ The setup agent will have a structured conversation with you to understand your 
 │           └── integrations/             # Optional tool integrations
 │               ├── linear.md             # Issue tracker integration (Linear)
 │               ├── greptile.md           # Automated PR review (Greptile)
-│               └── github-projects.md    # GitHub Projects board integration
+│               ├── github-projects.md    # GitHub Projects board integration
+│               ├── ci-cd-deployment.md   # CI/CD deployment placeholders and customization
+│               └── e2e-regression.md     # E2E/regression test integration
 │
 ├── .codex/
 │   └── skills/                           # Codex skills that wrap the workflow protocols and ship UI metadata
 │
 ├── scripts/
 │   ├── development-workflow/            # AI workflow helpers (orchestrator, PR/CI loops, state discovery)
+│   │   ├── add-backlog-item.sh          # Resolves tracker destination; creates GitHub issues when configured
 │   │   ├── discover-workflow-state.sh   # Summarizes branches, worktrees, development folders, and open PRs
 │   │   ├── check-workflow-branch.sh     # Checks whether a workflow branch already exists
 │   │   ├── pr-review-loop.sh      # Polls Greptile PR review until clean / fix / escalate
@@ -240,12 +250,13 @@ Use $workflow-item-orchestrator to start and advance work for [feature or issue 
 - **Issue Tracker (e.g., Linear)**: See [`docs/ai/development-workflow/integrations/linear.md`](docs/ai/development-workflow/integrations/linear.md)
 - **Automated PR Review (e.g., Greptile)**: See [`docs/ai/development-workflow/integrations/greptile.md`](docs/ai/development-workflow/integrations/greptile.md)
 - **GitHub Projects board**: See [`docs/ai/development-workflow/integrations/github-projects.md`](docs/ai/development-workflow/integrations/github-projects.md)
+- **CI/CD deployment placeholders**: See [`docs/ai/development-workflow/integrations/ci-cd-deployment.md`](docs/ai/development-workflow/integrations/ci-cd-deployment.md)
 
 ---
 
 ## Mandatory Conventions
 
-- **CHANGELOG.md is required**: every feature/fix/hotfix PR must add an entry under `[Unreleased]` before merge. Never defer CHANGELOG entries to release time.
+- **CHANGELOG.md is required**: every feature/fix/hotfix PR must add an entry under `[Unreleased]` before merge, with exceptions for spec/plan-only PRs (no entry needed) and fixes to unreleased work (update the existing entry instead of adding a new one). Never defer CHANGELOG entries to release time.
 - **Human merge gates**: PRs for spec, plan, and implementation are opened by agents and kept moving until they are actually review-ready; humans still review and merge them.
 - **No destructive Git operations** without explicit human approval (no `--force`, `reset --hard`, `rebase` on shared branches).
 
@@ -285,6 +296,7 @@ Framework-level paths to propagate:
 - `.cursor/agents/`
 - `.cursor/commands/`
 - `scripts/development-workflow/install-codex-skills.sh`
+- `scripts/development-workflow/add-backlog-item.sh`
 - `scripts/development-workflow/discover-workflow-state.sh`
 - `scripts/development-workflow/check-workflow-branch.sh`
 - `docs/best-practices/1-general.md`

@@ -173,14 +173,23 @@ if [ -z "${WORKFLOW_SKIP_FETCH:-}" ]; then
     echo "workflow-next-action.sh: warning: git fetch --prune origin failed; refs may be stale" >&2
   fi
 fi
-# Check for feature/ or refactor/ branches (fix/ and hotfix/ don't use development folders).
+# Determine the expected branch prefix from the folder contents:
+#   - Spec file present → Full Pipeline → feature/
+#   - Plan-only (no spec) → Refactor → refactor/
+# This avoids cross-matching: a refactor/*-user-auth branch won't be mistaken
+# for progress on a Full Pipeline feature/*-user-auth item, and vice versa.
+if [ -n "$spec_file" ]; then
+  dev_prefix="feature"
+else
+  dev_prefix="refactor"
+fi
+
+# Check for the expected branch (fix/ and hotfix/ don't use development folders).
 if [ -n "$slug" ]; then
   slug_ere="$(ere_escape "$slug")"
-  for dev_prefix in feature refactor; do
-    if git show-ref --verify -q "refs/remotes/origin/${dev_prefix}/$slug" 2>/dev/null; then
-      feature_branch_exists=1
-      break
-    fi
+  if git show-ref --verify -q "refs/remotes/origin/${dev_prefix}/$slug" 2>/dev/null; then
+    feature_branch_exists=1
+  else
     # Issue-tracker-prefixed branches: [prefix]/[issue-id]-[slug]
     #   Linear/Jira: ENG-123-user-auth  (pattern: [A-Z]+-[0-9]+-)
     #   GitHub Issues: 42-user-auth     (pattern: [0-9]+-)
@@ -189,10 +198,10 @@ if [ -n "$slug" ]; then
       [ -z "$ref" ] && continue
       if [ "$ref" = "$slug" ] || echo "$ref" | grep -qE "^([A-Z]+-)?[0-9]+-${slug_ere}$"; then
         feature_branch_exists=1
-        break 2
+        break
       fi
     done < <(git show-ref 2>/dev/null | sed -n "s|.*refs/remotes/origin/${dev_prefix}/||p")
-  done
+  fi
 fi
 
 # When no live dev branch exists and a plan is present, the item could be either
@@ -201,13 +210,12 @@ fi
 # Falls back gracefully to "Plan Ready" when gh is unavailable (non-GitHub VCS).
 feature_branch_merged=0
 if [ "$feature_branch_exists" -eq 0 ] && [ -n "$plan_file" ] && gh_available; then
-  for dev_prefix in feature refactor; do
-    # Try exact branch name first: [prefix]/<slug>
-    merged_count="$(gh pr list --state merged --head "${dev_prefix}/$slug" --json number --jq 'length' 2>/dev/null || echo 0)"
-    if [ "${merged_count:-0}" -gt 0 ]; then
-      feature_branch_merged=1
-      break
-    fi
+  # Use the same scoped dev_prefix determined above (feature or refactor).
+  # Try exact branch name first: [prefix]/<slug>
+  merged_count="$(gh pr list --state merged --head "${dev_prefix}/$slug" --json number --jq 'length' 2>/dev/null || echo 0)"
+  if [ "${merged_count:-0}" -gt 0 ]; then
+    feature_branch_merged=1
+  else
     # Try issue-tracker-prefixed pattern: [prefix]/<ISSUE-ID>-<slug>
     # Matches Linear (ENG-123), Jira (PROJ-456), and GitHub Issues (42) prefixes.
     if gh pr list --state merged --limit 500 --json headRefName 2>/dev/null \
@@ -215,9 +223,8 @@ if [ "$feature_branch_exists" -eq 0 ] && [ -n "$plan_file" ] && gh_available; th
         | sed -n "s|^${dev_prefix}/||p" \
         | grep -qE "^([A-Z]+-)?[0-9]+-${slug_ere}$"; then
       feature_branch_merged=1
-      break
     fi
-  done
+  fi
 fi
 
 # IMPORTANT: The VCS-derived status below is a best-effort heuristic. It cannot reliably

@@ -38,6 +38,7 @@ Always refer to these docs for authoritative guidance:
 | [`docs/best-practices/STACK-SPECIFIC.md`](docs/best-practices/STACK-SPECIFIC.md) | Stack-specific conventions |
 | [`REVIEW.md`](REVIEW.md) | Canonical review contract for spec, plan, and code review gates |
 | [`docs/ai/development-workflow/README.md`](docs/ai/development-workflow/README.md) | AI development workflow (master doc) |
+| [`docs/ai/development-workflow/protocols/00-add-backlog-item-protocol.md`](docs/ai/development-workflow/protocols/00-add-backlog-item-protocol.md) | Create backlog work items in a configured tracker (before spec/plan work) |
 | [`docs/ai/development-workflow/agent-model-config.md`](docs/ai/development-workflow/agent-model-config.md) | Model assignments, tool restrictions, and override guide for all agents |
 | [`.ai-dev-workflow.yaml`](.ai-dev-workflow.yaml) | Repo-level workflow integration manifest (review tools, issue tracker, VCS, browser automation) |
 
@@ -56,6 +57,7 @@ Repository-specific workflow providers are declared in [`.ai-dev-workflow.yaml`]
 | Stage | Claude Code | Cursor | Codex | Any other tool |
 |---|---|---|---|---|
 | Project Setup | `project-setup` agent | `/setup-project` | `workflow-project-setup` skill | Follow `docs/ai/setup/protocol.md` |
+| Add backlog item | `/add-backlog-item` | `/add-backlog-item` | — | Follow `docs/ai/development-workflow/protocols/00-add-backlog-item-protocol.md` |
 | Write Spec | `product-manager` agent | `/generate-new-feature` | `workflow-spec-writer` skill | Follow `docs/ai/development-workflow/protocols/01-generate-spec-protocol.md` |
 | Write Plan | `tech-lead` agent | `/generate-implementation-plan` | `workflow-plan-writer` skill | Follow `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
 | Implement | `developer` agent | `/implement-development` | `workflow-implementer` skill | Follow `docs/ai/development-workflow/protocols/03-implement-development-protocol.md` |
@@ -66,6 +68,8 @@ Repository-specific workflow providers are declared in [`.ai-dev-workflow.yaml`]
 | Prepare Commit | — | `/prepare-commit` | Follow `docs/best-practices/2-version-control.md` | Follow `docs/best-practices/2-version-control.md` |
 | Prepare Release | `/prepare-release` | `/prepare-release` | Follow `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md` | Follow `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md` |
 | Orchestrate Work | `orchestrator` agent | `/run-work` | `workflow-orchestrator` skill | Follow `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
+
+**Prepare release** does not stop after opening PRs: protocol `05` requires running the automated reviewer loop, applying `ready-for-regression` on the **production PR to `main`**, and completing the CI loop (including label-gated e2e/regression when configured) before handoff to merge.
 
 ### Codex Skills
 
@@ -127,8 +131,8 @@ This repository follows the default template workflow (documented in `docs/ai/de
 
 - Follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format.
 - Use [Semantic Versioning](https://semver.org/): patch for fixes/tweaks, minor for new features or meaningful improvements, major for breaking changes to the template structure.
-- **Feature and fix PRs** merged into `develop` add entries under `[Unreleased]` in `CHANGELOG.md`; do not convert to a version number on merge.
-- **A new version is created only when releasing**: run the Prepare Release workflow (`/prepare-release` or `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md`). That creates a `release/v[X.Y.Z]` branch, renames `[Unreleased]` to `[X.Y.Z]` in the CHANGELOG, and opens PRs to `main` and backport to `develop`.
+- **Feature and fix PRs** merged into `develop` add entries under `[Unreleased]` in `CHANGELOG.md`; do not convert to a version number on merge. Spec-only and plan-only PRs are exempt. Fixes or changes to unreleased work should update the existing entry rather than adding a new one.
+- **A new version is created only when releasing**: run the Prepare Release workflow (`/prepare-release` or `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md`). That creates a `release/v[X.Y.Z]` branch, renames `[Unreleased]` to `[X.Y.Z]` in the CHANGELOG, opens PRs to `main` and backport to `develop`, then drives reviewer + regression + CI readiness on the **main** release PR before merge.
 
 ### Stack Conventions
 
