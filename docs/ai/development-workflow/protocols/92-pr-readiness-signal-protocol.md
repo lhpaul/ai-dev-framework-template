@@ -12,7 +12,7 @@ This is a **repo-wide definition**. All agents apply these labels consistently.
 | --- | --- |
 | `ready-for-human-review` | The PR is ready for a human reviewer. CI is green. The `REVIEW.md` gate is satisfied. Every configured automated reviewer is clean or skipped. |
 | `needs-fixes` | The PR still needs fixes before it is ready for human review. This may be due to human-requested changes, failing CI, or blocking automated PR feedback. |
-| `ready-for-regression` | Automated code reviews are clean (or skipped). E2e/regression tests should now run. Applied automatically by the orchestrator (Step 7b) on implementation PRs only (`feature/*`, `fix/*`, `hotfix/*`, `refactor/*`). |
+| `ready-for-regression` | Automated code reviews are clean (or skipped). E2e/regression tests should now run. Applied by the orchestrator (Step 7b) on implementation PRs (`feature/*`, `fix/*`, `hotfix/*`, `refactor/*`), and by the prepare-release flow (protocol `05`) on **production** release PRs (`release/*` → `main`) only. |
 
 ---
 
@@ -41,13 +41,22 @@ Apply this label when **any** of the following is true:
 
 Apply this label when **all** of the following are true:
 
+**Case A — implementation PR** (orchestrator Step 7b in `91-orchestrate-work-protocol.md`):
+
 - [ ] The PR is an implementation PR (branch prefix `feature/*`, `fix/*`, `hotfix/*`, or `refactor/*`)
 - [ ] Step 7a (internal review gate) previously produced `APPROVED`
 - [ ] Step 7 (automated reviewer loop) has completed with `clean` or `skipped`
 
+**Case B — production release PR** (`05-prepare-release-protocol.md` Step 7.4):
+
+- [ ] The PR targets `main` from a `release/*` branch
+- [ ] Step 7 (automated reviewer loop) on that PR has completed with `clean` or `skipped`
+
+Release PRs typically do not use the same draft → `gh pr ready` path as feature work; internal review may be minimal when the change set is changelog/version-only — still apply this label only after Step 7 is `clean` or `skipped` per protocol `05`.
+
 This label is **not removed** after e2e tests pass — it persists on the PR. The `ready-for-human-review` label is what ultimately signals human readiness after CI (including e2e) is green.
 
-This label is **not applied** to spec or plan PRs (`spec/*`, `implementation-plan/*`).
+This label is **not applied** to spec or plan PRs (`spec/*`, `implementation-plan/*`). It **is** applied to qualifying release PRs per Case B above.
 
 ---
 
@@ -65,7 +74,7 @@ This label is **not applied** to spec or plan PRs (`spec/*`, `implementation-pla
    - Once the internal review gate is clean, run `gh pr ready <pr-number>` to convert the draft to non-draft
 4. Run `./scripts/development-workflow/pr-review-loop.sh <pr-number> --branch <branch> [--platform <platform> ...]` when automated review tooling is configured
 5. If any automated reviewer reports blocking PR feedback: apply fixes, push, and repeat Step 4
-6. For implementation PRs only: apply `ready-for-regression` label to trigger e2e/regression CI checks
+6. For implementation PRs (`feature/*`, `fix/*`, `hotfix/*`, `refactor/*`), or for production release PRs per `05-prepare-release-protocol.md` Step 7.4: apply `ready-for-regression` label to trigger e2e/regression CI checks
 7. Run `./scripts/development-workflow/pr-ci-loop.sh <pr-number>`
 8. If CI passes and all reviews are clean (or not configured): apply `ready-for-human-review` (the PR is already non-draft from Step 3) and move the tracker status to the matching human-review stage (`Spec in Review`, `Plan in Review`, or `Development in Review`) when the tracker is the source of truth
 9. If CI fails: apply `needs-fixes`, fix PR feedback or failing checks, push, and return to Step 4
