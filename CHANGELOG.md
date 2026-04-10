@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Missing `/sync-template` command for Claude Code**: `CLAUDE.md` advertised `/sync-template` as available in Claude Code, but the command file did not exist. Added `.claude/commands/sync-template.md` as a port of the existing Cursor command (`.cursor/commands/sync-template.md`), covering the full workflow: template source resolution (local path, remote ref, or `.tmp/template-config.json`), categorized diff and approval gate, file application, and git/PR instructions.
+
 ## [0.20.0] - 2026-04-10
 
 ### Added
