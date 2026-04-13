@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Worktree isolation for parallel batch dispatch**: protocols `90-batch-orchestrate-work-protocol.md` and `91-orchestrate-work-protocol.md` now require each Work Item Runner in a parallel batch to operate in a dedicated git worktree. Includes `BATCH_CONTEXT=true` handoff signal, pre-flight worktree checks, base-branch table for all item types, and stage protocol compatibility notes.
+- **Worktree isolation for parallel batch dispatch**: protocols `90-batch-orchestrate-work-protocol.md` and `91-orchestrate-work-protocol.md` now require each Work Item Runner in a parallel batch to operate in a dedicated git worktree. Includes `BATCH_CONTEXT=true` handoff signal, pre-flight worktree checks, base-branch table for all item types, stage protocol compatibility notes, CWD safety mandate (`cd` to repo root before `git worktree remove`), and corrected Step 10 cleanup sequence (worktree removal before branch deletion).
 
 ### Fixed
 
