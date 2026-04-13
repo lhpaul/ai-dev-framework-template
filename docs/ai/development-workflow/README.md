@@ -199,8 +199,8 @@ The sections below keep this document usable as a master reference after the nar
 | Implement | `developer` agent | `/implement-development` | `workflow-implementer` skill | `docs/ai/development-workflow/protocols/03-implement-development-protocol.md` |
 | Review gate (spec / plan / code) | Native review against `REVIEW.md` | `/review-spec`, `/review-implementation-plan`, `/review-code` | Native review against `REVIEW.md` | `REVIEW.md` plus compatibility wrappers in `docs/ai/development-workflow/protocols/` |
 | Smoke test | `smoke-tester` agent | `/smoke-tester` | — | `docs/ai/development-workflow/protocols/04-smoke-test-protocol.md` |
-| Run reviewer loop | `automated-reviewer-loop` agent | `/run-reviewer-loop` | `workflow-reviewer-loop` skill | `docs/ai/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` |
-| Advance one item | `item-orchestrator` agent | `/run-item-work` | `workflow-item-orchestrator` skill | `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` |
+| Run reviewer loop | `/run-reviewer-loop` command (or `automated-reviewer-loop` agent) | `/run-reviewer-loop` | `workflow-reviewer-loop` skill | `docs/ai/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` |
+| Advance one item | `/run-item-work` command (or `item-orchestrator` agent) | `/run-item-work` | `workflow-item-orchestrator` skill | `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` |
 | Orchestrate portfolio | `/run-work` command (or `orchestrator` agent) | `/run-work` | `workflow-orchestrator` skill | `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
 | Prepare release | `/prepare-release` | `/prepare-release` | — | `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md` |
 
