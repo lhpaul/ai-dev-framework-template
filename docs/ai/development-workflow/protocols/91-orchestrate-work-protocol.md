@@ -48,6 +48,10 @@ When an issue tracker is configured in `.ai-dev-workflow.yaml`, **always query t
 
 Prefer the helper scripts in `scripts/development-workflow/` for deterministic state inspection before falling back to ad hoc shell commands.
 
+### Parallel batch indicator
+
+**Check for a parallel batch context**: If this Work Item Runner was dispatched as part of a parallel batch by the Portfolio Orchestrator (`90-batch-orchestrate-work-protocol.md`), the handoff metadata will indicate `BATCH_CONTEXT=true`. Note this indicator; you will use it in Step 3 (Dispatch Strategy) to decide whether worktree isolation is required.
+
 Resolve the request to exactly one of the following:
 
 1. **Backlog / tracker work item** — use when a human explicitly requests a not-yet-started item
@@ -144,6 +148,57 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 | Review plan | Native review against `REVIEW.md` or the compatibility wrapper `02-review-implementation-plan-protocol.md` |
 | Implement feature | `developer` |
 | Review code (post-draft-PR) | `code-reviewer` agent (Claude Code: `/code-review`); for other runners use compatibility wrapper `03-review-implementation-protocol.md` |
+
+### Worktree isolation for parallel batches
+
+**When dispatched as part of a parallel batch** (`BATCH_CONTEXT=true` in the handoff metadata):
+
+1. **Create a dedicated worktree** for this item before executing any stage work. This ensures complete isolation from other concurrent Work Item Runners in the batch.
+
+2. Determine the appropriate base branch for the worktree:
+
+| Item type | Base branch |
+|-----------|------------|
+| Feature (`feature/`) | `origin/develop` |
+| Refactor (`refactor/`) | `origin/develop` |
+| Fast Track fix (`fix/`) | `origin/develop` |
+| Hotfix (`hotfix/`) | `origin/main` |
+| Spec (`spec/`) | `origin/develop` |
+| Plan (`implementation-plan/`) | `origin/develop` |
+
+**Note:** Use `origin/<base>` (remote tracking) rather than local `<base>` to avoid git worktree conflicts if the local base branch is already checked out elsewhere.
+
+3. Create the worktree. The command depends on whether the item's branch already exists:
+
+```bash
+# Fetch latest remote refs first
+git fetch origin
+
+# Case A: New item — branch does not exist yet
+git worktree add <worktree-path> -b <branch-prefix>/<slug> origin/<base-branch>
+
+# Case B: Resuming item — branch exists locally
+git worktree add <worktree-path> <branch-prefix>/<slug>
+
+# Case C: Resuming item — branch exists only on remote
+git worktree add <worktree-path> -b <branch-prefix>/<slug> origin/<branch-prefix>/<slug>
+
+cd <worktree-path>
+```
+
+Use the pre-dispatch branch check from Step 2 (`git branch --list`, `git branch -r --list`) to determine which case applies. Case B and C are common when resuming "In Development" items, PRs with `needs-fixes`, or any item with prior work.
+
+**Important — stage protocol compatibility**: When working inside a worktree created with this method, the stage protocol's initial branching steps (`git fetch origin`, `git checkout develop`, `git pull origin develop`, `git checkout -b ...`) are **already satisfied** by the worktree creation above. The stage agent should skip those steps and proceed directly to the implementation work. If the stage agent runs `git checkout develop` inside the worktree, it will fail because `develop` is already checked out in the main working tree and git prevents the same branch from being checked out in multiple worktrees simultaneously.
+
+4. **Suggested worktree path**: `<repo-root>/.claude/worktrees/<item-id>/<branch-prefix>-<slug>` where `<item-id>` is the issue number, tracker ID, or slug.
+
+5. After the item reaches a terminal condition, the cleanup script will remove the worktree:
+
+```bash
+git worktree remove <worktree-path>
+```
+
+**When not in a parallel batch**: Worktree creation is optional but recommended for large development folders or long-running work. If not using a dedicated worktree, ensure the working directory is clean before proceeding.
 
 This protocol stays scoped to one item. It may call different stage agents over time, but it must not start scanning or dispatching unrelated items.
 

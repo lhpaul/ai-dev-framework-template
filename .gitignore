@@ -9,6 +9,7 @@ Thumbs.db
 
 # Claude Code
 .claude/settings.local.json
+.claude/worktrees/
 
 # Temp files
 .tmp/
