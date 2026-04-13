@@ -179,7 +179,15 @@ Extract from your reading:
 ### Refactor Steps
 
 1. If no blocking ambiguity remains, proceed without an extra approval pause; otherwise stop and ask the human
-2. Branch: `git checkout -b refactor/[branch-slug]` from `develop` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without)
+2. Branch from `develop` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without):
+
+```bash
+git fetch origin
+git checkout develop
+git pull origin develop
+git checkout -b refactor/[branch-slug]
+```
+
 3. Implement following the plan order. Follow `docs/best-practices/` for all code written.
 4. If scope is larger than the plan described, **stop and report**
 5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area
@@ -221,7 +229,15 @@ gh pr create --draft --title "refactor([scope]): [short description]" --body "..
 
 1. Read the brief. If the work item exists in an issue tracker, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for `In Development (Fast Track)` expectations.
 2. If no blocking ambiguity remains, proceed without an extra approval pause; otherwise stop and ask the human
-3. Branch: `git checkout -b fix/[branch-slug]` from `develop` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without)
+3. Branch from `develop` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without):
+
+```bash
+git fetch origin
+git checkout develop
+git pull origin develop
+git checkout -b fix/[branch-slug]
+```
+
 4. Implement the fix
 5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area
 6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (skip if this fixes unreleased work that already has an entry — update the existing entry instead, or leave it unchanged if it already describes the correct behavior)
@@ -240,7 +256,15 @@ gh pr create --draft --title "refactor([scope]): [short description]" --body "..
 
 1. Read the incident brief from the human
 2. Confirm it's a production-only issue (not a dev/staging issue)
-3. Branch: `git checkout -b hotfix/[branch-slug]` from `main` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without)
+3. Branch from `main` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without):
+
+```bash
+git fetch origin
+git checkout main
+git pull origin main
+git checkout -b hotfix/[branch-slug]
+```
+
 4. Implement the minimal fix (do not bundle unrelated changes)
 5. Verify: build, lint, tests pass
 6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (hotfixes always fix released code, so a new entry is always required)

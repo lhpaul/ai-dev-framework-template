@@ -48,6 +48,10 @@ When an issue tracker is configured in `.ai-dev-workflow.yaml`, **always query t
 
 Prefer the helper scripts in `scripts/development-workflow/` for deterministic state inspection before falling back to ad hoc shell commands.
 
+### Parallel batch indicator
+
+**Check for a parallel batch context**: If this Work Item Runner was dispatched as part of a parallel batch by the Portfolio Orchestrator (`90-batch-orchestrate-work-protocol.md`), the handoff metadata will indicate `BATCH_CONTEXT=true`. Note this indicator; you will use it in Step 3 (Dispatch Strategy) to decide whether worktree isolation is required.
+
 Resolve the request to exactly one of the following:
 
 1. **Backlog / tracker work item** — use when a human explicitly requests a not-yet-started item
@@ -144,6 +148,33 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 | Review plan | Native review against `REVIEW.md` or the compatibility wrapper `02-review-implementation-plan-protocol.md` |
 | Implement feature | `developer` |
 | Review code (post-draft-PR) | `code-reviewer` agent (Claude Code: `/code-review`); for other runners use compatibility wrapper `03-review-implementation-protocol.md` |
+
+### Worktree isolation for parallel batches
+
+**When dispatched as part of a parallel batch** (`BATCH_CONTEXT=true` in the handoff metadata):
+
+1. **Create a dedicated worktree** for this item before executing any stage work. This ensures complete isolation from other concurrent Work Item Runners in the batch.
+
+2. Execute this checkout sequence:
+
+```bash
+# Create and enter an isolated worktree for this item
+git worktree add <worktree-path> develop
+cd <worktree-path>
+
+# All subsequent work (creator stage, PR operations, etc.) happens in this worktree
+# The worktree automatically manages its own branch state and index
+```
+
+3. **Suggested worktree path**: `<repo-root>/.claude/worktrees/<item-id>/<branch-prefix>-<slug>` where `<item-id>` is the issue number, tracker ID, or slug.
+
+4. After the item reaches a terminal condition, the cleanup script will remove the worktree:
+
+```bash
+git worktree remove <worktree-path>
+```
+
+**When not in a parallel batch**: Worktree creation is optional but recommended for large development folders or long-running work. If not using a dedicated worktree, ensure the working directory is clean before proceeding.
 
 This protocol stays scoped to one item. It may call different stage agents over time, but it must not start scanning or dispatching unrelated items.
 
