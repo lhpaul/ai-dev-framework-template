@@ -144,6 +144,7 @@ Ask:
 - What Git hosting / pull-request platform do you use? (GitHub, GitLab, Bitbucket, other)
 - What browser automation tool, if any, should the workflow assume for smoke tests? (Cursor browser MCP, Playwright MCP, Playwright CLI, other, none)
 - Do you want to use automated PR review? (Greptile, Devin, both, other, none)
+- Which internal AI reviewers should run on draft PRs before external review? (Claude, Codex, both, other, none — default: Claude only)
 - Do you want branch-based CI/CD deployments? (yes/no)
   - If yes: what is the deploy branch strategy (`develop` -> non-production, `main` -> production, or custom)?
   - What deployment provider/tool should downstream repos wire in? (or `TBD`)
@@ -163,6 +164,9 @@ schema_version: 1
 review:
   platforms:
     - greptile
+  internal_reviewers:
+    - claude
+    - codex
 
 issue_tracker:
   provider: linear
@@ -177,7 +181,7 @@ browser_automation:
 Rules:
 - Include only the sections the user actually chose.
 - Keep the file declarative; do not store secrets or tokens in it.
-- `pr-review-loop.sh` currently consumes only `review.platforms`.
+- `review.platforms` is consumed by `pr-review-loop.sh` for external automated PR review (Step 7). `review.internal_reviewers` is consumed by the Step 7a internal review gate protocol.
 - If the file is absent, or `review.platforms` is omitted or empty, automated PR review is treated as not configured and the review loop reports `skipped`.
 
 ---
