@@ -1,0 +1,20 @@
+---
+description: Batch-orchestrate and supervise multiple developments. Reads current state from the issue tracker and/or dev folders, builds safe parallel batches, and keeps each selected item moving until it is waiting on a human, blocked, or escalated. Usage: /run-work [optional filter, e.g. "only spec stage" or "feature-slug"]
+---
+
+# Claude Code Command: Run Work
+
+Follow the batch orchestration protocol exactly as defined in:
+
+`docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
+
+Key responsibilities:
+
+- Read current state from the issue tracker (if configured) and `docs/specs/developments/`
+- When using an issue tracker, read the current brief per `docs/ai/development-workflow/integrations/issue-tracker.md`
+- Respect dependencies declared in specs
+- Prioritize: due within 2 weeks → priority level → creation date
+- Flag conflicts to the human rather than choosing silently
+- Use the helper scripts in `scripts/development-workflow/` to inspect state, plan batches, resume partial work, poll automated review, and poll CI
+- Use the Agent tool to dispatch the `item-orchestrator` agent for each selected item when possible
+- Report a summary of what was started, what is ready for review, what was serialized, and what is blocked

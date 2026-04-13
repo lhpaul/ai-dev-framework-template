@@ -101,7 +101,7 @@ Runs one or more automated PR review platforms in order, then classifies finding
 Usage:
 
 ```bash
-./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch feature/my-branch] [--platform greptile] [--platform devin]
+./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch feature/my-branch] [--platform greptile] [--platform devin] [--platform coderabbit]
 ```
 
 What it does:

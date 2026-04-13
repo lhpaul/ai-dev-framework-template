@@ -8,8 +8,10 @@
 # docs/ai/development-workflow/integrations/ for integration-specific setup.
 #
 # Important:
-# - scripts/development-workflow/pr-review-loop.sh currently consumes only
-#   review.platforms.
+# - review.platforms is consumed by scripts/development-workflow/pr-review-loop.sh
+#   for external automated PR review (Step 7).
+# - review.internal_reviewers is consumed by the Step 7a internal review gate
+#   protocol (91-orchestrate-work-protocol.md).
 # - Other sections are advisory until additional scripts or agents adopt them.
 #
 # Behavior for automated PR review:
@@ -21,9 +23,34 @@ schema_version: 1
 review:
   # Ordered list of automated PR review platforms to run sequentially.
   # Platforms are evaluated in order; the first blocking result stops the loop.
-  # Supported today by pr-review-loop.sh: greptile, devin
+  # Supported today by pr-review-loop.sh: greptile, devin, coderabbit
   platforms:
     - devin
+
+  # Ordered list of internal AI reviewers to run sequentially on draft PRs
+  # (Step 7a in 91-orchestrate-work-protocol.md) before converting to non-draft.
+  # All listed reviewers must APPROVE before `gh pr ready` is called.
+  #
+  # Supported values:
+  #   claude  — dispatches the stage-appropriate reviewer agent:
+  #               spec/*               -> spec-reviewer
+  #               implementation-plan/* -> implementation-plan-reviewer
+  #               feature/*/refactor/*/fix/*/hotfix/* -> code-reviewer
+  #   codex   — dispatches the stage-appropriate Codex review skill:
+  #               spec/*               -> workflow-spec-reviewer
+  #               implementation-plan/* -> workflow-plan-reviewer
+  #               feature/*/refactor/*/fix/*/hotfix/* -> workflow-code-reviewer
+  #
+  # Local override: developers who do not have access to all tools listed here
+  # can override this list locally by creating .tmp/template-config.json in the
+  # repository root (this path is gitignored). Format:
+  #   { "overrides": { "review": { "internal_reviewers": ["claude"] } } }
+  # The overrides key takes precedence over this file for the local environment.
+  # See docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md
+  # Step 7a for the full multi-reviewer gate procedure.
+  internal_reviewers:
+    - claude
+    - codex
 
 issue_tracker:
   # Supported examples: linear, github_projects, github_issues, jira, clickup, notion, none

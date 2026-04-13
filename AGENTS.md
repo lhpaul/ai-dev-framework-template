@@ -50,7 +50,7 @@ Always refer to these docs for authoritative guidance:
 
 This project uses a staged AI-assisted development workflow. See [`docs/ai/development-workflow/README.md`](docs/ai/development-workflow/README.md) for the full specification.
 
-Repository-specific workflow providers are declared in [`.ai-dev-workflow.yaml`](.ai-dev-workflow.yaml). Today, only `review.platforms` is consumed directly by repository helper scripts; other sections are advisory until additional tooling adopts them.
+Repository-specific workflow providers are declared in [`.ai-dev-workflow.yaml`](.ai-dev-workflow.yaml). Today, `review.platforms` is consumed by `pr-review-loop.sh` (Step 7) and `review.internal_reviewers` is consumed by the Step 7a internal review gate protocol; other sections are advisory until additional tooling adopts them.
 
 ### Workflow Commands
 
@@ -67,7 +67,7 @@ Repository-specific workflow providers are declared in [`.ai-dev-workflow.yaml`]
 | Advance One Item | `/run-item-work` command (or `item-orchestrator` agent) | `/run-item-work` | `workflow-item-orchestrator` skill | Follow `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` |
 | Prepare Commit | — | `/prepare-commit` | Follow `docs/best-practices/2-version-control.md` | Follow `docs/best-practices/2-version-control.md` |
 | Prepare Release | `/prepare-release` | `/prepare-release` | Follow `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md` | Follow `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md` |
-| Orchestrate Work | `orchestrator` agent | `/run-work` | `workflow-orchestrator` skill | Follow `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
+| Orchestrate Work | `/run-work` command (or `orchestrator` agent) | `/run-work` | `workflow-orchestrator` skill | Follow `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
 
 **Prepare release** does not stop after opening PRs: protocol `05` requires running the automated reviewer loop, applying `ready-for-regression` on the **production PR to `main`**, and completing the CI loop (including label-gated e2e/regression when configured) before handoff to merge.
 

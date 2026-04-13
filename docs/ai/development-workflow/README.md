@@ -199,9 +199,9 @@ The sections below keep this document usable as a master reference after the nar
 | Implement | `developer` agent | `/implement-development` | `workflow-implementer` skill | `docs/ai/development-workflow/protocols/03-implement-development-protocol.md` |
 | Review gate (spec / plan / code) | Native review against `REVIEW.md` | `/review-spec`, `/review-implementation-plan`, `/review-code` | Native review against `REVIEW.md` | `REVIEW.md` plus compatibility wrappers in `docs/ai/development-workflow/protocols/` |
 | Smoke test | `smoke-tester` agent | `/smoke-tester` | — | `docs/ai/development-workflow/protocols/04-smoke-test-protocol.md` |
-| Run reviewer loop | `automated-reviewer-loop` agent | `/run-reviewer-loop` | `workflow-reviewer-loop` skill | `docs/ai/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` |
-| Advance one item | `item-orchestrator` agent | `/run-item-work` | `workflow-item-orchestrator` skill | `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` |
-| Orchestrate portfolio | `orchestrator` agent | `/run-work` | `workflow-orchestrator` skill | `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
+| Run reviewer loop | `/run-reviewer-loop` command (or `automated-reviewer-loop` agent) | `/run-reviewer-loop` | `workflow-reviewer-loop` skill | `docs/ai/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` |
+| Advance one item | `/run-item-work` command (or `item-orchestrator` agent) | `/run-item-work` | `workflow-item-orchestrator` skill | `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` |
+| Orchestrate portfolio | `/run-work` command (or `orchestrator` agent) | `/run-work` | `workflow-orchestrator` skill | `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
 | Prepare release | `/prepare-release` | `/prepare-release` | — | `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md` |
 
 After opening release PRs, protocol `05` runs the automated reviewer loop, applies `ready-for-regression` on the **PR targeting `main`**, and runs the CI loop until checks are green (or escalation) — same persistence contract as other PR readiness work.
@@ -365,6 +365,9 @@ review:
   platforms:
     - greptile
     - devin
+  internal_reviewers:
+    - claude
+    - codex
 
 issue_tracker:
   provider: linear
@@ -376,10 +379,10 @@ browser_automation:
   provider: playwright_mcp
 ```
 
-Important implementation note:
+Important implementation notes:
 
-- Today, the repository helpers only consume `review.platforms`, and only `scripts/development-workflow/pr-review-loop.sh` reads the file directly.
-- If the config file is absent, or `review.platforms` is omitted or empty, automated PR review is treated as not configured and the review loop reports `skipped`.
+- `review.platforms` is consumed by `scripts/development-workflow/pr-review-loop.sh` for external automated PR review (Step 7). If the config file is absent, or `review.platforms` is omitted or empty, automated PR review is treated as not configured and the review loop reports `skipped`.
+- `review.internal_reviewers` is consumed by the Step 7a internal review gate protocol (`91-orchestrate-work-protocol.md`). If omitted, the gate falls back to running the stage-appropriate `claude` reviewer once. Developers can override the list locally via `.tmp/template-config.json` (gitignored).
 
 Provider-specific setup still lives in the integration guides under `docs/ai/development-workflow/integrations/`.
 
@@ -455,7 +458,7 @@ Protocol prefixes are stable family identifiers, not a promise of contiguous num
 ### Tooling And Configuration
 
 - `docs/ai/development-workflow/agent-model-config.md`
-- `.ai-dev-workflow.yaml` - repo-level workflow integration manifest (`review.platforms`, `issue_tracker.provider`, `vcs.provider`, `browser_automation.provider`)
+- `.ai-dev-workflow.yaml` - repo-level workflow integration manifest (`review.platforms`, `review.internal_reviewers`, `issue_tracker.provider`, `vcs.provider`, `browser_automation.provider`)
 
 Repository helpers:
 
@@ -473,6 +476,7 @@ Repository helpers:
 - `docs/ai/development-workflow/integrations/pr-review-platform.md`
 - `docs/ai/development-workflow/integrations/greptile.md`
 - `docs/ai/development-workflow/integrations/devin.md`
+- `docs/ai/development-workflow/integrations/coderabbit.md`
 - `docs/ai/development-workflow/integrations/github-projects.md`
 - `docs/ai/development-workflow/integrations/ci-cd-deployment.md`
 - `docs/ai/development-workflow/integrations/e2e-regression.md`

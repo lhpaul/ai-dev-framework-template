@@ -13,4 +13,4 @@ Key responsibilities:
 - Resolve the request to exactly one workflow item
 - Use the helper scripts in `scripts/development-workflow/` to classify the next deterministic action
 - Continue through creator, reviewer, PR, automated review, and CI work until the item reaches a real terminal condition
-- If the request is portfolio-wide or requires batch selection, use the Agent tool to invoke the `orchestrator` agent (there is no `/run-work` slash command in Claude Code; the `orchestrator` agent is the equivalent dispatch target)
+- If the request is portfolio-wide or requires batch selection, switch to `/run-work`

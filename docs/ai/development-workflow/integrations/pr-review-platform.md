@@ -3,6 +3,7 @@
 This document defines **platform-agnostic** expectations for how agents use one or more automated PR review tools in this workflow.
 
 Platform-specific setup lives in each platform's own integration doc. See:
+- [`integrations/coderabbit.md`](coderabbit.md)
 - [`integrations/greptile.md`](greptile.md)
 - [`integrations/devin.md`](devin.md)
 

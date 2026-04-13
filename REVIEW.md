@@ -153,6 +153,13 @@ Typical `important` issues:
 - Use the repo commands `/review-spec`, `/review-implementation-plan`, and `/review-code`.
 - Those commands should manually review against this file and apply direct fixes when appropriate.
 
+### CodeRabbit CLI
+
+- Use the CodeRabbit CLI as an optional pre-push review tool for local changes.
+- In Claude Code: `/coderabbit:review`. Standalone: `cr` or `cr --agent`.
+- CodeRabbit CLI findings complement the pre-PR review gate but do not replace it.
+- See [`docs/ai/development-workflow/integrations/coderabbit.md`](docs/ai/development-workflow/integrations/coderabbit.md) for setup and usage modes.
+
 ### Automated PR Reviewers
 
 - Treat automated PR reviewers as post-push validation.
