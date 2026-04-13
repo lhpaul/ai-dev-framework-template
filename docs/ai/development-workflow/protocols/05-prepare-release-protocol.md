@@ -11,7 +11,14 @@ Before doing anything, verify:
 
 1. Working directory is clean (`git status` returns no uncommitted changes). If not, stop and report.
 2. Currently on `develop`. If not, stop and report.
-3. Pull latest: `git pull origin develop`
+3. Fetch and pull latest from remote so the release branch is created from up-to-date state:
+
+   ```bash
+   git fetch origin
+   git pull origin develop
+   ```
+
+   If the pull fails (e.g., diverged history), stop and report to the human.
 
 ---
 
