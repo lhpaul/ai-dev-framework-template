@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`/run-work` command for Claude Code**: added `.claude/commands/run-work.md` to invoke the batch orchestrator, matching the existing Cursor `/run-work` command. Updated `AGENTS.md` workflow table and simplified `/run-item-work` to reference `/run-work` instead of the raw `orchestrator` agent.
+
+### Changed
+
+- **Multi-reviewer internal review gate (Step 7a)**: expanded Step 7a in `91-orchestrate-work-protocol.md` to run all configured internal reviewers (`review.internal_reviewers` in `.ai-dev-workflow.yaml`) sequentially on draft PRs before converting to non-draft. Added `max_internal_review_cycles` parameter (default: 5) to prevent infinite loops. Added local override support via `.tmp/template-config.json` for developers without access to all review tools. Updated `93-automated-reviewer-loop-protocol.md` to reference the multi-reviewer gate.
+- **Post-merge status transitions (Step 10)**: added Step 10 to `91-orchestrate-work-protocol.md` with a branch-type-to-tracker-status table (`spec/*` -> Spec Ready, `implementation-plan/*` -> Plan Ready, implementation branches -> Merged). Updated `90-batch-orchestrate-work-protocol.md` Step 5 and all post-merge-cleanup command/skill files (Claude Code, Cursor, Codex) to follow this table instead of always setting status to Merged.
+
 ### Fixed
 
 - **Missing `/sync-template` command for Claude Code**: `CLAUDE.md` advertised `/sync-template` as available in Claude Code, but the command file did not exist. Added `.claude/commands/sync-template.md` as a port of the existing Cursor command (`.cursor/commands/sync-template.md`), covering the full workflow: template source resolution (local path, remote ref, or `.tmp/template-config.json`), categorized diff and approval gate, file application, and git/PR instructions.

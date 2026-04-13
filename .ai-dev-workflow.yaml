@@ -25,6 +25,29 @@ review:
   platforms:
     - devin
 
+  # Ordered list of internal AI reviewers to run sequentially on draft PRs
+  # (Step 7a in 91-orchestrate-work-protocol.md) before converting to non-draft.
+  # All listed reviewers must APPROVE before `gh pr ready` is called.
+  #
+  # Supported values:
+  #   claude  — dispatches the stage-appropriate reviewer agent:
+  #               spec/*               -> spec-reviewer
+  #               implementation-plan/* -> implementation-plan-reviewer
+  #               feature/*/refactor/*/fix/*/hotfix/* -> code-reviewer
+  #   codex   — runs `workflow-reviewer-loop` Codex skill (or equivalent)
+  #             against REVIEW.md for the stage-appropriate review protocol
+  #
+  # Local override: developers who do not have access to all tools listed here
+  # can override this list locally by creating .tmp/template-config.json in the
+  # repository root (this path is gitignored). Format:
+  #   { "overrides": { "review": { "internal_reviewers": ["claude"] } } }
+  # The overrides key takes precedence over this file for the local environment.
+  # See docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md
+  # Step 7a for the full multi-reviewer gate procedure.
+  internal_reviewers:
+    - claude
+    - codex
+
 issue_tracker:
   # Supported examples: linear, github_projects, github_issues, jira, clickup, notion, none
   provider: github_projects
