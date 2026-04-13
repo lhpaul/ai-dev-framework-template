@@ -195,8 +195,14 @@ Use the pre-dispatch branch check from Step 2 (`git branch --list`, `git branch 
 5. After the item reaches a terminal condition, the cleanup script will remove the worktree:
 
 ```bash
+# IMPORTANT: Change directory to the main repo root BEFORE deleting the worktree
+cd <repo-root>
 git worktree remove <worktree-path>
 ```
+
+**Critical safety rule:** You **must** `cd` to the repository root or any other valid directory **before** executing `git worktree remove`. If the shell's current working directory (CWD) is inside the worktree being deleted, the directory will cease to exist immediately after `git worktree remove` completes. All subsequent bash commands will fail with "directory not found" errors, causing the orchestration to break and requiring manual intervention or agent re-delegation.
+
+After removing the worktree, verify that the CWD is still valid by running a simple command like `pwd` before executing any further shell operations.
 
 **When not in a parallel batch**: Worktree creation is optional but recommended for large development folders or long-running work. If not using a dedicated worktree, ensure the working directory is clean before proceeding.
 
