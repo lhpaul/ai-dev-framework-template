@@ -155,20 +155,42 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 
 1. **Create a dedicated worktree** for this item before executing any stage work. This ensures complete isolation from other concurrent Work Item Runners in the batch.
 
-2. Execute this checkout sequence:
+2. Determine the appropriate base branch for the worktree:
+
+| Item type | Base branch |
+|-----------|------------|
+| Feature (`feature/`) | `origin/develop` |
+| Refactor (`refactor/`) | `origin/develop` |
+| Fast Track fix (`fix/`) | `origin/develop` |
+| Hotfix (`hotfix/`) | `origin/main` |
+| Spec (`spec/`) | `origin/develop` |
+| Plan (`implementation-plan/`) | `origin/develop` |
+
+**Note:** Use `origin/<base>` (remote tracking) rather than local `<base>` to avoid git worktree conflicts if the local base branch is already checked out elsewhere.
+
+3. Create the worktree using detached HEAD mode (safest):
 
 ```bash
-# Create and enter an isolated worktree for this item
-git worktree add <worktree-path> develop
+# Create an isolated worktree in detached HEAD state from origin/<base-branch>
+git worktree add <worktree-path> --detach origin/<base-branch>
 cd <worktree-path>
 
-# All subsequent work (creator stage, PR operations, etc.) happens in this worktree
-# The worktree automatically manages its own branch state and index
+# All subsequent work (creator stage, branch creation, PR operations, etc.)
+# happens in this worktree. The item orchestrator will create the feature/fix/etc.
+# branch as needed.
 ```
 
-3. **Suggested worktree path**: `<repo-root>/.claude/worktrees/<item-id>/<branch-prefix>-<slug>` where `<item-id>` is the issue number, tracker ID, or slug.
+Alternatively, if you prefer to avoid detached HEAD:
 
-4. After the item reaches a terminal condition, the cleanup script will remove the worktree:
+```bash
+# Create worktree and immediately check out a new branch
+git worktree add <worktree-path> -b <branch-prefix>/<slug> origin/<base-branch>
+cd <worktree-path>
+```
+
+4. **Suggested worktree path**: `<repo-root>/.claude/worktrees/<item-id>/<branch-prefix>-<slug>` where `<item-id>` is the issue number, tracker ID, or slug.
+
+5. After the item reaches a terminal condition, the cleanup script will remove the worktree:
 
 ```bash
 git worktree remove <worktree-path>

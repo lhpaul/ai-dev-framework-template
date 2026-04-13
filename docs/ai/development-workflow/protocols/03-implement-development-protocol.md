@@ -58,6 +58,7 @@ Determine the branch slug:
 - **Without issue tracker**: `[slug]` (e.g., `user-auth`)
 
 ```bash
+git fetch origin
 git checkout develop
 git pull origin develop
 git checkout -b feature/[branch-slug]
