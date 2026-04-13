@@ -76,6 +76,42 @@ Execute **Step 7a: Internal Review Gate**, **Step 7: Automated Reviewer Loop**, 
 
 For each PR: run Step 7a first. Step 7a runs **all** configured internal reviewers sequentially (per the `review.internal_reviewers` list in `.ai-dev-workflow.yaml`, with `.tmp/template-config.json` local overrides taking precedence). All internal reviewers must APPROVE before proceeding. Once Step 7a produces `APPROVED` from all internal reviewers, run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then run Step 7 to completion, then Step 7b (regression label, implementation PRs only), then Step 8. Dispatch fixers and re-run as specified in 91 until the PR is clean and ready for human review or escalated. After Step 8 returns `green`, apply `ready-for-human-review` (the PR is already non-draft from the step after 7a).
 
+### Stuck-loop detection and escalation
+
+The automated reviewer loop can become stuck if findings are not being resolved or if the same issues keep reappearing. Complement the per-platform timeouts in `pr-review-loop.sh` (20 min) with these higher-level heuristics to detect when a fix-review cycle is not making progress:
+
+#### Detection rules
+
+Use the **PR feedback ledger** (keyed by `(platform, path, body_snippet)`) to detect stuck loops. Check these conditions **after each fixer push + re-review cycle**:
+
+1. **No progress over N consecutive cycles**: If the count of **open findings** (status = `open`) remains the same or increases after 2 or more consecutive fixer push cycles, the loop is not converging. Escalate.
+
+2. **Finding reappears after fix**: If a finding that was marked `resolved` in a previous cycle reappears in the ledger (same `(platform, path, body_snippet)` key, status reverts to `open`), the fix did not hold. After one reappearance, dispatch the fixer once more. If it reappears again in the following cycle, flag as potentially unfixable and escalate to human.
+
+3. **Maximum cycle count**: As specified in `91-orchestrate-work-protocol.md`, escalate when `cycle >= max_cycles` (default: 10). This is a hard limit independent of finding counts.
+
+#### Escalation trigger
+
+Stop the loop and escalate to human when any of the above conditions are met. In the final summary comment (see "PR feedback tracking and comments" below), include:
+
+- Which stuck-loop heuristic triggered escalation
+- A table showing the ledger state (all findings, their current status, and the cycles they have been open)
+- A recommendation to the human (e.g., "Finding X appears unfixable by current fix agent; consider manual fix" or "Review cycle has not converged; recommend pausing to reassess root cause")
+
+Example escalation comment:
+````markdown
+### Automated Reviewer Loop Escalation
+
+**Reason:** No progress detected — 3 consecutive cycles with 2 unresolved findings.
+
+| # | Platform | File | Status | Cycles open | Resolved in | Reappeared in |
+|---|----------|------|--------|-------------|-------------|---------------|
+| 1 | greptile | `src/foo.ts` | Open | 4 | -- | -- |
+| 2 | devin | `src/bar.ts` | Open | 3 | `abc1234` | `def5678` |
+
+**Recommendation:** Finding #2 reappeared after fix in cycle 4. This may indicate a fundamental issue that the automated fixer cannot resolve; consider manual review and fix.
+````
+
 ### PR feedback tracking and comments
 
 Follow the "PR feedback tracking and comments" subsection of Step 7 in `91-orchestrate-work-protocol.md`:
@@ -93,7 +129,7 @@ Follow the "PR feedback tracking and comments" subsection of Step 7 in `91-orche
 After processing the requested PR(s), report:
 
 - **Ready for human review**: PR link, branch, and that the internal review gate, every configured automated reviewer, and CI are all clean (or skipped). Confirm that `gh pr ready` was run (after Step 7a APPROVED, before Step 7) to convert the draft PR to non-draft.
-- **Escalated**: PR link, reason (max cycles, timeout, or review platform escalate).
+- **Escalated**: PR link, reason (no progress over consecutive cycles, finding reappeared after fix, max cycles, timeout, or review platform escalate).
 - **Skipped**: If no review platform is configured, or a configured platform is currently unsupported and therefore skipped, note that in the result for the listed PR(s).
 
 The final summary comment posted on the PR (per the PR feedback tracking subsection) serves as the durable record; the summary to the user is a concise pointer to the PR and its outcome.
