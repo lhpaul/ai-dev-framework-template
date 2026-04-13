@@ -196,6 +196,7 @@ After a Work Item Runner returns:
 2. If the tracker is unavailable, fall back to `workflow-next-action.sh` but flag to the human that status may be stale.
 3. If the next action is still deterministic because the Work Item Runner returned early or was interrupted, redispatch / resume that same item.
 4. Stop supervising that item only when it is waiting on a human, blocked, or escalated.
+5. **When a human confirms PRs have been merged**: run post-merge status transitions per the table in Step 10 of `91-orchestrate-work-protocol.md` — set tracker status to `Spec Ready`, `Plan Ready`, or `Merged` depending on the branch type of the merged PR — and clean up local branches and worktrees associated with the merged PRs.
 
 Do not consider the batch complete until every dispatched item has reached a real terminal condition.
 

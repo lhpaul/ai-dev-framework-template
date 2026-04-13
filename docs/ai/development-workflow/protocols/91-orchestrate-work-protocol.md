@@ -155,7 +155,7 @@ Run the next deterministic action for the selected item, then immediately re-eva
 
 Expected chain:
 
-`creator -> draft PR opened -> internal review gate (Step 7a) -> gh pr ready -> automated reviewer loop (Step 7) -> regression label (Step 7b, implementation PRs only) -> CI loop (Step 8) -> readiness label / tracker status -> wait or escalation`
+`creator -> draft PR opened -> internal review gate with all internal reviewers (Step 7a) -> gh pr ready -> automated reviewer loop (Step 7) -> regression label (Step 7b, implementation PRs only) -> CI loop (Step 8) -> readiness label / tracker status -> wait or escalation`
 
 After any subagent finishes, determine whether the item still has a deterministic next action:
 
@@ -201,23 +201,57 @@ After the selected item reaches a terminal condition, provide a concise summary:
 
 Run this step immediately after opening a draft PR, and again after any push that addresses internal-review findings.
 
-Dispatch the stage-appropriate internal reviewer for the draft PR:
+### Determining which reviewers to run
 
-| PR branch prefix | Internal reviewer to dispatch |
-|---|---|
-| `spec/*` | `spec-reviewer` or `01-review-spec-protocol.md` |
-| `implementation-plan/*` | `implementation-plan-reviewer` or `02-review-implementation-plan-protocol.md` |
-| `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `code-reviewer` or `03-review-implementation-protocol.md` |
+Read the `review.internal_reviewers` list from `.ai-dev-workflow.yaml`. If a `.tmp/template-config.json` file exists in the repository root (this path is gitignored and used for local developer overrides), read its `overrides.review.internal_reviewers` list — that value takes precedence over `.ai-dev-workflow.yaml` for the local environment. This allows developers without access to all configured review tools to run a subset (e.g., only `claude`) without changing the shared config.
 
-The reviewer runs against `REVIEW.md`, applies deterministic fixes directly, and commits + pushes if needed.
+Example `.tmp/template-config.json` override format:
+
+```json
+{
+  "overrides": {
+    "review": {
+      "internal_reviewers": ["claude"]
+    }
+  }
+}
+```
+
+If neither file defines `internal_reviewers`, fall back to running the stage-appropriate reviewer once (default behavior: `claude`).
+
+### Reviewer dispatch map
+
+For each reviewer in the resolved list, dispatch the stage-appropriate agent:
+
+| Reviewer | PR branch prefix | Agent / protocol to dispatch |
+|---|---|---|
+| `claude` | `spec/*` | `spec-reviewer` or `01-review-spec-protocol.md` |
+| `claude` | `implementation-plan/*` | `implementation-plan-reviewer` or `02-review-implementation-plan-protocol.md` |
+| `claude` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `code-reviewer` or `03-review-implementation-protocol.md` |
+| `codex` | any | `workflow-reviewer-loop` Codex skill (or equivalent) against `REVIEW.md` for the stage-appropriate review protocol |
+
+### Multi-reviewer execution rules
+
+Run all configured internal reviewers **sequentially** in the order listed. Each reviewer runs against `REVIEW.md`, applies deterministic fixes directly, and commits + pushes if needed.
+
+Initialize `internal_review_cycle = 0` at the start of Step 7a. Increment each time the full reviewer list is restarted. Escalate to human when `internal_review_cycle` reaches `max_internal_review_cycles` (default: 5).
 
 | Outcome | Action |
 |---|---|
-| `APPROVED` | Run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then continue to Step 7 (external automated reviewers) |
-| `NEEDS REVISION` (fixable) | Fixes already applied by the agent; re-run Step 7a |
-| `NEEDS REVISION` (product/design decision) | Stop and escalate to human before proceeding |
+| All reviewers `APPROVED` | Run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then continue to Step 7 (external automated reviewers) |
+| Any reviewer returns `NEEDS REVISION` (fixable) and `internal_review_cycle < max_internal_review_cycles` | Fixes already applied by the agent; increment `internal_review_cycle`; re-run **all** internal reviewers from the beginning of the list |
+| Any reviewer returns `NEEDS REVISION` (fixable) and `internal_review_cycle >= max_internal_review_cycles` | Escalate to human — internal review is not converging |
+| Any reviewer returns `NEEDS REVISION` (product/design decision) | Stop and escalate to human before proceeding |
 
-Step 7a runs **before** Step 7 (external reviewers). Only proceed to Step 7 once Step 7a produces `APPROVED`. After any fixer push triggered by Step 7 (external reviewers), re-run Step 7a to ensure the stage-specific internal review gate is still clean.
+All internal reviewers must APPROVE before `gh pr ready` is called. If any reviewer finds issues, fix them and re-run ALL internal reviewers.
+
+### Step 7a loop parameters
+
+| Parameter | Default | Description |
+|---|---|---|
+| `max_internal_review_cycles` | 5 | Max times the full internal reviewer list is restarted before escalating |
+
+Step 7a runs **before** Step 7 (external reviewers). Only proceed to Step 7 once all internal reviewers in Step 7a produce `APPROVED`. After any fixer push triggered by Step 7 (external reviewers), re-run Step 7a (all internal reviewers) to ensure the stage-specific internal review gate is still clean.
 
 ---
 
@@ -402,3 +436,29 @@ When a human requests changes on a PR:
 8. Reapply `ready-for-human-review` only when both loops are clean again
 
 See `92-pr-readiness-signal-protocol.md` for label definitions.
+
+---
+
+## Step 10: Post-Merge Status Transitions
+
+When a human confirms that a PR has been merged, update the issue tracker and clean up local state according to this table:
+
+| Merged PR branch type | Set tracker status to |
+|---|---|
+| `spec/*` | Spec Ready |
+| `implementation-plan/*` | Plan Ready |
+| `feature/*` / `fix/*` / `refactor/*` / `hotfix/*` | Merged |
+
+**Key rules:**
+
+- When a spec or plan PR is merged, set the tracker status to the corresponding **Ready** status (`Spec Ready` or `Plan Ready`) — **not** `Merged`. Only implementation PRs (feature, fix, refactor, hotfix) go to `Merged`.
+- The `/post-merge-cleanup` skill and `post-merge-cleanup` command follow this same table when updating tracker status.
+- After updating the tracker, clean up local branches and worktrees associated with the merged PR:
+
+```bash
+git fetch origin
+git branch -D <merged-branch>           # force-delete local branch (squash merges need -D)
+git worktree remove <worktree-path>     # remove worktree if present
+```
+
+If the item's tracker status is already in a further-advanced state (e.g., already `In Development` when a spec PR merges), do not roll it back — leave it as-is and only clean up local branches/worktrees.
