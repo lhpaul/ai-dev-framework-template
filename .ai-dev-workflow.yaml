@@ -23,7 +23,7 @@ schema_version: 1
 review:
   # Ordered list of automated PR review platforms to run sequentially.
   # Platforms are evaluated in order; the first blocking result stops the loop.
-  # Supported today by pr-review-loop.sh: greptile, devin
+  # Supported today by pr-review-loop.sh: greptile, devin, coderabbit
   platforms:
     - devin
 

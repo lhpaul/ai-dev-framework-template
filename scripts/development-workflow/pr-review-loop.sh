@@ -8,7 +8,7 @@ source "$SCRIPT_DIR/workflow-lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin] [--poll-interval seconds] [--max-wait seconds]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,coderabbit] [--poll-interval seconds] [--max-wait seconds]
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
 triggering a new review, each platform checks for existing blocking findings. If
@@ -763,6 +763,363 @@ run_devin_review() {
   return 0
 }
 
+is_coderabbit_blocking() {
+  # Returns 0 (true) if the comment body contains a blocking severity marker.
+  # Critical (🔴) and Major (🟠) are blocking; Minor (🟡) and Low (🟢) are not.
+  local body="$1"
+  if printf '%s\n' "$body" | grep -q "🔴"; then return 0; fi
+  if printf '%s\n' "$body" | grep -q "🟠"; then return 0; fi
+  return 1
+}
+
+run_coderabbit_review() {
+  local pr_number="$1"
+  local branch_name="$2"
+  local poll_interval="$3"
+  local max_wait="$4"
+  local platform="coderabbit"
+  local bot_login="coderabbitai[bot]"
+  local repo
+  local head_sha=""
+  local since_iso=""
+  local existing_comments=""
+  local existing_reviews=""
+  local existing_blocking_file=""
+  local existing_blocking_count=0
+  local existing_suggestion_count=0
+  local comment_json=""
+  local review_json=""
+  local body=""
+  local blocking_lines_file=""
+  local elapsed=0
+  local comments=""
+  local blocking_reviews=""
+  local blocking_count=0
+  local suggestion_count=0
+  local comment_count=0
+  local index=1
+  local blocking_json=""
+  local stale_file=""
+
+  trap 'rm -f "${existing_blocking_file:-}" "${blocking_lines_file:-}" "${stale_file:-}"' RETURN
+
+  require_gh
+  cd_workflow_repo_root
+  repo="$(repo_slug)"
+
+  head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
+  if [ -z "$head_sha" ]; then
+    print_kv RESULT escalate
+    print_kv REASON "head-sha-unavailable"
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    return 2
+  fi
+  since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
+  if [ -z "$since_iso" ]; then
+    since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
+  fi
+
+  # --- Phase 1: Check for existing blocking findings on the current HEAD ---
+  existing_comments="$(
+    gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+          .[]
+          | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null)
+          | { path, line: (.line // .original_line // 0), body: (.body // "") }
+          | @json
+        '
+  )"
+  existing_reviews="$(
+    gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+          .[]
+          | select(
+              .user.login == $bot and
+              .submitted_at > $since and
+              .state == "CHANGES_REQUESTED"
+            )
+          | { path: "", line: 0, body: (.body // "CHANGES_REQUESTED review without body") }
+          | @json
+        '
+  )"
+
+  existing_blocking_file="$(mktemp)"
+  while IFS= read -r comment_json; do
+    [ -z "${comment_json:-}" ] && continue
+    body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
+    [ -z "$body" ] && continue
+    if is_coderabbit_blocking "$body"; then
+      existing_blocking_count=$((existing_blocking_count + 1))
+      printf '%s\n' "$comment_json" >> "$existing_blocking_file"
+    else
+      existing_suggestion_count=$((existing_suggestion_count + 1))
+    fi
+  done <<< "$existing_comments"
+
+  while IFS= read -r review_json; do
+    [ -z "${review_json:-}" ] && continue
+    body="$(printf '%s\n' "$review_json" | jq -r '.body')"
+    [ -z "$body" ] && continue
+    existing_blocking_count=$((existing_blocking_count + 1))
+    printf '%s\n' "$review_json" >> "$existing_blocking_file"
+  done <<< "$existing_reviews"
+
+  if [ "$existing_blocking_count" -gt 0 ]; then
+    print_kv RESULT needs_fixes
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv REASON existing_findings
+    print_kv COMMENT_COUNT "$((existing_blocking_count + existing_suggestion_count))"
+    print_kv BLOCKING_COUNT "$existing_blocking_count"
+    print_kv SUGGESTION_COUNT "$existing_suggestion_count"
+    while IFS= read -r blocking_json; do
+      [ -z "${blocking_json:-}" ] && continue
+      print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
+      print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
+      print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+      index=$((index + 1))
+    done < "$existing_blocking_file"
+    rm -f "$existing_blocking_file"
+    return 1
+  fi
+
+  rm -f "$existing_blocking_file"
+
+  # --- Phase 2: Poll for CodeRabbit review completion ---
+  # CodeRabbit signals completion by posting a COMMENTED review after the HEAD commit.
+  # Unlike Devin, there are no check runs to monitor — we rely solely on the review.
+  #
+  local coderabbit_review_count=0
+  local coderabbit_any_activity=0
+
+  while :; do
+    # Check for any CodeRabbit review submitted after the HEAD commit
+    coderabbit_review_count="$(
+      gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+        | jq --arg bot "$bot_login" --arg since "$since_iso" '
+            [.[]
+             | select(
+                 .user.login == $bot and
+                 .submitted_at > $since
+               )
+            ] | length
+          '
+    )"
+    coderabbit_review_count="${coderabbit_review_count:-0}"
+
+    if [ "$coderabbit_review_count" -gt 0 ]; then
+      coderabbit_any_activity=1
+      break
+    fi
+
+    # Also check for CodeRabbit issue comments (summary comment) as activity signal.
+    # Filter by since_iso so historical comments from prior pushes do not incorrectly
+    # mark this HEAD cycle as having activity (which would suppress stale-findings recovery).
+    if [ "$coderabbit_any_activity" -eq 0 ]; then
+      local activity_count
+      activity_count="$(
+        gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+          | jq --arg bot "$bot_login" --arg since "$since_iso" '
+              [.[] | select(.user.login == $bot and .created_at > $since)] | length
+            '
+      )"
+      if [ "${activity_count:-0}" -gt 0 ]; then
+        coderabbit_any_activity=1
+      fi
+    fi
+
+    if [ "$elapsed" -ge "$max_wait" ]; then
+      if [ "$coderabbit_any_activity" -eq 0 ]; then
+        # CodeRabbit didn't review this HEAD. Check for stale findings before skipping.
+        # Only consider unresolved inline comments here. Exclude resolved findings
+        # (replies starting with ✅ resolve their parent comment) — same pattern as Devin.
+        local stale_count=0
+        local stale_blocking_count=0
+        local stale_comments
+        stale_comments="$(
+          gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+            | jq -s -r --arg bot "$bot_login" '
+                (
+                  [
+                    .[][]
+                    | select(
+                        .user.login == $bot and
+                        .in_reply_to_id != null and
+                        ((.body // "") | test("^✅"))
+                      )
+                    | .in_reply_to_id
+                  ]
+                ) as $resolved_ids
+                | .[][]
+                | select(
+                    .user.login == $bot and
+                    .in_reply_to_id == null and
+                    ((.body // "") | test("^✅") | not) and
+                    (.id as $comment_id | ($resolved_ids | index($comment_id) | not))
+                  )
+                | { path, line: (.line // .original_line // 0), body: (.body // "") }
+                | @json
+              '
+        )"
+        stale_file="$(mktemp)"
+        while IFS= read -r comment_json; do
+          [ -z "${comment_json:-}" ] && continue
+          body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
+          [ -z "$body" ] && continue
+          if is_coderabbit_blocking "$body"; then
+            stale_blocking_count=$((stale_blocking_count + 1))
+            printf '%s\n' "$comment_json" >> "$stale_file"
+          fi
+          stale_count=$((stale_count + 1))
+        done <<< "$stale_comments"
+
+        if [ "$stale_blocking_count" -gt 0 ]; then
+          print_kv RESULT needs_fixes
+          print_kv PLATFORM "$platform"
+          print_kv PR_NUMBER "$pr_number"
+          print_kv BRANCH "$branch_name"
+          print_kv REVIEW_COMMENT_ID ""
+          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          print_kv REASON stale_findings
+          print_kv COMMENT_COUNT "$stale_count"
+          print_kv BLOCKING_COUNT "$stale_blocking_count"
+          print_kv SUGGESTION_COUNT "$((stale_count - stale_blocking_count))"
+          while IFS= read -r blocking_json; do
+            [ -z "${blocking_json:-}" ] && continue
+            print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
+            print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
+            print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+            index=$((index + 1))
+          done < "$stale_file"
+          rm -f "$stale_file"
+          return 1
+        fi
+        rm -f "$stale_file"
+
+        print_kv RESULT skipped
+        print_kv REASON no_review
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv REVIEW_COMMENT_ID ""
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv COMMENT_COUNT 0
+        print_kv BLOCKING_COUNT 0
+        print_kv SUGGESTION_COUNT 0
+        return 0
+      fi
+      print_kv RESULT escalate
+      print_kv REASON timeout
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      return 2
+    fi
+
+    sleep "$poll_interval"
+    elapsed=$((elapsed + poll_interval))
+  done
+
+  # --- Phase 3: Collect results after completion ---
+  blocking_lines_file="$(mktemp)"
+
+  comments="$(
+    gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+        .[]
+        | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null)
+        | {
+            path,
+            line: (.line // .original_line // 0),
+            body: (.body // "")
+          }
+        | @json
+      '
+  )"
+
+  blocking_reviews="$(
+    gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+        .[]
+        | select(
+            .user.login == $bot and
+            .submitted_at > $since and
+            .state == "CHANGES_REQUESTED"
+          )
+        | {
+            path: "",
+            line: 0,
+            body: (.body // "CHANGES_REQUESTED review without body")
+          }
+        | @json
+      '
+  )"
+
+  while IFS= read -r comment_json; do
+    [ -z "${comment_json:-}" ] && continue
+    body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
+    [ -z "$body" ] && continue
+    comment_count=$((comment_count + 1))
+    if is_coderabbit_blocking "$body"; then
+      blocking_count=$((blocking_count + 1))
+      printf '%s\n' "$comment_json" >> "$blocking_lines_file"
+    else
+      suggestion_count=$((suggestion_count + 1))
+    fi
+  done <<< "$comments"
+
+  while IFS= read -r review_json; do
+    [ -z "${review_json:-}" ] && continue
+    body="$(printf '%s\n' "$review_json" | jq -r '.body')"
+    [ -z "$body" ] && continue
+    comment_count=$((comment_count + 1))
+    blocking_count=$((blocking_count + 1))
+    printf '%s\n' "$review_json" >> "$blocking_lines_file"
+  done <<< "$blocking_reviews"
+
+  if [ "$blocking_count" -gt 0 ]; then
+    print_kv RESULT needs_fixes
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT "$comment_count"
+    print_kv BLOCKING_COUNT "$blocking_count"
+    print_kv SUGGESTION_COUNT "$suggestion_count"
+    while IFS= read -r blocking_json; do
+      [ -z "${blocking_json:-}" ] && continue
+      print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
+      print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
+      print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+      index=$((index + 1))
+    done < "$blocking_lines_file"
+    rm -f "$blocking_lines_file"
+    return 1
+  fi
+
+  rm -f "$blocking_lines_file"
+  print_kv RESULT clean
+  print_kv PLATFORM "$platform"
+  print_kv PR_NUMBER "$pr_number"
+  print_kv BRANCH "$branch_name"
+  print_kv REVIEW_COMMENT_ID ""
+  print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+  print_kv COMMENT_COUNT "$comment_count"
+  print_kv BLOCKING_COUNT 0
+  print_kv SUGGESTION_COUNT "$suggestion_count"
+  return 0
+}
+
 run_platform_review() {
   local platform="$1"
   local pr_number="$2"
@@ -776,6 +1133,9 @@ run_platform_review() {
       ;;
     devin)
       run_devin_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      ;;
+    coderabbit)
+      run_coderabbit_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
       ;;
     *)
       print_kv RESULT skipped

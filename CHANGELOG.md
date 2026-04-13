@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **CodeRabbit integration**: added CodeRabbit as an optional automated PR reviewer platform (`coderabbit` in `review.platforms`) and as a pre-push CLI tool via `/coderabbit:review` in Claude Code. Includes `run_coderabbit_review` adapter in `pr-review-loop.sh` with severity-based blocking classification (Critical/Major blocking, Minor/Low non-blocking), `CHANGES_REQUESTED` review handling, stale-findings recovery with resolved-comment filtering, and scoped activity detection to suppress false stale blockers. Added `.coderabbit.yaml` config (auto-review disabled by default) and `docs/ai/development-workflow/integrations/coderabbit.md` setup guide. Updated `REVIEW.md` CodeRabbit CLI guidance.
 - **`/run-work` command for Claude Code**: added `.claude/commands/run-work.md` to invoke the batch orchestrator, matching the existing Cursor `/run-work` command. Updated `AGENTS.md` workflow table and simplified `/run-item-work` to reference `/run-work` instead of the raw `orchestrator` agent.
 
 ### Changed
