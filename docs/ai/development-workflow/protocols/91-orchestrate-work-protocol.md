@@ -102,7 +102,7 @@ When dispatching a subagent for this item, include a short “Tracker Work Item 
 | Draft PR open, internal review pending | PR is draft and the relevant internal review gate has not run yet or has open findings | Run the stage-specific internal review gate (Step 7a); apply fixes, push, repeat until clean. Once APPROVED, run `gh pr ready` to convert to non-draft |
 | Non-draft PR open, no readiness label, external review not yet run | PR is non-draft (converted after Step 7a APPROVED), external review not yet run | Run Step 7 (external automated reviewers) and Step 8 (CI) |
 | PR open (non-draft), no readiness label | PR exists and latest push has not fully cleared | Run Step 7 and Step 8 until clean or escalated |
-| PR labeled `needs-fixes` | Human or automated systems requested changes | Address feedback, push, then run Step 7a (if draft), Step 7, and Step 8 |
+| PR labeled `needs-fixes` | Human or automated systems requested changes | Address feedback, push, then run Step 7a, Step 7, and Step 8 |
 | PR labeled `ready-for-human-review` | — | Wait — human review / merge required |
 
 ### Pre-dispatch branch check
@@ -228,7 +228,9 @@ For each reviewer in the resolved list, dispatch the stage-appropriate agent:
 | `claude` | `spec/*` | `spec-reviewer` or `01-review-spec-protocol.md` |
 | `claude` | `implementation-plan/*` | `implementation-plan-reviewer` or `02-review-implementation-plan-protocol.md` |
 | `claude` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `code-reviewer` or `03-review-implementation-protocol.md` |
-| `codex` | any | `workflow-reviewer-loop` Codex skill (or equivalent) against `REVIEW.md` for the stage-appropriate review protocol |
+| `codex` | `spec/*` | `workflow-spec-reviewer` Codex skill against `REVIEW.md` |
+| `codex` | `implementation-plan/*` | `workflow-plan-reviewer` Codex skill against `REVIEW.md` |
+| `codex` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `workflow-code-reviewer` Codex skill against `REVIEW.md` |
 
 ### Multi-reviewer execution rules
 
@@ -430,10 +432,11 @@ When a human requests changes on a PR:
 2. Add `needs-fixes`
 3. Address the feedback
 4. Push fixes
-5. Run Step 7
-6. Run Step 7b (implementation PRs only)
-7. Run Step 8
-8. Reapply `ready-for-human-review` only when both loops are clean again
+5. Run Step 7a (internal review gate) — all internal reviewers must approve before proceeding
+6. Run Step 7 (external automated reviewers)
+7. Run Step 7b (implementation PRs only)
+8. Run Step 8 (CI loop)
+9. Reapply `ready-for-human-review` only when both loops are clean again
 
 See `92-pr-readiness-signal-protocol.md` for label definitions.
 

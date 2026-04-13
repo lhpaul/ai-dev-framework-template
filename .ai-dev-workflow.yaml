@@ -36,8 +36,10 @@ review:
   #               spec/*               -> spec-reviewer
   #               implementation-plan/* -> implementation-plan-reviewer
   #               feature/*/refactor/*/fix/*/hotfix/* -> code-reviewer
-  #   codex   — runs `workflow-reviewer-loop` Codex skill (or equivalent)
-  #             against REVIEW.md for the stage-appropriate review protocol
+  #   codex   — dispatches the stage-appropriate Codex review skill:
+  #               spec/*               -> workflow-spec-reviewer
+  #               implementation-plan/* -> workflow-plan-reviewer
+  #               feature/*/refactor/*/fix/*/hotfix/* -> workflow-code-reviewer
   #
   # Local override: developers who do not have access to all tools listed here
   # can override this list locally by creating .tmp/template-config.json in the
