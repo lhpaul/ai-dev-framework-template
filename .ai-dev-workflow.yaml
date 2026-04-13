@@ -8,8 +8,10 @@
 # docs/ai/development-workflow/integrations/ for integration-specific setup.
 #
 # Important:
-# - scripts/development-workflow/pr-review-loop.sh currently consumes only
-#   review.platforms.
+# - review.platforms is consumed by scripts/development-workflow/pr-review-loop.sh
+#   for external automated PR review (Step 7).
+# - review.internal_reviewers is consumed by the Step 7a internal review gate
+#   protocol (91-orchestrate-work-protocol.md).
 # - Other sections are advisory until additional scripts or agents adopt them.
 #
 # Behavior for automated PR review:
