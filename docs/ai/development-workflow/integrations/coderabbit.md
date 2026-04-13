@@ -99,12 +99,11 @@ CodeRabbit posts as `coderabbitai[bot]`. Use this login to filter its comments a
 
 ### Step 7.2 — Detect review completion
 
-CodeRabbit signals completion in one of these ways:
+CodeRabbit signals completion by posting a review (typically `COMMENTED` or `CHANGES_REQUESTED`) on the PR after analyzing the pushed commit.
 
-1. **Review submission** — a `COMMENTED` review posted by `coderabbitai[bot]` after the HEAD commit timestamp
-2. **Summary comment update** — the PR issue comment containing `<!-- This is an auto-generated comment: summarize by coderabbit.ai -->` no longer contains "Currently processing"
+The helper script checks for a CodeRabbit review on each poll iteration. If a review from `coderabbitai[bot]` is found submitted after the HEAD commit timestamp, the review is considered complete and the script proceeds to Phase 3.
 
-The helper script checks for a CodeRabbit review on each poll iteration. If a review is found submitted after the HEAD commit, the review is considered complete.
+As a secondary signal, the script also checks for CodeRabbit issue comments (e.g., the PR summary comment) as an **activity indicator** — this is used only to distinguish "CodeRabbit is active but hasn't finished" from "CodeRabbit didn't review this HEAD at all" when the timeout is reached.
 
 | Result | Action |
 | --- | --- |
