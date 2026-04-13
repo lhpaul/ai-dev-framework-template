@@ -113,16 +113,18 @@ The helper script checks for a CodeRabbit review on each poll iteration. If a re
 | `elapsed >= max_wait` and no CodeRabbit activity detected | Stale findings recovery, then skip as `no_review` if none found |
 | `elapsed >= max_wait` and CodeRabbit activity was detected | Timeout — escalate to human |
 
-### Step 7.3 — Fetch inline comments
+### Step 7.3 — Fetch inline comments and reviews
 
 ```bash
 gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
   --jq "[.[] | select(.user.login == \"coderabbitai[bot]\" and .created_at > \"$since_iso\" and .in_reply_to_id == null) | {path, line, body}]"
 ```
 
+Additionally, `CHANGES_REQUESTED` reviews posted by `coderabbitai[bot]` after the HEAD commit are also fetched from the reviews endpoint and counted as blocking, regardless of the emoji severity marker in their body. This matches the behavior of the other platform adapters.
+
 ### Blocking vs. suggestion classification
 
-Unlike Devin (where all findings are blocking), CodeRabbit findings include severity markers that determine blocking status:
+Unlike Devin (where all findings are blocking), CodeRabbit inline comments include severity markers that determine blocking status:
 
 | Severity marker | Classification |
 | --- | --- |

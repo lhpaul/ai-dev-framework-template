@@ -783,14 +783,17 @@ run_coderabbit_review() {
   local head_sha=""
   local since_iso=""
   local existing_comments=""
+  local existing_reviews=""
   local existing_blocking_file=""
   local existing_blocking_count=0
   local existing_suggestion_count=0
   local comment_json=""
+  local review_json=""
   local body=""
   local blocking_lines_file=""
   local elapsed=0
   local comments=""
+  local blocking_reviews=""
   local blocking_count=0
   local suggestion_count=0
   local comment_count=0
@@ -830,6 +833,19 @@ run_coderabbit_review() {
           | @json
         '
   )"
+  existing_reviews="$(
+    gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+          .[]
+          | select(
+              .user.login == $bot and
+              .submitted_at > $since and
+              .state == "CHANGES_REQUESTED"
+            )
+          | { path: "", line: 0, body: (.body // "CHANGES_REQUESTED review without body") }
+          | @json
+        '
+  )"
 
   existing_blocking_file="$(mktemp)"
   while IFS= read -r comment_json; do
@@ -843,6 +859,14 @@ run_coderabbit_review() {
       existing_suggestion_count=$((existing_suggestion_count + 1))
     fi
   done <<< "$existing_comments"
+
+  while IFS= read -r review_json; do
+    [ -z "${review_json:-}" ] && continue
+    body="$(printf '%s\n' "$review_json" | jq -r '.body')"
+    [ -z "$body" ] && continue
+    existing_blocking_count=$((existing_blocking_count + 1))
+    printf '%s\n' "$review_json" >> "$existing_blocking_file"
+  done <<< "$existing_reviews"
 
   if [ "$existing_blocking_count" -gt 0 ]; then
     print_kv RESULT needs_fixes
@@ -895,13 +919,15 @@ run_coderabbit_review() {
       break
     fi
 
-    # Also check for CodeRabbit issue comments (summary comment) as activity signal
+    # Also check for CodeRabbit issue comments (summary comment) as activity signal.
+    # Filter by since_iso so historical comments from prior pushes do not incorrectly
+    # mark this HEAD cycle as having activity (which would suppress stale-findings recovery).
     if [ "$coderabbit_any_activity" -eq 0 ]; then
       local activity_count
       activity_count="$(
         gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-          | jq --arg bot "$bot_login" '
-              [.[] | select(.user.login == $bot)] | length
+          | jq --arg bot "$bot_login" --arg since "$since_iso" '
+              [.[] | select(.user.login == $bot and .created_at > $since)] | length
             '
       )"
       if [ "${activity_count:-0}" -gt 0 ]; then
@@ -1005,6 +1031,24 @@ run_coderabbit_review() {
       '
   )"
 
+  blocking_reviews="$(
+    gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+        .[]
+        | select(
+            .user.login == $bot and
+            .submitted_at > $since and
+            .state == "CHANGES_REQUESTED"
+          )
+        | {
+            path: "",
+            line: 0,
+            body: (.body // "CHANGES_REQUESTED review without body")
+          }
+        | @json
+      '
+  )"
+
   while IFS= read -r comment_json; do
     [ -z "${comment_json:-}" ] && continue
     body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
@@ -1017,6 +1061,15 @@ run_coderabbit_review() {
       suggestion_count=$((suggestion_count + 1))
     fi
   done <<< "$comments"
+
+  while IFS= read -r review_json; do
+    [ -z "${review_json:-}" ] && continue
+    body="$(printf '%s\n' "$review_json" | jq -r '.body')"
+    [ -z "$body" ] && continue
+    comment_count=$((comment_count + 1))
+    blocking_count=$((blocking_count + 1))
+    printf '%s\n' "$review_json" >> "$blocking_lines_file"
+  done <<< "$blocking_reviews"
 
   if [ "$blocking_count" -gt 0 ]; then
     print_kv RESULT needs_fixes
