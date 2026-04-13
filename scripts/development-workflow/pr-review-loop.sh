@@ -938,16 +938,31 @@ run_coderabbit_review() {
     if [ "$elapsed" -ge "$max_wait" ]; then
       if [ "$coderabbit_any_activity" -eq 0 ]; then
         # CodeRabbit didn't review this HEAD. Check for stale findings before skipping.
+        # Only consider unresolved inline comments here. Exclude resolved findings
+        # (replies starting with ✅ resolve their parent comment) — same pattern as Devin.
         local stale_count=0
         local stale_blocking_count=0
         local stale_comments
         stale_comments="$(
           gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
-            | jq -r --arg bot "$bot_login" '
-                .[]
+            | jq -s -r --arg bot "$bot_login" '
+                (
+                  [
+                    .[][]
+                    | select(
+                        .user.login == $bot and
+                        .in_reply_to_id != null and
+                        ((.body // "") | test("^✅"))
+                      )
+                    | .in_reply_to_id
+                  ]
+                ) as $resolved_ids
+                | .[][]
                 | select(
                     .user.login == $bot and
-                    .in_reply_to_id == null
+                    .in_reply_to_id == null and
+                    ((.body // "") | test("^✅") | not) and
+                    (.id as $comment_id | ($resolved_ids | index($comment_id) | not))
                   )
                 | { path, line: (.line // .original_line // 0), body: (.body // "") }
                 | @json

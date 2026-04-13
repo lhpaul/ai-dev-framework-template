@@ -141,4 +141,4 @@ CodeRabbit posts findings as inline comments on code lines. The adapter filters 
 
 ### Resolved comment handling
 
-When CodeRabbit detects fixes in subsequent commits, it may update or resolve prior findings. The adapter excludes comments that are replies or resolved confirmations from the blocking count.
+When CodeRabbit detects fixes in subsequent commits, it may post a reply starting with `✅` on the original finding. The adapter uses these resolved confirmations to exclude their parent comments from blocking counts — both during normal Phase 1/3 processing and during stale-findings recovery (same pattern as the Devin adapter). Reply comments (`in_reply_to_id != null`) are always excluded from direct counting.
