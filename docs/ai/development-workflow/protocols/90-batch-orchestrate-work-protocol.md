@@ -165,6 +165,45 @@ For each item in the batch, prepare a short handoff:
 - Current next action
 - Priority context
 - Parallelization notes or serialization reason
+- `BATCH_CONTEXT=true` — required for parallel batches so the Work Item Runner (protocol 91) activates worktree isolation
+
+### Worktree isolation requirement
+
+**When batching items for parallel dispatch**: Each item in a parallel batch **must** run in its own isolated worktree (or checked-out copy) to prevent branch contamination, PR cross-pollution, and shared-state conflicts between concurrent agents.
+
+Do **not** dispatch multiple Work Item Runners to operate in the same working directory.
+
+---
+
+## Step 3.5: Pre-Flight Worktree Check (Parallel Batches Only)
+
+Before dispatching a parallel batch, validate that each item can be isolated.
+
+For each item in the batch:
+
+```bash
+# Check if the item's branch already has a worktree
+git worktree list | grep -F "<branch-name>"
+
+# If no match, the pre-flight check passes for this item.
+# The Work Item Runner (Step 4, protocol 91) will create the worktree.
+
+# If a match is found and points to an active worktree:
+# - If the worktree is on the same branch and clean, it is safe to reuse
+# - If the worktree is on a different branch or dirty, the pre-flight fails
+```
+
+**Failure handling**:
+
+If the pre-flight check finds an active worktree on a conflicting branch or in a dirty state:
+
+1. Stop the batch dispatch
+2. Report to the human which item(s) have conflicting worktrees
+3. Ask the human to either:
+   - Remove the conflicting worktree (`git worktree remove <path>`)
+   - Or manually run the item serially after the batch completes
+
+Proceed with batch dispatch only when all pre-flight checks pass.
 
 ---
 
