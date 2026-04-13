@@ -7,10 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Worktree isolation for parallel batch dispatch**: protocols `90-batch-orchestrate-work-protocol.md` and `91-orchestrate-work-protocol.md` now require each Work Item Runner in a parallel batch to operate in a dedicated git worktree. Includes `BATCH_CONTEXT=true` handoff signal, pre-flight worktree checks, base-branch table for all item types, and stage protocol compatibility notes.
+
 ### Fixed
 
-- **Reviewer loop verification (Protocol 93)**: added explicit "Verification: Re-read to confirm each fix" section requiring fixer agents to re-read specific file/line references in review findings before marking them resolved. This prevents premature dismissal of findings based on memory alone and ensures substantive code changes are actually present in the PR.
 - **Implementation protocol pre-branch fetch**: all four paths (Full Pipeline, Refactor, Fast Track, Hotfix) in protocol `03-implement-development-protocol.md` now include `git fetch origin` before branching from `develop` or `main`, matching the pattern already used in the prepare-release protocol (`05`). This prevents merge conflicts caused by stale local remote-tracking refs when creating feature/refactor/fix/hotfix branches.
+- **Reviewer loop verification (Protocol 93)**: added explicit "Verification: Re-read to confirm each fix" section requiring fixer agents to re-read specific file/line references in review findings before marking them resolved. This prevents premature dismissal of findings based on memory alone and ensures substantive code changes are actually present in the PR.
 - **Prepare-release pre-flight sync**: the release protocol now runs `git fetch origin && git pull origin develop` (with a code block and failure guidance) before creating the release branch, preventing stale local state from being released. The `/prepare-release` command wrappers (Claude Code and Cursor) also now explicitly list this as a key rule. `git fetch` is also added to the Claude Code command's `allowed-tools`.
 
 ## [0.21.0] - 2026-04-13
