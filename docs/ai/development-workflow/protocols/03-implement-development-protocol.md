@@ -58,6 +58,7 @@ Determine the branch slug:
 - **Without issue tracker**: `[slug]` (e.g., `user-auth`)
 
 ```bash
+git fetch origin
 git checkout develop
 git pull origin develop
 git checkout -b feature/[branch-slug]
@@ -179,7 +180,7 @@ Extract from your reading:
 ### Refactor Steps
 
 1. If no blocking ambiguity remains, proceed without an extra approval pause; otherwise stop and ask the human
-2. Branch: `git checkout -b refactor/[branch-slug]` from `develop` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without)
+2. Branch: `git fetch origin && git checkout develop && git pull origin develop && git checkout -b refactor/[branch-slug]` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without)
 3. Implement following the plan order. Follow `docs/best-practices/` for all code written.
 4. If scope is larger than the plan described, **stop and report**
 5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area
