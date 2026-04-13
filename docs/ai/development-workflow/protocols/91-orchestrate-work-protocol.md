@@ -168,18 +168,25 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 
 **Note:** Use `origin/<base>` (remote tracking) rather than local `<base>` to avoid git worktree conflicts if the local base branch is already checked out elsewhere.
 
-3. Create the worktree with the item's branch directly (preferred):
+3. Create the worktree. The command depends on whether the item's branch already exists:
 
 ```bash
 # Fetch latest remote refs first
 git fetch origin
 
-# Create worktree and immediately check out a new branch from origin/<base>
+# Case A: New item — branch does not exist yet
 git worktree add <worktree-path> -b <branch-prefix>/<slug> origin/<base-branch>
+
+# Case B: Resuming item — branch exists locally
+git worktree add <worktree-path> <branch-prefix>/<slug>
+
+# Case C: Resuming item — branch exists only on remote
+git worktree add <worktree-path> -b <branch-prefix>/<slug> origin/<branch-prefix>/<slug>
+
 cd <worktree-path>
 ```
 
-This is preferred over detached-HEAD mode because it creates the branch in one step and avoids conflicts with stage protocols (e.g., protocol 03) that assume a branch is already checked out.
+Use the pre-dispatch branch check from Step 2 (`git branch --list`, `git branch -r --list`) to determine which case applies. Case B and C are common when resuming "In Development" items, PRs with `needs-fixes`, or any item with prior work.
 
 **Important — stage protocol compatibility**: When working inside a worktree created with this method, the stage protocol's initial branching steps (`git fetch origin`, `git checkout develop`, `git pull origin develop`, `git checkout -b ...`) are **already satisfied** by the worktree creation above. The stage agent should skip those steps and proceed directly to the implementation work. If the stage agent runs `git checkout develop` inside the worktree, it will fail because `develop` is already checked out in the main working tree and git prevents the same branch from being checked out in multiple worktrees simultaneously.
 
