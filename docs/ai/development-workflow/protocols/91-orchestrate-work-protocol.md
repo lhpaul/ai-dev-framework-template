@@ -521,9 +521,9 @@ When a human confirms that a PR has been merged, update the issue tracker and cl
 
 ```bash
 git fetch origin
-git branch -D <merged-branch>           # force-delete local branch (squash merges need -D)
 cd <repo-root>                          # CRITICAL: change to repo root before removing worktree (see Step 3)
-git worktree remove <worktree-path>     # remove worktree if present
+git worktree remove <worktree-path>     # remove worktree first (branch is checked out there)
+git branch -D <merged-branch>           # force-delete local branch (squash merges need -D)
 ```
 
 If the item's tracker status is already in a further-advanced state (e.g., already `In Development` when a spec PR merges), do not roll it back — leave it as-is and only clean up local branches/worktrees.
