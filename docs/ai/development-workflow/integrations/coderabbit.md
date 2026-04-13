@@ -140,6 +140,8 @@ CodeRabbit posts findings as inline comments on code lines. The adapter filters 
 
 ### Resolved comment handling
 
-When CodeRabbit detects fixes in subsequent commits, it may post a reply starting with `✅` on the original finding. During **stale-findings recovery** (where the entire PR history is scanned without a timestamp bound), the adapter collects the IDs of all bot replies starting with `✅` and excludes their parent comments from the stale blocking count — the same pattern as the Devin adapter.
+When CodeRabbit detects fixes in subsequent commits, it may post a reply starting with `✅` on the original finding.
 
-During **normal Phase 1 and Phase 3 processing**, resolved comments are implicitly excluded by the `since_iso` timestamp bound: only comments posted after the HEAD commit are considered. Because CodeRabbit posts its findings and any `✅` resolution replies in separate review cycles (triggered by different pushes), a resolved finding's original comment will have a `created_at` before `since_iso` and will not appear in Phase 1 or Phase 3 results. Reply comments (`in_reply_to_id != null`) are always excluded from direct counting regardless of phase.
+**Stale-findings recovery** (where the entire PR history is scanned without a timestamp bound) is the only path that performs explicit `✅`-reply filtering: it collects the IDs of all bot replies starting with `✅` and excludes their parent comments from the stale blocking count — the same `jq -s` pattern as the Devin adapter.
+
+**Phase 1 and Phase 3 do not perform explicit resolved-comment filtering.** They rely on the `since_iso` timestamp bound instead: only comments posted after the HEAD commit are fetched. Because CodeRabbit posts findings and `✅` resolution replies in separate review cycles (triggered by different pushes), a resolved finding's original comment will have a `created_at` before `since_iso` and will not appear in Phase 1 or Phase 3 queries. Reply comments (`in_reply_to_id != null`) are always excluded from direct counting regardless of phase.
