@@ -9,6 +9,7 @@ Follow the release protocol exactly as defined in:
 Key rules:
 
 - Verify working directory is clean and currently on `develop` before starting
+- Run `git fetch origin && git pull origin develop` before creating the release branch; if the pull fails, stop and report
 - If no version provided, inspect `[Unreleased]` entries and suggest the next version
 - Confirm the version with the human before creating the branch
 - Open **two** PRs: one to `main`, one backport to `develop`

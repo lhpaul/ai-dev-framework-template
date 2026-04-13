@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Prepare-release pre-flight sync**: the release protocol now runs `git fetch origin && git pull origin develop` (with a code block and failure guidance) before creating the release branch, preventing stale local state from being released. The `/prepare-release` command wrappers (Claude Code and Cursor) also now explicitly list this as a key rule. `git fetch` is also added to the Claude Code command's `allowed-tools`.
+
 ## [0.21.0] - 2026-04-13
 
 ### Added
