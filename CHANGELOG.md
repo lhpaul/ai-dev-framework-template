@@ -7,19 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-04-13
+
 ### Added
 
-- **CodeRabbit integration**: added CodeRabbit as an optional automated PR reviewer platform (`coderabbit` in `review.platforms`) and as a pre-push CLI tool via `/coderabbit:review` in Claude Code. Includes `run_coderabbit_review` adapter in `pr-review-loop.sh` with severity-based blocking classification (Critical/Major blocking, Minor/Low non-blocking), `CHANGES_REQUESTED` review handling, stale-findings recovery with resolved-comment filtering, and scoped activity detection to suppress false stale blockers. Added `.coderabbit.yaml` config (auto-review disabled by default) and `docs/ai/development-workflow/integrations/coderabbit.md` setup guide. Updated `REVIEW.md` CodeRabbit CLI guidance.
-- **`/run-work` command for Claude Code**: added `.claude/commands/run-work.md` to invoke the batch orchestrator, matching the existing Cursor `/run-work` command. Updated `AGENTS.md` workflow table and simplified `/run-item-work` to reference `/run-work` instead of the raw `orchestrator` agent.
+- **CodeRabbit integration**: CodeRabbit is now available as an automated PR reviewer platform (`coderabbit` in `review.platforms`) and as a pre-push CLI tool. Includes adapter in `pr-review-loop.sh` with severity-based blocking (Critical/Major block, Minor/Low don't), `CHANGES_REQUESTED` review handling, stale-findings recovery with resolved-comment filtering, `.coderabbit.yaml` config, and setup guide at `docs/ai/development-workflow/integrations/coderabbit.md`.
+- **`/run-work` command for Claude Code**: batch orchestrator command (`.claude/commands/run-work.md`), matching the existing Cursor `/run-work`.
 
 ### Changed
 
-- **Multi-reviewer internal review gate (Step 7a)**: expanded Step 7a in `91-orchestrate-work-protocol.md` to run all configured internal reviewers (`review.internal_reviewers` in `.ai-dev-workflow.yaml`) sequentially on draft PRs before converting to non-draft. Added `max_internal_review_cycles` parameter (default: 5) to prevent infinite loops. Added local override support via `.tmp/template-config.json` for developers without access to all review tools. Updated `93-automated-reviewer-loop-protocol.md` to reference the multi-reviewer gate. Codex reviewer dispatch table now lists stage-specific skills (`workflow-spec-reviewer`, `workflow-plan-reviewer`, `workflow-code-reviewer`) instead of the generic `workflow-reviewer-loop` skill; matching update in `.ai-dev-workflow.yaml` comments. Step 9 (Feedback Loop) corrected to include Step 7a before Step 7, and the `needs-fixes` table row no longer carries a stale "(if draft)" qualifier.
-- **Post-merge status transitions (Step 10)**: added Step 10 to `91-orchestrate-work-protocol.md` with a branch-type-to-tracker-status table (`spec/*` -> Spec Ready, `implementation-plan/*` -> Plan Ready, implementation branches -> Merged). Updated `90-batch-orchestrate-work-protocol.md` Step 5 and all post-merge-cleanup command/skill files (Claude Code, Cursor, Codex) to follow this table instead of always setting status to Merged.
+- **Multi-reviewer internal review gate (Step 7a)**: Step 7a now runs all configured internal reviewers (`review.internal_reviewers` in `.ai-dev-workflow.yaml`) sequentially on draft PRs before converting to non-draft. Added `max_internal_review_cycles` (default: 5) to prevent infinite loops and local override support via `.tmp/template-config.json`. Codex reviewer dispatch uses stage-specific skills. Step 9 feedback loop corrected to include Step 7a before Step 7.
+- **Post-merge status transitions (Step 10)**: new Step 10 in `91-orchestrate-work-protocol.md` maps branch type to tracker status (`spec/*` → Spec Ready, `implementation-plan/*` → Plan Ready, implementation branches → Merged). All post-merge-cleanup commands updated accordingly.
 
 ### Fixed
 
-- **Missing `/sync-template` command for Claude Code**: `CLAUDE.md` advertised `/sync-template` as available in Claude Code, but the command file did not exist. Added `.claude/commands/sync-template.md` as a port of the existing Cursor command (`.cursor/commands/sync-template.md`), covering the full workflow: template source resolution (local path, remote ref, or `.tmp/template-config.json`), categorized diff and approval gate, file application, and git/PR instructions.
+- **Missing `/sync-template` command for Claude Code**: added `.claude/commands/sync-template.md` covering template source resolution, categorized diff, approval gate, file application, and git/PR instructions.
 
 ## [0.20.0] - 2026-04-10
 
@@ -336,7 +338,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.18.0...v0.18.1
