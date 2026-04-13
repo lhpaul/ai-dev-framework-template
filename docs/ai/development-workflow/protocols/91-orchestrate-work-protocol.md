@@ -522,6 +522,7 @@ When a human confirms that a PR has been merged, update the issue tracker and cl
 ```bash
 git fetch origin
 git branch -D <merged-branch>           # force-delete local branch (squash merges need -D)
+cd <repo-root>                          # CRITICAL: change to repo root before removing worktree (see Step 3)
 git worktree remove <worktree-path>     # remove worktree if present
 ```
 
