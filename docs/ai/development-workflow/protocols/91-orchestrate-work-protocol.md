@@ -168,25 +168,20 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 
 **Note:** Use `origin/<base>` (remote tracking) rather than local `<base>` to avoid git worktree conflicts if the local base branch is already checked out elsewhere.
 
-3. Create the worktree using detached HEAD mode (safest):
+3. Create the worktree with the item's branch directly (preferred):
 
 ```bash
-# Create an isolated worktree in detached HEAD state from origin/<base-branch>
-git worktree add <worktree-path> --detach origin/<base-branch>
-cd <worktree-path>
+# Fetch latest remote refs first
+git fetch origin
 
-# All subsequent work (creator stage, branch creation, PR operations, etc.)
-# happens in this worktree. The item orchestrator will create the feature/fix/etc.
-# branch as needed.
-```
-
-Alternatively, if you prefer to avoid detached HEAD:
-
-```bash
-# Create worktree and immediately check out a new branch
+# Create worktree and immediately check out a new branch from origin/<base>
 git worktree add <worktree-path> -b <branch-prefix>/<slug> origin/<base-branch>
 cd <worktree-path>
 ```
+
+This is preferred over detached-HEAD mode because it creates the branch in one step and avoids conflicts with stage protocols (e.g., protocol 03) that assume a branch is already checked out.
+
+**Important — stage protocol compatibility**: When working inside a worktree created with this method, the stage protocol's initial branching steps (`git fetch origin`, `git checkout develop`, `git pull origin develop`, `git checkout -b ...`) are **already satisfied** by the worktree creation above. The stage agent should skip those steps and proceed directly to the implementation work. If the stage agent runs `git checkout develop` inside the worktree, it will fail because the worktree is already on the correct branch.
 
 4. **Suggested worktree path**: `<repo-root>/.claude/worktrees/<item-id>/<branch-prefix>-<slug>` where `<item-id>` is the issue number, tracker ID, or slug.
 

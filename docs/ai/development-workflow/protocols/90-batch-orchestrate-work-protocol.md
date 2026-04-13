@@ -165,6 +165,7 @@ For each item in the batch, prepare a short handoff:
 - Current next action
 - Priority context
 - Parallelization notes or serialization reason
+- `BATCH_CONTEXT=true` — required for parallel batches so the Work Item Runner (protocol 91) activates worktree isolation
 
 ### Worktree isolation requirement
 
