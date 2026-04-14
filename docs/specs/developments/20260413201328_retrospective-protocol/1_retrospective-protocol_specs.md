@@ -142,14 +142,14 @@ This feature adds a retrospective analysis capability to the AI development work
   - **Without conversation context** (fallback): analyzes GitHub data only (PR metadata, git history, PR comments)
 - **Categorization taxonomy** — each improvement opportunity is assigned one of the following categories:
 
-  | Category | Description |
-  |---|---|
-  | `workflow-process` | Deviation from or friction in the defined workflow protocols (e.g., wrong base branch, skipped review step) |
-  | `agent-behavior` | Unexpected or incorrect agent action, model mischoice, or protocol misread |
-  | `configuration` | Missing or incorrect repo/workflow configuration (e.g., labels, YAML files, `.gitignore`) |
-  | `documentation` | Gap or inaccuracy in a protocol, spec, or guideline document |
-  | `code-quality` | Recurring reviewer findings that suggest a systemic pattern rather than a one-off issue |
-  | `tooling` | External tool integration issue (e.g., CodeRabbit misconfiguration, `gh` CLI usage gap) |
+  | Category | Display label | Description |
+  |---|---|---|
+  | `workflow-process` | Workflow & Process | Deviation from or friction in the defined workflow protocols (e.g., wrong base branch, skipped review step) |
+  | `agent-behavior` | Agent Behavior | Unexpected or incorrect agent action, model mischoice, or protocol misread |
+  | `configuration` | Configuration | Missing or incorrect repo/workflow configuration (e.g., labels, YAML files, `.gitignore`) |
+  | `documentation` | Documentation | Gap or inaccuracy in a protocol, spec, or guideline document |
+  | `code-quality` | Code Quality | Recurring reviewer findings that suggest a systemic pattern rather than a one-off issue |
+  | `tooling` | Tooling | External tool integration issue (e.g., CodeRabbit misconfiguration, `gh` CLI usage gap) |
 
 - Each opportunity is presented with its category, a short description, a severity signal (High / Medium / Low), and a recommended action (Address now / Add to backlog)
 - Severity signals are the agent's best-effort assessment based on frequency, impact, and whether the issue caused rework or human intervention
