@@ -270,7 +270,7 @@ git checkout -b hotfix/[branch-slug]
 
 4. Implement the minimal fix (do not bundle unrelated changes)
 5. Verify: build, lint, tests pass
-6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (hotfixes always fix released code, so a new entry is always required). **Parallel batch exception**: if `SKIP_CHANGELOG=true` was signaled in the handoff, skip this step (see protocol 90 Step 3.6)
+6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (hotfixes fix released code, so a new entry is normally required). **Parallel batch exception**: if `SKIP_CHANGELOG=true` was signaled in the handoff, skip this step (see protocol 90 Step 3.6)
 7. Commit: `fix([scope]): [description] (hotfix)`
 8. Push branch to remote
 9. Open a **draft** PR targeting `main` by adapting Path 1 `### Step 8: Open PR (Draft)` for hotfix (`fix(...)` title with `(hotfix)` as needed, incident-focused body, target branch `main`).
