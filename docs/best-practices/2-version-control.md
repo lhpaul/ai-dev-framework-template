@@ -112,6 +112,6 @@ This project uses [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) forma
   - Spec-only or plan-only PRs (documentation artifacts for upcoming work) — no entry needed
   - Fixes or changes to developments that have not been released yet — update the existing `[Unreleased]` entry instead of adding a new one; if the original entry already describes the corrected behavior, no change is needed
   - **Parallel batch items** (when orchestrated by protocol 90, Step 3.6): all non-last items in a parallel batch **must skip CHANGELOG updates**; only the last item adds consolidated entries for all batch items in a single commit. This prevents cascading merge conflicts when the first PR merges. See `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md#step-36-changelog-conflict-mitigation-for-parallel-batches` for details.
-- Never defer CHANGELOG entries to release time (except in parallel batches per protocol 90 Step 3.6)
+- Never defer CHANGELOG entries to release time
 - Use the appropriate category: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`
 - Release PRs move `[Unreleased]` entries to a versioned section: `[X.Y.Z] - YYYY-MM-DD`
