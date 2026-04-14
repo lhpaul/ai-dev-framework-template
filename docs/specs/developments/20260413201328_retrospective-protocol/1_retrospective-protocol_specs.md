@@ -117,7 +117,7 @@ This feature adds a retrospective analysis capability to the AI development work
 **Preconditions**: The human has chosen "Add to backlog" for a specific improvement opportunity
 
 **Steps**:
-1. The agent creates a GitHub issue directly using `gh issue create` with a descriptive title, a body that describes the problem and the improvement opportunity, and the appropriate labels
+1. The agent creates a GitHub issue directly with a descriptive title, a body that describes the problem and the improvement opportunity, and the appropriate labels
 2. The agent reports the created issue with its URL
 
 **Postconditions**: A GitHub issue exists representing the improvement opportunity
@@ -154,7 +154,7 @@ This feature adds a retrospective analysis capability to the AI development work
 - Each opportunity is presented with its category, a short description, a severity signal (High / Medium / Low), and a recommended action (Address now / Add to backlog)
 - Severity signals are the agent's best-effort assessment based on frequency, impact, and whether the issue caused rework or human intervention
 - **"Address now"** is reserved for changes the agent can self-assess as simple and safe to apply without a review loop; the agent uses its own judgment
-- **"Add to backlog"** issue creation uses `gh issue create` directly — not the full `00-add-backlog-item-protocol.md` flow
+- **"Add to backlog"** creates a GitHub issue directly — not through the full `00-add-backlog-item-protocol.md` flow
 - The human may skip any individual opportunity (take no action); the agent moves on
 - The retrospective scope is limited to work from the current session or the PRs specified in the scope hint — no cross-session trend analysis
 - No persistent state is required or maintained between sessions
@@ -171,7 +171,7 @@ This feature adds a retrospective analysis capability to the AI development work
 - [ ] The developer can choose "Address now", "Add to backlog", or skip for each opportunity
 - [ ] When "Address now" is chosen for a simple fix, the agent applies the fix, commits, and pushes without opening a new PR or running a review loop
 - [ ] When "Address now" is chosen but the agent assesses the opportunity as too complex to apply without a review loop, the agent recommends "Add to backlog" instead and explains why
-- [ ] When "Add to backlog" is chosen, the agent creates a GitHub issue via `gh issue create` with a descriptive title and body, and returns the issue URL
+- [ ] When "Add to backlog" is chosen, the agent creates a GitHub issue directly with a descriptive title and body, and returns the issue URL
 - [ ] When invoked in the same session as a completed batch/item run, the retrospective also surfaces findings from the conversation history (manual interventions, human corrections, agent deviations)
 - [ ] Protocol 90 (batch orchestrator) suggests a retrospective after the Step 6 batch summary
 - [ ] Protocol 91 (work item runner) suggests a retrospective after the item summary only when the item was run standalone (not dispatched by a batch orchestrator)
