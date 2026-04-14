@@ -5,7 +5,7 @@ description: Advance a single workflow item until it reaches a real terminal con
 
 # Workflow Item Orchestrator
 
-Recommended model tier: `economy`
+Recommended model tier: `balanced`
 
 1. Read `AGENTS.md` for repository-wide rules, branch overrides, and terminal-condition expectations.
 2. Read `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`.
