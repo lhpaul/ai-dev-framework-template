@@ -151,8 +151,16 @@ This feature adds a retrospective analysis capability to the AI development work
   | `code-quality` | Code Quality | Recurring reviewer findings that suggest a systemic pattern rather than a one-off issue |
   | `tooling` | Tooling | External tool integration issue (e.g., CodeRabbit misconfiguration, `gh` CLI usage gap) |
 
-- Each opportunity is presented with its category, a short description, a severity signal (High / Medium / Low), and a recommended action (Address now / Add to backlog)
-- Severity signals are the agent's best-effort assessment based on frequency, impact, and whether the issue caused rework or human intervention
+- Each opportunity is presented with its category, a short description, a severity signal, and a recommended action (Address now / Add to backlog)
+- **Severity signal** — each opportunity is assigned one of the following severity levels:
+
+  | Code value | Display label | Description |
+  |---|---|---|
+  | `high` | High | The issue caused rework, required human intervention, or has high likelihood of recurring and significantly disrupting future runs |
+  | `medium` | Medium | The issue caused friction or delay but did not require human intervention; likely to recur without a fix |
+  | `low` | Low | The issue is a minor deviation or a one-off occurrence with low likelihood of recurring or causing meaningful disruption |
+
+- Severity signals are the agent's best-effort assessment; the agent should bias toward `high` when an issue required direct human correction
 - **"Address now"** is reserved for changes the agent can self-assess as simple and safe to apply without a review loop; the agent uses its own judgment
 - **"Add to backlog"** creates a GitHub issue directly — not through the full `00-add-backlog-item-protocol.md` flow
 - The human may skip any individual opportunity (take no action); the agent moves on
