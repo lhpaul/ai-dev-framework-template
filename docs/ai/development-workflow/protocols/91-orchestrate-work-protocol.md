@@ -52,6 +52,8 @@ Prefer the helper scripts in `scripts/development-workflow/` for deterministic s
 
 **Check for a parallel batch context**: If this Work Item Runner was dispatched as part of a parallel batch by the Portfolio Orchestrator (`90-batch-orchestrate-work-protocol.md`), the handoff metadata will indicate `BATCH_CONTEXT=true`. Note this indicator; you will use it in Step 3 (Dispatch Strategy) to decide whether worktree isolation is required.
 
+**Check for CHANGELOG skip signal**: If the handoff includes `SKIP_CHANGELOG=true`, this item is a non-last item in a parallel batch, and you **must not** update `CHANGELOG.md` during implementation. The last item in the batch will consolidate all CHANGELOG entries in a single commit. See Step 3 (Dispatch Strategy) for how to instruct stage agents to skip CHANGELOG updates.
+
 Resolve the request to exactly one of the following:
 
 1. **Backlog / tracker work item** — use when a human explicitly requests a not-yet-started item
@@ -207,6 +209,25 @@ After removing the worktree, verify that the CWD is still valid by running a sim
 **When not in a parallel batch**: Worktree creation is optional but recommended for large development folders or long-running work. If not using a dedicated worktree, ensure the working directory is clean before proceeding.
 
 This protocol stays scoped to one item. It may call different stage agents over time, but it must not start scanning or dispatching unrelated items.
+
+### CHANGELOG skip signal for parallel batches
+
+**When dispatching an implementation agent with `SKIP_CHANGELOG=true`** in the handoff metadata (non-last item in parallel batch):
+
+1. **Before calling protocol 03** (`implement-development-protocol.md`) or any stage agent, extract the signal and pass it forward explicitly. If using a stage agent handoff (e.g., `developer` agent), include the signal in your handoff context as part of the Work Item Runner's instruction:
+
+   ```
+   Work Item Runner note: This is item [X] in a parallel batch. 
+   Do NOT update CHANGELOG.md during this implementation.
+   Protocol 90 Step 3.6 designates item [Y] (the last item) to consolidate 
+   all batch CHANGELOG entries. Skip the CHANGELOG step in protocol 03 Step 6.
+   ```
+
+2. **When following protocol 03 directly** (not using a stage agent): At protocol 03 Step 6 (CHANGELOG update), add a pre-check:
+   - If `SKIP_CHANGELOG=true` was in the handoff, skip Step 6 entirely and proceed directly to Step 7 (draft PR).
+   - Document in the commit message or PR body that CHANGELOG is intentionally skipped (e.g., "CHANGELOG: skipped (non-last item in parallel batch per protocol 90 Step 3.6; consolidated by item Y)").
+
+3. **Exception**: The last item in the batch (without `SKIP_CHANGELOG` in its handoff) implements normally and adds consolidated CHANGELOG entries for all batch items in a single commit during Step 6.
 
 ---
 

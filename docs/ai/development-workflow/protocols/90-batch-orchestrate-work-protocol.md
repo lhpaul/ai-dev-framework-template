@@ -166,6 +166,7 @@ For each item in the batch, prepare a short handoff:
 - Priority context
 - Parallelization notes or serialization reason
 - `BATCH_CONTEXT=true` — required for parallel batches so the Work Item Runner (protocol 91) activates worktree isolation
+- `SKIP_CHANGELOG=true` — for all non-last items in parallel batches that touch implementation; omit for last item so it consolidates CHANGELOG entries (see Step 3.6)
 
 ### Worktree isolation requirement
 
