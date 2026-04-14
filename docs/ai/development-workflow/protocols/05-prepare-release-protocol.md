@@ -112,7 +112,7 @@ Opening PRs is **not** a terminal condition. Continue with Step 7 for the produc
 
 Apply only to the **release PR that targets `main`**. Do **not** apply the regression-label requirement to the backport PR to `develop` (that PR may still run other CI; this step scopes expensive label-gated e2e/regression to production).
 
-Canonical loop semantics match [`91-orchestrate-work-protocol.md`](91-orchestrate-work-protocol.md) (Steps 7, 7b, 8) and [`93-automated-reviewer-loop-protocol.md`](93-automated-reviewer-loop-protocol.md) for standalone reviewer runs. Prefer the repository helpers:
+Canonical loop semantics match [`91-orchestrate-work-protocol.md`](91-orchestrate-work-protocol.md) (Steps 7, 7b, 8) and [`93-automated-reviewer-loop-protocol.md`](93-automated-reviewer-loop-protocol.md) for standalone reviewer runs. Note: release PRs use a simplified readiness flow (Step 7.5 applies `ready-for-human-review` directly) and do not run Protocol 91's Step 8a/8b label checklist. Prefer the repository helpers:
 
 ```bash
 ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch release/v[X.Y.Z]
