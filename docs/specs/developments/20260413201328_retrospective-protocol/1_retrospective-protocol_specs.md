@@ -158,21 +158,8 @@ This feature adds a retrospective analysis capability to the AI development work
 - The human may skip any individual opportunity (take no action); the agent moves on
 - The retrospective scope is limited to work from the current session or the PRs specified in the scope hint — no cross-session trend analysis
 - No persistent state is required or maintained between sessions
-
----
-
-## Delivery
-
-The retrospective capability is delivered across all three platforms following existing patterns:
-
-- **New protocol**: `docs/ai/development-workflow/protocols/06-retrospective-protocol.md`
-- **Claude Code**: a `retrospective` agent / `/retrospective` command following existing agent patterns
-- **Cursor**: a `/retrospective` subagent under `.cursor/agents/` following existing Cursor agent patterns
-- **Codex**: a `workflow-retrospective` skill under `.codex/skills/` following existing Codex skill patterns
-
-Integration points (suggestion, not auto-trigger) are added to:
-- **Protocol 90, Step 6** (after batch summary): always suggest a retrospective
-- **Protocol 91** (after item summary, before terminal handoff): suggest only when `BATCH_CONTEXT != true`
+- The `/retrospective` capability must be available as an invocable command across all three supported workflow platforms: Claude Code, Cursor, and Codex
+- The retrospective suggestion must be added to the batch orchestration summary (end of a batch run) and to the individual item summary (end of a standalone item run, not part of a batch)
 
 ---
 
