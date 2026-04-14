@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Worktree isolation for parallel batch dispatch**: protocols `90-batch-orchestrate-work-protocol.md` and `91-orchestrate-work-protocol.md` now require each Work Item Runner in a parallel batch to operate in a dedicated git worktree. Includes `BATCH_CONTEXT=true` handoff signal, pre-flight worktree checks, base-branch table for all item types, stage protocol compatibility notes, CWD safety mandate (`cd` to repo root before `git worktree remove`), and corrected Step 10 cleanup sequence (worktree removal before branch deletion).
 
+- **CHANGELOG conflict mitigation for parallel batches** (Protocol 90, Step 3.6): when multiple PRs in a batch touch `CHANGELOG.md`, merge conflicts cascade after the first PR merges. New strategy: only the last item in a parallel batch updates CHANGELOG; other items skip CHANGELOG modifications and document their entries separately. Last item consolidates all batch CHANGELOG entries in a single commit. Applies to feature/fix implementations; spec/plan PRs and hotfix batches have exceptions detailed in the protocol.
+
 ### Fixed
 
 - **Item-orchestrator model upgrade to balanced tier**: upgraded `item-orchestrator` agent from economy (haiku) to balanced (sonnet) tier in `.claude/agents/item-orchestrator.md` and `.cursor/agents/item-orchestrator.md`. Economy models struggle with the multi-step reasoning required to parse review findings, determine correct fixes, and verify fixes are present during review-fix-review cycles. This upgrade ensures the Work Item Runner can reliably supervise these cycles without requiring manual takeover (issue #109).

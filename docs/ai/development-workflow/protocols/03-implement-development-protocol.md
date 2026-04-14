@@ -107,6 +107,8 @@ Fix any failures before committing. Do not push a broken build.
 
 ### Step 6: Update CHANGELOG
 
+> **Parallel batch exception**: If this implementation is part of a parallel batch and `SKIP_CHANGELOG=true` was signaled in the Work Item Runner handoff, skip this step entirely. See protocol 90 Step 3.6 for details.
+
 Add an entry under `[Unreleased]` in `CHANGELOG.md`:
 
 - Use the appropriate category: `Added`, `Changed`, `Fixed`, `Security`, `Deprecated`, `Removed`
@@ -192,7 +194,7 @@ git checkout -b refactor/[branch-slug]
 3. Implement following the plan order. Follow `docs/best-practices/` for all code written.
 4. If scope is larger than the plan described, **stop and report**
 5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area
-6. Update CHANGELOG under `[Unreleased]` with a `Changed` entry (skip if this refactor adjusts unreleased work that already has an entry — update the existing entry instead, or leave it unchanged if it already describes the correct behavior)
+6. Update CHANGELOG under `[Unreleased]` with a `Changed` entry (skip if this refactor adjusts unreleased work that already has an entry — update the existing entry instead, or leave it unchanged if it already describes the correct behavior). **Parallel batch exception**: if `SKIP_CHANGELOG=true` was signaled in the handoff, skip this step (see protocol 90 Step 3.6)
 7. Commit: `refactor([scope]): [description]`
 8. Push branch to remote
 9. Open a **draft** PR targeting `develop` with refactor-appropriate metadata (do **not** reuse Path 1 Step 8 verbatim — that path uses `feat(...)` and a spec link):
@@ -241,7 +243,7 @@ git checkout -b fix/[branch-slug]
 
 4. Implement the fix
 5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area
-6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (skip if this fixes unreleased work that already has an entry — update the existing entry instead, or leave it unchanged if it already describes the correct behavior)
+6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (skip if this fixes unreleased work that already has an entry — update the existing entry instead, or leave it unchanged if it already describes the correct behavior). **Parallel batch exception**: if `SKIP_CHANGELOG=true` was signaled in the handoff, skip this step (see protocol 90 Step 3.6)
 7. Commit: `fix([scope]): [description]`
 8. Push branch to remote
 9. Open a **draft** PR targeting `develop` using the same structure as Path 1 `### Step 8: Open PR (Draft)`, but with a **`fix(...)`** title and a fix-focused description (omit spec/plan links when none exist).
@@ -268,7 +270,7 @@ git checkout -b hotfix/[branch-slug]
 
 4. Implement the minimal fix (do not bundle unrelated changes)
 5. Verify: build, lint, tests pass
-6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (hotfixes always fix released code, so a new entry is always required)
+6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (hotfixes fix released code, so a new entry is normally required). **Parallel batch exception**: if `SKIP_CHANGELOG=true` was signaled in the handoff, skip this step (see protocol 90 Step 3.6)
 7. Commit: `fix([scope]): [description] (hotfix)`
 8. Push branch to remote
 9. Open a **draft** PR targeting `main` by adapting Path 1 `### Step 8: Open PR (Draft)` for hotfix (`fix(...)` title with `(hotfix)` as needed, incident-focused body, target branch `main`).

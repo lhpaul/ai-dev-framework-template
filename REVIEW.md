@@ -118,7 +118,7 @@ Check:
 - Logic and edge cases are correct
 - Security boundaries and validation are respected
 - Tests cover the changed business behavior
-- CHANGELOG and workflow-specific artifacts are updated when required (spec/plan-only PRs are exempt; fixes to unreleased work update existing entries rather than adding new ones)
+- CHANGELOG and workflow-specific artifacts are updated when required (spec/plan-only PRs are exempt; fixes to unreleased work update existing entries rather than adding new ones; in parallel batches, only the designated last item updates CHANGELOG per protocol 90 Step 3.6)
 - New patterns are justified and consistent with the codebase
 
 Typical `blocking` issues:
