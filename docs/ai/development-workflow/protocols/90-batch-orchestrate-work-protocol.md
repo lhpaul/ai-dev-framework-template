@@ -236,7 +236,7 @@ To prevent cascading CHANGELOG conflicts, only the **last item to be merged in a
    - Add all entries under the appropriate section (Added, Changed, Fixed, etc.) in a single commit on the last item's branch
    - Use consistent wording and avoid duplication
 
-### When This Strategy Does Not Apply
+### Special Cases
 
 **Spec-only or plan-only PRs**: These are exempt from CHANGELOG updates per the project's changelog policy (`docs/best-practices/2-version-control.md`). Spec and plan PRs do not trigger the conflict problem because they do not modify CHANGELOG at all.
 
