@@ -138,8 +138,10 @@ Open a **draft** PR targeting `develop` with:
   - CHANGELOG entry preview
 
 ```bash
-gh pr create --draft --title "feat([scope]): [feature-name]" --body "..."
+gh pr create --draft --base develop --title "feat([scope]): [feature-name]" --body "..."
 ```
+
+**Important**: Always use `--base develop` to explicitly target the `develop` branch. This prevents accidental PR creation to `main` or other branches.
 
 ### Step 9: Handoff to Work Item Runner
 
@@ -207,8 +209,10 @@ git checkout -b refactor/[branch-slug]
      - CHANGELOG entry preview
 
 ```bash
-gh pr create --draft --title "refactor([scope]): [short description]" --body "..."
+gh pr create --draft --base develop --title "refactor([scope]): [short description]" --body "..."
 ```
+
+**Important**: Always use `--base develop` to explicitly target the `develop` branch.
 
 10. Hand off to the Work Item Runner with the same lifecycle expectations as Path 1 Step 9 (internal review gate, automated reviewer loop, CI, labels). See `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/ai/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
 
@@ -246,7 +250,12 @@ git checkout -b fix/[branch-slug]
 6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (skip if this fixes unreleased work that already has an entry — update the existing entry instead, or leave it unchanged if it already describes the correct behavior). **Parallel batch exception**: if `SKIP_CHANGELOG=true` was signaled in the handoff, skip this step (see protocol 90 Step 3.6)
 7. Commit: `fix([scope]): [description]`
 8. Push branch to remote
-9. Open a **draft** PR targeting `develop` using the same structure as Path 1 `### Step 8: Open PR (Draft)`, but with a **`fix(...)`** title and a fix-focused description (omit spec/plan links when none exist).
+9. Open a **draft** PR targeting `develop` using the same structure as Path 1 `### Step 8: Open PR (Draft)`, but with a **`fix(...)`** title and a fix-focused description (omit spec/plan links when none exist):
+
+```bash
+gh pr create --draft --base develop --title "fix([scope]): [description]" --body "..."
+```
+
 10. Hand off to the Work Item Runner per Path 1 `### Step 9: Handoff to Work Item Runner`.
 
 ---
@@ -273,7 +282,14 @@ git checkout -b hotfix/[branch-slug]
 6. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (hotfixes fix released code, so a new entry is normally required). **Parallel batch exception**: if `SKIP_CHANGELOG=true` was signaled in the handoff, skip this step (see protocol 90 Step 3.6)
 7. Commit: `fix([scope]): [description] (hotfix)`
 8. Push branch to remote
-9. Open a **draft** PR targeting `main` by adapting Path 1 `### Step 8: Open PR (Draft)` for hotfix (`fix(...)` title with `(hotfix)` as needed, incident-focused body, target branch `main`).
+9. Open a **draft** PR targeting `main` by adapting Path 1 `### Step 8: Open PR (Draft)` for hotfix (`fix(...)` title with `(hotfix)` as needed, incident-focused body, target branch `main`):
+
+```bash
+gh pr create --draft --base main --title "fix([scope]): [description] (hotfix)" --body "..."
+```
+
+**Important**: Use `--base main` for hotfixes (not `develop`). A hotfix merges to production first, then must be backported to `develop`.
+
 10. Hand off to the Work Item Runner per Path 1 `### Step 9: Handoff to Work Item Runner`.
 11. **After merge**: notify the human that a backport PR (main → develop) must be opened to prevent branch drift
 
