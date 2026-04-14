@@ -220,7 +220,7 @@ To prevent cascading CHANGELOG conflicts, only the **last item to be merged in a
 
 1. **Identify which item will merge last** during the batch dispatch phase (Step 4). This is typically:
    - The item with the longest expected review/fix cycle (high complexity, many reviewers)
-   - The item with the highest priority (if review cycles are equal)
+   - The item with the lowest priority (if review cycles are equal)
    - By default, the last item in the batch list if review complexity is similar
 
 2. **Instruct Work Item Runners** (when dispatching in Step 4):
