@@ -232,14 +232,6 @@ gh pr create --draft --base develop --title "refactor([scope]): [short descripti
 
 **If scope expands during implementation**: Stop immediately. Report to the human. Do not silently expand scope.
 
-**Scope boundary rule**: When implementing any path, modify **only** files directly related to the assigned issue. If a code review or linter finding requires changes outside the issue's scope (e.g., fixing issues in adjacent modules, refactoring unrelated utilities, or addressing tech debt in other areas):
-
-1. **Do not fix it in the current PR**
-2. **Document it** as a separate issue or review finding
-3. **Move on** without implementing the out-of-scope fix
-
-This prevents merge conflicts, scope creep, and wasted review cycles. Scope boundaries are especially critical in parallel batch orchestration where multiple agents work simultaneously.
-
 ### Fast Track Steps
 
 1. Read the brief. If the work item exists in an issue tracker, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for `In Development (Fast Track)` expectations.
@@ -318,7 +310,12 @@ When you encounter something the spec or plan doesn't cover:
 
 ## Quality Rules
 
-- **Scope boundary**: Modify only files directly related to the assigned issue. If a review finding requires changes outside scope, document it as a separate issue and move on — do not fix it in the current PR. This is critical in parallel batch orchestration.
+- **Scope boundary**: Modify **only** files directly related to the assigned issue. If a code review or linter finding requires changes outside the issue's scope (e.g., fixing issues in adjacent modules, refactoring unrelated utilities, or addressing tech debt in other areas):
+  1. **Do not fix it** in the current PR
+  2. **Document it** as a separate issue or review finding
+  3. **Move on** without implementing the out-of-scope fix
+
+  This prevents merge conflicts, scope creep, and wasted review cycles. Scope boundaries are especially critical in parallel batch orchestration where multiple agents work simultaneously.
 - Follow all best practices in `docs/best-practices/`
 - Never expose raw internal values (enum codes, IDs) directly in user-facing output — use display labels
 - Extract duplication only when the same logic appears 3+ times and the abstraction is clear
