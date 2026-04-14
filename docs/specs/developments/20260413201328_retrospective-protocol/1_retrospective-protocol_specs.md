@@ -187,8 +187,3 @@ This feature adds a retrospective analysis capability to the AI development work
 - Custom categorization taxonomy configuration (the taxonomy is fixed at the protocol level)
 - Retrospective analytics or dashboards
 
----
-
-## Open Questions
-
-<!-- No blocking open questions remain. -->
