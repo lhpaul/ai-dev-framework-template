@@ -239,6 +239,17 @@ After a Work Item Runner returns:
 
 Do not consider the batch complete until every dispatched item has reached a real terminal condition.
 
+### Retrospective notes during supervision
+
+As you supervise the batch, **proactively save issues, human corrections, and anomalies to memory** (e.g., a `project_batchN_retro_notes.md` memory file) as they happen — do not wait until the retrospective to reconstruct what went wrong. Record:
+
+- Which PR was affected
+- What went wrong (wrong base branch, missing label, incomplete review loop, etc.)
+- What the root cause was (agent skipped a step, protocol gap, timeout, etc.)
+- Whether the human had to intervene and how
+
+These notes feed directly into the Step 6 retrospective suggestion and provide context that GitHub data alone cannot capture.
+
 ---
 
 ## Step 6: Notify Humans
