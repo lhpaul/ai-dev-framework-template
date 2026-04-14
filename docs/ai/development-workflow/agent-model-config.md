@@ -37,6 +37,7 @@ If you prefer different names (`small/medium/large`, `fast/standard/pro`, etc.),
 | `code-reviewer` | `balanced` | Code review against known standards and a completed spec. A balanced model is capable here. |
 | `project-setup` | `balanced` | Structured onboarding conversation with clear protocol guidance. A balanced model is sufficient. |
 | `smoke-tester` | `balanced` | Executes the smoke test runbook using browser automation. A balanced model is sufficient for following step-by-step testing instructions. |
+| `retrospective` | `economy` | **Retrospective Analyst**. Reads PR metadata and git history, synthesizes findings into a categorized list; mechanical analysis that should stay fast and cheap. |
 
 ### Runner Notes
 
@@ -65,6 +66,7 @@ Agents only get `Bash` when they need it to carry a stage through branch creatio
 | `code-reviewer` | ✅ | ❌ | May run lint or tests to verify applied fixes |
 | `project-setup` | ✅ | ❌ | May need to initialize git, run project commands during setup |
 | `smoke-tester` | ✅ | ❌ | Runs browser automation and test scripts; needs Bash for execution |
+| `retrospective` | ✅ | ❌ | Needs `gh` CLI for PR metadata queries, `git` for history analysis, and `gh issue create` for backlog items; does not dispatch sub-agents |
 
 ---
 

@@ -430,7 +430,7 @@ Use these documents when you need the detailed rules behind a part of the workfl
 
 Protocol prefixes are stable family identifiers, not a promise of contiguous numbering.
 
-- `01`-`05` are the current primary stage families in workflow order.
+- `01`-`06` are the current primary stage families in workflow order.
 - `00` is reserved for pre-stage backlog intake (creating tracker work items before spec work).
 - Generate and review protocols for the same stage share the same family number.
 - `90`-`99` are orchestration, readiness, and other cross-cutting operational protocols.
