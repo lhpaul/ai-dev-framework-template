@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Item-orchestrator model upgrade to balanced tier**: upgraded `item-orchestrator` agent from economy (haiku) to balanced (sonnet) tier in `.claude/agents/item-orchestrator.md` and `.cursor/agents/item-orchestrator.md`. Economy models struggle with the multi-step reasoning required to parse review findings, determine correct fixes, and verify fixes are present during review-fix-review cycles. This upgrade ensures the Work Item Runner can reliably supervise these cycles without requiring manual takeover (issue #109).
+
 - **Implementation protocol pre-branch fetch**: all four paths (Full Pipeline, Refactor, Fast Track, Hotfix) in protocol `03-implement-development-protocol.md` now include `git fetch origin` before branching from `develop` or `main`, matching the pattern already used in the prepare-release protocol (`05`). This prevents merge conflicts caused by stale local remote-tracking refs when creating feature/refactor/fix/hotfix branches.
 - **Reviewer loop verification (Protocol 93)**: added explicit "Verification: Re-read to confirm each fix" section requiring fixer agents to re-read specific file/line references in review findings before marking them resolved. This prevents premature dismissal of findings based on memory alone and ensures substantive code changes are actually present in the PR.
 - **Stuck-loop detection for review cycles (Protocol 93)**: added protocol-level heuristics to detect stuck fix-review loops — no-progress detection across consecutive cycles, reappearing findings after resolution, and a hard maximum cycle count with mandatory escalation. Complements existing per-platform timeouts in `pr-review-loop.sh`.

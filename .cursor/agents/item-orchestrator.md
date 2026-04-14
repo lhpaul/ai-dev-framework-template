@@ -1,6 +1,6 @@
 ---
 name: item-orchestrator
-model: fast
+model: inherit
 description: Coordination agent for a single workflow item. Resumes one development, branch, or PR and keeps it moving until it is waiting on a human, blocked, or escalated. Use when you want targeted advancement without scanning the full portfolio.
 ---
 
