@@ -112,6 +112,18 @@ Example escalation comment:
 **Recommendation:** Finding #2 reappeared after fix in cycle 4. This may indicate a fundamental issue that the automated fixer cannot resolve; consider manual review and fix.
 ````
 
+### After fixing findings: cross-reference check and re-read verification
+
+Before committing any fix, apply these two mandatory checks:
+
+1. **Cross-reference check**: After editing a file to address a finding, search the entire file for other mentions of the same concept. For example, if you changed a variable name, function signature, API pattern, or storage mechanism, grep for the old term throughout the document and update every occurrence. A single-point fix that leaves contradictory references in other sections will generate new findings on the next review cycle.
+
+   ```bash
+   grep -n "<old-term>" <file>  # verify no stale references remain
+   ```
+
+2. **Re-read verification**: After committing fixes, re-read the changed lines in the file using the Read tool to confirm the fix is present in the committed content. Do not mark a finding as resolved based on memory of having made the edit — verify the actual file content.
+
 ### PR feedback tracking and comments
 
 Follow the "PR feedback tracking and comments" subsection of Step 7 in `91-orchestrate-work-protocol.md`:

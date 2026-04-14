@@ -89,6 +89,14 @@
 
 ---
 
+## Code Samples
+
+> **If this plan includes code samples, mark each one as illustrative** — for example with a comment like `// Illustrative — adapt during implementation`. Detailed, production-ready implementation code belongs in the implementation PR, not in the plan. Reviewers will treat unlabelled code samples as real code and flag syntax or API issues.
+>
+> **Consistency rule**: when the plan references the same concept in multiple sections (e.g., a secret storage mechanism, an API pattern, a naming convention), ensure all references are consistent. Contradictions between sections accumulate review cycles. Do a final cross-read before marking the plan ready.
+
+---
+
 ## Implementation Order
 
 > Ordered steps. Later steps may depend on earlier ones.
