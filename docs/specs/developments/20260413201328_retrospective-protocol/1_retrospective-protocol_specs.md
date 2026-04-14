@@ -166,9 +166,11 @@ This feature adds a retrospective analysis capability to the AI development work
 ## Acceptance Criteria
 
 - [ ] A developer can invoke `/retrospective` in a fresh session and receive a categorized list of improvement opportunities derived from GitHub PR data for recent work in the repository
+- [ ] When GitHub data is insufficient to surface meaningful findings, the agent communicates that no actionable opportunities were found and closes the retrospective gracefully
 - [ ] Each improvement opportunity is labeled with its category (from the taxonomy), severity signal, and recommended action
 - [ ] The developer can choose "Address now", "Add to backlog", or skip for each opportunity
 - [ ] When "Address now" is chosen for a simple fix, the agent applies the fix, commits, and pushes without opening a new PR or running a review loop
+- [ ] When "Address now" is chosen but the agent assesses the opportunity as too complex to apply without a review loop, the agent recommends "Add to backlog" instead and explains why
 - [ ] When "Add to backlog" is chosen, the agent creates a GitHub issue via `gh issue create` with a descriptive title and body, and returns the issue URL
 - [ ] When invoked in the same session as a completed batch/item run, the retrospective also surfaces findings from the conversation history (manual interventions, human corrections, agent deviations)
 - [ ] Protocol 90 (batch orchestrator) suggests a retrospective after the Step 6 batch summary
