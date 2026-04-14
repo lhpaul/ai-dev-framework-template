@@ -520,9 +520,90 @@ Interpret the result as follows:
 
 | Result | Action |
 |---|---|
-| `green` | Apply `ready-for-human-review` (the PR is already non-draft from Step 7a); update the tracker status to `Spec in Review`, `Plan in Review`, or `Development in Review` based on branch type; remove `needs-fixes` if present; and report the PR as ready |
+| `green` | Proceed to Step 8a (label readiness checklist) |
 | `red` | Apply `needs-fixes`, dispatch the matching fixer agent, wait for a push, then return to Step 7 |
 | `timeout` | Escalate to human; do not apply `ready-for-human-review` |
+
+---
+
+## Step 8a: Label Readiness Checklist (Hard Gate)
+
+**Before applying `ready-for-human-review`**, verify all required readiness conditions are met. This is a hard gate — do not skip or defer.
+
+Run this checklist for **every PR**:
+
+```bash
+PR_NUMBER=<pr_number>
+BRANCH=<branch_name>  # e.g., feature/foo, spec/bar, fix/baz
+
+# Determine PR type (implementation vs. spec/plan)
+case "$BRANCH" in
+  feature/*|fix/*|hotfix/*|refactor/*)
+    IS_IMPLEMENTATION_PR=true
+    ;;
+  spec/*|implementation-plan/*)
+    IS_IMPLEMENTATION_PR=false
+    ;;
+  *)
+    IS_IMPLEMENTATION_PR=false
+    ;;
+esac
+
+# Check 1: PR is non-draft
+DRAFT=$(gh pr view "$PR_NUMBER" --json isDraft --jq '.isDraft')
+if [ "$DRAFT" = "true" ]; then
+  echo "ERROR: PR is still a draft. Run 'gh pr ready $PR_NUMBER' first."
+  exit 1
+fi
+
+# Check 2: ready-for-regression label applied (implementation PRs only)
+if [ "$IS_IMPLEMENTATION_PR" = "true" ]; then
+  HAS_REGRESSION_LABEL=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c "^ready-for-regression$" || true)
+  if [ "$HAS_REGRESSION_LABEL" -eq 0 ]; then
+    echo "ERROR: Implementation PR is missing 'ready-for-regression' label. Run Step 7b first."
+    exit 1
+  fi
+fi
+
+# Check 3: ready-for-human-review label NOT yet applied (we are about to apply it)
+HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c "^ready-for-human-review$" || true)
+if [ "$HAS_HUMAN_REVIEW_LABEL" -gt 0 ]; then
+  echo "INFO: PR already has 'ready-for-human-review' label. Skipping re-application."
+else
+  echo "Applying 'ready-for-human-review' label..."
+  gh pr edit "$PR_NUMBER" --add-label "ready-for-human-review"
+fi
+
+# Remove needs-fixes if present
+HAS_NEEDS_FIXES=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c "^needs-fixes$" || true)
+if [ "$HAS_NEEDS_FIXES" -gt 0 ]; then
+  gh pr edit "$PR_NUMBER" --remove-label "needs-fixes"
+fi
+
+echo "✅ Label readiness checklist passed. PR is ready for human review."
+```
+
+**Interpretation**:
+
+- **All checks pass**: Continue to Step 8b (update tracker status) and report the PR as ready
+- **Any check fails**: Stop and fix the condition. Do not apply `ready-for-human-review` until all checks pass
+  - If `PR is still a draft`: Human error; run `gh pr ready <pr_number>` manually
+  - If `missing ready-for-regression` on implementation PR: Re-run Step 7b, then re-check
+  - If `needs-fixes` is present: Address the findings, push, return to Step 7
+
+This checklist ensures the label sequence is always complete before the PR is declared ready for human review.
+
+---
+
+## Step 8b: Update Tracker Status
+
+After the label readiness checklist passes, update the tracker status to reflect the PR is waiting for human review:
+
+- For **spec PRs** (`spec/*`): set tracker status to `Spec in Review`
+- For **plan PRs** (`implementation-plan/*`): set tracker status to `Plan in Review`
+- For **implementation PRs** (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`): set tracker status to `Development in Review`
+
+See `docs/ai/development-workflow/integrations/github-projects.md` for tracker API details.
 
 ---
 
@@ -538,7 +619,9 @@ When a human requests changes on a PR:
 6. Run Step 7 (external automated reviewers)
 7. Run Step 7b (implementation PRs only)
 8. Run Step 8 (CI loop)
-9. Reapply `ready-for-human-review` only when both loops are clean again
+9. Run Step 8a (label readiness checklist) — this is **mandatory** to verify the PR is non-draft, `ready-for-regression` is applied on implementation PRs, and `ready-for-human-review` is applied
+10. Run Step 8b (update tracker status)
+11. Notify human that feedback has been addressed and the PR is ready again
 
 See `92-pr-readiness-signal-protocol.md` for label definitions.
 
