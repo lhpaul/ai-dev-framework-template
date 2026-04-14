@@ -7,7 +7,7 @@
 
 ## Summary
 
-**Approach**: Add a new protocol document (`06-retrospective-protocol.md`) that defines the retrospective analysis flow, then integrate suggestion hooks into Protocols 90 and 91 at their Step 6 summary points. Create the `/retrospective` command/skill across all three supported platforms (Claude Code, Cursor, Codex) following the existing patterns for each. Finally, update the workflow README, AGENTS.md, and REVIEW.md to reference the new protocol and command.
+**Approach**: Add a new protocol document (`06-retrospective-protocol.md`) that defines the retrospective analysis flow, then integrate suggestion hooks into Protocols 90 and 91 at their Step 6 summary points. Create the `/retrospective` command/skill across all three supported platforms (Claude Code, Cursor, Codex) following the existing patterns for each. Finally, update the workflow README and AGENTS.md to reference the new protocol and command.
 
 **Estimated complexity**: S
 <!-- S: < 1 day | M: 1-3 days | L: 3+ days -->
