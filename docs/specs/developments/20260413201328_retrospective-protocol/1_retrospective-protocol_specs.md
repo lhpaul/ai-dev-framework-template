@@ -31,11 +31,11 @@ This feature adds a retrospective analysis capability to the AI development work
 3. The agent analyzes git history for the relevant PRs: commit patterns, fix-commit ratio, and review iteration count
 4. The agent synthesizes findings into a categorized list of improvement opportunities (see Business Rules: Categorization)
 5. The agent presents the opportunities to the human with a recommended action for each
-6. For each opportunity, the human chooses: **Address now** or **Add to backlog**
+6. For each opportunity, the human chooses: **Address now**, **Add to backlog**, or **Skip**
 7. The agent executes the chosen action for each opportunity (see Use Case 3 and 4)
 8. The agent confirms what was done and closes the retrospective
 
-**Postconditions**: Each improvement opportunity has either been addressed in the current session or added as a backlog issue
+**Postconditions**: Each improvement opportunity has either been addressed in the current session, added as a backlog issue, or explicitly skipped by the human
 
 **Information shown**:
 - Categorized improvement opportunities, each with: description, category label, severity signal, and recommended action
@@ -64,11 +64,11 @@ This feature adds a retrospective analysis capability to the AI development work
 3. In addition to GitHub data (as in Use Case 1), the agent also analyzes the conversation history from the current session: manual interventions, human corrections, agent deviations from protocol, and friction points that were surfaced verbally
 4. The agent synthesizes all findings (GitHub + conversation) into a categorized list of improvement opportunities
 5. The agent presents the opportunities to the human with a recommended action for each
-6. For each opportunity, the human chooses: **Address now** or **Add to backlog**
+6. For each opportunity, the human chooses: **Address now**, **Add to backlog**, or **Skip**
 7. The agent executes the chosen action for each opportunity
 8. The agent confirms what was done and closes the retrospective
 
-**Postconditions**: Each improvement opportunity has either been addressed in the current session or added as a backlog issue
+**Postconditions**: Each improvement opportunity has either been addressed in the current session, added as a backlog issue, or explicitly skipped by the human
 
 **Information shown**:
 - Same as Use Case 1, with additional findings sourced from conversation context
