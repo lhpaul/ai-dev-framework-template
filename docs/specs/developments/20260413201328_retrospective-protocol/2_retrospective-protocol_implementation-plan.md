@@ -1,7 +1,7 @@
 # Retrospective Protocol — Implementation Plan
 
 **Spec**: [1_retrospective-protocol_specs.md](1_retrospective-protocol_specs.md)
-**Smoke test runbook**: [retrospective-protocol.smoke-test.md](../../testing/workflow/retrospective-protocol.smoke-test.md)
+**Smoke test runbook**: [retrospective-protocol.smoke-test.md](../../../testing/workflow/retrospective-protocol.smoke-test.md)
 
 ---
 
@@ -62,7 +62,7 @@
 8. Complete a dispatched (non-standalone) item run via Protocol 91 and verify retrospective is NOT suggested (AC 10)
 9. Run retrospective in the same session as a completed batch/item and verify conversation-context findings are surfaced alongside GitHub findings (AC 8)
 
-**Smoke test runbook**: [`docs/testing/workflow/retrospective-protocol.smoke-test.md`](../../testing/workflow/retrospective-protocol.smoke-test.md)
+**Smoke test runbook**: [`docs/testing/workflow/retrospective-protocol.smoke-test.md`](../../../testing/workflow/retrospective-protocol.smoke-test.md)
 
 ---
 
