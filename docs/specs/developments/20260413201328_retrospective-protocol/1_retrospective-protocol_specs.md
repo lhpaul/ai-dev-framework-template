@@ -174,7 +174,7 @@ This feature adds a retrospective analysis capability to the AI development work
 - [ ] When "Add to backlog" is chosen, the agent creates a GitHub issue via `gh issue create` with a descriptive title and body, and returns the issue URL
 - [ ] When invoked in the same session as a completed batch/item run, the retrospective also surfaces findings from the conversation history (manual interventions, human corrections, agent deviations)
 - [ ] Protocol 90 (batch orchestrator) suggests a retrospective after the Step 6 batch summary
-- [ ] Protocol 91 (work item runner) suggests a retrospective after the item summary only when `BATCH_CONTEXT != true`
+- [ ] Protocol 91 (work item runner) suggests a retrospective after the item summary only when the item was run standalone (not dispatched by a batch orchestrator)
 - [ ] The `/retrospective` command/skill is available in Claude Code, Cursor, and Codex following existing platform patterns
 - [ ] The agent never applies fixes or creates issues without the human's explicit choice
 
