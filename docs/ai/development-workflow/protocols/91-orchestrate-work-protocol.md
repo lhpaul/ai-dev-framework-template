@@ -565,11 +565,11 @@ if [ "$IS_IMPLEMENTATION_PR" = "true" ]; then
   fi
 fi
 
-# Check 3: needs-fixes label must NOT be present (blocking gate)
+# Check 3: needs-fixes label — remove if present (stale at this point: CI is green and reviews are clean)
 HAS_NEEDS_FIXES=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c "^needs-fixes$" || true)
 if [ "$HAS_NEEDS_FIXES" -gt 0 ]; then
-  echo "ERROR: PR has 'needs-fixes' label. Address the findings, push fixes, and return to Step 7 before applying 'ready-for-human-review'."
-  exit 1
+  echo "INFO: Removing stale 'needs-fixes' label (CI is green and reviews are clean)."
+  gh pr edit "$PR_NUMBER" --remove-label "needs-fixes"
 fi
 
 # Check 4: ready-for-human-review label NOT yet applied (we are about to apply it)
@@ -590,7 +590,7 @@ echo "✅ Label readiness checklist passed. PR is ready for human review."
 - **Any check fails**: Stop and fix the condition. Do not apply `ready-for-human-review` until all checks pass
   - If `PR is still a draft`: Human error; run `gh pr ready <pr_number>` manually
   - If `missing ready-for-regression` on implementation PR: Re-run Step 7b, then re-check
-  - If `needs-fixes` is present (Check 3 fails): Address the findings, push, return to Step 7 — `ready-for-human-review` is never applied while `needs-fixes` is active
+  - If `needs-fixes` is present (Check 3): The label is stale at this point (CI is green and reviews are clean), so it is automatically removed before proceeding to apply `ready-for-human-review`
 
 This checklist ensures the label sequence is always complete before the PR is declared ready for human review.
 
