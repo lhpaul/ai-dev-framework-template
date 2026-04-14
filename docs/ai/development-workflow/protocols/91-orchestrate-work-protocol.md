@@ -224,7 +224,7 @@ This protocol stays scoped to one item. It may call different stage agents over 
    ```
 
 2. **When following protocol 03 directly** (not using a stage agent): At protocol 03 Step 6 (CHANGELOG update), add a pre-check:
-   - If `SKIP_CHANGELOG=true` was in the handoff, skip Step 6 entirely and proceed directly to Step 7 (draft PR).
+   - If `SKIP_CHANGELOG=true` was in the handoff, skip Step 6 entirely and proceed directly to Step 7 (Commit & Push).
    - Document in the commit message or PR body that CHANGELOG is intentionally skipped (e.g., "CHANGELOG: skipped (non-last item in parallel batch per protocol 90 Step 3.6; consolidated by item Y)").
 
 3. **Exception**: The last item in the batch (without `SKIP_CHANGELOG` in its handoff) implements normally and adds consolidated CHANGELOG entries for all batch items in a single commit during Step 6.
