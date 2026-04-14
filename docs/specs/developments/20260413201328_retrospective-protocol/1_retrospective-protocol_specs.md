@@ -79,7 +79,7 @@ This feature adds a retrospective analysis capability to the AI development work
 
 **Considerations**:
 - The agent suggests a retrospective only once per session at the end of a batch/item run
-- In protocol 91 (Work Item Runner), the suggestion is made only when the item was run standalone (not dispatched by a batch orchestrator). When `BATCH_CONTEXT=true`, the suggestion is suppressed to avoid double-triggering (the batch orchestrator handles it)
+- In protocol 91 (Work Item Runner), the suggestion is made only when the item was run standalone (not dispatched by a batch orchestrator). When dispatched by a batch orchestrator, the suggestion is suppressed to avoid double-triggering — the batch orchestrator handles it
 - In protocol 90 (Portfolio Orchestrator), the suggestion is always made after the batch summary
 - Conversation context is the richest source of findings; GitHub data alone is the fallback
 
