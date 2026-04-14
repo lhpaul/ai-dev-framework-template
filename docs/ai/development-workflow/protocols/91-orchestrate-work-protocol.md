@@ -227,7 +227,17 @@ This protocol stays scoped to one item. It may call different stage agents over 
    - If `SKIP_CHANGELOG=true` was in the handoff, skip Step 6 entirely and proceed directly to Step 7 (Commit & Push).
    - Document in the commit message or PR body that CHANGELOG is intentionally skipped (e.g., "CHANGELOG: skipped (non-last item in parallel batch per protocol 90 Step 3.6; consolidated by item Y)").
 
-3. **Exception**: The last item in the batch (without `SKIP_CHANGELOG` in its handoff) implements normally and adds consolidated CHANGELOG entries for all batch items in a single commit during Step 6.
+3. **Last item (consolidator)**: The last item in the batch (without `SKIP_CHANGELOG` in its handoff) implements normally and adds consolidated CHANGELOG entries for **all batch items** during protocol 03 Step 6. When dispatching the implementation agent for the last item, include the collected CHANGELOG descriptions from protocol 90 Step 3.6 point 3 in the handoff context:
+
+   ```
+   Work Item Runner note: This is the LAST item in a parallel batch.
+   When updating CHANGELOG.md in Step 6, add consolidated entries for ALL 
+   batch items (not just this one). Here are the entries to include:
+   - [Item A]: [CHANGELOG description]
+   - [Item B]: [CHANGELOG description]
+   - [This item]: [write based on implementation]
+   See protocol 90 Step 3.6 for details.
+   ```
 
 ---
 

@@ -224,7 +224,7 @@ To prevent cascading CHANGELOG conflicts, only the **last item to be merged in a
    - By default, the last item in the batch list if review complexity is similar
 
 2. **Instruct Work Item Runners** (when dispatching in Step 4):
-   - For all items **except the last**: Pass `--skip-changelog` or equivalent signal so the implementation phase skips adding CHANGELOG entries
+   - For all items **except the last**: Pass `SKIP_CHANGELOG=true` in the handoff metadata so the implementation phase skips adding CHANGELOG entries
    - For the last item only: Implement and add CHANGELOG entries for **all work in the batch** in a single consolidated commit
 
 3. **Collect CHANGELOG descriptions** from earlier items:
