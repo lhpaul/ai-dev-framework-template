@@ -565,19 +565,20 @@ if [ "$IS_IMPLEMENTATION_PR" = "true" ]; then
   fi
 fi
 
-# Check 3: ready-for-human-review label NOT yet applied (we are about to apply it)
+# Check 3: needs-fixes label must NOT be present (blocking gate)
+HAS_NEEDS_FIXES=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c "^needs-fixes$" || true)
+if [ "$HAS_NEEDS_FIXES" -gt 0 ]; then
+  echo "ERROR: PR has 'needs-fixes' label. Address the findings, push fixes, and return to Step 7 before applying 'ready-for-human-review'."
+  exit 1
+fi
+
+# Check 4: ready-for-human-review label NOT yet applied (we are about to apply it)
 HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c "^ready-for-human-review$" || true)
 if [ "$HAS_HUMAN_REVIEW_LABEL" -gt 0 ]; then
   echo "INFO: PR already has 'ready-for-human-review' label. Skipping re-application."
 else
   echo "Applying 'ready-for-human-review' label..."
   gh pr edit "$PR_NUMBER" --add-label "ready-for-human-review"
-fi
-
-# Remove needs-fixes if present
-HAS_NEEDS_FIXES=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c "^needs-fixes$" || true)
-if [ "$HAS_NEEDS_FIXES" -gt 0 ]; then
-  gh pr edit "$PR_NUMBER" --remove-label "needs-fixes"
 fi
 
 echo "✅ Label readiness checklist passed. PR is ready for human review."
@@ -589,7 +590,7 @@ echo "✅ Label readiness checklist passed. PR is ready for human review."
 - **Any check fails**: Stop and fix the condition. Do not apply `ready-for-human-review` until all checks pass
   - If `PR is still a draft`: Human error; run `gh pr ready <pr_number>` manually
   - If `missing ready-for-regression` on implementation PR: Re-run Step 7b, then re-check
-  - If `needs-fixes` is present: Address the findings, push, return to Step 7
+  - If `needs-fixes` is present (Check 3 fails): Address the findings, push, return to Step 7 — `ready-for-human-review` is never applied while `needs-fixes` is active
 
 This checklist ensures the label sequence is always complete before the PR is declared ready for human review.
 
