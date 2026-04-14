@@ -265,3 +265,9 @@ After all currently eligible items have reached a terminal condition, provide a 
 ```
 
 Call out any sequential fallback caused by runner limitations so humans can distinguish a workflow constraint from a product dependency.
+
+After presenting the summary, suggest running a retrospective:
+
+> Would you like to run a retrospective on this session's work?
+
+If the human agrees, follow `docs/ai/development-workflow/protocols/06-retrospective-protocol.md`. The retrospective will analyze the PRs from this batch using both GitHub data and the conversation context from this session.

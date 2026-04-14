@@ -256,6 +256,16 @@ After the selected item reaches a terminal condition, provide a concise summary:
 - Next human action: merge PR / answer architecture question / unblock dependency
 ```
 
+**Retrospective suggestion (standalone runs only)**:
+
+If this Work Item Runner was invoked **directly by a human** (i.e., `BATCH_CONTEXT` is not set or is `false`), after presenting the summary, suggest running a retrospective:
+
+> Would you like to run a retrospective on this session's work?
+
+If the human agrees, follow `docs/ai/development-workflow/protocols/06-retrospective-protocol.md`. The retrospective will analyze the PRs from this item run using both GitHub data and the conversation context from this session.
+
+**When `BATCH_CONTEXT=true`** (dispatched by the Portfolio Orchestrator): suppress the retrospective suggestion. The Portfolio Orchestrator will suggest the retrospective at the end of its own Step 6 summary instead, covering the entire batch at once.
+
 ---
 
 ## Step 7a: Internal Review Gate (Draft PR)

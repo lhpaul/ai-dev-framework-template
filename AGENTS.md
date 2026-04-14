@@ -68,6 +68,7 @@ Repository-specific workflow providers are declared in [`.ai-dev-workflow.yaml`]
 | Prepare Commit | — | `/prepare-commit` | Follow `docs/best-practices/2-version-control.md` | Follow `docs/best-practices/2-version-control.md` |
 | Prepare Release | `/prepare-release` | `/prepare-release` | Follow `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md` | Follow `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md` |
 | Orchestrate Work | `/run-work` command (or `orchestrator` agent) | `/run-work` | `workflow-orchestrator` skill | Follow `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
+| Retrospective | `/retrospective` | `/retrospective` | `workflow-retrospective` skill | Follow `docs/ai/development-workflow/protocols/06-retrospective-protocol.md` |
 
 **Prepare release** does not stop after opening PRs: protocol `05` requires running the automated reviewer loop, applying `ready-for-regression` on the **production PR to `main`**, and completing the CI loop (including label-gated e2e/regression when configured) before handoff to merge.
 
