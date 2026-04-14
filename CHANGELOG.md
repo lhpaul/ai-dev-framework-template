@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Retrospective analysis protocol**: a new `/retrospective` command and `06-retrospective-protocol.md` allow developers (or agents) to analyze completed work — a batch or individual item — and identify process improvement opportunities. Each finding is categorized (Workflow & Process, Agent Behavior, Configuration, Documentation, Code Quality, Tooling) and assigned a severity signal (High, Medium, Low). The human chooses an action for each: "Address now" (agent applies a simple fix, commits, and pushes — no new PR), "Add to backlog" (agent creates a GitHub issue directly), or "Skip". Works in two modes: with conversation context (preferred, richer findings) or with GitHub data only (on-demand fallback). Protocol 90 (batch orchestrator) now suggests a retrospective after its Step 6 summary; Protocol 91 (work item runner) does the same for standalone item runs only (suppressed when `BATCH_CONTEXT=true`). Available as `/retrospective` in Claude Code, `/retrospective` in Cursor, and the `workflow-retrospective` Codex skill.
+
 - **Worktree isolation for parallel batch dispatch**: protocols `90-batch-orchestrate-work-protocol.md` and `91-orchestrate-work-protocol.md` now require each Work Item Runner in a parallel batch to operate in a dedicated git worktree. Includes `BATCH_CONTEXT=true` handoff signal, pre-flight worktree checks, base-branch table for all item types, stage protocol compatibility notes, CWD safety mandate (`cd` to repo root before `git worktree remove`), and corrected Step 10 cleanup sequence (worktree removal before branch deletion).
 
 ### Fixed

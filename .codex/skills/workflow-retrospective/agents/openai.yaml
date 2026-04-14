@@ -1,0 +1,7 @@
+interface:
+  display_name: "Workflow Retrospective"
+  short_description: "Run a retrospective analysis on completed work to identify and act on process improvement opportunities."
+  default_prompt: "Use $workflow-retrospective to run a retrospective on the most recently completed batch or item run (or the PR number / branch I give you)."
+
+policy:
+  allow_implicit_invocation: false
