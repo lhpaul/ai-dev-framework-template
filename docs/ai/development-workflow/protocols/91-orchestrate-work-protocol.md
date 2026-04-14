@@ -78,7 +78,7 @@ Important for `development folder` targets:
 - The script **cannot** distinguish `Spec in Review` / `Plan in Review` from the corresponding merged state. If the target may still be waiting on a spec or plan PR merge, confirm the state via the issue tracker or by inspecting the workflow branch / PR directly before advancing.
 - If `NEXT_ACTION=skip` is returned, the item is already done — do not redispatch.
 
-When dispatching a subagent for this item, include a short “Tracker Work Item Summary” in the handoff:
+When dispatching a subagent for this item, include a short "Tracker Work Item Summary" in the handoff:
 
 - What the work item is asking for
 - Any scope changes / decisions in recent comments
@@ -238,6 +238,19 @@ This protocol stays scoped to one item. It may call different stage agents over 
    - [This item]: [write based on implementation]
    See protocol 90 Step 3.6 for details.
    ```
+
+### Scope Boundary Rule for Dispatched Agents
+
+When dispatching a stage agent (creator, reviewer, or fixer), include the following explicit instruction:
+
+> **Critical scope rule**: This item is assigned only to [ISSUE_ID]. Modify **only** files directly related to this issue. If a finding or review comment requires changes outside this issue's scope (e.g., fixing issues in unrelated modules, applying a new pattern to the broader codebase, or addressing tech debt elsewhere), do **not** implement it. Instead:
+> 1. Note it as a separate finding
+> 2. Suggest opening a new issue if appropriate
+> 3. Continue with in-scope work only
+>
+> This is critical in parallel batch orchestration where multiple agents work concurrently. Out-of-scope changes cause merge conflicts and waste review cycles.
+
+This rule prevents agents from making changes that affect unrelated issues and causing downstream conflicts in batch runs.
 
 ---
 
