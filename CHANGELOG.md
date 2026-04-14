@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **CHANGELOG conflict mitigation for parallel batches** (Protocol 90, Step 3.6): when multiple PRs in a batch touch `CHANGELOG.md`, merge conflicts cascade after the first PR merges. New strategy: only the last item in a parallel batch updates CHANGELOG; other items skip CHANGELOG modifications and document their entries separately. Last item consolidates all batch CHANGELOG entries in a single commit. Applies to feature/fix implementations; spec/plan PRs and hotfix batches have exceptions detailed in the protocol.
 
+### Changed
+
+- AI Workflow: `93-automated-reviewer-loop-protocol.md` — added mandatory cross-reference check requiring agents to grep edited files for stale references before committing fixes; links to the existing re-read verification section for post-commit confirmation.
+- AI Workflow: `implementation-plan-template.md` — added a "Code Samples" section with guidance to mark code samples as illustrative and to ensure all cross-section references are consistent before marking the plan ready.
+
 ### Fixed
 
 - **Item-orchestrator model upgrade to balanced tier**: upgraded `item-orchestrator` agent from economy (haiku) to balanced (sonnet) tier in `.claude/agents/item-orchestrator.md` and `.cursor/agents/item-orchestrator.md`. Economy models struggle with the multi-step reasoning required to parse review findings, determine correct fixes, and verify fixes are present during review-fix-review cycles. This upgrade ensures the Work Item Runner can reliably supervise these cycles without requiring manual takeover (issue #109).
