@@ -27,7 +27,7 @@ When the orchestrator produces a batch of parallel PRs targeting `develop`, merg
 **Trigger**: The human decides that one or more PRs targeting `develop` are ready to merge and starts the batch-merge command.
 
 **Preconditions**:
-- At least one PR in the repository is labeled `ready-for-human-review`
+- At least one PR in the repository is labeled `ready-for-human-review` (required for auto-discovery mode; when explicit PR numbers are provided, the command proceeds to per-PR readiness checks regardless of label status)
 - The human is on or has access to the repository's `develop` branch
 
 **Steps**:
