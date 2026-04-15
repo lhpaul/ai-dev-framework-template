@@ -315,6 +315,44 @@ These notes feed directly into the Step 6 retrospective suggestion and provide c
 
 ---
 
+## Step 5.5: Batch-Merge Handoff (Merge-Ready Parallel Batches)
+
+When **all PRs in a parallel batch** have reached `ready-for-human-review`, the orchestrator may hand off to the batch-merge flow instead of leaving the human to merge manually.
+
+### When to activate this step
+
+All of the following must be true:
+
+- The batch was a **parallel implementation batch** (not a spec-only or plan-only batch).
+- Every PR in the batch is labeled `ready-for-human-review`.
+- No PR in the batch is labeled `needs-fixes`.
+
+If any PR is still in progress or labeled `needs-fixes`, continue supervising (Step 5) until the condition is met or the item is blocked/escalated.
+
+### How to hand off
+
+1. **Prepare the merge plan**: collect the PR numbers for all batch PRs. Run discovery:
+
+   ```bash
+   ./scripts/development-workflow/batch-merge.sh discover --prs <num1,num2,...>
+   ```
+
+2. **Revalidate readiness from discovery output**:
+   - If any PR returned `PR_READY_LABEL=false`, warn the human and require an explicit include-or-skip decision before proceeding. Remove any skipped PRs from the merge list and carry them forward as `skipped_not_ready` for the final summary. Do not proceed silently with any unready PR.
+   - If any PR's `PR_LABELS` still contains `needs-fixes`, stop the handoff and return to Step 5 supervision for that PR. A `needs-fixes` PR must not be merged even if human supervision approved the batch earlier.
+
+3. **Present the validated merge plan to the human** and require explicit approval before any merge starts. The human must confirm before the orchestrator invokes `94-batch-merge-protocol.md`.
+
+4. **Once the human approves**, follow `docs/ai/development-workflow/protocols/94-batch-merge-protocol.md` starting from **Step 4** (the sequential merge loop). The merge plan confirmation (Protocol 94 Step 3) has already been satisfied by Step 5.5.3 above. Pass only the approved ordered PR list after Step 5.5.2 filtering, and include skipped entries in the final summary.
+
+5. **Include the batch-merge summary** (Step 5 of Protocol 94) in the orchestrator's Step 6 summary output.
+
+### Governance note
+
+The orchestrator prepares and validates the batch but **does not merge autonomously**. The human's explicit approval at Step 5.5 (above) is the required merge gate. This aligns with the policy in `2_batch-merge_implementation-plan.md`: "The agent executes `git merge` locally, but only after the human explicitly confirms the merge plan."
+
+---
+
 ## Step 6: Notify Humans
 
 After all currently eligible items have reached a terminal condition, provide a consolidated summary:
