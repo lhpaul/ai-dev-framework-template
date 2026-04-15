@@ -242,12 +242,6 @@ This feature does not introduce new tracker statuses. Per-PR outcomes within the
 
 ---
 
-## Open Questions
-
-<!-- All alignment questions were answered by the human. No open questions remain. -->
-
----
-
 ## Appendix: Technical Notes for Implementation Plan
 
 > This section is informational context for the implementation plan, not product requirements.
