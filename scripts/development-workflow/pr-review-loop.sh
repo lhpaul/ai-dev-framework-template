@@ -947,14 +947,18 @@ run_coderabbit_review() {
     # the pause by checking for a "Reviews paused" issue comment and post
     # "@coderabbitai review" to trigger a fresh review. Only attempt once.
     if [ "$coderabbit_any_activity" -eq 0 ] && [ "$coderabbit_retrigger_attempted" -eq 0 ] && [ "$elapsed" -ge "$((max_wait / 2))" ]; then
-      local paused_count
-      paused_count="$(
+      # Check if the most recent CodeRabbit bot comment (if any) contains a "Reviews paused" marker.
+      # Search all comments (no since_iso filter) to catch historical paused markers, but then
+      # extract only the most recent one to avoid false positives from very old paused messages.
+      local is_paused
+      is_paused="$(
         gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-          | jq --arg bot "$bot_login" --arg since "$since_iso" '
-              [.[] | select(.user.login == $bot and .created_at > $since and (.body | test("Reviews paused|review paused"; "i")))] | length
+          | jq --arg bot "$bot_login" '
+              [.[] | select(.user.login == $bot)] | sort_by(.created_at) | last // empty
+              | if (.body // "") | test("Reviews paused|review paused"; "i") then "1" else "0" end
             '
       )"
-      if [ "${paused_count:-0}" -gt 0 ]; then
+      if [ "${is_paused:-0}" -eq 1 ]; then
         echo "INFO: CodeRabbit reviews are paused — posting @coderabbitai review to trigger a fresh review" >&2
         if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
           coderabbit_retrigger_attempted=1
