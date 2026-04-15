@@ -46,7 +46,7 @@ When the orchestrator produces a batch of parallel PRs targeting `develop`, merg
    e. After each successful merge, the command runs `post-merge-cleanup` for that branch.
 6. When all PRs have been processed, the command reports the outcome for each PR (`merged_clean`, `merged_auto`, `merged_human`, `skipped_not_ready`, `skipped_conflict`, or `failed`).
 
-**Outcome**:
+**Postconditions**:
 - All PRs the human approved for merging are merged into `develop` (or explicitly noted as skipped or pending human resolution).
 - `post-merge-cleanup` has been run for every successfully merged PR.
 - The issue tracker status is updated for each merged branch (per the branch-type-to-status table).
@@ -64,7 +64,7 @@ When the orchestrator produces a batch of parallel PRs targeting `develop`, merg
 - Abort the entire batch merge at any time
 
 **Considerations**:
-- If `/batch-merge` is invoked when no `ready-for-human-review` PRs exist, the command exits immediately with an informational message and no side effects.
+- If `/batch-merge` is invoked in auto-discovery mode (no explicit PR numbers provided) and no `ready-for-human-review` PRs exist in the repository, the command exits immediately with an informational message and no side effects. When the user provides an explicit PR list, the command always proceeds to the per-PR readiness check (Step 3) regardless of label status.
 - If only a single PR is in the candidate set, the command proceeds as normal (not a no-op).
 - A PR that fails to merge (e.g., unresolvable conflict after human gives up) is noted in the final summary and skipped; remaining PRs continue.
 
@@ -87,7 +87,7 @@ When the orchestrator produces a batch of parallel PRs targeting `develop`, merg
 5. For trivial conflicts (CHANGELOG entries, documentation files), the orchestrator auto-resolves without additional human confirmation.
 6. For non-trivial conflicts, the orchestrator pauses and escalates to the human.
 
-**Outcome**:
+**Postconditions**:
 - Same as Use Case 1.
 
 **Information shown**:
@@ -221,7 +221,7 @@ This feature does not introduce new tracker statuses. Per-PR outcomes within the
 - [ ] If the human aborts a conflict resolution, the merge is abandoned (`git merge --abort`) and the PR is noted as skipped; remaining PRs continue.
 - [ ] After each successful merge, `post-merge-cleanup` runs for the merged branch and its result is reported.
 - [ ] The final summary lists every candidate PR with its outcome (`merged_clean`, `merged_auto`, `merged_human`, `skipped_not_ready`, `skipped_conflict`, or `failed`).
-- [ ] If no `ready-for-human-review` PRs exist, the command exits cleanly with an informational message and no side effects.
+- [ ] In auto-discovery mode, if no `ready-for-human-review` PRs exist, the command exits cleanly with an informational message and no side effects. When explicit PR numbers are provided, the command proceeds to per-PR readiness checks regardless of label status.
 - [ ] The command works as a Claude Code slash command (`/batch-merge`), a Cursor command, and a Codex skill.
 - [ ] In orchestrator-invoked mode, any PR missing `ready-for-human-review` causes a warning and requires an explicit human decision (exclude or include). The command must not proceed silently with any unready PR.
 
