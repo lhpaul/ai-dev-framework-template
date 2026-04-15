@@ -79,17 +79,31 @@ Before running this smoke test:
 
 **Expected result**: Agent redirects to "Add to backlog" with explanation. (Note: this scenario depends on the findings surfaced; if no complex findings exist, note this step as N/A.)
 
-### Step 5: Add to Backlog
+### Step 5: Add to Backlog — New Issue
 
-**Maps to**: Acceptance Criteria 7, 12
+**Maps to**: Acceptance Criteria 7, 12, 13
 
-1. From the findings, choose "Add to backlog" for one finding
-2. Verify a GitHub issue is created (via `gh issue create`)
-3. Verify the issue has a descriptive title and body
-4. Verify the agent returns the issue URL
-5. Inspect the created issue: confirm the body includes enough context to understand the problem without the original conversation
+1. Verify the Step 4 presentation includes a **"Related existing item"** field for each finding (`#NNN — [title]` or "No existing backlog item found")
+2. From the findings, choose "Add to backlog" for one finding that has **no related existing item**
+3. Verify a new GitHub issue is created (via `gh issue create` with the `workflow` label)
+4. Verify the issue has a descriptive title and body
+5. Verify the agent returns the issue URL
+6. Inspect the created issue: confirm the body includes enough context to understand the problem without the original conversation
 
-**Expected result**: GitHub issue created with descriptive content; URL returned.
+**Expected result**: GitHub issue created with descriptive content and `workflow` label; URL returned.
+
+### Step 5b: Add to Backlog — Expand Existing Issue
+
+**Maps to**: Acceptance Criteria 7, 12, 13
+
+1. From the findings, choose "Add to backlog" for one finding that has a **related existing item**
+2. Verify the agent offers a choice: **Expand existing** or **Create new**
+3. Choose "Expand existing"
+4. Verify the agent appends the new observation to the existing issue body (via `gh issue edit --body-file`)
+5. Verify the agent returns the updated issue URL
+6. Inspect the updated issue on GitHub: confirm the new observation appears as an additional section
+
+**Expected result**: Existing issue updated with new observation appended; URL returned. No duplicate issue created. (Note: this step requires a finding that matched an existing item; mark N/A if none are detected.)
 
 ### Step 6: Protocol 90 Integration — Batch Summary Suggestion
 
@@ -149,6 +163,7 @@ Each checkbox maps to an acceptance criterion from the spec.
 - [ ] AC 5: "Address now" for a simple fix: agent applies, commits, pushes without new PR
 - [ ] AC 6: "Address now" for a complex fix: agent recommends "Add to backlog" instead with explanation
 - [ ] AC 7: "Add to backlog": agent creates GitHub issue directly and returns URL
+- [ ] AC 13: Before presenting findings, agent queries the configured issue tracker for existing open items and annotates each finding with a related item reference or "No existing backlog item found"; when a related item exists and the human chooses "Expand existing", the agent appends the new observation to the existing issue rather than creating a duplicate
 - [ ] AC 8: Same-session retrospective surfaces conversation-context findings alongside GitHub findings
 - [ ] AC 9: Protocol 90 suggests retrospective after Step 6 batch summary
 - [ ] AC 10: Protocol 91 suggests retrospective after item summary only for standalone runs (not batched)
@@ -160,5 +175,6 @@ Each checkbox maps to an acceptance criterion from the spec.
 ## Known Limitations
 
 - Step 4 (complex finding) depends on the retrospective surfacing a finding that is too complex; if all findings are simple, this step cannot be validated and should be marked N/A
+- Step 5b (expand existing) depends on the retrospective surfacing a finding that matches an existing open backlog item; if no match is detected, this step cannot be validated and should be marked N/A
 - Steps 6-8 require running full orchestration sessions, which may take significant time; these can be tested opportunistically during normal workflow usage rather than in a dedicated smoke test session
 - Conversation-context analysis quality depends on the richness of the conversation history in the current session
