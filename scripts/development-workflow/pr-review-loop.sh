@@ -603,6 +603,7 @@ run_devin_review() {
                     .user.login == $bot and
                     .in_reply_to_id == null and
                     ((.body // "") | test("^✅") | not) and
+                    ((.body // "") | test("✅ Addressed") | not) and
                     ((.body // "") | test("No Issues Found"; "i") | not) and
                     (.id as $comment_id | ($resolved_ids | index($comment_id) | not))
                   )
@@ -766,7 +767,11 @@ run_devin_review() {
 is_coderabbit_blocking() {
   # Returns 0 (true) if the comment body contains a blocking severity marker.
   # Critical (🔴) and Major (🟠) are blocking; Minor (🟡) and Low (🟢) are not.
+  # However, CodeRabbit appends "✅ Addressed in commit ..." at the end of the
+  # comment body when the finding has been fixed in a subsequent commit. These
+  # resolved findings are NOT blocking even if they still contain 🔴/🟠 markers.
   local body="$1"
+  if printf '%s\n' "$body" | grep -q "✅ Addressed"; then return 1; fi
   if printf '%s\n' "$body" | grep -q "🔴"; then return 0; fi
   if printf '%s\n' "$body" | grep -q "🟠"; then return 0; fi
   return 1
@@ -898,6 +903,7 @@ run_coderabbit_review() {
   #
   local coderabbit_review_count=0
   local coderabbit_any_activity=0
+  local coderabbit_retrigger_attempted=0
 
   while :; do
     # Check for any CodeRabbit review submitted after the HEAD commit
@@ -922,16 +928,57 @@ run_coderabbit_review() {
     # Also check for CodeRabbit issue comments (summary comment) as activity signal.
     # Filter by since_iso so historical comments from prior pushes do not incorrectly
     # mark this HEAD cycle as having activity (which would suppress stale-findings recovery).
+    # Exclude "Reviews paused" comments as they are not an actual review; they are a pause marker.
     if [ "$coderabbit_any_activity" -eq 0 ]; then
       local activity_count
       activity_count="$(
         gh api "repos/$repo/issues/$pr_number/comments" --paginate \
           | jq --arg bot "$bot_login" --arg since "$since_iso" '
-              [.[] | select(.user.login == $bot and .created_at > $since)] | length
+              [.[] | select(
+                  .user.login == $bot and
+                  .created_at > $since and
+                  ((.body // "") | test("Reviews paused|review paused"; "i") | not)
+              )] | length
             '
       )"
       if [ "${activity_count:-0}" -gt 0 ]; then
         coderabbit_any_activity=1
+      fi
+    fi
+
+    # --- Auto-retrigger: detect CodeRabbit "reviews paused" state ---
+    # CodeRabbit auto-pauses reviews after many commits. When this happens, no
+    # review is posted for the current HEAD, causing the loop to time out. Detect
+    # the pause by checking for a "Reviews paused" issue comment and post
+    # "@coderabbitai review" to trigger a fresh review. Only attempt once.
+    if [ "$coderabbit_any_activity" -eq 0 ] && [ "$coderabbit_retrigger_attempted" -eq 0 ] && [ "$elapsed" -ge "$((max_wait / 2))" ]; then
+      # Check if the most recent CodeRabbit bot comment created after since_iso contains
+      # a "Reviews paused" marker. Use since_iso filter to avoid false positives from
+      # historical pause banners from prior HEAD commits.
+      local paused_count
+      paused_count="$(
+        gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+          | jq --arg bot "$bot_login" --arg since "$since_iso" '
+              [.[] | select(
+                  .user.login == $bot and
+                  .created_at > $since and
+                  ((.body // "") | test("Reviews paused|review paused"; "i"))
+              )] | length
+            '
+      )"
+      if [ "${paused_count:-0}" -gt 0 ]; then
+        echo "INFO: CodeRabbit reviews are paused — posting @coderabbitai review to trigger a fresh review" >&2
+        if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
+          coderabbit_retrigger_attempted=1
+          # Reset the elapsed timer to give the retrigger time to complete.
+          elapsed=0
+        else
+          echo "WARN: failed to post retrigger comment — will not reset timer" >&2
+          coderabbit_retrigger_attempted=1
+        fi
+        sleep "$poll_interval"
+        elapsed=$((elapsed + poll_interval))
+        continue
       fi
     fi
 
@@ -962,6 +1009,7 @@ run_coderabbit_review() {
                     .user.login == $bot and
                     .in_reply_to_id == null and
                     ((.body // "") | test("^✅") | not) and
+                    ((.body // "") | test("✅ Addressed") | not) and
                     (.id as $comment_id | ($resolved_ids | index($comment_id) | not))
                   )
                 | { path, line: (.line // .original_line // 0), body: (.body // "") }
