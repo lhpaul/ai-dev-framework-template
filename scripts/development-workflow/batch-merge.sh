@@ -132,15 +132,18 @@ cmd_discover() {
 
   require_gh
 
-  # Build newline-separated list of PR numbers (stored in temp files for
-  # bash 3 compatibility — no mapfile/readarray available).
-  local pr_list_file no_changelog_file changelog_file
+  # Temp files for bash 3 compatibility (no mapfile/readarray available).
+  # Each PR's metadata is cached from the single fetch call so the output loop
+  # reads from the cache instead of re-fetching — avoids double API calls and
+  # ensures DISCOVERY_RESULT=found is never emitted before all output is ready.
+  local pr_list_file no_changelog_file changelog_file meta_cache_dir
   pr_list_file="$(mktemp)"
   no_changelog_file="$(mktemp)"
   changelog_file="$(mktemp)"
-  # Set a single trap for all temp files at once to avoid fragile overwrites.
+  meta_cache_dir="$(mktemp -d)"
+  # Single trap covers all temp files/dirs.
   # shellcheck disable=SC2064
-  trap "rm -f '$pr_list_file' '$no_changelog_file' '$changelog_file'" EXIT INT TERM
+  trap "rm -rf '$pr_list_file' '$no_changelog_file' '$changelog_file' '$meta_cache_dir'" EXIT INT TERM
 
   if [ -n "$explicit_prs" ]; then
     # Parse comma-separated list; strip leading '#' if provided
@@ -164,10 +167,10 @@ cmd_discover() {
     return 0
   fi
 
-  # Collect metadata for each PR, separating into two groups by CHANGELOG flag.
-  # Defer DISCOVERY_RESULT until after filtering so that a non-empty initial
-  # list that is entirely filtered out (e.g. all PRs target main) still results
-  # in DISCOVERY_RESULT=none rather than a misleading =found with no PR blocks.
+  # Fetch metadata once per PR.  Cache the result so the output loop can reuse
+  # it without a second API call.  Defer DISCOVERY_RESULT until after filtering
+  # so a list that is entirely filtered out emits =none, not a misleading =found
+  # with zero PR blocks.
   while IFS= read -r pr_num; do
     [ -z "$pr_num" ] && continue
 
@@ -187,6 +190,9 @@ cmd_discover() {
       continue
     fi
 
+    # Cache metadata to avoid a second API call during output.
+    printf '%s\n' "$meta" > "${meta_cache_dir}/${pr_num}.meta"
+
     if [ "$has_changelog" = "true" ]; then
       printf '%s\n' "$pr_num" >> "$changelog_file"
     else
@@ -203,21 +209,20 @@ cmd_discover() {
   print_kv DISCOVERY_RESULT "found"
 
   # Emit ordered output: non-CHANGELOG PRs first (sorted numerically),
-  # then CHANGELOG PRs (sorted numerically).
+  # then CHANGELOG PRs (sorted numerically).  Read from cache — no re-fetch.
   local order=0
 
   for group_file in "$no_changelog_file" "$changelog_file"; do
     [ -s "$group_file" ] || continue
     while IFS= read -r pr_num; do
       [ -z "$pr_num" ] && continue
-      order=$((order + 1))
-      local meta
-      if ! meta="$(fetch_pr_meta "$pr_num")"; then
-        echo "WARNING: could not fetch metadata for PR #${pr_num} during output — skipping" >&2
-        order=$((order - 1))
+      local cache_file="${meta_cache_dir}/${pr_num}.meta"
+      if [ ! -f "$cache_file" ]; then
+        echo "WARNING: no cached metadata for PR #${pr_num} — skipping output" >&2
         continue
       fi
-      printf '%s\n' "$meta"
+      order=$((order + 1))
+      cat "$cache_file"
       print_kv PR_ORDER "$order"
       echo "---"
     done < <(sort -n "$group_file")
