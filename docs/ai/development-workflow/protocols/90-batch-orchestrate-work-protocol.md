@@ -317,7 +317,7 @@ Verify all of the following. If any check fails, the PR is **not ready** — tre
 | `ready-for-human-review` label | Present |
 | `ready-for-regression` label | Present on `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PRs; not required for `spec/*`, `implementation-plan/*` |
 | No `needs-fixes` label | Absent |
-| Automated reviewer loop summary comment | At least one PR comment containing "Automated Reviewer Loop Summary" or "No blocking PR feedback" (skip this check for `spec/*` and `implementation-plan/*` PRs when Step 7 was `skipped` because no review platforms are configured) |
+| Automated reviewer loop summary comment | At least one PR comment containing "Automated Reviewer Loop Summary" or "No blocking PR feedback" (skip this check only when Step 7 was `skipped` because no review platforms are configured) |
 | CI checks | All required status checks are green (`state: SUCCESS` or `conclusion: success`) |
 
 If a check fails:
