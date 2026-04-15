@@ -950,8 +950,8 @@ run_coderabbit_review() {
       local paused_count
       paused_count="$(
         gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-          | jq --arg bot "$bot_login" '
-              [.[] | select(.user.login == $bot and (.body | test("Reviews paused|review paused"; "i")))] | length
+          | jq --arg bot "$bot_login" --arg since "$since_iso" '
+              [.[] | select(.user.login == $bot and .created_at > $since and (.body | test("Reviews paused|review paused"; "i")))] | length
             '
       )"
       if [ "${paused_count:-0}" -gt 0 ]; then
