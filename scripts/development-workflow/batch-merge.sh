@@ -89,7 +89,11 @@ fetch_pr_meta() {
   base="$(printf '%s' "$json" | jq -r '.baseRefName')"
   created_at="$(printf '%s' "$json" | jq -r '.createdAt')"
   labels_csv="$(printf '%s' "$json" | jq -r '[.labels[].name] | join(",")')"
-  ready_label="$(printf '%s' "$json" | jq -r '.labels[].name' | grep -q '^ready-for-human-review$' && echo true || echo false)"
+  if printf '%s' "$json" | jq -r '.labels[].name' | grep -q '^ready-for-human-review$'; then
+    ready_label="true"
+  else
+    ready_label="false"
+  fi
 
   # Check whether the PR diff touches CHANGELOG.md
   local has_changelog="false"
@@ -97,14 +101,14 @@ fetch_pr_meta() {
     has_changelog="true"
   fi
 
-  print_kv PR_NUMBER    "$number"
+  print_kv PR_NUMBER       "$number"
   print_kv_escaped PR_TITLE "$title"
-  print_kv PR_BRANCH    "$branch"
-  print_kv PR_BASE      "$base"
-  print_kv PR_LABELS    "$labels_csv"
-  print_kv PR_READY_LABEL "$ready_label"
+  print_kv PR_BRANCH       "$branch"
+  print_kv PR_BASE         "$base"
+  print_kv PR_LABELS       "$labels_csv"
+  print_kv PR_READY_LABEL  "$ready_label"
   print_kv PR_HAS_CHANGELOG "$has_changelog"
-  print_kv PR_CREATED_AT  "$created_at"
+  print_kv PR_CREATED_AT   "$created_at"
 }
 
 # ---------------------------------------------------------------------------
@@ -114,7 +118,7 @@ fetch_pr_meta() {
 cmd_discover() {
   local explicit_prs=""
 
-  while [[ $# -gt 0 ]]; do
+  while [ $# -gt 0 ]; do
     case "$1" in
       --prs)
         explicit_prs="${2:-}"
@@ -128,49 +132,56 @@ cmd_discover() {
 
   require_gh
 
-  # Build list of PR numbers to process
-  declare -a pr_numbers=()
+  # Build newline-separated list of PR numbers (stored in a temp file for
+  # bash 3 compatibility — no mapfile/readarray available).
+  local pr_list_file
+  pr_list_file="$(mktemp)"
+  # shellcheck disable=SC2064
+  trap "rm -f '$pr_list_file'" EXIT INT TERM
 
   if [ -n "$explicit_prs" ]; then
     # Parse comma-separated list; strip leading '#' if provided
-    IFS=',' read -r -a raw_prs <<< "$explicit_prs"
-    for raw in "${raw_prs[@]}"; do
-      pr_numbers+=("${raw#\#}")
+    local IFS=','
+    for raw in $explicit_prs; do
+      printf '%s\n' "${raw#\#}" >> "$pr_list_file"
     done
   else
     # Auto-discover PRs labeled ready-for-human-review targeting develop
-    mapfile -t pr_numbers < <(
-      gh pr list \
-        --base "$TARGET_BASE" \
-        --label "ready-for-human-review" \
-        --state open \
-        --json number \
-        --jq '.[].number' \
-      2>/dev/null || true
-    )
+    gh pr list \
+      --base "$TARGET_BASE" \
+      --label "ready-for-human-review" \
+      --state open \
+      --json number \
+      --jq '.[].number' \
+      2>/dev/null > "$pr_list_file" || true
   fi
 
-  if [ "${#pr_numbers[@]}" -eq 0 ]; then
+  if [ ! -s "$pr_list_file" ]; then
     print_kv DISCOVERY_RESULT "none"
     return 0
   fi
 
   print_kv DISCOVERY_RESULT "found"
 
-  # Collect metadata for each PR
-  declare -a no_changelog_prs=()   # (number|created_at) tuples — sorted later
-  declare -a changelog_prs=()
+  # Collect metadata for each PR, separating into two groups by CHANGELOG flag.
+  local no_changelog_file changelog_file
+  no_changelog_file="$(mktemp)"
+  changelog_file="$(mktemp)"
+  # shellcheck disable=SC2064
+  trap "rm -f '$pr_list_file' '$no_changelog_file' '$changelog_file'" EXIT INT TERM
 
-  for pr_num in "${pr_numbers[@]}"; do
+  while IFS= read -r pr_num; do
+    [ -z "$pr_num" ] && continue
+
     local meta
-    meta="$(fetch_pr_meta "$pr_num" 2>&1)" || {
+    if ! meta="$(fetch_pr_meta "$pr_num" 2>&1)"; then
       echo "WARNING: skipping PR #${pr_num} — could not fetch metadata" >&2
       continue
-    }
+    fi
 
     local base has_changelog
-    base="$(printf '%s\n' "$meta" | awk -F= '$1=="PR_BASE"{print $2}')"
-    has_changelog="$(printf '%s\n' "$meta" | awk -F= '$1=="PR_HAS_CHANGELOG"{print $2}')"
+    base="$(printf '%s\n' "$meta" | awk -F'=' '$1=="PR_BASE"{print $2}')"
+    has_changelog="$(printf '%s\n' "$meta" | awk -F'=' '$1=="PR_HAS_CHANGELOG"{print $2}')"
 
     # Filter: only target develop (explicit mode may include any PR numbers)
     if [ "$base" != "$TARGET_BASE" ]; then
@@ -179,28 +190,27 @@ cmd_discover() {
     fi
 
     if [ "$has_changelog" = "true" ]; then
-      changelog_prs+=("$pr_num")
+      printf '%s\n' "$pr_num" >> "$changelog_file"
     else
-      no_changelog_prs+=("$pr_num")
+      printf '%s\n' "$pr_num" >> "$no_changelog_file"
     fi
-  done
+  done < "$pr_list_file"
 
-  # Sort each group by ascending PR number (GitHub PR numbers are monotonically
-  # increasing, so numeric sort also approximates creation order).
-  mapfile -t no_changelog_prs < <(printf '%s\n' "${no_changelog_prs[@]:-}" | sort -n)
-  mapfile -t changelog_prs < <(printf '%s\n' "${changelog_prs[@]:-}" | sort -n)
-
-  # Emit ordered output: non-CHANGELOG PRs first, then CHANGELOG PRs
+  # Emit ordered output: non-CHANGELOG PRs first (sorted numerically),
+  # then CHANGELOG PRs (sorted numerically).
   local order=0
 
-  for pr_num in "${no_changelog_prs[@]:-}" "${changelog_prs[@]:-}"; do
-    [ -z "$pr_num" ] && continue
-    order=$((order + 1))
-    local meta
-    meta="$(fetch_pr_meta "$pr_num")"
-    printf '%s\n' "$meta"
-    print_kv PR_ORDER "$order"
-    echo "---"
+  for group_file in "$no_changelog_file" "$changelog_file"; do
+    [ -s "$group_file" ] || continue
+    while IFS= read -r pr_num; do
+      [ -z "$pr_num" ] && continue
+      order=$((order + 1))
+      local meta
+      meta="$(fetch_pr_meta "$pr_num")"
+      printf '%s\n' "$meta"
+      print_kv PR_ORDER "$order"
+      echo "---"
+    done < <(sort -n "$group_file")
   done
 }
 
@@ -211,7 +221,7 @@ cmd_discover() {
 cmd_merge() {
   local pr_num=""
 
-  while [[ $# -gt 0 ]]; do
+  while [ $# -gt 0 ]; do
     case "$1" in
       --pr)
         pr_num="${2:-}"
@@ -243,7 +253,8 @@ cmd_merge() {
   git fetch origin "$branch" >/dev/null 2>&1 || \
     die "Could not fetch origin/${branch}"
 
-  # Attempt the merge
+  # Attempt the merge (capture output; the 'if' absorbs the non-zero exit code
+  # so set -e does not fire on a failed merge).
   local merge_output
   if merge_output="$(git merge --no-ff --no-edit "origin/${branch}" 2>&1)"; then
     print_kv MERGE_RESULT "clean"
@@ -255,18 +266,18 @@ cmd_merge() {
   conflicted_files="$(git diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ',' | sed 's/,$//')"
 
   if [ -n "$conflicted_files" ]; then
-    print_kv MERGE_RESULT    "conflict"
+    print_kv MERGE_RESULT     "conflict"
     print_kv CONFLICTED_FILES "$conflicted_files"
     # Exit 1 signals "conflict detected" — do NOT abort the merge here;
     # the caller (agent protocol) classifies and resolves or aborts.
     exit 1
   fi
 
-  # Non-conflict failure
+  # Non-conflict failure: abort and report.
   git merge --abort 2>/dev/null || true
   local error_msg
   error_msg="$(printf '%s' "$merge_output" | head -5 | tr '\n' ' ')"
-  print_kv MERGE_RESULT    "failed"
+  print_kv MERGE_RESULT "failed"
   print_kv_escaped ERROR_MESSAGE "$error_msg"
   exit 2
 }
