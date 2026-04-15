@@ -3,7 +3,7 @@
 **Agent role**: Runner of the automated reviewer loop
 **Purpose**: Run the automated reviewer loop and CI loop for one or more PRs until each PR is clean and ready for human review, or escalate to human
 
-This protocol is **standalone**: it can be invoked for any open PR (or set of PRs) without full orchestration. It reuses **Step 7** and **Step 8** of `91-orchestrate-work-protocol.md` as-is; this document only adds how to choose the target PR(s) and how to report.
+This protocol is **standalone**: it can be invoked for any open PR (or set of PRs) without full orchestration. It reuses **Step 7**, **Step 8**, and **Step 8a** of `91-orchestrate-work-protocol.md` as-is; this document only adds how to choose the target PR(s) and how to report.
 
 ---
 
@@ -61,9 +61,9 @@ If unresolved findings exist: dispatch a fixer agent, wait for the push, then pr
 
 ### Run the loops
 
-Execute **Step 7a: Internal Review Gate**, **Step 7: Automated Reviewer Loop**, and **Step 8: CI Loop** exactly as defined in `91-orchestrate-work-protocol.md` (scripts, result interpretation, sequential platform policy, fixer mapping, parameters, and labels). Do not duplicate that logic here — follow 91.
+Execute **Step 7a: Internal Review Gate**, **Step 7: Automated Reviewer Loop**, **Step 8: CI Loop**, and **Step 8a: PR Readiness Gate** exactly as defined in `91-orchestrate-work-protocol.md` (scripts, result interpretation, sequential platform policy, fixer mapping, parameters, and labels). Do not duplicate that logic here — follow 91.
 
-For each PR: run Step 7a first. Step 7a runs **all** configured internal reviewers sequentially (per the `review.internal_reviewers` list in `.ai-dev-workflow.yaml`, with `.tmp/template-config.json` local overrides taking precedence). All internal reviewers must APPROVE before proceeding. Once Step 7a produces `APPROVED` from all internal reviewers, run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then run Step 7 to completion, then Step 7b (regression label, implementation PRs only), then Step 8. Dispatch fixers and re-run as specified in 91 until the PR is clean and ready for human review or escalated. After Step 8 returns `green`, apply `ready-for-human-review` (the PR is already non-draft from the step after 7a).
+For each PR: run Step 7a first. Step 7a runs **all** configured internal reviewers sequentially (per the `review.internal_reviewers` list in `.ai-dev-workflow.yaml`, with `.tmp/template-config.json` local overrides taking precedence). All internal reviewers must APPROVE before proceeding. Once Step 7a produces `APPROVED` from all internal reviewers, run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then run Step 7 to completion, then Step 7b (regression label, implementation PRs only), then Step 8, then Step 8a. Dispatch fixers and re-run as specified in 91 until the PR is clean and ready for human review or escalated. After Step 8a passes all checks, apply `ready-for-human-review` (the PR is already non-draft from the step after 7a).
 
 ### PR feedback tracking and comments
 
@@ -81,7 +81,7 @@ Follow the "PR feedback tracking and comments" subsection of Step 7 in `91-orche
 
 After processing the requested PR(s), report:
 
-- **Ready for human review**: PR link, branch, and that the internal review gate, every configured automated reviewer, and CI are all clean (or skipped). Confirm that `gh pr ready` was run (after Step 7a APPROVED, before Step 7) to convert the draft PR to non-draft.
+- **Ready for human review**: PR link, branch, and that the internal review gate, every configured automated reviewer, CI, and the PR readiness gate (Step 8a) are all clean (or skipped). Confirm that `gh pr ready` was run (after Step 7a APPROVED, before Step 7) to convert the draft PR to non-draft.
 - **Escalated**: PR link, reason (max cycles, timeout, or review platform escalate).
 - **Skipped**: If no review platform is configured, or a configured platform is currently unsupported and therefore skipped, note that in the result for the listed PR(s).
 

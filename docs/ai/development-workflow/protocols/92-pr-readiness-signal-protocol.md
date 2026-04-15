@@ -76,7 +76,7 @@ This label is **not applied** to spec or plan PRs (`spec/*`, `implementation-pla
 5. If any automated reviewer reports blocking PR feedback: apply fixes, push, and repeat Step 4
 6. For implementation PRs (`feature/*`, `fix/*`, `hotfix/*`, `refactor/*`), or for production release PRs per `05-prepare-release-protocol.md` Step 7.4: apply `ready-for-regression` label to trigger e2e/regression CI checks
 7. Run `./scripts/development-workflow/pr-ci-loop.sh <pr-number>`
-8. If CI passes and all reviews are clean (or not configured): apply `ready-for-human-review` (the PR is already non-draft from Step 3) and move the tracker status to the matching human-review stage (`Spec in Review`, `Plan in Review`, or `Development in Review`) when the tracker is the source of truth
+8. If CI passes: run the PR readiness gate (Step 8a in `91-orchestrate-work-protocol.md`) — verify non-draft state, `ready-for-regression` label on implementation PRs, and no unresolved blocking comments from configured reviewer bots. Only after all Step 8a checks pass: apply `ready-for-human-review` (the PR is already non-draft from Step 3) and move the tracker status to the matching human-review stage (`Spec in Review`, `Plan in Review`, or `Development in Review`) when the tracker is the source of truth
 9. If CI fails: apply `needs-fixes`, fix PR feedback or failing checks, push, and return to Step 4
 
 ### Human requests changes
