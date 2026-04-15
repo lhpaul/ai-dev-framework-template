@@ -1,6 +1,6 @@
 # Batch Merge — Spec
 
-**Depends on**: <!-- none -->
+**Depends on**: None
 
 ---
 
@@ -24,6 +24,8 @@ When the orchestrator produces a batch of parallel PRs targeting `develop`, merg
 
 **Actor**: Developer / team member (human, invoking `/batch-merge` from Claude Code, a Cursor command, or a Codex skill)
 
+**Trigger**: The human decides that one or more PRs targeting `develop` are ready to merge and starts the batch-merge command.
+
 **Preconditions**:
 - At least one PR in the repository is labeled `ready-for-human-review`
 - The human is on or has access to the repository's `develop` branch
@@ -44,7 +46,7 @@ When the orchestrator produces a batch of parallel PRs targeting `develop`, merg
    e. After each successful merge, the command runs `post-merge-cleanup` for that branch.
 6. When all PRs have been processed, the command reports the final outcome for each PR (merged, skipped, paused-for-human, failed).
 
-**Postconditions**:
+**Outcome**:
 - All PRs the human approved for merging are merged into `develop` (or explicitly noted as skipped or pending human resolution).
 - `post-merge-cleanup` has been run for every successfully merged PR.
 - The issue tracker status is updated for each merged branch (per the branch-type-to-status table).
@@ -72,6 +74,8 @@ When the orchestrator produces a batch of parallel PRs targeting `develop`, merg
 
 **Actor**: Portfolio Orchestrator (`/run-work` or `item-orchestrator`) acting autonomously after all PRs in a batch reach `ready-for-human-review`
 
+**Trigger**: The orchestrator detects that every PR in a batch has reached `ready-for-human-review` and is authorized to start the batch-merge flow.
+
 **Preconditions**:
 - All PRs in the current batch are labeled `ready-for-human-review`
 - The orchestrator has explicit authority to merge (i.e., the human previously approved autonomous merging for this batch, or the project's workflow configuration enables it)
@@ -84,7 +88,7 @@ When the orchestrator produces a batch of parallel PRs targeting `develop`, merg
 4. For trivial conflicts (CHANGELOG entries, documentation files), the orchestrator auto-resolves without human confirmation.
 5. For non-trivial conflicts, the orchestrator pauses and escalates to the human.
 
-**Postconditions**:
+**Outcome**:
 - Same as Use Case 1.
 
 **Information shown**:
