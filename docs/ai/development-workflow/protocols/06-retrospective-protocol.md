@@ -231,8 +231,9 @@ First, check whether a related existing item was found in Step 3a for this findi
 If the human chooses **Expand existing**, append the new observation to the existing issue body:
 
 ```bash
-# Read current body, append new section, then edit
-gh issue edit <number> --body "$(gh issue view <number> --json body -q '.body')
+# Read current body, append new section via temp file to avoid shell quoting issues
+gh issue view <number> --json body -q '.body' > /tmp/retro-issue-body.md
+cat >> /tmp/retro-issue-body.md <<'EOF'
 
 ---
 
@@ -240,7 +241,10 @@ gh issue edit <number> --body "$(gh issue view <number> --json body -q '.body')
 
 [What was observed — specific, factual]
 
-[Impact if unaddressed]"
+[Impact if unaddressed]
+EOF
+
+gh issue edit <number> --body-file /tmp/retro-issue-body.md
 ```
 
 Report the updated issue with its URL.
