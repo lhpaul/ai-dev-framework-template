@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Agent model config**: upgraded `item-orchestrator` from `economy` to `balanced` tier across all runner configurations (Claude Code `claude-haiku` → `claude-sonnet-4-6`, Cursor `fast` → `inherit`, Codex `economy` → `balanced`). The single-item control loop requires multi-step reasoning for review fix loops that an economy-class model handles insufficiently.
+
 ## [0.21.0] - 2026-04-13
 
 ### Added
