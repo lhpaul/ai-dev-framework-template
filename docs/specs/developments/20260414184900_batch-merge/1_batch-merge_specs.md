@@ -143,9 +143,9 @@ When a non-trivial conflict is encountered during a merge:
 
 1. The command pauses the merge for that PR.
 2. The command clearly states which files are in conflict and what the conflicting sections are.
-3. The human is asked to resolve the conflict in their editor and then signal the command to resume (e.g., by running `git merge --continue` manually, then confirming in the command interface).
+3. The human is asked to resolve the conflict in their editor and then signal the command to resume.
 4. Once the human signals resolution, the command completes the merge and proceeds to `post-merge-cleanup` and remaining PRs.
-5. If the human cannot resolve the conflict and chooses to abort, the PR is skipped (the merge is abandoned with `git merge --abort`), and the command continues with remaining PRs. The skipped PR is noted in the final summary.
+5. If the human cannot resolve the conflict and chooses to abort, the PR is skipped (the merge attempt is canceled and `develop` is returned to its pre-merge state), and the command continues with remaining PRs. The skipped PR is noted in the final summary.
 
 ### Readiness Gate
 
@@ -179,7 +179,7 @@ When a non-trivial conflict is encountered during a merge:
 - Auto-resolved trivial conflicts must be explicitly described (which files, what was combined) — silent auto-resolution is not acceptable.
 - The final summary must clearly distinguish: merged clean (`merged_clean`), merged with auto-resolved conflicts (`merged_auto`), merged after human-resolved conflict (`merged_human`), skipped because not ready (`skipped_not_ready`), skipped because conflict was aborted (`skipped_conflict`), failed (`failed`), and not attempted (`not_attempted`).
 - When pausing for a non-trivial conflict, the command must display the conflicting file path(s) and a short excerpt of the conflict markers.
-- The command must not leave `develop` in a conflicted state under any circumstances. If a merge cannot be cleanly completed (human aborts resolution), the merge is aborted (`git merge --abort`) before proceeding.
+- The command must not leave `develop` in a conflicted state under any circumstances. If a merge cannot be cleanly completed (human aborts resolution), `develop` must be returned to its pre-merge state before proceeding.
 
 ---
 
@@ -219,7 +219,7 @@ This feature does not introduce new tracker statuses. Per-PR outcomes within the
 - [ ] A documentation/protocol file conflict with non-overlapping changes is auto-resolved; the output describes which files were combined.
 - [ ] A non-trivial conflict (code files, or overlapping doc changes) causes the command to pause, display the conflicting file(s) and conflict markers, and wait for the human to resolve.
 - [ ] After the human signals conflict resolution, the command resumes the merge and continues with remaining PRs.
-- [ ] If the human aborts a conflict resolution, the merge is abandoned (`git merge --abort`) and the PR is noted as skipped; remaining PRs continue.
+- [ ] If the human aborts a conflict resolution, the merge is canceled, `develop` is returned to its pre-merge state, and the PR is noted as skipped; remaining PRs continue.
 - [ ] After each successful merge, `post-merge-cleanup` runs for the merged branch and its result is reported.
 - [ ] The final summary lists every candidate PR with its outcome (`merged_clean`, `merged_auto`, `merged_human`, `skipped_not_ready`, `skipped_conflict`, `failed`, or `not_attempted`).
 - [ ] In auto-discovery mode, if no `ready-for-human-review` PRs exist, the command exits cleanly with an informational message and no side effects. When explicit PR numbers are provided, the command proceeds to per-PR readiness checks regardless of label status.
