@@ -81,7 +81,7 @@ When the orchestrator produces a batch of parallel PRs targeting `develop`, merg
 
 **Steps**:
 1. The orchestrator detects all batch PRs have `ready-for-human-review` and prepares the batch-merge flow (discovers candidates, determines merge order, validates readiness).
-2. If any PR in the batch is missing `ready-for-human-review`, the orchestrator does NOT proceed — it warns the human and waits for confirmation before continuing.
+2. If any PR in the batch is missing `ready-for-human-review`, the orchestrator warns the human and requires an explicit decision for each unready PR (exclude or include). The orchestrator must not proceed silently with any unready PR.
 3. The orchestrator presents the validated merge plan to the human and requests explicit approval to execute the merges. The human must confirm before any merge occurs.
 4. Once the human approves, the orchestrator runs the same merge procedure as the human-invoked case (Use Case 1).
 5. For trivial conflicts (CHANGELOG entries, documentation files), the orchestrator auto-resolves without additional human confirmation.
@@ -223,7 +223,7 @@ This feature does not introduce new tracker statuses. Per-PR outcomes within the
 - [ ] The final summary lists every candidate PR with its outcome (`merged_clean`, `merged_auto`, `merged_human`, `skipped_not_ready`, `skipped_conflict`, or `failed`).
 - [ ] If no `ready-for-human-review` PRs exist, the command exits cleanly with an informational message and no side effects.
 - [ ] The command works as a Claude Code slash command (`/batch-merge`), a Cursor command, and a Codex skill.
-- [ ] In orchestrator-invoked mode, any PR missing `ready-for-human-review` causes the command to stop and escalate to the human rather than proceeding.
+- [ ] In orchestrator-invoked mode, any PR missing `ready-for-human-review` causes a warning and requires an explicit human decision (exclude or include). The command must not proceed silently with any unready PR.
 
 ---
 
