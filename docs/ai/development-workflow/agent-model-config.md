@@ -27,7 +27,7 @@ If you prefer different names (`small/medium/large`, `fast/standard/pro`, etc.),
 | Agent | Tier | Rationale |
 |---|---|---|
 | `orchestrator` | `economy` | **Portfolio Orchestrator**. Reads state, builds batches, and dispatches Work Item Runners; mechanical coordination that should stay fast and cheap. |
-| `item-orchestrator` | `economy` | **Work Item Runner**. Single-item control loop; mostly routing, resume logic, and readiness supervision rather than deep reasoning. |
+| `item-orchestrator` | `balanced` | **Work Item Runner**. Single-item control loop that includes dispatching fixer agents and supervising review fix loops. Parsing review findings, determining correct fixes, and verifying resolutions require multi-step reasoning — an economy model is insufficient for this. |
 | `automated-reviewer-loop` | `economy` | Runs review + CI loop for a PR; mechanical coordination like the orchestration agents, no deep reasoning required. |
 | `product-manager` | `balanced` | Spec writing requires creativity and structured thinking, but the spec template provides strong scaffolding. A balanced model handles this well at a reasonable cost. |
 | `spec-reviewer` | `balanced` | Review against a checklist. A balanced model is well within the capability required. |
