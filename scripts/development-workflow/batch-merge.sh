@@ -132,12 +132,15 @@ cmd_discover() {
 
   require_gh
 
-  # Build newline-separated list of PR numbers (stored in a temp file for
+  # Build newline-separated list of PR numbers (stored in temp files for
   # bash 3 compatibility — no mapfile/readarray available).
-  local pr_list_file
+  local pr_list_file no_changelog_file changelog_file
   pr_list_file="$(mktemp)"
+  no_changelog_file="$(mktemp)"
+  changelog_file="$(mktemp)"
+  # Set a single trap for all temp files at once to avoid fragile overwrites.
   # shellcheck disable=SC2064
-  trap "rm -f '$pr_list_file'" EXIT INT TERM
+  trap "rm -f '$pr_list_file' '$no_changelog_file' '$changelog_file'" EXIT INT TERM
 
   if [ -n "$explicit_prs" ]; then
     # Parse comma-separated list; strip leading '#' if provided
@@ -161,15 +164,10 @@ cmd_discover() {
     return 0
   fi
 
-  print_kv DISCOVERY_RESULT "found"
-
   # Collect metadata for each PR, separating into two groups by CHANGELOG flag.
-  local no_changelog_file changelog_file
-  no_changelog_file="$(mktemp)"
-  changelog_file="$(mktemp)"
-  # shellcheck disable=SC2064
-  trap "rm -f '$pr_list_file' '$no_changelog_file' '$changelog_file'" EXIT INT TERM
-
+  # Defer DISCOVERY_RESULT until after filtering so that a non-empty initial
+  # list that is entirely filtered out (e.g. all PRs target main) still results
+  # in DISCOVERY_RESULT=none rather than a misleading =found with no PR blocks.
   while IFS= read -r pr_num; do
     [ -z "$pr_num" ] && continue
 
@@ -195,6 +193,14 @@ cmd_discover() {
       printf '%s\n' "$pr_num" >> "$no_changelog_file"
     fi
   done < "$pr_list_file"
+
+  # If every PR was filtered out, report none.
+  if [ ! -s "$no_changelog_file" ] && [ ! -s "$changelog_file" ]; then
+    print_kv DISCOVERY_RESULT "none"
+    return 0
+  fi
+
+  print_kv DISCOVERY_RESULT "found"
 
   # Emit ordered output: non-CHANGELOG PRs first (sorted numerically),
   # then CHANGELOG PRs (sorted numerically).
@@ -245,7 +251,8 @@ cmd_merge() {
     die "Could not fetch branch for PR #${pr_num}"
 
   # Ensure local develop is current
-  git checkout "$TARGET_BASE" >/dev/null 2>&1
+  git checkout "$TARGET_BASE" >/dev/null 2>&1 || \
+    die "Could not check out '${TARGET_BASE}' — ensure the working tree is clean and the branch exists locally"
   git pull --ff-only origin "$TARGET_BASE" >/dev/null 2>&1 || \
     die "Could not fast-forward local '${TARGET_BASE}' from origin — resolve divergence manually"
 
