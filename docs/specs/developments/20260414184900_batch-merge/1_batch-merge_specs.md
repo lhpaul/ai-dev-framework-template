@@ -44,7 +44,7 @@ When the orchestrator produces a batch of parallel PRs targeting `develop`, merg
    c. If the merge has conflicts that are all classified as trivial (CHANGELOG entries or documentation/protocol files), the command auto-resolves them and completes the merge.
    d. If the merge has any non-trivial conflict, the command pauses and asks the human to resolve it, then resumes after the human confirms resolution.
    e. After each successful merge, the command runs `post-merge-cleanup` for that branch.
-6. When all PRs have been processed, the command reports the outcome for each PR (merged, skipped, paused-for-human, failed).
+6. When all PRs have been processed, the command reports the outcome for each PR (`merged_clean`, `merged_auto`, `merged_human`, `skipped_not_ready`, `skipped_conflict`, or `failed`).
 
 **Outcome**:
 - All PRs the human approved for merging are merged into `develop` (or explicitly noted as skipped or pending human resolution).
@@ -105,41 +105,17 @@ When the orchestrator produces a batch of parallel PRs targeting `develop`, merg
 
 ## Business Rules
 
-### Approach Evaluation
+### Merge Requirements
 
-Three approaches were considered for solving the cascading-conflict problem:
+The merge approach must satisfy these product requirements:
 
-**Option A — Rebase each PR on top of the latest `develop` before merging**
-- Rewrites the PR branch's commit history to sit on top of `develop` after previous merges.
-- Pro: each subsequent merge is always a fast-forward; no conflict possible.
-- Con: rewrites commits, changes SHAs, breaks "Conversations" threads on the PR (reviewer comments become detached), and requires force-push to the PR branch. In collaborative workflows this is disruptive.
+- Individual PR commit history must remain visible in `develop`'s log (useful for audit, blame, and bisect)
+- PR conversation threads must not be disrupted by the merge process
+- The merge approach must not require force-pushing or rewriting PR branches
+- The merge approach must be the natural extension of the existing per-PR merge workflow
+- Each PR's contribution must be individually identifiable in `develop`'s history
 
-**Option B — Sequential merge commit with automated conflict resolution**
-- Merges PRs in order using merge commits. After the first merge updates `develop`, each subsequent PR's branch diverges. The command detects and auto-resolves trivial conflicts; pauses on non-trivial ones.
-- Pro: preserves full commit history; individual commit SHAs on PR branches remain stable; PR conversation threads intact. Merge commits are explicit and auditable in `develop`'s history.
-- Con: non-trivial conflicts still require human intervention, but that is unavoidable in any approach.
-
-**Option C — Temporary integration branch**
-- Create a temporary branch from `develop`, merge all PRs into it sequentially (resolving conflicts), then merge the integration branch into `develop` as a single commit.
-- Pro: `develop`'s history gets a clean single-merge-commit; individual conflicts resolved in isolation.
-- Con: hides individual PR contributions in `develop`'s log; adds an extra indirection layer; does not pair naturally with per-PR `post-merge-cleanup`; more complex to implement and reason about.
-
-**Recommendation: Option B (sequential merge commit with automated conflict resolution)**
-
-Option B is recommended because it:
-- Preserves individual PR commit history in `develop` (useful for `git log`, bisect, and blame)
-- Keeps PR conversation threads intact
-- Is the most natural extension of the existing per-PR merge workflow
-- Handles the primary pain point (CHANGELOG and doc conflicts) automatically
-- Does not require force-pushing or rewriting branches
-
-The spec is written around Option B. The implementation plan may revisit this if technical constraints emerge, noting Option A as an alternative for fully automated pipelines where commit-hash stability on PR branches is less important.
-
-### Merge Strategy
-
-- **Merge commits** are used (not squash, not rebase) so that each PR's individual commits are preserved in `develop`'s history.
-- This is particularly useful for batch PRs: reviewers can audit exactly what each PR contributed.
-- Squash merge is noted as an alternative if the team prefers a linear history; this choice should be documented as a configurable option in the implementation plan.
+The specific merge strategy (merge commit, squash, rebase) and implementation approach will be decided in the Implementation Plan. See the **Technical Notes for Implementation Plan** appendix for a preliminary evaluation of three candidate approaches.
 
 ### Merge Ordering
 
@@ -201,7 +177,7 @@ When a non-trivial conflict is encountered during a merge:
 - The command must display a confirmation prompt listing all candidate PRs before performing any merge. The human must acknowledge before merges begin.
 - Each per-PR merge result must be reported immediately (not just in the final summary) so the human can track progress.
 - Auto-resolved trivial conflicts must be explicitly described (which files, what was combined) — silent auto-resolution is not acceptable.
-- The final summary must clearly distinguish: merged clean, merged with auto-resolved conflicts, skipped (missing label), skipped (human chose to skip), and paused / failed (non-trivial conflict, unresolved).
+- The final summary must clearly distinguish: merged clean (`merged_clean`), merged with auto-resolved conflicts (`merged_auto`), merged after human-resolved conflict (`merged_human`), skipped because not ready (`skipped_not_ready`), skipped because conflict was aborted (`skipped_conflict`), and failed (`failed`).
 - When pausing for a non-trivial conflict, the command must display the conflicting file path(s) and a short excerpt of the conflict markers.
 - The command must not leave `develop` in a conflicted state under any circumstances. If a merge cannot be cleanly completed (human aborts resolution), the merge is aborted (`git merge --abort`) before proceeding.
 
@@ -237,7 +213,7 @@ This feature does not introduce new tracker statuses. Per-PR outcomes within the
 - [ ] The human is shown a confirmation prompt with the candidate PR list; no merge occurs until the human confirms.
 - [ ] A PR missing the `ready-for-human-review` label causes a warning and requires explicit human confirmation to include or exclude; it is never silently processed.
 - [ ] PRs are merged in the order defined by the Merge Ordering rule (non-CHANGELOG PRs first by lowest PR number; then CHANGELOG PRs by lowest PR number).
-- [ ] Merges use merge commit strategy (not squash, not rebase).
+- [ ] The merge approach satisfies the Merge Requirements: individual PR history visible, PR threads intact, no force-push, each PR individually identifiable in `develop`'s history.
 - [ ] A CHANGELOG conflict between two PRs is auto-resolved by combining all `[Unreleased]` entries from both sides; no entries are dropped; the auto-resolution is described in the output.
 - [ ] A documentation/protocol file conflict with non-overlapping changes is auto-resolved; the output describes which files were combined.
 - [ ] A non-trivial conflict (code files, or overlapping doc changes) causes the command to pause, display the conflicting file(s) and conflict markers, and wait for the human to resolve.
@@ -254,8 +230,7 @@ This feature does not introduce new tracker statuses. Per-PR outcomes within the
 ## Out of Scope (MVP)
 
 - Merging release PRs (PRs targeting `main`). This command is scoped to PRs targeting `develop`.
-- Rebase strategy (Option A). Merge commits are used exclusively in MVP.
-- Temporary integration branch strategy (Option C).
+- Alternative merge strategies beyond what the implementation plan selects.
 - Merging PRs across different repositories or monorepo packages.
 - Automatically reopening or rebasing PRs that failed to merge; the command only reports failures.
 - Support for pull request queues or GitHub's merge queue feature.
@@ -268,3 +243,28 @@ This feature does not introduce new tracker statuses. Per-PR outcomes within the
 ## Open Questions
 
 <!-- All alignment questions were answered by the human. No open questions remain. -->
+
+---
+
+## Appendix: Technical Notes for Implementation Plan
+
+> This section is informational context for the implementation plan, not product requirements.
+
+Three approaches were evaluated for solving the cascading-conflict problem:
+
+**Option A — Rebase each PR on top of the latest `develop` before merging**
+- Rewrites the PR branch's commit history to sit on top of `develop` after previous merges.
+- Pro: each subsequent merge is always a fast-forward; no conflict possible.
+- Con: rewrites commits, changes SHAs, breaks PR conversation threads, and requires force-push. Disruptive in collaborative workflows.
+
+**Option B — Sequential merge commit with automated conflict resolution**
+- Merges PRs in order using merge commits. After the first merge updates `develop`, each subsequent PR's branch diverges. The command detects and auto-resolves trivial conflicts; pauses on non-trivial ones.
+- Pro: preserves full commit history; PR conversation threads intact. Merge commits are explicit and auditable.
+- Con: non-trivial conflicts still require human intervention (unavoidable in any approach).
+
+**Option C — Temporary integration branch**
+- Create a temporary branch from `develop`, merge all PRs into it sequentially, then merge the integration branch into `develop` as a single commit.
+- Pro: `develop`'s history gets a clean single-merge-commit.
+- Con: hides individual PR contributions; does not pair naturally with per-PR `post-merge-cleanup`; more complex.
+
+**Preliminary recommendation: Option B** — it best satisfies the Merge Requirements (individual PR history visible, PR threads intact, no force-push). The implementation plan should confirm or revise this choice.
