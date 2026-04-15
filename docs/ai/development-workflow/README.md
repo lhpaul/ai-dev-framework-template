@@ -403,7 +403,6 @@ Review platforms are declared in `.ai-dev-workflow.yaml` under `review.platforms
 
 - `scripts/development-workflow/pr-review-loop.sh`
 - `scripts/development-workflow/pr-ci-loop.sh`
-- `scripts/development-workflow/batch-merge.sh`
 
 ### Release Summary
 

@@ -121,7 +121,8 @@ cmd_discover() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --prs)
-        explicit_prs="${2:-}"
+        [ $# -ge 2 ] && [ -n "${2:-}" ] || die "--prs requires a comma-separated value (e.g. --prs 101,102)"
+        explicit_prs="$2"
         shift 2
         ;;
       *)
@@ -146,20 +147,32 @@ cmd_discover() {
   trap "rm -rf '$pr_list_file' '$no_changelog_file' '$changelog_file' '$meta_cache_dir'" EXIT INT TERM
 
   if [ -n "$explicit_prs" ]; then
-    # Parse comma-separated list; strip leading '#' if provided
+    # Parse comma-separated list; strip leading '#' and validate numeric.
     local IFS=','
     for raw in $explicit_prs; do
-      printf '%s\n' "${raw#\#}" >> "$pr_list_file"
+      local pr_id="${raw#\#}"
+      # Reject non-numeric tokens to prevent path traversal via cache file names.
+      case "$pr_id" in
+        ''|*[!0-9]*) die "Invalid PR number '${pr_id}' — must be a positive integer" ;;
+      esac
+      printf '%s\n' "$pr_id" >> "$pr_list_file"
     done
   else
-    # Auto-discover PRs labeled ready-for-human-review targeting develop
+    # Auto-discover PRs labeled ready-for-human-review targeting develop.
+    # Distinguish a real API failure (exit non-zero + no output) from an
+    # empty result (exit 0 + no output) so API errors are not silently
+    # treated as DISCOVERY_RESULT=none.
+    local gh_exit=0
     gh pr list \
       --base "$TARGET_BASE" \
       --label "ready-for-human-review" \
       --state open \
       --json number \
       --jq '.[].number' \
-      2>/dev/null > "$pr_list_file" || true
+      2>/dev/null > "$pr_list_file" || gh_exit=$?
+    if [ "$gh_exit" -ne 0 ] && [ ! -s "$pr_list_file" ]; then
+      die "gh pr list failed (exit ${gh_exit}) — check gh authentication and network connectivity"
+    fi
   fi
 
   if [ ! -s "$pr_list_file" ]; then
@@ -239,7 +252,8 @@ cmd_merge() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --pr)
-        pr_num="${2:-}"
+        [ $# -ge 2 ] && [ -n "${2:-}" ] || die "--pr requires a PR number value"
+        pr_num="$2"
         shift 2
         ;;
       *)
@@ -250,24 +264,39 @@ cmd_merge() {
 
   [ -z "$pr_num" ] && usage
 
+  # Validate numeric (same guard as cmd_discover to prevent cache path issues).
+  case "$pr_num" in
+    ''|*[!0-9]*) die "Invalid PR number '${pr_num}' — must be a positive integer" ;;
+  esac
+
   require_gh
 
   print_kv MERGE_PR_NUMBER "$pr_num"
 
+  # merge_die: emit structured failure output before exiting so the agent
+  # protocol always receives MERGE_RESULT=failed + ERROR_MESSAGE, not just
+  # MERGE_PR_NUMBER with no MERGE_RESULT (which would violate the output contract).
+  merge_die() {
+    print_kv MERGE_RESULT "failed"
+    print_kv_escaped ERROR_MESSAGE "$*"
+    echo "ERROR: $*" >&2
+    exit 2
+  }
+
   # Fetch branch name for this PR
   local branch
   branch="$(gh pr view "$pr_num" --json headRefName --jq '.headRefName' 2>/dev/null)" || \
-    die "Could not fetch branch for PR #${pr_num}"
+    merge_die "Could not fetch branch for PR #${pr_num}"
 
   # Ensure local develop is current
   git checkout "$TARGET_BASE" >/dev/null 2>&1 || \
-    die "Could not check out '${TARGET_BASE}' — ensure the working tree is clean and the branch exists locally"
+    merge_die "Could not check out '${TARGET_BASE}' — ensure the working tree is clean and the branch exists locally"
   git pull --ff-only origin "$TARGET_BASE" >/dev/null 2>&1 || \
-    die "Could not fast-forward local '${TARGET_BASE}' from origin — resolve divergence manually"
+    merge_die "Could not fast-forward local '${TARGET_BASE}' from origin — resolve divergence manually"
 
   # Fetch the PR's head branch
   git fetch origin "$branch" >/dev/null 2>&1 || \
-    die "Could not fetch origin/${branch}"
+    merge_die "Could not fetch origin/${branch}"
 
   # Attempt the merge (capture output; the 'if' absorbs the non-zero exit code
   # so set -e does not fire on a failed merge).
