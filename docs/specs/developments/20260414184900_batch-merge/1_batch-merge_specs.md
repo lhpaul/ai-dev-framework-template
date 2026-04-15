@@ -44,7 +44,7 @@ When the orchestrator produces a batch of parallel PRs targeting `develop`, merg
    c. If the merge has conflicts that are all classified as trivial (CHANGELOG entries or documentation/protocol files), the command auto-resolves them and completes the merge.
    d. If the merge has any non-trivial conflict, the command pauses and asks the human to resolve it, then resumes after the human confirms resolution.
    e. After each successful merge, the command runs `post-merge-cleanup` for that branch.
-6. When all PRs have been processed, the command reports the final outcome for each PR (merged, skipped, paused-for-human, failed).
+6. When all PRs have been processed, the command reports the outcome for each PR (merged, skipped, paused-for-human, failed).
 
 **Outcome**:
 - All PRs the human approved for merging are merged into `develop` (or explicitly noted as skipped or pending human resolution).
@@ -72,20 +72,20 @@ When the orchestrator produces a batch of parallel PRs targeting `develop`, merg
 
 ### Use Case 2: Orchestrator-invoked batch merge
 
-**Actor**: Portfolio Orchestrator (`/run-work` or `item-orchestrator`) acting autonomously after all PRs in a batch reach `ready-for-human-review`
+**Actor**: Portfolio Orchestrator (`/run-work` or `item-orchestrator`) preparing a batch merge after all PRs in a batch reach `ready-for-human-review`
 
-**Trigger**: The orchestrator detects that every PR in a batch has reached `ready-for-human-review` and is authorized to start the batch-merge flow.
+**Trigger**: The orchestrator detects that every PR in a batch has reached `ready-for-human-review` and initiates the batch-merge validation flow.
 
 **Preconditions**:
 - All PRs in the current batch are expected to be labeled `ready-for-human-review`
-- The orchestrator has explicit authority to merge (i.e., the human previously approved autonomous merging for this batch, or the project's workflow configuration enables it)
 
 **Steps**:
-1. The orchestrator invokes the batch-merge capability after detecting all batch PRs have `ready-for-human-review`.
+1. The orchestrator detects all batch PRs have `ready-for-human-review` and prepares the batch-merge flow (discovers candidates, determines merge order, validates readiness).
 2. If any PR in the batch is missing `ready-for-human-review`, the orchestrator does NOT proceed — it warns the human and waits for confirmation before continuing.
-3. The orchestrator runs the same merge procedure as the human-invoked case (Use Case 1), with all decisions that would otherwise require human input instead resulting in escalation back to the human.
-4. For trivial conflicts (CHANGELOG entries, documentation files), the orchestrator auto-resolves without human confirmation.
-5. For non-trivial conflicts, the orchestrator pauses and escalates to the human.
+3. The orchestrator presents the validated merge plan to the human and requests explicit approval to execute the merges. The human must confirm before any merge occurs.
+4. Once the human approves, the orchestrator runs the same merge procedure as the human-invoked case (Use Case 1).
+5. For trivial conflicts (CHANGELOG entries, documentation files), the orchestrator auto-resolves without additional human confirmation.
+6. For non-trivial conflicts, the orchestrator pauses and escalates to the human.
 
 **Outcome**:
 - Same as Use Case 1.
@@ -98,6 +98,7 @@ When the orchestrator produces a batch of parallel PRs targeting `develop`, merg
 
 **Considerations**:
 - The orchestrator-invoked path is a stretch goal; the human-invoked path (Use Case 1) is the primary deliverable.
+- The orchestrator prepares and validates the batch but does not merge autonomously — the human must explicitly approve the merge execution. This aligns with the repository governance rule that humans perform merges.
 - The orchestrator must not silently skip the readiness check — if any PR is not `ready-for-human-review`, the command must warn and require human confirmation.
 
 ---
@@ -154,7 +155,7 @@ This ordering minimizes the total number of conflict resolutions needed.
 
 The following conflict types are classified as **trivial** and auto-resolved without human confirmation:
 
-1. **CHANGELOG.md `[Unreleased]` section**: When two PRs each added entries under `[Unreleased]`, the command merges the entry lists by including all unique entries from both sides, ordered by the merge order. No entries are dropped. The human is notified of what was combined in the post-merge summary.
+1. **CHANGELOG.md `[Unreleased]` section**: When two PRs each added entries under `[Unreleased]`, the command merges the entry lists by including all unique entries from both sides, ordered chronologically by PR merge sequence (entries from the PR merged first appear first, followed by entries from the PR merged second). No entries are dropped. The human is notified of what was combined in the post-merge summary.
 
 2. **Protocol / documentation files** (e.g., files under `docs/`, `.cursor/`, `.codex/`): When two PRs each modified documentation-only files with non-overlapping line ranges, the command applies both changes. If the changes overlap, the conflict is treated as **non-trivial** and escalated to the human.
 
@@ -179,9 +180,8 @@ When a non-trivial conflict is encountered during a merge:
 
 ### Post-Merge Cleanup Integration
 
-- After each successful merge, `post-merge-cleanup` is run for the merged branch.
-- This includes: fetching origin, checking out `develop`, pulling, deleting the local branch, and updating the issue tracker status (using the branch-type-to-status table).
-- `post-merge-cleanup` failures are reported but do not halt the remaining merges.
+- After each successful merge, `post-merge-cleanup` is run for the merged branch (see existing `post-merge-cleanup` protocol for exact steps and side effects).
+- If cleanup fails, the failure is reported but does not halt the remaining merges.
 
 ### Abortability
 
