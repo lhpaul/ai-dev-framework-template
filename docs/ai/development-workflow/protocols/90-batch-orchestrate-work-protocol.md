@@ -338,12 +338,12 @@ If any PR is still in progress or labeled `needs-fixes`, continue supervising (S
    ```
 
 2. **Revalidate readiness from discovery output**:
-   - If any PR returned `PR_READY_LABEL=false`, warn the human and require an explicit include-or-skip decision before proceeding. Do not proceed silently with any unready PR.
+   - If any PR returned `PR_READY_LABEL=false`, warn the human and require an explicit include-or-skip decision before proceeding. Remove any skipped PRs from the merge list and carry them forward as `skipped_not_ready` for the final summary. Do not proceed silently with any unready PR.
    - If any PR's `PR_LABELS` still contains `needs-fixes`, stop the handoff and return to Step 5 supervision for that PR. A `needs-fixes` PR must not be merged even if human supervision approved the batch earlier.
 
 3. **Present the validated merge plan to the human** and require explicit approval before any merge starts. The human must confirm before the orchestrator invokes `94-batch-merge-protocol.md`.
 
-4. **Once the human approves**, follow `docs/ai/development-workflow/protocols/94-batch-merge-protocol.md` starting from **Step 4** (the sequential merge loop). The merge plan confirmation (Protocol 94 Step 3) has already been satisfied by Step 5.5.3 above. Pass the ordered PR list from discovery output.
+4. **Once the human approves**, follow `docs/ai/development-workflow/protocols/94-batch-merge-protocol.md` starting from **Step 4** (the sequential merge loop). The merge plan confirmation (Protocol 94 Step 3) has already been satisfied by Step 5.5.3 above. Pass only the approved ordered PR list after Step 5.5.2 filtering, and include skipped entries in the final summary.
 
 5. **Include the batch-merge summary** (Step 5 of Protocol 94) in the orchestrator's Step 6 summary output.
 

@@ -283,10 +283,24 @@ cmd_merge() {
     exit 2
   }
 
-  # Fetch branch name for this PR
-  local branch
-  branch="$(gh pr view "$pr_num" --json headRefName --jq '.headRefName' 2>/dev/null)" || \
-    merge_die "Could not fetch branch for PR #${pr_num}"
+  # Revalidate the PR immediately before merging. A PR may have been
+  # retargeted, closed, or labeled needs-fixes since discovery.
+  local pr_json branch base state
+  pr_json="$(gh pr view "$pr_num" --json headRefName,baseRefName,state,labels 2>/dev/null)" || \
+    merge_die "Could not fetch metadata for PR #${pr_num}"
+
+  branch="$(printf '%s' "$pr_json" | jq -r '.headRefName')"
+  base="$(printf '%s' "$pr_json" | jq -r '.baseRefName')"
+  state="$(printf '%s' "$pr_json" | jq -r '.state')"
+
+  [ "$base" = "$TARGET_BASE" ] || \
+    merge_die "PR #${pr_num} targets '${base}', not '${TARGET_BASE}'"
+  [ "$state" = "OPEN" ] || \
+    merge_die "PR #${pr_num} is not open (state: ${state})"
+
+  if printf '%s' "$pr_json" | jq -e '.labels[].name | select(. == "needs-fixes")' >/dev/null 2>&1; then
+    merge_die "PR #${pr_num} is labeled needs-fixes"
+  fi
 
   # Ensure local develop is current
   git checkout "$TARGET_BASE" >/dev/null 2>&1 || \
