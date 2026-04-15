@@ -129,6 +129,7 @@ Follow the "PR feedback tracking and comments" subsection of Step 7 in `91-orche
 - **Ledger bootstrap:** Before starting Step 7, seed the PR feedback ledger with **all** open blocking findings visible on the PR across its full history (not only comments timestamped after the current `HEAD`). That way a fresh run does not declare clean while a code bug from an earlier commit on the branch is still open. Align with the pre-flight rules above. Note: `pr-review-loop.sh` performs a **stale findings recovery** for Devin — when Devin does not review the current HEAD (no check run), the script scans the full PR history for unresolved findings and reports `needs_fixes` with reason `stale_findings`.
 - Maintain a PR feedback ledger tracking all blocking findings across cycles (keyed by `(platform, path, body_snippet)`).
 - After each fixer push, post a **fix commit comment** on the PR listing which findings that commit resolved and any remaining open findings.
+- After each fixer push, **reply to each addressed inline review comment** on the PR to mark it as resolved (e.g., `gh api repos/{owner}/{repo}/pulls/<pr>/comments/<id>/replies -f body="Fixed in commit \`<sha>\`."`). This is mandatory — unresolved inline comments cause confusion when humans review the PR on GitHub.
 - When the loop terminates, post a **final summary table** on the PR with all findings and their statuses (`resolved` / `unresolved`).
 - If the result is `skipped` (no platforms configured), do not post a summary comment.
 
