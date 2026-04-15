@@ -121,6 +121,12 @@ Check:
 - CHANGELOG and workflow-specific artifacts are updated when required (spec/plan-only PRs are exempt; fixes to unreleased work update existing entries rather than adding new ones; in parallel batches, only the designated last item updates CHANGELOG per protocol 90 Step 3.6)
 - New patterns are justified and consistent with the codebase
 
+Additional checks for **shell scripts** (`*.sh`):
+- Option parsing validates that required values are present before `shift`
+- All error paths emit structured output consistent with the script's output contract
+- User-supplied input (PR numbers, branch names) is validated before interpolation into file paths or commands
+- `|| true` does not silently swallow failures from external commands (e.g., `gh`, `git`) that the caller needs to know about
+
 Typical `blocking` issues:
 - Incorrect behavior
 - Security flaw
