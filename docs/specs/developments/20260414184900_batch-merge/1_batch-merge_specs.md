@@ -39,7 +39,7 @@ When the orchestrator produces a batch of parallel PRs targeting `develop`, merg
    - If the human confirms include, the PR proceeds with an explicit "not fully reviewed" notation.
 4. The command determines the merge order (see Business Rules — Merge Ordering).
 5. For each PR in order:
-   a. The command attempts to merge into `develop` using a merge commit strategy.
+   a. The command attempts to merge the PR into `develop`.
    b. If the merge is clean, it succeeds immediately.
    c. If the merge has conflicts that are all classified as trivial (CHANGELOG entries or documentation/protocol files), the command auto-resolves them and completes the merge.
    d. If the merge has any non-trivial conflict, the command pauses and asks the human to resolve it, then resumes after the human confirms resolution.
@@ -144,7 +144,7 @@ When a non-trivial conflict is encountered during a merge:
 1. The command pauses the merge for that PR.
 2. The command clearly states which files are in conflict and what the conflicting sections are.
 3. The human is asked to resolve the conflict in their editor and then signal the command to resume (e.g., by running `git merge --continue` manually, then confirming in the command interface).
-4. Once the human signals resolution, the command continues with the merge commit and proceeds to `post-merge-cleanup` and remaining PRs.
+4. Once the human signals resolution, the command completes the merge and proceeds to `post-merge-cleanup` and remaining PRs.
 5. If the human cannot resolve the conflict and chooses to abort, the PR is skipped (the merge is abandoned with `git merge --abort`), and the command continues with remaining PRs. The skipped PR is noted in the final summary.
 
 ### Readiness Gate
@@ -202,7 +202,7 @@ This feature does not introduce new tracker statuses. Per-PR outcomes within the
 
 - **Logs / Output**: The command produces inline progress output for each PR: merge attempt started, merge result (clean / auto-resolved / conflict detected), conflict details on pause, resume confirmation, `post-merge-cleanup` result.
 - **Final Summary**: A structured end-of-run summary is always printed, regardless of whether all merges succeeded.
-- **Audit trail**: Each merge is a standard git merge commit on `develop`; the commit message should reference the PR number and branch name so the audit trail is visible in `git log`.
+- **Audit trail**: Each merge on `develop` should reference the PR number and branch name so the audit trail is visible in `git log`.
 - **Issue tracker updates**: `post-merge-cleanup` updates the issue tracker status for each merged PR (same as the existing `post-merge-cleanup` command behavior).
 
 ---
