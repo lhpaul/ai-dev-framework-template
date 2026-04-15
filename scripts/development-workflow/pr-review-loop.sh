@@ -953,8 +953,8 @@ run_coderabbit_review() {
       local is_paused
       is_paused="$(
         gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-          | jq --arg bot "$bot_login" '
-              [.[] | select(.user.login == $bot)] | sort_by(.created_at) | last // empty
+          | jq -s -r --arg bot "$bot_login" '
+              [.[][] | select(.user.login == $bot)] | sort_by(.created_at) | last // empty
               | if (.body // "") | test("Reviews paused|review paused"; "i") then "1" else "0" end
             '
       )"
