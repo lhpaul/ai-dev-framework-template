@@ -9,6 +9,8 @@
 
 **Approach**: Split the batch-merge feature into a deterministic shell script (`batch-merge.sh`) that handles PR discovery, merge ordering, local merge attempts on `develop`, and structured status output, paired with an agent-side protocol (`94-batch-merge-protocol.md`) that drives the readiness gate, human prompts, conflict classification/resolution, push and remote-branch cleanup, `post-merge-cleanup`, and summary output. Use local `git merge --no-ff` as the only merge path so each PR remains individually identifiable in `develop` and GitHub can recognize the PR as merged when the resulting `develop` history is pushed. Agent entry points (Claude Code command, Cursor command, Codex skill) all point to the same protocol.
 
+**Policy note — agent-executed merges**: The baseline workflow rule is "humans merge PRs — agents open them." Batch-merge is an approved exception: the agent executes `git merge` locally, but only after the human explicitly confirms the merge plan (Use Case 1) or explicitly approves the orchestrator's merge proposal (Use Case 2). The human remains the decision-maker; the agent is the executor. The spec (approved in PR #129) defines this governance model.
+
 **Estimated complexity**: M
 **Rationale**: Medium because the shell script has moderate complexity (PR discovery via `gh`, merge ordering logic, conflict detection, cleanup integration) and the protocol requires careful orchestration of human interaction points, but there are no database, API, or frontend layers involved — just shell scripting and markdown protocol authoring.
 
