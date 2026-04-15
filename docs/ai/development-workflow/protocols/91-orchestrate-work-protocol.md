@@ -505,7 +505,7 @@ If all configured platforms have reviewed the latest commit and no blocking unre
 | Non-draft check fails | Run `gh pr ready`, then re-run checklist |
 | Label check fails (implementation PR) | Apply `ready-for-regression`, then re-run checklist |
 | Blocking unresolved comment found | Add to ledger, dispatch fixer, push, then return to Step 7a |
-| Reviewer bot has not yet reviewed the latest commit | Wait up to `max_wait` for the bot to post, then re-run checklist |
+| Reviewer bot has not yet reviewed the latest commit | Wait up to `max_wait` for the bot to post, then re-run checklist. If the bot still has not posted after a second `max_wait`, escalate to human — do not apply `ready-for-human-review` |
 
 ---
 
