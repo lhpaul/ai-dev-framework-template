@@ -52,7 +52,7 @@
        - **CHANGELOG.md `[Unreleased]` section**: auto-resolve by reading both sides of the conflict markers, combining all unique entries (entries from the already-merged side first, then entries from the incoming PR), writing the resolved content, staging, and completing the merge commit. Report `merged_auto` with details of what was combined. *Maps to: AC 6*
        - **Documentation/protocol files** (files under `docs/`, `.cursor/`, `.codex/`): if changes are in non-overlapping line ranges, auto-resolve by accepting both changes. If overlapping, treat as non-trivial. *Maps to: AC 7*
        - **Non-trivial conflicts**: display the conflicting file paths and a short excerpt of the conflict markers. Ask the human to resolve in their editor and signal when done. After human signals, verify resolution (`git diff --check`), complete the merge, and report `merged_human`. If the human chooses to abort, run `git merge --abort` to return `develop` to pre-merge state, report `skipped_conflict`, and continue with remaining PRs. *Maps to: AC 8, AC 9, AC 10*
-    5. After each successful merge (`merged_clean`, `merged_auto`, or `merged_human`): push `develop`, verify via `gh pr view` that GitHub now reports the PR as merged, delete the remote branch if it still exists, run the `post-merge-cleanup` flow for the merged branch, and report the cleanup result. Do not use `gh pr close` because the PR must remain a merged PR, not a closed-unmerged PR. *Maps to: AC 5, AC 11*
+    5. After each successful merge (`merged_clean`, `merged_auto`, or `merged_human`): push `develop`, verify via `gh pr view` that GitHub now reports the PR as merged, delete the remote branch if it still exists, then run post-merge cleanup and report the result. **Implementation note**: the batch-merge flow merges via `origin/<branch>` without creating a local branch, but `post-merge-cleanup.sh` requires a local branch to exist. The protocol should either (a) create a temporary local branch before invoking the script (`git branch <branch> origin/<branch>`) so it can be deleted by the script, or (b) handle cleanup directly (fetch, pull, delete remote branch, update issue tracker) without delegating to the script. The implementer should choose the approach that minimizes code duplication. Issue tracker status updates (per the branch-type-to-status table) must also happen here — either via the script/protocol delegation or as a direct step. Do not use `gh pr close` because the PR must remain a merged PR, not a closed-unmerged PR. *Maps to: AC 5, AC 11*
     6. At any point, if the human requests abort: stop processing remaining PRs, mark them `not_attempted`. *Maps to: AC 15*
   - **Step 5: Final summary** — display a structured summary table listing every candidate PR with its outcome code (`merged_clean`, `merged_auto`, `merged_human`, `skipped_not_ready`, `skipped_conflict`, `failed`, `not_attempted`). Include details of any auto-resolved conflicts. *Maps to: AC 12*
   - **Orchestrator-invoked mode**: a note that when called from the orchestrator (protocol 90), the same flow applies — the orchestrator passes the PR list, and the protocol still requires human confirmation at Step 3 and human resolution at Step 4. *Maps to: AC 14*
@@ -69,7 +69,7 @@
 
 ### Documentation Updates
 
-- [ ] **`AGENTS.md`** — Add `batch-merge` row to the **Workflow Commands** table (between "Run reviewer loop (PR)" and "Advance One Item" or at the end of the workflow commands section) and to the **Maintenance Commands** table if appropriate. The row should list: `/batch-merge` for Claude Code, `/batch-merge` for Cursor, `batch-merge` skill for Codex.
+- [ ] **`AGENTS.md`** — Add `batch-merge` row to the **Workflow Commands** table (between "Run reviewer loop (PR)" and "Advance One Item" or at the end of the workflow commands section). The row should list: `/batch-merge` for Claude Code, `/batch-merge` for Cursor, `batch-merge` skill for Codex.
 
 - [ ] **`docs/ai/development-workflow/README.md`** — Add `batch-merge` to the workflow command tables and add a reference to `94-batch-merge-protocol.md` in the protocol/command reference sections.
 
@@ -116,7 +116,7 @@ No database seed data required. Testing requires:
 
 ## Documentation Updates
 
-- [ ] `AGENTS.md` — Add `batch-merge` to the Workflow Commands table and Maintenance Commands table
+- [ ] `AGENTS.md` — Add `batch-merge` to the Workflow Commands table
 - [ ] `docs/ai/development-workflow/README.md` — Add `batch-merge` to the workflow command tables and reference `94-batch-merge-protocol.md`
 - [ ] `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — Add the batch-merge handoff step for merge-ready batches
 - [ ] `scripts/development-workflow/README.md` — Add `batch-merge.sh` to the script listing
