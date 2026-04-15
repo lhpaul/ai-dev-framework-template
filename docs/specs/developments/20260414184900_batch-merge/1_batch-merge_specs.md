@@ -44,7 +44,7 @@ When the orchestrator produces a batch of parallel PRs targeting `develop`, merg
    c. If the merge has conflicts that are all classified as trivial (CHANGELOG entries or documentation/protocol files), the command auto-resolves them and completes the merge.
    d. If the merge has any non-trivial conflict, the command pauses and asks the human to resolve it, then resumes after the human confirms resolution.
    e. After each successful merge, the command runs `post-merge-cleanup` for that branch.
-6. When all PRs have been processed, the command reports the outcome for each PR (`merged_clean`, `merged_auto`, `merged_human`, `skipped_not_ready`, `skipped_conflict`, or `failed`).
+6. When all PRs have been processed (or the batch is aborted), the command reports the outcome for each PR (`merged_clean`, `merged_auto`, `merged_human`, `skipped_not_ready`, `skipped_conflict`, `failed`, or `not_attempted`).
 
 **Postconditions**:
 - All PRs the human approved for merging are merged into `develop` (or explicitly noted as skipped or pending human resolution).
@@ -195,6 +195,7 @@ This feature does not introduce new tracker statuses. Per-PR outcomes within the
 | `skipped_not_ready` | Skipped (not ready) | PR skipped because it lacked `ready-for-human-review` and human chose to exclude it |
 | `skipped_conflict` | Skipped (conflict aborted) | PR skipped because human could not resolve conflict and chose to abort the merge |
 | `failed` | Failed | PR merge failed for an unexpected reason |
+| `not_attempted` | Not attempted | PR was not yet processed when the human aborted the batch |
 
 ---
 
@@ -220,10 +221,11 @@ This feature does not introduce new tracker statuses. Per-PR outcomes within the
 - [ ] After the human signals conflict resolution, the command resumes the merge and continues with remaining PRs.
 - [ ] If the human aborts a conflict resolution, the merge is abandoned (`git merge --abort`) and the PR is noted as skipped; remaining PRs continue.
 - [ ] After each successful merge, `post-merge-cleanup` runs for the merged branch and its result is reported.
-- [ ] The final summary lists every candidate PR with its outcome (`merged_clean`, `merged_auto`, `merged_human`, `skipped_not_ready`, `skipped_conflict`, or `failed`).
+- [ ] The final summary lists every candidate PR with its outcome (`merged_clean`, `merged_auto`, `merged_human`, `skipped_not_ready`, `skipped_conflict`, `failed`, or `not_attempted`).
 - [ ] In auto-discovery mode, if no `ready-for-human-review` PRs exist, the command exits cleanly with an informational message and no side effects. When explicit PR numbers are provided, the command proceeds to per-PR readiness checks regardless of label status.
 - [ ] The command works as a Claude Code slash command (`/batch-merge`), a Cursor command, and a Codex skill.
 - [ ] In orchestrator-invoked mode, any PR missing `ready-for-human-review` causes a warning and requires an explicit human decision (exclude or include). The command must not proceed silently with any unready PR.
+- [ ] The human can abort the entire batch merge at any point; already-merged PRs remain merged, remaining PRs are marked `not_attempted`, and the command reports the final state of all candidate PRs.
 
 ---
 
