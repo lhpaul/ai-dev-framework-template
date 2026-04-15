@@ -323,9 +323,10 @@ Verify all of the following. If any check fails, the PR is **not ready** — tre
 If a check fails:
 
 1. Log the specific failure in your retrospective notes (see "Retrospective notes during supervision" below).
-2. Add the `needs-fixes` label to the PR: `gh pr edit <pr_number> --add-label "needs-fixes"`.
-3. Redispatch / resume the Work Item Runner for that item to address the gap.
-4. Re-run this verification after the next Work Item Runner return.
+2. Remove `ready-for-human-review` if it is present: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.
+3. Add the `needs-fixes` label to the PR: `gh pr edit <pr_number> --add-label "needs-fixes"`.
+4. Redispatch / resume the Work Item Runner for that item to address the gap.
+5. Re-run this verification after the next Work Item Runner return.
 
 Do not consider the batch complete until every dispatched item has reached a real terminal condition.
 
