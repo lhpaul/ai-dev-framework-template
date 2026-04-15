@@ -956,10 +956,14 @@ run_coderabbit_review() {
       )"
       if [ "${paused_count:-0}" -gt 0 ]; then
         echo "INFO: CodeRabbit reviews are paused — posting @coderabbitai review to trigger a fresh review" >&2
-        gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1 || true
-        coderabbit_retrigger_attempted=1
-        # Reset the elapsed timer to give the retrigger time to complete.
-        elapsed=0
+        if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
+          coderabbit_retrigger_attempted=1
+          # Reset the elapsed timer to give the retrigger time to complete.
+          elapsed=0
+        else
+          echo "WARN: failed to post retrigger comment — will not reset timer" >&2
+          coderabbit_retrigger_attempted=1
+        fi
         sleep "$poll_interval"
         elapsed=$((elapsed + poll_interval))
         continue
