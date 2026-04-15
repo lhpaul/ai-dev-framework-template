@@ -77,9 +77,8 @@ When the orchestrator produces a batch of parallel PRs targeting `develop`, merg
 **Trigger**: The orchestrator detects that every PR in a batch has reached `ready-for-human-review` and is authorized to start the batch-merge flow.
 
 **Preconditions**:
-- All PRs in the current batch are labeled `ready-for-human-review`
+- All PRs in the current batch are expected to be labeled `ready-for-human-review`
 - The orchestrator has explicit authority to merge (i.e., the human previously approved autonomous merging for this batch, or the project's workflow configuration enables it)
-- No PR in the batch is missing `ready-for-human-review`
 
 **Steps**:
 1. The orchestrator invokes the batch-merge capability after detecting all batch PRs have `ready-for-human-review`.
