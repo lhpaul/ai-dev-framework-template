@@ -337,7 +337,9 @@ If any PR is still in progress or labeled `needs-fixes`, continue supervising (S
    ./scripts/development-workflow/batch-merge.sh discover --prs <num1,num2,...>
    ```
 
-2. **Warn about any unready PR**: if any PR returned `PR_READY_LABEL=false`, warn the human and require an explicit include-or-skip decision for each unready PR before proceeding. Do not proceed silently with any unready PR.
+2. **Revalidate readiness from discovery output**:
+   - If any PR returned `PR_READY_LABEL=false`, warn the human and require an explicit include-or-skip decision before proceeding. Do not proceed silently with any unready PR.
+   - If any PR's `PR_LABELS` still contains `needs-fixes`, stop the handoff and return to Step 5 supervision for that PR. A `needs-fixes` PR must not be merged even if human supervision approved the batch earlier.
 
 3. **Present the validated merge plan to the human** and require explicit approval before any merge starts. The human must confirm before the orchestrator invokes `94-batch-merge-protocol.md`.
 

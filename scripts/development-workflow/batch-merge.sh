@@ -294,14 +294,18 @@ cmd_merge() {
   git pull --ff-only origin "$TARGET_BASE" >/dev/null 2>&1 || \
     merge_die "Could not fast-forward local '${TARGET_BASE}' from origin — resolve divergence manually"
 
-  # Fetch the PR's head branch
-  git fetch origin "$branch" >/dev/null 2>&1 || \
-    merge_die "Could not fetch origin/${branch}"
+  # Fetch via the pull-request ref (works for both same-repo and fork PRs;
+  # `refs/pull/<N>/head` is always available via `origin` on GitHub regardless
+  # of whether the head branch belongs to the same repo or a fork).
+  local pr_head_ref="refs/pull/${pr_num}/head"
+  local merge_ref="FETCH_HEAD"
+  git fetch origin "$pr_head_ref" >/dev/null 2>&1 || \
+    merge_die "Could not fetch ${pr_head_ref} from origin"
 
   # Attempt the merge (capture output; the 'if' absorbs the non-zero exit code
   # so set -e does not fire on a failed merge).
   local merge_output
-  if merge_output="$(git merge --no-ff --no-edit "origin/${branch}" 2>&1)"; then
+  if merge_output="$(git merge --no-ff --no-edit -m "Merge PR #${pr_num} (${branch})" "$merge_ref" 2>&1)"; then
     print_kv MERGE_RESULT "clean"
     return 0
   fi
