@@ -212,7 +212,7 @@ Auto-resolution procedure:
 
 #### Documentation / protocol files — potentially trivial
 
-Applies when a conflicted file's path starts with `docs/`, `.cursor/`, or `.codex/`.
+Applies when a conflicted file's path starts with `docs/`, `.claude/`, `.cursor/`, or `.codex/`.
 
 Check whether the changes are in **non-overlapping line ranges**:
 

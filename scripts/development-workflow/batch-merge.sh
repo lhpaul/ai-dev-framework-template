@@ -212,7 +212,11 @@ cmd_discover() {
       [ -z "$pr_num" ] && continue
       order=$((order + 1))
       local meta
-      meta="$(fetch_pr_meta "$pr_num")"
+      if ! meta="$(fetch_pr_meta "$pr_num")"; then
+        echo "WARNING: could not fetch metadata for PR #${pr_num} during output — skipping" >&2
+        order=$((order - 1))
+        continue
+      fi
       printf '%s\n' "$meta"
       print_kv PR_ORDER "$order"
       echo "---"
