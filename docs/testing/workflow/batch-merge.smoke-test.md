@@ -255,7 +255,7 @@ Each checkbox maps to an acceptance criterion from the spec.
 - [ ] AC 11: `post-merge-cleanup` runs after each successful merge
 - [ ] AC 12: Final summary lists every PR with correct outcome code
 - [ ] AC 13: Command works as Claude Code command, Cursor command, and Codex skill; auto-discovery with no ready PRs exits cleanly
-- [ ] AC 14: Orchestrator-invoked mode requires human confirmation for unready PRs
+- [ ] AC 14: Orchestrator-invoked mode requires human confirmation for unready PRs *(stretch goal — see Known Limitations)*
 - [ ] AC 15: Abort stops future merges; already-merged PRs stay; remaining marked `not_attempted`
 
 ---
