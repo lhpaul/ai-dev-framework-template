@@ -96,13 +96,13 @@ When dispatching a subagent for this item, include a short “Tracker Work Item 
 | Plan in Review | Tracker **Plan in Review** — plan PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
 | Plan branch pushed, no PR yet | Branch exists on local / remote / worktree | Run the plan review gate via `REVIEW.md` / `02-review-implementation-plan-protocol.md`, open the PR, then finish PR readiness |
 | Plan Ready | Plan PR is merged | Set tracker status to **In Development**, then run `03-implement-development-protocol.md` |
-| In Development | Tracker **In Development** — feature/fix PR not yet human-ready | Continue implementation branch/PR work (Step 7a, 7, 8) until tracker moves to **Development in Review** |
+| In Development | Tracker **In Development** — feature/fix PR not yet human-ready | Continue implementation branch/PR work (Step 7a, 7, 8, 8a) until tracker moves to **Development in Review** |
 | Development in Review | Tracker **Development in Review** — feature/fix PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
-| Dev branch pushed, no PR yet | Branch exists on local / remote / worktree | Open draft PR, run the internal review gate (Step 7a), run `gh pr ready` to convert to non-draft, then run automated reviewer loop (Step 7) and CI loop (Step 8) |
+| Dev branch pushed, no PR yet | Branch exists on local / remote / worktree | Open draft PR, run the internal review gate (Step 7a), run `gh pr ready` to convert to non-draft, then run automated reviewer loop (Step 7), CI loop (Step 8), and PR readiness gate (Step 8a) |
 | Draft PR open, internal review pending | PR is draft and the relevant internal review gate has not run yet or has open findings | Run the stage-specific internal review gate (Step 7a); apply fixes, push, repeat until clean. Once APPROVED, run `gh pr ready` to convert to non-draft |
-| Non-draft PR open, no readiness label, external review not yet run | PR is non-draft (converted after Step 7a APPROVED), external review not yet run | Run Step 7 (external automated reviewers) and Step 8 (CI) |
-| PR open (non-draft), no readiness label | PR exists and latest push has not fully cleared | Run Step 7 and Step 8 until clean or escalated |
-| PR labeled `needs-fixes` | Human or automated systems requested changes | Address feedback, push, then run Step 7a, Step 7, and Step 8 |
+| Non-draft PR open, no readiness label, external review not yet run | PR is non-draft (converted after Step 7a APPROVED), external review not yet run | Run Step 7 (external automated reviewers), Step 8 (CI), and Step 8a (PR readiness gate) |
+| PR open (non-draft), no readiness label | PR exists and latest push has not fully cleared | Run Step 7, Step 8, and Step 8a until clean or escalated |
+| PR labeled `needs-fixes` | Human or automated systems requested changes | Address feedback, push, then run Step 7a, Step 7, Step 8, and Step 8a |
 | PR labeled `ready-for-human-review` | — | Wait — human review / merge required |
 
 ### Pre-dispatch branch check
@@ -155,7 +155,7 @@ Run the next deterministic action for the selected item, then immediately re-eva
 
 Expected chain:
 
-`creator -> draft PR opened -> internal review gate with all internal reviewers (Step 7a) -> gh pr ready -> automated reviewer loop (Step 7) -> regression label (Step 7b, implementation PRs only) -> CI loop (Step 8) -> readiness label / tracker status -> wait or escalation`
+`creator -> draft PR opened -> internal review gate with all internal reviewers (Step 7a) -> gh pr ready -> automated reviewer loop (Step 7) -> regression label (Step 7b, implementation PRs only) -> CI loop (Step 8) -> PR readiness gate (Step 8a) -> readiness label / tracker status -> wait or escalation`
 
 After any subagent finishes, determine whether the item still has a deterministic next action:
 
@@ -418,9 +418,94 @@ Interpret the result as follows:
 
 | Result | Action |
 |---|---|
-| `green` | Apply `ready-for-human-review` (the PR is already non-draft from Step 7a); update the tracker status to `Spec in Review`, `Plan in Review`, or `Development in Review` based on branch type; remove `needs-fixes` if present; and report the PR as ready |
+| `green` | Proceed to Step 8a (PR readiness gate) before applying `ready-for-human-review` |
 | `red` | Apply `needs-fixes`, dispatch the matching fixer agent, wait for a push, then return to Step 7 |
 | `timeout` | Escalate to human; do not apply `ready-for-human-review` |
+
+---
+
+## Step 8a: PR Readiness Gate
+
+Run this gate **immediately after Step 8 returns `green`** and before applying `ready-for-human-review`. This is a hard gate — all checks must pass before the label is applied.
+
+### Checklist
+
+#### 1. Non-draft check
+
+```bash
+gh pr view <pr_number> --json isDraft --jq '.isDraft'
+# Must return: false
+```
+
+If the PR is still draft, run `gh pr ready <pr_number>` before continuing.
+
+#### 2. Label check (implementation PRs only)
+
+For PRs on branches `feature/*`, `fix/*`, `hotfix/*`, `refactor/*`: verify `ready-for-regression` is present.
+
+```bash
+gh pr view <pr_number> --json labels --jq '[.labels[].name] | contains(["ready-for-regression"])'
+# Must return: true
+```
+
+If the label is missing, apply it now:
+
+```bash
+gh pr edit <pr_number> --add-label "ready-for-regression"
+```
+
+Skip this sub-check for `spec/*` and `implementation-plan/*` PRs.
+
+#### 3. Review comment verification
+
+Query all review comments on the PR and verify no unresolved blocking comment exists from a configured review platform:
+
+```bash
+# List all review comments (inline code review comments)
+gh api repos/{owner}/{repo}/pulls/<pr_number>/comments --paginate \
+  --jq '[.[] | {id, user: .user.login, body: .body, path, line, created_at, in_reply_to_id}]'
+
+# Also list PR-level review thread comments
+gh api repos/{owner}/{repo}/pulls/<pr_number>/reviews --paginate \
+  --jq '[.[] | {id, user: .user.login, state, body, submitted_at}]'
+```
+
+For each comment from a configured reviewer bot (any platform listed under `review.platforms` in `.ai-dev-workflow.yaml`, including `coderabbit`, `devin`, `greptile`), classify it as **resolved** if ANY of the following is true:
+
+- The comment thread has a reply containing `✅` or explicitly acknowledging resolution (e.g., "Resolved", "Fixed", "Addressed") — from either the bot or a human
+- The comment was posted on a commit older than the HEAD commit of the PR **and** the latest completed review run from that platform returned `clean` (no new blocking findings)
+- The comment body would be classified as a **soft suggestion** by the blocking-vs-suggestion rules in Step 7 (every non-empty, non-code line starts with an advisory prefix such as `Consider`, `You might`, `An alternative`, `Optionally`, `It could be cleaner to`, `Perhaps`, `Maybe`, `You could`, `One option is`, or `Alternatively`)
+
+If any comment from a configured reviewer bot is not resolved by one of the above criteria, treat it as a **blocking unresolved comment** — do **not** apply `ready-for-human-review`. Instead:
+
+1. Add it to the PR feedback ledger (Step 7) with status `open`
+2. Dispatch the matching fixer agent (same as Step 7's fixer map) to address it
+3. Wait for the push, then return to Step 7a
+
+#### 4. Race condition window (async reviewer bots)
+
+Before declaring the PR ready, confirm that every configured review platform has posted **at least one review on the latest commit SHA**. If a platform has not yet commented on the latest commit, wait up to `max_wait` (Step 7 parameter, default 20 min) for it to do so before re-running the check.
+
+```bash
+# Get the latest commit SHA on the PR
+gh pr view <pr_number> --json headRefOid --jq '.headRefOid'
+
+# Get all reviews and check submission timestamps vs the latest commit push time
+gh api repos/{owner}/{repo}/pulls/<pr_number>/reviews --paginate \
+  --jq '[.[] | {user: .user.login, state, submitted_at, commit_id}]'
+```
+
+If all configured platforms have reviewed the latest commit and no blocking unresolved comments exist, proceed to apply `ready-for-human-review`.
+
+### Outcome
+
+| Outcome | Action |
+|---|---|
+| All checks pass | Apply `ready-for-human-review`; update tracker status to `Spec in Review`, `Plan in Review`, or `Development in Review` based on branch type; remove `needs-fixes` if present; report the PR as ready |
+| Non-draft check fails | Run `gh pr ready`, then re-run checklist |
+| Label check fails (implementation PR) | Apply `ready-for-regression`, then re-run checklist |
+| Blocking unresolved comment found | Add to ledger, dispatch fixer, push, then return to Step 7a |
+| Reviewer bot has not yet reviewed the latest commit | Wait up to `max_wait` for the bot to post, then re-run checklist |
 
 ---
 
@@ -436,7 +521,8 @@ When a human requests changes on a PR:
 6. Run Step 7 (external automated reviewers)
 7. Run Step 7b (implementation PRs only)
 8. Run Step 8 (CI loop)
-9. Reapply `ready-for-human-review` only when both loops are clean again
+9. Run Step 8a (PR readiness gate) — all label, non-draft, and review comment checks must pass
+10. Reapply `ready-for-human-review` only when all gates are clean
 
 See `92-pr-readiness-signal-protocol.md` for label definitions.
 
