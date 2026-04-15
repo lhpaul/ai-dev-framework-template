@@ -18,7 +18,7 @@ Key rules:
 
 - Do not start any merge until the human explicitly confirms the merge plan (Step 3 of the protocol).
 - For each PR, run `./scripts/development-workflow/batch-merge.sh merge --pr <number>`.
-- Auto-resolve CHANGELOG and non-overlapping documentation conflicts; pause and escalate non-trivial conflicts.
+- Auto-resolve CHANGELOG conflicts and documentation file conflicts where changes are non-overlapping (different line ranges); pause and escalate all other conflicts.
 - After each successful merge: push `develop`, verify GitHub shows the PR as `MERGED`, delete the remote branch, run `./scripts/development-workflow/post-merge-cleanup.sh <branch>`.
 - Never leave `develop` in a conflicted state.
 - Always print the final summary table (Step 5) regardless of outcome.

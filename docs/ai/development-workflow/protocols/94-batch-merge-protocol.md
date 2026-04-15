@@ -50,7 +50,7 @@ Parse the output. Each PR candidate is a block of `KEY=VALUE` lines terminated b
 
 Print a summary table so the human can see what was discovered before any gate or merge:
 
-```
+```text
 Candidate PRs for batch merge
 ──────────────────────────────────────────────────────────────────────────────
  Order │  PR #  │ Title                             │ Branch              │ Labels
@@ -91,7 +91,7 @@ After Step 2, update the candidate list: remove any PRs the human chose to skip 
 
 Display the final merge plan (only PRs approved so far):
 
-```
+```text
 Merge plan (will be executed in this order)
 ──────────────────────────────────────────
   1. PR #101  feature/101-widget     (no CHANGELOG conflict expected)
@@ -171,6 +171,10 @@ After a clean or resolved merge, in order:
 
    ```bash
    BRANCH="$(gh pr view <number> --json headRefName --jq '.headRefName')"
+   # Try origin/<branch> first; fall back to HEAD~1 if the remote branch was
+   # already deleted (e.g., repo has auto-delete enabled). HEAD~1 points to the
+   # pre-merge develop commit, not the PR's tip, but post-merge-cleanup.sh only
+   # needs the branch *name* to delete it — the commit it points to is irrelevant.
    git branch "$BRANCH" "origin/$BRANCH" 2>/dev/null || git branch "$BRANCH" HEAD~1 2>/dev/null || true
    ./scripts/development-workflow/post-merge-cleanup.sh "$BRANCH"
    ```
@@ -236,7 +240,8 @@ Any conflict that is not in the above categories, or a documentation file with o
    > - `path/to/file.sh`
    >
    > Conflict excerpt:
-   > ```
+   >
+   > ```text
    > <<<<<<< HEAD
    > [first 10 lines of HEAD side]
    > =======
@@ -295,7 +300,7 @@ Proceed to **4.2 Post-merge steps**.
 
 After all PRs have been processed (or the batch has been aborted), always print a structured summary:
 
-```
+```text
 Batch Merge Summary
 ──────────────────────────────────────────────────────────────────────────────
  PR #  │ Title                       │ Outcome

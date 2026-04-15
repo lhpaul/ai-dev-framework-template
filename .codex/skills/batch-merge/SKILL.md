@@ -8,12 +8,15 @@ description: Merge all ready PRs in a parallel batch into develop sequentially, 
 Follow `docs/ai/development-workflow/protocols/94-batch-merge-protocol.md` exactly.
 
 1. **Auto-discovery mode** (no explicit PR numbers): run:
+
    ```bash
    ./scripts/development-workflow/batch-merge.sh discover
    ```
+
    If `DISCOVERY_RESULT=none`, exit immediately with an informational message — no merges occur.
 
 2. **Explicit PR list** (PR numbers provided by the human): run:
+
    ```bash
    ./scripts/development-workflow/batch-merge.sh discover --prs <num1,num2,...>
    ```
@@ -39,7 +42,7 @@ Follow `docs/ai/development-workflow/protocols/94-batch-merge-protocol.md` exact
 Key rules:
 
 - Never leave `develop` in a conflicted state — always run `git merge --abort` if a conflict cannot be resolved.
-- Never force-push or rebase PR branches.
-- Never use `gh pr close` — the merge must be recognized by GitHub as `MERGED`.
+- Do not force-push or rebase PR branches.
+- Do not use `gh pr close` — the merge must be recognized by GitHub as `MERGED`.
 - Already-merged PRs stay merged even if the human aborts mid-batch.
 - `post-merge-cleanup` failures are reported but do not stop remaining merges.
