@@ -50,7 +50,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 
 **Maps to**: AC 1, AC 2
 
-1. Restore `ready-for-human-review` labels on PRs A, B, C, and E.
+1. Restore `ready-for-human-review` labels on PRs A, B, C, E, and F.
 2. Run `/batch-merge` with no arguments.
 
 **Expected result**:
