@@ -302,21 +302,22 @@ After a Work Item Runner returns:
 
 ### Step 5.1: Post-Dispatch PR Verification
 
-Before reporting any PR as ready for human review, **independently verify the actual PR state** via `gh pr view`. Do not trust Work Item Runner self-reports alone. Run this check for every implementation PR that a Work Item Runner reports as ready:
+Before reporting any PR as ready for human review, **independently verify the actual PR state** via `gh pr view`. Do not trust Work Item Runner self-reports alone. Run this check for every PR that a Work Item Runner reports as ready:
 
 ```bash
-gh pr view <pr_number> --json baseRefName,labels,state,statusCheckRollup,reviews
+gh pr view <pr_number> --json baseRefName,isDraft,labels,statusCheckRollup,comments
 ```
 
 Verify all of the following. If any check fails, the PR is **not ready** — treat it the same as `needs-fixes` and return the item to active supervision:
 
 | Check | Pass condition |
 |---|---|
-| Base branch | `develop` for `feature/*`, `fix/*`, `refactor/*`; `main` for `hotfix/*` |
+| Base branch | `develop` for `feature/*`, `fix/*`, `refactor/*`, `spec/*`, `implementation-plan/*`; `main` for `hotfix/*` |
+| PR is non-draft | `isDraft: false` |
 | `ready-for-human-review` label | Present |
-| `ready-for-regression` label | Present on `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PRs |
+| `ready-for-regression` label | Present on `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PRs; not required for `spec/*`, `implementation-plan/*` |
 | No `needs-fixes` label | Absent |
-| Automated reviewer loop summary comment | At least one PR comment containing "Automated Reviewer Loop Summary" or "No blocking PR feedback" |
+| Automated reviewer loop summary comment | At least one PR comment containing "Automated Reviewer Loop Summary" or "No blocking PR feedback" (skip this check for `spec/*` and `implementation-plan/*` PRs when Step 7 was `skipped` because no review platforms are configured) |
 | CI checks | All required status checks are green (`state: SUCCESS` or `conclusion: success`) |
 
 If a check fails:
