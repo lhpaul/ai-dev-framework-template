@@ -29,6 +29,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 | PR C (with CHANGELOG) | Targets `develop`, has `ready-for-human-review` label, adds a different entry under `[Unreleased]` in `CHANGELOG.md`. Higher PR number than PR B. |
 | PR D (no label) | Targets `develop`, does NOT have `ready-for-human-review` label. Used for readiness gate testing. |
 | PR E (conflict) | Targets `develop`, has `ready-for-human-review` label, modifies a non-doc code file that will conflict with an earlier PR (e.g., same line in a script). Used for non-trivial conflict testing. |
+| PR F (doc conflict) | Targets `develop`, has `ready-for-human-review` label, modifies a documentation file (e.g., a file under `docs/`) in non-overlapping line ranges compared to another PR that also modifies the same file. Used for doc file auto-resolution testing. |
 
 ---
 
@@ -141,6 +142,22 @@ Create the following test PRs before running the smoke test. Each PR should be a
 
 ---
 
+### Step 7b: Documentation file conflict auto-resolution
+
+**Maps to**: AC 7
+
+1. Set up PR F so it modifies a documentation file (e.g., `docs/some-doc.md`) in non-overlapping line ranges compared to changes already in `develop` (from a previously merged PR that also touched the same file in different sections).
+2. Run `/batch-merge` with PR F.
+3. Confirm the merge plan.
+
+**Expected result**:
+- The command detects a conflict in the documentation file.
+- Since the changes are in non-overlapping line ranges, the conflict is classified as trivial and auto-resolved.
+- The command reports `merged_auto` with a description of which files were combined.
+- `post-merge-cleanup` runs for PR F's branch.
+
+---
+
 ### Step 8: Non-trivial conflict — human resolves
 
 **Maps to**: AC 8, AC 9
@@ -167,15 +184,14 @@ Create the following test PRs before running the smoke test. Each PR should be a
 
 **Maps to**: AC 10
 
-1. Create a new PR (PR F) that will conflict with `develop` on a non-doc file.
-2. Run `/batch-merge` with PR F.
+1. Create a new PR (PR F2) that will conflict with `develop` on a non-doc file.
+2. Run `/batch-merge` with PR F2.
 3. Confirm the merge plan.
 4. When the conflict is detected and the command pauses, choose to abort the merge for this PR.
 
 **Expected result**:
-- The merge is canceled (`git merge --abort`).
-- `develop` is returned to its pre-merge state (verify with `git status` — clean working tree).
-- PR F is reported as `skipped_conflict`.
+- The merge is canceled and `develop` is returned to its pre-merge state (verify with `git status` — clean working tree).
+- PR F2 is reported as `skipped_conflict`.
 - The command continues with any remaining PRs (or reports the final summary if PR F was the last).
 
 ---
@@ -250,7 +266,7 @@ No database seed data. Test PRs must be created manually per the Test Data secti
 
 | Entity | Scenario | How to load |
 |---|---|---|
-| Test PRs A-E | Various merge scenarios | Create manually with `gh pr create` targeting `develop` |
+| Test PRs A-F | Various merge scenarios | Create manually with `gh pr create` targeting `develop` |
 | Test PRs G-I | Abort scenario | Create manually with `gh pr create` targeting `develop` |
 
 ---

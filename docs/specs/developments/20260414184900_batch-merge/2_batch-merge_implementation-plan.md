@@ -96,7 +96,7 @@
 14. Orchestrator-invoked mode — human confirmation still required (AC 14)
 15. Post-push verification — after each successful local merge, GitHub shows the PR as merged (not closed-unmerged) before cleanup proceeds (AC 5)
 
-**Smoke test runbook**: [`docs/testing/workflow/batch-merge.smoke-test.md`](../../testing/workflow/batch-merge.smoke-test.md)
+**Smoke test runbook**: [`docs/testing/workflow/batch-merge.smoke-test.md`](../../../testing/workflow/batch-merge.smoke-test.md)
 
 ---
 
