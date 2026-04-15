@@ -1,0 +1,7 @@
+interface:
+  display_name: "Batch merge"
+  short_description: "Merge all ready PRs in a parallel batch into develop, auto-resolving trivial conflicts."
+  default_prompt: "Run batch merge: discover all PRs labeled ready-for-human-review targeting develop (or use the explicit PR list I provide), confirm the merge plan with me, then merge them sequentially, auto-resolving CHANGELOG and documentation conflicts and pausing for non-trivial ones."
+
+policy:
+  allow_implicit_invocation: false

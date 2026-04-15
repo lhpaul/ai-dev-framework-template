@@ -202,6 +202,7 @@ The sections below keep this document usable as a master reference after the nar
 | Run reviewer loop | `/run-reviewer-loop` command (or `automated-reviewer-loop` agent) | `/run-reviewer-loop` | `workflow-reviewer-loop` skill | `docs/ai/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` |
 | Advance one item | `/run-item-work` command (or `item-orchestrator` agent) | `/run-item-work` | `workflow-item-orchestrator` skill | `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` |
 | Orchestrate portfolio | `/run-work` command (or `orchestrator` agent) | `/run-work` | `workflow-orchestrator` skill | `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
+| Batch merge | `/batch-merge` | `/batch-merge` | `batch-merge` skill | `docs/ai/development-workflow/protocols/94-batch-merge-protocol.md` |
 | Prepare release | `/prepare-release` | `/prepare-release` | — | `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md` |
 | Retrospective | `/retrospective` command | `/retrospective` | `workflow-retrospective` skill | `docs/ai/development-workflow/protocols/06-retrospective-protocol.md` |
 
@@ -402,6 +403,7 @@ Review platforms are declared in `.ai-dev-workflow.yaml` under `review.platforms
 
 - `scripts/development-workflow/pr-review-loop.sh`
 - `scripts/development-workflow/pr-ci-loop.sh`
+- `scripts/development-workflow/batch-merge.sh`
 
 ### Release Summary
 
@@ -452,6 +454,7 @@ Protocol prefixes are stable family identifiers, not a promise of contiguous num
 - `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`
 - `docs/ai/development-workflow/protocols/92-pr-readiness-signal-protocol.md`
 - `docs/ai/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`
+- `docs/ai/development-workflow/protocols/94-batch-merge-protocol.md`
 
 ### Review Contract
 
@@ -470,6 +473,7 @@ Repository helpers:
 - `scripts/development-workflow/workflow-next-action.sh`
 - `scripts/development-workflow/pr-review-loop.sh`
 - `scripts/development-workflow/pr-ci-loop.sh`
+- `scripts/development-workflow/batch-merge.sh`
 
 ### Integration Guides
 

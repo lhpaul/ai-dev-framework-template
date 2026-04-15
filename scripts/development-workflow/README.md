@@ -175,3 +175,27 @@ Usage:
 
 Use this when:
 - You have merged a feature/plan/spec PR and deleted the remote branch, and want to clean up the local branch and update develop.
+
+### `batch-merge.sh`
+
+Deterministic merge pipeline for parallel batch PRs. Handles PR discovery (auto or explicit), metadata collection, merge ordering (non-CHANGELOG PRs first by ascending PR number, then CHANGELOG PRs by ascending PR number), and single-PR merge execution with structured key-value output.
+
+Usage:
+
+```bash
+# Discovery mode — auto-discover all ready-for-human-review PRs targeting develop
+./scripts/development-workflow/batch-merge.sh discover
+
+# Discovery mode — explicit PR list
+./scripts/development-workflow/batch-merge.sh discover --prs 101,102,103
+
+# Per-PR merge — attempt to merge one PR into develop (called in a loop by the agent)
+./scripts/development-workflow/batch-merge.sh merge --pr 101
+```
+
+Outputs structured `KEY=VALUE` lines. See the script header for the full output format.
+
+Use this when:
+- The agent protocol `94-batch-merge-protocol.md` is running a batch merge.
+- You want to inspect the merge ordering for a set of PRs before invoking the agent command.
+- Called by the `/batch-merge` Claude Code command, `/batch-merge` Cursor command, or the `batch-merge` Codex skill.
