@@ -34,7 +34,7 @@
   - **Output format**: structured key-value lines consumable by the agent (e.g., `PR_NUMBER=123`, `MERGE_RESULT=clean`, `CONFLICTED_FILES=CHANGELOG.md,docs/foo.md`, `PR_READY_LABEL=true`)
   - The script processes one PR per invocation (called in a loop by the agent protocol). This keeps git state transitions deterministic and lets the protocol own human-interaction steps.
 
-  *Maps to: AC 4 (merge ordering), AC 5 (merge requirements), AC 11 (post-merge-cleanup)*
+  *Maps to: AC 4 (merge ordering), AC 5 (merge requirements)*
 
 ### Protocols / Agent Docs
 

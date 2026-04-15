@@ -192,7 +192,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 **Expected result**:
 - The merge is canceled and `develop` is returned to its pre-merge state (verify with `git status` — clean working tree).
 - PR F2 is reported as `skipped_conflict`.
-- The command continues with any remaining PRs (or reports the final summary if PR F was the last).
+- The command continues with any remaining PRs (or reports the final summary if PR F2 was the last).
 
 ---
 
