@@ -54,7 +54,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 2. Run `/batch-merge` with no arguments.
 
 **Expected result**:
-- The command discovers PRs A, B, C, and E and displays a candidate summary table showing PR number, title, branch, labels, and readiness status.
+- The command discovers PRs A, B, C, E, and F and displays a candidate summary table showing PR number, title, branch, labels, and readiness status.
 - The command asks for confirmation before proceeding. No merge has occurred yet.
 - Cancel/decline the confirmation to avoid merging (we will test merging in later steps).
 
