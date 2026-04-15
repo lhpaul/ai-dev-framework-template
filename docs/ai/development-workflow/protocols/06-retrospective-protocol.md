@@ -91,7 +91,35 @@ Conversation findings are often the highest-value source — weight them accordi
 
 Analyze all gathered data and produce a categorized list of improvement opportunities.
 
-### Categorization taxonomy
+### 3a. Query existing backlog for related items
+
+Before categorizing findings, query the configured issue tracker for existing open items that may overlap with what was discovered. This prevents duplicate issues and surfaces opportunities to expand existing backlog items instead.
+
+Use the `issue_tracker.provider` from `.ai-dev-workflow.yaml` to determine the query method:
+
+**`github_issues` or `github_projects`**:
+```bash
+# Fetch open issues with the workflow label
+gh issue list --label "workflow" --state open --limit 50 --json number,title,body
+
+# Also fetch recent open issues without label filter (catches unlabeled items)
+gh issue list --state open --limit 100 --json number,title,body
+```
+
+**`linear`**: Use the Linear MCP tool to list open issues in the relevant team or project.
+
+**`jira`**, **`clickup`**, **`notion`**: Use their respective MCP tools or APIs to fetch open backlog items.
+
+**`none`** or provider unavailable: Skip this substep and note in the presentation that no tracker check was performed.
+
+For each issue retrieved, extract its title and a short summary. After categorizing all findings in Step 3b below, match each finding against the retrieved items by topic similarity (keywords, file paths, affected protocol, root cause). Record:
+
+- `related_item`: issue number and title, if a match is found
+- `no_related_item`: explicitly noted when no match is found
+
+Carry this mapping into Step 4 (presentation) and Step 5 (action execution).
+
+### 3b. Categorization taxonomy
 
 Assign each opportunity exactly one category:
 
@@ -154,6 +182,7 @@ Present the categorized findings to the human in a structured format:
 **Observed**: [What happened — specific, factual description]
 **Impact**: [What it caused or could cause if unaddressed]
 **Recommended action**: Address now | Add to backlog
+**Related existing item**: #NNN — [title] | No existing backlog item found
 
 ---
 
@@ -190,13 +219,39 @@ Execute each chosen action in the order the human specified (or in the order the
 
 ### Add to backlog
 
-Create a GitHub issue directly using `gh issue create`:
+First, check whether a related existing item was found in Step 3a for this finding.
+
+**If a related existing item exists**: offer the human a choice before creating a new issue:
+
+> Finding #N has a related existing item: **#NNN — [title]**.
+> Would you like to:
+> - **Expand existing**: add the new observation to the existing issue's body
+> - **Create new**: create a separate issue (use when the scope is distinct enough to warrant tracking separately)
+
+If the human chooses **Expand existing**, append the new observation to the existing issue body:
+
+```bash
+# Read current body, append new section, then edit
+gh issue edit <number> --body "$(gh issue view <number> --json body -q '.body')
+
+---
+
+## Additional observation from retrospective on [date]
+
+[What was observed — specific, factual]
+
+[Impact if unaddressed]"
+```
+
+Report the updated issue with its URL.
+
+**If no related existing item exists** (or the human chose **Create new**), create a new GitHub issue:
 
 ```bash
 gh issue create \
   --title "[Descriptive title of the improvement opportunity]" \
   --body "[Body — see format below]" \
-  --label "enhancement"
+  --label "workflow"
 ```
 
 Issue body format:
