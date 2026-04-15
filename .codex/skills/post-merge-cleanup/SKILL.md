@@ -26,4 +26,11 @@ description: After a development PR is merged and the remote branch deleted, syn
    - **Other trackers**: Follow the same idea — set the issue to the appropriate status per the table above. See `docs/ai/development-workflow/integrations/issue-tracker.md` and the tracker-specific doc under `docs/ai/development-workflow/integrations/`.
    - If no issue identifier is present in the branch name or no tracker is in use, skip this step.
 
+**After cleanup and tracker update — suggest a retrospective if appropriate:**
+If this post-merge cleanup is the final action for a work item that was advanced in the current session (i.e., you drove the item through implementation, review, and merge in this conversation), suggest running a retrospective:
+
+> Would you like to run a retrospective on this session’s work?
+
+Only suggest this when the cleanup is for a standalone item run (not when called as part of a batch merge or orchestrator flow, which handle retrospectives at their own level). See `docs/ai/development-workflow/protocols/06-retrospective-protocol.md`.
+
 The script (step 1) fetches origin, checks out `develop`, pulls, and deletes the local branch with `git branch -D` (force-delete; safe because the branch is already merged on the remote). Do not change the order or skip steps.

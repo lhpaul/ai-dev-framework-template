@@ -431,6 +431,17 @@ Addressed **N** finding(s) from cycle M:
 
 If 0 findings were resolved: post a shorter note — "Pushed fixes for cycle M. 0 findings resolved so far — re-running review to check."
 
+#### Resolve inline review comments
+
+After each fixer push, reply to each addressed inline review comment on the PR to mark it as resolved. Use `gh api` to post a reply to each comment whose ledger entry transitioned to `resolved`:
+
+```bash
+gh api "repos/{owner}/{repo}/pulls/<pr_number>/comments/<comment_id>/replies" \
+  -f body="Fixed in commit \`<short_sha>\`."
+```
+
+This is **mandatory** — do not skip this step. Unresolved inline comments cause confusion when humans review the PR on GitHub, even if the underlying issue was already fixed. When delegating to a fixer subagent, include explicit instructions to reply to each addressed comment.
+
 #### Final summary comment
 
 Post via `gh pr comment` when the loop reaches a terminal condition (`clean`, `escalate`, or `max_cycles`):
