@@ -264,17 +264,29 @@ gh pr create --draft --base develop --title "refactor([scope]): [short descripti
 
 **If scope expands during implementation**: Stop immediately. Report to the human. Do not silently expand scope.
 
-### Fast Track Steps
+### Step 1: Read Brief
 
-1. Read the brief. If the work item exists in an issue tracker, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for `In Development (Fast Track)` expectations.
-2. **Pre-implementation scope checklist** — complete before writing any code:
-   - **Enumerate all files** that need changes (list every file path explicitly).
-   - **For each file**, describe the specific changes needed.
-   - **Verify scope**: confirm all listed changes are within the issue's stated scope. Remove anything that is not.
-   - **Consider edge cases**: what if the branch already exists? What if this runs in a worktree? What are the failure modes?
-   - **Cross-reference related files**: if any changed file references or is referenced by others, confirm your changes are consistent.
-3. If no blocking ambiguity remains, proceed without an extra approval pause; otherwise stop and ask the human
-4. Branch from `develop` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without):
+Read the brief. If the work item exists in an issue tracker, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for `In Development (Fast Track)` expectations.
+
+### Step 1b: Pre-Implementation Scope Checklist
+
+Complete this checklist **before writing any code**. It takes 5–10 minutes and prevents review round-trips caused by missed files, scope drift, or inconsistencies with related files.
+
+1. **Enumerate all files** that need changes (list every file path explicitly).
+2. **For each file**, describe the specific changes needed.
+3. **Verify scope**: confirm all listed changes are within the issue's stated scope. Remove anything that is not.
+4. **Consider edge cases**: what if the branch already exists locally or remotely? What if this runs in a worktree? What are the failure modes?
+5. **Cross-reference related files**: if any changed file references or is referenced by others, confirm your changes are consistent.
+
+Do not proceed to Step 2 until this checklist is complete and all five points are answered.
+
+### Step 2: Ambiguity Check
+
+If no blocking ambiguity remains, proceed without an extra approval pause; otherwise stop and ask the human.
+
+### Step 3: Branch
+
+Branch from `develop` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without):
 
 ```bash
 git fetch origin
@@ -283,18 +295,37 @@ git pull origin develop
 git checkout -b fix/[branch-slug]
 ```
 
-5. Implement the fix
-6. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area
-7. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (skip if this fixes unreleased work that already has an entry — update the existing entry instead, or leave it unchanged if it already describes the correct behavior). **Parallel batch exception**: if `SKIP_CHANGELOG=true` was signaled in the handoff, skip this step (see protocol 90 Step 3.6)
-8. Commit: `fix([scope]): [description]`
-9. Push branch to remote
-10. Open a **draft** PR targeting `develop` using the same structure as Path 1 `### Step 8: Open PR (Draft)`, but with a **`fix(...)`** title and a fix-focused description (omit spec/plan links when none exist):
+### Step 4: Implement
+
+Implement the fix.
+
+### Step 5: Verify
+
+Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area.
+
+### Step 6: Update CHANGELOG
+
+Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (skip if this fixes unreleased work that already has an entry — update the existing entry instead, or leave it unchanged if it already describes the correct behavior). **Parallel batch exception**: if `SKIP_CHANGELOG=true` was signaled in the handoff, skip this step (see protocol 90 Step 3.6).
+
+### Step 7: Commit & Push
+
+```bash
+git add [files]
+git commit -m "fix([scope]): [description]"
+git push -u origin fix/[branch-slug]
+```
+
+### Step 8: Open PR (Draft)
+
+Open a **draft** PR targeting `develop` using the same structure as Path 1 `### Step 8: Open PR (Draft)`, but with a **`fix(...)`** title and a fix-focused description (omit spec/plan links when none exist):
 
 ```bash
 gh pr create --draft --base develop --title "fix([scope]): [description]" --body "..."
 ```
 
-11. Hand off to the Work Item Runner per Path 1 `### Step 9: Handoff to Work Item Runner`.
+### Step 9: Handoff to Work Item Runner
+
+Hand off to the Work Item Runner per Path 1 `### Step 9: Handoff to Work Item Runner`.
 
 ---
 
@@ -302,17 +333,29 @@ gh pr create --draft --base develop --title "fix([scope]): [description]" --body
 
 **Criteria**: Active production incident or critical security issue.
 
-### Hotfix Steps
+### Step 1: Read Brief
 
-1. Read the incident brief from the human
-2. Confirm it's a production-only issue (not a dev/staging issue)
-3. **Pre-implementation scope checklist** — complete before writing any code:
-   - **Enumerate all files** that need changes (list every file path explicitly).
-   - **For each file**, describe the specific changes needed.
-   - **Verify scope**: confirm all listed changes address the production incident directly. Remove anything that is not strictly necessary.
-   - **Consider edge cases**: what if the branch already exists? What is the minimal safe change? Are there related files that must stay consistent?
-   - **Cross-reference related protocols**: if the fix touches shared utilities or configuration files used by other flows, confirm consistency.
-4. Branch from `main` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without):
+Read the incident brief from the human.
+
+### Step 2: Confirm Production
+
+Confirm it's a production-only issue (not a dev/staging issue).
+
+### Step 2b: Pre-Implementation Scope Checklist
+
+Complete this checklist **before writing any code**. It takes 5–10 minutes and prevents review round-trips caused by missed files or scope creep in a production-critical context.
+
+1. **Enumerate all files** that need changes (list every file path explicitly).
+2. **For each file**, describe the specific changes needed.
+3. **Verify scope**: confirm all listed changes address the production incident directly. Remove anything that is not strictly necessary.
+4. **Consider edge cases**: what if the branch already exists locally or remotely? What is the minimal safe change? Are there related files that must stay consistent?
+5. **Cross-reference related protocols**: if the fix touches shared utilities or configuration files used by other flows, confirm consistency.
+
+Do not proceed to Step 3 until this checklist is complete and all five points are answered.
+
+### Step 3: Branch
+
+Branch from `main` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without):
 
 ```bash
 git fetch origin
@@ -321,12 +364,29 @@ git pull origin main
 git checkout -b hotfix/[branch-slug]
 ```
 
-5. Implement the minimal fix (do not bundle unrelated changes)
-6. Verify: build, lint, tests pass
-7. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (hotfixes fix released code, so a new entry is normally required). **Parallel batch exception**: if `SKIP_CHANGELOG=true` was signaled in the handoff, skip this step (see protocol 90 Step 3.6)
-8. Commit: `fix([scope]): [description] (hotfix)`
-9. Push branch to remote
-10. Open a **draft** PR targeting `main` by adapting Path 1 `### Step 8: Open PR (Draft)` for hotfix (`fix(...)` title with `(hotfix)` as needed, incident-focused body, target branch `main`):
+### Step 4: Implement
+
+Implement the minimal fix (do not bundle unrelated changes).
+
+### Step 5: Verify
+
+Verify: build, lint, tests pass.
+
+### Step 6: Update CHANGELOG
+
+Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (hotfixes fix released code, so a new entry is normally required). **Parallel batch exception**: if `SKIP_CHANGELOG=true` was signaled in the handoff, skip this step (see protocol 90 Step 3.6).
+
+### Step 7: Commit & Push
+
+```bash
+git add [files]
+git commit -m "fix([scope]): [description] (hotfix)"
+git push -u origin hotfix/[branch-slug]
+```
+
+### Step 8: Open PR (Draft)
+
+Open a **draft** PR targeting `main` by adapting Path 1 `### Step 8: Open PR (Draft)` for hotfix (`fix(...)` title with `(hotfix)` as needed, incident-focused body, target branch `main`):
 
 ```bash
 gh pr create --draft --base main --title "fix([scope]): [description] (hotfix)" --body "..."
@@ -334,8 +394,11 @@ gh pr create --draft --base main --title "fix([scope]): [description] (hotfix)" 
 
 **Important**: Use `--base main` for hotfixes (not `develop`). A hotfix merges to production first, then must be backported to `develop`.
 
-11. Hand off to the Work Item Runner per Path 1 `### Step 9: Handoff to Work Item Runner`.
-12. **After merge**: notify the human that a backport PR (main → develop) must be opened to prevent branch drift
+### Step 9: Handoff to Work Item Runner
+
+Hand off to the Work Item Runner per Path 1 `### Step 9: Handoff to Work Item Runner`.
+
+**After merge**: notify the human that a backport PR (main → develop) must be opened to prevent branch drift.
 
 ---
 
