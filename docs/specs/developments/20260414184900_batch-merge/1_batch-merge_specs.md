@@ -94,7 +94,7 @@ When the orchestrator produces a batch of parallel PRs targeting `develop`, merg
 - Same as Use Case 1 (reported in the orchestrator's summary).
 
 **Actions available**:
-- Human can intervene at any point to resolve non-trivial conflicts.
+- Same as Use Case 1 (confirm or adjust the candidate PR list, approve or skip unready PRs, resolve non-trivial conflicts, abort the entire batch merge at any time).
 
 **Considerations**:
 - The orchestrator-invoked path is a stretch goal; the human-invoked path (Use Case 1) is the primary deliverable.
