@@ -145,9 +145,9 @@ The spec is written around Option B. The implementation plan may revisit this if
 
 The command orders PRs for merging according to this priority (highest first):
 
-1. PRs without CHANGELOG changes — merge these first since they cannot cause CHANGELOG conflicts.
-2. Among CHANGELOG-touching PRs: lowest PR number (oldest) merges first. This is a stable, predictable order.
-3. Ties are broken by PR creation timestamp, earlier first.
+1. PRs without CHANGELOG changes — merge these first since they cannot cause CHANGELOG conflicts. Among these, lowest PR number (oldest) merges first.
+2. PRs with CHANGELOG changes — merge after all non-CHANGELOG PRs. Among these, lowest PR number (oldest) merges first.
+3. Ties (same PR number is impossible; this covers any future grouping) are broken by PR creation timestamp, earlier first.
 
 This ordering minimizes the total number of conflict resolutions needed.
 
@@ -237,7 +237,7 @@ This feature does not introduce new tracker statuses. Per-PR outcomes within the
 - [ ] Running `/batch-merge` (or equivalent) with no arguments discovers all PRs labeled `ready-for-human-review` and displays a candidate list before any merge is attempted.
 - [ ] The human is shown a confirmation prompt with the candidate PR list; no merge occurs until the human confirms.
 - [ ] A PR missing the `ready-for-human-review` label causes a warning and requires explicit human confirmation to include or exclude; it is never silently processed.
-- [ ] PRs are merged in the order defined by the Merge Ordering rule (non-CHANGELOG PRs first; among CHANGELOG PRs, lowest PR number first).
+- [ ] PRs are merged in the order defined by the Merge Ordering rule (non-CHANGELOG PRs first by lowest PR number; then CHANGELOG PRs by lowest PR number).
 - [ ] Merges use merge commit strategy (not squash, not rebase).
 - [ ] A CHANGELOG conflict between two PRs is auto-resolved by combining all `[Unreleased]` entries from both sides; no entries are dropped; the auto-resolution is described in the output.
 - [ ] A documentation/protocol file conflict with non-overlapping changes is auto-resolved; the output describes which files were combined.
