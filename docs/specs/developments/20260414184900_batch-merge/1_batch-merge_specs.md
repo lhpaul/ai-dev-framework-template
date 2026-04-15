@@ -177,7 +177,7 @@ When a non-trivial conflict is encountered during a merge:
 - The command must display a confirmation prompt listing all candidate PRs before performing any merge. The human must acknowledge before merges begin.
 - Each per-PR merge result must be reported immediately (not just in the final summary) so the human can track progress.
 - Auto-resolved trivial conflicts must be explicitly described (which files, what was combined) — silent auto-resolution is not acceptable.
-- The final summary must clearly distinguish: merged clean (`merged_clean`), merged with auto-resolved conflicts (`merged_auto`), merged after human-resolved conflict (`merged_human`), skipped because not ready (`skipped_not_ready`), skipped because conflict was aborted (`skipped_conflict`), and failed (`failed`).
+- The final summary must clearly distinguish: merged clean (`merged_clean`), merged with auto-resolved conflicts (`merged_auto`), merged after human-resolved conflict (`merged_human`), skipped because not ready (`skipped_not_ready`), skipped because conflict was aborted (`skipped_conflict`), failed (`failed`), and not attempted (`not_attempted`).
 - When pausing for a non-trivial conflict, the command must display the conflicting file path(s) and a short excerpt of the conflict markers.
 - The command must not leave `develop` in a conflicted state under any circumstances. If a merge cannot be cleanly completed (human aborts resolution), the merge is aborted (`git merge --abort`) before proceeding.
 
