@@ -32,8 +32,7 @@ Follow `docs/ai/development-workflow/protocols/94-batch-merge-protocol.md` exact
      - Documentation files (`docs/`, `.claude/`, `.cursor/`, `.codex/`): auto-resolve if non-overlapping; escalate if overlapping.
      - All other files (or overlapping doc changes): pause, show conflict markers, wait for human to resolve or abort.
    - On `MERGE_RESULT=failed`: report the error, mark `failed`, continue.
-   - After each successful merge: `git push origin develop`, verify GitHub shows `MERGED`, delete the remote branch, create a temporary local branch if needed, then run `./scripts/development-workflow/post-merge-cleanup.sh <branch>`.
-   - Update issue tracker status for each merged PR (same logic as `post-merge-cleanup` command).
+   - After each successful merge: `git push origin develop`, verify GitHub shows `MERGED`, delete the remote branch, create a temporary local branch if needed, then run `./scripts/development-workflow/post-merge-cleanup.sh <branch>` (git cleanup only — does not update the issue tracker).
 
 7. **Final summary**: always print a table listing every candidate PR with its outcome code (`merged_clean`, `merged_auto`, `merged_human`, `skipped_not_ready`, `skipped_conflict`, `failed`, `not_attempted`).
 
