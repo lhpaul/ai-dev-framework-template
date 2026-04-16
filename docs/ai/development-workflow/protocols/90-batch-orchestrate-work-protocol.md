@@ -68,14 +68,18 @@ From the tracker, collect for each open item:
 ```bash
 # For each candidate issue number, check if a merged PR already exists
 gh pr list --state merged --search "<issue-number>" --json number,title,headRefName \
-  --jq ".[] | select(.headRefName | test(\"<issue-number>\"))"
+  --jq ".[] | select(.headRefName | test(\"/<issue-number>($|-)\"))"
 ```
 
-If a merged PR is found for an item whose tracker status is not `Merged` or `Done`:
-1. Update the tracker status to `Merged`
-2. Close the issue if still open
-3. Exclude the item from the candidate list
-4. Report the stale status to the human: `⚠️ Issue #N was already merged (PR #M) but tracker showed [status]. Updated to Merged.`
+If a merged PR is found for an item whose tracker status is not already terminal:
+1. Inspect the `headRefName` of the merged PR to determine its branch type
+2. Apply the appropriate status transition per Step 10 of `91-orchestrate-work-protocol.md`:
+   - `spec/*` → Set tracker status to `Spec Ready`
+   - `implementation-plan/*` → Set tracker status to `Plan Ready`
+   - `feature/*` / `fix/*` / `refactor/*` / `hotfix/*` → Set tracker status to `Merged`
+3. Close the issue **only if it was an implementation branch** (feature/fix/refactor/hotfix)
+4. Exclude the item from the candidate list **only if it was an implementation branch** (a merged spec or plan PR means the item should advance to the next stage, not be excluded)
+5. Report the stale status to the human: `⚠️ Issue #N was already merged (PR #M) but tracker showed [old_status]. Updated to [new_status].`
 
 **If the tracker is unavailable** (no provider configured, API unreachable, or no MCP server available), **you MUST immediately warn the human** with a clear message such as:
 
