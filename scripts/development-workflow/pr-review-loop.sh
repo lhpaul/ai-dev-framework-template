@@ -931,7 +931,8 @@ run_coderabbit_review() {
     # Also check for CodeRabbit issue comments (summary comment) as activity signal.
     # Filter by since_iso so historical comments from prior pushes do not incorrectly
     # mark this HEAD cycle as having activity (which would suppress stale-findings recovery).
-    # Exclude "Reviews paused" comments as they are not an actual review; they are a pause marker.
+    # Exclude "Reviews paused" comments (pause marker) and "rate limit" comments (rate-limit
+    # marker) — neither represents a completed review and must not suppress rate-limit handling.
     if [ "$coderabbit_any_activity" -eq 0 ]; then
       local activity_count
       activity_count="$(
@@ -940,7 +941,8 @@ run_coderabbit_review() {
               [.[] | select(
                   .user.login == $bot and
                   .created_at > $since and
-                  ((.body // "") | test("Reviews paused|review paused"; "i") | not)
+                  ((.body // "") | test("Reviews paused|review paused"; "i") | not) and
+                  ((.body // "") | test("rate.?limit"; "i") | not)
               )] | length
             '
       )"
