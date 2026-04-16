@@ -98,6 +98,7 @@ Before categorizing findings, query the configured issue tracker for existing op
 Use the `issue_tracker.provider` from `.ai-dev-workflow.yaml` to determine the query method:
 
 **`github_issues` or `github_projects`**:
+
 ```bash
 # Fetch open issues with the workflow label
 gh issue list --label "workflow" --state open --limit 50 --json number,title,body
@@ -106,13 +107,21 @@ gh issue list --label "workflow" --state open --limit 50 --json number,title,bod
 gh issue list --state open --limit 100 --json number,title,body
 ```
 
-**`linear`**: Use the Linear MCP tool to list open issues in the relevant team or project.
+**`linear`**: Use the Linear MCP tool to list open issues in the relevant team or project. See [`integrations/linear.md`](../integrations/linear.md) for setup details.
 
-**`jira`**, **`clickup`**, **`notion`**: Use their respective MCP tools or APIs to fetch open backlog items.
+**`jira`**, **`clickup`**, **`notion`**: Use their respective MCP tools or APIs to fetch open backlog items (see integration guides in `docs/ai/development-workflow/integrations/` if available).
 
 **`none`** or provider unavailable: Skip this substep and note in the presentation that no tracker check was performed.
 
-For each issue retrieved, extract its title and a short summary. After categorizing all findings in Step 3b below, match each finding against the retrieved items by topic similarity (keywords, file paths, affected protocol, root cause). Record:
+For each issue retrieved, extract its title and a short description. After categorizing all findings in Step 3b below, match each finding against the retrieved items using these criteria (in priority order):
+
+1. **Exact match**: The finding's affected file path or protocol name appears in the existing item's title or body
+2. **Strong keyword overlap**: Three or more significant keywords (excluding stopwords like "the", "a", "is") appear in both the finding and the existing item title/body
+3. **Root-cause category match**: The finding and existing item share the same categorization taxonomy label (e.g., both are `workflow-process`) and describe overlapping symptoms
+
+When multiple existing items could match, prefer the most recently updated item. When no item meets at least criterion 2 or 3, record `no_related_item`. When match confidence is ambiguous (one weak criterion only), present both the potential match and "No strong existing item found" and let the human decide in Step 5.
+
+Record:
 
 - `related_item`: issue number and title, if a match is found
 - `no_related_item`: explicitly noted when no match is found
@@ -232,8 +241,9 @@ If the human chooses **Expand existing**, append the new observation to the exis
 
 ```bash
 # Read current body, append new section via temp file to avoid shell quoting issues
-gh issue view <number> --json body -q '.body' > /tmp/retro-issue-body.md
-cat >> /tmp/retro-issue-body.md <<'EOF'
+TEMP_FILE=$(mktemp)
+gh issue view <number> --json body -q '.body' > "$TEMP_FILE"
+cat >> "$TEMP_FILE" <<'EOF'
 
 ---
 
@@ -244,7 +254,8 @@ cat >> /tmp/retro-issue-body.md <<'EOF'
 [Impact if unaddressed]
 EOF
 
-gh issue edit <number> --body-file /tmp/retro-issue-body.md
+gh issue edit <number> --body-file "$TEMP_FILE"
+rm -f "$TEMP_FILE"
 ```
 
 Report the updated issue with its URL.
