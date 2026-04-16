@@ -59,7 +59,7 @@ This feature adds a retrospective analysis capability to the AI development work
 **Preconditions**: At least one PR was processed in the current session
 
 **Steps**:
-1. After presenting the batch or item summary, the agent suggests running a retrospective: *"Would you like to run a retrospective on this session's work?"*
+1. After the human confirms the batch PRs (or the item PR) have been merged (e.g., via `/post-merge-cleanup`, `/batch-merge`, or an explicit signal), the agent suggests running a retrospective: *"Would you like to run a retrospective on this session's work?"*
 2. If the human agrees, the agent runs the retrospective
 3. In addition to GitHub data (as in Use Case 1), the agent also analyzes the conversation history from the current session: manual interventions, human corrections, agent deviations from protocol, and friction points that were surfaced verbally
 4. The agent synthesizes all findings (GitHub + conversation) into a categorized list of improvement opportunities
@@ -80,7 +80,7 @@ This feature adds a retrospective analysis capability to the AI development work
 **Considerations**:
 - The agent suggests a retrospective only once per session at the end of a batch/item run
 - In protocol 91 (Work Item Runner), the suggestion is made only when the item was run standalone (not dispatched by a batch orchestrator). When dispatched by a batch orchestrator, the suggestion is suppressed to avoid double-triggering — the batch orchestrator handles it
-- In protocol 90 (Portfolio Orchestrator), the suggestion is always made after the batch summary
+- In protocol 90 (Portfolio Orchestrator), the suggestion is made after the human confirms the batch PRs have been merged — not immediately after the batch summary (which is presented when PRs reach `ready-for-human-review`, while the work is still awaiting human merge)
 - Conversation context is the richest source of findings; GitHub data alone is the fallback
 
 ---
@@ -173,7 +173,7 @@ This feature adds a retrospective analysis capability to the AI development work
 - The retrospective scope is limited to work from the current session or the PRs specified in the scope hint — no cross-session trend analysis
 - No persistent state is required or maintained between sessions
 - The `/retrospective` capability must be available as an invocable command across all three supported workflow platforms: Claude Code, Cursor, and Codex
-- The retrospective suggestion must be added to the batch orchestration summary (end of a batch run) and to the individual item summary (end of a standalone item run, not part of a batch)
+- The retrospective suggestion must not appear at the point the batch orchestration summary or item summary is displayed (those represent the `ready-for-human-review` terminal state, not completion). Instead, the suggestion is deferred until after the human confirms the PR(s) have been merged (via `/post-merge-cleanup`, `/batch-merge`, or an explicit merge signal)
 
 ---
 
@@ -187,8 +187,8 @@ This feature adds a retrospective analysis capability to the AI development work
 - [ ] When "Address now" is chosen but the agent assesses the opportunity as too complex to apply without a review loop, the agent recommends "Add to backlog" instead and explains why
 - [ ] When "Add to backlog" is chosen, the agent creates a GitHub issue directly with a descriptive title and body, and returns the issue URL
 - [ ] When invoked in the same session as a completed batch/item run, the retrospective also surfaces findings from the conversation history (manual interventions, human corrections, agent deviations)
-- [ ] Protocol 90 (batch orchestrator) suggests a retrospective after the Step 6 batch summary
-- [ ] Protocol 91 (work item runner) suggests a retrospective after the item summary only when the item was run standalone (not dispatched by a batch orchestrator)
+- [ ] Protocol 90 (batch orchestrator) does not suggest a retrospective at the Step 6 batch summary; instead defers the suggestion until after the human confirms the batch PRs have been merged (via `/batch-merge`, `/post-merge-cleanup`, or an explicit merge signal)
+- [ ] Protocol 91 (work item runner) does not suggest a retrospective immediately after the item summary; defers the suggestion until after the human confirms the PR has been merged; suppressed entirely when `BATCH_CONTEXT=true` (dispatched by a batch orchestrator)
 - [ ] The `/retrospective` command/skill is available in Claude Code, Cursor, and Codex following existing platform patterns
 - [ ] The agent never applies fixes or creates issues without the human's explicit choice
 - [ ] Before presenting findings, the agent queries the configured issue tracker for existing open items and annotates each finding with a related existing item reference (number and title) or "No existing backlog item found"; when "Add to backlog" is chosen and a related item exists, the agent offers to expand the existing item instead of creating a duplicate
