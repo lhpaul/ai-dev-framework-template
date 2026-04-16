@@ -41,7 +41,7 @@ This feature adds automated ShellCheck static analysis that runs on pull request
 **Considerations**:
 - The check must not run on PRs that touch only non-shell files (to avoid unnecessary CI noise), or if it does run, it must exit green when no shell files are changed.
 - The check must handle the case where no `.sh` files exist under the target path (exit green).
-- The check must not block PRs for `suggestion`-level ShellCheck findings; only findings at or above `warning` severity are blocking.
+- The check must not block PRs for `info` or `style`-level ShellCheck findings; only findings at or above `warning` severity are blocking.
 
 ---
 
