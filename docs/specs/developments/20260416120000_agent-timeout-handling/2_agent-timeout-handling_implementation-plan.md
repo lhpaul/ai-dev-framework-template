@@ -1,7 +1,7 @@
 # Agent Timeout Handling — Implementation Plan
 
 **Spec**: [`1_agent-timeout-handling_specs.md`](./1_agent-timeout-handling_specs.md)
-**Smoke test runbook**: [`docs/testing/workflow/agent-timeout-handling.smoke-test.md`](../../../../testing/workflow/agent-timeout-handling.smoke-test.md)
+**Smoke test runbook**: [`docs/testing/workflow/agent-timeout-handling.smoke-test.md`](../../../testing/workflow/agent-timeout-handling.smoke-test.md)
 
 ---
 
@@ -37,7 +37,7 @@
 2. All four acceptance criteria are verified by inspecting the changed files — maps to Acceptance Criteria 1–4
 3. Acceptance Criterion 5 (documentation-only) is satisfied by confirming no code/script/CI files were changed — maps to Acceptance Criterion 5
 
-**Smoke test runbook**: [`docs/testing/workflow/agent-timeout-handling.smoke-test.md`](../../../../testing/workflow/agent-timeout-handling.smoke-test.md)
+**Smoke test runbook**: [`docs/testing/workflow/agent-timeout-handling.smoke-test.md`](../../../testing/workflow/agent-timeout-handling.smoke-test.md)
 
 **Regression suite**: No regression suite exists in this repository.
 
