@@ -184,7 +184,7 @@ For each item that passed the Step 2 eligibility check:
 
    ```
    ✅ #N [slug]: already on board; status Writing Plan → no change (already in-flight)
-   ✅ #M [slug]: added to board; status Spec Ready → In Development
+   ✅ #M [slug]: added to board; status Plan Ready → In Development
    ✅ #K [slug]: already on board; status Backlog → Writing Plan
    ```
 
