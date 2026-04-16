@@ -77,19 +77,22 @@ if [[ "$TO_DELETE" =~ ^(fix|feature|hotfix|refactor)/([0-9]+)($|-) ]]; then
 fi
 
 if [ -n "$ISSUE_NUMBER" ]; then
-  ISSUE_STATE=$(gh issue view "$ISSUE_NUMBER" --json state --jq '.state' 2>/dev/null) || { echo "Warning: could not query issue #$ISSUE_NUMBER (gh command failed). Skipping issue close."; ISSUE_STATE=""; }
-  if [ "$ISSUE_STATE" = "OPEN" ]; then
-    # Find the merged PR for this branch
-    MERGED_PR=$(gh pr list --state merged --head "$TO_DELETE" --json number --jq '.[0].number // empty' 2>/dev/null || echo "")
-    if [ -n "$MERGED_PR" ]; then
-      CLOSE_COMMENT="Closed by PR #${MERGED_PR}."
-      echo "Closing issue #$ISSUE_NUMBER..."
-      gh issue close "$ISSUE_NUMBER" --comment "$CLOSE_COMMENT" 2>/dev/null || echo "Warning: could not close issue #$ISSUE_NUMBER"
+  if ISSUE_STATE=$(gh issue view "$ISSUE_NUMBER" --json state --jq '.state' 2>/dev/null); then
+    if [ "$ISSUE_STATE" = "OPEN" ]; then
+      # Find the merged PR for this branch
+      MERGED_PR=$(gh pr list --state merged --head "$TO_DELETE" --json number --jq '.[0].number // empty' 2>/dev/null || echo "")
+      if [ -n "$MERGED_PR" ]; then
+        CLOSE_COMMENT="Closed by PR #${MERGED_PR}."
+        echo "Closing issue #$ISSUE_NUMBER..."
+        gh issue close "$ISSUE_NUMBER" --comment "$CLOSE_COMMENT" 2>/dev/null || echo "Warning: could not close issue #$ISSUE_NUMBER"
+      else
+        echo "No merged PR found for branch '$TO_DELETE'; leaving issue #$ISSUE_NUMBER open."
+      fi
     else
-      echo "No merged PR found for branch '$TO_DELETE'; leaving issue #$ISSUE_NUMBER open."
+      echo "Issue #$ISSUE_NUMBER is already $ISSUE_STATE, skipping close."
     fi
   else
-    echo "Issue #$ISSUE_NUMBER is already $ISSUE_STATE, skipping close."
+    echo "Warning: could not query issue #$ISSUE_NUMBER (gh command failed). Skipping issue close."
   fi
 else
   echo "No issue number detected in branch name '$TO_DELETE', skipping issue close."
