@@ -319,7 +319,7 @@ As you supervise the batch, **proactively save issues, human corrections, and an
 - What the root cause was (agent skipped a step, protocol gap, timeout, etc.)
 - Whether the human had to intervene and how
 
-These notes feed directly into the Step 6 retrospective suggestion and provide context that GitHub data alone cannot capture.
+These notes feed directly into the post-merge retrospective and provide context that GitHub data alone cannot capture.
 
 ---
 
@@ -386,8 +386,10 @@ After all currently eligible items have reached a terminal condition, provide a 
 
 Call out any sequential fallback caused by runner limitations so humans can distinguish a workflow constraint from a product dependency.
 
-After presenting the summary, suggest running a retrospective:
+Do **not** suggest a retrospective at this point. The batch is not fully complete yet — PRs that are `ready-for-human-review` still need human review and merge before the work is done.
 
-> Would you like to run a retrospective on this session's work?
+Instead, suggest the retrospective **after the human confirms the PRs have been merged** (e.g., after running `/batch-merge`, `/post-merge-cleanup`, or an explicit "they're merged" signal). At that point, offer:
+
+> Would you like to run a retrospective on this batch's work?
 
 If the human agrees, follow `docs/ai/development-workflow/protocols/06-retrospective-protocol.md`. The retrospective will analyze the PRs from this batch using both GitHub data and the conversation context from this session.
