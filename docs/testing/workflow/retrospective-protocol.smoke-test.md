@@ -83,7 +83,7 @@ Before running this smoke test:
 
 **Maps to**: Acceptance Criteria 7, 12, 13
 
-1. Verify the Step 4 presentation includes a **"Related existing item"** field for each finding (`#NNN — [title]` or "No existing backlog item found")
+1. Verify the findings presentation (protocol Step 4) includes a **"Related existing item"** field for each finding (`#NNN — [title]` or "No existing backlog item found")
 2. From the findings, choose "Add to backlog" for one finding that has **no related existing item**
 3. Verify a new GitHub issue is created (via `gh issue create` with the `workflow` label)
 4. Verify the issue has a descriptive title and body

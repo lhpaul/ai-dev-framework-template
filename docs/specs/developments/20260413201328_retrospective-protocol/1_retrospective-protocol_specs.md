@@ -185,6 +185,7 @@ This feature adds a retrospective analysis capability to the AI development work
 - [ ] Protocol 91 (work item runner) suggests a retrospective after the item summary only when the item was run standalone (not dispatched by a batch orchestrator)
 - [ ] The `/retrospective` command/skill is available in Claude Code, Cursor, and Codex following existing platform patterns
 - [ ] The agent never applies fixes or creates issues without the human's explicit choice
+- [ ] Before presenting findings, the agent queries the configured issue tracker for existing open items and annotates each finding with a related existing item reference (number and title) or "No existing backlog item found"; when "Add to backlog" is chosen and a related item exists, the agent offers to expand the existing item instead of creating a duplicate
 
 ---
 
