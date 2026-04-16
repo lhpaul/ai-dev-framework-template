@@ -425,7 +425,7 @@ When you encounter something the spec or plan doesn't cover:
 ## Quality Rules
 
 - **Cross-reference consistency**: When a change modifies policy or rule text that appears in multiple files (protocols, agent instructions, best-practice docs, Cursor agents, Codex skills, etc.), every location must be updated in the same PR. Before opening the PR:
-  1. Grep for key phrases and signal names from the changed rule across the entire docs tree
+  1. Grep for key phrases and signal names from the changed rule across all relevant locations (`docs/`, `AGENTS.md`, `README.md`, `.cursor/`, `.claude/`, `.codex/`)
   2. Confirm every matched location is updated consistently
   3. Verify headings, signal names, and language do not contradict each other across files
 
