@@ -102,14 +102,13 @@ Long-running item-orchestrator agents can time out mid-run (observed as "API Err
 
 ## Business Rules
 
-- **BR-1**: The presence of `ready-for-human-review` on a PR does NOT guarantee the automated reviewer loop ran to completion. The only reliable signal is a PR comment whose body contains `"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"`.
+- **BR-1**: The presence of `ready-for-human-review` on a PR does NOT guarantee the automated reviewer loop ran to completion. The only reliable signal is a PR comment whose body contains `"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"`. This comment is the canonical "Step 7 complete" signal; no other label or PR state substitutes for it.
 - **BR-2**: The Step 8c independent verification gate (post-label verification in protocol 91) MUST check for the reviewer loop summary comment before reporting a PR as ready. This check already exists in the protocol; it must be enforced consistently.
 - **BR-3**: A resumed agent that finds a PR without the reviewer loop summary comment MUST re-run Step 7 (external automated reviewers) from the beginning of that step, regardless of which labels are already applied.
 - **BR-4**: A resumed agent that finds a PR with no CI checks completed must re-run Step 8 (CI loop).
-- **BR-5**: The automated reviewer loop summary comment is the canonical "Step 7 complete" signal. No other label or PR state substitutes for this.
-- **BR-6**: If the Step 8c gate fails (missing review summary comment, missing label, CI not green), the agent must apply `needs-fixes` and remove `ready-for-human-review` before re-entering the fix loop from Step 7a.
-- **BR-7**: The agent model configuration document should document the expected maximum duration for each agent role so operators know when a run has likely timed out versus is still running.
-- **BR-8**: Long-running review loops should not be broken into separate parallel async sub-calls unless the orchestration protocol explicitly supports async handoff — doing so risks leaving the PR in an inconsistent intermediate state.
+- **BR-5**: If the Step 8c gate fails (missing review summary comment, missing label, CI not green), the agent must apply `needs-fixes` and remove `ready-for-human-review` before re-entering the fix loop from Step 7a.
+- **BR-6**: The agent model configuration document should document the expected maximum duration for each agent role so operators know when a run has likely timed out versus is still running.
+- **BR-7**: Long-running review loops should not be broken into separate parallel async sub-calls unless the orchestration protocol explicitly supports async handoff — doing so risks leaving the PR in an inconsistent intermediate state.
 
 ---
 
@@ -133,10 +132,10 @@ This feature primarily affects the orchestration protocol documents and the agen
 
 ## Acceptance Criteria
 
-- [ ] The Step 8c independent verification checklist in `91-orchestrate-work-protocol.md` includes an explicit check: at least one PR comment whose body contains `"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"` must be present before `ready-for-human-review` is applied. (This check already exists in the protocol; this criterion confirms it is clearly stated and not removable by an agent.)
-- [ ] `docs/ai/development-workflow/agent-model-config.md` documents an expected maximum run duration for the `item-orchestrator` and `automated-reviewer-loop` agents (e.g., "typical run: 5–15 min; consider timeout at ~25 min").
-- [ ] A "Resume a timed-out agent run" section is added to `docs/ai/development-workflow/agent-model-config.md` (or a dedicated doc linked from it). The section describes: (a) how to detect an incomplete run (checklist of signals), (b) the command to resume, and (c) the warning not to manually apply `ready-for-human-review` without completing the review loop.
-- [ ] The portfolio orchestrator protocol (`90-batch-orchestrate-work-protocol.md`) documents the heuristic for detecting a stale/incomplete PR (labels present, summary comment absent) and the action to take (re-dispatch item-orchestrator to resume from Step 7).
+- [ ] The Step 8c independent verification checklist in [`91-orchestrate-work-protocol.md`](../../../ai/development-workflow/protocols/91-orchestrate-work-protocol.md) includes an explicit check: at least one PR comment whose body contains `"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"` must be present before `ready-for-human-review` is applied. (This check already exists in the protocol; this criterion confirms it is clearly stated and not removable by an agent.)
+- [ ] [`docs/ai/development-workflow/agent-model-config.md`](../../../ai/development-workflow/agent-model-config.md) documents an expected maximum run duration for the `item-orchestrator` and `automated-reviewer-loop` agents (e.g., "typical run: 5–15 min; consider timeout at ~25 min").
+- [ ] A "Resume a timed-out agent run" section is added to [`docs/ai/development-workflow/agent-model-config.md`](../../../ai/development-workflow/agent-model-config.md) (or a dedicated doc linked from it). The section describes: (a) how to detect an incomplete run (checklist of signals), (b) the command to resume, and (c) the warning not to manually apply `ready-for-human-review` without completing the review loop.
+- [ ] The portfolio orchestrator protocol ([`90-batch-orchestrate-work-protocol.md`](../../../ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md)) documents the heuristic for detecting a stale/incomplete PR (labels present, summary comment absent) and the action to take (re-dispatch item-orchestrator to resume from Step 7).
 - [ ] All changes are documentation-only: no code, no scripts, no CI configuration changes are required.
 
 ---
