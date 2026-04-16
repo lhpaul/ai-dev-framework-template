@@ -114,7 +114,7 @@ This feature adds a retrospective analysis capability to the AI development work
 ### Use Case 4: Add to Backlog
 
 **Actor**: Agent (on behalf of human who chose "Add to backlog" for an opportunity)
-**Preconditions**: The human has chosen "Add to backlog" for a specific improvement opportunity; the agent has already queried the issue tracker for related existing items during synthesis (Use Case 3 / Step 3a)
+**Preconditions**: The human has chosen "Add to backlog" for a specific improvement opportunity; the agent has already queried the issue tracker for related existing items during synthesis (Protocol Step 3 / Step 3a)
 
 **Steps**:
 1. The agent checks whether a related existing backlog item was identified for this finding during the synthesis phase
