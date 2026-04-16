@@ -192,6 +192,27 @@ Use the pre-dispatch branch check from Step 2 (`git branch --list`, `git branch 
 
 **Important — stage protocol compatibility**: When working inside a worktree created with this method, the stage protocol's initial branching steps (`git fetch origin`, `git checkout develop`, `git pull origin develop`, `git checkout -b ...`) are **already satisfied** by the worktree creation above. The stage agent should skip those steps and proceed directly to the implementation work. If the stage agent runs `git checkout develop` inside the worktree, it will fail because `develop` is already checked out in the main working tree and git prevents the same branch from being checked out in multiple worktrees simultaneously.
 
+**Critical safety rule — never modify the main working tree's branch**: An agent running inside a worktree **must never** run `git checkout`, `git switch`, `git reset`, or any command that changes the checked-out branch of the **main working tree**. Violating this rule leaves the main repo in a broken state (e.g., pointing at a `worktree-agent-*` branch) that breaks subsequent operations for all other agents and for the human operator.
+
+- All git operations must target **the current worktree only**. Never `cd` out of the worktree into the main repo root and then run branch-switching commands.
+- If you need to read information from the main repo (e.g., inspect its current branch), use `git -C <main-repo-root> <command>` without switching branches, for example:
+
+  ```bash
+  git -C /path/to/main-repo rev-parse --abbrev-ref HEAD
+  ```
+
+- After the item reaches a terminal condition and **before** removing the worktree, verify the main working tree is still on the expected integration branch (typically `develop`):
+
+  ```bash
+  MAIN_BRANCH=$(git -C <main-repo-root> rev-parse --abbrev-ref HEAD)
+  if [ "$MAIN_BRANCH" != "develop" ]; then
+    echo "ERROR: main working tree is on '$MAIN_BRANCH', expected 'develop'. Do not proceed — restore the main branch manually."
+    exit 1
+  fi
+  ```
+
+  If the branch is wrong, **stop and report to the human** rather than attempting an automated fix.
+
 4. **Suggested worktree path**: `<repo-root>/.claude/worktrees/<item-id>/<branch-prefix>-<slug>` where `<item-id>` is the issue number, tracker ID, or slug.
 
 5. After the item reaches a terminal condition, the cleanup script will remove the worktree:
