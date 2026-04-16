@@ -365,13 +365,17 @@ Do not consider the batch complete until every dispatched item has reached a rea
 
 #### Stale / Incomplete PR Detection
 
-A PR may appear "almost ready" — non-draft, with readiness labels applied — but actually be in an incomplete state because the agent timed out before finishing Step 7 (external automated reviewers). The canonical detection heuristic is:
+A PR may appear "almost ready" — non-draft, with readiness labels applied — but actually be in an incomplete state because the agent timed out before finishing Step 7 (external automated reviewers). The canonical detection heuristic depends on PR type:
 
-> **Non-draft PR + `ready-for-regression` present + no reviewer loop summary comment = incomplete run**
+**Implementation PRs** (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`):
+> non-draft + `ready-for-regression` present + no reviewer loop summary comment = incomplete run
 
-The presence of `ready-for-human-review` alone is NOT a reliable completion signal. The reviewer loop summary comment is the only reliable indicator that Step 7 ran to completion.
+**Spec/plan PRs** (`spec/*`, `implementation-plan/*`):
+> non-draft + `ready-for-human-review` present + no reviewer loop summary comment = incomplete run
 
-Use this one-line command to detect the incomplete state for a specific PR:
+The reviewer loop summary comment is the only reliable indicator that Step 7 ran to completion. `ready-for-human-review` alone is NOT a reliable completion signal. This check applies only when review platforms are configured — skip it for repos where Step 7 is `skipped` (no platforms configured).
+
+Use this command to detect the incomplete state for a specific PR:
 
 ```bash
 gh pr view <pr_number> --json isDraft,labels,comments \
@@ -390,7 +394,7 @@ gh pr view <pr_number> --json isDraft,labels,comments \
 3. Add `needs-fixes`: `gh pr edit <pr_number> --add-label "needs-fixes"`.
 4. Redispatch the Work Item Runner with a resume hint to pick up from Step 7.
 
-This pattern also applies to PRs where an agent timed out mid-CI-loop: detect via `statusCheckRollup` entries in `PENDING` or `ERROR` state and re-dispatch accordingly.
+This pattern also applies to PRs where an agent timed out mid-CI-loop: detect via `statusCheckRollup` entries in `ERROR` state, or `PENDING` state that has exceeded the configured max-wait threshold (see `pr-ci-loop.sh` timeout), and re-dispatch accordingly. Do not treat `PENDING` alone as a timeout signal — CI checks that are legitimately running will show as `PENDING` until they complete.
 
 ### Step 5.2: Post-Agent Main Working Tree Verification (Parallel Batches Only)
 
