@@ -4,6 +4,14 @@
 
 ---
 
+## Guiding principle (important)
+
+This stage is intentionally **product-focused**:
+
+- Write **user-facing behavior**, permissions, UX rules, and acceptance criteria.
+- Avoid prescribing **implementation details** (database tables/columns, specific endpoints, file paths, class names, or migration design). Those belong in the **Implementation Plan** stage.
+- If a technical constraint matters to the product (e.g., "an agent may belong to multiple broker companies"), express it as a **product requirement** without naming tables.
+
 ## Overview
 
 Long-running item-orchestrator agents can time out mid-run (observed as "API Error: Stream idle timeout" after ~20 minutes), leaving the workflow in an ambiguous partial state. This spec defines the behavior the framework should guarantee when an agent run is interrupted: what progress is preserved, how a resumed agent can detect incomplete state, and what guidance operators need to safely resume. The goal is to eliminate the class of incidents where a timed-out agent leaves a PR appearing ready when the review loop was never completed.
