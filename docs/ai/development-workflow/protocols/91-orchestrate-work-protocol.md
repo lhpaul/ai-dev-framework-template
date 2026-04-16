@@ -201,12 +201,13 @@ Use the pre-dispatch branch check from Step 2 (`git branch --list`, `git branch 
   git -C /path/to/main-repo rev-parse --abbrev-ref HEAD
   ```
 
-- After the item reaches a terminal condition and **before** removing the worktree, verify the main working tree is still on the expected integration branch (typically `develop`):
+- After the item reaches a terminal condition and **before** removing the worktree, verify the main working tree is still on the expected integration branch. Resolve the expected branch from your workflow context (typically `develop` for this template, but use whatever `integration_branch` is configured for the repo):
 
   ```bash
+  EXPECTED_BRANCH="<integration-branch>"  # e.g., develop (or main in repos configured that way)
   MAIN_BRANCH=$(git -C <main-repo-root> rev-parse --abbrev-ref HEAD)
-  if [ "$MAIN_BRANCH" != "develop" ]; then
-    echo "ERROR: main working tree is on '$MAIN_BRANCH', expected 'develop'. Do not proceed — restore the main branch manually."
+  if [ "$MAIN_BRANCH" != "$EXPECTED_BRANCH" ]; then
+    echo "ERROR: main working tree is on '$MAIN_BRANCH', expected '$EXPECTED_BRANCH'. Do not proceed — restore the main branch manually."
     exit 1
   fi
   ```
