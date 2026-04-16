@@ -584,6 +584,7 @@ case "$BRANCH" in
     ;;
   *)
     IS_IMPLEMENTATION_PR=false
+    echo "WARNING: Branch '$BRANCH' does not match a recognized prefix (feature/*, fix/*, refactor/*, hotfix/*, spec/*, implementation-plan/*). Treating as non-implementation PR. Report this anomaly to the human."
     ;;
 esac
 
