@@ -94,10 +94,11 @@ Before running this smoke test:
 
 **Maps to**: Acceptance Criterion 5
 
-1. Run `git diff develop -- '*.sh' '*.yml' '*.yaml' '*.json'` on the merged implementation branch (or review the PR diff)
-2. Confirm no shell scripts, CI configurations, or JSON files were modified
+1. Run `git diff --name-only develop...HEAD` (or review the PR file list)
+2. Confirm every changed file is a documentation file (for example, ends with `.md` or lives under `docs/`)
+3. If any non-documentation file appears in the list, fail this smoke test
 
-**Expected result**: Zero non-documentation files changed.
+**Expected result**: All changed files are documentation files (`.md`); no code, scripts, CI, or configuration files appear in the diff.
 
 ---
 
