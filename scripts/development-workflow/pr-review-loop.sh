@@ -907,6 +907,14 @@ run_coderabbit_review() {
   local coderabbit_rate_limit_retries=0
   local coderabbit_rate_limit_max_retries="${CODERABBIT_RATE_LIMIT_MAX_RETRIES:-2}"
   local coderabbit_rate_limit_wait="${CODERABBIT_RATE_LIMIT_WAIT:-180}"
+  if ! [[ "$coderabbit_rate_limit_max_retries" =~ ^[0-9]+$ ]]; then
+    echo "WARN: CODERABBIT_RATE_LIMIT_MAX_RETRIES must be a non-negative integer; defaulting to 2" >&2
+    coderabbit_rate_limit_max_retries=2
+  fi
+  if ! [[ "$coderabbit_rate_limit_wait" =~ ^[0-9]+$ ]] || [ "$coderabbit_rate_limit_wait" -le 0 ]; then
+    echo "WARN: CODERABBIT_RATE_LIMIT_WAIT must be a positive integer; defaulting to 180" >&2
+    coderabbit_rate_limit_wait=180
+  fi
 
   while :; do
     # Check for any CodeRabbit review submitted after the HEAD commit
