@@ -1,0 +1,28 @@
+name: ShellCheck
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+    paths:
+      - 'scripts/development-workflow/**/*.sh'
+
+jobs:
+  shellcheck:
+    name: ShellCheck static analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run ShellCheck
+        run: |
+          mapfile -t shell_files < <(find scripts/development-workflow -name "*.sh")
+          if [ "${#shell_files[@]}" -eq 0 ]; then
+            echo "No shell files found under scripts/development-workflow — skipping."
+            exit 0
+          fi
+          echo "Analyzing ${#shell_files[@]} shell file(s):"
+          printf '  %s\n' "${shell_files[@]}"
+          shellcheck --severity=warning "${shell_files[@]}"
