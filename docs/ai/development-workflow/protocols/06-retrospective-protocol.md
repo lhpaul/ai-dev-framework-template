@@ -237,7 +237,9 @@ First, check whether a related existing item was found in Step 3a for this findi
 > - **Expand existing**: add the new observation to the existing issue's body
 > - **Create new**: create a separate issue (use when the scope is distinct enough to warrant tracking separately)
 
-If the human chooses **Expand existing**, append the new observation to the existing issue body:
+If the human chooses **Expand existing**, append the new observation to the existing issue body. Use the `issue_tracker.provider` from `.ai-dev-workflow.yaml` to determine the method:
+
+**`github_issues` or `github_projects`**:
 
 ```bash
 # Read current body, append new section via temp file to avoid shell quoting issues
@@ -258,9 +260,17 @@ gh issue edit <number> --body-file "$TEMP_FILE"
 rm -f "$TEMP_FILE"
 ```
 
+**`linear`**: Use the Linear MCP tool to read the issue description, append the new observation section, and update the issue. See [`integrations/linear.md`](../integrations/linear.md) for setup details.
+
+**`jira`**, **`clickup`**, **`notion`**: Use their respective MCP tools or APIs to read and update the issue body (see integration guides in `docs/ai/development-workflow/integrations/` if available).
+
+**`none`** or provider unavailable: Fall back to **Create new** and note that the existing item could not be expanded programmatically.
+
 Report the updated issue with its URL.
 
-**If no related existing item exists** (or the human chose **Create new**), create a new GitHub issue:
+**If no related existing item exists** (or the human chose **Create new**), create a new issue using the configured tracker.
+
+**`github_issues` or `github_projects`**:
 
 ```bash
 gh issue create \
@@ -268,6 +278,8 @@ gh issue create \
   --body "[Body — see format below]" \
   --label "workflow"
 ```
+
+**`linear`**, **`jira`**, **`clickup`**, **`notion`**: Use the respective MCP tool or API to create a new issue with an equivalent title, body, and label/tag.
 
 Issue body format:
 
