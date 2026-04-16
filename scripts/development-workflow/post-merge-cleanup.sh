@@ -84,6 +84,11 @@ git branch -D "$TO_DELETE"
 ISSUE_NUMBER=""
 if [[ "$TO_DELETE" =~ ^(fix|feature|hotfix|refactor)/([0-9]+)($|-) ]]; then
   ISSUE_NUMBER="${BASH_REMATCH[2]}"
+elif [[ "$TO_DELETE" =~ ^(spec|implementation-plan)/([0-9]+)($|-) ]]; then
+  # spec/* and implementation-plan/* branches reference the issue, but the issue
+  # must stay open for the next workflow stage — do not close it.
+  STAGE_ISSUE="${BASH_REMATCH[2]}"
+  echo "Plan/spec branch for issue #$STAGE_ISSUE merged; issue stays open for the next workflow stage (not closing)."
 fi
 
 if [ -n "$ISSUE_NUMBER" ]; then
