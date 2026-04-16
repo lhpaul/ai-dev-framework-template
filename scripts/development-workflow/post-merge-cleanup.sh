@@ -83,11 +83,11 @@ if [ -n "$ISSUE_NUMBER" ]; then
     MERGED_PR=$(gh pr list --state merged --head "$TO_DELETE" --json number --jq '.[0].number // empty' 2>/dev/null || echo "")
     if [ -n "$MERGED_PR" ]; then
       CLOSE_COMMENT="Closed by PR #${MERGED_PR}."
+      echo "Closing issue #$ISSUE_NUMBER..."
+      gh issue close "$ISSUE_NUMBER" --comment "$CLOSE_COMMENT" 2>/dev/null || echo "Warning: could not close issue #$ISSUE_NUMBER"
     else
-      CLOSE_COMMENT="Closed via post-merge cleanup of branch \`${TO_DELETE}\`."
+      echo "No merged PR found for branch '$TO_DELETE'; leaving issue #$ISSUE_NUMBER open."
     fi
-    echo "Closing issue #$ISSUE_NUMBER..."
-    gh issue close "$ISSUE_NUMBER" --comment "$CLOSE_COMMENT" 2>/dev/null || echo "Warning: could not close issue #$ISSUE_NUMBER"
   else
     echo "Issue #$ISSUE_NUMBER is already $ISSUE_STATE, skipping close."
   fi
