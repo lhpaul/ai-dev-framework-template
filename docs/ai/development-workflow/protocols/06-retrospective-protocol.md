@@ -91,7 +91,53 @@ Conversation findings are often the highest-value source — weight them accordi
 
 Analyze all gathered data and produce a categorized list of improvement opportunities.
 
-### Categorization taxonomy
+### 3a. Query existing backlog for related items
+
+Before categorizing findings, query the configured issue tracker for existing open items that may overlap with what was discovered. This prevents duplicate issues and surfaces opportunities to expand existing backlog items instead.
+
+Use the `issue_tracker.provider` from `.ai-dev-workflow.yaml` to determine the query method:
+
+**`github_issues`**:
+
+```bash
+# Fetch open issues with the workflow label
+gh issue list --label "workflow" --state open --limit 50 --json number,title,body
+
+# Also fetch recent open issues without label filter (catches unlabeled items)
+gh issue list --state open --limit 100 --json number,title,body
+```
+
+**`github_projects`**:
+
+```bash
+# Fetch items from GitHub Project v2
+gh project item-list <PROJECT_NUMBER> --owner <OWNER> --format json --limit 50
+```
+
+Where `<PROJECT_NUMBER>` is the project number (find it via `gh project list`) and `<OWNER>` is the user or organization owning the project. This includes issues, PRs, and draft issues tracked in the project.
+
+**`linear`**: Use the Linear MCP tool to list open issues in the relevant team or project. See [`integrations/linear.md`](../integrations/linear.md) for setup details.
+
+**`jira`**, **`clickup`**, **`notion`**: Use their respective MCP tools or APIs to fetch open backlog items (see integration guides in `docs/ai/development-workflow/integrations/` if available).
+
+**`none`** or provider unavailable: Skip this substep and note in the presentation that no tracker check was performed.
+
+For each issue retrieved, extract its title and a short description. After categorizing all findings in Step 3b below, match each finding against the retrieved items using these criteria (in priority order):
+
+1. **Exact match**: The finding's affected file path or protocol name appears in the existing item's title or body
+2. **Strong keyword overlap**: Three or more significant keywords (excluding stopwords like "the", "a", "is") appear in both the finding and the existing item title/body
+3. **Root-cause category match**: The finding and existing item share the same categorization taxonomy label (e.g., both are `workflow-process`) and describe overlapping symptoms
+
+When multiple existing items could match, prefer the most recently updated item. When no item meets at least one criterion, record `no_related_item`. When match confidence is ambiguous (one weak criterion only), present both the potential match and "No strong existing item found" and let the human decide in Step 5.
+
+Record:
+
+- `related_item`: issue number and title, if a match is found
+- `no_related_item`: explicitly noted when no match is found
+
+Carry this mapping into Step 4 (presentation) and Step 5 (action execution).
+
+### 3b. Categorization taxonomy
 
 Assign each opportunity exactly one category:
 
@@ -154,6 +200,7 @@ Present the categorized findings to the human in a structured format:
 **Observed**: [What happened — specific, factual description]
 **Impact**: [What it caused or could cause if unaddressed]
 **Recommended action**: Address now | Add to backlog
+**Related existing item**: #NNN — [title] | No existing backlog item found
 
 ---
 
@@ -190,14 +237,58 @@ Execute each chosen action in the order the human specified (or in the order the
 
 ### Add to backlog
 
-Create a GitHub issue directly using `gh issue create`:
+First, check whether a related existing item was found in Step 3a for this finding.
+
+**If a related existing item exists**: offer the human a choice before creating a new issue:
+
+> Finding #N has a related existing item: **#NNN — [title]**.
+> Would you like to:
+> - **Expand existing**: add the new observation to the existing issue's body
+> - **Create new**: create a separate issue (use when the scope is distinct enough to warrant tracking separately)
+
+If the human chooses **Expand existing**, append the new observation to the existing issue body. Use the `issue_tracker.provider` from `.ai-dev-workflow.yaml` to determine the method:
+
+**`github_issues` or `github_projects`**:
+
+```bash
+# Read current body, append new section via temp file to avoid shell quoting issues
+TEMP_FILE=$(mktemp)
+gh issue view <number> --json body -q '.body' > "$TEMP_FILE"
+cat >> "$TEMP_FILE" <<'EOF'
+
+---
+
+## Additional observation from retrospective on [date]
+
+[What was observed — specific, factual]
+
+[Impact if unaddressed]
+EOF
+
+gh issue edit <number> --body-file "$TEMP_FILE"
+rm -f "$TEMP_FILE"
+```
+
+**`linear`**: Use the Linear MCP tool to read the issue description, append the new observation section, and update the issue. See [`integrations/linear.md`](../integrations/linear.md) for setup details.
+
+**`jira`**, **`clickup`**, **`notion`**: Use their respective MCP tools or APIs to read and update the issue body (see integration guides in `docs/ai/development-workflow/integrations/` if available).
+
+**`none`** or provider unavailable: Fall back to **Create new** and note that the existing item could not be expanded programmatically.
+
+Report the updated issue with its URL.
+
+**If no related existing item exists** (or the human chose **Create new**), create a new issue using the configured tracker.
+
+**`github_issues` or `github_projects`**:
 
 ```bash
 gh issue create \
   --title "[Descriptive title of the improvement opportunity]" \
   --body "[Body — see format below]" \
-  --label "enhancement"
+  --label "workflow"
 ```
+
+**`linear`**, **`jira`**, **`clickup`**, **`notion`**: Use the respective MCP tool or API to create a new issue with an equivalent title, body, and label/tag.
 
 Issue body format:
 

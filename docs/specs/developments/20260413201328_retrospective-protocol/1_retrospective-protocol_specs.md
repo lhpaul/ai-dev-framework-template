@@ -38,7 +38,7 @@ This feature adds a retrospective analysis capability to the AI development work
 **Postconditions**: Each improvement opportunity has either been addressed in the current session, added as a backlog issue, or explicitly skipped by the human
 
 **Information shown**:
-- Categorized improvement opportunities, each with: description, category label, severity signal, and recommended action
+- Categorized improvement opportunities, each with: description, category label, severity signal, recommended action, and a related existing item reference (issue number and title) or "No existing backlog item found"
 - After action execution: confirmation of what was done (fix applied or issue created with link)
 
 **Actions available**:
@@ -114,23 +114,29 @@ This feature adds a retrospective analysis capability to the AI development work
 ### Use Case 4: Add to Backlog
 
 **Actor**: Agent (on behalf of human who chose "Add to backlog" for an opportunity)
-**Preconditions**: The human has chosen "Add to backlog" for a specific improvement opportunity
+**Preconditions**: The human has chosen "Add to backlog" for a specific improvement opportunity; the agent has already queried the issue tracker for related existing items during synthesis (Protocol Step 3 / Step 3a)
 
 **Steps**:
-1. The agent creates a GitHub issue directly with a descriptive title, a body that describes the problem and the improvement opportunity, and the appropriate labels
-2. The agent reports the created issue with its URL
+1. The agent checks whether a related existing backlog item was identified for this finding during the synthesis phase
+2. **If a related item exists**: the agent offers the human a choice:
+   - **Expand existing**: append the new observation to the existing issue's body
+   - **Create new**: create a separate issue (appropriate when the scope is distinct enough to warrant separate tracking)
+3. If the human chooses **Expand existing**: the agent appends the new observation to the existing issue body and reports the updated issue URL
+4. If the human chooses **Create new**, or if no related item was found: the agent creates a new GitHub issue with a descriptive title, a body describing the problem and improvement opportunity, and the `workflow` label; the agent reports the created issue URL
 
-**Postconditions**: A GitHub issue exists representing the improvement opportunity
+**Postconditions**: Either a new GitHub issue exists, or an existing issue has been updated with the new observation
 
 **Information shown**:
-- Issue title and URL
+- Related existing item number and title (if found during synthesis)
+- Updated or created issue URL
 
 **Actions available**:
 - None after confirmation (the opportunity is closed)
 
 **Considerations**:
-- The issue creation is lightweight and direct — it does not go through the full `00-add-backlog-item-protocol.md` flow (which would disrupt the retrospective with its own alignment conversation)
+- The issue creation or update is lightweight and direct — it does not go through the full `00-add-backlog-item-protocol.md` flow (which would disrupt the retrospective with its own alignment conversation)
 - The issue body should include enough context that someone picking it up later can understand what was observed and why it matters, without needing the original conversation
+- The expand-existing path avoids creating duplicate backlog items for the same systemic issue seen across multiple sessions
 
 ---
 
@@ -151,7 +157,7 @@ This feature adds a retrospective analysis capability to the AI development work
   | `code-quality` | Code Quality | Recurring reviewer findings that suggest a systemic pattern rather than a one-off issue |
   | `tooling` | Tooling | External tool integration issue (e.g., CodeRabbit misconfiguration, `gh` CLI usage gap) |
 
-- Each opportunity is presented with its category, a short description, a severity signal, and a recommended action (Address now / Add to backlog)
+- Each opportunity is presented with its category, a short description, a severity signal, a recommended action (Address now / Add to backlog), and a related existing item reference (issue number and title, or "No existing backlog item found")
 - **Severity signal** — each opportunity is assigned one of the following severity levels:
 
   | Code value | Display label | Description |
@@ -162,7 +168,7 @@ This feature adds a retrospective analysis capability to the AI development work
 
 - Severity signals are the agent's best-effort assessment; the agent should bias toward `high` when an issue required direct human correction
 - **"Address now"** is reserved for changes the agent can self-assess as simple and safe to apply without a review loop; the agent uses its own judgment
-- **"Add to backlog"** creates a GitHub issue directly — not through the full `00-add-backlog-item-protocol.md` flow
+- **"Add to backlog"** creates a new GitHub issue or expands an existing one directly — not through the full `00-add-backlog-item-protocol.md` flow
 - The human may skip any individual opportunity (take no action); the agent moves on
 - The retrospective scope is limited to work from the current session or the PRs specified in the scope hint — no cross-session trend analysis
 - No persistent state is required or maintained between sessions
@@ -185,6 +191,7 @@ This feature adds a retrospective analysis capability to the AI development work
 - [ ] Protocol 91 (work item runner) suggests a retrospective after the item summary only when the item was run standalone (not dispatched by a batch orchestrator)
 - [ ] The `/retrospective` command/skill is available in Claude Code, Cursor, and Codex following existing platform patterns
 - [ ] The agent never applies fixes or creates issues without the human's explicit choice
+- [ ] Before presenting findings, the agent queries the configured issue tracker for existing open items and annotates each finding with a related existing item reference (number and title) or "No existing backlog item found"; when "Add to backlog" is chosen and a related item exists, the agent offers to expand the existing item instead of creating a duplicate
 
 ---
 
