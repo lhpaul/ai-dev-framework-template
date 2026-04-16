@@ -118,7 +118,7 @@ Check:
 - Logic and edge cases are correct
 - Security boundaries and validation are respected
 - Tests cover the changed business behavior
-- CHANGELOG and workflow-specific artifacts are updated when required (spec/plan-only PRs are exempt; fixes to unreleased work update existing entries rather than adding new ones; in parallel batches, only the designated last item updates CHANGELOG per protocol 90 Step 3.6)
+- CHANGELOG and workflow-specific artifacts are updated when required (spec/plan-only PRs are exempt; fixes to unreleased work update existing entries rather than adding new ones; in parallel batches, each PR adds its own CHANGELOG entry as normal; merge conflicts are resolved by batch-merge auto-resolution per protocol 94 Step 4.3)
 - New patterns are justified and consistent with the codebase
 
 Additional checks for **shell scripts** (`*.sh`):
