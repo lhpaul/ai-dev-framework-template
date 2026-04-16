@@ -83,8 +83,8 @@ This feature adds automated ShellCheck static analysis that runs on pull request
 - The suppression directive is visible in the diff.
 
 **Considerations**:
-- Blanket suppression of entire files or entire error codes across all files is out of scope for this feature. Suppressions should be as targeted as possible.
-- A `.shellcheckrc` file for project-wide suppressions of specific codes that are intentionally out of scope (e.g., SC1091 for unresolvable `source` paths) is acceptable and within scope.
+- Blanket suppression of entire files (excluding a file from ShellCheck analysis entirely) is out of scope for this feature. Suppressions should be as targeted as possible — prefer inline directives scoped to specific lines over project-wide rules.
+- A `.shellcheckrc` file for project-wide suppression of specific error codes that are structurally unfixable in this repository (e.g., SC1091 for unresolvable `source` paths) is acceptable and within scope, provided each suppressed code includes a comment explaining the reason.
 
 ---
 
