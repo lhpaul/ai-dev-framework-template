@@ -105,7 +105,7 @@ Opening PRs is **not** a terminal condition. Continue with Step 7 for the produc
 
 Apply only to the **release PR that targets `main`**. Do **not** apply the regression-label requirement to the backport PR to `develop` (that PR may still run other CI; this step scopes expensive label-gated e2e/regression to production).
 
-Canonical loop semantics match [`91-orchestrate-work-protocol.md`](91-orchestrate-work-protocol.md) (Steps 7, 7b, 8) and [`93-automated-reviewer-loop-protocol.md`](93-automated-reviewer-loop-protocol.md) for standalone reviewer runs. Prefer the repository helpers:
+Canonical loop semantics match [`91-orchestrate-work-protocol.md`](91-orchestrate-work-protocol.md) (Steps 7, 7b, 8, 8a) and [`93-automated-reviewer-loop-protocol.md`](93-automated-reviewer-loop-protocol.md) for standalone reviewer runs. Prefer the repository helpers:
 
 ```bash
 ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch release/v[X.Y.Z]
@@ -155,7 +155,7 @@ Run `pr-ci-loop.sh` and wait until required checks settle (including the e2e/reg
 
 | Result | Action |
 |---|---|
-| `green` | Apply `ready-for-human-review` per [`92-pr-readiness-signal-protocol.md`](92-pr-readiness-signal-protocol.md); the production PR is ready for human merge review. |
+| `green` | Proceed to Step 8a (PR readiness gate) in `91-orchestrate-work-protocol.md`. Apply `ready-for-human-review` only after all Step 8a checks pass; the production PR is then ready for human merge review. |
 | `red` | Apply `needs-fixes`, fix, push, then return to Step 7.3 (reviewer) and repeat through Step 7.5. |
 | `timeout` | Escalate to a human; do not apply `ready-for-human-review`. |
 

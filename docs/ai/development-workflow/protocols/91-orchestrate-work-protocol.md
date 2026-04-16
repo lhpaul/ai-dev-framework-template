@@ -503,7 +503,7 @@ If all configured platforms have reviewed the latest commit and no blocking unre
 |---|---|
 | All checks pass | Apply `ready-for-human-review`; update tracker status to `Spec in Review`, `Plan in Review`, or `Development in Review` based on branch type; remove `needs-fixes` if present; report the PR as ready |
 | Non-draft check fails | Run `gh pr ready`, then re-run checklist |
-| Label check fails (implementation PR) | Apply `ready-for-regression`, then re-run checklist |
+| Label check fails (implementation PR) | Apply `ready-for-regression`, then return to Step 8 (CI loop) to wait for the newly triggered e2e/regression checks before re-running this checklist |
 | Blocking unresolved comment found | Add to ledger, dispatch fixer, push, then return to Step 7a |
 | Reviewer bot has not yet reviewed the latest commit | Wait up to `max_wait` for the bot to post, then re-run checklist. If the bot still has not posted after a second `max_wait`, escalate to human — do not apply `ready-for-human-review` |
 
