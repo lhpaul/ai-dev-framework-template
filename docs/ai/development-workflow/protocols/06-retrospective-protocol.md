@@ -97,7 +97,7 @@ Before categorizing findings, query the configured issue tracker for existing op
 
 Use the `issue_tracker.provider` from `.ai-dev-workflow.yaml` to determine the query method:
 
-**`github_issues` or `github_projects`**:
+**`github_issues`**:
 
 ```bash
 # Fetch open issues with the workflow label
@@ -106,6 +106,15 @@ gh issue list --label "workflow" --state open --limit 50 --json number,title,bod
 # Also fetch recent open issues without label filter (catches unlabeled items)
 gh issue list --state open --limit 100 --json number,title,body
 ```
+
+**`github_projects`**:
+
+```bash
+# Fetch items from GitHub Project v2
+gh project item-list <number> --owner @me --limit 50 --json number,title,body
+```
+
+Where `<number>` is the project number (find it via `gh project list`). This includes issues, PRs, and draft issues tracked in the project.
 
 **`linear`**: Use the Linear MCP tool to list open issues in the relevant team or project. See [`integrations/linear.md`](../integrations/linear.md) for setup details.
 
