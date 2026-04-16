@@ -256,7 +256,7 @@ Use $workflow-item-orchestrator to start and advance work for [feature or issue 
 
 ## Mandatory Conventions
 
-- **CHANGELOG.md is required**: every feature/fix/hotfix PR must add an entry under `[Unreleased]` before merge, with exceptions for spec/plan-only PRs (no entry needed) and fixes to unreleased work (update the existing entry instead of adding a new one). Never defer CHANGELOG entries to release time (exception: in parallel batches, only the designated last item updates CHANGELOG per protocol 90 Step 3.6).
+- **CHANGELOG.md is required**: follow the canonical CHANGELOG policy in [`docs/best-practices/2-version-control.md#changelog`](docs/best-practices/2-version-control.md#changelog), including parallel-batch handling.
 - **Human merge gates**: PRs for spec, plan, and implementation are opened by agents and kept moving until they are actually review-ready; humans still review and merge them.
 - **No destructive Git operations** without explicit human approval (no `--force`, `reset --hard`, `rebase` on shared branches).
 

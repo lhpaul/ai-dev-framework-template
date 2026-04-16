@@ -133,6 +133,32 @@ Follow the "PR feedback tracking and comments" subsection of Step 7 in `91-orche
 - When the loop terminates, post a **final summary table** on the PR with all findings and their statuses (`resolved` / `unresolved`).
 - If the result is `skipped` (no platforms configured), do not post a summary comment.
 
+### Review comments audit (post-clean gate)
+
+After the review loop script returns `clean` for all platforms and before declaring the PR ready, **audit all review comments on the PR's code changes** to verify nothing was missed. The review loop script checks the latest review state, but comments from earlier commits or async reviewer posts can be overlooked.
+
+1. **Fetch all review comments**:
+
+   ```bash
+   gh api repos/{owner}/{repo}/pulls/<number>/comments \
+     --jq '.[] | select(.user.login | test("devin|coderabbit|greptile")) | {id: .id, user: .user.login, path: .path, body: .body[:150], created_at: .created_at}'
+   ```
+
+2. **For each reviewer comment**, check whether it has been addressed:
+   - A reply from the PR author or agent confirming the fix (e.g., "Fixed in commit ...")
+   - A "Resolved" status from the reviewer bot itself
+   - The comment is on a file/line that has been modified in a subsequent commit
+
+3. **If any unaddressed comment is found**:
+   - Dispatch a fixer to address it
+   - Push the fix and reply to the comment confirming resolution
+   - Re-run the review loop script to verify the fix didn't introduce new findings
+   - Repeat this gate until all comments are addressed
+
+4. **Only after all review comments are confirmed addressed**, proceed to the summary and readiness steps.
+
+This prevents declaring a PR "clean" while substantive reviewer findings remain unresolved in the code changes view.
+
 ---
 
 ## Summary to the user
