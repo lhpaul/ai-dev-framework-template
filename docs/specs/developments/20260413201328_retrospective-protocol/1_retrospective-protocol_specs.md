@@ -38,7 +38,7 @@ This feature adds a retrospective analysis capability to the AI development work
 **Postconditions**: Each improvement opportunity has either been addressed in the current session, added as a backlog issue, or explicitly skipped by the human
 
 **Information shown**:
-- Categorized improvement opportunities, each with: description, category label, severity signal, and recommended action
+- Categorized improvement opportunities, each with: description, category label, severity signal, recommended action, and a related existing item reference (issue number and title) or "No existing backlog item found"
 - After action execution: confirmation of what was done (fix applied or issue created with link)
 
 **Actions available**:
