@@ -276,7 +276,7 @@ Complete this checklist **before writing any code**. It takes 5–10 minutes and
 2. **For each file**, describe the specific changes needed.
 3. **Verify scope**: confirm all listed changes are within the issue's stated scope. Remove anything that is not.
 4. **Consider edge cases**: what if the branch already exists locally or remotely? What if this runs in a worktree? What are the failure modes?
-5. **Cross-reference related files**: if any changed file references or is referenced by others, confirm your changes are consistent.
+5. **Cross-reference related protocols**: if any changed file references or is referenced by other protocol documents, read those documents and confirm your changes are consistent with them.
 
 Do not proceed to Step 2 until this checklist is complete and all five points are answered.
 
