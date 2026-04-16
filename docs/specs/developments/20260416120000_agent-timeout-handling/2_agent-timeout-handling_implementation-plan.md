@@ -1,7 +1,7 @@
 # Agent Timeout Handling — Implementation Plan
 
 **Spec**: [`1_agent-timeout-handling_specs.md`](./1_agent-timeout-handling_specs.md)
-**Smoke test runbook**: [`docs/testing/ai-workflow/agent-timeout-handling.smoke-test.md`](../../../../testing/ai-workflow/agent-timeout-handling.smoke-test.md)
+**Smoke test runbook**: [`docs/testing/workflow/agent-timeout-handling.smoke-test.md`](../../../../testing/workflow/agent-timeout-handling.smoke-test.md)
 
 ---
 
@@ -37,7 +37,7 @@
 2. All four acceptance criteria are verified by inspecting the changed files — maps to Acceptance Criteria 1–4
 3. Acceptance Criterion 5 (documentation-only) is satisfied by confirming no code/script/CI files were changed — maps to Acceptance Criterion 5
 
-**Smoke test runbook**: [`docs/testing/ai-workflow/agent-timeout-handling.smoke-test.md`](../../../../testing/ai-workflow/agent-timeout-handling.smoke-test.md)
+**Smoke test runbook**: [`docs/testing/workflow/agent-timeout-handling.smoke-test.md`](../../../../testing/workflow/agent-timeout-handling.smoke-test.md)
 
 **Regression suite**: No regression suite exists in this repository.
 
@@ -77,8 +77,7 @@ No other `docs/project/` files, `AGENTS.md`, or `docs/best-practices/` files req
 4. Read Step 8c of `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`. Verify the reviewer loop summary comment check row in the table is explicitly stated and clear. Add a note below the table row — or update the wording — to explicitly state that this check is a hard requirement that must not be removed by agents applying fixes.
 5. Read Step 5.1 of `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`. Add a "Stale / Incomplete PR Detection" subsection after the main verification table. The subsection must include: the detection heuristic, a one-line detection shell command (using `gh pr view --json` to check for label+comment state), and the required action (re-dispatch item-orchestrator to resume from Step 7).
 6. Cross-read all three updated files for consistency: confirm references between them are accurate, no wording contradicts the spec's business rules, and each section satisfies its mapped acceptance criterion.
-7. Update `CHANGELOG.md` under `[Unreleased]`.
-8. Verify smoke test runbook is complete and maps to all acceptance criteria.
+7. Verify smoke test runbook is complete and maps to all acceptance criteria. (Note: CHANGELOG update is not required — plan-only PRs are exempt per `docs/best-practices/2-version-control.md`.)
 
 ---
 
