@@ -356,7 +356,7 @@ Complete this checklist **before writing any code**. It takes 5–10 minutes and
 3. **Verify scope**: confirm all listed changes address the production incident directly. Remove anything that is not strictly necessary.
 4. **Consider edge cases**: what if the branch already exists locally or remotely? What is the minimal safe change? Are there related files that must stay consistent?
 5. **Cross-reference related protocols**: if the fix touches shared utilities or configuration files used by other flows, confirm consistency.
-6. **Cross-reference consistency check** (required when the fix modifies policy or rule text): if the rule or policy you are changing is documented in more than one location, grep for key phrases before writing any code, list every location, and confirm each location will be updated consistently.
+6. **Cross-reference consistency check** (required when the fix modifies policy or rule text): if the rule or policy you are changing is documented in more than one location, grep for key phrases before writing any code, list every location, and confirm each location will be updated consistently. Verify that headings, signal names, and language do not contradict each other across files.
 
 Do not proceed to Step 3 until this checklist is complete and all six points are answered.
 
