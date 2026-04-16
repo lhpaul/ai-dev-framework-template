@@ -201,7 +201,7 @@ Use the pre-dispatch branch check from Step 2 (`git branch --list`, `git branch 
   git -C /path/to/main-repo rev-parse --abbrev-ref HEAD
   ```
 
-- After the item reaches a terminal condition and **before** removing the worktree, verify the main working tree is still on the expected integration branch. Resolve the expected branch from your workflow context (typically `develop` for this template, but use whatever `integration_branch` is configured for the repo):
+- After the item reaches a terminal condition and **before** removing the worktree, verify the main working tree is still on the expected integration branch **and has no uncommitted modifications**. Resolve the expected branch from your workflow context (typically `develop` for this template, but use whatever `integration_branch` is configured for the repo):
 
   ```bash
   EXPECTED_BRANCH="<integration-branch>"  # e.g., develop (or main in repos configured that way)
@@ -210,9 +210,20 @@ Use the pre-dispatch branch check from Step 2 (`git branch --list`, `git branch 
     echo "ERROR: main working tree is on '$MAIN_BRANCH', expected '$EXPECTED_BRANCH'. Do not proceed — restore the main branch manually."
     exit 1
   fi
+
+  # Check for uncommitted modifications in the main working tree
+  MAIN_STATUS=$(git -C <main-repo-root> status --porcelain)
+  if [ -n "$MAIN_STATUS" ]; then
+    echo "WARNING: main working tree has uncommitted modifications after worktree agent completed:"
+    echo "$MAIN_STATUS"
+    echo "Unexpected changes detected in the main working tree; these may indicate a leak and must be reviewed before proceeding."
+    echo "Possible cause: a stage agent leaked file writes outside the worktree boundary."
+    echo "Do NOT commit or discard these changes without human review."
+    exit 1
+  fi
   ```
 
-  If the branch is wrong, **stop and report to the human** rather than attempting an automated fix.
+  If the branch is wrong or unexpected modifications are present, **stop and report to the human** rather than attempting an automated fix. The human must inspect and discard (or commit to a separate branch) any leaked changes before the next batch dispatch.
 
 4. **Suggested worktree path**: `<repo-root>/.claude/worktrees/<item-id>/<branch-prefix>-<slug>` where `<item-id>` is the issue number, tracker ID, or slug.
 

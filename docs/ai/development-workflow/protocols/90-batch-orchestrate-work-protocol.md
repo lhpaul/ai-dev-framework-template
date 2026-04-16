@@ -310,6 +310,27 @@ If a check fails:
 
 Do not consider the batch complete until every dispatched item has reached a real terminal condition.
 
+### Step 5.2: Post-Agent Main Working Tree Verification (Parallel Batches Only)
+
+After each Work Item Runner returns in a **parallel batch**, immediately check that the main working tree was not modified by the agent:
+
+```bash
+MAIN_STATUS=$(git -C <main-repo-root> status --porcelain)
+if [ -n "$MAIN_STATUS" ]; then
+  echo "WARNING: main working tree has uncommitted modifications after agent for item <item-id> returned:"
+  echo "$MAIN_STATUS"
+fi
+```
+
+If any modifications are detected:
+
+1. **Do not discard the changes silently.** Log them for the human.
+2. **Do not dispatch additional agents** until the issue is resolved — a dirty main working tree may cause the next agent to incorporate leaked changes.
+3. **Report to the human** with the list of modified files and the item whose agent ran last. The likely cause is a stage agent that wrote files relative to the main repo root rather than the worktree path.
+4. **Ask the human** to inspect and discard (or commit to a separate branch) the leaked modifications before resuming the batch.
+
+If the main working tree is clean, proceed normally with the next Work Item Runner or with Step 5.1 (PR verification).
+
 ### Retrospective notes during supervision
 
 As you supervise the batch, **proactively save issues, human corrections, and anomalies to memory** (e.g., a `project_batchN_retro_notes.md` memory file) as they happen — do not wait until the retrospective to reconstruct what went wrong. Record:
@@ -351,7 +372,7 @@ If any PR is still in progress or labeled `needs-fixes`, continue supervising (S
 
 3. **Present the validated merge plan to the human** and require explicit approval before any merge starts. The human must confirm before the orchestrator invokes `94-batch-merge-protocol.md`.
 
-4. **Once the human approves**, follow `docs/ai/development-workflow/protocols/94-batch-merge-protocol.md` starting from **Step 4** (the sequential merge loop). The merge plan confirmation (Protocol 94 Step 3) has already been satisfied by Step 5.5.3 above. Pass only the approved ordered PR list after Step 5.5.2 filtering, and include skipped entries in the final summary.
+4. **Once the human approves**, follow `docs/ai/development-workflow/protocols/94-batch-merge-protocol.md` starting from **Step 3.5** (the pre-merge clean-state check and sequential merge loop). The merge plan confirmation (Protocol 94 Step 3) has already been satisfied by Step 5.5.3 above, but Step 3.5 has **not** been satisfied and must still run. Pass only the approved ordered PR list after Step 5.5.2 filtering, and include skipped entries in the final summary.
 
 5. **Include the batch-merge summary** (Step 5 of Protocol 94) in the orchestrator's Step 6 summary output.
 

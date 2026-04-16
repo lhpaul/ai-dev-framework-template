@@ -107,6 +107,33 @@ Proceed with the merge? [yes / no / abort]
 
 ---
 
+## Step 3.5: Pre-Merge Clean-State Check
+
+Before starting the sequential merge loop, verify that the main working tree (the checkout that will receive the merges) is clean and on the expected integration branch:
+
+```bash
+# Verify branch
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+EXPECTED_BRANCH="develop"   # or the configured integration branch
+if [ "$CURRENT_BRANCH" != "$EXPECTED_BRANCH" ]; then
+  echo "ERROR: main working tree is on '$CURRENT_BRANCH', expected '$EXPECTED_BRANCH'. Aborting batch merge."
+  exit 1
+fi
+
+# Verify no uncommitted modifications
+DIRTY=$(git status --porcelain)
+if [ -n "$DIRTY" ]; then
+  echo "ERROR: main working tree has uncommitted modifications. Aborting batch merge."
+  echo "$DIRTY"
+  echo "Resolve or discard these changes before running batch merge."
+  exit 1
+fi
+```
+
+If either check fails, **stop immediately** and report to the human. Do not attempt any merges with a dirty or mis-branched working tree — leaked modifications may be incorporated into merge commits and corrupt `develop`.
+
+---
+
 ## Step 4: Sequential Merge Loop
 
 Process PRs one at a time in the approved order.
