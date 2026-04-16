@@ -80,7 +80,7 @@ if [ -n "$ISSUE_NUMBER" ]; then
   ISSUE_STATE=$(gh issue view "$ISSUE_NUMBER" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
   if [ "$ISSUE_STATE" = "OPEN" ]; then
     # Find the merged PR for this branch
-    MERGED_PR=$(gh pr list --state merged --head "$TO_DELETE" --json number --jq '.[0].number' 2>/dev/null || echo "")
+    MERGED_PR=$(gh pr list --state merged --head "$TO_DELETE" --json number --jq '.[0].number // empty' 2>/dev/null || echo "")
     if [ -n "$MERGED_PR" ]; then
       CLOSE_COMMENT="Closed by PR #${MERGED_PR}."
     else
