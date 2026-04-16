@@ -66,6 +66,14 @@ echo "Pulling $DEVELOP_BRANCH..."
 git pull --ff-only
 
 echo "Deleting local branch '$TO_DELETE'..."
+# Check whether a worktree is still using this branch; if so, remove it first.
+# git branch -D fails with "error: cannot delete branch 'X' used by worktree" in that case.
+WORKTREE_PATH=$(git worktree list --porcelain | grep -B2 "branch refs/heads/$TO_DELETE" | grep "^worktree " | sed 's/^worktree //')
+if [ -n "$WORKTREE_PATH" ]; then
+  echo "Worktree '$WORKTREE_PATH' is still using branch '$TO_DELETE'. Removing worktree first..."
+  git worktree remove "$WORKTREE_PATH" --force
+  echo "Worktree removed."
+fi
 # -D: branch is already merged on remote (squash/rebase merges don't leave tip in develop)
 git branch -D "$TO_DELETE"
 
