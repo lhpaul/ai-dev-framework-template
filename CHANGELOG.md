@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **CodeRabbit rate-limit handling in `pr-review-loop.sh`**: when CodeRabbit posts a rate-limit comment instead of a review (common in parallel batches with 3+ PRs), the script now detects the comment, waits 3 minutes, and retries with `@coderabbitai review` (up to 2 retries, configurable via `CODERABBIT_RATE_LIMIT_MAX_RETRIES` and `CODERABBIT_RATE_LIMIT_WAIT`). Also added Step 3.7 to `90-batch-orchestrate-work-protocol.md` documenting this behavior and fallback guidance for human reviewers.
+
 ### Added
 
 - **Batch merge command** (`/batch-merge`): a new command and shell script that merge all ready PRs in a parallel batch into `develop` sequentially. Discovers PRs labeled `ready-for-human-review` automatically or accepts an explicit PR list; presents a merge plan for human confirmation before any merge; auto-resolves CHANGELOG `[Unreleased]` conflicts (entries combined, none dropped) and non-overlapping documentation file conflicts; pauses for human input on non-trivial conflicts; runs `post-merge-cleanup` after each successful merge; and produces a structured outcome summary (`merged_clean`, `merged_auto`, `merged_human`, `skipped_not_ready`, `skipped_conflict`, `failed`, `not_attempted`). Available as `/batch-merge` in Claude Code, `/batch-merge` in Cursor, and the `batch-merge` Codex skill. Protocol 90 (batch orchestrator) now includes a Step 5.5 handoff path for merge-ready parallel batches.
