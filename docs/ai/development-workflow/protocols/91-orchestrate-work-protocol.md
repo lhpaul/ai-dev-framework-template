@@ -96,13 +96,13 @@ When dispatching a subagent for this item, include a short “Tracker Work Item 
 | Plan in Review | Tracker **Plan in Review** — plan PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
 | Plan branch pushed, no PR yet | Branch exists on local / remote / worktree | Run the plan review gate via `REVIEW.md` / `02-review-implementation-plan-protocol.md`, open the PR, then finish PR readiness |
 | Plan Ready | Plan PR is merged | Set tracker status to **In Development**, then run `03-implement-development-protocol.md` |
-| In Development | Tracker **In Development** — feature/fix PR not yet human-ready | Continue implementation branch/PR work (Step 7a, 7, 8, 8a) until tracker moves to **Development in Review** |
+| In Development | Tracker **In Development** — feature/fix PR not yet human-ready | Continue implementation branch/PR work (Step 7a, 7, 7b, 8, 8a) until tracker moves to **Development in Review** |
 | Development in Review | Tracker **Development in Review** — feature/fix PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
-| Dev branch pushed, no PR yet | Branch exists on local / remote / worktree | Open draft PR, run the internal review gate (Step 7a), run `gh pr ready` to convert to non-draft, then run automated reviewer loop (Step 7), CI loop (Step 8), and PR readiness gate (Step 8a) |
+| Dev branch pushed, no PR yet | Branch exists on local / remote / worktree | Open draft PR, run the internal review gate (Step 7a), run `gh pr ready` to convert to non-draft, then run automated reviewer loop (Step 7), regression label (Step 7b, implementation PRs only), CI loop (Step 8), and PR readiness gate (Step 8a) |
 | Draft PR open, internal review pending | PR is draft and the relevant internal review gate has not run yet or has open findings | Run the stage-specific internal review gate (Step 7a); apply fixes, push, repeat until clean. Once APPROVED, run `gh pr ready` to convert to non-draft |
-| Non-draft PR open, no readiness label, external review not yet run | PR is non-draft (converted after Step 7a APPROVED), external review not yet run | Run Step 7 (external automated reviewers), Step 8 (CI), and Step 8a (PR readiness gate) |
-| PR open (non-draft), no readiness label | PR exists and latest push has not fully cleared | Run Step 7, Step 8, and Step 8a until clean or escalated |
-| PR labeled `needs-fixes` | Human or automated systems requested changes | Address feedback, push, then run Step 7a, Step 7, Step 8, and Step 8a |
+| Non-draft PR open, no readiness label, external review not yet run | PR is non-draft (converted after Step 7a APPROVED), external review not yet run | Run Step 7 (external automated reviewers), Step 7b (regression label, implementation PRs only), Step 8 (CI), and Step 8a (PR readiness gate) |
+| PR open (non-draft), no readiness label | PR exists and latest push has not fully cleared | Run Step 7, Step 7b (implementation PRs only), Step 8, and Step 8a until clean or escalated |
+| PR labeled `needs-fixes` | Human or automated systems requested changes | Address feedback, push, then run Step 7a, Step 7, Step 7b (implementation PRs only), Step 8, and Step 8a |
 | PR labeled `ready-for-human-review` | — | Wait — human review / merge required |
 
 ### Pre-dispatch branch check
@@ -444,7 +444,7 @@ If the PR is still draft, run `gh pr ready <pr_number>` before continuing.
 For PRs on branches `feature/*`, `fix/*`, `hotfix/*`, `refactor/*`: verify `ready-for-regression` is present.
 
 ```bash
-gh pr view <pr_number> --json labels --jq '[.labels[].name] | contains(["ready-for-regression"])'
+gh pr view <pr_number> --json labels --jq '[.labels[].name] | any(. == "ready-for-regression")'
 # Must return: true
 ```
 
