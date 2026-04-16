@@ -372,7 +372,7 @@ If any PR is still in progress or labeled `needs-fixes`, continue supervising (S
 
 3. **Present the validated merge plan to the human** and require explicit approval before any merge starts. The human must confirm before the orchestrator invokes `94-batch-merge-protocol.md`.
 
-4. **Once the human approves**, follow `docs/ai/development-workflow/protocols/94-batch-merge-protocol.md` starting from **Step 4** (the sequential merge loop). The merge plan confirmation (Protocol 94 Step 3) has already been satisfied by Step 5.5.3 above. Pass only the approved ordered PR list after Step 5.5.2 filtering, and include skipped entries in the final summary.
+4. **Once the human approves**, follow `docs/ai/development-workflow/protocols/94-batch-merge-protocol.md` starting from **Step 3.5** (the pre-merge clean-state check and sequential merge loop). The merge plan confirmation (Protocol 94 Step 3) has already been satisfied by Step 5.5.3 above, but Step 3.5 has **not** been satisfied and must still run. Pass only the approved ordered PR list after Step 5.5.2 filtering, and include skipped entries in the final summary.
 
 5. **Include the batch-merge summary** (Step 5 of Protocol 94) in the orchestrator's Step 6 summary output.
 
