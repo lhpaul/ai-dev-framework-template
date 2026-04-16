@@ -319,7 +319,7 @@ As you supervise the batch, **proactively save issues, human corrections, and an
 - What the root cause was (agent skipped a step, protocol gap, timeout, etc.)
 - Whether the human had to intervene and how
 
-These notes feed directly into the Step 6 retrospective suggestion and provide context that GitHub data alone cannot capture.
+These notes feed directly into the post-merge retrospective and provide context that GitHub data alone cannot capture.
 
 ---
 
