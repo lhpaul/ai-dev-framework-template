@@ -25,13 +25,13 @@
   - Protocol metadata (agent role, purpose)
   - Step 1: Resolve scope — determine which PRs to analyze (from scope hint, current session, or recent repo PRs)
   - Step 2: Gather data — query GitHub PR metadata (review cycles, finding types, labels, merge conflicts) and git history (commit patterns, fix-commit ratio); when conversation context is available, also analyze manual interventions, human corrections, agent deviations
-  - Step 3: Synthesize findings — categorize improvement opportunities using the fixed taxonomy (`workflow-process`, `agent-behavior`, `configuration`, `documentation`, `code-quality`, `tooling`), assign severity signals (`high`, `medium`, `low`), and recommend an action for each
-  - Step 4: Present and act — show categorized findings to the human; for each, accept the human's choice of "Address now", "Add to backlog", or "Skip"; execute the chosen action
-  - Step 5: Execute actions — "Address now": apply simple fix, commit, push (no new PR or review loop); "Add to backlog": create GitHub issue directly via `gh issue create` (not through `00-add-backlog-item-protocol.md`); "Skip": move on
+  - Step 3: Synthesize findings — Step 3a queries the configured issue tracker for existing open items that may overlap with findings (tracker-agnostic via `issue_tracker.provider` in `.ai-dev-workflow.yaml`); Step 3b categorizes improvement opportunities using the fixed taxonomy (`workflow-process`, `agent-behavior`, `configuration`, `documentation`, `code-quality`, `tooling`), assigns severity signals (`high`, `medium`, `low`), recommends an action for each, and records a related existing item reference (or "none") per finding
+  - Step 4: Present and act — show categorized findings to the human; each finding includes a "Related existing item" field; for each, accept the human's choice of "Address now", "Add to backlog", or "Skip"; execute the chosen action
+  - Step 5: Execute actions — "Address now": apply simple fix, commit, push (no new PR or review loop); "Add to backlog": when a related item exists, offer "Expand existing" (append to the existing issue body) or "Create new" (create a new GitHub issue with the `workflow` label); when no related item exists, create a new issue directly; "Skip": move on
   - Step 6: Close — confirm what was done and end the retrospective
   - Graceful exit when no actionable findings are surfaced
   - Constraint: the agent never applies fixes or creates issues without the human's explicit choice
-  - Maps to: AC 1, 2, 3, 4, 5, 6, 7, 8, 12
+  - Maps to: AC 1, 2, 3, 4, 5, 6, 7, 8, 12, 13
 
 ### Integration into Existing Protocols
 
@@ -56,7 +56,8 @@
 2. Invoke `/retrospective` with a specific PR number as scope hint — verify findings are scoped to that PR (AC 1)
 3. Choose "Address now" for a simple finding — verify fix is applied, committed, and pushed without a new PR (AC 5)
 4. Choose "Address now" for a complex finding — verify agent recommends "Add to backlog" instead and explains why (AC 6)
-5. Choose "Add to backlog" for a finding — verify a GitHub issue is created with descriptive title/body and the URL is returned (AC 7)
+5. Choose "Add to backlog" for a finding with no related existing item — verify a new GitHub issue is created with the `workflow` label, descriptive title/body, and the URL is returned (AC 7)
+5a. Choose "Add to backlog" for a finding with a related existing item — verify the agent offers "Expand existing" vs "Create new"; choosing "Expand existing" appends the observation to the existing issue body and returns the updated URL (AC 13)
 6. Complete a batch run via Protocol 90 and verify retrospective is suggested after the batch summary (AC 9)
 7. Complete a standalone item run via Protocol 91 and verify retrospective is suggested after the item summary (AC 10)
 8. Complete a dispatched (non-standalone) item run via Protocol 91 and verify retrospective is NOT suggested (AC 10)
