@@ -34,7 +34,7 @@
 
 **Key scenarios to test**:
 1. Reviewer reads `agent-model-config.md` and can find the resume guide within 30 seconds — maps to Acceptance Criterion 3 (UX rule: scannable in under 30 seconds)
-2. All four acceptance criteria are verified by inspecting the changed files — maps to Acceptance Criteria 1–4
+2. Acceptance Criteria 1–4 are verified by inspecting the changed files
 3. Acceptance Criterion 5 (documentation-only) is satisfied by confirming no code/script/CI files were changed — maps to Acceptance Criterion 5
 
 **Smoke test runbook**: [`docs/testing/workflow/agent-timeout-handling.smoke-test.md`](../../../testing/workflow/agent-timeout-handling.smoke-test.md)
