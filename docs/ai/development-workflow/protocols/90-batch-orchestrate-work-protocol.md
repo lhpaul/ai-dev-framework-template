@@ -250,6 +250,16 @@ Each PR in a parallel batch adds its own CHANGELOG entry as normal during implem
 
 ---
 
+## Step 3.7: CodeRabbit Rate Limits in Parallel Batches
+
+CodeRabbit enforces a per-hour rate limit on automated reviews. When multiple PRs are created within a short window (e.g., 3+ PRs within seconds of each other in a parallel batch), CodeRabbit may rate-limit reviews on some PRs and post a "rate limit" comment instead of a full review.
+
+`pr-review-loop.sh` detects this automatically: when a rate-limit comment is found, it waits 3 minutes and retries with `@coderabbitai review` (up to 2 retries, configurable via `CODERABBIT_RATE_LIMIT_MAX_RETRIES` and `CODERABBIT_RATE_LIMIT_WAIT`). No manual intervention is needed in most cases.
+
+If a PR still shows no CodeRabbit review after all retries (e.g., the rate-limit window extends beyond the retry budget), the script falls through to stale-findings recovery and eventually marks the result as `skipped (no_review)`. The PR can still advance to `ready-for-human-review`. A human reviewer can manually post `@coderabbitai review` on the PR to trigger a fresh review after the rate-limit window resets.
+
+---
+
 ## Step 4: Dispatch Work Item Runners
 
 Dispatch exactly one Work Item Runner per item in the current batch.

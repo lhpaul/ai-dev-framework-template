@@ -904,6 +904,17 @@ run_coderabbit_review() {
   local coderabbit_review_count=0
   local coderabbit_any_activity=0
   local coderabbit_retrigger_attempted=0
+  local coderabbit_rate_limit_retries=0
+  local coderabbit_rate_limit_max_retries="${CODERABBIT_RATE_LIMIT_MAX_RETRIES:-2}"
+  local coderabbit_rate_limit_wait="${CODERABBIT_RATE_LIMIT_WAIT:-180}"
+  if ! [[ "$coderabbit_rate_limit_max_retries" =~ ^[0-9]+$ ]]; then
+    echo "WARN: CODERABBIT_RATE_LIMIT_MAX_RETRIES must be a non-negative integer; defaulting to 2" >&2
+    coderabbit_rate_limit_max_retries=2
+  fi
+  if ! [[ "$coderabbit_rate_limit_wait" =~ ^[0-9]+$ ]] || [ "$coderabbit_rate_limit_wait" -le 0 ]; then
+    echo "WARN: CODERABBIT_RATE_LIMIT_WAIT must be a positive integer; defaulting to 180" >&2
+    coderabbit_rate_limit_wait=180
+  fi
 
   while :; do
     # Check for any CodeRabbit review submitted after the HEAD commit
@@ -928,7 +939,8 @@ run_coderabbit_review() {
     # Also check for CodeRabbit issue comments (summary comment) as activity signal.
     # Filter by since_iso so historical comments from prior pushes do not incorrectly
     # mark this HEAD cycle as having activity (which would suppress stale-findings recovery).
-    # Exclude "Reviews paused" comments as they are not an actual review; they are a pause marker.
+    # Exclude "Reviews paused" comments (pause marker) and "rate limit" comments (rate-limit
+    # marker) — neither represents a completed review and must not suppress rate-limit handling.
     if [ "$coderabbit_any_activity" -eq 0 ]; then
       local activity_count
       activity_count="$(
@@ -937,7 +949,8 @@ run_coderabbit_review() {
               [.[] | select(
                   .user.login == $bot and
                   .created_at > $since and
-                  ((.body // "") | test("Reviews paused|review paused"; "i") | not)
+                  ((.body // "") | test("Reviews paused|review paused"; "i") | not) and
+                  ((.body // "") | test("rate.?limit"; "i") | not)
               )] | length
             '
       )"
@@ -975,6 +988,39 @@ run_coderabbit_review() {
         else
           echo "WARN: failed to post retrigger comment — will not reset timer" >&2
           coderabbit_retrigger_attempted=1
+        fi
+        sleep "$poll_interval"
+        elapsed=$((elapsed + poll_interval))
+        continue
+      fi
+    fi
+
+    # --- Rate-limit detection: CodeRabbit posts a comment when it cannot review yet ---
+    # When CodeRabbit is rate-limited it posts an issue comment containing "rate limit"
+    # text. Detect this, wait, and retry up to coderabbit_rate_limit_max_retries times.
+    if [ "$coderabbit_any_activity" -eq 0 ] && [ "$coderabbit_rate_limit_retries" -lt "$coderabbit_rate_limit_max_retries" ]; then
+      local rate_limit_comment_count
+      rate_limit_comment_count="$(
+        gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+          | jq --arg bot "$bot_login" --arg since "$since_iso" '
+              [.[] | select(
+                  .user.login == $bot and
+                  .created_at > $since and
+                  ((.body // "") | test("rate.?limit"; "i"))
+              )] | length
+            '
+      )"
+      if [ "${rate_limit_comment_count:-0}" -gt 0 ]; then
+        coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
+        echo "INFO: CodeRabbit rate limit detected (retry $coderabbit_rate_limit_retries/$coderabbit_rate_limit_max_retries) — waiting ${coderabbit_rate_limit_wait}s before re-triggering" >&2
+        sleep "$coderabbit_rate_limit_wait"
+        # Do NOT reset since_iso — keep the original HEAD-commit timestamp so any review
+        # posted by CodeRabbit during or after the wait is still within the detection window.
+        elapsed=0
+        if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
+          echo "INFO: posted @coderabbitai review trigger after rate-limit wait" >&2
+        else
+          echo "WARN: failed to post @coderabbitai review trigger after rate-limit wait" >&2
         fi
         sleep "$poll_interval"
         elapsed=$((elapsed + poll_interval))
