@@ -172,6 +172,8 @@ After the draft PR exists, the **Work Item Runner** owns the rest of the lifecyc
 - Apply `ready-for-human-review` and move the tracker to **Development in Review** when the PR is human-ready
 - Stop only when the PR is waiting on human review / merge or the run has escalated
 
+**Label derivation rule**: The `ready-for-regression` label requirement is determined by the **branch prefix**, not by the content of the PR. `feature/*` branches always require `ready-for-regression` regardless of whether the changes are code, documentation, or configuration. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table.
+
 If this protocol is invoked **standalone** rather than through the Work Item Runner, hand off manually by following `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` from the newly opened draft PR.
 
 See `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/ai/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
@@ -251,7 +253,7 @@ gh pr create --draft --base develop --title "refactor([scope]): [short descripti
 
 **Important**: Always use `--base develop` to explicitly target the `develop` branch.
 
-10. Hand off to the Work Item Runner with the same lifecycle expectations as Path 1 Step 9 (internal review gate, automated reviewer loop, CI, labels). See `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/ai/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
+10. Hand off to the Work Item Runner with the same lifecycle expectations as Path 1 Step 9 (internal review gate, automated reviewer loop, CI, labels). **Label derivation rule**: `refactor/*` branches always require `ready-for-regression` based on branch prefix, not content type. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table. See `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/ai/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
 
 ---
 
@@ -331,7 +333,7 @@ gh pr create --draft --base develop --title "fix([scope]): [description]" --body
 
 ### Step 9: Handoff to Work Item Runner
 
-Hand off to the Work Item Runner per Path 1 `### Step 9: Handoff to Work Item Runner`.
+Hand off to the Work Item Runner per Path 1 `### Step 9: Handoff to Work Item Runner`. **Label derivation rule**: `fix/*` branches always require `ready-for-regression` based on branch prefix, not content type. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table.
 
 ---
 
@@ -403,7 +405,7 @@ gh pr create --draft --base main --title "fix([scope]): [description] (hotfix)" 
 
 ### Step 9: Handoff to Work Item Runner
 
-Hand off to the Work Item Runner per Path 1 `### Step 9: Handoff to Work Item Runner`.
+Hand off to the Work Item Runner per Path 1 `### Step 9: Handoff to Work Item Runner`. **Label derivation rule**: `hotfix/*` branches always require `ready-for-regression` based on branch prefix, not content type. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table.
 
 **After merge**: notify the human that a backport PR (main → develop) must be opened to prevent branch drift.
 

@@ -553,6 +553,21 @@ Interpret the result as follows:
 
 **Before applying `ready-for-human-review`**, verify all required readiness conditions are met. This is a hard gate — do not skip or defer.
 
+### Label derivation rule
+
+Required labels are determined by the **branch prefix**, not by the content of the PR (e.g., whether it changes code vs. documentation). An agent must never infer labels from what was changed inside the PR.
+
+| Branch prefix | Requires `ready-for-regression` |
+|---|---|
+| `feature/*` | Yes |
+| `fix/*` | Yes |
+| `refactor/*` | Yes |
+| `hotfix/*` | Yes |
+| `spec/*` | No |
+| `implementation-plan/*` | No |
+
+Any branch that does not match a recognized prefix is treated as non-implementation (i.e., `ready-for-regression` is NOT required), but this should be treated as a configuration anomaly and reported to the human.
+
 Run this checklist for **every PR**:
 
 ```bash
