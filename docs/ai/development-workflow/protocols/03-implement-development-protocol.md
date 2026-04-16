@@ -56,8 +56,8 @@ Complete this checklist **before writing any code**. It takes 5–10 minutes and
 6. **Cross-reference consistency check** (required when the change modifies policy or rule text): if the rule or policy you are changing is documented in more than one location, grep for key phrases before writing any code, list every location, and confirm each location will be updated consistently. Verify that headings, signal names, and language do not contradict each other across files.
 
    ```bash
-   # Example: grep for the key phrase or signal name across all docs
-   grep -r "key phrase" docs/ .cursor/ .claude/ .codex/ --include="*.md" -l
+   # Example: grep for the key phrase or signal name across all relevant locations
+   grep -r "key phrase" docs/ .cursor/ .claude/ .codex/ AGENTS.md README.md REVIEW.md --include="*.md" -l
    ```
 
 Do not proceed to Step 2 until this checklist is complete and all six points are answered.
