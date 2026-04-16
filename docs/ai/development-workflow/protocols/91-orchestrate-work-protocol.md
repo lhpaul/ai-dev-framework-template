@@ -227,10 +227,10 @@ For each reviewer in the resolved list, dispatch the stage-appropriate agent:
 |---|---|---|
 | `claude` | `spec/*` | `spec-reviewer` or `01-review-spec-protocol.md` |
 | `claude` | `implementation-plan/*` | `implementation-plan-reviewer` or `02-review-implementation-plan-protocol.md` |
-| `claude` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `code-reviewer` or `03-review-implementation-protocol.md` |
+| `claude` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` / `release/*` | `code-reviewer` or `03-review-implementation-protocol.md` |
 | `codex` | `spec/*` | `workflow-spec-reviewer` Codex skill against `REVIEW.md` |
 | `codex` | `implementation-plan/*` | `workflow-plan-reviewer` Codex skill against `REVIEW.md` |
-| `codex` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `workflow-code-reviewer` Codex skill against `REVIEW.md` |
+| `codex` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` / `release/*` | `workflow-code-reviewer` Codex skill against `REVIEW.md` |
 
 ### Multi-reviewer execution rules
 
@@ -371,6 +371,7 @@ Soft suggestions may be reported in summaries, but they do not change the loop r
 | `spec/*` | `spec-reviewer` |
 | `implementation-plan/*` | `implementation-plan-reviewer` |
 | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `code-reviewer` |
+| `release/*` | `code-reviewer` (follow `05-prepare-release-protocol.md` Step 7.3 fixer guidance) |
 
 ### Loop parameters
 
