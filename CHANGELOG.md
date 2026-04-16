@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Unbound variable in `add-backlog-item.sh create`**: fixed `labels[@]: unbound variable` error (bash `set -u`) that occurred when no `--label` flags were passed. The array iteration now uses the `${var[@]+"${var[@]}"}` guard so an empty `labels` array expands safely to nothing rather than triggering an error.
+
 - **Cross-reference consistency check in developer protocol**: `03-implement-development-protocol.md` now requires a cross-reference consistency check in the pre-implementation scope checklist (item 6, all four paths) and the Quality Rules section. When a change modifies policy or rule text that appears in multiple files, developers must grep for key phrases, list every matched location, and confirm all locations are updated consistently before opening a PR. This addresses the root cause of multi-cycle review loops on cross-cutting documentation changes (e.g., PR #120 required 8 cycles due to inconsistencies across 10+ files).
 - **Worktree agent main-branch safety rule (Protocol 91)**: added an explicit safety rule to the worktree isolation section of `91-orchestrate-work-protocol.md` prohibiting agents running inside a worktree from running `git checkout`, `git switch`, or any other branch-switching command that targets the main working tree. Violations leave the main repo checked out on a `worktree-agent-*` branch, breaking all subsequent agent and human operations. The rule requires agents to use `git -C <main-repo-root>` for read-only main-repo queries and to verify that the main working tree is still on `develop` before worktree cleanup — stopping with an error and escalating to the human if the branch has changed (issue #111).
 

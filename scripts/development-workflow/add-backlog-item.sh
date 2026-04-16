@@ -91,7 +91,7 @@ create_cmd() {
       gh_args+=(--body "$body")
     fi
     local label
-    for label in "${labels[@]}"; do
+    for label in "${labels[@]+"${labels[@]}"}"; do
       [ -n "$label" ] || continue
       gh_args+=(--label "$label")
     done
