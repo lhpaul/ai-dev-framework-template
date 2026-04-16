@@ -610,7 +610,7 @@ echo "✅ Label readiness checklist passed. PR is ready for human review."
 
 **Interpretation**:
 
-- **All checks pass**: Continue to Step 8b (update tracker status) and report the PR as ready
+- **All checks pass**: Continue to Step 8b (update tracker status) and then Step 8c (independent PR verification); only report the PR as ready after Step 8c also passes
 - **Any check fails**: Stop and fix the condition. Do not apply `ready-for-human-review` until all checks pass
   - If `PR is still a draft`: Human error; run `gh pr ready <pr_number>` manually
   - If `missing ready-for-regression` on implementation PR: Re-run Step 7b, then re-check
