@@ -189,5 +189,5 @@ Not applicable — this feature is CI-only and requires no application seed data
 ## Known Limitations
 
 - Smoke test Steps 3–6 require opening and closing test PRs; clean up branches after each step to avoid cluttering the repository
-- ShellCheck analysis covers only `scripts/development-workflow/*.sh`; scripts in other directories are out of scope for this feature (see spec Out of Scope section)
+- ShellCheck analysis covers only `scripts/development-workflow/**/*.sh`; scripts in other directories are out of scope for this feature (see spec Out of Scope section)
 - The CI check reviews the PR branch state, not the local working tree — local fixes must be pushed before the check reflects them
