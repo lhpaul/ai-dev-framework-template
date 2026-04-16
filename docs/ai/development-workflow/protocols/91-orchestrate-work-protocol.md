@@ -111,6 +111,21 @@ When dispatching a subagent for this item, include a short "Tracker Work Item Su
 | PR labeled `needs-fixes` | Human or automated systems requested changes | Address feedback, push, then run Step 7a, Step 7, and Step 8 |
 | PR labeled `ready-for-human-review` | — | Wait — human review / merge required |
 
+### Pre-dispatch tracker status update (single-item path)
+
+When the Work Item Runner is invoked **directly** (not via Protocol 90) and the item's tracker status is stale — for example, a Refactor item is still `Backlog` even though the plan is merged and implementation is about to start — the runner must update the tracker status **before** dispatching the creator agent. Use the same transition table as Protocol 90 Step 2.5:
+
+| Next action to dispatch | Tracker status to set |
+|---|---|
+| Write Spec | `Writing Spec` |
+| Write Plan | `Writing Plan` |
+| Implement (feature/fix/refactor/hotfix branch) | `In Development` |
+| Resume in-progress stage (status already `Writing Spec`, `Writing Plan`, or `In Development`) | No change — skip |
+
+This mirrors what Protocol 90 does at the portfolio level in Step 2.5 and ensures the tracker reflects the correct in-flight state regardless of whether the item was dispatched by the Portfolio Orchestrator or invoked directly by a human.
+
+If the tracker is unavailable, log a warning and proceed — do not block advancement.
+
 ### Pre-dispatch branch check
 
 Before dispatching any creator-stage agent, run all three checks below. An existing branch or active worktree means work already exists and should be resumed rather than restarted.
