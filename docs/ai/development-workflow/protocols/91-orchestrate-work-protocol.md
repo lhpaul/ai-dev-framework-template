@@ -260,7 +260,7 @@ Run the next deterministic action for the selected item, then immediately re-eva
 
 Expected chain:
 
-`creator -> draft PR opened -> internal review gate with all internal reviewers (Step 7a) -> gh pr ready -> automated reviewer loop (Step 7) -> regression label (Step 7b, implementation PRs only) -> CI loop (Step 8) -> readiness label / tracker status -> wait or escalation`
+`creator -> draft PR opened -> internal review gate with all internal reviewers (Step 7a) -> gh pr ready -> automated reviewer loop (Step 7) -> regression label (Step 7b, implementation PRs only) -> CI loop (Step 8) -> label readiness checklist (Step 8a) -> tracker status update (Step 8b) -> independent PR verification (Step 8c) -> wait or escalation`
 
 After any subagent finishes, determine whether the item still has a deterministic next action:
 
@@ -544,7 +544,7 @@ Interpret the result as follows:
 
 | Result | Action |
 |---|---|
-| `green` | Proceed to Step 8a (label readiness checklist) |
+| `green` | Proceed to Step 8a (label readiness checklist) → Step 8b (tracker status) → Step 8c (independent verification) |
 | `red` | Apply `needs-fixes`, dispatch the matching fixer agent, wait for a push, then return to Step 7 |
 | `timeout` | Escalate to human; do not apply `ready-for-human-review` |
 
@@ -610,7 +610,7 @@ echo "✅ Label readiness checklist passed. PR is ready for human review."
 
 **Interpretation**:
 
-- **All checks pass**: Continue to Step 8b (update tracker status) and report the PR as ready
+- **All checks pass**: Continue to Step 8b (update tracker status) and then Step 8c (independent PR verification); only report the PR as ready after Step 8c also passes
 - **Any check fails**: Stop and fix the condition. Do not apply `ready-for-human-review` until all checks pass
   - If `PR is still a draft`: Human error; run `gh pr ready <pr_number>` manually
   - If `missing ready-for-regression` on implementation PR: Re-run Step 7b, then re-check
@@ -632,6 +632,37 @@ See `docs/ai/development-workflow/integrations/github-projects.md` for tracker A
 
 ---
 
+## Step 8c: Post-Label Independent Verification (Hard Gate)
+
+After Steps 8a and 8b complete, perform one final independent verification of the actual PR state via `gh pr view` before reporting the PR as ready for human review. **Do not rely on prior step outputs or agent self-reports** — query GitHub directly.
+
+```bash
+gh pr view <pr_number> --json baseRefName,isDraft,labels,statusCheckRollup,comments
+```
+
+Verify all of the following. If any check fails, **do not report ready** — treat it the same as `needs-fixes` and re-enter the fix loop from Step 7a:
+
+| Check | Pass condition |
+|---|---|
+| Base branch | `develop` for `feature/*`, `fix/*`, `refactor/*`; `main` for `hotfix/*`; `develop` for `spec/*`, `implementation-plan/*` |
+| PR is non-draft | `isDraft: false` |
+| `ready-for-human-review` label | Present in `labels[].name` |
+| `ready-for-regression` label | Present in `labels[].name` for `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`; absent/ignored for `spec/*`, `implementation-plan/*` |
+| No `needs-fixes` label | `needs-fixes` absent from `labels[].name` |
+| Automated reviewer loop summary | At least one comment whose body contains `"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"` (skip this check only when Step 7 was `skipped` because no review platforms are configured) |
+| CI checks | All required status checks have `state: SUCCESS` or `conclusion: success` in `statusCheckRollup` (no check in `PENDING`, `FAILURE`, or `ERROR` state) |
+
+If any check fails:
+
+1. Log the specific failure(s) — include the PR number, failed check name, and observed value.
+2. Apply `needs-fixes` if not already present: `gh pr edit <pr_number> --add-label "needs-fixes"`.
+3. Remove `ready-for-human-review` if it was already applied: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.
+4. Fix the root cause (wrong base branch, missing label, missing review comment, failing CI) and return to Step 7a.
+
+Only after all checks pass should the Work Item Runner report the PR as terminal ("ready for human review").
+
+---
+
 ## Step 9: Feedback Loop
 
 When a human requests changes on a PR:
@@ -646,7 +677,8 @@ When a human requests changes on a PR:
 8. Run Step 8 (CI loop)
 9. Run Step 8a (label readiness checklist) — this is **mandatory** to verify the PR is non-draft, `ready-for-regression` is applied on implementation PRs, and `ready-for-human-review` is applied
 10. Run Step 8b (update tracker status)
-11. Notify human that feedback has been addressed and the PR is ready again
+11. Run Step 8c (post-label independent verification) — query GitHub directly to confirm base branch, labels, review comment, and CI before reporting ready
+12. Notify human that feedback has been addressed and the PR is ready again
 
 See `92-pr-readiness-signal-protocol.md` for label definitions.
 

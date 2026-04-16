@@ -300,6 +300,34 @@ After a Work Item Runner returns:
 4. Stop supervising that item only when it is waiting on a human, blocked, or escalated.
 5. **When a human confirms PRs have been merged**: run post-merge status transitions per the table in Step 10 of `91-orchestrate-work-protocol.md` — set tracker status to `Spec Ready`, `Plan Ready`, or `Merged` depending on the branch type of the merged PR — and clean up local branches and worktrees associated with the merged PRs.
 
+### Step 5.1: Post-Dispatch PR Verification
+
+Before reporting any PR as ready for human review, **independently verify the actual PR state** via `gh pr view`. Do not trust Work Item Runner self-reports alone. Run this check for every PR that a Work Item Runner reports as ready:
+
+```bash
+gh pr view <pr_number> --json baseRefName,isDraft,labels,statusCheckRollup,comments
+```
+
+Verify all of the following. If any check fails, the PR is **not ready** — treat it the same as `needs-fixes` and return the item to active supervision:
+
+| Check | Pass condition |
+|---|---|
+| Base branch | `develop` for `feature/*`, `fix/*`, `refactor/*`, `spec/*`, `implementation-plan/*`; `main` for `hotfix/*` |
+| PR is non-draft | `isDraft: false` |
+| `ready-for-human-review` label | Present |
+| `ready-for-regression` label | Present on `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PRs; not required for `spec/*`, `implementation-plan/*` |
+| No `needs-fixes` label | Absent |
+| Automated reviewer loop summary comment | At least one PR comment containing "Automated Reviewer Loop Summary" or "No blocking PR feedback" (skip this check only when Step 7 was `skipped` because no review platforms are configured) |
+| CI checks | All required status checks are green (`state: SUCCESS` or `conclusion: success`) |
+
+If a check fails:
+
+1. Log the specific failure in your retrospective notes (see "Retrospective notes during supervision" below).
+2. Remove `ready-for-human-review` if it is present: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.
+3. Add the `needs-fixes` label to the PR: `gh pr edit <pr_number> --add-label "needs-fixes"`.
+4. Redispatch / resume the Work Item Runner for that item to address the gap.
+5. Re-run this verification after the next Work Item Runner return.
+
 Do not consider the batch complete until every dispatched item has reached a real terminal condition.
 
 ### Retrospective notes during supervision
