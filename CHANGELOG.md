@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - AI Workflow: `93-automated-reviewer-loop-protocol.md` — added mandatory cross-reference check requiring agents to grep edited files for stale references before committing fixes; links to the existing re-read verification section for post-commit confirmation.
 - AI Workflow: `implementation-plan-template.md` — added a "Code Samples" section with guidance to mark code samples as illustrative and to ensure all cross-section references are consistent before marking the plan ready.
+- **Workflow agent model bump to Opus 4.7**: updated `.claude/agents/tech-lead.md` (`model: claude-opus-4-6` → `model: claude-opus-4-7`) and refreshed the two Opus model-ID examples in `docs/ai/development-workflow/agent-model-config.md` (in-session override example `claude-opus-4-5-20251101` → `claude-opus-4-7`; Cursor permanent-change example `claude-opus-4-6` → `claude-opus-4-7`). Sonnet 4.6 and Haiku 4.5 remain unchanged — only Opus had a newer latest model to pick up. No tier reassignments, no tool restriction changes (issue #160).
 
 ### Fixed
 

@@ -80,7 +80,7 @@ Use your runner’s “one-off model override” mechanism.
 Claude Code example (if applicable):
 
 ```bash
-claude --agent developer --model claude-opus-4-5-20251101
+claude --agent developer --model claude-opus-4-7
 ```
 
 **Cursor:**
@@ -101,7 +101,7 @@ This affects all future invocations until changed back.
 
 - `fast`: Uses Cursor's fast model (recommended for economy-tier agents)
 - `inherit`: Uses the current Composer model (recommended for balanced/premium-tier agents)
-- Specific model ID: Uses that exact model (e.g., `claude-opus-4-6`, `gpt-4-turbo`)
+- Specific model ID: Uses that exact model (e.g., `claude-opus-4-7`, `gpt-4-turbo`)
 
 **Precedence**: When multiple agent locations exist (`.cursor/agents/`, `.claude/agents/`, `.codex/agents/`), Cursor uses `.cursor/agents/` first, then `.claude/agents/`, then `.codex/agents/`.
 
