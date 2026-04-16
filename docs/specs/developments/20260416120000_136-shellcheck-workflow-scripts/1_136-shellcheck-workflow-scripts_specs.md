@@ -110,7 +110,7 @@ This feature adds automated ShellCheck static analysis that runs on pull request
 ## Acceptance Criteria
 
 - [ ] A CI check named (or clearly labeled) `shellcheck` (or equivalent) runs automatically on every pull request that modifies `.sh` files under `scripts/development-workflow/`.
-- [ ] The check exits red and displays specific findings (file, line, code, message) when any `error` or `warning`-level ShellCheck issue is present in the changed or baseline scripts.
+- [ ] The check exits red and displays specific findings (file, line, code, message) when any `error` or `warning`-level ShellCheck issue is present in any analyzed scripts under `scripts/development-workflow/`.
 - [ ] The check exits green when no `error` or `warning`-level findings are present.
 - [ ] A pull request that modifies only non-shell files is not blocked by the ShellCheck check (either the check does not run, or it passes with a no-files-found result).
 - [ ] Suppressing a finding with an inline `# shellcheck disable=SCxxxx` directive causes the check to exit green for that finding.
