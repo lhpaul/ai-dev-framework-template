@@ -216,8 +216,8 @@ Use the pre-dispatch branch check from Step 2 (`git branch --list`, `git branch 
   if [ -n "$MAIN_STATUS" ]; then
     echo "WARNING: main working tree has uncommitted modifications after worktree agent completed:"
     echo "$MAIN_STATUS"
-    echo "These changes were NOT made by this worktree agent and must be reviewed before proceeding."
-    echo "Likely cause: a stage agent leaked file writes outside the worktree boundary."
+    echo "Unexpected changes detected in the main working tree; these may indicate a leak and must be reviewed before proceeding."
+    echo "Possible cause: a stage agent leaked file writes outside the worktree boundary."
     echo "Do NOT commit or discard these changes without human review."
     exit 1
   fi
