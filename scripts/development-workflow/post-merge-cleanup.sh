@@ -70,9 +70,9 @@ echo "Deleting local branch '$TO_DELETE'..."
 git branch -D "$TO_DELETE"
 
 # --- Close associated GitHub issue (if any) ---
-# Extract issue number from branch name patterns like fix/123-slug, feature/45-slug, etc.
+# Extract issue number from branch name patterns like fix/123-slug or fix/123 (slug optional per conventions)
 ISSUE_NUMBER=""
-if [[ "$TO_DELETE" =~ ^(fix|feature|hotfix|refactor)/([0-9]+)- ]]; then
+if [[ "$TO_DELETE" =~ ^(fix|feature|hotfix|refactor)/([0-9]+)($|-) ]]; then
   ISSUE_NUMBER="${BASH_REMATCH[2]}"
 fi
 
