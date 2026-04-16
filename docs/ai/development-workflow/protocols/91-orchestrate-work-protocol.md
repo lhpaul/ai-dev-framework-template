@@ -690,7 +690,7 @@ Verify all of the following. If any check fails, **do not report ready** — tre
 | `ready-for-human-review` label | Present in `labels[].name` |
 | `ready-for-regression` label | Present in `labels[].name` for `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`; absent/ignored for `spec/*`, `implementation-plan/*` |
 | No `needs-fixes` label | `needs-fixes` absent from `labels[].name` |
-| Automated reviewer loop summary | At least one comment whose body contains `"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"` (skip this check only when Step 7 was `skipped` because no review platforms are configured) |
+| Automated reviewer loop summary | At least one comment whose body contains `"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"` (skip this check only when Step 7 was `skipped` because no review platforms are configured). **This is a hard requirement. Agents applying fixes MUST NOT remove or skip this check — the presence of the comment is the only reliable signal that Step 7 ran to completion. A PR that has `ready-for-human-review` but lacks this comment is in an incomplete state and must re-run Step 7.** |
 | CI checks | All required status checks have `state: SUCCESS` or `conclusion: success` in `statusCheckRollup` (no check in `PENDING`, `FAILURE`, or `ERROR` state) |
 
 If any check fails:

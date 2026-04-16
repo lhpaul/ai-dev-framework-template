@@ -107,6 +107,61 @@ This affects all future invocations until changed back.
 
 ---
 
+## Expected Run Durations
+
+The table below shows the typical and maximum expected wall-clock duration for the two agents most likely to be interrupted by an API stream timeout. Use these values to decide whether an agent run is still in progress or has likely timed out.
+
+| Agent | Typical run | Consider timed out if no progress after |
+|---|---|---|
+| `item-orchestrator` | 5–15 min | ~25 min |
+| `automated-reviewer-loop` | 2–10 min | ~20 min |
+
+These estimates assume a single development item with a normal review-fix cycle. Runs that encounter multiple fixer cycles, slow CI, or rate-limited external reviewers can exceed the typical range — escalate to human only when the maximum threshold is crossed with no visible progress.
+
+---
+
+## Resume a Timed-Out Agent Run
+
+Long-running item-orchestrator agents can be interrupted mid-run (e.g., "API Error: Stream idle timeout" after ~20 minutes), leaving a PR in a partially-advanced state. This section explains how to detect and safely resume an interrupted run.
+
+### Detection checklist
+
+Inspect the PR with:
+
+```bash
+gh pr view <pr_number> --json isDraft,labels,comments,statusCheckRollup
+```
+
+| Signal | Interpretation |
+|---|---|
+| PR is non-draft | The internal review gate (Step 7a) and `gh pr ready` completed |
+| `ready-for-regression` present | Step 7b applied the label |
+| `ready-for-human-review` present **but** no reviewer loop summary comment | **Incomplete** — the label was applied before Step 7 completed; the PR is not actually ready |
+| No comment containing `"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"` | Step 7 (external automated reviewers) did not finish |
+| CI checks absent or in PENDING/FAILURE state | Step 8 (CI loop) did not finish |
+| `needs-fixes` label present | A prior run detected issues but the fix loop did not complete |
+
+A PR that has readiness labels but **no reviewer loop summary comment** is the canonical sign of an interrupted run. The label alone is not a reliable completion signal.
+
+### Resume command
+
+```bash
+# Determine the correct next step
+./scripts/development-workflow/workflow-next-action.sh --pr <pr_number>
+
+# Then re-invoke the item-orchestrator (or automated-reviewer-loop agent) for the PR
+# Example (Claude Code):
+#   /run-item-work --pr <pr_number>
+```
+
+The item-orchestrator uses the Step 8c independent verification gate to detect any missing labels or comments and automatically re-enters the correct resume point (Step 7a, Step 7, or Step 8).
+
+### Warning
+
+**Do NOT manually apply `ready-for-human-review` to a PR that is missing the reviewer loop summary comment.** Doing so marks the PR as ready when the automated review step was never completed, defeating the purpose of the review loop. Always resume via the item-orchestrator and let it complete Step 7 and Step 8 before the label is applied.
+
+---
+
 ## Updating Model IDs Over Time
 
 Models change frequently across providers. When your provider releases new models (or deprecates old ones), update:

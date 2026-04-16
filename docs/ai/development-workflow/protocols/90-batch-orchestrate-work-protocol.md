@@ -363,6 +363,35 @@ If a check fails:
 
 Do not consider the batch complete until every dispatched item has reached a real terminal condition.
 
+#### Stale / Incomplete PR Detection
+
+A PR may appear "almost ready" — non-draft, with readiness labels applied — but actually be in an incomplete state because the agent timed out before finishing Step 7 (external automated reviewers). The canonical detection heuristic is:
+
+> **Non-draft PR + `ready-for-regression` present + no reviewer loop summary comment = incomplete run**
+
+The presence of `ready-for-human-review` alone is NOT a reliable completion signal. The reviewer loop summary comment is the only reliable indicator that Step 7 ran to completion.
+
+Use this one-line command to detect the incomplete state for a specific PR:
+
+```bash
+gh pr view <pr_number> --json isDraft,labels,comments \
+  --jq '{
+    isDraft: .isDraft,
+    hasRegressionLabel: ([.labels[].name] | any(. == "ready-for-regression")),
+    hasReadyLabel: ([.labels[].name] | any(. == "ready-for-human-review")),
+    hasReviewSummary: ([.comments[].body] | any(test("Automated Reviewer Loop Summary|No blocking PR feedback")))
+  }'
+```
+
+**Expected action when incomplete state is detected**:
+
+1. Log the incomplete PR in your retrospective notes.
+2. Remove `ready-for-human-review` if present: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.
+3. Add `needs-fixes`: `gh pr edit <pr_number> --add-label "needs-fixes"`.
+4. Redispatch the Work Item Runner with a resume hint to pick up from Step 7.
+
+This pattern also applies to PRs where an agent timed out mid-CI-loop: detect via `statusCheckRollup` entries in `PENDING` or `ERROR` state and re-dispatch accordingly.
+
 ### Step 5.2: Post-Agent Main Working Tree Verification (Parallel Batches Only)
 
 After each Work Item Runner returns in a **parallel batch**, immediately check that the main working tree was not modified by the agent:
