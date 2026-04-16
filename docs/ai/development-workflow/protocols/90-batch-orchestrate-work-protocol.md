@@ -63,6 +63,20 @@ From the tracker, collect for each open item:
 
 **Exclude** items whose tracker status is already `Done`, `Merged`, `Cancelled`, or equivalent — these are not candidates for advancement.
 
+**Cross-check merged PRs**: Tracker statuses can be stale (e.g., a prior batch merged PRs but never updated the tracker). Before accepting a tracker status as authoritative, cross-check each candidate item against merged PRs:
+
+```bash
+# For each candidate issue number, check if a merged PR already exists
+gh pr list --state merged --search "<issue-number>" --json number,title,headRefName \
+  --jq ".[] | select(.headRefName | test(\"<issue-number>\"))"
+```
+
+If a merged PR is found for an item whose tracker status is not `Merged` or `Done`:
+1. Update the tracker status to `Merged`
+2. Close the issue if still open
+3. Exclude the item from the candidate list
+4. Report the stale status to the human: `⚠️ Issue #N was already merged (PR #M) but tracker showed [status]. Updated to Merged.`
+
 **If the tracker is unavailable** (no provider configured, API unreachable, or no MCP server available), **you MUST immediately warn the human** with a clear message such as:
 
 > ⚠️ **Issue tracker unavailable** — could not reach the configured tracker (`<provider>`). Falling back to VCS-based status inference, which may be stale or inaccurate. Statuses shown below are best-effort only.
@@ -166,7 +180,7 @@ For each item in the batch, prepare a short handoff:
 - Priority context
 - Parallelization notes or serialization reason
 - `BATCH_CONTEXT=true` — required for parallel batches so the Work Item Runner (protocol 91) activates worktree isolation
-- `SKIP_CHANGELOG=true` — for all non-last items in parallel batches that touch implementation; omit for last item so it consolidates CHANGELOG entries (see Step 3.6)
+- Each item adds its own CHANGELOG entry as normal (see Step 3.6 for conflict resolution strategy)
 
 ### Worktree isolation requirement
 
@@ -210,63 +224,25 @@ Proceed with batch dispatch only when all pre-flight checks pass.
 
 ## Step 3.6: CHANGELOG Conflict Mitigation for Parallel Batches
 
-When multiple PRs in a parallel batch touch `CHANGELOG.md`, merge conflicts are inevitable: the first PR to merge will update the `[Unreleased]` section, causing subsequent merges to fail on merge conflicts until they manually rebase or re-resolve.
+When multiple PRs in a parallel batch touch `CHANGELOG.md`, merge conflicts are expected because they all add entries to the same `[Unreleased]` section.
 
-### Strategy: Only the Last-Merged Item in a Batch Updates CHANGELOG
+### Strategy: Per-PR Entries with Batch-Merge Auto-Resolution
 
-To prevent cascading CHANGELOG conflicts, only the **last item to be merged in a parallel batch** should modify `CHANGELOG.md`. Other items in the batch **must not** touch the CHANGELOG.
+Each PR in a parallel batch adds its own CHANGELOG entry as normal during implementation. CHANGELOG merge conflicts are resolved at merge time by the batch-merge auto-resolution (protocol 94 Step 4.3), which combines entries from both sides without dropping any.
+
+**Why not consolidate into a single PR?** External reviewers (e.g., Devin, CodeRabbit) enforce per-PR diff scope and will flag CHANGELOG entries for work not present in the PR's diff as phantom/incorrect entries. Additionally, agents do not reliably parse `SKIP_CHANGELOG` metadata. The batch-merge auto-resolution handles CHANGELOG conflicts cleanly, making consolidation unnecessary.
 
 **Implementation**:
 
-1. **Identify which item will merge last** during this batch planning phase (Step 3). This is typically:
-   - The item with the longest expected review/fix cycle (high complexity, many reviewers)
-   - The item with the lowest priority (if review cycles are equal)
-   - By default, the last item in the batch list if review complexity is similar
-
-2. **Instruct Work Item Runners** (when dispatching in Step 4):
-   - For all items **except the last**: Pass `SKIP_CHANGELOG=true` in the handoff metadata so the implementation phase skips adding CHANGELOG entries
-   - For the last item only: Implement and add CHANGELOG entries for **all work in the batch** in a single consolidated commit
-
-3. **Collect CHANGELOG descriptions** from earlier items:
-   - As each non-last item's PR reaches `ready-for-human-review`, the Work Item Runner or human can post a comment with the intended CHANGELOG entry text
-   - Document these in a consolidated list accessible to the last item's orchestrator (e.g., a summary comment on the PR dashboard or in the orchestrator's context)
-
-4. **Last item's CHANGELOG consolidation**:
-   - When the last item reaches implementation, gather the CHANGELOG descriptions from all batch items
-   - Add all entries under the appropriate section (Added, Changed, Fixed, etc.) in a single commit on the last item's branch
-   - Use consistent wording and avoid duplication
+1. **Do not pass `SKIP_CHANGELOG`** in handoff metadata. Each item adds its own CHANGELOG entry per the standard protocol 03 rules.
+2. **At merge time** (Step 5.5 or `/batch-merge`): the batch-merge protocol auto-resolves CHANGELOG conflicts by combining entries from both `HEAD` and the incoming branch. No entries are dropped.
+3. **If batch-merge is not used** (e.g., human merges manually): CHANGELOG conflicts are trivial to resolve — accept both sides' entries under the appropriate section.
 
 ### Special Cases
 
 **Spec-only or plan-only PRs**: These are exempt from CHANGELOG updates per the project's changelog policy (`docs/best-practices/2-version-control.md`). Spec and plan PRs do not trigger the conflict problem because they do not modify CHANGELOG at all.
 
-**Hotfixes**: Hotfixes require a new CHANGELOG entry immediately (they fix released code). If multiple hotfixes are in the same batch:
-- Apply the same "last item" strategy above
-- Or serialize the hotfixes (run them sequentially) to avoid conflicts
-
-**Single item in batch**: If a batch has only one implementation item, it updates CHANGELOG normally.
-
-### Example Batch Scenario
-
-**Parallel batch**: Feature A (spec + plan + implementation), Feature B (spec + plan + implementation), Fix C (implementation)
-
-1. **Dispatch phase** notifies:
-   - Feature A: skip CHANGELOG during implementation
-   - Feature B: skip CHANGELOG during implementation
-   - Fix C (last item): will consolidate CHANGELOG for all three items
-
-2. **Execution phase**:
-   - Features A and B implement without touching CHANGELOG.md; push PRs marked `ready-for-human-review`
-   - Fix C implements, and before reaching `ready-for-human-review`, adds a single consolidated CHANGELOG entry for all three items:
-     ```markdown
-     - **Feature A**: [description]
-     - **Feature B**: [description]
-     - **Fix C**: [incident/reason] 
-     ```
-
-3. **Merge phase**:
-   - Features A and B merge cleanly (no CHANGELOG conflict)
-   - Fix C merges last with the consolidated CHANGELOG entry
+**Single item in batch**: If a batch has only one implementation item, it updates CHANGELOG normally (no conflict possible).
 
 ---
 

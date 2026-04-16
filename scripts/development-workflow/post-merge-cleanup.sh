@@ -69,5 +69,31 @@ echo "Deleting local branch '$TO_DELETE'..."
 # -D: branch is already merged on remote (squash/rebase merges don't leave tip in develop)
 git branch -D "$TO_DELETE"
 
+# --- Close associated GitHub issue (if any) ---
+# Extract issue number from branch name patterns like fix/123-slug, feature/45-slug, etc.
+ISSUE_NUMBER=""
+if [[ "$TO_DELETE" =~ ^(fix|feature|hotfix|refactor)/([0-9]+)- ]]; then
+  ISSUE_NUMBER="${BASH_REMATCH[2]}"
+fi
+
+if [ -n "$ISSUE_NUMBER" ]; then
+  ISSUE_STATE=$(gh issue view "$ISSUE_NUMBER" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
+  if [ "$ISSUE_STATE" = "OPEN" ]; then
+    # Find the merged PR for this branch
+    MERGED_PR=$(gh pr list --state merged --head "$TO_DELETE" --json number --jq '.[0].number' 2>/dev/null || echo "")
+    if [ -n "$MERGED_PR" ]; then
+      CLOSE_COMMENT="Closed by PR #${MERGED_PR}."
+    else
+      CLOSE_COMMENT="Closed via post-merge cleanup of branch \`${TO_DELETE}\`."
+    fi
+    echo "Closing issue #$ISSUE_NUMBER..."
+    gh issue close "$ISSUE_NUMBER" --comment "$CLOSE_COMMENT" 2>/dev/null || echo "Warning: could not close issue #$ISSUE_NUMBER"
+  else
+    echo "Issue #$ISSUE_NUMBER is already $ISSUE_STATE, skipping close."
+  fi
+else
+  echo "No issue number detected in branch name '$TO_DELETE', skipping issue close."
+fi
+
 echo ""
 echo "Done. You are on $DEVELOP_BRANCH and '$TO_DELETE' has been removed locally."
