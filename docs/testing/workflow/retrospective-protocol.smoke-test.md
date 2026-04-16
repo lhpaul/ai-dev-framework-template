@@ -94,7 +94,7 @@ Before running this smoke test:
 
 ### Step 5b: Add to Backlog — Expand Existing Issue
 
-**Maps to**: Acceptance Criteria 7, 12, 13
+**Maps to**: Acceptance Criteria 12, 13
 
 1. From the findings, choose "Add to backlog" for one finding that has a **related existing item**
 2. Verify the agent offers a choice: **Expand existing** or **Create new**
