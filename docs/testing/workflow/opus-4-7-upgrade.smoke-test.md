@@ -11,7 +11,7 @@
 
 Before running this smoke test:
 
-- [ ] Working tree is on the `refactor/160-opus-4-7-upgrade` branch (or reviewing the merged PR)
+- [ ] Working tree is on the `implementation-plan/160-opus-4-7-upgrade` branch (or reviewing the merged PR)
 - [ ] No worktree-local files are being checked (worktrees are transient and irrelevant)
 
 ---
@@ -33,8 +33,8 @@ Before running this smoke test:
 Run from the repo root:
 
 ```bash
-grep -r "claude-opus-4-6" .claude/agents/ .cursor/ .codex/ docs/ai/
-grep -r "claude-opus-4-5" .claude/agents/ .cursor/ .codex/ docs/ai/
+grep -r "claude-opus-4-6" .claude/ .cursor/ .codex/ docs/ai/
+grep -r "claude-opus-4-5" .claude/ .cursor/ .codex/ docs/ai/
 ```
 
 **Expected result**: Both commands return no output (zero matches).
@@ -75,8 +75,8 @@ grep -r "claude-sonnet\|claude-haiku" .claude/agents/ docs/ai/development-workfl
 
 ## Assertions Checklist
 
-- [ ] `grep -r "claude-opus-4-6" .claude/agents/ .cursor/ .codex/ docs/ai/` returns no matches
-- [ ] `grep -r "claude-opus-4-5" .claude/agents/ .cursor/ .codex/ docs/ai/` returns no matches
+- [ ] `grep -r "claude-opus-4-6" .claude/ .cursor/ .codex/ docs/ai/` returns no matches
+- [ ] `grep -r "claude-opus-4-5" .claude/ .cursor/ .codex/ docs/ai/` returns no matches
 - [ ] `.claude/agents/tech-lead.md` front-matter has `model: claude-opus-4-7`
 - [ ] `docs/ai/development-workflow/agent-model-config.md` examples use `claude-opus-4-7`
 - [ ] CHANGELOG `[Unreleased]` section has a `Changed` entry for this upgrade

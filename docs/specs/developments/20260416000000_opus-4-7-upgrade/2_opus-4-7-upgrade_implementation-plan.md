@@ -53,8 +53,9 @@ None — this change involves only documentation and configuration files, with n
 ## Documentation Updates
 
 - [ ] `docs/ai/development-workflow/agent-model-config.md` — update the two Opus example model IDs (this is also a documentation file and is the primary change for this item)
+- [ ] `CHANGELOG.md` — add a `Changed` entry under `[Unreleased]` for the Opus 4.6 → 4.7 model reference upgrade
 
-No other project docs in `docs/project/`, `AGENTS.md`, or `docs/best-practices/` require updates. The change is a version bump in the agent config documentation itself; the tier names and rationale are unchanged.
+No other project docs in `docs/project/`, `AGENTS.md`, or `docs/best-practices/` require updates. The tier names and rationale are unchanged.
 
 ---
 
@@ -72,6 +73,6 @@ No other project docs in `docs/project/`, `AGENTS.md`, or `docs/best-practices/`
 1. In the worktree's `.claude/agents/tech-lead.md`, change `model: claude-opus-4-6` to `model: claude-opus-4-7`
 2. In the worktree's `docs/ai/development-workflow/agent-model-config.md`, update the in-session override example from `claude-opus-4-5-20251101` to `claude-opus-4-7`
 3. In the worktree's `docs/ai/development-workflow/agent-model-config.md`, update the permanent-change example from `claude-opus-4-6` to `claude-opus-4-7`
-4. Run `grep -r "claude-opus-4-6\|claude-opus-4-5" .claude/agents/ .cursor/ .codex/ docs/ai/` to confirm zero remaining matches in tracked files (excluding worktree paths)
+4. Run `grep -r "claude-opus-4-6\|claude-opus-4-5" .claude/ .cursor/ .codex/ docs/ai/` to confirm zero remaining matches in tracked files (excluding worktree paths)
 5. Add CHANGELOG entry under `[Unreleased]`
 6. Commit: `refactor(agent-config): upgrade Opus model references from 4.6 to 4.7`
