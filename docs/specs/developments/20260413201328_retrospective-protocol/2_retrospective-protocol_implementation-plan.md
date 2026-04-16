@@ -57,7 +57,7 @@
 3. Choose "Address now" for a simple finding — verify fix is applied, committed, and pushed without a new PR (AC 5)
 4. Choose "Address now" for a complex finding — verify agent recommends "Add to backlog" instead and explains why (AC 6)
 5. Choose "Add to backlog" for a finding with no related existing item — verify a new GitHub issue is created with the `workflow` label, descriptive title/body, and the URL is returned (AC 7)
-5a. Choose "Add to backlog" for a finding with a related existing item — verify the agent offers "Expand existing" vs "Create new"; choosing "Expand existing" appends the observation to the existing issue body and returns the updated URL (AC 13)
+5b. Choose "Add to backlog" for a finding with a related existing item — verify the agent offers "Expand existing" vs "Create new"; choosing "Expand existing" appends the observation to the existing issue body and returns the updated URL (AC 13)
 6. Complete a batch run via Protocol 90 and verify retrospective is suggested after the batch summary (AC 9)
 7. Complete a standalone item run via Protocol 91 and verify retrospective is suggested after the item summary (AC 10)
 8. Complete a dispatched (non-standalone) item run via Protocol 91 and verify retrospective is NOT suggested (AC 10)

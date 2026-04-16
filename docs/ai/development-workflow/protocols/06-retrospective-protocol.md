@@ -111,10 +111,10 @@ gh issue list --state open --limit 100 --json number,title,body
 
 ```bash
 # Fetch items from GitHub Project v2
-gh project item-list <number> --owner @me --limit 50 --json number,title,body
+gh project item-list <PROJECT_NUMBER> --owner <OWNER> --format json --limit 50
 ```
 
-Where `<number>` is the project number (find it via `gh project list`). This includes issues, PRs, and draft issues tracked in the project.
+Where `<PROJECT_NUMBER>` is the project number (find it via `gh project list`) and `<OWNER>` is the user or organization owning the project. This includes issues, PRs, and draft issues tracked in the project.
 
 **`linear`**: Use the Linear MCP tool to list open issues in the relevant team or project. See [`integrations/linear.md`](../integrations/linear.md) for setup details.
 
