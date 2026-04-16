@@ -448,7 +448,7 @@ gh pr view <pr_number> --json labels --jq '[.labels[].name] | any(. == "ready-fo
 # Must return: true
 ```
 
-If the label is missing, apply it now:
+If the label is missing, apply it and return to Step 8 (CI loop) to wait for the newly triggered e2e/regression checks before re-running this checklist:
 
 ```bash
 gh pr edit <pr_number> --add-label "ready-for-regression"
