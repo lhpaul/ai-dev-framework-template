@@ -7,7 +7,7 @@
 
 ## Summary
 
-**Approach**: Add a new protocol document (`06-retrospective-protocol.md`) that defines the retrospective analysis flow, then integrate suggestion hooks into Protocols 90 and 91 at their Step 6 summary points. Create the `/retrospective` command/skill across all three supported platforms (Claude Code, Cursor, Codex) following the existing patterns for each. Finally, update the workflow README and AGENTS.md to reference the new protocol and command.
+**Approach**: Add a new protocol document (`06-retrospective-protocol.md`) that defines the retrospective analysis flow, then integrate post-merge retrospective suggestion hooks into Protocols 90 and 91 (deferred until after the human confirms PRs are merged, not at the Step 6 summary point). Create the `/retrospective` command/skill across all three supported platforms (Claude Code, Cursor, Codex) following the existing patterns for each. Finally, update the workflow README and AGENTS.md to reference the new protocol and command.
 
 **Estimated complexity**: S
 <!-- S: < 1 day | M: 1-3 days | L: 3+ days -->
@@ -92,8 +92,8 @@ No seed data is required. The retrospective protocol operates on existing GitHub
 ## Implementation Order
 
 1. Create `docs/ai/development-workflow/protocols/06-retrospective-protocol.md` — the core protocol document
-2. Update `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — add retrospective suggestion to Step 6
-3. Update `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` — add retrospective suggestion to Step 6 (with `BATCH_CONTEXT` guard)
+2. Update `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — defer retrospective suggestion to post-merge (Step 6 does NOT immediately suggest; defers until human confirms PRs merged)
+3. Update `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` — defer retrospective suggestion to post-merge (Step 6 does NOT immediately suggest; defers until human confirms PR merged; suppressed entirely when `BATCH_CONTEXT=true`)
 4. Create `.claude/commands/retrospective.md` — Claude Code command
 5. Create `.cursor/agents/retrospective.md` — Cursor agent
 6. Create `.codex/skills/workflow-retrospective/SKILL.md` and `.codex/skills/workflow-retrospective/agents/openai.yaml` — Codex skill
