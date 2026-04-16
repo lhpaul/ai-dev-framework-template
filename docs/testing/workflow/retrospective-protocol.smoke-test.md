@@ -105,37 +105,41 @@ Before running this smoke test:
 
 **Expected result**: Existing issue updated with new observation appended; URL returned. No duplicate issue created. (Note: this step requires a finding that matched an existing item; mark N/A if none are detected.)
 
-### Step 6: Protocol 90 Integration — Batch Summary Suggestion
+### Step 6: Protocol 90 Integration — Post-Merge Retrospective Suggestion
 
 **Maps to**: Acceptance Criterion 9
 
-1. Run a batch orchestration session (via `/run-work` or equivalent) that processes at least one item to completion
-2. After the batch summary is displayed, verify the agent suggests: "Would you like to run a retrospective on this session's work?" (or similar wording)
-3. Accept the suggestion
-4. Verify the retrospective runs and presents findings (including conversation-context findings if available)
+1. Run a batch orchestration session (via `/run-work` or equivalent) that processes at least one item until all PRs reach `ready-for-human-review`
+2. After the batch summary is displayed, verify the agent does **NOT** suggest a retrospective yet (PRs are not merged)
+3. Simulate merge completion by telling the agent the PRs have been merged (or run `/batch-merge` / `/post-merge-cleanup`)
+4. Verify the agent now suggests: "Would you like to run a retrospective on this batch's work?" (or similar wording)
+5. Accept the suggestion
+6. Verify the retrospective runs and presents findings (including conversation-context findings if available)
 
-**Expected result**: Retrospective is suggested after batch summary; runs when accepted.
+**Expected result**: Retrospective is NOT suggested after the batch summary; it is suggested only after the human confirms PRs have been merged. Runs when accepted.
 
-### Step 7: Protocol 91 Integration — Standalone Item Suggestion
+### Step 7: Protocol 91 Integration — Standalone Item Post-Merge Suggestion
 
 **Maps to**: Acceptance Criterion 10
 
 1. Run a single item via `/run-item-work` or equivalent (standalone, not dispatched by a batch orchestrator)
-2. After the item summary is displayed, verify the agent suggests running a retrospective
-3. Decline the suggestion
-4. Verify the agent closes without running the retrospective
+2. After the item reaches `ready-for-human-review` and the item summary is displayed, verify the agent does **NOT** suggest a retrospective yet
+3. Simulate merge completion by telling the agent the PR has been merged (or run `/post-merge-cleanup`)
+4. Verify the agent now suggests running a retrospective
+5. Decline the suggestion
+6. Verify the agent closes without running the retrospective
 
-**Expected result**: Retrospective is suggested for standalone item runs; skipped when declined.
+**Expected result**: Retrospective is NOT suggested immediately after the item summary; it is suggested only after the human confirms the PR has been merged. Skipped when declined.
 
 ### Step 8: Protocol 91 Integration — Batched Item Suppression
 
 **Maps to**: Acceptance Criterion 10
 
 1. Run a batch orchestration session that dispatches at least one item via the Work Item Runner with `BATCH_CONTEXT=true`
-2. After the dispatched item completes, verify the Work Item Runner does NOT suggest a retrospective
-3. Verify the batch orchestrator (Protocol 90) suggests the retrospective instead (per Step 6)
+2. After the dispatched item completes (reaches `ready-for-human-review`), verify the Work Item Runner does NOT suggest a retrospective
+3. Verify the batch orchestrator (Protocol 90) also does not suggest a retrospective at the Step 6 summary — it defers until after merge confirmation
 
-**Expected result**: Retrospective suggestion is suppressed for batched items; only the batch orchestrator suggests it.
+**Expected result**: Retrospective suggestion is suppressed entirely for batched items in the Work Item Runner; the batch orchestrator only suggests it after confirming PRs are merged.
 
 ### Step 9: Same-Session Conversation Context
 
@@ -165,8 +169,8 @@ Each checkbox maps to an acceptance criterion from the spec.
 - [ ] AC 7: "Add to backlog": agent creates GitHub issue directly and returns URL
 - [ ] AC 13: Before presenting findings, agent queries the configured issue tracker for existing open items and annotates each finding with a related item reference or "No existing backlog item found"; when a related item exists and the human chooses "Expand existing", the agent appends the new observation to the existing issue rather than creating a duplicate
 - [ ] AC 8: Same-session retrospective surfaces conversation-context findings alongside GitHub findings
-- [ ] AC 9: Protocol 90 suggests retrospective after Step 6 batch summary
-- [ ] AC 10: Protocol 91 suggests retrospective after item summary only for standalone runs (not batched)
+- [ ] AC 9: Protocol 90 does NOT suggest retrospective after Step 6 batch summary; instead defers until human confirms PRs are merged
+- [ ] AC 10: Protocol 91 does NOT suggest retrospective immediately after item summary; defers until human confirms PR is merged; suppressed entirely when `BATCH_CONTEXT=true`
 - [ ] AC 11: `/retrospective` command/skill is available in Claude Code, Cursor, and Codex
 - [ ] AC 12: Agent never applies fixes or creates issues without human's explicit choice
 
