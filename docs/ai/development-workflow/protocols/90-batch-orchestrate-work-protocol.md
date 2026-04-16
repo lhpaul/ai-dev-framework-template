@@ -155,6 +155,49 @@ Before batching an item, check its `Depends on` field or tracker dependency data
 
 ---
 
+## Step 2.5: Pre-Dispatch Tracker Status Update
+
+Before building parallel batches, update the tracker to reflect that eligible items are now actively being worked on. This step runs after Step 2 (eligibility determination) and before Step 3 (batch building).
+
+### Purpose
+
+Without this step, items remain in a stale tracker status (e.g., `Backlog`, `Spec Ready`, `Plan Ready`) while agents are already working on them. The Batch 3 retro identified this as a source of confusion for humans monitoring portfolio progress and for Work Item Runners that check tracker status when resuming.
+
+### Procedure
+
+For each item that passed the Step 2 eligibility check:
+
+1. **Ensure the item is on the project board**: check whether the item already exists in the configured project board. If it is missing, add it. Log the result (`already present` / `added to board`).
+
+2. **Update tracker status to the appropriate in-flight value** based on the next action that will be dispatched:
+
+   | Next action to dispatch | Tracker status to set |
+   |---|---|
+   | Write Spec | `Writing Spec` |
+   | Write Plan | `Writing Plan` |
+   | Implement (feature/fix/refactor/hotfix branch) | `In Development` |
+   | Resume in-progress stage (status already `Writing Spec`, `Writing Plan`, or `In Development`) | No change — skip |
+
+   For resume items (the last row), the status is already correct — do not reset it. This keeps the update idempotent.
+
+3. **Log each result** for transparency:
+
+   ```text
+   ✅ #N [slug]: already on board; status Writing Plan → no change (already in-flight)
+   ✅ #M [slug]: added to board; status Plan Ready → In Development
+   ✅ #K [slug]: already on board; status Backlog → Writing Plan
+   ```
+
+4. **Tracker unavailability**: if the tracker API is unreachable, log a warning and continue without blocking the batch — matching the "warn and fall back" pattern established in Steps 1a–1c.
+
+### Ordering: updates first, then dispatch
+
+All tracker status updates for the batch must complete **before** any Work Item Runner is dispatched. This ensures observers see the correct in-flight status from the moment work starts, not retroactively after the creator stage finishes.
+
+See `docs/ai/development-workflow/integrations/github-projects.md` for the tracker API details used to add items to the project board and update their status.
+
+---
+
 ## Step 3: Build Parallel Batches
 
 Group eligible items into explicit batches.
