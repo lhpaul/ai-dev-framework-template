@@ -171,7 +171,7 @@ After a clean or resolved merge, in order:
 
    ```bash
    BRANCH="$(gh pr view <number> --json headRefName --jq '.headRefName')"
-   WORKTREE_PATH=$(git worktree list --porcelain | grep -B2 "branch refs/heads/$BRANCH" | grep "^worktree " | sed 's/^worktree //' || true)
+   WORKTREE_PATH=$(git worktree list --porcelain | grep -B2 "branch refs/heads/$BRANCH$" | grep "^worktree " | sed 's/^worktree //' || true)
    if [ -n "$WORKTREE_PATH" ]; then
      git worktree remove "$WORKTREE_PATH" --force
    fi

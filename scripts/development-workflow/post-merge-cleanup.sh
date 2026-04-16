@@ -70,7 +70,7 @@ echo "Deleting local branch '$TO_DELETE'..."
 # git branch -D fails with "error: cannot delete branch 'X' used by worktree" in that case.
 # The grep pipeline exits 1 when no worktree uses the branch; the '|| true' prevents set -e from
 # aborting the script in the common case where no worktree holds the branch.
-WORKTREE_PATH=$(git worktree list --porcelain | grep -B2 "branch refs/heads/$TO_DELETE" | grep "^worktree " | sed 's/^worktree //' || true)
+WORKTREE_PATH=$(git worktree list --porcelain | grep -B2 "branch refs/heads/$TO_DELETE$" | grep "^worktree " | sed 's/^worktree //' || true)
 if [ -n "$WORKTREE_PATH" ]; then
   echo "Worktree '$WORKTREE_PATH' is still using branch '$TO_DELETE'. Removing worktree first..."
   git worktree remove "$WORKTREE_PATH" --force
