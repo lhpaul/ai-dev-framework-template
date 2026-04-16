@@ -114,23 +114,29 @@ This feature adds a retrospective analysis capability to the AI development work
 ### Use Case 4: Add to Backlog
 
 **Actor**: Agent (on behalf of human who chose "Add to backlog" for an opportunity)
-**Preconditions**: The human has chosen "Add to backlog" for a specific improvement opportunity
+**Preconditions**: The human has chosen "Add to backlog" for a specific improvement opportunity; the agent has already queried the issue tracker for related existing items during synthesis (Use Case 3 / Step 3a)
 
 **Steps**:
-1. The agent creates a GitHub issue directly with a descriptive title, a body that describes the problem and the improvement opportunity, and the appropriate labels
-2. The agent reports the created issue with its URL
+1. The agent checks whether a related existing backlog item was identified for this finding during the synthesis phase
+2. **If a related item exists**: the agent offers the human a choice:
+   - **Expand existing**: append the new observation to the existing issue's body
+   - **Create new**: create a separate issue (appropriate when the scope is distinct enough to warrant separate tracking)
+3. If the human chooses **Expand existing**: the agent appends the new observation to the existing issue body and reports the updated issue URL
+4. If the human chooses **Create new**, or if no related item was found: the agent creates a new GitHub issue with a descriptive title, a body describing the problem and improvement opportunity, and the `workflow` label; the agent reports the created issue URL
 
-**Postconditions**: A GitHub issue exists representing the improvement opportunity
+**Postconditions**: Either a new GitHub issue exists, or an existing issue has been updated with the new observation
 
 **Information shown**:
-- Issue title and URL
+- Related existing item number and title (if found during synthesis)
+- Updated or created issue URL
 
 **Actions available**:
 - None after confirmation (the opportunity is closed)
 
 **Considerations**:
-- The issue creation is lightweight and direct — it does not go through the full `00-add-backlog-item-protocol.md` flow (which would disrupt the retrospective with its own alignment conversation)
+- The issue creation or update is lightweight and direct — it does not go through the full `00-add-backlog-item-protocol.md` flow (which would disrupt the retrospective with its own alignment conversation)
 - The issue body should include enough context that someone picking it up later can understand what was observed and why it matters, without needing the original conversation
+- The expand-existing path avoids creating duplicate backlog items for the same systemic issue seen across multiple sessions
 
 ---
 
