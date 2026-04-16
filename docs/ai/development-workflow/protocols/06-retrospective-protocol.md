@@ -119,7 +119,7 @@ For each issue retrieved, extract its title and a short description. After categ
 2. **Strong keyword overlap**: Three or more significant keywords (excluding stopwords like "the", "a", "is") appear in both the finding and the existing item title/body
 3. **Root-cause category match**: The finding and existing item share the same categorization taxonomy label (e.g., both are `workflow-process`) and describe overlapping symptoms
 
-When multiple existing items could match, prefer the most recently updated item. When no item meets at least criterion 2 or 3, record `no_related_item`. When match confidence is ambiguous (one weak criterion only), present both the potential match and "No strong existing item found" and let the human decide in Step 5.
+When multiple existing items could match, prefer the most recently updated item. When no item meets at least one criterion, record `no_related_item`. When match confidence is ambiguous (one weak criterion only), present both the potential match and "No strong existing item found" and let the human decide in Step 5.
 
 Record:
 
