@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Cross-reference consistency check in developer protocol**: `03-implement-development-protocol.md` now requires a cross-reference consistency check in the pre-implementation scope checklist (item 6, all four paths) and the Quality Rules section. When a change modifies policy or rule text that appears in multiple files, developers must grep for key phrases, list every matched location, and confirm all locations are updated consistently before opening a PR. This addresses the root cause of multi-cycle review loops on cross-cutting documentation changes (e.g., PR #120 required 8 cycles due to inconsistencies across 10+ files).
+
 ### Added
 
 - **Batch merge command** (`/batch-merge`): a new command and shell script that merge all ready PRs in a parallel batch into `develop` sequentially. Discovers PRs labeled `ready-for-human-review` automatically or accepts an explicit PR list; presents a merge plan for human confirmation before any merge; auto-resolves CHANGELOG `[Unreleased]` conflicts (entries combined, none dropped) and non-overlapping documentation file conflicts; pauses for human input on non-trivial conflicts; runs `post-merge-cleanup` after each successful merge; and produces a structured outcome summary (`merged_clean`, `merged_auto`, `merged_human`, `skipped_not_ready`, `skipped_conflict`, `failed`, `not_attempted`). Available as `/batch-merge` in Claude Code, `/batch-merge` in Cursor, and the `batch-merge` Codex skill. Protocol 90 (batch orchestrator) now includes a Step 5.5 handoff path for merge-ready parallel batches.
