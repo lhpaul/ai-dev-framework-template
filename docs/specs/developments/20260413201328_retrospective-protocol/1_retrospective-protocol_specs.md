@@ -168,7 +168,7 @@ This feature adds a retrospective analysis capability to the AI development work
 
 - Severity signals are the agent's best-effort assessment; the agent should bias toward `high` when an issue required direct human correction
 - **"Address now"** is reserved for changes the agent can self-assess as simple and safe to apply without a review loop; the agent uses its own judgment
-- **"Add to backlog"** creates a GitHub issue directly — not through the full `00-add-backlog-item-protocol.md` flow
+- **"Add to backlog"** creates a new GitHub issue or expands an existing one directly — not through the full `00-add-backlog-item-protocol.md` flow
 - The human may skip any individual opportunity (take no action); the agent moves on
 - The retrospective scope is limited to work from the current session or the PRs specified in the scope hint — no cross-session trend analysis
 - No persistent state is required or maintained between sessions
