@@ -1006,8 +1006,8 @@ run_coderabbit_review() {
         coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
         echo "INFO: CodeRabbit rate limit detected (retry $coderabbit_rate_limit_retries/$coderabbit_rate_limit_max_retries) — waiting ${coderabbit_rate_limit_wait}s before re-triggering" >&2
         sleep "$coderabbit_rate_limit_wait"
-        # Reset since_iso to after the wait so activity detection picks up the new review.
-        since_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
+        # Do NOT reset since_iso — keep the original HEAD-commit timestamp so any review
+        # posted by CodeRabbit during or after the wait is still within the detection window.
         elapsed=0
         if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
           echo "INFO: posted @coderabbitai review trigger after rate-limit wait" >&2
