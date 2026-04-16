@@ -277,13 +277,15 @@ After the selected item reaches a terminal condition, provide a concise summary:
 
 **Retrospective suggestion (standalone runs only)**:
 
-If this Work Item Runner was invoked **directly by a human** (i.e., `BATCH_CONTEXT` is not set or is `false`), after presenting the summary, suggest running a retrospective:
+If this Work Item Runner was invoked **directly by a human** (i.e., `BATCH_CONTEXT` is not set or is `false`), do **not** suggest a retrospective immediately after the terminal condition summary. The work is not complete yet — the human still needs to review and merge the PR.
+
+Instead, suggest the retrospective **after the human confirms the PR has been merged** (e.g., via `/post-merge-cleanup` or an explicit "it's merged" message). At that point, offer:
 
 > Would you like to run a retrospective on this session's work?
 
 If the human agrees, follow `docs/ai/development-workflow/protocols/06-retrospective-protocol.md`. The retrospective will analyze the PRs from this item run using both GitHub data and the conversation context from this session.
 
-**When `BATCH_CONTEXT=true`** (dispatched by the Portfolio Orchestrator): suppress the retrospective suggestion. The Portfolio Orchestrator will suggest the retrospective at the end of its own Step 6 summary instead, covering the entire batch at once.
+**When `BATCH_CONTEXT=true`** (dispatched by the Portfolio Orchestrator): suppress the retrospective suggestion entirely. The Portfolio Orchestrator will suggest the retrospective after the full batch has been merged, not when PRs reach `ready-for-human-review`.
 
 ---
 
