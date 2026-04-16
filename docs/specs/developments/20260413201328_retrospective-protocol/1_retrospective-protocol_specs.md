@@ -157,7 +157,7 @@ This feature adds a retrospective analysis capability to the AI development work
   | `code-quality` | Code Quality | Recurring reviewer findings that suggest a systemic pattern rather than a one-off issue |
   | `tooling` | Tooling | External tool integration issue (e.g., CodeRabbit misconfiguration, `gh` CLI usage gap) |
 
-- Each opportunity is presented with its category, a short description, a severity signal, and a recommended action (Address now / Add to backlog)
+- Each opportunity is presented with its category, a short description, a severity signal, a recommended action (Address now / Add to backlog), and a related existing item reference (issue number and title, or "No existing backlog item found")
 - **Severity signal** — each opportunity is assigned one of the following severity levels:
 
   | Code value | Display label | Description |
