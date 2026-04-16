@@ -69,8 +69,9 @@ Before running this smoke test:
 3. Locate the verification table
 4. Find the row for "Automated reviewer loop summary"
 5. Verify the row explicitly states that at least one comment containing `"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"` must be present
+6. Verify the row (and any surrounding prose) marks this check as a **required / non-removable hard gate** before `ready-for-human-review` is applied — wording such as "must", "required", "hard gate", or "non-removable" must be present so the check cannot be treated as optional
 
-**Expected result**: The check row is present in the Step 8c table and the wording is explicit — it must not be ambiguous or easy to skip.
+**Expected result**: The check row is present in the Step 8c table, the wording is explicit, and the check is clearly marked as a non-removable hard gate. Partial implementations that only mention the presence check without the hard-gate wording fail this step.
 
 ---
 
@@ -95,10 +96,10 @@ Before running this smoke test:
 **Maps to**: Acceptance Criterion 5
 
 1. Run `git diff --name-only develop...HEAD` (or review the PR file list)
-2. Confirm every changed file is a documentation file (for example, ends with `.md` or lives under `docs/`)
-3. If any non-documentation file appears in the list, fail this smoke test
+2. Confirm every changed file is a Markdown (`.md`) file
+3. If any non-`.md` file appears in the list, fail this smoke test
 
-**Expected result**: All changed files are documentation files (`.md`); no code, scripts, CI, or configuration files appear in the diff.
+**Expected result**: All changed files are Markdown (`.md`) files; no code, scripts, CI, configuration, or non-`.md` asset files appear in the diff.
 
 ---
 
@@ -113,7 +114,7 @@ Before running this smoke test:
 
 Each checkbox maps to an acceptance criterion from the spec.
 
-- [ ] **AC1**: Step 8c of `91-orchestrate-work-protocol.md` includes an explicit check for the reviewer loop summary comment (`"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"`) before `ready-for-human-review` is applied, and the check is clearly stated as non-removable.
+- [ ] **AC1**: Step 8c of `91-orchestrate-work-protocol.md` includes an explicit check for the reviewer loop summary comment (`"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"`) before `ready-for-human-review` is applied, the check is clearly stated as a required / non-removable hard gate, and the hard-gate wording (e.g., "must", "required", "hard gate", "non-removable") is present in the table row or surrounding prose.
 - [ ] **AC2**: `agent-model-config.md` documents expected maximum run durations for `item-orchestrator` (e.g., typical 5–15 min; consider timeout at ~25 min) and `automated-reviewer-loop` (e.g., typical 2–10 min; consider timeout at ~20 min).
 - [ ] **AC3**: `agent-model-config.md` includes a "Resume a Timed-Out Agent Run" section covering (a) detection signals checklist, (b) resume command, and (c) explicit warning against manually applying `ready-for-human-review`.
 - [ ] **AC4**: `90-batch-orchestrate-work-protocol.md` documents the stale/incomplete PR heuristic and the action to re-dispatch item-orchestrator to resume from Step 7.
