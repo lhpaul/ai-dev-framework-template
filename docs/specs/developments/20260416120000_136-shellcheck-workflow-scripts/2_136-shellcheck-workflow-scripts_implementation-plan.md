@@ -1,7 +1,7 @@
 # ShellCheck Static Analysis for Workflow Scripts — Implementation Plan
 
 **Spec**: [`docs/specs/developments/20260416120000_136-shellcheck-workflow-scripts/1_136-shellcheck-workflow-scripts_specs.md`](./1_136-shellcheck-workflow-scripts_specs.md)
-**Smoke test runbook**: [`docs/testing/workflow/136-shellcheck-workflow-scripts.smoke-test.md`](../../../../testing/workflow/136-shellcheck-workflow-scripts.smoke-test.md)
+**Smoke test runbook**: [`docs/testing/workflow/136-shellcheck-workflow-scripts.smoke-test.md`](../../../testing/workflow/136-shellcheck-workflow-scripts.smoke-test.md)
 
 ---
 
@@ -56,7 +56,7 @@
 5. The implementation PR itself is merged and the check is green from day one — maps to Acceptance Criterion 6
 6. `.shellcheckrc` file (if created) is committed and each entry has a comment — maps to Acceptance Criterion 7
 
-**Smoke test runbook**: [`docs/testing/workflow/136-shellcheck-workflow-scripts.smoke-test.md`](../../../../testing/workflow/136-shellcheck-workflow-scripts.smoke-test.md)
+**Smoke test runbook**: [`docs/testing/workflow/136-shellcheck-workflow-scripts.smoke-test.md`](../../../testing/workflow/136-shellcheck-workflow-scripts.smoke-test.md)
 
 **Regression suite**: Not applicable — no automated regression suite configured in this repository.
 
