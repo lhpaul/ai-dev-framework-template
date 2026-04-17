@@ -99,7 +99,7 @@ _KEYWORD_PATTERN = "(?P<label>" + "|".join(_COUNT_KEYWORDS) + ")"
 # number (e.g., "Protocol 90 Step 2.5" → "90 Step 2" is a section reference, not a count).
 # Also exclude when preceded by "Protocol" (common in workflow doc prose).
 _COUNT_PHRASE_RE = re.compile(
-    r"(?<!Protocol\s)\b" + _NUM_PATTERN + r"\b\s+" + _KEYWORD_PATTERN + r"(?!\s*\d)",
+    r"(?<!Protocol\s)\b" + _NUM_PATTERN + r"\b\s+" + _KEYWORD_PATTERN + r"\b(?!\s*\d)",
     re.IGNORECASE,
 )
 
