@@ -103,7 +103,9 @@ _KEYWORD_PATTERN = "(?P<label>" + "|".join(_COUNT_KEYWORDS) + ")"
 # number (e.g., "Protocol 90 Step 2.5" → "90 Step 2" is a section reference, not a count).
 # Also exclude when preceded by "Protocol" (common in workflow doc prose).
 _COUNT_PHRASE_RE = re.compile(
-    r"(?<!Protocol\s)\b" + _NUM_PATTERN + r"\b\s+" + _KEYWORD_PATTERN + r"\b(?!\s*\d)",
+    # Exclude numbers that are part of a decimal (e.g., "2.0") by requiring
+    # the digit is not preceded by a dot. Also exclude protocol-step references.
+    r"(?<!Protocol\s)(?<!\.)\b" + _NUM_PATTERN + r"\b\s+" + _KEYWORD_PATTERN + r"\b(?!\s*\d)",
     re.IGNORECASE,
 )
 
@@ -168,7 +170,9 @@ def check_glob001(path: str, lines: List[str]) -> List[str]:
                 fence_marker = fence_match.group("fence")
                 current_block_start = i
         else:
-            if fence_marker and lstripped.startswith(fence_marker):
+            # Per CommonMark: a closing fence must start with the same fence
+            # marker and have ONLY optional trailing whitespace (no info string).
+            if fence_marker and lstripped.startswith(fence_marker) and not lstripped[len(fence_marker):].strip():
                 in_code_block = False
                 continue
             # Look for non-recursive glob patterns
@@ -193,9 +197,12 @@ def check_glob001(path: str, lines: List[str]) -> List[str]:
                 backward_context = lines[window_start:current_block_start]
 
                 # Find the closing fence to determine where forward prose starts.
+                # A valid closing fence has only the marker + optional whitespace.
                 closing_fence_line = len(lines)  # default: end of file
                 for k in range(i + 1, len(lines)):
-                    if fence_marker and lines[k].strip().startswith(fence_marker):
+                    kstripped = lines[k].strip()
+                    if (fence_marker and kstripped.startswith(fence_marker)
+                            and not kstripped[len(fence_marker):].strip()):
                         closing_fence_line = k + 1  # prose starts after closing fence
                         break
                 forward_end = min(len(lines), closing_fence_line + GLOB001_WINDOW)
@@ -244,7 +251,8 @@ def check_count001(path: str, lines: List[str]) -> List[str]:
                 code_block_lines.add(i)
         else:
             code_block_lines.add(i)
-            if fence_marker_c and lstripped.startswith(fence_marker_c):
+            # Per CommonMark: a closing fence has only the marker + optional whitespace.
+            if fence_marker_c and lstripped.startswith(fence_marker_c) and not lstripped[len(fence_marker_c):].strip():
                 in_code_block = False
 
     for i, line in enumerate(lines):
