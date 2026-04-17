@@ -30,7 +30,7 @@
   - Accepts one or more file paths as positional arguments; exits 0 if no violations, exits 1 if any violations found.
   - The cue list for GLOB001 is declared as a top-level constant in the script so contributors can extend it without changing the detection logic.
 - [ ] Add `scripts/lint/` directory with a `README.md` briefly describing the scripts it contains and their invocation.
-- [ ] Create a new `package.json` at the repository root (no root-level `package.json` exists yet; the `e2e/package.json` is scoped to the Playwright suite and must not be modified for this feature) declaring `markdownlint-cli2` and `markdownlint-rule-relative-links` as `devDependencies`. Pin each dependency to the latest stable version available at implementation time using an exact version specifier (no `^` or `~`) so CI does not silently pick up upstream changes. Run `npm install` to generate the accompanying `package-lock.json`.
+- [ ] Create a new `package.json` at the repository root (no root-level `package.json` exists yet; the `e2e/package.json` is scoped to the Playwright suite and must not be modified for this feature) declaring `markdownlint-cli2` and `markdownlint-rule-relative-links` as `devDependencies`. Pin each dependency to the latest stable version available at implementation time using an exact version specifier (no `^` or `~`) so CI does not silently pick up upstream changes. Run `npm install` to generate the accompanying `package-lock.json`. Add `node_modules/` to the root `.gitignore` (the current root `.gitignore` does not exclude it; only `e2e/.gitignore` covers its own scope) to prevent accidentally committing generated npm packages.
 - [ ] Baseline cleanup: scan all files under `docs/specs/developments/`, `docs/testing/workflow/`, and `CHANGELOG.md` with both the markdownlint-cli2 rules and the heuristic script; fix any violations directly (remove trailing whitespace, fix broken relative links, correct count phrases or list lengths, correct glob patterns) or add an inline suppression with a reviewer-visible rationale where a fix is not appropriate.
 
 ---
@@ -84,7 +84,7 @@ None — this feature has no database layer or application state. The "data" is 
 
 1. Create the `scripts/lint/` directory and write `markdown-heuristic-lint.py` with both heuristic checks (GLOB001, COUNT001), inline suppression support, and the declared cue list constant.
 2. Add `scripts/lint/README.md` briefly describing the script and its invocation.
-3. Create or update `package.json` at the repository root to add `markdownlint-cli2` and `markdownlint-rule-relative-links` as `devDependencies`; run `npm install` to generate / update `package-lock.json`.
+3. Create the root `package.json` with `markdownlint-cli2` and `markdownlint-rule-relative-links` as exact-version `devDependencies`; run `npm install` to generate `package-lock.json`; add `node_modules/` to the root `.gitignore` (currently absent from root `.gitignore`).
 4. Create `.markdownlint.jsonc` at the repository root with the scoped rule set (MD009 with hard-break exception, relative-link plugin enabled, all out-of-scope default rules disabled).
 5. Scan all baseline files (`docs/specs/developments/**/*.md`, `docs/testing/workflow/**/*.md`, `CHANGELOG.md`) with `markdownlint-cli2` and `python3 scripts/lint/markdown-heuristic-lint.py`; fix all violations directly or add inline suppressions with reviewer-visible rationale.
 6. Create `.github/workflows/markdown-lint.yml` with path-filtered `pull_request` trigger, `npm ci`, `markdownlint-cli2` step, and heuristic script step.
