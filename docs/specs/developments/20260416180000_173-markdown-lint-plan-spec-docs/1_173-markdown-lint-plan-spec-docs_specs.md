@@ -68,6 +68,9 @@ This feature adds a lightweight automated markdown lint step that runs in CI on 
 **Information shown**:
 - Either no lint check visible, or a check marked as skipped/passed indicating no target files were changed.
 
+**Actions available**:
+- Contributor proceeds with the pull request normally; no lint-related action is required when no target markdown files changed.
+
 **Considerations**:
 - Avoids adding friction to PRs that have nothing to do with spec or plan documents.
 
@@ -89,6 +92,10 @@ This feature adds a lightweight automated markdown lint step that runs in CI on 
 
 **Information shown**:
 - The broken link, the source file path, and the resolved (missing) target path.
+
+**Actions available**:
+- Contributor corrects the broken relative link (fixing the path or creating the missing file) and pushes again to re-run the check.
+- Contributor suppresses the rule inline with a tool-specific directive if the link is intentionally a placeholder, subject to normal PR review.
 
 **Considerations**:
 - The check validates that the target file exists on disk relative to the source document's directory; it does not make HTTP requests.
@@ -113,6 +120,10 @@ This feature adds a lightweight automated markdown lint step that runs in CI on 
 
 **Information shown**:
 - File path, line number, and rule description for each trailing-whitespace violation.
+
+**Actions available**:
+- Contributor removes the trailing whitespace (manually or via editor/tool) and pushes again to re-run the check.
+- Contributor confirms via diff that any intentional two-space hard line breaks are preserved and not stripped.
 
 **Considerations**:
 - Intentional two-space trailing (hard line breaks in Markdown) must not be flagged as trailing whitespace; the rule should apply to whitespace-only trailing characters that serve no semantic purpose.
