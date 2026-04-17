@@ -4,14 +4,6 @@
 
 ---
 
-## Guiding principle (important)
-
-This stage is intentionally **product-focused**:
-
-- Write **user-facing behavior**, permissions, UX rules, and acceptance criteria.
-- Avoid prescribing **implementation details** (database tables/columns, specific endpoints, file paths, class names, or migration design). Those belong in the **Implementation Plan** stage.
-- If a technical constraint matters to the product (e.g., "an agent may belong to multiple broker companies"), express it as a **product requirement** without naming tables.
-
 ## Overview
 
 This feature adds a retrospective analysis capability to the AI development workflow. After completing a batch or individual item, the agent analyzes the work that was done, identifies process improvement opportunities, presents them to the human, and takes the action the human chooses for each. The retrospective is always suggested at natural completion points — never forced — and works whether or not conversation context is available.
