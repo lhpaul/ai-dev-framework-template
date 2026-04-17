@@ -111,11 +111,16 @@ item ahead of its consumers or surface a human confirmation gate before parallel
 - At least one of the candidate development folders is classified as a tool-fix item.
 
 **Steps**:
-1. `workflow-batch-plan.sh` reads each candidate's spec/plan document (and, when available,
-   the tracker title/description) to determine whether it modifies a workflow tool file.
+1. `workflow-batch-plan.sh` classifies tool-fix items from each candidate's spec/plan document
+   only and emits `TOOL_FIX=yes|no|unknown` based on document evidence or availability. Tracker
+   title/description signals are not read by the script; they are used separately by the
+   orchestrator (see Business Rules — Tool-fix classification).
 2. For tool-fix items, the script emits an additional key-value pair in its per-item output
    block: `TOOL_FIX=yes` and `TOOL_FIX_FILES=<comma-separated list of affected tool paths>`.
-3. The orchestrator reads these signals and applies the ordering rules (Use Case 1).
+3. The orchestrator reads these script signals and may additionally apply tracker-derived
+   classification. If tracker-derived classification indicates a tool-fix risk that the script
+   output does not reflect, the orchestrator takes the conservative path and treats the item as
+   a hazard candidate. The orchestrator then applies the ordering rules (Use Case 1).
 
 **Postconditions**:
 - The orchestrator has machine-readable signals to drive batch-building logic without needing to
@@ -141,9 +146,13 @@ item ahead of its consumers or surface a human confirmation gate before parallel
 
 ## Business Rules
 
-- **Tool-fix classification**: an item is classified as a tool-fix item if its spec document,
-  implementation plan, or tracker title/description references modifications to any of the
-  following files (exact path match, relative to repo root):
+- **Tool-fix classification**: an item is classified as a tool-fix item if its spec document or
+  implementation plan references modifications to any of the following files (exact path match,
+  relative to repo root). `workflow-batch-plan.sh` determines `TOOL_FIX` exclusively from the
+  spec/plan document. The orchestrator may additionally classify from tracker title/description;
+  if tracker-derived classification conflicts with script output (e.g., the script emits
+  `TOOL_FIX=no` but the tracker title references a tool file), the orchestrator takes the
+  conservative path and treats the item as a hazard candidate:
   - `scripts/development-workflow/pr-review-loop.sh`
   - `scripts/development-workflow/pr-ci-loop.sh`
   - `scripts/development-workflow/batch-merge.sh`
@@ -196,12 +205,16 @@ item ahead of its consumers or surface a human confirmation gate before parallel
   containing `.ai-dev-workflow.yaml`.
 - [ ] When `workflow-batch-plan.sh` is run against a development folder with no workflow tool
   references, the output does not include `TOOL_FIX=yes`.
+- [ ] When `workflow-batch-plan.sh` emits `TOOL_FIX=no` for an item but the orchestrator detects
+  that the item's tracker title or description references a tool file from the canonical list,
+  Protocol 90 Step 3 instructs the orchestrator to treat the item as a tool-fix hazard candidate
+  (conservative override of the script output).
 - [ ] When an orchestrator following Protocol 90 Step 3 encounters a batch with a tool-fix item
   alongside consumer items, the protocol instructs the orchestrator to serialize the tool-fix
   item first and hold the consumer items.
 - [ ] Protocol 90 Step 3 explicitly names the same-batch tool-fix ordering hazard and describes
   the serialize-first rule.
-- [ ] Protocol 90 Step 3 does not modify Step 5.1 (reviewThreads GraphQL check) — that section
+- [ ] Protocol 90 Step 3 does not modify Step 5.1 (Post-Dispatch PR Verification) — that section
   remains unchanged.
 - [ ] The human override path (Use Case 2) is documented in Protocol 90 Step 3 with a clear
   statement that it requires explicit human instruction.
@@ -224,4 +237,4 @@ item ahead of its consumers or surface a human confirmation gate before parallel
   is also in the batch) — treat each tool-fix item independently.
 - Changes to Protocol 91 internals or any protocol other than Protocol 90 Step 3.
 - Changes to `pr-review-loop.sh`, `pr-ci-loop.sh`, `batch-merge.sh`, or `post-merge-cleanup.sh`.
-- Modifying Protocol 90 Step 5.1 (reviewThreads GraphQL check) — that is issue #167's scope.
+- Modifying Protocol 90 Step 5.1 (Post-Dispatch PR Verification) — that is issue #167's scope.
