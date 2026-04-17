@@ -1,0 +1,13 @@
+# .shellcheckrc — Project-wide ShellCheck configuration
+#
+# Only codes that are structurally unfixable across this codebase are suppressed here.
+# All other findings must be fixed or suppressed inline at the specific line.
+#
+# SC1007: ShellCheck incorrectly flags "CDPATH= cd" as a malformed assignment.
+#         "CDPATH= cd ..." is the standard POSIX idiom for running cd with CDPATH
+#         cleared (to prevent cd from printing the directory to stdout). The space
+#         after "=" is intentional — it is an inline environment variable assignment
+#         ("CDPATH=" sets CDPATH to empty string) followed by the "cd" command.
+#         This pattern is used consistently across all scripts in scripts/development-workflow/
+#         to produce reliable, portable directory resolution.
+disable=SC1007
