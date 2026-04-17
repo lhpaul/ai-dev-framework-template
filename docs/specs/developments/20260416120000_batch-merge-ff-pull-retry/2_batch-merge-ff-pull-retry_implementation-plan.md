@@ -83,7 +83,7 @@ git pull --ff-only origin "$TARGET_BASE" >/dev/null 2>&1 || \
 if ! git pull --ff-only origin "$TARGET_BASE" >/dev/null 2>&1; then
   echo "ff-pull failed on first attempt; retrying after 2s (transient stale-ref recovery)..." >&2
   sleep 2
-  git fetch origin "$TARGET_BASE" >/dev/null 2>&1 || true
+  git fetch origin "$TARGET_BASE" >/dev/null 2>&1 && \
   git pull --ff-only origin "$TARGET_BASE" >/dev/null 2>&1 || \
     merge_die "Could not fast-forward local '${TARGET_BASE}' from origin — resolve divergence manually"
 fi
