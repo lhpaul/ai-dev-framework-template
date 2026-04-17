@@ -27,6 +27,9 @@ Before running this smoke test:
 | Batch merge spec | `docs/specs/developments/20260414184900_batch-merge/1_batch-merge_specs.md` |
 | Shellcheck spec | `docs/specs/developments/20260416120000_136-shellcheck-workflow-scripts/1_136-shellcheck-workflow-scripts_specs.md` |
 | Agent timeout spec | `docs/specs/developments/20260416120000_agent-timeout-handling/1_agent-timeout-handling_specs.md` |
+| Batch merge FF pull retry spec | `docs/specs/developments/20260416120000_batch-merge-ff-pull-retry/1_batch-merge-ff-pull-retry_specs.md` |
+| CodeRabbit success fallback spec | `docs/specs/developments/20260416120000_coderabbit-success-fallback/1_coderabbit-success-fallback_specs.md` |
+| Markdown lint plan spec docs spec | `docs/specs/developments/20260416180000_173-markdown-lint-plan-spec-docs/1_173-markdown-lint-plan-spec-docs_specs.md` |
 
 ---
 
@@ -67,15 +70,18 @@ Before running this smoke test:
 
 ---
 
-### Step 4: Verify all 4 existing spec files no longer contain "Guiding principle" section
+### Step 4: Verify all existing spec files no longer contain "Guiding principle" section
 
-**Maps to**: Acceptance Criterion 4
+**Maps to**: Acceptance Criterion 4 and spec Business Rule (all merged spec files must be updated)
 
 For each of the following files:
 - `docs/specs/developments/20260413201328_retrospective-protocol/1_retrospective-protocol_specs.md`
 - `docs/specs/developments/20260414184900_batch-merge/1_batch-merge_specs.md`
 - `docs/specs/developments/20260416120000_136-shellcheck-workflow-scripts/1_136-shellcheck-workflow-scripts_specs.md`
 - `docs/specs/developments/20260416120000_agent-timeout-handling/1_agent-timeout-handling_specs.md`
+- `docs/specs/developments/20260416120000_batch-merge-ff-pull-retry/1_batch-merge-ff-pull-retry_specs.md`
+- `docs/specs/developments/20260416120000_coderabbit-success-fallback/1_coderabbit-success-fallback_specs.md`
+- `docs/specs/developments/20260416180000_173-markdown-lint-plan-spec-docs/1_173-markdown-lint-plan-spec-docs_specs.md`
 
 1. Open the file.
 2. Search for the text `Guiding principle`.
@@ -102,6 +108,9 @@ Each checkbox maps to an acceptance criterion from the spec.
 - [ ] `docs/specs/developments/20260414184900_batch-merge/1_batch-merge_specs.md` does not contain the "Guiding principle (important)" section.
 - [ ] `docs/specs/developments/20260416120000_136-shellcheck-workflow-scripts/1_136-shellcheck-workflow-scripts_specs.md` does not contain the "Guiding principle (important)" section.
 - [ ] `docs/specs/developments/20260416120000_agent-timeout-handling/1_agent-timeout-handling_specs.md` does not contain the "Guiding principle (important)" section.
+- [ ] `docs/specs/developments/20260416120000_batch-merge-ff-pull-retry/1_batch-merge-ff-pull-retry_specs.md` does not contain the "Guiding principle (important)" section.
+- [ ] `docs/specs/developments/20260416120000_coderabbit-success-fallback/1_coderabbit-success-fallback_specs.md` does not contain the "Guiding principle (important)" section.
+- [ ] `docs/specs/developments/20260416180000_173-markdown-lint-plan-spec-docs/1_173-markdown-lint-plan-spec-docs_specs.md` does not contain the "Guiding principle (important)" section.
 
 ---
 
