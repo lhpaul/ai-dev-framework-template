@@ -10,6 +10,7 @@ on:
       - 'docs/testing/workflow/**'
       - 'CHANGELOG.md'
       - '.markdownlint.jsonc'
+      - '.markdownlint-cli2.jsonc'
       - 'package.json'
       - 'package-lock.json'
       - 'scripts/lint/markdown-heuristic-lint.py'
