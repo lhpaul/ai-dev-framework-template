@@ -42,34 +42,35 @@ AI developer agents writing `CHANGELOG.md` entries consistently produce trailing
 
 ---
 
-### Use Case 2: Human or Agent Updates the Pre-Commit Checklist
+### Use Case 2: Human or Agent Updates the CHANGELOG Update Step
 
 **Actor**: Human developer or AI agent reviewing the implementation protocol
-**Preconditions**: The implementation protocol (`03-implement-development-protocol.md`) currently lacks an explicit CHANGELOG format check in Step 5 (Pre-Commit Verification).
+**Preconditions**: The implementation protocol (`03-implement-development-protocol.md`) currently lacks an explicit CHANGELOG format check in the CHANGELOG update step (Step 6 in Full Pipeline, and the equivalent step in Refactor, Fast Track, and Hotfix paths).
 
 **Steps**:
-1. The protocol is updated to include an explicit CHANGELOG format verification instruction in the Pre-Commit Verification step.
-2. When a developer agent reads the updated protocol before implementation, it understands it must verify the CHANGELOG entry before committing.
+1. The protocol is updated to include an explicit CHANGELOG format verification instruction immediately after the CHANGELOG entry is written, in every implementation path.
+2. When a developer agent reads the updated protocol before implementation, it understands it must verify the CHANGELOG entry before staging (i.e., after writing the entry in Step 6, before committing in Step 7).
 
 **Postconditions**:
-- Protocol Step 5 includes a clear, actionable instruction for verifying CHANGELOG trailing whitespace.
+- The CHANGELOG update step in every implementation path (Full Pipeline, Refactor, Fast Track, Hotfix) includes a clear, actionable instruction for verifying CHANGELOG trailing whitespace.
 - Any agent reading and following the protocol will apply the check without needing to infer it.
 
 **Information shown**:
-- The instruction in the protocol specifies what to check (trailing whitespace, trailing blank lines) and how to verify (visual inspection of the diff or a simple shell check).
+- The instruction in the protocol specifies what to check (trailing whitespace, trailing blank lines at end of entry) and how to verify (visual inspection of the diff or a simple shell check).
 
 **Actions available**:
 - Agent follows the step as written; no human intervention required during normal operation.
 
 **Considerations**:
-- The instruction must be concrete enough that an LLM agent can follow it deterministically — e.g., "after writing the CHANGELOG entry, verify no line ends with whitespace characters and no section ends with two or more consecutive blank lines."
-- The instruction should be short and integrated into the existing Step 5 block rather than a separate standalone section, to preserve protocol readability.
+- The instruction must be concrete enough that an LLM agent can follow it deterministically — e.g., "after writing the CHANGELOG entry, verify no line ends with whitespace characters and the entry does not end with two or more consecutive blank lines."
+- The instruction should be integrated into the existing CHANGELOG update step rather than a separate standalone section, to preserve protocol readability.
+- The check is positioned after writing the CHANGELOG entry and before the commit/push step in every path, matching the logical flow: write entry → verify format → stage and commit.
 
 ---
 
 ## Business Rules
 
-- The CHANGELOG format verification step is part of the Pre-Commit Verification stage in `03-implement-development-protocol.md` and applies to every implementation path (Full Pipeline, Refactor, Fast Track, Hotfix) that modifies `CHANGELOG.md`.
+- The CHANGELOG format verification step is added to the CHANGELOG update step in `03-implement-development-protocol.md` (Step 6 in the Full Pipeline path, and the equivalent CHANGELOG update step in the Refactor, Fast Track, and Hotfix paths). It applies to every implementation path that modifies `CHANGELOG.md`. The check runs after the CHANGELOG entry is written and before the file is staged for commit.
 - The verification covers exactly two defect patterns:
   1. Trailing whitespace (one or more whitespace characters at the end of a line, excluding intentional two-space Markdown hard line breaks).
   2. Trailing blank lines after a CHANGELOG entry (two or more consecutive blank lines at the end of the modified entry, and before end-of-file if applicable).
@@ -81,9 +82,9 @@ AI developer agents writing `CHANGELOG.md` entries consistently produce trailing
 
 ## Acceptance Criteria
 
-- [ ] AC1: `03-implement-development-protocol.md` Step 5 (Pre-Commit Verification) includes an explicit, actionable instruction directing the agent to verify the CHANGELOG entry for trailing whitespace and trailing blank lines before staging.
+- [ ] AC1: `03-implement-development-protocol.md` includes an explicit, actionable CHANGELOG format verification instruction in every implementation path (Full Pipeline Step 6, and the equivalent CHANGELOG update step in the Refactor, Fast Track, and Hotfix paths), directing the agent to verify the written CHANGELOG entry for trailing whitespace and trailing blank lines before staging.
 - [ ] AC2: `.claude/agents/developer.md` key rules section includes a note that the CHANGELOG entry must have no trailing whitespace or trailing blank lines before commit.
-- [ ] AC3: The instruction in the protocol is concrete and unambiguous — it specifies both defect patterns (trailing whitespace, consecutive blank lines) and the timing (before staging, not after push).
+- [ ] AC3: The instruction in the protocol is concrete and unambiguous — it specifies both defect patterns (trailing whitespace, trailing blank lines at end of entry) and the timing (after writing the CHANGELOG entry, before staging for commit).
 - [ ] AC4: The instruction explicitly states that intentional two-space Markdown hard line breaks must not be treated as trailing whitespace violations.
 - [ ] AC5: The changes do not remove or conflict with any existing CHANGELOG update instructions in the protocol or agent definition.
 
