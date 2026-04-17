@@ -1,7 +1,7 @@
 # Protocol-90 Tracker Status Update Before Dispatch — Implementation Plan
 
 **Spec**: N/A (Refactor — see [GitHub issue #159](https://github.com/lhpaul/ai-dev-framework-template/issues/159))
-**Smoke test runbook**: [`docs/testing/workflow/protocol-90-tracker-status-update.smoke-test.md`](../../../../testing/workflow/protocol-90-tracker-status-update.smoke-test.md)
+**Smoke test runbook**: [`docs/testing/workflow/protocol-90-tracker-status-update.smoke-test.md`](../../../testing/workflow/protocol-90-tracker-status-update.smoke-test.md)
 
 ---
 
@@ -51,7 +51,7 @@ Not applicable — this is a doc-only change.
 2. Portfolio Orchestrator runs against items already in the correct in-flight status — no spurious status changes occur (idempotent)
 3. Work Item Runner invoked directly for a single Refactor item that is still `Backlog` — runner sets status to `Writing Plan` before proceeding
 
-**Smoke test runbook**: [`docs/testing/workflow/protocol-90-tracker-status-update.smoke-test.md`](../../../../testing/workflow/protocol-90-tracker-status-update.smoke-test.md)
+**Smoke test runbook**: [`docs/testing/workflow/protocol-90-tracker-status-update.smoke-test.md`](../../../testing/workflow/protocol-90-tracker-status-update.smoke-test.md)
 
 **Regression suite**: Not applicable — no automated regression suite configured in this repository.
 

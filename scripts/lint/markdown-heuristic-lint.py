@@ -29,7 +29,7 @@ Exit codes:
 
 import re
 import sys
-from typing import List, Tuple, Optional
+from typing import List, Optional
 
 # ---------------------------------------------------------------------------
 # GLOB001 configuration
@@ -136,28 +136,10 @@ def check_glob001(path: str, lines: List[str]) -> List[str]:
     """Check for suspicious non-recursive globs (GLOB001)."""
     findings: List[str] = []
 
-    # Build list of lines that are inside fenced code blocks with their line numbers.
-    # Also track line ranges of code blocks so we can search context around them.
+    # Scan each code block line for non-recursive globs.
     # Use line.strip() for fence detection to handle indented fences correctly.
     in_code_block = False
     fence_char: Optional[str] = None
-    code_blocks: List[Tuple[int, int]] = []  # (start_line, end_line) 1-indexed
-    block_start = 0
-
-    for i, line in enumerate(lines):
-        lstripped = line.strip()
-        if not in_code_block:
-            if lstripped.startswith("```") or lstripped.startswith("~~~"):
-                in_code_block = True
-                fence_char = lstripped[:3]
-                block_start = i + 1  # 1-indexed
-        else:
-            if lstripped.startswith(fence_char):  # type: ignore[arg-type]
-                in_code_block = False
-                code_blocks.append((block_start, i + 1))  # i+1 is the closing fence line (1-indexed)
-
-    # Now scan each code block line for non-recursive globs
-    in_code_block = False
     current_block_start = 0
 
     for i, line in enumerate(lines):
