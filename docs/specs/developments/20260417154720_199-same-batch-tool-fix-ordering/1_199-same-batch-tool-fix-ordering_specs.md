@@ -35,14 +35,13 @@ item ahead of its consumers or surface a human confirmation gate before parallel
   - Any file matching `docs/ai/development-workflow/protocols/*.md`
   - `.ai-dev-workflow.yaml`
 - The candidate batch also contains one or more other items that are not tool-fix items (i.e.,
-  downstream consumers that will go through the PR readiness loop during this batch run).
+  consumer items that are not yet `ready-for-human-review`).
 
 **Steps**:
 1. During Step 3 batch-building, the orchestrator (or `workflow-batch-plan.sh`) checks whether
    any candidate item is classified as a **tool-fix item** (see Business Rules).
 2. The orchestrator checks whether the same batch contains at least one non-tool-fix item that
-   will invoke the affected tool (any item going through Steps 7–8 of Protocol 91 — i.e., spec,
-   plan, or implementation PRs).
+   is not already `ready-for-human-review` (any in-flight spec, plan, or implementation item).
 3. The ordering hazard is flagged.
 4. The orchestrator applies the **serialize-first** strategy: the tool-fix item is placed in its
    own serial sub-batch that must complete before the remaining items are dispatched in a
@@ -151,6 +150,7 @@ item ahead of its consumers or surface a human confirmation gate before parallel
   plan or tracker title/description references modifications to any of the following files
   (exact path match, relative to repo root):
   - `scripts/development-workflow/pr-review-loop.sh`
+  - `scripts/development-workflow/pr-ci-loop.sh`
   - `scripts/development-workflow/batch-merge.sh`
   - `scripts/development-workflow/post-merge-cleanup.sh`
   - Any file matching the glob `docs/ai/development-workflow/protocols/*.md`
@@ -161,10 +161,12 @@ item ahead of its consumers or surface a human confirmation gate before parallel
 - **Human override is required for parallel dispatch**: the orchestrator must never autonomously
   skip the serialize-first gate. Only an explicit human instruction enables parallel dispatch
   when an ordering hazard has been detected.
-- **Detection scope is limited to direct callers of the affected tool**: a consumer item is
-  considered a downstream caller if it will invoke any of the listed tool files during Steps 7–8
-  of Protocol 91 (automated PR review loop and CI loop). Items that are already past Steps 7–8
-  (already `ready-for-human-review`) are not affected.
+- **Any non-tool-fix item in the same batch is a consumer**: a consumer item is any non-tool-fix
+  item in the same candidate batch, regardless of what phase of the batch it is in. This covers
+  items that will invoke the affected tool during Steps 7–8 (PR review loop, CI loop) as well as
+  items that will invoke it during the batch-merge or post-merge phases. Items that are already
+  `ready-for-human-review` before batch dispatch are not affected (they are no longer in-flight
+  within the batch).
 - **Multiple tool-fix items**: if two tool-fix items are in the same batch, they are each
   serialized. The ordering between multiple tool-fix items follows standard priority (due date,
   then priority, then creation date).
@@ -182,6 +184,9 @@ item ahead of its consumers or surface a human confirmation gate before parallel
 - [ ] When `workflow-batch-plan.sh` is run against a development folder whose spec/plan document
   references `pr-review-loop.sh`, the output includes `TOOL_FIX=yes` and `TOOL_FIX_FILES=`
   containing `pr-review-loop.sh`.
+- [ ] When `workflow-batch-plan.sh` is run against a development folder whose spec/plan document
+  references `pr-ci-loop.sh`, the output includes `TOOL_FIX=yes` and `TOOL_FIX_FILES=`
+  containing `pr-ci-loop.sh`.
 - [ ] When `workflow-batch-plan.sh` is run against a development folder whose spec/plan document
   references a `docs/ai/development-workflow/protocols/*.md` file, the output includes
   `TOOL_FIX=yes`.
