@@ -299,7 +299,9 @@ CodeRabbit enforces a per-hour rate limit on automated reviews. When multiple PR
 
 `pr-review-loop.sh` detects this automatically: when a rate-limit comment is found, it waits 3 minutes and retries with `@coderabbitai review` (up to 2 retries, configurable via `CODERABBIT_RATE_LIMIT_MAX_RETRIES` and `CODERABBIT_RATE_LIMIT_WAIT`). No manual intervention is needed in most cases.
 
-If a PR still shows no CodeRabbit review after all retries (e.g., the rate-limit window extends beyond the retry budget), the script falls through to stale-findings recovery and eventually marks the result as `skipped (no_review)`. The PR can still advance to `ready-for-human-review`. A human reviewer can manually post `@coderabbitai review` on the PR to trigger a fresh review after the rate-limit window resets.
+If the retry budget is exhausted and no CodeRabbit inline review has appeared, `pr-review-loop.sh` first checks whether CodeRabbit posted a **SUCCESS commit-status context** for the current HEAD SHA (via `GET /repos/{owner}/{repo}/commits/{sha}/statuses`). During rate-limit windows, CodeRabbit sometimes signals a clean result via a commit status rather than an inline review comment. When a CodeRabbit `SUCCESS` commit-status is found, the script exits immediately with `RESULT=clean` and `REASON=coderabbit_status_success_fallback` — no human intervention is required and the PR advances to the CI loop normally. The fallback reason is included in the automated reviewer loop summary comment on the PR.
+
+Only when no SUCCESS commit-status is found does the script fall through to stale-findings recovery, which may yield `skipped (no_review)`. The PR can still advance to `ready-for-human-review` in that case as well. A human reviewer can optionally post `@coderabbitai review` on the PR after the rate-limit window resets to obtain a full inline review.
 
 ---
 
