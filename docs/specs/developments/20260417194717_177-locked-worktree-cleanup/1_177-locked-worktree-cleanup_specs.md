@@ -22,7 +22,7 @@ After every parallel batch merge, `post-merge-cleanup.sh` fails when trying to r
 2. The script attempts `git worktree remove "$WORKTREE_PATH" --force`.
 3. Git returns `fatal: cannot remove a locked working tree, lock reason: claude agent…`.
 4. The script detects the lock error and logs a warning: `Worktree '<path>' was locked (lock reason: <reason>). Force-overriding lock — verify no active agent is still using this path.`
-5. The script runs `git worktree unlock "$WORKTREE_PATH"` followed by `git worktree remove "$WORKTREE_PATH" --force`, OR uses `git worktree remove -f -f "$WORKTREE_PATH"` (double-force).
+5. The script runs `git worktree unlock "$WORKTREE_PATH"` followed by `git worktree remove "$WORKTREE_PATH" --force`. If `git worktree unlock` fails, the script falls back to `git worktree remove -f -f "$WORKTREE_PATH"` (double-force).
 6. The worktree is removed successfully.
 7. The script proceeds to delete the local branch and complete cleanup.
 
@@ -93,6 +93,10 @@ After every parallel batch merge, `post-merge-cleanup.sh` fails when trying to r
 3. Branch is deleted directly.
 
 **Postconditions**: No change in behavior; this path is unchanged.
+
+**Information shown**: Same as current behavior.
+
+**Actions available**: N/A (fully automated)
 
 **Considerations**: Unchanged from current behavior.
 
