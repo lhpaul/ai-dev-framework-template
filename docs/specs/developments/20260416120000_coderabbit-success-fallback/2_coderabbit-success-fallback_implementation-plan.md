@@ -22,12 +22,12 @@
 ### Scripts / Shell
 
 - [ ] In `scripts/development-workflow/pr-review-loop.sh`, within `run_coderabbit_review()`:
-  - Add a new local variable `coderabbit_success_status_found=0` in the local declarations block at the top of the function.
+  - Add a new local variable `local coderabbit_success_status_count` in the local declarations block at the top of the function.
   - After the rate-limit retry block (the `if [ "$coderabbit_any_activity" -eq 0 ] && [ "$coderabbit_rate_limit_retries" -lt "$coderabbit_rate_limit_max_retries" ]` guard) and once `elapsed >= max_wait`, insert a new fallback check block immediately before the existing `stale_count` / stale-findings block:
     1. Query `GET /repos/{repo}/commits/{head_sha}/statuses` (paginated) via `gh api`.
     2. Filter for entries where `.context` contains `coderabbit` (case-insensitive) and `.state == "success"`.
-    3. If at least one such entry is found, set `coderabbit_success_status_found=1`.
-  - If `coderabbit_success_status_found=1`, skip the stale-findings block entirely and emit:
+    3. Count the matching entries into `coderabbit_success_status_count`.
+  - If `coderabbit_success_status_count > 0`, skip the stale-findings block entirely and emit:
     ```
     RESULT=clean
     REASON=coderabbit_status_success_fallback
@@ -41,8 +41,8 @@
     SUGGESTION_COUNT=0
     ```
     Then `return 0`.
-  - The stale-findings block and the existing `skipped (no_review)` / `escalate (timeout)` paths are only reached when `coderabbit_success_status_found=0`.
-  - The `coderabbit_success_status_found` check must only apply when `coderabbit_any_activity -eq 0`. When `coderabbit_any_activity -eq 1` (a real review was posted), the existing Phase 3 result collection path runs as-is.
+  - The stale-findings block and the existing `skipped (no_review)` / `escalate (timeout)` paths are only reached when `coderabbit_success_status_count` is 0 or empty.
+  - This check must only apply when `coderabbit_any_activity -eq 0`. When `coderabbit_any_activity -eq 1` (a real review was posted), the existing Phase 3 result collection path runs as-is.
 
 ### Documentation
 
@@ -139,7 +139,7 @@ fi
 ## Implementation Order
 
 1. Read the full `run_coderabbit_review()` function in `scripts/development-workflow/pr-review-loop.sh` and identify the exact insertion point: the `if [ "$elapsed" -ge "$max_wait" ]` block, inside the `if [ "$coderabbit_any_activity" -eq 0 ]` guard, before the stale-findings query.
-2. Add `local coderabbit_success_status_found=0` to the local declarations block at the top of `run_coderabbit_review()`.
+2. Add `local coderabbit_success_status_count` to the local declarations block at the top of `run_coderabbit_review()`.
 3. Insert the SUCCESS commit-status fallback block (API query + conditional `return 0`) at the identified location.
 4. Update `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` Step 3.7 to document the new fallback.
 5. Verify the smoke test runbook scenarios manually or with a dry-run review of the script diff.
