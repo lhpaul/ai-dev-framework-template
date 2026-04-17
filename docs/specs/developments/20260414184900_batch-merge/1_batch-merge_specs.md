@@ -4,14 +4,6 @@
 
 ---
 
-## Guiding principle (important)
-
-This stage is intentionally **product-focused**:
-
-- Write **user-facing behavior**, permissions, UX rules, and acceptance criteria.
-- Avoid prescribing **implementation details** (database tables/columns, specific endpoints, file paths, class names, or migration design). Those belong in the **Implementation Plan** stage.
-- If a technical constraint matters to the product (e.g., "an agent may belong to multiple broker companies"), express it as a **product requirement** without naming tables.
-
 ## Overview
 
 When the orchestrator produces a batch of parallel PRs targeting `develop`, merging them sequentially causes cascading conflicts — primarily in `CHANGELOG.md`, shared protocol files, and configuration — because each successive PR diverges from `develop` after the first one is merged. The `batch-merge` command gives humans (and the orchestrator) a single entry point to merge all ready PRs in a batch without manually resolving the same conflict types over and over. It orders the merges, auto-resolves known trivial conflicts (CHANGELOG entries, documentation-only overlaps), pauses for human input on non-trivial conflicts, and runs `post-merge-cleanup` for each successfully merged PR.

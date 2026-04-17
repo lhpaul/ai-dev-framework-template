@@ -4,14 +4,6 @@
 
 ---
 
-## Guiding principle (important)
-
-This stage is intentionally **product-focused**:
-
-- Write **user-facing behavior**, permissions, UX rules, and acceptance criteria.
-- Avoid prescribing **implementation details** (database tables/columns, specific endpoints, file paths, class names, or migration design). Those belong in the **Implementation Plan** stage.
-- If a technical constraint matters to the product (e.g., "an agent may belong to multiple broker companies"), express it as a **product requirement** without naming tables.
-
 ## Overview
 
 AI agents and developers contributing spec and plan documents under `docs/specs/developments/` and `docs/testing/workflow/` currently receive no automated feedback on structural defects until a human or bot reviewer flags them in a PR review. Retrospective data from Batch 5 shows that avoidable markdown defects — broken relative links, internally inconsistent acceptance-criteria counts, and incorrect glob patterns in smoke-test instructions — drove high fix-commit ratios (67–83%) on plan PRs, burning CodeRabbit rate-limit budget and extending orchestrator supervision time on every cycle.

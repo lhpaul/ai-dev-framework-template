@@ -4,16 +4,6 @@
 
 ---
 
-## Guiding principle (important)
-
-This stage is intentionally **product-focused**:
-
-- Write **user-facing behavior**, permissions, UX rules, and acceptance criteria.
-- Avoid prescribing **implementation details** (database tables/columns, specific endpoints, file paths, class names, or migration design). Those belong in the **Implementation Plan** stage.
-- If a technical constraint matters to the product (e.g., "an agent may belong to multiple broker companies"), express it as a **product requirement** without naming tables.
-
----
-
 ## Overview
 
 `batch-merge.sh` fails with a false "Could not fast-forward local 'develop' from origin — resolve divergence manually" error during sequential batch merges. The error is transient: a manual retry of the same command immediately succeeds. In an automated `/batch-merge` run the script exits with `MERGE_RESULT=failed`, causing the PR to be aborted from the batch for no real reason.

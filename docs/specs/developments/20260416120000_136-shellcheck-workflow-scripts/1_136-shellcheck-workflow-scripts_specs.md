@@ -4,14 +4,6 @@
 
 ---
 
-## Guiding principle (important)
-
-This stage is intentionally **product-focused**:
-
-- Write **user-facing behavior**, permissions, UX rules, and acceptance criteria.
-- Avoid prescribing **implementation details** (database tables/columns, specific endpoints, file paths, class names, or migration design). Those belong in the **Implementation Plan** stage.
-- If a technical constraint matters to the product (e.g., "an agent may belong to multiple broker companies"), express it as a **product requirement** without naming tables.
-
 ## Overview
 
 Developers and AI agents contributing shell scripts under `scripts/development-workflow/` currently receive no automated static analysis feedback until a human or bot reviewer flags an issue in a PR review. Retrospective data shows that common shell scripting mistakes (unquoted variables, missing error handling, incorrect `set -e` interactions with pipeline commands) regularly produce high fix-commit ratios that trigger CodeRabbit's auto-pause and extend review cycles.

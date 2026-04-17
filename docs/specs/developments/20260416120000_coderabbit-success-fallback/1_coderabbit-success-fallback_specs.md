@@ -4,14 +4,6 @@
 
 ---
 
-## Guiding principle (important)
-
-This stage is intentionally **product-focused**:
-
-- Write **user-facing behavior**, permissions, UX rules, and acceptance criteria.
-- Avoid prescribing **implementation details** (database tables/columns, specific endpoints, file paths, class names, or migration design). Those belong in the **Implementation Plan** stage.
-- If a technical constraint matters to the product (e.g., "an agent may belong to multiple broker companies"), express it as a **product requirement** without naming tables.
-
 ## Overview
 
 When multiple PRs are opened in rapid succession (3+ within seconds), CodeRabbit may exhaust its per-hour rate-limit budget before posting a fresh inline review comment on later PRs. The `pr-review-loop.sh` script currently waits up to its full retry budget and then escalates with `timeout`, even when CodeRabbit has already posted a `SUCCESS` commit-status context on the current HEAD — indicating the review is complete and clean. This causes orchestrator agents to appear "stuck" and forces manual intervention on every parallel batch of this size.
