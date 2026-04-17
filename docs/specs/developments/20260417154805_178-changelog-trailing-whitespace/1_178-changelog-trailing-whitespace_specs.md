@@ -74,7 +74,7 @@ AI developer agents writing `CHANGELOG.md` entries consistently produce trailing
   1. Trailing whitespace (one or more whitespace characters at the end of a line, excluding intentional two-space Markdown hard line breaks).
   2. Trailing blank lines within or after a CHANGELOG entry (two or more consecutive blank lines anywhere in the modified section).
 - The check is applied before staging, not as a separate commit. The agent fixes in-place if violations are found; no additional "fix commit" is created.
-- The rule does not replace the CI lint check from issue #173 — both mechanisms coexist. The agent-level check prevents failures upstream; the CI check is the durable enforcement gate for cases where the agent or a human contributor skips the pre-commit step.
+- The rule does not replace the CI lint check from issue #173 — both mechanisms coexist. The agent-level check prevents failures upstream; the CI check (MD009 trailing-space and MD047 EOF-newline rules) is the durable enforcement gate for trailing-whitespace violations. Consecutive-blank-line defects within CHANGELOG entries are not caught by the current CI config (MD012 is not enabled), so the agent-level pre-commit step is the primary guard for that defect class.
 - The developer agent definition (`.claude/agents/developer.md`) is updated to surface the CHANGELOG format rule at agent initialization, alongside the existing CHANGELOG update reminder.
 
 ---
