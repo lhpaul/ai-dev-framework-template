@@ -87,7 +87,7 @@ For each of the following files:
 2. Search for the text `Guiding principle`.
 3. Verify the remaining content (Overview, Use Cases, Business Rules, Acceptance Criteria, etc.) is intact.
 
-**Expected result**: The string `Guiding principle` is not present in any of the 4 files. All other spec content is unmodified.
+**Expected result**: The string `Guiding principle` is not present in any of the 7 files. All other spec content is unmodified.
 
 ---
 

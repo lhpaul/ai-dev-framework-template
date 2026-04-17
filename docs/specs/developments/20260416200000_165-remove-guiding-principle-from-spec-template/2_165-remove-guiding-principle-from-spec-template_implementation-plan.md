@@ -7,7 +7,7 @@
 
 ## Summary
 
-**Approach**: Remove the "Guiding principle (important)" section from the spec template and all 4 existing merged spec files that still contain it. Verify that the product-focused authoring guidance is already present (in equivalent form) in `01-generate-spec-protocol.md` — it is (the "Product-first boundary" section), so no additions are needed there. Confirm `REVIEW.md`'s spec checklist already checks implementation-detail cleanliness rather than the presence of a named boilerplate section — it does, so no changes are needed there.
+**Approach**: Remove the "Guiding principle (important)" section from the spec template and all 7 existing merged spec files that still contain it. Verify that the product-focused authoring guidance is already present (in equivalent form) in `01-generate-spec-protocol.md` — it is (the "Product-first boundary" section), so no additions are needed there. Confirm `REVIEW.md`'s spec checklist already checks implementation-detail cleanliness rather than the presence of a named boilerplate section — it does, so no changes are needed there.
 
 **Estimated complexity**: S
 <!-- S: < 1 day | M: 1-3 days | L: 3+ days -->
@@ -62,7 +62,7 @@ None — this feature affects documentation files only.
 
 ## Documentation Updates
 
-None — all file changes in this plan (the spec template and the 4 existing spec files) are the primary deliverable, not secondary documentation updates triggered by a code or config change. No additional project docs in `docs/project/`, `docs/best-practices/`, or `AGENTS.md` need updating as a result of this work.
+None — all file changes in this plan (the spec template and the 7 existing spec files) are the primary deliverable, not secondary documentation updates triggered by a code or config change. No additional project docs in `docs/project/`, `docs/best-practices/`, or `AGENTS.md` need updating as a result of this work.
 
 ---
 
