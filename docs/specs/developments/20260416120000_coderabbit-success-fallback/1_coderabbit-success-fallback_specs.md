@@ -73,7 +73,7 @@ This fix adds a fallback path: if the CodeRabbit review-loop retry budget is exh
 1. The script exhausts the retry budget waiting for CodeRabbit to post a review.
 2. The script queries the commit-status contexts for the current HEAD SHA.
 3. No CodeRabbit `SUCCESS` status context is found.
-4. The script falls through to its existing stale-findings recovery path and then returns `skipped (no_review)` or `escalate` per existing logic.
+4. The script falls through to its existing stale-findings recovery path and then returns `needs_fixes (stale_findings)`, `skipped (no_review)`, or `escalate (timeout)` per existing logic.
 
 **Postconditions**:
 - Behavior is unchanged from the current implementation for this case.
