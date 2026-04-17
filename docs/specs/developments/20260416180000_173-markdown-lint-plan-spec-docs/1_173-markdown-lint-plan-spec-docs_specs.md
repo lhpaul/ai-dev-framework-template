@@ -16,7 +16,7 @@ This stage is intentionally **product-focused**:
 
 AI agents and developers contributing spec and plan documents under `docs/specs/developments/` and `docs/testing/workflow/` currently receive no automated feedback on structural defects until a human or bot reviewer flags them in a PR review. Retrospective data from Batch 5 shows that avoidable markdown defects — broken relative links, internally inconsistent acceptance-criteria counts, and incorrect glob patterns in smoke-test instructions — drove high fix-commit ratios (67–83%) on plan PRs, burning CodeRabbit rate-limit budget and extending orchestrator supervision time on every cycle.
 
-This feature adds a lightweight automated markdown lint step that runs in CI on every pull request touching plan and spec documents, and optionally as a pre-commit hook, to catch the most common shape defects before human review begins. The same lint stack will also catch CHANGELOG trailing-whitespace issues, subsuming the scope of deferred item #178.
+This feature adds a lightweight automated markdown lint step that runs in CI on every pull request touching plan and spec documents, catching the most common shape defects before human review begins. The same lint stack will also catch CHANGELOG trailing-whitespace issues, subsuming the scope of deferred item #178.
 
 ---
 
