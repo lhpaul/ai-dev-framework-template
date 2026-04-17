@@ -30,6 +30,7 @@ item ahead of its consumers or surface a human confirmation gate before parallel
 - The candidate batch contains at least one item whose implementation plan (or tracker title /
   description) indicates it modifies a directly-invoked workflow tool:
   - `scripts/development-workflow/pr-review-loop.sh`
+  - `scripts/development-workflow/pr-ci-loop.sh`
   - `scripts/development-workflow/batch-merge.sh`
   - `scripts/development-workflow/post-merge-cleanup.sh`
   - Any file matching `docs/ai/development-workflow/protocols/*.md`
