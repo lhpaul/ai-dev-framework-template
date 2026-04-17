@@ -196,6 +196,12 @@ item ahead of its consumers or surface a human confirmation gate before parallel
   remains unchanged.
 - [ ] The human override path (Use Case 2) is documented in Protocol 90 Step 3 with a clear
   statement that it requires explicit human instruction.
+- [ ] When `workflow-batch-plan.sh` is run against a development folder whose spec/plan document
+  does not yet exist (e.g., the item is in `Writing Spec` state), the output includes
+  `TOOL_FIX=unknown`.
+- [ ] When the orchestrator encounters a `TOOL_FIX=unknown` item in a candidate batch alongside
+  consumer items, Protocol 90 Step 3 instructs the orchestrator to treat it as a potential
+  tool-fix hazard and apply the serialize-first strategy (same behavior as `TOOL_FIX=yes`).
 
 ---
 
