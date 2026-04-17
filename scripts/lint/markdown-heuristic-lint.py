@@ -57,10 +57,14 @@ RECURSIVE_CUES: List[str] = [
 GLOB001_WINDOW = 10
 
 # Regex: non-recursive glob patterns inside code blocks.
-# Matches patterns like *.sh, *.md, *.py but not **/*.sh or ./**/*.sh
+# Matches patterns like *.sh, *.md, *.smoke-test.md but not **/*.sh or ./**/*.sh
+# The extension group allows dots and hyphens so multi-part extensions
+# (e.g., *.smoke-test.md, *.spec.ts) are captured in full.
+# A lookahead on word/punctuation boundary prevents matching mid-token.
 _GLOB_PATTERN = re.compile(
     r'(?<!\*\*/)(?<!\*/)(?<!\.\*\*)(?<!\./\*\*)(?<!\w)'
-    r'(\*\.[a-zA-Z0-9_]+)'
+    r'(\*\.[A-Za-z0-9_][A-Za-z0-9_.-]*)'
+    r'(?=$|[\s"\'`),;: ])'
 )
 
 # ---------------------------------------------------------------------------
@@ -106,6 +110,11 @@ _COUNT_PHRASE_RE = re.compile(
 # Markdown list item (ordered or unordered).
 _LIST_ITEM_RE = re.compile(r"^\s{0,3}(?:[-*+]|\d+[.)]) ")
 
+# Fenced code block opening pattern — matches 3 or more backticks/tildes.
+# Capturing the full marker length (e.g., ```` for 4-backtick fences) is
+# required so the closing fence is matched correctly.
+_FENCE_RE = re.compile(r"^(?P<fence>`{3,}|~{3,})")
+
 # Markdown heading
 _HEADING_RE = re.compile(r"^#{1,6}\s")
 
@@ -143,20 +152,23 @@ def check_glob001(path: str, lines: List[str]) -> List[str]:
 
     # Scan each code block line for non-recursive globs.
     # Use line.strip() for fence detection to handle indented fences correctly.
+    # Store the full fence marker (3+ chars) so 4-backtick blocks are closed
+    # by a 4-backtick fence and not accidentally by an inner 3-backtick line.
     in_code_block = False
-    fence_char: Optional[str] = None
+    fence_marker: Optional[str] = None
     current_block_start = 0
 
     for i, line in enumerate(lines):
         lstripped = line.strip()
         stripped = line.rstrip()
         if not in_code_block:
-            if lstripped.startswith("```") or lstripped.startswith("~~~"):
+            fence_match = _FENCE_RE.match(lstripped)
+            if fence_match:
                 in_code_block = True
-                fence_char = lstripped[:3]
+                fence_marker = fence_match.group("fence")
                 current_block_start = i
         else:
-            if lstripped.startswith(fence_char):  # type: ignore[arg-type]
+            if fence_marker and lstripped.startswith(fence_marker):
                 in_code_block = False
                 continue
             # Look for non-recursive glob patterns
@@ -183,7 +195,7 @@ def check_glob001(path: str, lines: List[str]) -> List[str]:
                 # Find the closing fence to determine where forward prose starts.
                 closing_fence_line = len(lines)  # default: end of file
                 for k in range(i + 1, len(lines)):
-                    if lines[k].strip().startswith(fence_char):  # type: ignore[arg-type]
+                    if fence_marker and lines[k].strip().startswith(fence_marker):
                         closing_fence_line = k + 1  # prose starts after closing fence
                         break
                 forward_end = min(len(lines), closing_fence_line + GLOB001_WINDOW)
@@ -216,20 +228,23 @@ def check_count001(path: str, lines: List[str]) -> List[str]:
 
     # Skip lines inside code blocks.
     # Use line.strip() for fence detection to handle indented fences correctly.
+    # Store the full fence marker (3+ chars) so 4-backtick blocks are closed
+    # by a 4-backtick fence and not accidentally by an inner 3-backtick line.
     in_code_block = False
-    fence_char: Optional[str] = None
+    fence_marker_c: Optional[str] = None
     code_block_lines: set = set()
 
     for i, line in enumerate(lines):
         lstripped = line.strip()
         if not in_code_block:
-            if lstripped.startswith("```") or lstripped.startswith("~~~"):
+            fence_match = _FENCE_RE.match(lstripped)
+            if fence_match:
                 in_code_block = True
-                fence_char = lstripped[:3]
+                fence_marker_c = fence_match.group("fence")
                 code_block_lines.add(i)
         else:
             code_block_lines.add(i)
-            if lstripped.startswith(fence_char):  # type: ignore[arg-type]
+            if fence_marker_c and lstripped.startswith(fence_marker_c):
                 in_code_block = False
 
     for i, line in enumerate(lines):
@@ -246,9 +261,18 @@ def check_count001(path: str, lines: List[str]) -> List[str]:
 
         label = m.group("label")
 
-        # Count list items in the window immediately following this line
+        # Count top-level list items immediately following this line.
+        # Rules:
+        # - Only the IMMEDIATELY following list is counted: stop if any non-blank,
+        #   non-code, non-heading line appears BEFORE the first list item is found.
+        # - Once a top-level list starts (base_indent established), only top-level
+        #   items (indent == base_indent) are counted; nested/indented lines are
+        #   treated as continuation content and are skipped without stopping.
+        # - Blank lines between list items do not stop the count.
+        # - A heading or unindented non-list line after the list has started stops it.
         actual_count = 0
         found_list = False
+        base_indent: Optional[int] = None
         for j in range(i + 1, min(len(lines), i + 1 + COUNT001_WINDOW)):
             if j in code_block_lines:
                 continue
@@ -256,17 +280,26 @@ def check_count001(path: str, lines: List[str]) -> List[str]:
             # Stop counting if we hit a heading (new section)
             if _HEADING_RE.match(jline):
                 break
-            if _LIST_ITEM_RE.match(jline):
-                actual_count += 1
-                found_list = True
+            list_match = _LIST_ITEM_RE.match(jline)
+            if list_match:
+                indent = len(jline) - len(jline.lstrip(" \t"))
+                if base_indent is None:
+                    # First list item — establish the top-level indent
+                    base_indent = indent
+                if indent == base_indent:
+                    actual_count += 1
+                    found_list = True
+                # else: nested bullet — skip without stopping
+            elif not found_list and jline.strip():
+                # Non-blank, non-list line before any list item found — stop;
+                # the list (if any) is not immediately following the count phrase.
+                break
             elif found_list and jline.strip() == "":
                 # Blank line after list items — could be list continuation, keep going
                 pass
-            elif found_list and jline.strip() and not _LIST_ITEM_RE.match(jline):
-                # Non-blank, non-list line after we've seen at least one list item.
-                # Treat indented lines as list-item continuation lines (e.g., a
-                # multi-line list item whose subsequent lines are indented).
-                # Stop only on unindented non-list content or headings.
+            elif found_list and jline.strip() and not list_match:
+                # Non-blank, non-list line after the list has started.
+                # Indented lines are continuation content; unindented lines end the list.
                 if jline[0] in (" ", "\t"):
                     pass  # list-item continuation line — keep going
                 else:
