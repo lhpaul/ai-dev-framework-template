@@ -19,24 +19,24 @@ After every parallel batch merge, `post-merge-cleanup.sh` fails when trying to r
 
 **Steps**:
 1. `post-merge-cleanup.sh` discovers a worktree using the merged branch.
-2. The script attempts `git worktree remove "$WORKTREE_PATH" --force`.
-3. Git returns `fatal: cannot remove a locked working tree, lock reason: claude agent…`.
-4. The script detects the lock error and logs a warning: `WARNING: Worktree '<path>' is locked (reason: <lock-reason>). Force-overriding — if this worktree belongs to an active agent, data may be lost.`
-5. The script runs `git worktree unlock "$WORKTREE_PATH"` followed by `git worktree remove "$WORKTREE_PATH" --force`. If `git worktree unlock` fails, the script falls back to `git worktree remove -f -f "$WORKTREE_PATH"` (double-force).
+2. The script attempts to forcibly remove the worktree.
+3. The removal fails because the worktree is locked.
+4. The script detects the lock condition and emits a human-readable warning including the worktree path and the detected lock reason.
+5. The script unlocks the worktree and then removes it. If unlocking is unavailable or fails, the script uses an alternative removal method that bypasses the lock.
 6. The worktree is removed successfully.
 7. The script proceeds to delete the local branch and complete cleanup.
 
 **Postconditions**: Cleanup completes without manual intervention; the locked worktree is removed and the branch is deleted.
 
 **Information shown**:
-- A log line on stdout: `WARNING: Worktree '<path>' is locked (reason: <lock-reason>). Force-overriding — if this worktree belongs to an active agent, data may be lost.`
+- A warning log line on stdout including the worktree path, the detected lock reason, and a note that the lock is being force-overridden.
 
 **Actions available**: N/A (fully automated)
 
 **Considerations**:
-- The force-override warning (`WARNING: Worktree '<path>' is locked (reason: <lock-reason>). Force-overriding — if this worktree belongs to an active agent, data may be lost.`) must be visible to the human operator so that if a legitimately-active worktree is ever accidentally removed, the incident can be diagnosed.
+- The force-override warning must be visible to the human operator so that if a legitimately-active worktree is ever accidentally removed, the incident can be diagnosed.
 - The script must not silently swallow the lock error; the warning must always appear when a lock is force-overridden.
-- If the unlock+remove sequence itself fails (e.g., filesystem permissions), the script must surface the error and exit non-zero rather than continuing.
+- If the remediation fails (e.g., filesystem permissions), the script must surface the error and exit non-zero rather than continuing.
 
 ---
 
@@ -46,20 +46,20 @@ After every parallel batch merge, `post-merge-cleanup.sh` fails when trying to r
 **Preconditions**: `git worktree unlock` fails (e.g., git version predating the unlock subcommand), but the lock is a stale Claude agent lock.
 
 **Steps**:
-1. Script detects the locked-worktree error as in Use Case 1.
-2. `git worktree unlock "$WORKTREE_PATH"` exits non-zero.
-3. Script falls back to `git worktree remove -f -f "$WORKTREE_PATH"` (double-force, which bypasses the lock entirely in git ≥ 2.39).
+1. Script detects the locked-worktree condition as in Use Case 1.
+2. The unlock attempt is unavailable or exits non-zero.
+3. Script falls back to an alternative removal method that bypasses the lock.
 4. Worktree is removed; cleanup continues.
 
 **Postconditions**: Cleanup completes; worktree and branch are gone.
 
 **Information shown**:
-- Same force-override warning as Use Case 1, plus an additional note that `unlock` failed and double-force was used.
+- Same force-override warning as Use Case 1, plus an additional note that the primary unlock path failed and the fallback was used.
 
 **Actions available**: N/A (fully automated)
 
 **Considerations**:
-- The double-force fallback is a safety net; the unlock-first path is preferred when available because it is explicit.
+- The fallback removal method is a safety net; the unlock-then-remove path is preferred when available because it is explicit about the lock release.
 
 ---
 
@@ -104,14 +104,13 @@ After every parallel batch merge, `post-merge-cleanup.sh` fails when trying to r
 
 ## Business Rules
 
-- The lock-detection trigger is the string `cannot remove a locked working tree` in git's stderr output on the first `git worktree remove --force` attempt.
-- When a lock is detected, the script MUST emit a human-readable warning that includes: the worktree path, the detected lock reason (extracted from git's error output), and a note that the lock is being force-overridden.
-- The preferred remediation sequence is: `git worktree unlock "$WORKTREE_PATH"` followed by `git worktree remove "$WORKTREE_PATH" --force`.
-- If `git worktree unlock` exits non-zero, the script falls back to `git worktree remove -f -f "$WORKTREE_PATH"`.
+- The script must detect when a worktree removal attempt fails because the worktree is locked (as opposed to other removal failures).
+- When a lock is detected, the script MUST emit a human-readable warning that includes: the worktree path, the detected lock reason (from the lock error output), and a note that the lock is being force-overridden.
+- The script must first attempt to unlock the worktree and then remove it. If unlocking is unavailable or fails, the script must use an alternative removal method that bypasses the lock.
 - If both remediation paths fail, the script must exit non-zero with a clear error message. It must not silently skip the worktree and leave it dangling.
 - The lock-override warning must be emitted before the remediation attempt, not after, so it appears in the log even if the remediation fails.
 - No changes to the branch-deletion logic, issue-close logic, or `develop` checkout/pull steps.
-- The fix must not alter the behavior of `batch-merge.sh`'s merge step — it operates only in `post-merge-cleanup.sh`.
+- The fix must only modify `post-merge-cleanup.sh` behavior, not `batch-merge.sh`.
 
 ---
 
@@ -125,12 +124,12 @@ After every parallel batch merge, `post-merge-cleanup.sh` fails when trying to r
 
 ## Acceptance Criteria
 
-- [ ] When `git worktree remove --force` fails with `cannot remove a locked working tree`, the script logs a force-override warning and successfully removes the worktree using the unlock-then-force or double-force path.
-- [ ] The force-override warning includes the worktree path and the lock reason extracted from git's error output.
-- [ ] When the worktree is not locked, `git worktree remove --force` is called exactly once and no warning is emitted — behavior is unchanged.
+- [ ] When a worktree removal attempt fails because the worktree is locked, the script logs a force-override warning and successfully removes the worktree via the unlock-then-remove or fallback path.
+- [ ] The force-override warning includes the worktree path and the detected lock reason.
+- [ ] When the worktree is not locked, the standard single removal attempt succeeds and no warning is emitted — behavior is unchanged.
 - [ ] When no worktree is found for the merged branch, behavior is unchanged.
-- [ ] If both the unlock and double-force attempts fail, the script exits non-zero with a clear error; it does not silently continue.
-- [ ] End-to-end: running `post-merge-cleanup.sh <branch>` against a branch whose worktree is locked (lock reason `claude agent …`) completes successfully without manual intervention.
+- [ ] If both remediation attempts fail, the script exits non-zero with a clear error; it does not silently continue.
+- [ ] End-to-end: running `post-merge-cleanup.sh <branch>` against a branch whose worktree is locked completes successfully without manual intervention.
 
 ---
 
