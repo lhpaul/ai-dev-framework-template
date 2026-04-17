@@ -1,0 +1,319 @@
+#!/usr/bin/env python3
+"""
+Markdown heuristic lint checks for spec, plan, and CHANGELOG documents.
+
+Two checks are implemented:
+
+  GLOB001 — Suspicious non-recursive glob
+      Detects a non-recursive glob pattern (e.g., *.sh) inside a fenced code
+      block when the surrounding document prose (within a configurable window)
+      uses recursive-language cues (e.g., "subdirectories", "recursively").
+
+  COUNT001 — Within-document count disagreement
+      Detects a narrative count phrase (e.g., "4 acceptance criteria") that
+      disagrees with the count of list items in the section immediately
+      following (within 30 lines).
+
+Both checks support inline suppression via:
+    <!-- markdown-heuristic-disable GLOB001 -->
+    <!-- markdown-heuristic-disable COUNT001 -->
+placed on the same line or the line immediately preceding the finding.
+
+Usage:
+    python3 scripts/lint/markdown-heuristic-lint.py <file> [<file> ...]
+
+Exit codes:
+    0 — no violations found
+    1 — one or more violations found
+"""
+
+import re
+import sys
+from typing import List, Tuple, Optional
+
+# ---------------------------------------------------------------------------
+# GLOB001 configuration
+# Extend this list to add new recursive-language cues without changing the
+# detection logic.
+# ---------------------------------------------------------------------------
+RECURSIVE_CUES: List[str] = [
+    "subdirectories",
+    "subdirectory",
+    "recursively",
+    "recursive",
+    "under the tree",
+    "all files in",
+    "in all subdirectories",
+    "in all sub-directories",
+    "throughout the repository",
+    "throughout the repo",
+    "under the directory",
+    "in the directory tree",
+    "nested",
+    "across all directories",
+]
+
+# Window (in lines) around a code block to search for recursive cues.
+GLOB001_WINDOW = 10
+
+# Regex: non-recursive glob patterns inside code blocks.
+# Matches patterns like *.sh, *.md, *.py but not **/*.sh or ./**/*.sh
+_GLOB_PATTERN = re.compile(
+    r'(?<!\*\*/)(?<!\*/)(?<!\.\*\*)(?<!\./\*\*)(?<!\w)'
+    r'(\*\.[a-zA-Z0-9_]+)'
+)
+
+# ---------------------------------------------------------------------------
+# COUNT001 configuration
+# ---------------------------------------------------------------------------
+# Window (in lines) after the narrative phrase to search for the list.
+COUNT001_WINDOW = 30
+
+# Written-out numerals 0–20.
+_WORD_TO_NUM = {
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4,
+    "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+    "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+    "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+    "nineteen": 19, "twenty": 20,
+}
+
+# Count-phrase keywords that signal a list count.
+_COUNT_KEYWORDS = [
+    r"acceptance criteria",
+    r"acceptance criterion",
+    r"use cases?",
+    r"steps?",
+    r"checks?",
+    r"tasks?",
+    r"rules?",
+    r"requirements?",
+    r"changes?",
+    r"scenarios?",
+    r"conditions?",
+]
+
+_NUM_PATTERN = r"(?P<n>\d+|" + "|".join(_WORD_TO_NUM.keys()) + r")"
+_KEYWORD_PATTERN = "(?P<label>" + "|".join(_COUNT_KEYWORDS) + ")"
+# Negative lookahead: exclude "N step(s)" when "step" is immediately followed by another
+# number (e.g., "Protocol 90 Step 2.5" → "90 Step 2" is a section reference, not a count).
+# Also exclude when preceded by "Protocol" (common in workflow doc prose).
+_COUNT_PHRASE_RE = re.compile(
+    r"(?<!Protocol\s)\b" + _NUM_PATTERN + r"\b\s+" + _KEYWORD_PATTERN + r"(?!\s*\d)",
+    re.IGNORECASE,
+)
+
+# Markdown list item (ordered or unordered).
+_LIST_ITEM_RE = re.compile(r"^\s{0,3}(?:[-*+]|\d+[.)]) ")
+
+# Markdown heading
+_HEADING_RE = re.compile(r"^#{1,6}\s")
+
+# Suppression comment pattern
+_SUPPRESS_RE = re.compile(
+    r"<!--\s*markdown-heuristic-disable\s+(GLOB001|COUNT001)\s*-->"
+)
+
+
+def _is_suppressed(lines: List[str], line_index: int, rule: str) -> bool:
+    """Return True if the given line (0-indexed) has a suppression comment for rule."""
+    for idx in (line_index, line_index - 1):
+        if 0 <= idx < len(lines):
+            m = _SUPPRESS_RE.search(lines[idx])
+            if m and m.group(1) == rule:
+                return True
+    return False
+
+
+def _parse_number(text: str) -> Optional[int]:
+    """Parse a digit string or written numeral to int."""
+    if text.isdigit():
+        return int(text)
+    return _WORD_TO_NUM.get(text.lower())
+
+
+def check_glob001(path: str, lines: List[str]) -> List[str]:
+    """Check for suspicious non-recursive globs (GLOB001)."""
+    findings: List[str] = []
+
+    # Build list of lines that are inside fenced code blocks with their line numbers.
+    # Also track line ranges of code blocks so we can search context around them.
+    # Use line.strip() for fence detection to handle indented fences correctly.
+    in_code_block = False
+    fence_char: Optional[str] = None
+    code_blocks: List[Tuple[int, int]] = []  # (start_line, end_line) 1-indexed
+    block_start = 0
+
+    for i, line in enumerate(lines):
+        lstripped = line.strip()
+        if not in_code_block:
+            if lstripped.startswith("```") or lstripped.startswith("~~~"):
+                in_code_block = True
+                fence_char = lstripped[:3]
+                block_start = i + 1  # 1-indexed
+        else:
+            if lstripped.startswith(fence_char):  # type: ignore[arg-type]
+                in_code_block = False
+                code_blocks.append((block_start, i + 1))  # i+1 is the closing fence line (1-indexed)
+
+    # Now scan each code block line for non-recursive globs
+    in_code_block = False
+    current_block_start = 0
+
+    for i, line in enumerate(lines):
+        lstripped = line.strip()
+        stripped = line.rstrip()
+        if not in_code_block:
+            if lstripped.startswith("```") or lstripped.startswith("~~~"):
+                in_code_block = True
+                fence_char = lstripped[:3]
+                current_block_start = i
+        else:
+            if lstripped.startswith(fence_char):  # type: ignore[arg-type]
+                in_code_block = False
+                continue
+            # Look for non-recursive glob patterns
+            for m in _GLOB_PATTERN.finditer(stripped):
+                glob_pattern = m.group(1)
+                # Skip if it's preceded by ** (already recursive) — belt-and-suspenders
+                start_pos = m.start(1)
+                before = stripped[:start_pos]
+                if before.endswith("**/") or before.endswith("*/"):
+                    continue
+                # Skip if it's a find -name argument: `find ... -name "*.ext"` or
+                # `-name '*.ext'` — find itself handles recursion; the glob is a
+                # filename-only pattern, not a path glob.
+                if re.search(r"-name\s+[\"']?" + re.escape(glob_pattern) + r"[\"']?", stripped):
+                    continue
+
+                # Search for recursive cues in the surrounding window
+                window_start = max(0, current_block_start - GLOB001_WINDOW)
+                window_end = min(len(lines), i + GLOB001_WINDOW + 1)
+                context_lines = lines[window_start:current_block_start] + lines[i + 1:window_end]
+                context_text = " ".join(cl.lower() for cl in context_lines)
+
+                triggered_cue: Optional[str] = None
+                for cue in RECURSIVE_CUES:
+                    if cue in context_text:
+                        triggered_cue = cue
+                        break
+
+                if triggered_cue is not None:
+                    if not _is_suppressed(lines, i, "GLOB001"):
+                        line_no = i + 1  # 1-indexed
+                        findings.append(
+                            f"{path}:{line_no}: GLOB001 Suspicious non-recursive glob "
+                            f"'{glob_pattern}' — surrounding prose suggests recursion "
+                            f"('{triggered_cue}'); use '**/{glob_pattern}' or suppress inline"
+                        )
+
+    return findings
+
+
+def check_count001(path: str, lines: List[str]) -> List[str]:
+    """Check for within-document count disagreements (COUNT001)."""
+    findings: List[str] = []
+
+    # Skip lines inside code blocks.
+    # Use line.strip() for fence detection to handle indented fences correctly.
+    in_code_block = False
+    fence_char: Optional[str] = None
+    code_block_lines: set = set()
+
+    for i, line in enumerate(lines):
+        lstripped = line.strip()
+        if not in_code_block:
+            if lstripped.startswith("```") or lstripped.startswith("~~~"):
+                in_code_block = True
+                fence_char = lstripped[:3]
+                code_block_lines.add(i)
+        else:
+            code_block_lines.add(i)
+            if lstripped.startswith(fence_char):  # type: ignore[arg-type]
+                in_code_block = False
+
+    for i, line in enumerate(lines):
+        if i in code_block_lines:
+            continue
+
+        m = _COUNT_PHRASE_RE.search(line)
+        if not m:
+            continue
+
+        stated_n = _parse_number(m.group("n"))
+        if stated_n is None:
+            continue
+
+        label = m.group("label")
+
+        # Count list items in the window immediately following this line
+        actual_count = 0
+        found_list = False
+        for j in range(i + 1, min(len(lines), i + 1 + COUNT001_WINDOW)):
+            if j in code_block_lines:
+                continue
+            jline = lines[j]
+            # Stop counting if we hit a heading (new section)
+            if _HEADING_RE.match(jline):
+                break
+            if _LIST_ITEM_RE.match(jline):
+                actual_count += 1
+                found_list = True
+            elif found_list and jline.strip() == "":
+                # Blank line after list items — could be list continuation, keep going
+                pass
+            elif found_list and jline.strip() and not _LIST_ITEM_RE.match(jline):
+                # Non-blank, non-list line after we've seen at least one list item
+                break
+
+        if not found_list:
+            # No list found following the count phrase — skip
+            continue
+
+        if actual_count != stated_n:
+            if not _is_suppressed(lines, i, "COUNT001"):
+                line_no = i + 1  # 1-indexed
+                findings.append(
+                    f"{path}:{line_no}: COUNT001 Count disagreement — stated "
+                    f"'{m.group('n')} {label}' but found {actual_count} items; "
+                    f"update the narrative or the list, or suppress inline"
+                )
+
+    return findings
+
+
+def lint_file(path: str) -> List[str]:
+    """Run all heuristic checks on one file and return findings."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.readlines()
+    except OSError as exc:
+        return [f"{path}:0: ERROR Cannot read file: {exc}"]
+
+    findings: List[str] = []
+    findings.extend(check_glob001(path, lines))
+    findings.extend(check_count001(path, lines))
+    return findings
+
+
+def main() -> int:
+    if len(sys.argv) < 2:
+        print("Usage: markdown-heuristic-lint.py <file> [<file> ...]", file=sys.stderr)
+        return 1
+
+    all_findings: List[str] = []
+    for path in sys.argv[1:]:
+        all_findings.extend(lint_file(path))
+
+    for finding in all_findings:
+        print(finding)
+
+    if all_findings:
+        print(f"\n{len(all_findings)} heuristic finding(s) found.", file=sys.stderr)
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,69 @@
+name: Markdown Lint
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+    paths:
+      - 'docs/specs/developments/**'
+      - 'docs/testing/workflow/**'
+      - 'CHANGELOG.md'
+      - '.markdownlint.jsonc'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'scripts/lint/markdown-heuristic-lint.py'
+
+jobs:
+  markdown-lint:
+    name: Markdown lint (spec/plan/CHANGELOG)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Collect target markdown files
+        id: collect
+        run: |
+          mapfile -d '' -t md_files < <(
+            find docs/specs/developments docs/testing/workflow -type f -name "*.md" -print0 2>/dev/null
+          )
+          if [ -f CHANGELOG.md ]; then
+            md_files+=("CHANGELOG.md")
+          fi
+          if [ "${#md_files[@]}" -eq 0 ]; then
+            echo "No target markdown files found — skipping lint."
+            echo "found_files=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "found_files=true" >> "$GITHUB_OUTPUT"
+            echo "Found ${#md_files[@]} markdown file(s) to lint:"
+            printf '  %s\n' "${md_files[@]}"
+          fi
+
+      - name: Run markdownlint-cli2
+        if: steps.collect.outputs.found_files == 'true'
+        run: |
+          ./node_modules/.bin/markdownlint-cli2 \
+            "docs/specs/developments/**/*.md" \
+            "docs/testing/workflow/**/*.md" \
+            "CHANGELOG.md"
+
+      - name: Run heuristic lint checks (GLOB001, COUNT001)
+        if: steps.collect.outputs.found_files == 'true'
+        run: |
+          mapfile -d '' -t md_files < <(
+            find docs/specs/developments docs/testing/workflow -type f -name "*.md" -print0 2>/dev/null
+          )
+          if [ -f CHANGELOG.md ]; then
+            md_files+=("CHANGELOG.md")
+          fi
+          python3 scripts/lint/markdown-heuristic-lint.py "${md_files[@]}"

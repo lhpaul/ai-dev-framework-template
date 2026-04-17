@@ -171,6 +171,7 @@ This feature adds a lightweight automated markdown lint step that runs in CI on 
 
 **Considerations**:
 - The check targets count disagreements that occur within the same document; it does not attempt to reconcile counts across different documents.
+<!-- markdown-heuristic-disable COUNT001 --> <!-- False positive: "4 acceptance criteria" and "four acceptance criteria" here are illustrative examples describing how the check detects narrative count phrases, not actual counts of list items in this document. -->
 - Narrative counts may appear as digits (e.g., "4 acceptance criteria") or written-out numerals ("four acceptance criteria"); both forms are checked.
 - The check must not fire on narrative uses of numbers that are unrelated to a list (e.g., durations, version numbers); the heuristic must be scoped to count-of-items phrasing, and false positives must be suppressible inline.
 
