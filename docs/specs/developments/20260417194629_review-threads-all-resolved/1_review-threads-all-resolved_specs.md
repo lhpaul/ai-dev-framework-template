@@ -1,7 +1,5 @@
 # Require All Review Threads Resolved Before Ready-For-Human-Review — Spec
 
-**Depends on**: <!-- none -->
-
 ---
 
 ## Overview
@@ -117,6 +115,7 @@ This directly fixes a recurring pattern across batches 4, 5, 7, and 8 where huma
 - The list of automated reviewer bot logins subject to the gate is driven by the configured platforms in `.ai-dev-workflow.yaml` (`review.platforms`). Default bot accounts per platform: `coderabbitai[bot]` (coderabbit), `devin-ai-integration[bot]` (devin), `greptile-apps[bot]` (greptile).
 - Human-authored review threads are not subject to this automated gate; they are handled by the `needs-fixes` / human feedback loop in Protocol 91 Step 9.
 - When a thread is resolved via reply-only (no code change), the Automated Reviewer Loop Summary must record this explicitly so the human reviewer can see the rationale.
+- A thread is considered resolved if `isResolved: true` on the GitHub review thread object, **or** if the parent comment body contains the text `✅ Addressed` (CodeRabbit's auto-resolved marker after a fix commit). Both conditions are equivalent for the purposes of this gate.
 - The unresolved-thread check is a **hard gate**: it must run (a) as the final check inside `pr-review-loop.sh` before exiting `clean`, and (b) as one of the verification checks in Protocol 91 Step 8c.
 
 ---
