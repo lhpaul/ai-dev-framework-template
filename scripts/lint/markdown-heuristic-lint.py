@@ -141,6 +141,22 @@ def _is_suppressed(lines: List[str], line_index: int, rule: str) -> bool:
     return False
 
 
+def _is_closing_fence(lstripped: str, fence_marker: str) -> bool:
+    """Return True if lstripped is a valid CommonMark closing fence for fence_marker.
+
+    Per CommonMark spec: a closing fence must start with the same fence character
+    and be at least as long as the opening fence. The remainder after removing all
+    leading fence characters must be empty or only whitespace (no info strings).
+    """
+    fence_char = fence_marker[0]
+    if not lstripped.startswith(fence_marker):
+        return False
+    remainder = lstripped[len(fence_marker):]
+    # Strip any additional fence characters (longer closing fences are valid)
+    remainder = remainder.lstrip(fence_char)
+    return remainder.strip() == ""
+
+
 def _parse_number(text: str) -> Optional[int]:
     """Parse a digit string or written numeral to int."""
     if text.isdigit():
@@ -171,8 +187,9 @@ def check_glob001(path: str, lines: List[str]) -> List[str]:
                 current_block_start = i
         else:
             # Per CommonMark: a closing fence must start with the same fence
-            # marker and have ONLY optional trailing whitespace (no info string).
-            if fence_marker and lstripped.startswith(fence_marker) and not lstripped[len(fence_marker):].strip():
+            # character and be at least as long as the opening fence, with no
+            # info string (only optional trailing whitespace).
+            if fence_marker and _is_closing_fence(lstripped, fence_marker):
                 in_code_block = False
                 continue
             # Look for non-recursive glob patterns
@@ -197,12 +214,12 @@ def check_glob001(path: str, lines: List[str]) -> List[str]:
                 backward_context = lines[window_start:current_block_start]
 
                 # Find the closing fence to determine where forward prose starts.
-                # A valid closing fence has only the marker + optional whitespace.
+                # Per CommonMark: a closing fence is at least as long as the
+                # opening and has no info string.
                 closing_fence_line = len(lines)  # default: end of file
                 for k in range(i + 1, len(lines)):
                     kstripped = lines[k].strip()
-                    if (fence_marker and kstripped.startswith(fence_marker)
-                            and not kstripped[len(fence_marker):].strip()):
+                    if fence_marker and _is_closing_fence(kstripped, fence_marker):
                         closing_fence_line = k + 1  # prose starts after closing fence
                         break
                 forward_end = min(len(lines), closing_fence_line + GLOB001_WINDOW)
@@ -251,8 +268,9 @@ def check_count001(path: str, lines: List[str]) -> List[str]:
                 code_block_lines.add(i)
         else:
             code_block_lines.add(i)
-            # Per CommonMark: a closing fence has only the marker + optional whitespace.
-            if fence_marker_c and lstripped.startswith(fence_marker_c) and not lstripped[len(fence_marker_c):].strip():
+            # Per CommonMark: a closing fence is at least as long as the
+            # opening fence and has no info string.
+            if fence_marker_c and _is_closing_fence(lstripped, fence_marker_c):
                 in_code_block = False
 
     for i, line in enumerate(lines):
