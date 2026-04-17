@@ -59,9 +59,7 @@ None — this feature affects documentation files only.
 
 ## Documentation Updates
 
-- [ ] `docs/ai/development-workflow/templates/spec-template.md` — remove the "Guiding principle (important)" section (this is the primary deliverable, not a secondary doc update).
-
-All other doc changes in this plan are the primary deliverable (removing the boilerplate from existing spec files). No separate documentation updates are required beyond what is listed in the Layer-by-Layer Changes section above.
+None — all file changes in this plan (the spec template and the 4 existing spec files) are the primary deliverable, not secondary documentation updates triggered by a code or config change. No additional project docs in `docs/project/`, `docs/best-practices/`, or `AGENTS.md` need updating as a result of this work.
 
 ---
 
@@ -85,4 +83,4 @@ All other doc changes in this plan are the primary deliverable (removing the boi
 3. Verify `01-generate-spec-protocol.md` already has the product-focused boundary guidance (read-only check; no edits expected).
 4. Verify `REVIEW.md` spec checklist does not require the "Guiding principle" section (read-only check; no edits expected).
 5. Run the smoke test runbook manually to confirm all acceptance criteria pass.
-6. Update CHANGELOG under `[Unreleased]`.
+6. Update CHANGELOG under `[Unreleased]` in the implementation PR (plan-only PRs are exempt).
