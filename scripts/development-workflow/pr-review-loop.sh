@@ -1038,12 +1038,18 @@ run_coderabbit_review() {
         # the PR as clean and return immediately without scanning for stale findings.
         # Context name is matched case-insensitively to guard against future renames.
         local coderabbit_success_status_count
+        # Deduplicate by context (keep latest entry per context) before checking state,
+        # so a superseded status (e.g., an old success followed by a failure on the same
+        # context) is not counted. This matches the deduplication pattern used by the
+        # Devin adapter above.
         coderabbit_success_status_count="$(
           gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
-            | jq '[.[] | select(
-                    (.context // "" | ascii_downcase | test("coderabbit")) and
-                    .state == "success"
-                  )] | length'
+            | jq -s '[.[].[] | select(
+                    (.context // "" | ascii_downcase | test("coderabbit"))
+                  )]
+                  | group_by(.context) | map(max_by(.updated_at))
+                  | map(select(.state == "success"))
+                  | length'
         )"
         if [ "${coderabbit_success_status_count:-0}" -gt 0 ]; then
           echo "INFO: CodeRabbit SUCCESS commit-status found for HEAD $head_sha — treating PR as clean (coderabbit_status_success_fallback)" >&2
