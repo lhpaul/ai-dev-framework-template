@@ -61,6 +61,11 @@ The fix adds a one-shot retry (fetch + ff-pull) before surfacing the failure, so
 
 **Postconditions**: `MERGE_RESULT=failed` with the original error message is emitted, same as the current behavior. The orchestrator is not misled.
 
+**Information shown**:
+- The same structured `MERGE_RESULT=failed` and `ERROR_MESSAGE` output as the current behavior.
+
+**Actions available**: N/A (fully automated; existing manual remediation applies)
+
 **Considerations**:
 - The retry adds at most a 2-second delay before surfacing a genuine failure.
 
@@ -83,7 +88,7 @@ The fix adds a one-shot retry (fetch + ff-pull) before surfacing the failure, so
 - [ ] When both the first and second `git pull --ff-only` attempts fail, `MERGE_RESULT=failed` is emitted with an appropriate error message (same structured output contract as today).
 - [ ] A diagnostic stderr message is present when a retry is attempted, clearly distinguishing "retrying" from "giving up".
 - [ ] No existing test scenarios for `batch-merge.sh` are broken by the change.
-- [ ] The change is scoped to the ff-pull section at `batch-merge.sh:308` and does not alter discovery, conflict classification, or post-merge logic.
+- [ ] The change is scoped to the fast-forward pull step and does not alter discovery, conflict classification, or post-merge logic.
 
 ---
 
