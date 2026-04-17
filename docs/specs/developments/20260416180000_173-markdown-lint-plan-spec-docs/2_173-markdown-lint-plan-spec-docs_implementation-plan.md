@@ -30,7 +30,7 @@
   - Accepts one or more file paths as positional arguments; exits 0 if no violations, exits 1 if any violations found.
   - The cue list for GLOB001 is declared as a top-level constant in the script so contributors can extend it without changing the detection logic.
 - [ ] Add `scripts/lint/` directory with a `README.md` briefly describing the scripts it contains and their invocation.
-- [ ] Create a new `package.json` at the repository root (no root-level `package.json` exists yet; the `e2e/package.json` is scoped to the Playwright suite and must not be modified for this feature) declaring `markdownlint-cli2` and `markdownlint-rule-relative-links` as `devDependencies`; pin to specific versions. Run `npm install` to generate the accompanying `package-lock.json`.
+- [ ] Create a new `package.json` at the repository root (no root-level `package.json` exists yet; the `e2e/package.json` is scoped to the Playwright suite and must not be modified for this feature) declaring `markdownlint-cli2` and `markdownlint-rule-relative-links` as `devDependencies`. Pin each dependency to the latest stable version available at implementation time using an exact version specifier (no `^` or `~`) so CI does not silently pick up upstream changes. Run `npm install` to generate the accompanying `package-lock.json`.
 - [ ] Baseline cleanup: scan all files under `docs/specs/developments/`, `docs/testing/workflow/`, and `CHANGELOG.md` with both the markdownlint-cli2 rules and the heuristic script; fix any violations directly (remove trailing whitespace, fix broken relative links, correct count phrases or list lengths, correct glob patterns) or add an inline suppression with a reviewer-visible rationale where a fix is not appropriate.
 
 ---
