@@ -191,6 +191,12 @@ item ahead of its consumers or surface a human confirmation gate before parallel
 - [ ] When `workflow-batch-plan.sh` is run against a development folder whose spec/plan document
   references a `docs/ai/development-workflow/protocols/*.md` file, the output includes
   `TOOL_FIX=yes`.
+- [ ] When `workflow-batch-plan.sh` is run against a development folder whose spec/plan document
+  references `batch-merge.sh`, the output includes `TOOL_FIX=yes` and `TOOL_FIX_FILES=`
+  containing `batch-merge.sh`.
+- [ ] When `workflow-batch-plan.sh` is run against a development folder whose spec/plan document
+  references `.ai-dev-workflow.yaml`, the output includes `TOOL_FIX=yes` and `TOOL_FIX_FILES=`
+  containing `.ai-dev-workflow.yaml`.
 - [ ] When `workflow-batch-plan.sh` is run against a development folder with no workflow tool
   references, the output does not include `TOOL_FIX=yes`.
 - [ ] When an orchestrator following Protocol 90 Step 3 encounters a batch with a tool-fix item
@@ -220,5 +226,5 @@ item ahead of its consumers or surface a human confirmation gate before parallel
 - Recursive dependency tracking (tool-fix item A fixes a script used by tool-fix item B which
   is also in the batch) — treat each tool-fix item independently.
 - Changes to Protocol 91 internals or any protocol other than Protocol 90 Step 3.
-- Changes to `pr-review-loop.sh`, `batch-merge.sh`, or `post-merge-cleanup.sh`.
+- Changes to `pr-review-loop.sh`, `pr-ci-loop.sh`, `batch-merge.sh`, or `post-merge-cleanup.sh`.
 - Modifying Protocol 90 Step 5.1 (reviewThreads GraphQL check) — that is issue #167's scope.
