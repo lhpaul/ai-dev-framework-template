@@ -190,7 +190,7 @@ item ahead of its consumers or surface a human confirmation gate before parallel
   containing `pr-ci-loop.sh`.
 - [ ] When `workflow-batch-plan.sh` is run against a development folder whose spec/plan document
   references a `docs/ai/development-workflow/protocols/*.md` file, the output includes
-  `TOOL_FIX=yes`.
+  `TOOL_FIX=yes` and `TOOL_FIX_FILES=` containing the matched protocol file path.
 - [ ] When `workflow-batch-plan.sh` is run against a development folder whose spec/plan document
   references `batch-merge.sh`, the output includes `TOOL_FIX=yes` and `TOOL_FIX_FILES=`
   containing `batch-merge.sh`.
