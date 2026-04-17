@@ -1,0 +1,33 @@
+// markdownlint-cli2 configuration for spec, plan, and CHANGELOG documents.
+//
+// Only the rules in scope for this project are enabled; all other default
+// rules are explicitly disabled so new markdownlint rule additions in future
+// package upgrades do not silently break existing documents.
+//
+// Rules enabled:
+//   MD009 — Trailing spaces (hard-break exception: two trailing spaces allowed)
+//   MD047 — Files should end with a single newline
+//   markdownlint-rule-relative-links — Relative links must resolve to existing files
+//
+// Inline suppression (markdownlint-cli2 syntax):
+//   <!-- markdownlint-disable MD009 -->
+//   <!-- markdownlint-disable-next-line MD009 -->
+{
+  // Disable all default rules, then enable only the ones we need.
+  "default": false,
+
+  // MD009: Trailing spaces
+  // Allow two trailing spaces (intentional hard line break in Markdown).
+  "MD009": {
+    "br_spaces": 2,
+    "list_item_empty_lines": false,
+    "strict": false
+  },
+
+  // MD047: Files should end with a single newline
+  "MD047": true,
+
+  // markdownlint-rule-relative-links: relative links must resolve on disk.
+  // External URLs (http/https) and in-document anchors (#section) are excluded.
+  "relative-links": true
+}
