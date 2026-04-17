@@ -305,8 +305,14 @@ cmd_merge() {
   # Ensure local develop is current
   git checkout "$TARGET_BASE" >/dev/null 2>&1 || \
     merge_die "Could not check out '${TARGET_BASE}' — ensure the working tree is clean and the branch exists locally"
-  git pull --ff-only origin "$TARGET_BASE" >/dev/null 2>&1 || \
-    merge_die "Could not fast-forward local '${TARGET_BASE}' from origin — resolve divergence manually"
+  if ! git pull --ff-only origin "$TARGET_BASE" >/dev/null 2>&1; then
+    echo "ff-pull failed on first attempt; retrying after 2s (transient stale-ref recovery)..." >&2
+    sleep 2
+    git fetch origin "$TARGET_BASE" >/dev/null 2>&1 || \
+      merge_die "Could not refresh '${TARGET_BASE}' from origin before retry — check network/auth and retry"
+    git pull --ff-only origin "$TARGET_BASE" >/dev/null 2>&1 || \
+      merge_die "Could not fast-forward local '${TARGET_BASE}' from origin — resolve divergence manually"
+  fi
 
   # Fetch via the pull-request ref (works for both same-repo and fork PRs;
   # `refs/pull/<N>/head` is always available via `origin` on GitHub regardless
