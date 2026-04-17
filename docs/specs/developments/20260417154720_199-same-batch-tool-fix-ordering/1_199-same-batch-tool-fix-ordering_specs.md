@@ -27,14 +27,8 @@ item ahead of its consumers or surface a human confirmation gate before parallel
 **Preconditions**:
 - The orchestrator has completed Step 2 eligibility determination and is building the parallel
   batch in Step 3.
-- The candidate batch contains at least one item whose implementation plan (or tracker title /
-  description) indicates it modifies a directly-invoked workflow tool:
-  - `scripts/development-workflow/pr-review-loop.sh`
-  - `scripts/development-workflow/pr-ci-loop.sh`
-  - `scripts/development-workflow/batch-merge.sh`
-  - `scripts/development-workflow/post-merge-cleanup.sh`
-  - Any file matching `docs/ai/development-workflow/protocols/*.md`
-  - `.ai-dev-workflow.yaml`
+- The candidate batch contains at least one item classified as a **tool-fix item** (see
+  **Business Rules — Tool-fix classification** for the canonical file set).
 - The candidate batch also contains one or more other items that are not tool-fix items (i.e.,
   consumer items that are not yet `ready-for-human-review`).
 
@@ -194,6 +188,9 @@ item ahead of its consumers or surface a human confirmation gate before parallel
 - [ ] When `workflow-batch-plan.sh` is run against a development folder whose spec/plan document
   references `batch-merge.sh`, the output includes `TOOL_FIX=yes` and `TOOL_FIX_FILES=`
   containing `batch-merge.sh`.
+- [ ] When `workflow-batch-plan.sh` is run against a development folder whose spec/plan document
+  references `post-merge-cleanup.sh`, the output includes `TOOL_FIX=yes` and `TOOL_FIX_FILES=`
+  containing `post-merge-cleanup.sh`.
 - [ ] When `workflow-batch-plan.sh` is run against a development folder whose spec/plan document
   references `.ai-dev-workflow.yaml`, the output includes `TOOL_FIX=yes` and `TOOL_FIX_FILES=`
   containing `.ai-dev-workflow.yaml`.
