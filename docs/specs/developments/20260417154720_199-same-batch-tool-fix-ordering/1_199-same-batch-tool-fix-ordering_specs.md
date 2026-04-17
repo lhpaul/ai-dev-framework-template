@@ -221,6 +221,16 @@ item ahead of its consumers or surface a human confirmation gate before parallel
 - [ ] When an orchestrator following Protocol 90 Step 3 encounters a batch with a tool-fix item
   alongside consumer items, the protocol instructs the orchestrator to serialize the tool-fix
   item first and hold the consumer items.
+- [ ] When an orchestrator following Protocol 90 Step 3 encounters a batch with two or more
+  tool-fix items alongside consumer items, the protocol instructs the orchestrator to serialize
+  each tool-fix item into its own sub-batch dispatched one at a time before any consumer item
+  is dispatched (i.e., the consumer items are held until every tool-fix item has reached
+  `ready-for-human-review` and been merged).
+- [ ] When an orchestrator following Protocol 90 Step 3 must order multiple tool-fix items that
+  appear in the same candidate batch, the protocol instructs the orchestrator to apply the
+  standard priority order — due date within 2 weeks (earliest first), then priority (Urgent →
+  High → Normal → Low), then creation date (earliest first) — mirroring the Step 2 priority
+  rules.
 - [ ] Protocol 90 Step 3 explicitly names the same-batch tool-fix ordering hazard and describes
   the serialize-first rule.
 - [ ] Protocol 90 Step 3 does not modify Step 5.1 (Post-Dispatch PR Verification) — that section
