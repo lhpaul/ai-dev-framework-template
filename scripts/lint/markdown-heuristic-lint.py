@@ -116,12 +116,17 @@ _SUPPRESS_RE = re.compile(
 
 
 def _is_suppressed(lines: List[str], line_index: int, rule: str) -> bool:
-    """Return True if the given line (0-indexed) has a suppression comment for rule."""
+    """Return True if the given line (0-indexed) has a suppression comment for rule.
+
+    Uses finditer so that a line with multiple directives (e.g.,
+    <!-- markdown-heuristic-disable GLOB001 --> <!-- markdown-heuristic-disable COUNT001 -->)
+    is handled correctly regardless of directive order.
+    """
     for idx in (line_index, line_index - 1):
         if 0 <= idx < len(lines):
-            m = _SUPPRESS_RE.search(lines[idx])
-            if m and m.group(1) == rule:
-                return True
+            for m in _SUPPRESS_RE.finditer(lines[idx]):
+                if m.group(1) == rule:
+                    return True
     return False
 
 
