@@ -46,6 +46,9 @@ shellcheck scripts/development-workflow/batch-merge.sh
 This step performs structural verification of the retry path by inspecting script source and setting up a controlled environment (a temporary git repository) to confirm the logic is in place. Full automated simulation is not supported without a mock git layer (see Known Limitations).
 
 ```bash
+# Save repo root so Steps 3-6 can use it after CWD changes below
+REPO_ROOT="$(pwd)"
+
 # Create a temp repo for structural verification of the retry path
 TMPDIR="$(mktemp -d)"
 cd "$TMPDIR"
@@ -69,6 +72,9 @@ git push origin develop
 
 echo "Manual verification: open batch-merge.sh and confirm lines in cmd_merge"
 echo "match the pattern: if ! git pull --ff-only ...; then sleep 2; git fetch ...; git pull --ff-only ... || merge_die; fi"
+
+# Return to repository root for Steps 3-6
+cd "$REPO_ROOT"
 ```
 
 **Expected result**: The two-attempt block is present in `cmd_merge`. The first `git pull --ff-only` is in a conditional; a `sleep 2` + `git fetch origin "$TARGET_BASE"` precede the second attempt.
