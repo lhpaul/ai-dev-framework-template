@@ -111,8 +111,8 @@ item ahead of its consumers or surface a human confirmation gate before parallel
 - At least one of the candidate development folders is classified as a tool-fix item.
 
 **Steps**:
-1. `workflow-batch-plan.sh` reads each candidate's spec/plan document to determine whether it
-   modifies a workflow tool file.
+1. `workflow-batch-plan.sh` reads each candidate's spec/plan document (and, when available,
+   the tracker title/description) to determine whether it modifies a workflow tool file.
 2. For tool-fix items, the script emits an additional key-value pair in its per-item output
    block: `TOOL_FIX=yes` and `TOOL_FIX_FILES=<comma-separated list of affected tool paths>`.
 3. The orchestrator reads these signals and applies the ordering rules (Use Case 1).
@@ -141,9 +141,9 @@ item ahead of its consumers or surface a human confirmation gate before parallel
 
 ## Business Rules
 
-- **Tool-fix classification**: an item is classified as a tool-fix item if its implementation
-  plan or tracker title/description references modifications to any of the following files
-  (exact path match, relative to repo root):
+- **Tool-fix classification**: an item is classified as a tool-fix item if its spec document,
+  implementation plan, or tracker title/description references modifications to any of the
+  following files (exact path match, relative to repo root):
   - `scripts/development-workflow/pr-review-loop.sh`
   - `scripts/development-workflow/pr-ci-loop.sh`
   - `scripts/development-workflow/batch-merge.sh`
