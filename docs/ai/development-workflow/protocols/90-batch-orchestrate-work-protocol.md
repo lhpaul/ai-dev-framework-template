@@ -363,6 +363,39 @@ If a check fails:
 
 Do not consider the batch complete until every dispatched item has reached a real terminal condition.
 
+#### Stale / Incomplete PR Detection
+
+A PR may appear "almost ready" — non-draft, with readiness labels applied — but actually be in an incomplete state because the agent timed out before finishing Step 7 (external automated reviewers). The canonical detection heuristic depends on PR type:
+
+**Implementation PRs** (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`):
+> non-draft + `ready-for-regression` present + no reviewer loop summary comment = incomplete run
+
+**Spec/plan PRs** (`spec/*`, `implementation-plan/*`):
+> non-draft + `ready-for-human-review` present + no reviewer loop summary comment = incomplete run
+
+The reviewer loop summary comment is the only reliable indicator that Step 7 ran to completion. `ready-for-human-review` alone is NOT a reliable completion signal. This check applies only when review platforms are configured — skip it for repos where Step 7 is `skipped` (no platforms configured).
+
+Use this command to detect the incomplete state for a specific PR:
+
+```bash
+gh pr view <pr_number> --json isDraft,labels,comments \
+  --jq '{
+    isDraft: .isDraft,
+    hasRegressionLabel: ([.labels[].name] | any(. == "ready-for-regression")),
+    hasReadyLabel: ([.labels[].name] | any(. == "ready-for-human-review")),
+    hasReviewSummary: ([.comments[].body] | any(test("Automated Reviewer Loop Summary|No blocking PR feedback")))
+  }'
+```
+
+**Expected action when incomplete state is detected**:
+
+1. Log the incomplete PR in your retrospective notes.
+2. Remove `ready-for-human-review` if present: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.
+3. Add `needs-fixes`: `gh pr edit <pr_number> --add-label "needs-fixes"`.
+4. Redispatch the Work Item Runner with a resume hint to pick up from Step 7.
+
+This pattern also applies to PRs where an agent timed out mid-CI-loop: detect via `statusCheckRollup` entries in `ERROR` state, or `PENDING` state that has exceeded the configured max-wait threshold (see `pr-ci-loop.sh` timeout), and re-dispatch accordingly. Do not treat `PENDING` alone as a timeout signal — CI checks that are legitimately running will show as `PENDING` until they complete.
+
 ### Step 5.2: Post-Agent Main Working Tree Verification (Parallel Batches Only)
 
 After each Work Item Runner returns in a **parallel batch**, immediately check that the main working tree was not modified by the agent:
