@@ -175,8 +175,8 @@ item ahead of its consumers or surface a human confirmation gate before parallel
   preferred over missed hazards. An item mis-classified as a tool-fix item results in unnecessary
   serialization, not a missed defect.
 - **Scope boundary**: this feature modifies only Protocol 90 Step 3 wording and
-  `workflow-batch-plan.sh`. It does not modify `pr-review-loop.sh`, `post-merge-cleanup.sh`,
-  `batch-merge.sh`, or any other protocol.
+  `workflow-batch-plan.sh`. It does not modify `pr-review-loop.sh`, `pr-ci-loop.sh`,
+  `post-merge-cleanup.sh`, `batch-merge.sh`, or any other protocol.
 
 ---
 
