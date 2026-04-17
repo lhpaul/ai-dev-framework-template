@@ -64,7 +64,8 @@ These conventions apply across all languages and frameworks in this project.
 
   ```bash
   npx markdownlint-cli2 "docs/specs/developments/**/*.md" "docs/testing/workflow/**/*.md" "CHANGELOG.md"
-  python3 scripts/lint/markdown-heuristic-lint.py <files>
+  find docs/specs/developments docs/testing/workflow -name "*.md" -print0 \
+    | xargs -0 python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md
   ```
 
 ## Dependency Management

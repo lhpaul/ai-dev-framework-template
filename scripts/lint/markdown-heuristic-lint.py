@@ -177,7 +177,7 @@ def check_glob001(path: str, lines: List[str]) -> List[str]:
                 # Skip if it's preceded by ** (already recursive) — belt-and-suspenders
                 start_pos = m.start(1)
                 before = stripped[:start_pos]
-                if before.endswith("**/") or before.endswith("*/"):
+                if before.endswith(("**/", "*/")):
                     continue
                 # Skip if it's a find -name argument: `find ... -name "*.ext"` or
                 # `-name '*.ext'` — find itself handles recursion; the glob is a
