@@ -186,25 +186,34 @@ item ahead of its consumers or surface a human confirmation gate before parallel
 ## Acceptance Criteria
 
 - [ ] When `workflow-batch-plan.sh` is run against a development folder whose spec/plan document
-  references `pr-review-loop.sh`, the output includes `TOOL_FIX=yes` and `TOOL_FIX_FILES=`
-  containing `pr-review-loop.sh`.
+  references `scripts/development-workflow/pr-review-loop.sh`, the output includes
+  `TOOL_FIX=yes` and `TOOL_FIX_FILES=` containing the exact repo-relative path
+  `scripts/development-workflow/pr-review-loop.sh` (matched via string equality or an anchored
+  regex, not a substring containment check).
 - [ ] When `workflow-batch-plan.sh` is run against a development folder whose spec/plan document
-  references `pr-ci-loop.sh`, the output includes `TOOL_FIX=yes` and `TOOL_FIX_FILES=`
-  containing `pr-ci-loop.sh`.
+  references `scripts/development-workflow/pr-ci-loop.sh`, the output includes `TOOL_FIX=yes`
+  and `TOOL_FIX_FILES=` containing the exact repo-relative path
+  `scripts/development-workflow/pr-ci-loop.sh` (exact-path match, not a substring).
 - [ ] When `workflow-batch-plan.sh` is run against a development folder whose spec/plan document
   references a `docs/ai/development-workflow/protocols/*.md` file, the output includes
-  `TOOL_FIX=yes` and `TOOL_FIX_FILES=` containing the matched protocol file path.
+  `TOOL_FIX=yes` and `TOOL_FIX_FILES=` containing the exact matched protocol file path
+  (e.g., `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`),
+  matched via string equality or an anchored regex.
 - [ ] When `workflow-batch-plan.sh` is run against a development folder whose spec/plan document
-  references `batch-merge.sh`, the output includes `TOOL_FIX=yes` and `TOOL_FIX_FILES=`
-  containing `batch-merge.sh`.
+  references `scripts/development-workflow/batch-merge.sh`, the output includes `TOOL_FIX=yes`
+  and `TOOL_FIX_FILES=` containing the exact repo-relative path
+  `scripts/development-workflow/batch-merge.sh` (exact-path match, not a substring).
 - [ ] When `workflow-batch-plan.sh` is run against a development folder whose spec/plan document
-  references `post-merge-cleanup.sh`, the output includes `TOOL_FIX=yes` and `TOOL_FIX_FILES=`
-  containing `post-merge-cleanup.sh`.
+  references `scripts/development-workflow/post-merge-cleanup.sh`, the output includes
+  `TOOL_FIX=yes` and `TOOL_FIX_FILES=` containing the exact repo-relative path
+  `scripts/development-workflow/post-merge-cleanup.sh` (exact-path match, not a substring).
 - [ ] When `workflow-batch-plan.sh` is run against a development folder whose spec/plan document
   references `.ai-dev-workflow.yaml`, the output includes `TOOL_FIX=yes` and `TOOL_FIX_FILES=`
-  containing `.ai-dev-workflow.yaml`.
+  containing the exact repo-relative path `.ai-dev-workflow.yaml` (exact-path match, not a
+  substring).
 - [ ] When `workflow-batch-plan.sh` is run against a development folder with no workflow tool
-  references, the output does not include `TOOL_FIX=yes`.
+  references, the output includes `TOOL_FIX=no` (the script emits an explicit `no` per the
+  machine-readable `yes|no|unknown` contract, not an omitted `TOOL_FIX` line).
 - [ ] When `workflow-batch-plan.sh` emits `TOOL_FIX=no` for an item but the orchestrator detects
   that the item's tracker title or description references a tool file from the canonical list,
   Protocol 90 Step 3 instructs the orchestrator to treat the item as a tool-fix hazard candidate
