@@ -170,8 +170,8 @@ Before running this smoke test:
    ```bash
    git checkout -b smoke-test/173-glob-heuristic develop
    ```
-2. Add the following content to a file under `docs/specs/developments/` (e.g., append to the spec file). The prose should contain "subdirectories" (or another recursive-language cue) while the code block contains a non-recursive glob such as `*.sh` — for example, a paragraph reading "Run the script on all files in subdirectories:" followed by a bash code block containing `find . -name "*.sh"`.
-   (Note: the prose says "subdirectories" but the find pattern is non-recursive.)
+2. Add the following content to a file under `docs/specs/developments/` (e.g., append to the spec file). The prose should contain "subdirectories" (or another recursive-language cue) while the code block contains a non-recursive glob such as `*.sh` — for example, a paragraph reading "Run the linter on all shell scripts in subdirectories:" followed by a bash code block containing `lint *.sh`.
+   (Note: the prose says "subdirectories" but `lint *.sh` only matches files in the current directory, not subdirectories — making this a genuine non-recursive pattern.)
 3. Commit and push, then open a draft PR targeting `develop`.
 4. Wait for the `Markdown Lint` CI check to complete.
 

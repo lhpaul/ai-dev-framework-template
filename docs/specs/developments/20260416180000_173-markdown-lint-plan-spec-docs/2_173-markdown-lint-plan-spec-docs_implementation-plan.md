@@ -74,7 +74,7 @@ None — this feature has no database layer or application state. The "data" is 
 |---|---|---|---|
 | `markdownlint-rule-relative-links` produces false positives on intentional placeholder links or in-document anchors | Med | Med | Inline suppression is available; out-of-scope link types (anchors, external URLs) are explicitly excluded from the rule configuration |
 | Heuristic count-disagreement check fires on numeric content unrelated to lists (version numbers, durations) | Med | Low | The regex is scoped to count-of-items phrasing keywords ("acceptance criteria", "use cases", "steps", "items"); inline suppression is available |
-| Baseline cleanup surfaces many violations, delaying the PR | Med | Med | Scan the baseline before writing other plan artefacts (Step 1 of implementation order); block the PR only after cleanup is included in the same commit |
+| Baseline cleanup surfaces many violations, delaying the PR | Med | Med | Scan the baseline before writing other plan artefacts (Step 5 of implementation order); block the PR only after cleanup is included in the same commit |
 | `markdownlint-cli2` npm install time slows CI | Low | Low | Cache `node_modules` with `actions/cache` keyed on `package-lock.json` |
 | Python 3 unavailable on the GitHub-hosted runner image | Low | High | GitHub-hosted `ubuntu-latest` includes Python 3 by default; verify in the first CI run |
 
