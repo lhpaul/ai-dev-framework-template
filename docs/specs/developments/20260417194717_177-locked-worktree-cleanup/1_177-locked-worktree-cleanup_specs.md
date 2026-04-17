@@ -21,7 +21,7 @@ After every parallel batch merge, `post-merge-cleanup.sh` fails when trying to r
 1. `post-merge-cleanup.sh` discovers a worktree using the merged branch.
 2. The script attempts `git worktree remove "$WORKTREE_PATH" --force`.
 3. Git returns `fatal: cannot remove a locked working tree, lock reason: claude agent…`.
-4. The script detects the lock error and logs a warning: `Worktree '<path>' was locked (lock reason: <reason>). Force-overriding lock — verify no active agent is still using this path.`
+4. The script detects the lock error and logs a warning: `WARNING: Worktree '<path>' is locked (reason: <lock-reason>). Force-overriding — if this worktree belongs to an active agent, data may be lost.`
 5. The script runs `git worktree unlock "$WORKTREE_PATH"` followed by `git worktree remove "$WORKTREE_PATH" --force`. If `git worktree unlock` fails, the script falls back to `git worktree remove -f -f "$WORKTREE_PATH"` (double-force).
 6. The worktree is removed successfully.
 7. The script proceeds to delete the local branch and complete cleanup.
@@ -29,12 +29,12 @@ After every parallel batch merge, `post-merge-cleanup.sh` fails when trying to r
 **Postconditions**: Cleanup completes without manual intervention; the locked worktree is removed and the branch is deleted.
 
 **Information shown**:
-- A log line on stdout indicating a locked worktree was detected and force-overridden, including the worktree path and lock reason.
+- A log line on stdout: `WARNING: Worktree '<path>' is locked (reason: <lock-reason>). Force-overriding — if this worktree belongs to an active agent, data may be lost.`
 
 **Actions available**: N/A (fully automated)
 
 **Considerations**:
-- The force-override log must be visible to the human operator so that if a legitimately-active worktree is ever accidentally removed, the incident can be diagnosed.
+- The force-override warning (`WARNING: Worktree '<path>' is locked (reason: <lock-reason>). Force-overriding — if this worktree belongs to an active agent, data may be lost.`) must be visible to the human operator so that if a legitimately-active worktree is ever accidentally removed, the incident can be diagnosed.
 - The script must not silently swallow the lock error; the warning must always appear when a lock is force-overridden.
 - If the unlock+remove sequence itself fails (e.g., filesystem permissions), the script must surface the error and exit non-zero rather than continuing.
 
