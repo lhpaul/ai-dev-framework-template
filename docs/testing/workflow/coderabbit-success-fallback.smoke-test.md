@@ -65,7 +65,7 @@ Before running this smoke test:
 
 **Maps to**: Acceptance Criterion 5 — Greptile and Devin platform handlers are unaffected.
 
-1. Search `run_greptile_review()` for any reference to `commit-status`, `statuses`, or `coderabbit_success_status_fallback`.
+1. Search `run_greptile_review()` for any reference to `commit-status`, `statuses`, or `coderabbit_status_success_fallback`.
 2. Search `run_devin_review()` for the same.
 
 **Expected result**: Neither `run_greptile_review()` nor `run_devin_review()` contain any reference to the new fallback logic.
@@ -134,11 +134,13 @@ Before running this smoke test:
 
 ---
 
-### Step 6: Live test — Blocking inline comments present even with SUCCESS commit-status (Acceptance Criterion 3)
+### Step 6: Live test — Blocking inline comments present on current HEAD even with SUCCESS commit-status (Acceptance Criterion 3)
 
 **Maps to**: Acceptance Criterion 3
 
-1. On the same PR from Step 4 (SUCCESS commit-status present), verify that there IS at least one unresolved blocking CodeRabbit inline comment (severity 🔴 Critical or 🟠 Major) on the current HEAD.
+> The most practical way to test this scenario is with blocking inline comments posted **after** the HEAD commit timestamp (i.e., truly "on the current HEAD" from the script's perspective). In this case, Phase 1 of `run_coderabbit_review()` (`pr-review-loop.sh` lines 831–895) intercepts them before the polling loop starts, and the fallback is never reached.
+
+1. On the same PR from Step 4 (SUCCESS commit-status present), verify that there IS at least one unresolved blocking CodeRabbit inline comment (severity 🔴 Critical or 🟠 Major) whose `created_at` timestamp is **after** the HEAD commit's committer timestamp (`since_iso`).
 2. Run the script with a very short `max_wait`:
    ```bash
    CODERABBIT_RATE_LIMIT_MAX_RETRIES=0 \
@@ -152,12 +154,12 @@ Before running this smoke test:
 
 **Expected result**:
 - `RESULT=needs_fixes`
-- `REASON=stale_findings`
+- `REASON=existing_findings` (Phase 1 intercepts the blocking comment before the polling loop starts)
 - `BLOCKING_COUNT` is greater than 0
-- Script does NOT output `REASON=coderabbit_status_success_fallback`
+- Script does NOT output `REASON=coderabbit_status_success_fallback` (the fallback is never reached when Phase 1 finds blocking comments)
 - Script exits with code `1`
 
-> Note: The Phase 1 (existing-blocking-findings) check runs before the polling loop. If the blocking comments are found in Phase 1 (before the loop), the script returns `needs_fixes` from Phase 1 — the fallback is never reached. Either Phase 1 or the stale-findings path will catch blocking comments; the fallback does not apply in either case.
+> Note: Phase 1 (`existing-blocking-findings` check) runs before the polling loop and before the SUCCESS-status fallback. When blocking inline comments are present on the current HEAD, Phase 1 returns `REASON=existing_findings` immediately. The SUCCESS commit-status fallback is only reachable when `coderabbit_any_activity -eq 0` after the full polling loop completes — a condition that cannot occur when Phase 1 already found blocking findings and returned early.
 
 ---
 
