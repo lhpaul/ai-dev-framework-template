@@ -126,7 +126,7 @@ This feature adds a lightweight automated markdown lint step that runs in CI on 
 - Contributor confirms via diff that any intentional two-space hard line breaks are preserved and not stripped.
 
 **Considerations**:
-- Intentional two-space trailing (hard line breaks in Markdown) must not be flagged as trailing whitespace; the rule should apply to whitespace-only trailing characters that serve no semantic purpose.
+- Intentional two-space trailing spaces (hard line breaks in Markdown) must not be flagged as trailing whitespace; the rule should apply to whitespace-only trailing characters that serve no semantic purpose.
 - This use case covers CHANGELOG.md in addition to spec and plan documents, subsuming deferred item #178.
 
 ---
@@ -164,9 +164,3 @@ This feature adds a lightweight automated markdown lint step that runs in CI on 
 - Enforcement of markdown lint rules on markdown files outside the three target paths: `docs/specs/developments/`, `docs/testing/workflow/`, and `CHANGELOG.md` (e.g., README files, protocol docs).
 - Pre-commit hook integration (this may be added in a follow-on item; the CI check is the primary gate).
 - Auto-fixing violations without human review of the fix.
-
----
-
-## Open Questions
-
-<!-- All questions answered from issue brief and retrospective analysis. Section retained for completeness but no open questions remain. -->
