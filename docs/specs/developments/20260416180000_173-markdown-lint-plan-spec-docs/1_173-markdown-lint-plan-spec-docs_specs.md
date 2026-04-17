@@ -31,7 +31,7 @@ This feature adds a lightweight automated markdown lint step that runs in CI on 
 1. Contributor opens or pushes to a pull request with changes to plan or spec markdown files.
 2. CI automatically runs the markdown lint check on the changed files.
 3. The lint check produces output listing any violations found.
-4. CI check passes (green) if no violations above the configured severity threshold are found.
+4. CI check passes (green) if no violations are found.
 5. CI check fails (red) if one or more violations are found, displaying the specific file, line, and rule violation for each issue.
 
 **Postconditions**:
@@ -146,7 +146,7 @@ This feature adds a lightweight automated markdown lint step that runs in CI on 
 
 - [ ] AC1: A CI check runs automatically on every pull request that modifies markdown files under `docs/specs/developments/`, `docs/testing/workflow/`, or `CHANGELOG.md`, and exits red when any configured lint rule is violated.
 - [ ] AC2: The check detects and reports broken relative links — where a relative link in a markdown file resolves to a file path that does not exist on disk — with the file path, line number, and broken link target shown in the CI output.
-- [ ] AC3: The check detects and reports trailing whitespace on lines in spec, plan, and CHANGELOG.md files, with file path and line number shown in the CI output.
+- [ ] AC3: The check detects and reports trailing whitespace on lines in spec, plan, and CHANGELOG.md files, with file path and line number shown in the CI output. Intentional two-space trailing spaces used as hard line breaks in Markdown are not flagged.
 - [ ] AC4: The check exits green when no violations are present in the changed files.
 - [ ] AC5: A pull request that modifies only non-markdown files (or only markdown files outside the three target paths: `docs/specs/developments/`, `docs/testing/workflow/`, and `CHANGELOG.md`) is not blocked by the markdown lint check (either the check does not run, or it passes with a no-files-found result).
 - [ ] AC6: Suppressing a rule inline with a tool-specific directive causes the check to exit green for that specific finding.
