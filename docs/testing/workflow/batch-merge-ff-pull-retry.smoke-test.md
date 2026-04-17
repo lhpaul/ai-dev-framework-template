@@ -41,12 +41,12 @@ shellcheck scripts/development-workflow/batch-merge.sh
 
 **Expected result**: No errors or warnings are printed; shellcheck exits with code 0.
 
-### Step 2: Verify transient failure recovery (AC 1 + AC 3)
+### Step 2: Structural verification of first-attempt ff-pull retry (AC 1 + AC 3)
 
-This step simulates a first-attempt ff-pull failure that succeeds on retry. It uses a controlled environment (a temporary git repository) to exercise the retry path without affecting any real remote.
+This step performs structural verification of the retry path by inspecting script source and setting up a controlled environment (a temporary git repository) to confirm the logic is in place. Full automated simulation is not supported without a mock git layer (see Known Limitations).
 
 ```bash
-# Create a temp repo that simulates the transient failure
+# Create a temp repo for structural verification of the retry path
 TMPDIR="$(mktemp -d)"
 cd "$TMPDIR"
 
@@ -104,7 +104,8 @@ grep -A 5 "merge_die.*fast-forward" scripts/development-workflow/batch-merge.sh
 Confirm the diff of `batch-merge.sh` is confined to the ff-pull block in `cmd_merge`.
 
 ```bash
-git diff develop -- scripts/development-workflow/batch-merge.sh | grep "^[+-]" | grep -v "^[+-][+-][+-]"
+BASE="$(git merge-base HEAD origin/develop)"
+git diff "$BASE" -- scripts/development-workflow/batch-merge.sh | grep "^[+-]" | grep -v "^[+-][+-][+-]"
 ```
 
 **Expected result**: Changed lines are only within the `cmd_merge` function, touching only the `git pull --ff-only` block and the adjacent retry logic. No changes to `cmd_discover`, conflict classification, `merge_die` definition, or post-merge logic.

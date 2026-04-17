@@ -44,7 +44,7 @@
 4. No regression — existing call paths (clean first attempt, conflict, non-conflict non-ff failure) behave identically to before the change. *(Maps to Acceptance Criterion 4)*
 5. Change isolation — discovery mode, conflict classification, and post-merge logic are unmodified. *(Maps to Acceptance Criterion 5)*
 
-**Smoke test runbook**: [`docs/testing/workflow/batch-merge-ff-pull-retry.smoke-test.md`](../../../testing/workflow/batch-merge-ff-pull-retry.smoke-test.md)
+**Smoke test runbook**: See the canonical runbook linked in the document header above.
 
 ---
 
