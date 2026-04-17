@@ -1,6 +1,6 @@
 # Same-Batch Tool-Fix Ordering Hazard Detection — Spec
 
-**Depends on**: <!-- none -->
+**Depends on**: None
 
 ---
 
