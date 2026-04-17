@@ -321,6 +321,51 @@ If the runner does **not** support Work Item Runner handoff natively, continue i
 
 ---
 
+## Step 4.1: Subagent Permission-Denial Detection and Inline Fallback
+
+After each Work Item Runner subagent returns, check its output for permission-denial signals before proceeding to Step 5 supervision.
+
+### Detection (AC1)
+
+Check whether the subagent output contains the substring `SUBAGENT_PERMISSION_DENIAL:`. If it does:
+
+1. Extract the denied tool name(s) from the message.
+2. Log: `[PERMISSION_DENIAL] Item #N: subagent denied access to [tools]. Switching to inline execution.`
+
+### No-redispatch rule (AC1)
+
+Do **not** redispatch the same subagent for the same item in the same batch run. The inline fallback is the only recovery path.
+
+### Inline fallback (AC2)
+
+Execute the item from the main session using the worktree path that was already created for the item during dispatch. Re-evaluate item state from scratch:
+
+```bash
+./scripts/development-workflow/workflow-next-action.sh --branch <branch-name>
+```
+
+Do not assume any progress from the failed subagent — treat the item as if newly dispatched. Follow `91-orchestrate-work-protocol.md` inline from the current session for the re-evaluated action.
+
+### Batch summary entry (AC3)
+
+In the final batch summary (Step 6), mark the item with execution path `inline fallback (permission denial: [tools])` rather than `subagent`. The summary must distinguish items completed via subagent dispatch from items completed via inline fallback.
+
+### Double-failure path (AC6)
+
+If the inline fallback itself encounters a permission denial on `Edit` or `Bash`, mark the item as `blocked` in the batch summary and notify the human:
+
+```
+[BLOCKED] Item #N: both subagent and inline fallback were denied [tool] access. Human intervention required.
+```
+
+Do not retry further. Do not loop.
+
+### No `needs-fixes` label on permission failures
+
+A permission denial is an **infrastructure failure**, not a content failure. Do **not** apply `needs-fixes` on any permission-denial path, including the double-failure path above.
+
+---
+
 ## Step 5: Supervise Until Terminal
 
 The Portfolio Orchestrator remains responsible for the batch after dispatch.

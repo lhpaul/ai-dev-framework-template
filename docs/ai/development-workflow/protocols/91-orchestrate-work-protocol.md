@@ -256,6 +256,19 @@ After removing the worktree, verify that the CWD is still valid by running a sim
 
 **When not in a parallel batch**: Worktree creation is optional but recommended for large development folders or long-running work. If not using a dedicated worktree, ensure the working directory is clean before proceeding.
 
+**Permission-denial early exit (subagent runs only)**: If at any point during the run the harness responds with a message containing `"permission"` and `"denied"` (case-insensitive substring match — e.g., `"Permission to use Edit has been denied"`), the subagent must **immediately stop all further work** and return the following structured string to the Portfolio Orchestrator:
+
+```
+SUBAGENT_PERMISSION_DENIAL: [tool] tool denied by harness. No partial work committed. Falling back to orchestrator inline execution.
+```
+
+Before exiting:
+- Do **not** apply any PR labels.
+- Do **not** commit any partial work.
+- Do **not** update the tracker status.
+
+The Portfolio Orchestrator will handle recovery via the inline fallback described in `90-batch-orchestrate-work-protocol.md` Step 4.1.
+
 This protocol stays scoped to one item. It may call different stage agents over time, but it must not start scanning or dispatching unrelated items.
 
 ### CHANGELOG in parallel batches
@@ -274,6 +287,41 @@ When dispatching a stage agent (creator, reviewer, or fixer), include the follow
 > This is critical in parallel batch orchestration where multiple agents work concurrently. Out-of-scope changes cause merge conflicts and waste review cycles.
 
 This rule prevents agents from making changes that affect unrelated issues and causing downstream conflicts in batch runs.
+
+---
+
+## Step 3.5: Pre-flight Permission Self-Check (Subagent Runs Only)
+
+**Applies to**: Work Item Runner subagents dispatched as part of a parallel batch (`BATCH_CONTEXT=true`). This step is **optional but recommended** — the permission-denial early-exit in Step 3 (above) covers mid-run failures even without the self-check.
+
+Before calling any creator-stage agent or making any file edits, perform a lightweight sanity check to verify that `Edit` and `Bash` are accessible:
+
+```bash
+# Write a single-line test comment to a temp file (NOT a tracked file)
+mkdir -p .tmp
+echo "# preflight-check" > .tmp/permission-preflight.tmp
+rm -f .tmp/permission-preflight.tmp
+```
+
+If the write attempt above is denied (harness responds with a permission-denied message), exit immediately before any creator-stage work:
+
+```
+SUBAGENT_PERMISSION_DENIAL: Edit tool denied by harness. No partial work committed. Falling back to orchestrator inline execution.
+```
+
+**Self-check rules**:
+- Always target `.tmp/` for the self-check write (this path is gitignored).
+- Clean up the temp file after the check regardless of outcome.
+- Never touch tracked files during the self-check.
+- After the write, run a quick sanity check to ensure no tracked file was accidentally modified:
+
+  ```bash
+  git status --porcelain
+  ```
+
+  If the output is non-empty, abort and exit with `SUBAGENT_PERMISSION_DENIAL:`.
+
+If the self-check succeeds, proceed normally to the creator-stage work.
 
 ---
 
