@@ -1030,6 +1030,36 @@ run_coderabbit_review() {
 
     if [ "$elapsed" -ge "$max_wait" ]; then
       if [ "$coderabbit_any_activity" -eq 0 ]; then
+        # --- SUCCESS commit-status fallback ---
+        # Before running stale-findings recovery or escalating, check whether CodeRabbit
+        # already posted a SUCCESS commit-status context for the current HEAD SHA. This
+        # happens during rate-limit windows on parallel batches: CodeRabbit signals the
+        # result via a commit status rather than an inline review comment. If found, treat
+        # the PR as clean and return immediately without scanning for stale findings.
+        # Context name is matched case-insensitively to guard against future renames.
+        local coderabbit_success_status_count
+        coderabbit_success_status_count="$(
+          gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
+            | jq '[.[] | select(
+                    (.context // "" | ascii_downcase | test("coderabbit")) and
+                    .state == "success"
+                  )] | length'
+        )"
+        if [ "${coderabbit_success_status_count:-0}" -gt 0 ]; then
+          echo "INFO: CodeRabbit SUCCESS commit-status found for HEAD $head_sha — treating PR as clean (coderabbit_status_success_fallback)" >&2
+          print_kv RESULT clean
+          print_kv REASON coderabbit_status_success_fallback
+          print_kv PLATFORM "$platform"
+          print_kv PR_NUMBER "$pr_number"
+          print_kv BRANCH "$branch_name"
+          print_kv REVIEW_COMMENT_ID ""
+          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          print_kv COMMENT_COUNT 0
+          print_kv BLOCKING_COUNT 0
+          print_kv SUGGESTION_COUNT 0
+          return 0
+        fi
+
         # CodeRabbit didn't review this HEAD. Check for stale findings before skipping.
         # Only consider unresolved inline comments here. Exclude resolved findings
         # (replies starting with ✅ resolve their parent comment) — same pattern as Devin.
