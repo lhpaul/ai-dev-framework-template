@@ -42,7 +42,7 @@ This spec defines the detection, mitigation, and protocol changes needed so that
 
 **Considerations**:
 - The subagent may have partially completed some read-only steps before the denial. The inline fallback must re-evaluate state from scratch (using `workflow-next-action.sh`) rather than assuming any prior state from the subagent.
-- The fallback must use the same worktree path that was allocated for the item in Step 4 of protocol 90.
+- The fallback must use the same worktree or branch that was set up for the item by the Portfolio Orchestrator dispatch.
 
 ---
 
@@ -110,6 +110,14 @@ This spec defines the detection, mitigation, and protocol changes needed so that
 - The batch run summary MUST distinguish items completed via subagent dispatch from items completed via inline fallback.
 - If the inline fallback also fails, the item is marked blocked and the human is notified. The batch does not retry further.
 - The pre-flight self-check (Use Case 3) is optional but, when present, MUST run before any creator-stage tool call or file edit. It MUST NOT touch tracked files (commits, spec content, or production files).
+
+---
+
+## Operational Visibility
+
+- **Logs**: The Portfolio Orchestrator logs each permission-denial failure with the item identifier and the denied tool name when detected (Use Case 1, step 4).
+- **Notifications**: If both the subagent and the inline fallback fail, the human is notified and the item is marked blocked. No notification is required for a successful inline fallback.
+- **Audit trail**: The final batch run summary records the per-item execution path (subagent vs. inline fallback) and denied tool names for any affected items.
 
 ---
 
