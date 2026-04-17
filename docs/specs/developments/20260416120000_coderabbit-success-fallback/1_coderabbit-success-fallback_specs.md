@@ -1,5 +1,17 @@
 # CodeRabbit SUCCESS Commit-Status Fallback — Spec
 
+**Depends on**: <!-- none -->
+
+---
+
+## Guiding principle (important)
+
+This stage is intentionally **product-focused**:
+
+- Write **user-facing behavior**, permissions, UX rules, and acceptance criteria.
+- Avoid prescribing **implementation details** (database tables/columns, specific endpoints, file paths, class names, or migration design). Those belong in the **Implementation Plan** stage.
+- If a technical constraint matters to the product (e.g., "an agent may belong to multiple broker companies"), express it as a **product requirement** without naming tables.
+
 ## Overview
 
 When multiple PRs are opened in rapid succession (3+ within seconds), CodeRabbit may exhaust its per-hour rate-limit budget before posting a fresh inline review comment on later PRs. The `pr-review-loop.sh` script currently waits up to its full retry budget and then escalates with `timeout`, even when CodeRabbit has already posted a `SUCCESS` commit-status context on the current HEAD — indicating the review is complete and clean. This causes orchestrator agents to appear "stuck" and forces manual intervention on every parallel batch of this size.
@@ -22,7 +34,7 @@ This fix adds a fallback path: if the CodeRabbit review-loop retry budget is exh
 
 **Steps**:
 1. The script exhausts the retry budget waiting for CodeRabbit to post a review.
-2. Before returning `escalate`, the script queries the commit-status contexts for the current HEAD SHA.
+2. Before running stale-findings recovery or returning `escalate`, the script queries the commit-status contexts for the current HEAD SHA.
 3. The script finds a CodeRabbit status context with `state: SUCCESS`.
 4. No existing blocking inline comments are present for the current HEAD.
 5. The script returns `clean` (with `REASON=coderabbit_status_success_fallback`) instead of `escalate`.
@@ -74,7 +86,7 @@ This fix adds a fallback path: if the CodeRabbit review-loop retry budget is exh
 ## Business Rules
 
 - The SUCCESS commit-status fallback applies **only** to CodeRabbit and has no effect on Greptile or Devin platform handlers.
-- The fallback is a last-resort path: it triggers only after the normal review polling and stale-findings recovery have both been exhausted without finding a CodeRabbit review.
+- The fallback is checked after normal review polling is exhausted but **before** stale-findings recovery runs: if a `SUCCESS` commit-status is found at this point, the script returns `clean` immediately without scanning for stale findings.
 - A CodeRabbit `SUCCESS` commit-status context is treated as authoritative evidence that CodeRabbit reviewed the HEAD and found no issues blocking the PR.
 - Existing blocking inline comments (Critical or Major) on the current HEAD still block the PR even when a `SUCCESS` status context is present. The status context is a supplement to, not a replacement for, the inline comment check.
 - The fallback reason (`coderabbit_status_success_fallback`) must be included in the script's key-value output so orchestrators and summary comments can surface it.
