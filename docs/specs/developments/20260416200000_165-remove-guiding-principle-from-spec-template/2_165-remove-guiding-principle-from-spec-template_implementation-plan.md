@@ -1,7 +1,7 @@
 # Remove Boilerplate 'Guiding Principle' Section from Spec Template — Implementation Plan
 
 **Spec**: [`1_165-remove-guiding-principle-from-spec-template_specs.md`](1_165-remove-guiding-principle-from-spec-template_specs.md)
-**Smoke test runbook**: [`docs/testing/workflow/165-remove-guiding-principle-from-spec-template.smoke-test.md`](../../../../testing/workflow/165-remove-guiding-principle-from-spec-template.smoke-test.md)
+**Smoke test runbook**: [`docs/testing/workflow/165-remove-guiding-principle-from-spec-template.smoke-test.md`](../../../testing/workflow/165-remove-guiding-principle-from-spec-template.smoke-test.md)
 
 ---
 
@@ -48,7 +48,7 @@ _(No changes required)_
 3. Open `REVIEW.md` and verify the spec checklist enforces implementation-detail cleanliness, not the presence of a boilerplate section — maps to Acceptance Criterion 3.
 4. Open each of the 7 existing spec files and verify the "Guiding principle (important)" section has been removed — maps to Acceptance Criterion 4 (and its business rule extension to all merged spec files).
 
-**Smoke test runbook**: [`docs/testing/workflow/165-remove-guiding-principle-from-spec-template.smoke-test.md`](../../../../testing/workflow/165-remove-guiding-principle-from-spec-template.smoke-test.md)
+**Smoke test runbook**: [`docs/testing/workflow/165-remove-guiding-principle-from-spec-template.smoke-test.md`](../../../testing/workflow/165-remove-guiding-principle-from-spec-template.smoke-test.md)
 
 **Regression suite**: No automated regression suite exists in this repository for documentation changes.
 
