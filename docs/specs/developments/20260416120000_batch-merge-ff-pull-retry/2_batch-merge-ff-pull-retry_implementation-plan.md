@@ -21,7 +21,7 @@
 
 ### Infrastructure / Configuration
 
-- [ ] `scripts/development-workflow/batch-merge.sh` — in `cmd_merge`, replace the single-attempt `git pull --ff-only` + `merge_die` call (lines 308–309) with a two-attempt sequence:
+- [ ] `scripts/development-workflow/batch-merge.sh` — in `cmd_merge`, replace the current single-attempt `git pull --ff-only` + `merge_die` block with a two-attempt sequence:
   1. Attempt `git pull --ff-only origin "$TARGET_BASE"` (suppress stdout/stderr as today).
   2. If it succeeds, continue as before.
   3. If it fails, print a diagnostic message to stderr (e.g., `"ff-pull failed; retrying after 2s..."`), sleep 2, run `git fetch origin "$TARGET_BASE"`, then retry `git pull --ff-only origin "$TARGET_BASE"`.
