@@ -40,7 +40,6 @@ Exit code `0` means no findings; exit code `1` means one or more findings.
 **Local run (all target files):**
 
 ```bash
-python3 scripts/lint/markdown-heuristic-lint.py \
-  $(find docs/specs/developments docs/testing/workflow -name "*.md") \
-  CHANGELOG.md
+find docs/specs/developments docs/testing/workflow -name "*.md" -print0 \
+  | xargs -0 python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md
 ```

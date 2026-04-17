@@ -116,9 +116,8 @@ For normal Codex usage, start with `workflow-orchestrator`. It is the primary po
 npx markdownlint-cli2 "docs/specs/developments/**/*.md" "docs/testing/workflow/**/*.md" "CHANGELOG.md"
 
 # Heuristic rules (GLOB001, COUNT001):
-python3 scripts/lint/markdown-heuristic-lint.py \
-  $(find docs/specs/developments docs/testing/workflow -name "*.md") \
-  CHANGELOG.md
+find docs/specs/developments docs/testing/workflow -name "*.md" -print0 \
+  | xargs -0 python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md
 ```
 
 ---

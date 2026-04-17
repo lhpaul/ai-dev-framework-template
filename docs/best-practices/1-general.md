@@ -60,9 +60,12 @@ These conventions apply across all languages and frameworks in this project.
 - Spec, plan, and CHANGELOG markdown files are linted automatically on every PR touching
   `docs/specs/developments/`, `docs/testing/workflow/`, or `CHANGELOG.md`. Rules are
   configured in `.markdownlint.jsonc` (trailing whitespace, relative links, newline at EOF).
-  Run locally with:
-  `npx markdownlint-cli2 "docs/specs/developments/**/*.md" "docs/testing/workflow/**/*.md" "CHANGELOG.md"`
-  and `python3 scripts/lint/markdown-heuristic-lint.py <files>` for heuristic checks.
+  Run locally:
+
+  ```bash
+  npx markdownlint-cli2 "docs/specs/developments/**/*.md" "docs/testing/workflow/**/*.md" "CHANGELOG.md"
+  python3 scripts/lint/markdown-heuristic-lint.py <files>
+  ```
 
 ## Dependency Management
 
