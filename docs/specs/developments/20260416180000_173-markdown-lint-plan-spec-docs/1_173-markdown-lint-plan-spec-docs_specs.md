@@ -16,7 +16,7 @@ This stage is intentionally **product-focused**:
 
 AI agents and developers contributing spec and plan documents under `docs/specs/developments/` and `docs/testing/workflow/` currently receive no automated feedback on structural defects until a human or bot reviewer flags them in a PR review. Retrospective data from Batch 5 shows that avoidable markdown defects — broken relative links, internally inconsistent acceptance-criteria counts, and incorrect glob patterns in smoke-test instructions — drove high fix-commit ratios (67–83%) on plan PRs, burning CodeRabbit rate-limit budget and extending orchestrator supervision time on every cycle.
 
-This feature adds a lightweight automated markdown lint step that runs in CI on every pull request touching plan and spec documents, catching the most common shape defects before human review begins. The same lint stack will also catch CHANGELOG trailing-whitespace issues, subsuming the scope of deferred item #178.
+This feature adds a lightweight automated markdown lint step that runs in CI on every pull request touching plan and spec documents, catching the most common shape defects before human review begins. The check covers four defect categories derived from the retrospective: broken relative links, trailing whitespace, suspicious glob patterns in instruction blocks, and inconsistent acceptance-criteria (or list-item) count wording within a single document. The same lint stack also catches CHANGELOG trailing-whitespace issues, subsuming the scope of deferred item #178.
 
 ---
 
@@ -131,6 +131,59 @@ This feature adds a lightweight automated markdown lint step that runs in CI on 
 
 ---
 
+### Use Case 5: A Document Contains a Suspicious Glob Pattern in an Instruction Block
+
+**Actor**: Developer or AI agent (contributor)
+**Preconditions**: A spec or plan document contains a code block whose surrounding prose refers to matching files in "subdirectories" (or equivalent recursive wording) while the glob itself is a non-recursive pattern like `*.<ext>`.
+
+**Steps**:
+1. Contributor opens or updates a PR with a document whose instruction block pairs recursive-language prose (e.g., "in all subdirectories", "recursively") with a non-recursive glob (e.g., `*.sh`).
+2. CI runs the markdown lint check.
+3. The check detects the prose/glob mismatch in the same document.
+4. The check exits red and reports the file, the line of the glob, and the prose excerpt that suggested recursion.
+
+**Postconditions**:
+- The PR is blocked (CI red) until the glob is corrected (e.g., `**/*.sh`), the surrounding prose is corrected, or the rule is suppressed inline with a reviewed rationale.
+
+**Information shown**:
+- The file path, the line of the offending glob, the prose excerpt that triggered the match, and a suggested recursive pattern.
+
+**Actions available**:
+- Contributor replaces the glob with a recursive pattern (e.g., `**/*.sh`), rewrites the prose to remove the recursive phrasing, or suppresses the rule inline with a tool-specific directive and a reviewer-visible rationale.
+
+**Considerations**:
+- Detection is heuristic: the check correlates a fixed set of recursive-language cues (e.g., "subdirectories", "recursively", "under the tree") with non-recursive globs in the same document scope. False positives must be suppressible inline, so contributors are never blocked by a heuristic on content that is genuinely non-recursive.
+- The heuristic's cue list must be visible in the lint configuration so contributors can understand why a finding fired and extend the cue set over time.
+
+---
+
+### Use Case 6: A Document's Stated Count Disagrees With Its Own List
+
+**Actor**: Developer or AI agent (contributor)
+**Preconditions**: A spec or plan document contains prose that names a numeric count (e.g., "4 acceptance criteria", "three steps") while the list immediately following or referenced by that prose has a different number of items.
+
+**Steps**:
+1. Contributor opens or updates a PR with a document whose narrative count ("N acceptance criteria", "N use cases", "N steps") disagrees with the count of items in the corresponding list or section.
+2. CI runs the markdown lint check.
+3. The check detects the mismatch.
+4. The check exits red and reports the file, the stated count (with its surrounding phrase), and the actual item count.
+
+**Postconditions**:
+- The PR is blocked (CI red) until the stated count is corrected to match the list, the list is corrected to match the stated count, or the rule is suppressed inline with a reviewer-visible rationale.
+
+**Information shown**:
+- The file path, the line that contains the narrative count, the phrase used, the actual count found in the referenced list, and the computed disagreement.
+
+**Actions available**:
+- Contributor updates either the narrative count or the list length so the two agree, or suppresses the rule inline with a tool-specific directive and a reviewer-visible rationale for an intentional mismatch.
+
+**Considerations**:
+- The check targets count disagreements that occur within the same document; it does not attempt to reconcile counts across different documents.
+- Narrative counts may appear as digits (e.g., "4 acceptance criteria") or written-out numerals ("four acceptance criteria"); both forms are checked.
+- The check must not fire on narrative uses of numbers that are unrelated to a list (e.g., durations, version numbers); the heuristic must be scoped to count-of-items phrasing, and false positives must be suppressible inline.
+
+---
+
 ## Business Rules
 
 - The markdown lint check runs on all modified markdown files under `docs/specs/developments/`, `docs/testing/workflow/`, and on `CHANGELOG.md` on every pull request that touches any of these paths.
@@ -139,6 +192,8 @@ This feature adds a lightweight automated markdown lint step that runs in CI on 
 - The check must complete in a reasonable time (under 2 minutes for the current document set) and must not introduce flakiness due to external network dependencies at lint time.
 - External URLs in documents are not checked for liveness (network-free lint only).
 - The baseline for existing documents is established at the time of implementation: any violations in existing files must be resolved or suppressed as part of the implementation PR so the check is green from day one.
+- Heuristic checks (suspicious glob patterns and inconsistent count wording) must be suppressible inline with a tool-specific directive and a reviewer-visible rationale, so contributors are never blocked by a false positive on content that is genuinely correct.
+- The cue set used by the suspicious-glob heuristic (recursive-language phrases such as "subdirectories", "recursively", "under the tree") must be declared in the lint configuration and extendable without changing the lint tool itself.
 
 ---
 
@@ -152,13 +207,13 @@ This feature adds a lightweight automated markdown lint step that runs in CI on 
 - [ ] AC6: Suppressing a rule inline with a tool-specific directive causes the check to exit green for that specific finding.
 - [ ] AC7: The check is green from the moment the implementation PR is merged (i.e., any violations in existing baseline documents are resolved or suppressed in the implementation PR itself).
 - [ ] AC8: CHANGELOG.md trailing-whitespace violations are caught by the same check, satisfying the scope of deferred item #178.
+- [ ] AC9: The check detects and reports suspicious glob patterns — a non-recursive glob (e.g., `*.sh`) in a document whose surrounding prose uses recursive-language cues (e.g., "subdirectories", "recursively") — with the file path, line of the glob, and the triggering prose excerpt shown in the CI output. The rule is suppressible inline on a per-finding basis.
+- [ ] AC10: The check detects and reports within-document count disagreements — when a narrative phrase names a count of items ("N acceptance criteria", "N use cases", "N steps", in digits or written-out numerals) that differs from the count of items in the corresponding list or section — with the file path, the line of the narrative count, the stated count, and the actual count shown in the CI output. The rule is suppressible inline on a per-finding basis.
 
 ---
 
 ## Out of Scope (MVP)
 
-- Checking glob-pattern correctness in instruction blocks (whether `*.sh` should be `**/*.sh`); this requires semantic understanding of the surrounding prose and is deferred.
-- Checking internal acceptance-criteria count wording consistency (e.g., "4 acceptance criteria" vs. "5" in the same document); detecting this reliably without false positives requires deeper NLP and is deferred.
 - Checking liveness of external URLs (http/https links) — network dependency introduces flakiness.
 - Checking links to in-document anchors.
 - Enforcement of markdown lint rules on markdown files outside the three target paths: `docs/specs/developments/`, `docs/testing/workflow/`, and `CHANGELOG.md` (e.g., README files, protocol docs).
