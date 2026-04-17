@@ -73,8 +73,7 @@ Before running this smoke test:
 **Expected results**:
 - The orchestrator logs `[BLOCKED] Item #N: both subagent and inline fallback were denied Edit access. Human intervention required.`
 - The item is marked `blocked` in the batch summary.
-- If an open PR exists for the item, the `needs-fixes` label is applied to that PR.
-- No `needs-fixes` label is applied if there is no open PR.
+- No `needs-fixes` label is applied on any PR (permission denial is an infrastructure failure, not a content failure).
 - The orchestrator does not retry further (no loop). (AC6)
 
 ---
@@ -110,7 +109,7 @@ Before running this smoke test:
 - [ ] AC3: Final batch summary distinguishes `subagent` vs. `inline fallback (permission denial: [tools])` execution paths.
 - [ ] AC4: Item reaches a valid terminal condition (e.g., `ready-for-human-review`) via inline fallback.
 - [ ] AC5: Pre-flight self-check exits with `SUBAGENT_PERMISSION_DENIAL:` before any creator-stage write; no tracked files modified; temp file cleaned up.
-- [ ] AC6: Double-failure path marks item as `blocked` and notifies human; no further retries; `needs-fixes` applied to open PR only (not if no PR exists).
+- [ ] AC6: Double-failure path marks item as `blocked` and notifies human; no further retries; no `needs-fixes` label applied (permission denial is an infrastructure failure).
 
 ---
 

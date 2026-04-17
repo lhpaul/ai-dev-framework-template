@@ -51,9 +51,9 @@
 
   4. **Batch summary entry** (AC3): In the final batch summary, mark the item with execution path `inline fallback (permission denial: [tools])` rather than `subagent`. The summary must distinguish items completed via subagent dispatch from items completed via inline fallback.
 
-  5. **Double-failure path** (AC6): If the inline fallback itself encounters a permission denial on `Edit` or `Bash`, mark the item as `blocked` in the batch summary, apply a `needs-fixes` label on any open PR for the item (if one exists), and notify the human. Do not retry further. Example notification: `[BLOCKED] Item #N: both subagent and inline fallback were denied [tool] access. Human intervention required.`
+  5. **Double-failure path** (AC6): If the inline fallback itself encounters a permission denial on `Edit` or `Bash`, mark the item as `blocked` in the batch summary and notify the human. Do not retry further. Example notification: `[BLOCKED] Item #N: both subagent and inline fallback were denied [tool] access. Human intervention required.`
 
-  6. **No `needs-fixes` label on permission failures** (business rule from spec): A permission denial is an infrastructure failure, not a content failure. Do not apply `needs-fixes` unless the item is in the double-failure path.
+  6. **No `needs-fixes` label on permission failures** (business rule from spec): A permission denial is an infrastructure failure, not a content failure. Do not apply `needs-fixes` on any permission-denial path, including double-failure.
 
 ---
 
@@ -65,7 +65,7 @@
 
 1. Happy path — subagent completes normally (no permission denial): batch summary shows `subagent` execution path and no inline fallback section. Maps to AC1 (true-negative: no false-positive detection).
 2. Subagent permission denial, successful inline fallback: item reaches `ready-for-human-review` via inline execution; batch summary lists execution path as `inline fallback (permission denial: [tool])`. Maps to AC1, AC2, AC3, AC4.
-3. Double failure — both subagent and inline fallback denied: item is marked `blocked` in batch summary; human is notified; no `needs-fixes` label applied (unless an open PR already exists, in which case `needs-fixes` is applied). Maps to AC6.
+3. Double failure — both subagent and inline fallback denied: item is marked `blocked` in batch summary; human is notified; no `needs-fixes` label applied on any PR (permission denial is an infrastructure failure). Maps to AC6.
 4. Pre-flight self-check fails before any creator-stage work: subagent exits immediately with `SUBAGENT_PERMISSION_DENIAL:` message and no partial commit. Maps to AC5.
 
 **Smoke test runbook**: [`docs/testing/workflow/subagent-permission-denial.smoke-test.md`](../../../testing/workflow/subagent-permission-denial.smoke-test.md)
