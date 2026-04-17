@@ -168,10 +168,23 @@ def check_glob001(path: str, lines: List[str]) -> List[str]:
                 if re.search(r"-name\s+[\"']?" + re.escape(glob_pattern) + r"[\"']?", stripped):
                     continue
 
-                # Search for recursive cues in the surrounding window
+                # Search for recursive cues in the surrounding prose.
+                # Backward context: lines before the code block fence.
+                # Forward context: lines after the code block's closing fence
+                # (to avoid treating code-internal comments as "prose").
                 window_start = max(0, current_block_start - GLOB001_WINDOW)
-                window_end = min(len(lines), i + GLOB001_WINDOW + 1)
-                context_lines = lines[window_start:current_block_start] + lines[i + 1:window_end]
+                backward_context = lines[window_start:current_block_start]
+
+                # Find the closing fence to determine where forward prose starts.
+                closing_fence_line = len(lines)  # default: end of file
+                for k in range(i + 1, len(lines)):
+                    if lines[k].strip().startswith(fence_char):  # type: ignore[arg-type]
+                        closing_fence_line = k + 1  # prose starts after closing fence
+                        break
+                forward_end = min(len(lines), closing_fence_line + GLOB001_WINDOW)
+                forward_context = lines[closing_fence_line:forward_end]
+
+                context_lines = backward_context + forward_context
                 context_text = " ".join(cl.lower() for cl in context_lines)
 
                 triggered_cue: Optional[str] = None
@@ -245,8 +258,14 @@ def check_count001(path: str, lines: List[str]) -> List[str]:
                 # Blank line after list items — could be list continuation, keep going
                 pass
             elif found_list and jline.strip() and not _LIST_ITEM_RE.match(jline):
-                # Non-blank, non-list line after we've seen at least one list item
-                break
+                # Non-blank, non-list line after we've seen at least one list item.
+                # Treat indented lines as list-item continuation lines (e.g., a
+                # multi-line list item whose subsequent lines are indented).
+                # Stop only on unindented non-list content or headings.
+                if jline[0] in (" ", "\t"):
+                    pass  # list-item continuation line — keep going
+                else:
+                    break
 
         if not found_list:
             # No list found following the count phrase — skip
