@@ -294,16 +294,16 @@ This rule prevents agents from making changes that affect unrelated issues and c
 
 **Applies to**: Work Item Runner subagents dispatched as part of a parallel batch (`BATCH_CONTEXT=true`). This step is **optional but recommended** — the permission-denial early-exit in Step 3 (above) covers mid-run failures even without the self-check.
 
-Before calling any creator-stage agent or making any file edits, perform a lightweight sanity check to verify that `Edit` and `Bash` are accessible:
+Before calling any creator-stage agent or making any file edits, perform a lightweight sanity check to verify that both `Edit` and `Bash` are accessible:
 
-```bash
-# Write a single-line test comment to a temp file (NOT a tracked file)
-mkdir -p .tmp
-echo "# preflight-check" > .tmp/permission-preflight.tmp
-rm -f .tmp/permission-preflight.tmp
-```
+1. **Test `Edit`**: Use the `Edit` tool to create `.tmp/permission-preflight.tmp` with a single comment line (`# preflight-check`). This is the primary check — the Batch 5 incident (#160) was specifically about `Edit` being denied while `Bash` remained available.
+2. **Test `Bash`**: Use `Bash` to delete the temp file:
 
-If the write attempt above is denied (harness responds with a permission-denied message), exit immediately before any creator-stage work:
+   ```bash
+   rm -f .tmp/permission-preflight.tmp
+   ```
+
+If either tool call is denied (harness responds with a permission-denied message), exit immediately before any creator-stage work:
 
 ```
 SUBAGENT_PERMISSION_DENIAL: Edit tool denied by harness. No partial work committed. Falling back to orchestrator inline execution.
