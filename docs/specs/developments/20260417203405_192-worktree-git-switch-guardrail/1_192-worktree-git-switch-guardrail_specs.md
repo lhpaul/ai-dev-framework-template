@@ -134,7 +134,7 @@ When the Portfolio Orchestrator dispatches parallel Work Item Runners, each runn
 - **BR-1**: All git state-changing commands (`switch`, `checkout`, `checkout -b`, `reset`, `restore`) issued by a Work Item Runner operating in a worktree must target the worktree path, not the main repo root. This rule is mandatory when `BATCH_CONTEXT=true`.
 - **BR-2**: The Portfolio Orchestrator must verify the main working tree branch after each Work Item Runner returns in a parallel batch (Protocol 90 Step 5.2). This check already exists but currently only warns — it must also auto-correct when the tree is clean.
 - **BR-3**: Auto-correction (switching back to the integration branch) is permitted only when `git status --porcelain` returns empty output. When uncommitted modifications exist, the orchestrator must stop and escalate to the human.
-- **BR-4**: The handoff prompt template in Protocol 91 Step 4 must include an explicit "Critical: Worktree Git Discipline" section. This section must enumerate the prohibited commands and provide the correct alternatives (`git -C <worktree-path>` or `cd <worktree-path> &&`).
+- **BR-4**: The handoff prompt in Protocol 91 Step 3 (Worktree Isolation) and/or Step 4 (Execute and Re-evaluate) must include an explicit "Critical: Worktree Git Discipline" section. This section must enumerate the prohibited commands and provide the correct alternatives (`git -C <worktree-path>` or `cd <worktree-path> &&`).
 - **BR-5**: Read-only git commands against the main repo root are always permitted (e.g., `git -C <main-repo-root> rev-parse --abbrev-ref HEAD`). The guardrail applies only to state-changing commands.
 - **BR-6**: Auto-correction events must be recorded in the batch retrospective notes as a guardrail violation.
 - **BR-7**: The scope of this guardrail is git branch-switching commands only. File write paths outside the worktree are out of scope (tracked separately in issue #193).
@@ -156,7 +156,6 @@ When the Portfolio Orchestrator dispatches parallel Work Item Runners, each runn
 - [ ] Protocol 90 Step 5.2 still halts and escalates to the human (does not auto-correct) when the main working tree has uncommitted modifications, and the escalation message includes the full `git status --porcelain` output.
 - [ ] The `.claude/agents/item-orchestrator.md` system prompt (or an equivalent handoff note referenced by it) includes a brief reminder that all git state-changing commands must target the worktree path, not the main repo root.
 - [ ] (Optional — this criterion does not block the PR) A guidance note is added in either Protocol 91 or a new integration doc describing how a pre-tool-use hook can warn when a state-changing git command is issued from the main repo root; implementation is declared optional and hook-platform-specific.
-- [ ] No changes are made to `post-merge-cleanup.sh`, `pr-review-loop.sh`, Protocol 90 Step 3 (in scope for #199), or the `Write` path rule (in scope for #193).
 
 ---
 
