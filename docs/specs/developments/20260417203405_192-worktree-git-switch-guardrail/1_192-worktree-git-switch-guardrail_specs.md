@@ -146,7 +146,7 @@ When the Portfolio Orchestrator dispatches parallel Work Item Runners, each runn
 - [ ] Protocol 90 Step 5.2 is updated so that when the main working tree is found on the wrong branch and has no uncommitted modifications, the orchestrator automatically runs `git switch <integration-branch>` (or equivalent) to restore the correct branch, logs the correction, and proceeds — rather than only printing a warning.
 - [ ] Protocol 90 Step 5.2 still halts and escalates to the human (does not auto-correct) when the main working tree has uncommitted modifications, and the escalation message includes the full `git status --porcelain` output.
 - [ ] The `.claude/agents/item-orchestrator.md` system prompt (or an equivalent handoff note referenced by it) includes a brief reminder that all git state-changing commands must target the worktree path, not the main repo root.
-- [ ] (Optional) A guidance note is added in either Protocol 91 or a new integration doc describing how a pre-tool-use hook can warn when a state-changing git command is issued from the main repo root; implementation is declared optional and hook-platform-specific.
+- [ ] (Optional — this criterion does not block the PR) A guidance note is added in either Protocol 91 or a new integration doc describing how a pre-tool-use hook can warn when a state-changing git command is issued from the main repo root; implementation is declared optional and hook-platform-specific.
 - [ ] No changes are made to `post-merge-cleanup.sh`, `pr-review-loop.sh`, Protocol 90 Step 3 (in scope for #199), or the `Write` path rule (in scope for #193).
 
 ---
