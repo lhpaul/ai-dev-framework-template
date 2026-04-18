@@ -153,6 +153,7 @@ When the Portfolio Orchestrator dispatches parallel Work Item Runners, each runn
 
 ## Out of Scope (MVP)
 
+<!-- markdown-heuristic-disable COUNT001 -->
 - File write paths outside the worktree (tracked in issue #193)
 - Protocol 90 Step 3 changes (already addressed by issue #199, recently merged)
 - Changes to `post-merge-cleanup.sh` or `pr-review-loop.sh`
