@@ -1,7 +1,5 @@
 # fix(post-merge-cleanup): Contradictory Log Output and Missing Tracker Status Update — Spec
 
-**Depends on**: <!-- none -->
-
 ---
 
 ## Overview
