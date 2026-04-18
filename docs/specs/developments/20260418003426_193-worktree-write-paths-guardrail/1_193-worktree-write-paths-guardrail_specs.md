@@ -144,4 +144,4 @@ When item-orchestrator agents run inside isolated git worktrees during parallel 
 
 ## Open Questions
 
-<!-- No blocking open questions. -->
+None.
