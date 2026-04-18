@@ -118,8 +118,8 @@ When the Portfolio Orchestrator dispatches parallel Work Item Runners, each runn
 
 **Actions available**:
 
-- Agent revises the command to target the worktree
-- Agent proceeds if it has confirmed the command is intentionally targeting the main repo root for a read-only reason (hook does not block)
+- Agent retargets the command to the worktree path (e.g., by adding `git -C <worktree-path>` or prefixing with `cd <worktree-path> &&`) and re-issues it
+- Agent escalates to the human when the correct worktree path cannot be determined from the session context (the hook itself remains non-blocking, but the agent must not proceed with a main-repo-root state-changing command without retargeting or escalation)
 
 **Considerations**:
 
