@@ -39,7 +39,7 @@
 - Developer can immediately begin the next workflow stage for issue #184 (write plan)
 
 **Considerations**:
-- If the GitHub Projects lookup fails (network error, missing project config), the script should log a warning and exit with a non-zero code rather than silently continue
+- If the GitHub Projects lookup fails (network error, missing project config), the script should log a warning and continue (exit 0) rather than silently skip the update
 - If the project item for the issue does not exist, log a warning and continue (do not abort cleanup)
 
 ---
@@ -64,6 +64,13 @@
 - Local branch is deleted; developer is on `develop`
 - GitHub Projects v2 Status is `Plan Ready`
 - No contradictory log lines appear
+
+**Information shown**:
+- A single informational log line: issue number detected, issue stays open, status updated to `Plan Ready`
+- No "No issue number detected" message for this branch
+
+**Actions available**:
+- Developer can immediately begin the next workflow stage for the issue (implement)
 
 **Considerations**:
 - Same GitHub Projects failure handling as Use Case 1
@@ -93,6 +100,13 @@
 - GitHub Projects v2 Status is `Merged`
 - No contradictory log lines appear
 
+**Information shown**:
+- A single informational log line: issue number detected, issue closed, status updated to `Merged`
+- No "No issue number detected" message for this branch
+
+**Actions available**:
+- Developer confirms the issue is closed and tracker status is `Merged`
+
 **Considerations**:
 - If the issue is already closed, the close step is skipped (existing behavior, preserved)
 - If no merged PR is found for the branch, issue close is skipped (existing behavior, preserved)
@@ -117,6 +131,12 @@
 **Postconditions**:
 - Local branch is deleted; developer is on `develop`
 - No GitHub issue or tracker changes are made
+
+**Information shown**:
+- A single log line: "No issue number detected in branch name, skipping issue close and tracker update"
+
+**Actions available**:
+- Developer can confirm no tracker update was expected for this branch type
 
 **Considerations**:
 - This is a valid, non-error scenario for branches that predate the issue-number convention
