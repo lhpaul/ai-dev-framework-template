@@ -103,7 +103,7 @@ No other project docs (`docs/project/`, `docs/best-practices/`, `AGENTS.md`, etc
    ```bash
    npx markdownlint-cli2 "docs/specs/developments/20260417154805_178-changelog-trailing-whitespace/*.md" "docs/testing/workflow/178-changelog-trailing-whitespace.smoke-test.md"
    ```
-7. Commit with message: `fix(developer-agent): add CHANGELOG trailing-whitespace verification step`
-8. Push branch and open a draft PR targeting `develop`.
-9. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry.
+7. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry.
+8. Commit with message: `fix(developer-agent): add CHANGELOG trailing-whitespace verification step`
+9. Push branch and open a draft PR targeting `develop`.
 10. Verify smoke test runbook assertions manually.
