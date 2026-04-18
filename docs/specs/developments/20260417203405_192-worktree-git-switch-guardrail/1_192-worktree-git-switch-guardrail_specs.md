@@ -137,7 +137,7 @@ When the Portfolio Orchestrator dispatches parallel Work Item Runners, each runn
 - **BR-4**: The handoff prompt in Protocol 91 Step 3 (Worktree Isolation) and/or Step 4 (Execute and Re-evaluate) must include an explicit "Critical: Worktree Git Discipline" section. This section must enumerate the prohibited commands and provide the correct alternatives (`git -C <worktree-path>` or `cd <worktree-path> &&`).
 - **BR-5**: Read-only git commands against the main repo root are always permitted (e.g., `git -C <main-repo-root> rev-parse --abbrev-ref HEAD`). The guardrail applies only to state-changing commands.
 - **BR-6**: Auto-correction events must be recorded in the batch retrospective notes as a guardrail violation.
-- **BR-7**: The scope of this guardrail is git branch-switching commands only. File write paths outside the worktree are out of scope (tracked separately in issue #193).
+- **BR-7**: The scope of this guardrail is git state-changing commands only (as enumerated in BR-1: `switch`, `checkout`, `checkout -b`, `reset`, `restore`). File write paths outside the worktree are out of scope (tracked separately in issue #193).
 
 ---
 
