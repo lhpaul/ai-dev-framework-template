@@ -19,7 +19,7 @@ When item-orchestrator agents run inside isolated git worktrees during parallel 
 
 **Steps**:
 1. Item-orchestrator creates the worktree and records the worktree path as `<worktree-path>`.
-2. Protocol 91 Step 4 includes an explicit reminder that the orchestrator passes to every stage agent it dispatches: "All `Write` and `Edit` tool calls from this point forward must target paths under `<worktree-path>/...`. Any path that does not begin with `<worktree-path>/` is a main-repo path — correct it before calling the tool."
+2. The worktree isolation section of Protocol 91 Step 3 includes an explicit reminder that the orchestrator passes to every stage agent it dispatches: "All `Write` and `Edit` tool calls from this point forward must target paths under `<worktree-path>/...`. Any path that does not begin with `<worktree-path>/` is a main-repo path — correct it before calling the tool."
 3. The dispatched stage agent reads this reminder and issues `Write`/`Edit` calls with paths under `<worktree-path>/`.
 4. Files are created in the correct worktree location.
 
@@ -108,19 +108,19 @@ When item-orchestrator agents run inside isolated git worktrees during parallel 
 
 ## Business Rules
 
-- When `BATCH_CONTEXT=true`, Protocol 91 Step 4 MUST include an explicit reminder in the worktree-creation section stating that all `Write` and `Edit` tool calls must target paths under `<worktree-path>`, not under the main repo root.
+- When `BATCH_CONTEXT=true`, the worktree isolation section of Protocol 91 Step 3 MUST include an explicit reminder stating that all `Write` and `Edit` tool calls must target paths under `<worktree-path>`, not under the main repo root.
 - The reminder MUST include the resolved runtime value of `<worktree-path>`, not a generic placeholder.
 - The reminder MUST be repeated in every stage-agent handoff issued by the item-orchestrator for the duration of the parallel batch run.
 - When `BATCH_CONTEXT=false` or absent, no reminder is injected and no hook fires.
 - The pre-tool-use hook (Use Case 2) is optional. If implemented, it MUST only fire on `Write` and `Edit` calls, not on read-only tools.
 - When `WORKTREE_ROOT` is unset, the hook MUST be a no-op.
-- The guardrail changes are scoped to Protocol 91 Step 3/4 (worktree isolation section) and optionally the `.claude/agents/item-orchestrator.md` handoff template. No other scripts or protocols are modified.
+- The guardrail changes are scoped to the worktree isolation section of Protocol 91 Step 3 and optionally the `.claude/agents/item-orchestrator.md` handoff template. No other scripts or protocols are modified.
 
 ---
 
 ## Acceptance Criteria
 
-- [ ] Protocol 91 Step 4 (the worktree isolation section under Step 3) contains an explicit, human-readable reminder that all `Write` and `Edit` tool calls must target paths under `<worktree-path>/...` and that any main-repo-absolute path is a red flag to correct before calling the tool.
+- [ ] The worktree isolation section of Protocol 91 Step 3 contains an explicit, human-readable reminder that all `Write` and `Edit` tool calls must target paths under `<worktree-path>/...` and that any main-repo-absolute path is a red flag to correct before calling the tool.
 - [ ] The reminder specifies that `<worktree-path>` must be resolved to its runtime value before being included in stage-agent handoffs.
 - [ ] The reminder specifies that it must appear in every stage-agent handoff (not just the first) issued for the item.
 - [ ] The protocol language makes clear the guardrail applies only when `BATCH_CONTEXT=true` (a dedicated worktree exists).
