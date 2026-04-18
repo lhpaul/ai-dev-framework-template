@@ -1,7 +1,7 @@
 # Require All Review Threads Resolved Before Ready-For-Human-Review — Implementation Plan
 
 **Spec**: [`1_review-threads-all-resolved_specs.md`](./1_review-threads-all-resolved_specs.md)
-**Smoke test runbook**: [`docs/testing/workflow/review-threads-all-resolved.smoke-test.md`](../../../../testing/workflow/review-threads-all-resolved.smoke-test.md)
+**Smoke test runbook**: [`docs/testing/workflow/review-threads-all-resolved.smoke-test.md`](../../../testing/workflow/review-threads-all-resolved.smoke-test.md)
 
 ---
 
@@ -25,7 +25,9 @@
 
 ### Protocol Documentation
 
-- [ ] **`docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`** — Update Step 8c's independent-verification checklist to include an explicit `reviewThreads` GraphQL check as a hard gate, aligned with AC3 and AC7.
+- [ ] **`docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`** — Update Step 8c's independent-verification checklist to include an explicit `reviewThreads` GraphQL check as a hard gate, aligned with AC3. Also update the Automated Reviewer Loop Summary template in Step 7 to include a "Reply-only resolutions" section that lists threads resolved via reply + mutation (no code fix) with a short rationale, aligned with AC5.
+
+- [ ] **`docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`** — Update Step 5.1's post-dispatch PR verification checklist to include the same `reviewThreads` unresolved-thread check, aligned with AC7.
 
 ---
 
@@ -41,7 +43,7 @@
 4. Step 8c catches a PR where thread check was bypassed (maps to AC3)
 5. Human-authored threads are not counted by the gate (maps to AC6)
 
-**Smoke test runbook**: [`docs/testing/workflow/review-threads-all-resolved.smoke-test.md`](../../../../testing/workflow/review-threads-all-resolved.smoke-test.md)
+**Smoke test runbook**: [`docs/testing/workflow/review-threads-all-resolved.smoke-test.md`](../../../testing/workflow/review-threads-all-resolved.smoke-test.md)
 
 **Regression suite**: No automated regression suite exists in this repository.
 
@@ -59,7 +61,7 @@ No database seed data required. Testing relies on a real GitHub PR with controll
 
 ## Documentation Updates
 
-- [ ] `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` — Add the `reviewThreads` unresolved-thread check to the Step 8c hard-gate table (listed under Layer changes above and is itself a deliverable of this item, not a follow-up doc update). No other project docs are affected by this change.
+The protocol document changes (Step 8c in Protocol 91, Step 5.1 in Protocol 90, and the Step 7 summary template) are themselves deliverables listed in the Layer-by-Layer Changes section above and must be executed during implementation. No additional project docs in `docs/project/`, `docs/best-practices/`, or `AGENTS.md` are affected by this change.
 
 ---
 
@@ -224,10 +226,30 @@ fi
 
    Add a code block showing the `gh api graphql` command that evaluates this check, consistent with the illustrative sample in this plan. Place this row after the "No `needs-fixes` label" row and before the "Automated reviewer loop summary" row in the existing table.
 
-6. **Verify `shellcheck` passes** — run `shellcheck scripts/development-workflow/pr-review-loop.sh` in the worktree and fix any warnings before committing.
+6. **Update `91-orchestrate-work-protocol.md` Step 7 Automated Reviewer Loop Summary template** — add a "Reply-only resolutions" subsection to the Final Summary Comment template (the `### Automated Reviewer Loop Summary` block). The new section lists each thread resolved via reply + `resolveReviewThread` mutation (no code fix) with the thread author, a short description of the concern, and the rationale given in the reply. This enables human reviewers to audit non-code-fix resolutions (AC5).
 
-7. **Verify markdown lint passes** — run `npx markdownlint-cli2 "docs/specs/developments/**/*.md"` and `npx markdownlint-cli2 "docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md"` in the worktree.
+   The subsection should be added after the findings table in the summary template, similar to:
 
-8. **Update CHANGELOG** — add an entry under `[Unreleased]` describing this change.
+   ```markdown
+   **Reply-only resolutions (no code fix):** M thread(s) resolved via reply + resolveReviewThread mutation.
 
-9. **Verify smoke test runbook scenarios** — manually confirm the runbook steps map to each acceptance criterion.
+   | Thread | Author | Concern summary | Rationale |
+   |--------|--------|-----------------|-----------|
+   | #1 | coderabbitai[bot] | First 60 chars of concern... | First 80 chars of reply rationale... |
+   ```
+
+   When M=0 (all resolutions were code fixes), omit this subsection.
+
+7. **Update `90-batch-orchestrate-work-protocol.md` Step 5.1** — add the same `reviewThreads` unresolved-thread check to the post-dispatch PR verification checklist table (AC7). Add a row after "No `needs-fixes` label":
+
+   | Check | Pass condition |
+   |---|---|
+   | All automated-reviewer `reviewThreads` resolved | GraphQL `reviewThreads.nodes[].isResolved=true` (or `✅ Addressed` in body) for every thread authored by a configured bot login |
+
+8. **Verify `shellcheck` passes** — run `shellcheck scripts/development-workflow/pr-review-loop.sh` in the worktree and fix any warnings before committing.
+
+9. **Verify markdown lint passes** — run `npx markdownlint-cli2 "docs/specs/developments/**/*.md" "docs/testing/workflow/**/*.md" "docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md" "docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md"` in the worktree.
+
+10. **Update CHANGELOG** — add an entry under `[Unreleased]` describing this change.
+
+11. **Verify smoke test runbook scenarios** — manually confirm the runbook steps map to each acceptance criterion.
