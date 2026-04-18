@@ -140,6 +140,14 @@ When the Portfolio Orchestrator dispatches parallel Work Item Runners, each runn
 
 ---
 
+## Operational Visibility
+
+- **Logs**: The Portfolio Orchestrator logs auto-correction events when it switches the main working tree back to the integration branch (Use Case 2). When the main working tree has uncommitted modifications, it logs the full `git status --porcelain` output and the item ID of the preceding agent.
+- **Audit trail**: Auto-correction events are recorded in the batch retrospective notes as guardrail violations (BR-6).
+- **Warnings**: The optional pre-tool-use hook (Use Case 3) emits a warning to stderr when a state-changing git command targets the main repo root.
+
+---
+
 ## Acceptance Criteria
 
 - [ ] Protocol 91 Step 3 (Worktree Isolation) and/or Step 4 (Execute and Re-evaluate) contain an explicit, clearly marked guardrail section that: (a) lists `git switch`, `git checkout`, `git checkout -b`, `git reset`, and `git restore` as prohibited commands when run against the main repo root; (b) provides the correct alternative patterns (`git -C <worktree-path>` or `cd <worktree-path> &&`); (c) states the rule applies when `BATCH_CONTEXT=true`.
