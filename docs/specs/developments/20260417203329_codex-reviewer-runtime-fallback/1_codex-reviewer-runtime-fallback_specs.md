@@ -1,7 +1,5 @@
 # Codex Reviewer Runtime Fallback — Spec
 
-**Depends on**: <!-- no dependencies -->
-
 ---
 
 ## Overview
@@ -23,7 +21,7 @@ either halts the gate or proceeds only after explicit human acknowledgement.
 
 ## Use Cases
 
-### Use Case 1: Reviewer Unreachable — Warning and Skip with Human Acknowledgement
+### Use Case 1: Reviewer Unreachable — Warning and Skip (Default `warn` Policy)
 
 **Actor**: Work Item Runner (orchestrator agent or human-delegated CI run)
 **Preconditions**:
@@ -73,18 +71,17 @@ either halts the gate or proceeds only after explicit human acknowledgement.
   available before approving.
 
 **Considerations**:
-- If ALL reviewers are unreachable, apply the `fail-if-none-available` sub-rule
-  (see Business Rule BR-3) regardless of the configured policy.
+- If ALL reviewers are unreachable, the hard-fail rule (BR-3) applies
+  regardless of the configured policy.
 
 ---
 
-### Use Case 2: Reviewer Unreachable — Hard Fail (Policy: `fail-if-none-available`)
+### Use Case 2: Reviewer Unreachable — Hard Fail (Zero Reachable, Any Policy)
 
 **Actor**: Work Item Runner
 **Preconditions**:
-- All listed internal reviewers are unreachable from the current runner.
-- OR the repo's `internal_reviewers_unavailable_policy` is
-  `fail-if-none-available`.
+- All listed internal reviewers are unreachable from the current runner (zero
+  reachable regardless of configured policy).
 
 **Steps**:
 1. The Work Item Runner performs the runtime-availability check.
@@ -116,8 +113,9 @@ either halts the gate or proceeds only after explicit human acknowledgement.
   `.tmp/template-config.json` to run a reduced set, then re-trigger Step 7a.
 
 **Considerations**:
-- This use case applies even when `internal_reviewers_unavailable_policy` is
-  `warn` if zero reviewers are reachable.
+- This use case applies regardless of the configured policy: when zero reviewers
+  are reachable, the gate must hard-fail even under the `warn` default policy.
+  BR-3 is a floor that no policy can override.
 
 ---
 
@@ -198,11 +196,14 @@ either halts the gate or proceeds only after explicit human acknowledgement.
   subset. The warning must be posted as a PR comment and recorded in the Step 7a
   summary.
 
-- **BR-5 — Policy: `fail-if-none-available` configurable**: A future-compatible
+- **BR-5 — Configurable strict policy**: A future-compatible
   `internal_reviewers_unavailable_policy` key in `.ai-dev-workflow.yaml` (or its
-  local override) may be set to `fail-if-none-available` to require all listed
-  reviewers to be reachable before Step 7a can proceed. The spec leaves the
-  exact key name and schema as an implementation decision for the plan stage.
+  local override) may be set to a stricter value (e.g., `fail-if-any-unavailable`)
+  to halt Step 7a whenever any listed reviewer is unreachable — not just when all
+  are unreachable. Under the default `warn` policy, the gate proceeds with a
+  reduced reviewer set as long as at least one reviewer is reachable. The spec
+  leaves the exact key name, enum values, and schema as an implementation decision
+  for the plan stage.
 
 - **BR-6 — Local override takes precedence**: If `.tmp/template-config.json`
   defines `overrides.review.internal_reviewers`, that list is used instead of
