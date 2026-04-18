@@ -71,7 +71,8 @@ When the Portfolio Orchestrator dispatches parallel Work Item Runners, each runn
 
 - If the main tree is on the wrong branch **and is clean**: the orchestrator automatically switches it back to the integration branch (`git switch develop`) and logs the correction
 - If the main tree is on the wrong branch **and has uncommitted modifications**: the orchestrator stops, reports all modified files to the human, and does not dispatch additional agents until resolved
-- If the main tree is on the correct branch and clean: orchestrator proceeds normally
+- If the main tree is on the correct branch **and is clean**: orchestrator proceeds normally
+- If the main tree is on the correct branch **but has uncommitted modifications**: the orchestrator stops, reports all modified files to the human, and does not dispatch additional agents until resolved (same escalation as the wrong-branch dirty case — `git reset` / `git restore` can dirty the main tree without changing the branch, so the dirty-tree halt rule applies regardless of branch status)
 
 **Information shown**:
 
