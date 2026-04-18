@@ -1,5 +1,7 @@
 # Codex Reviewer Runtime Fallback — Spec
 
+**Depends on**: <!-- none -->
+
 ---
 
 ## Overview
@@ -86,25 +88,30 @@ either halts the gate or proceeds only after explicit human acknowledgement.
 **Steps**:
 1. The Work Item Runner performs the runtime-availability check.
 2. No reachable reviewer is found (all listed reviewers are unavailable).
-3. The runner posts a blocking error comment to the PR:
-   > `ERROR: Step 7a cannot proceed — no internal reviewer in
-   > 'review.internal_reviewers' is reachable from the current runner. Human
-   > acknowledgement is required before converting this PR to non-draft. Either
-   > run Step 7a from a runner that supports all configured reviewers, or
-   > temporarily override 'review.internal_reviewers' via
-   > .tmp/template-config.json.`
+3. The runner posts a Step 7a summary comment to the PR that serves as both
+   the error notification and the BR-7-mandated summary. The comment must include:
+   - Effective reviewer set: none (zero reachable)
+   - Skipped reviewers: all listed reviewers, each with reason `unreachable`
+   - Final verdict: `hard-fail / blocked`
+   - Remediation guidance, for example:
+     > `Step 7a BLOCKED: no internal reviewer is reachable from the current
+     > runner. Effective reviewer set: none. Skipped: [codex (unreachable),
+     > claude (unreachable)]. Verdict: hard-fail. To unblock: run Step 7a from a
+     > runner that supports all configured reviewers, or temporarily override
+     > 'review.internal_reviewers' via .tmp/template-config.json.`
 4. The runner does NOT convert the draft PR to non-draft.
 5. The runner stops and reports the item as "blocked — no reviewer available"
    to the Portfolio Orchestrator or human operator.
 
 **Postconditions**:
 - The draft PR remains in draft state.
-- A blocking error comment is posted to the PR.
+- A Step 7a summary comment (satisfying BR-7) is posted to the PR, listing all
+  skipped reviewers with reason, and the hard-fail verdict.
 - The item is escalated to human for resolution.
 
 **Information shown**:
-- Blocking error comment listing all unreachable reviewers and the policy that
-  triggered the hard stop.
+- Step 7a summary comment listing all listed reviewers as unreachable and the
+  hard-fail verdict, with remediation guidance.
 
 **Actions available**:
 - The human can run Step 7a from a runner context where reviewers are available
@@ -213,7 +220,10 @@ either halts the gate or proceeds only after explicit human acknowledgement.
 - **BR-7 — Step 7a summary comment always posted**: Whether all reviewers ran,
   some were skipped, or the gate hard-failed, a summary comment must be posted
   to the PR before the gate exits. The comment must list: effective reviewer set,
-  skipped reviewers (if any) with reason, and the final verdict.
+  skipped reviewers (if any) with reason, and the final verdict. In the hard-fail
+  case (Use Case 2), the error/blocked comment doubles as the summary comment and
+  must include the same required fields (effective reviewer set = none, skipped
+  reviewers = all listed with reason `unreachable`, verdict = `hard-fail`).
 
 - **BR-8 — Runner identity is the availability proxy**: The runtime-availability
   check is based on the known runner context (e.g., "Claude Code subagent" knows
