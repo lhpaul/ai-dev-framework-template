@@ -98,7 +98,7 @@ Before running this smoke test:
 2. Locate the worktree Write/Edit path discipline reminder after the key responsibilities list.
 3. Open `.cursor/agents/item-orchestrator.md`.
 4. Confirm the identical reminder language is present in the same relative position.
-5. Confirm no other content differs between the two files beyond the `model:` and `tools:` frontmatter fields (which legitimately differ).
+5. Confirm no other content differs between the two files beyond legitimate frontmatter differences: `.claude/agents/item-orchestrator.md` has `model: claude-sonnet-4-6` and a `tools:` line, while `.cursor/agents/item-orchestrator.md` has `model: inherit` and omits the `tools:` field.
 
 **Expected result**: Worktree path reminder is identical in both agent files.
 
