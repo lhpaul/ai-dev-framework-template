@@ -14,7 +14,7 @@ Before running this smoke test:
 - [ ] You are in the repository root (replace the path with your local clone location): `cd <your-local-clone-of-ai-dev-framework-template>`
 - [ ] `gh` CLI is authenticated: `gh auth status`
 - [ ] `shellcheck` is available (optional but recommended): `shellcheck --version`
-- [ ] The implementation branch has been built and `scripts/development-workflow/post-merge-cleanup.sh` reflects the changes from this PR
+- [ ] **The implementation from this plan must already be landed before running this smoke test.** `scripts/development-workflow/post-merge-cleanup.sh` must contain the unified `BRANCH_TYPE`/`ISSUE_NUMBER` extraction, the `update_tracker_status` helper, and the `Spec Ready` / `Plan Ready` / `Merged` status transitions described in the plan. This runbook validates post-implementation behavior; running it against the current `develop` state (where the script is unchanged) will fail Steps 1–5 because the expected output does not yet exist
 - [ ] For Step 5 (tracker update), you have access to a GitHub Projects v2 project with Status options: `Spec Ready`, `Plan Ready`, `Merged`
 
 > **Important**: Steps 1–4 can be run without a real GitHub Projects setup by checking only the log output and return code. Step 5 requires a live project. Use `GITHUB_PROJECT_NUMBER` and `GITHUB_PROJECT_OWNER` environment variables to point at a test project if needed.
@@ -63,7 +63,9 @@ git branch feature/my-legacy-feature
 # We need to be on develop already and not on the test branch.
 # The script exits 0 even if tracker update warns.
 output=$(./scripts/development-workflow/post-merge-cleanup.sh spec/184-smoke-test-dummy 2>&1)
+exit_code=$?
 echo "$output"
+echo "Exit code: $exit_code"
 ```
 
 **Expected result**:
@@ -89,7 +91,9 @@ echo "$output"
 # case; if a previous run removed it, this recreates it).
 git branch implementation-plan/184-smoke-test-dummy 2>/dev/null || true
 output=$(./scripts/development-workflow/post-merge-cleanup.sh implementation-plan/184-smoke-test-dummy 2>&1)
+exit_code=$?
 echo "$output"
+echo "Exit code: $exit_code"
 ```
 
 **Expected result**:
@@ -110,7 +114,9 @@ echo "$output"
 ```bash
 git branch feature/184-smoke-test-dummy 2>/dev/null || true
 output=$(./scripts/development-workflow/post-merge-cleanup.sh feature/184-smoke-test-dummy 2>&1)
+exit_code=$?
 echo "$output"
+echo "Exit code: $exit_code"
 ```
 
 **Expected result**:
@@ -131,7 +137,9 @@ echo "$output"
 ```bash
 git branch feature/my-legacy-feature 2>/dev/null || true
 output=$(./scripts/development-workflow/post-merge-cleanup.sh feature/my-legacy-feature 2>&1)
+exit_code=$?
 echo "$output"
+echo "Exit code: $exit_code"
 ```
 
 **Expected result**:
