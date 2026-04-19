@@ -116,8 +116,11 @@ update_tracker_status() {
   local status_label="$2"
   local owner project_number project_id field_id option_id item_id
 
-  # Resolve owner and project number
-  owner="${GITHUB_PROJECT_OWNER:-$(gh repo view --json owner --jq '.owner.login' 2>/dev/null)}"
+  # Resolve owner and project number. The `|| true` guard on the `gh repo view` fallback
+  # is mandatory: under `set -euo pipefail`, a failed command substitution in a parameter
+  # expansion default would propagate non-zero and abort the script before the
+  # `[ -z "$owner" ]` guard below can emit the warning and return 0.
+  owner="${GITHUB_PROJECT_OWNER:-$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || true)}"
   project_number="${GITHUB_PROJECT_NUMBER:-}"
   if [ -z "$owner" ] || [ -z "$project_number" ]; then
     echo "Warning: GITHUB_PROJECT_OWNER or GITHUB_PROJECT_NUMBER not set; skipping tracker status update."
