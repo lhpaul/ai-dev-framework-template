@@ -1552,14 +1552,16 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
   if [ -n "$unresolved_bot_logins" ]; then
     # Wrap with set +e so a transient GraphQL API failure does not crash the script
     # (all platform reviews have already succeeded; we degrade gracefully on thread-check failure).
+    # Do NOT use 2>&1 — stderr (WARN messages) must remain on stderr so that only the
+    # integer count appears on stdout for clean capture into unresolved_thread_count.
     thread_check_output=""
     thread_check_status=0
     set +e
-    thread_check_output="$(check_unresolved_threads "$pr_number" "$unresolved_bot_logins" "$(repo_slug)" 2>&1)"
+    thread_check_output="$(check_unresolved_threads "$pr_number" "$unresolved_bot_logins" "$(repo_slug)")"
     thread_check_status=$?
     set -e
     if [ "$thread_check_status" -ne 0 ]; then
-      echo "WARN: check_unresolved_threads failed (exit $thread_check_status) — skipping thread gate, treating as 0 unresolved: $thread_check_output" >&2
+      echo "WARN: check_unresolved_threads failed (exit $thread_check_status) — skipping thread gate, treating as 0 unresolved" >&2
       unresolved_thread_count=0
     else
       unresolved_thread_count="$thread_check_output"
