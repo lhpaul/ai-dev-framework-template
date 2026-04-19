@@ -37,16 +37,25 @@ the existing Step 3 structure.
   2. Locates the spec or plan document inside that folder (any `*.md` file in the folder; if
      none exists, returns `unknown`).
   3. Scans the document for exact occurrences of each path in the canonical tool file list (see
-     Business Rules in the spec). "Exact path match" means a plain-string search for the
-     repo-relative path as written in the canonical list — not a substring of a longer path.
-     Implement using `grep -F` (fixed-string) against each canonical path individually so that
-     (for example) `pr-review-loop.sh` does not match `pr-review-loop.sh.bak` or
-     `docs/ai/.../protocols/90-batch-orchestrate-work-protocol.md` matching the glob
-     `docs/ai/development-workflow/protocols/*.md` is handled as an anchored prefix + suffix
-     check, not as a raw glob expansion.
+     Business Rules in the spec). **"Exact path match" means the path must be delimited — it
+     starts and ends on a token boundary (start-of-line, whitespace, or a punctuation character
+     that is not part of the path). A naive `grep -F` (fixed-string) search does substring
+     matching and will incorrectly report a hit for a superstring like `pr-review-loop.sh.bak`.**
+     Implement with a delimiter-aware matcher, for example:
+     - `grep -qE "(^|[^[:alnum:]_./-])${path_regex}([^[:alnum:]_./-]|\$)" "$doc_file"` where
+       `path_regex` is the canonical path with regex metacharacters escaped (or use `grep -P`
+       with `\Q...\E`), **or**
+     - `grep -oF "$path" "$doc_file"` followed by a match-length equality check against the
+       canonical path length (rejects superstring hits).
+
+     The chosen strategy must ensure `pr-review-loop.sh` does **not** match
+     `pr-review-loop.sh.bak`, and the protocols glob does not match `.md.bak`.
   4. For the glob `docs/ai/development-workflow/protocols/*.md`, match lines that contain a
-     path starting with `docs/ai/development-workflow/protocols/` and ending with `.md` (using a
-     grep pattern such as `docs/ai/development-workflow/protocols/[^/]*\.md`).
+     path starting with `docs/ai/development-workflow/protocols/` and ending with `.md` at a
+     path-segment boundary. The regex must anchor on both sides of the matched filename to
+     reject superstrings — for example
+     `(^|[^[:alnum:]_./-])docs/ai/development-workflow/protocols/[^/[:space:]]+\.md([^[:alnum:]_./-]|$)`
+     — so `foo.md.bak` or a filename embedded in a longer identifier does not incorrectly match.
   5. Collects all matched canonical paths into a comma-separated list.
   6. Emits `TOOL_FIX=yes` and `TOOL_FIX_FILES=<list>` when at least one canonical path is
      matched, `TOOL_FIX=no` when none are matched, or `TOOL_FIX=unknown` when no spec/plan
@@ -200,26 +209,44 @@ classify_tool_fix() {
   local dev_path="$1"
   local doc_file matched_paths tool_fix
 
-  # Find the first spec or plan markdown document in the folder
-  doc_file="$(find "$dev_path" -maxdepth 1 -name '*.md' | sort | head -1)"
-  if [ -z "$doc_file" ]; then
+  # Find ALL spec and plan markdown documents in the folder (spec is 1_*_specs.md, plan is
+  # 2_*_implementation-plan.md). Scan every file, not just the first — a tool-fix reference
+  # may appear only in the implementation plan, and scanning only the spec would miss it.
+  local doc_files=()
+  while IFS= read -r f; do
+    doc_files+=("$f")
+  done < <(find "$dev_path" -maxdepth 1 -name '*.md' | sort)
+  if [ "${#doc_files[@]}" -eq 0 ]; then
     printf 'unknown\n'
     return 0
   fi
 
   matched_paths=()
 
+  # DELIMITER BOUNDARY RATIONALE: `grep -F` does substring matching, so a naive
+  # `grep -qF "$path"` would match `scripts/development-workflow/pr-review-loop.sh` against
+  # a line containing `pr-review-loop.sh.bak`. We use an extended regex with explicit
+  # non-path-character boundaries on both sides to reject superstrings.
+  local boundary_lead='(^|[^[:alnum:]_./-])'
+  local boundary_trail='([^[:alnum:]_./-]|$)'
+
   for path in "${CANONICAL_EXACT_PATHS[@]}"; do
-    if grep -qF "$path" "$doc_file"; then
+    # Escape regex metacharacters in the canonical path (dots, dashes, slashes are already
+    # safe; escape any characters that might appear if the canonical list grows).
+    local path_regex
+    path_regex="$(printf '%s' "$path" | sed 's/[][\\.^$*+?(){}|]/\\&/g')"
+    if grep -qE "${boundary_lead}${path_regex}${boundary_trail}" "${doc_files[@]}"; then
       matched_paths+=("$path")
     fi
   done
 
-  # Glob-equivalent: any docs/ai/development-workflow/protocols/*.md reference
-  if grep -qE "${PROTOCOLS_PREFIX}[^/]+\.md" "$doc_file"; then
+  # Glob-equivalent: any docs/ai/development-workflow/protocols/*.md reference, anchored
+  # on both sides to reject .md.bak and other superstrings.
+  local protocols_regex="${boundary_lead}${PROTOCOLS_PREFIX}[^/[:space:]]+\\.md${boundary_trail}"
+  if grep -qE "$protocols_regex" "${doc_files[@]}"; then
     while IFS= read -r match; do
       matched_paths+=("$match")
-    done < <(grep -oE "${PROTOCOLS_PREFIX}[^/]+\.md" "$doc_file" | sort -u)
+    done < <(grep -hoE "${PROTOCOLS_PREFIX}[^/[:space:]]+\\.md" "${doc_files[@]}" | sort -u)
   fi
 
   if [ "${#matched_paths[@]}" -gt 0 ]; then
