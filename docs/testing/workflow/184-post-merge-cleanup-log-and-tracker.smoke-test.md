@@ -11,7 +11,7 @@
 
 Before running this smoke test:
 
-- [ ] You are in the repository root: `cd /path/to/ai-dev-framework-template`
+- [ ] You are in the repository root (replace the path with your local clone location): `cd <your-local-clone-of-ai-dev-framework-template>`
 - [ ] `gh` CLI is authenticated: `gh auth status`
 - [ ] `shellcheck` is available (optional but recommended): `shellcheck --version`
 - [ ] The implementation branch has been built and `scripts/development-workflow/post-merge-cleanup.sh` reflects the changes from this PR
@@ -25,7 +25,7 @@ Before running this smoke test:
 
 | Item | Value |
 |---|---|
-| Repo root | `/path/to/ai-dev-framework-template` |
+| Repo root | Repository root directory |
 | Test branch (spec) | `spec/184-smoke-test-dummy` (create locally, do not push) |
 | Test branch (plan) | `implementation-plan/184-smoke-test-dummy` (create locally, do not push) |
 | Test branch (feature) | `feature/184-smoke-test-dummy` (create locally, do not push) |
