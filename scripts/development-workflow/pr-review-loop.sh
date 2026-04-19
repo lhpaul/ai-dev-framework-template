@@ -1250,6 +1250,103 @@ run_coderabbit_review() {
   return 0
 }
 
+bot_login_for_platform() {
+  # Returns the GitHub bot login for a given review platform name.
+  # Used to filter reviewThreads by bot-authored comments only.
+  case "$1" in
+    coderabbit) printf 'coderabbitai[bot]\n' ;;
+    devin)      printf 'devin-ai-integration[bot]\n' ;;
+    greptile)   printf 'greptile-apps[bot]\n' ;;
+    *)          printf '\n' ;;
+  esac
+}
+
+check_unresolved_threads() {
+  # Enumerate all reviewThreads on a PR via the GitHub GraphQL API (cursor-based
+  # pagination), filter to bot-authored threads, and return the count of unresolved
+  # threads on stdout as a plain integer.
+  #
+  # A thread is considered resolved when:
+  #   - isResolved=true (GitHub resolved it via the Resolve button / mutation), OR
+  #   - the first comment body contains "✅ Addressed" (bot self-marked it resolved)
+  #
+  # Only threads whose first comment was authored by a configured bot login are counted.
+  # Human-authored threads are ignored.
+  #
+  # Arguments:
+  #   $1 pr_number  - PR number (integer)
+  #   $2 bot_logins - space-separated list of bot login strings to check
+  #   $3 repo       - "owner/repo" slug
+  local pr_number="$1"
+  local bot_logins="$2"
+  local repo="$3"
+
+  local owner repo_name
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  local unresolved_count=0
+  local cursor=""
+  local has_next_page="true"
+  local page=0
+  local max_pages=10
+
+  # GraphQL query: paginate reviewThreads 100 at a time, fetch first comment per thread.
+  # Using inline query string to avoid heredoc quoting issues in subshells.
+  local graphql_query
+  graphql_query='query($owner:String!,$repo:String!,$pr:Int!,$cursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor}nodes{id isResolved comments(first:1){nodes{author{login}body}}}}}}}'
+
+  while [ "$has_next_page" = "true" ]; do
+    page=$((page + 1))
+    if [ "$page" -gt "$max_pages" ]; then
+      echo "WARN: check_unresolved_threads: exceeded $max_pages pages for PR #$pr_number — some threads may not have been checked" >&2
+      break
+    fi
+
+    local result
+    if [ -n "$cursor" ]; then
+      result="$(gh api graphql \
+        -f query="$graphql_query" \
+        -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" -f cursor="$cursor" \
+        --jq '.data.repository.pullRequest.reviewThreads')"
+    else
+      result="$(gh api graphql \
+        -f query="$graphql_query" \
+        -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" \
+        --jq '.data.repository.pullRequest.reviewThreads')"
+    fi
+
+    has_next_page="$(printf '%s\n' "$result" | jq -r '.pageInfo.hasNextPage')"
+    cursor="$(printf '%s\n' "$result" | jq -r '.pageInfo.endCursor // empty')"
+
+    local thread_json
+    while IFS= read -r thread_json; do
+      [ -z "${thread_json:-}" ] && continue
+
+      local is_resolved author body
+      is_resolved="$(printf '%s\n' "$thread_json" | jq -r '.isResolved')"
+      author="$(printf '%s\n' "$thread_json" | jq -r '.comments.nodes[0].author.login // ""')"
+      body="$(printf '%s\n' "$thread_json" | jq -r '.comments.nodes[0].body // ""')"
+
+      # Only count threads authored by configured bot logins
+      local is_bot=0
+      local bot_login
+      for bot_login in $bot_logins; do
+        if [ "$author" = "$bot_login" ]; then is_bot=1; break; fi
+      done
+      [ "$is_bot" -eq 0 ] && continue
+
+      # Thread is resolved if isResolved=true (GitHub resolved) or body contains "✅ Addressed"
+      if [ "$is_resolved" = "true" ]; then continue; fi
+      if printf '%s\n' "$body" | grep -q "✅ Addressed"; then continue; fi
+
+      unresolved_count=$((unresolved_count + 1))
+    done < <(printf '%s\n' "$result" | jq -c '.nodes[]')
+  done
+
+  printf '%d\n' "$unresolved_count"
+}
+
 run_platform_review() {
   local platform="$1"
   local pr_number="$2"
@@ -1432,7 +1529,37 @@ if [ -z "$last_platform" ]; then
   print_kv COMMENT_COUNT 0
   print_kv BLOCKING_COUNT 0
   print_kv SUGGESTION_COUNT 0
+  print_kv UNRESOLVED_THREAD_COUNT 0
   exit 0
+fi
+
+# --- Unresolved review thread gate ---
+# When all platforms returned clean or skipped, check whether any bot-authored
+# review threads remain unresolved before declaring the aggregate result clean.
+# This catches Nitpick/Trivial/Minor severity threads that individual platform
+# handlers do not classify as blocking but that still need explicit resolution.
+if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; then
+  # Derive the space-separated list of bot logins from the configured platforms.
+  unresolved_bot_logins=""
+  for _platform in "${platforms[@]}"; do
+    _login="$(bot_login_for_platform "$_platform")"
+    [ -n "$_login" ] && unresolved_bot_logins="$unresolved_bot_logins $_login"
+  done
+  # Trim leading/trailing whitespace
+  unresolved_bot_logins="$(printf '%s\n' "$unresolved_bot_logins" | xargs 2>/dev/null || printf '%s\n' "$unresolved_bot_logins")"
+
+  unresolved_thread_count=0
+  if [ -n "$unresolved_bot_logins" ]; then
+    unresolved_thread_count="$(check_unresolved_threads "$pr_number" "$unresolved_bot_logins" "$(repo_slug)")"
+  fi
+  print_kv UNRESOLVED_THREAD_COUNT "$unresolved_thread_count"
+
+  if [ "$unresolved_thread_count" -gt 0 ]; then
+    aggregate_result="needs_fixes"
+    aggregate_reason="unresolved_review_threads"
+  fi
+else
+  print_kv UNRESOLVED_THREAD_COUNT 0
 fi
 
 print_kv RESULT "$aggregate_result"

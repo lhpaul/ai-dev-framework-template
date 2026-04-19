@@ -532,7 +532,15 @@ Post via `gh pr comment` when the loop reaches a terminal condition (`clean`, `e
 | 2 | greptile | `src/baz.ts` | 5 | First 80 chars... | Unresolved | -- |
 
 **Resolved:** 1 / 2 findings
+
+**Reply-only resolutions (no code fix):** M thread(s) resolved via reply + resolveReviewThread mutation.
+
+| Thread | Author | Concern summary | Rationale |
+|--------|--------|-----------------|-----------|
+| #1 | coderabbitai[bot] | First 60 chars of concern... | First 80 chars of reply rationale... |
 ````
+
+When M=0 (all resolutions were code fixes), omit the "Reply-only resolutions" subsection entirely.
 
 - If no findings were ever raised (clean on first run): post a simpler comment — "No blocking PR feedback was raised by any configured reviewer tool."
 - If result is `skipped` (no platforms configured): do **not** post a summary comment.
@@ -738,6 +746,7 @@ Verify all of the following. If any check fails, **do not report ready** — tre
 | `ready-for-human-review` label | Present in `labels[].name` |
 | `ready-for-regression` label | Present in `labels[].name` for `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`; absent/ignored for `spec/*`, `implementation-plan/*` |
 | No `needs-fixes` label | `needs-fixes` absent from `labels[].name` |
+| All automated-reviewer `reviewThreads` resolved | GraphQL `reviewThreads.nodes[].isResolved=true` (or `✅ Addressed` in the first comment body) for every thread authored by a configured bot login. Evaluate via: `gh api graphql -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login}body}}}}}}}' -f owner=OWNER -f repo=REPO -F pr=NUMBER \| jq '.data.repository.pullRequest.reviewThreads.nodes[] \| select(.isResolved==false)'` — output must be empty for all bot-authored threads. Use cursor-based pagination for PRs with more than 100 threads. |
 | Automated reviewer loop summary | At least one comment whose body contains `"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"` (skip this check only when Step 7 was `skipped` because no review platforms are configured). **This is a hard requirement. Agents applying fixes MUST NOT remove or skip this check — the presence of the comment is the only reliable signal that Step 7 ran to completion. A PR that has `ready-for-human-review` but lacks this comment is in an incomplete state and must re-run Step 7.** |
 | CI checks | All required status checks have `state: SUCCESS` or `conclusion: success` in `statusCheckRollup` (no check in `PENDING`, `FAILURE`, or `ERROR` state) |
 
