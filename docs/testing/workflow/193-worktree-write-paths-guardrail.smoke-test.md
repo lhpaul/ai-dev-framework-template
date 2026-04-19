@@ -86,7 +86,7 @@ Before running this smoke test:
 3. Verify Protocol 90 (`90-batch-orchestrate-work-protocol.md`) was not changed by this PR.
 4. Verify `scripts/development-workflow/post-merge-cleanup.sh` and `scripts/development-workflow/pr-review-loop.sh` were not changed by this PR.
 
-**Expected result**: Zero diffs outside the three targeted files (Protocol 91 Step 3, `.claude/agents/item-orchestrator.md`, `.cursor/agents/item-orchestrator.md`).
+**Expected result**: Zero diffs outside the targeted files (Protocol 91 Step 3, `.claude/agents/item-orchestrator.md`, `.cursor/agents/item-orchestrator.md`, and `CHANGELOG.md`).
 
 ---
 
@@ -95,7 +95,7 @@ Before running this smoke test:
 **Maps to**: Acceptance Criterion for dual-agent consistency
 
 1. Open `.claude/agents/item-orchestrator.md`.
-2. Locate the worktree Write/Edit path discipline reminder in the Notes block.
+2. Locate the worktree Write/Edit path discipline reminder after the key responsibilities list.
 3. Open `.cursor/agents/item-orchestrator.md`.
 4. Confirm the identical reminder language is present in the same relative position.
 5. Confirm no other content differs between the two files beyond the `model:` and `tools:` frontmatter fields (which legitimately differ).
