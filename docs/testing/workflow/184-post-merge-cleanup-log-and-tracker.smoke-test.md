@@ -83,7 +83,10 @@ echo "$output"
 **Maps to**: Acceptance Criteria 2 and 5
 
 ```bash
-# Re-create the branch (it was NOT deleted in Step 1 since we passed spec/ above)
+# Re-create the implementation-plan branch only if it does not already exist
+# (Step 1 deleted the spec/* branch, so the implementation-plan/* one should
+# already be present from its creation above — the command is a no-op in that
+# case; if a previous run removed it, this recreates it).
 git branch implementation-plan/184-smoke-test-dummy 2>/dev/null || true
 output=$(./scripts/development-workflow/post-merge-cleanup.sh implementation-plan/184-smoke-test-dummy 2>&1)
 echo "$output"
@@ -169,7 +172,7 @@ git status --porcelain
 git branch --show-current
 ```
 
-**Expected result**: Output is empty (no uncommitted changes). Current branch is `develop`.
+**Expected result**: `git status --porcelain` outputs nothing (no uncommitted changes), and `git branch --show-current` outputs `develop`.
 
 ---
 
