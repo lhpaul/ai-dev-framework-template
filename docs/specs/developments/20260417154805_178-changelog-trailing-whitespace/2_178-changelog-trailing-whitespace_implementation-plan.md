@@ -7,11 +7,11 @@
 
 ## Summary
 
-**Approach**: Add an explicit, actionable CHANGELOG format verification instruction to every implementation path in `03-implement-development-protocol.md` (Full Pipeline Step 6, and equivalent CHANGELOG update steps in the Refactor, Fast Track, and Hotfix paths). Concurrently, add a matching rule to the developer agent's key rules section in `.claude/agents/developer.md` so the check is surfaced at agent initialization. Both changes are pure documentation and protocol text edits — no scripts, hooks, or CI changes are needed.
+**Approach**: Add an explicit, actionable CHANGELOG format verification instruction to every implementation path in `03-implement-development-protocol.md` (Full Pipeline Step 6, and equivalent CHANGELOG update steps in the Refactor, Fast Track, and Hotfix paths). Concurrently, add a matching rule to the developer agent's key rules section in **both** `.claude/agents/developer.md` **and** `.cursor/agents/developer.md` (the two agent files share an identical `Key rules:` section and must stay in sync) so the check is surfaced at agent initialization for both runners. All changes are pure documentation and protocol text edits — no scripts, hooks, or CI changes are needed.
 
 **Estimated complexity**: S
 
-**Rationale**: Only two files need targeted text additions. No code, schema, or CI configuration changes are required. The change is well-bounded and each insertion point is clearly identified by the spec.
+**Rationale**: Three files need targeted text additions — the protocol file plus the two parallel agent definitions that share an identical key-rules section. No code, schema, or CI configuration changes are required. The change is well-bounded and each insertion point is clearly identified by the spec.
 
 **Dependencies**: 173-markdown-lint-plan-spec-docs (merged — provides the durable CI enforcement gate that coexists with the agent-level check introduced here)
 
@@ -93,7 +93,7 @@ No other project docs (`docs/project/`, `docs/best-practices/`, `AGENTS.md`, etc
    > ```bash
    > git diff --cached CHANGELOG.md | grep '^+' | grep -P '\s+$'
    > ```
-   > If this returns output, fix the flagged lines before committing.
+   > If this returns output, inspect each flagged line: leave intentional two-space Markdown hard line breaks (exactly two trailing spaces followed by a newline) intact, and fix any other trailing whitespace (e.g., a single trailing space, a tab, or three or more trailing spaces) before committing.
 
 5. Edit **both** `.claude/agents/developer.md` **and** `.cursor/agents/developer.md` (both
    files contain an identical `Key rules:` bullet list that must stay in sync per the
