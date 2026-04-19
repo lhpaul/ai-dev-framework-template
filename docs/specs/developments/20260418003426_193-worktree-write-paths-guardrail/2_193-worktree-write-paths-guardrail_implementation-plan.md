@@ -148,10 +148,10 @@ Append after the existing key responsibilities list (after the last bullet point
 
 3. **Update `.cursor/agents/item-orchestrator.md`** — Apply the identical worktree Write/Edit path discipline bullet in the same relative position as step 2. The two agent files must be updated in the same commit to ensure they stay in sync.
 
-4. **Commit** — Single commit with all three files: `fix(item-orchestrator): add Write/Edit path guardrail for isolated worktrees`
-
-5. **Update CHANGELOG** — Add an entry under `[Unreleased]`:
+4. **Update CHANGELOG** — Add an entry under `[Unreleased]` in `CHANGELOG.md`:
    - Under `Fixed`: `fix(item-orchestrator): item-orchestrator agents running in isolated git worktrees now receive an explicit reminder that all Write/Edit tool calls must target paths under the resolved worktree path, not the main repo root; same guardrail added to both Claude Code and Cursor agent prompts (#193)`
+
+5. **Commit** — Single commit with all four files (Protocol 91, `.claude/agents/item-orchestrator.md`, `.cursor/agents/item-orchestrator.md`, `CHANGELOG.md`): `fix(item-orchestrator): add Write/Edit path guardrail for isolated worktrees`
 
 6. **Push and open draft PR** targeting `develop`
 
