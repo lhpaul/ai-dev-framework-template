@@ -89,9 +89,9 @@ No other project docs (`docs/project/`, `docs/best-practices/`, `AGENTS.md`, etc
    > 1. **Trailing whitespace**: No line in the written entry should end with one or more whitespace characters. Note: intentional two-space Markdown hard line breaks (`<text>  ` with exactly two trailing spaces followed by a newline) are not trailing whitespace and must not be removed.
    > 2. **Trailing blank lines**: The entry must not end with two or more consecutive blank lines.
    >
-   > A quick shell check for trailing whitespace on staged CHANGELOG lines:
+   > A quick shell check for trailing whitespace on pending CHANGELOG changes (run **before** `git add`, per the "before staging" timing requirement):
    > ```bash
-   > git diff --cached CHANGELOG.md | grep '^+' | grep -P '\s+$'
+   > git diff CHANGELOG.md | grep '^+' | grep -P '\s+$'
    > ```
    > If this returns output, inspect each flagged line: leave intentional two-space Markdown hard line breaks (exactly two trailing spaces followed by a newline) intact, and fix any other trailing whitespace (e.g., a single trailing space, a tab, or three or more trailing spaces) before committing.
 
