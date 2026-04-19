@@ -145,10 +145,6 @@ Each checkbox maps to an acceptance criterion from the spec.
 
 None — this feature is documentation and protocol text only. No runtime seed data is required.
 
-| Entity | Scenario | How to load |
-|---|---|---|
-| N/A | N/A | N/A |
-
 ---
 
 ## Troubleshooting
@@ -156,7 +152,7 @@ None — this feature is documentation and protocol text only. No runtime seed d
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `grep` returns fewer than 4 matches for "CHANGELOG format verification" | One or more paths were missed during implementation | Re-read each path's Step 6 and add the missing sub-step |
-| Developer agent key rule is missing | `.claude/agents/developer.md` was not updated | Add the trailing-whitespace key rule to the key rules bullet list |
+| Developer agent key rule is missing or mismatched between agent files | `.claude/agents/developer.md` and/or `.cursor/agents/developer.md` was not updated, or wording diverged between the two | Add/fix the trailing-whitespace key rule in both files and ensure the bullet text is identical |
 | Existing CHANGELOG instructions are missing after the change | Incorrect edit replaced rather than appended | Restore from git history and re-apply the change as an append |
 
 ---
