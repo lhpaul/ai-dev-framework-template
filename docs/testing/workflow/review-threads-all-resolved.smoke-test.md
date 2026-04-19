@@ -38,10 +38,15 @@ Before running this smoke test:
 
    ```bash
    gh api graphql \
-     -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login}body}}}}}}}' \
+     -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100){nodes{id isResolved comments(first:1){nodes{author{login}body}}}}}}}' \
      -f owner="<owner>" -f repo="<repo>" -F pr=<pr_number> \
-     --jq '.data.repository.pullRequest.reviewThreads.nodes[] | {isResolved, author: .comments.nodes[0].author.login}'
+     --jq '.data.repository.pullRequest.reviewThreads.nodes[] | {id, isResolved, author: .comments.nodes[0].author.login}'
    ```
+
+   > **Note**: This query returns only the first 100 review threads; for smoke
+   > testing this is sufficient. For PRs with >100 threads, use the paginated
+   > implementation in `pr-review-loop.sh` or repeat the query with cursor-based
+   > pagination.
 
 3. Confirm at least one thread is `isResolved: false` and authored by `coderabbitai[bot]`.
 
@@ -134,6 +139,11 @@ Before running this smoke test:
      -f owner="<owner>" -f repo="<repo>" -F pr=<pr_number> \
      --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | select(.comments.nodes[0].author.login | IN("coderabbitai[bot]","devin-ai-integration[bot]","greptile-apps[bot]")) | select(.comments.nodes[0].body | contains("✅ Addressed") | not)] | length'
    ```
+
+   > **Note**: This query returns only the first 100 review threads; it is a
+   > simplified smoke-test check. For PRs with >100 threads, use the paginated
+   > implementation in `pr-review-loop.sh` or repeat the query with cursor-based
+   > pagination.
 
 3. Confirm the output is > 0 (at least one unresolved bot thread).
 4. Confirm the protocol's Step 8c logic would reject `ready-for-human-review` for this PR.

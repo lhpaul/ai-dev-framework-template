@@ -61,7 +61,7 @@ No database seed data required. Testing relies on a real GitHub PR with controll
 
 ## Documentation Updates
 
-The protocol document changes (Step 8c in Protocol 91, Step 5.1 in Protocol 90, and the Step 7 summary template) are themselves deliverables listed in the Layer-by-Layer Changes section above and must be executed during implementation. No additional project docs in `docs/project/`, `docs/best-practices/`, or `AGENTS.md` are affected by this change.
+The protocol document changes (Step 8c in Protocol 91, Step 5.1 in Protocol 90, and the Step 7 summary template) are themselves deliverables listed in the Layer-by-Layer Changes section above and must be executed during implementation. Additionally, `CHANGELOG.md` must be updated with an entry under `[Unreleased]` as part of the implementation (Implementation Order Step 10) per standard practice for feature PRs merged into `develop`. No other project docs in `docs/project/`, `docs/best-practices/`, or `AGENTS.md` are affected by this change.
 
 ---
 
@@ -129,7 +129,7 @@ check_unresolved_threads() {
     local result
     result="$(gh api graphql \
       -f query='query($owner:String!,$repo:String!,$pr:Int!,$cursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor}nodes{id isResolved comments(first:1){nodes{author{login}body}}}}}}}' \
-      -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" \
+      -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" ${cursor:+-f cursor="$cursor"} \
       --jq '.data.repository.pullRequest.reviewThreads')"
 
     has_next_page="$(printf '%s\n' "$result" | jq -r '.pageInfo.hasNextPage')"
