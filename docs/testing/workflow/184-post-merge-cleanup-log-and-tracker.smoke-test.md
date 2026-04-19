@@ -149,8 +149,9 @@ echo "$output"
 git branch feature/184-smoke-test-dummy 2>/dev/null || true
 output=$(GITHUB_PROJECT_NUMBER="" GITHUB_PROJECT_OWNER="" \
   ./scripts/development-workflow/post-merge-cleanup.sh feature/184-smoke-test-dummy 2>&1)
+exit_code=$?
 echo "$output"
-echo "Exit code: $?"
+echo "Exit code: $exit_code"
 ```
 
 **Expected result**:
