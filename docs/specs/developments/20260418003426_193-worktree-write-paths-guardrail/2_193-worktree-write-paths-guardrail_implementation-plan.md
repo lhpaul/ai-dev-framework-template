@@ -127,16 +127,15 @@ A pre-tool-use hook can enforce the Write/Edit path rule automatically:
 
 ### `.claude/agents/item-orchestrator.md` reminder addition
 
-Append after the existing key responsibilities list:
+Append after the existing key responsibilities list (after the last bullet point, before the end of the file):
 
 ```markdown
-Notes:
-- Agent threads always have their cwd reset between bash calls, as a result please only use absolute file paths.
-- In your final response, share file paths (always absolute, never relative) that are relevant to the task. Include code snippets only when the exact text is load-bearing (e.g., a bug you found, a function signature the caller asked for) — do not recap code you merely read.
-- For clear communication with the user the assistant MUST avoid using emojis.
-- Do not use a colon before tool calls. Text like "Let me read the file:" followed by a read tool call should just be "Let me read the file." with a period.
-- Do NOT Write report/summary/findings/analysis .md files. Return findings directly as your final assistant message — the parent agent reads your text output, not files you create.
-- **Worktree Write/Edit path discipline (BATCH_CONTEXT=true only)**: When running inside an isolated worktree, all `Write` and `Edit` tool calls must target paths under the resolved `<worktree-path>/...`. Any absolute path that does NOT begin with `<worktree-path>/` is a main-repo path — correct it before calling the tool. Include the literal resolved `<worktree-path>` value in every stage-agent handoff so each agent can validate its own paths independently.
+- **Worktree Write/Edit path discipline (BATCH_CONTEXT=true only)**: When running inside
+  an isolated worktree, all `Write` and `Edit` tool calls must target paths under the
+  resolved `<worktree-path>/...`. Any absolute path that does NOT begin with
+  `<worktree-path>/` is a main-repo path — correct it before calling the tool. Include
+  the literal resolved `<worktree-path>` value in every stage-agent handoff so each
+  dispatched agent can validate its own paths independently.
 ```
 
 ---
@@ -145,9 +144,9 @@ Notes:
 
 1. **Update Protocol 91 Step 3** — In `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`, locate the "Critical safety rule — never modify the main working tree's branch" bullet block inside the Step 3 worktree isolation section. Immediately after that block (before the "4. Suggested worktree path" item), insert the "Write and Edit paths inside a worktree" critical safety rule prose and the optional pre-tool-use hook design block (see Code Samples above).
 
-2. **Update `.claude/agents/item-orchestrator.md`** — Append the "Notes" block (including the worktree Write/Edit path discipline bullet) after the existing key responsibilities list in the agent file (see Code Samples above). Keep the `---` frontmatter and `tools:` line unchanged.
+2. **Update `.claude/agents/item-orchestrator.md`** — Append the worktree Write/Edit path discipline bullet to the existing key responsibilities list (after the last existing bullet, before the end of the file). See Code Samples above for the exact bullet text. Keep the `---` frontmatter and `tools:` line unchanged.
 
-3. **Update `.cursor/agents/item-orchestrator.md`** — Apply the identical Notes block addition in the same relative position as step 2. The two agent files must be updated in the same commit to ensure they stay in sync.
+3. **Update `.cursor/agents/item-orchestrator.md`** — Apply the identical worktree Write/Edit path discipline bullet in the same relative position as step 2. The two agent files must be updated in the same commit to ensure they stay in sync.
 
 4. **Commit** — Single commit with all three files: `fix(item-orchestrator): add Write/Edit path guardrail for isolated worktrees`
 
