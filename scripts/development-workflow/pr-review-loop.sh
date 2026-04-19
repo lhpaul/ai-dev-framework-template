@@ -1550,13 +1550,30 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
 
   unresolved_thread_count=0
   if [ -n "$unresolved_bot_logins" ]; then
-    unresolved_thread_count="$(check_unresolved_threads "$pr_number" "$unresolved_bot_logins" "$(repo_slug)")"
+    # Wrap with set +e so a transient GraphQL API failure does not crash the script
+    # (all platform reviews have already succeeded; we degrade gracefully on thread-check failure).
+    thread_check_output=""
+    thread_check_status=0
+    set +e
+    thread_check_output="$(check_unresolved_threads "$pr_number" "$unresolved_bot_logins" "$(repo_slug)" 2>&1)"
+    thread_check_status=$?
+    set -e
+    if [ "$thread_check_status" -ne 0 ]; then
+      echo "WARN: check_unresolved_threads failed (exit $thread_check_status) — skipping thread gate, treating as 0 unresolved: $thread_check_output" >&2
+      unresolved_thread_count=0
+    else
+      unresolved_thread_count="$thread_check_output"
+    fi
   fi
   print_kv UNRESOLVED_THREAD_COUNT "$unresolved_thread_count"
 
   if [ "$unresolved_thread_count" -gt 0 ]; then
     aggregate_result="needs_fixes"
     aggregate_reason="unresolved_review_threads"
+    # Increment total_blocking_count so BLOCKING_COUNT reflects the unresolved threads.
+    # No BLOCKING_N_* entries are emitted for thread findings — callers must use
+    # REASON=unresolved_review_threads and UNRESOLVED_THREAD_COUNT to handle this case.
+    total_blocking_count=$((total_blocking_count + unresolved_thread_count))
   fi
 else
   print_kv UNRESOLVED_THREAD_COUNT 0
