@@ -33,6 +33,78 @@ parallel_safe_for_action() {
   esac
 }
 
+# Canonical tool file list for tool-fix classification.
+# Each entry is checked with a delimiter-aware regex to reject superstrings.
+CANONICAL_EXACT_PATHS=(
+  "scripts/development-workflow/pr-review-loop.sh"
+  "scripts/development-workflow/pr-ci-loop.sh"
+  "scripts/development-workflow/batch-merge.sh"
+  "scripts/development-workflow/post-merge-cleanup.sh"
+  ".ai-dev-workflow.yaml"
+)
+PROTOCOLS_PREFIX="docs/ai/development-workflow/protocols/"
+
+# classify_tool_fix <development-folder-path>
+#
+# Scans ALL *.md files in the development folder for exact-path references to
+# the canonical tool file list.  Uses delimiter-aware regex boundaries to reject
+# superstrings (e.g., pr-review-loop.sh.bak must NOT match pr-review-loop.sh).
+#
+# Prints one of:
+#   unknown           — no *.md file found in the folder
+#   no                — *.md files found but no canonical path matched
+#   yes<newline><comma-list>  — at least one canonical path matched; <comma-list>
+#                               is the matched paths separated by commas
+classify_tool_fix() {
+  local dev_path="$1"
+  local doc_files=()
+
+  # Collect all *.md files in the folder (maxdepth 1 — do not recurse).
+  while IFS= read -r f; do
+    doc_files+=("$f")
+  done < <(find "$dev_path" -maxdepth 1 -name '*.md' | sort)
+
+  if [ "${#doc_files[@]}" -eq 0 ]; then
+    printf 'unknown\n'
+    return 0
+  fi
+
+  local matched_paths=()
+
+  # DELIMITER BOUNDARY RATIONALE: grep -F does substring matching, so a naive
+  # grep -qF "$path" would match "pr-review-loop.sh" against a line containing
+  # "pr-review-loop.sh.bak".  We use an extended-regex with explicit
+  # non-path-character boundaries on both sides to reject superstrings.
+  local boundary_lead='(^|[^[:alnum:]_./-])'
+  local boundary_trail='([^[:alnum:]_./-]|$)'
+
+  for path in "${CANONICAL_EXACT_PATHS[@]}"; do
+    # Escape regex metacharacters that could appear in the canonical path.
+    local path_regex
+    path_regex="$(printf '%s' "$path" | sed 's/[][\\.^$*+?(){}|]/\\&/g')"
+    if grep -qE "${boundary_lead}${path_regex}${boundary_trail}" "${doc_files[@]}"; then
+      matched_paths+=("$path")
+    fi
+  done
+
+  # Glob-equivalent: any docs/ai/development-workflow/protocols/*.md reference,
+  # anchored on both sides to reject .md.bak and other superstrings.
+  local protocols_regex
+  protocols_regex="${boundary_lead}${PROTOCOLS_PREFIX}[^/[:space:]]+\\.md${boundary_trail}"
+  if grep -qE "$protocols_regex" "${doc_files[@]}"; then
+    while IFS= read -r match; do
+      matched_paths+=("$match")
+    done < <(grep -hoE "${PROTOCOLS_PREFIX}[^/[:space:]]+\\.md" "${doc_files[@]}" | sort -u)
+  fi
+
+  if [ "${#matched_paths[@]}" -gt 0 ]; then
+    local IFS=','
+    printf 'yes\n%s\n' "${matched_paths[*]}"
+  else
+    printf 'no\n'
+  fi
+}
+
 cd_workflow_repo_root
 
 if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
@@ -73,8 +145,27 @@ for development_path in "${development_paths[@]}"; do
   fi
 
   slug="$(basename "$development_path" | sed 's/^[0-9]\{14\}_//')"
+
+  # Classify tool-fix BEFORE workflow-next-action.sh so TOOL_FIX is always
+  # emitted, even for folders where next-action exits non-zero (e.g., no
+  # spec/plan yet).
+  tool_fix_output="$(classify_tool_fix "$development_path")"
+  tool_fix="$(printf '%s\n' "$tool_fix_output" | head -1)"
+  tool_fix_files=""
+  if [ "$tool_fix" = "yes" ]; then
+    tool_fix_files="$(printf '%s\n' "$tool_fix_output" | sed -n '2p')"
+  fi
+
   if ! next_action_output="$("$SCRIPT_DIR/workflow-next-action.sh" --development "$development_path" 2>&1)"; then
+    # next-action failed (e.g., no merged spec/plan PR yet).  Emit an abbreviated
+    # block so the orchestrator still sees TOOL_FIX for this folder.
     echo "Skipping $development_path: $next_action_output" >&2
+    print_kv TARGET "development:$development_path"
+    print_kv DEVELOPMENT_PATH "$development_path"
+    print_kv SLUG "$slug"
+    print_kv TOOL_FIX "$tool_fix"
+    [ "$tool_fix" = "yes" ] && print_kv TOOL_FIX_FILES "$tool_fix_files"
+    echo
     continue
   fi
 
@@ -97,5 +188,7 @@ for development_path in "${development_paths[@]}"; do
   print_kv NEXT_ACTION "$next_action"
   print_kv BATCH_HINT "$(batch_hint_for_action "$next_action")"
   print_kv PARALLEL_SAFE "$(parallel_safe_for_action "$next_action")"
+  print_kv TOOL_FIX "$tool_fix"
+  [ "$tool_fix" = "yes" ] && print_kv TOOL_FIX_FILES "$tool_fix_files"
   echo
 done
