@@ -1,7 +1,7 @@
 # fix(post-merge-cleanup): Contradictory Log Output and Missing Tracker Status Update — Implementation Plan
 
 **Spec**: [1_post-merge-cleanup-log-and-tracker_specs.md](1_post-merge-cleanup-log-and-tracker_specs.md)
-**Smoke test runbook**: [../../testing/workflow/184-post-merge-cleanup-log-and-tracker.smoke-test.md](../../../testing/workflow/184-post-merge-cleanup-log-and-tracker.smoke-test.md)
+**Smoke test runbook**: [../../../testing/workflow/184-post-merge-cleanup-log-and-tracker.smoke-test.md](../../../testing/workflow/184-post-merge-cleanup-log-and-tracker.smoke-test.md)
 
 ---
 
