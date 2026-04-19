@@ -28,7 +28,7 @@
   - **Hotfix Path 4, Step 6** (`### Step 6: Update CHANGELOG`): add the same verification instruction.
   - The instruction must cover both defect patterns (trailing whitespace on any line, two or more consecutive blank lines at the end of the entry), state that intentional two-space Markdown hard line breaks must not be treated as violations, and clarify that the check runs after writing the entry and before staging.
 
-- [ ] `.claude/agents/developer.md` — Add a key rule that states the CHANGELOG entry must have no trailing whitespace or trailing blank lines before commit, alongside the existing CHANGELOG update reminder.
+- [ ] `.claude/agents/developer.md` and `.cursor/agents/developer.md` — Add the same key rule to the `Key rules:` bullet list of **both** files (they share an identical key-rules section and must stay in sync): the CHANGELOG entry must have no trailing whitespace or trailing blank lines before commit, alongside the existing CHANGELOG update reminder.
 
 ---
 
@@ -39,7 +39,7 @@
 **Key scenarios to test**:
 
 1. Verify that `03-implement-development-protocol.md` contains the CHANGELOG verification instruction in all four implementation paths (Full Pipeline Step 6, Refactor Step 6, Fast Track Step 6, Hotfix Step 6) — maps to AC1, AC3, AC4.
-2. Verify that `.claude/agents/developer.md` key rules section mentions no trailing whitespace or trailing blank lines — maps to AC2.
+2. Verify that **both** `.claude/agents/developer.md` **and** `.cursor/agents/developer.md` key rules sections mention no trailing whitespace or trailing blank lines, and that both bullets are worded identically — maps to AC2.
 3. Verify the changes do not remove or conflict with any existing CHANGELOG update instructions — maps to AC5.
 
 **Smoke test runbook**: [`docs/testing/workflow/178-changelog-trailing-whitespace.smoke-test.md`](../../../testing/workflow/178-changelog-trailing-whitespace.smoke-test.md)
@@ -55,7 +55,7 @@ None — this feature is documentation/protocol-only. No runtime seed data is re
 ## Documentation Updates
 
 - [ ] `docs/ai/development-workflow/protocols/03-implement-development-protocol.md` — Updated as the primary deliverable (all four CHANGELOG update steps). No further documentation updates are needed beyond what is listed under Layer-by-Layer Changes.
-- [ ] `.claude/agents/developer.md` — Updated as the secondary deliverable (key rules section).
+- [ ] `.claude/agents/developer.md` and `.cursor/agents/developer.md` — Both updated as the secondary deliverable (the shared key rules section must receive the same new bullet in each file).
 
 No other project docs (`docs/project/`, `docs/best-practices/`, `AGENTS.md`, etc.) are affected by this change.
 
@@ -74,7 +74,7 @@ No other project docs (`docs/project/`, `docs/best-practices/`, `AGENTS.md`, etc
 ## Implementation Order
 
 1. Read the current text of `03-implement-development-protocol.md` in full, noting the exact location of Step 6 / the CHANGELOG update step in each of the four paths (Full Pipeline, Refactor, Fast Track, Hotfix).
-2. Read the current text of `.claude/agents/developer.md` in full, noting the key rules section.
+2. Read the current text of `.claude/agents/developer.md` and `.cursor/agents/developer.md` in full, noting the key rules section in each (they are currently identical and must stay so).
 3. **Cross-reference consistency check**: grep for `CHANGELOG` and `trailing` across `docs/`, `.claude/`, `.cursor/`, `.codex/`, `AGENTS.md`, `REVIEW.md` to ensure no other location mentions a contradictory rule or would also need updating.
 4. Edit `03-implement-development-protocol.md`:
    - In **Full Pipeline Path 1, Step 6**: append the verification sub-step immediately after the existing bullet list.
@@ -95,13 +95,19 @@ No other project docs (`docs/project/`, `docs/best-practices/`, `AGENTS.md`, etc
    > ```
    > If this returns output, fix the flagged lines before committing.
 
-5. Edit `.claude/agents/developer.md`:
+5. Edit **both** `.claude/agents/developer.md` **and** `.cursor/agents/developer.md` (both
+   files contain an identical `Key rules:` bullet list that must stay in sync per the
+   protocol's Quality Rule on cross-reference consistency):
    - In the key rules section (the bullet list after `Key rules:`), add the following bullet:
      > - CHANGELOG entries must have no trailing whitespace and no trailing blank lines before commit; verify in-place after writing the entry and before staging (intentional two-space Markdown hard line breaks are exempt)
 
-6. Run the markdown lint check on modified files to confirm no lint violations are introduced:
+6. Run the markdown lint check on the files actually modified in steps 4–5 to confirm no
+   lint violations are introduced:
    ```bash
-   npx markdownlint-cli2 "docs/specs/developments/20260417154805_178-changelog-trailing-whitespace/*.md" "docs/testing/workflow/178-changelog-trailing-whitespace.smoke-test.md"
+   npx markdownlint-cli2 \
+     "docs/ai/development-workflow/protocols/03-implement-development-protocol.md" \
+     ".claude/agents/developer.md" \
+     ".cursor/agents/developer.md"
    ```
 7. Update CHANGELOG under `[Unreleased]` with a `Fixed` entry.
 8. Commit with message: `fix(developer-agent): add CHANGELOG trailing-whitespace verification step`
