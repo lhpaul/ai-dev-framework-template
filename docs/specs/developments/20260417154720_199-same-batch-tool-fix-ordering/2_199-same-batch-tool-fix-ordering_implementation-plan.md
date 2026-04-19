@@ -52,9 +52,16 @@ the existing Step 3 structure.
      matched, `TOOL_FIX=no` when none are matched, or `TOOL_FIX=unknown` when no spec/plan
      document exists.
 
-- [ ] In `workflow-batch-plan.sh`, call `classify_tool_fix` for each development path inside
-  the main loop (after the existing `print_kv PARALLEL_SAFE` line) and emit the result using
-  `print_kv`:
+- [ ] In `workflow-batch-plan.sh`, call `classify_tool_fix` for each development path **before**
+  the `workflow-next-action.sh` call (i.e., between the `slug=` computation and the
+  `if ! next_action_output=...` guard, currently around lines 75–76). Running it earlier
+  ensures `TOOL_FIX` is emitted even for directories without spec/plan files — where
+  `workflow-next-action.sh` exits non-zero and the current code `continue`s silently. When
+  `workflow-next-action.sh` fails, replace the bare `continue` with an abbreviated output
+  block that emits `TARGET`, `DEVELOPMENT_PATH`, `SLUG`, and the TOOL_FIX line(s) before
+  continuing to the next path. This keeps spec AC 13 (`TOOL_FIX=unknown` for directories
+  without spec/plan documents) satisfiable. Emit rules for the TOOL_FIX lines (applies in
+  both the happy path and the next-action-failed path):
   - `print_kv TOOL_FIX "$tool_fix"` always.
   - `print_kv TOOL_FIX_FILES "$tool_fix_files"` only when `TOOL_FIX=yes` (omit the line
     entirely for `no` and `unknown` to keep output compact).

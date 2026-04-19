@@ -174,7 +174,7 @@ Verify that a path like `scripts/development-workflow/pr-review-loop.sh.bak` doe
 ```bash
 mkdir -p .tmp/smoke-199/20200101000009_ac3-superstring
 cat > .tmp/smoke-199/20200101000009_ac3-superstring/1_ac3b_specs.md <<'EOF'
-# References pr-review-loop.sh.bak (a superstring, not the canonical path)
+# References scripts/development-workflow/pr-review-loop.sh.bak (a superstring, not the canonical path)
 EOF
 WORKFLOW_SKIP_FETCH=1 ./scripts/development-workflow/workflow-batch-plan.sh \
   .tmp/smoke-199/20200101000009_ac3-superstring 2>/dev/null || true
