@@ -124,16 +124,21 @@ update_tracker_status() {
     return 0
   fi
 
-  project_id=$(gh project view "$project_number" --owner "$owner" --format json 2>/dev/null | jq -r '.id // empty')
+  # Note: each `gh`/`jq` pipeline below is wrapped with `|| true` so that, under the
+  # script's `set -euo pipefail`, a failed API call (auth missing, rate-limit, project not
+  # found, etc.) produces an empty string the `[ -z ... ]` guard can detect and handle —
+  # rather than aborting the entire `post-merge-cleanup.sh` script before reaching the
+  # warn-and-continue fallback.
+  project_id=$(gh project view "$project_number" --owner "$owner" --format json 2>/dev/null | jq -r '.id // empty' || true)
   if [ -z "$project_id" ]; then
     echo "Warning: could not resolve project ID for project #${project_number}; skipping tracker status update."
     return 0
   fi
 
   # Resolve Status field ID and option ID for the requested label
-  field_json=$(gh project field-list "$project_number" --owner "$owner" --format json 2>/dev/null)
-  field_id=$(echo "$field_json" | jq -r '.fields[] | select(.name == "Status") | .id // empty')
-  option_id=$(echo "$field_json" | jq -r --arg label "$status_label" '.fields[] | select(.name == "Status") | .options[] | select(.name == $label) | .id // empty')
+  field_json=$(gh project field-list "$project_number" --owner "$owner" --format json 2>/dev/null || true)
+  field_id=$(printf '%s' "$field_json" | jq -r '.fields[] | select(.name == "Status") | .id // empty' || true)
+  option_id=$(printf '%s' "$field_json" | jq -r --arg label "$status_label" '.fields[] | select(.name == "Status") | .options[] | select(.name == $label) | .id // empty' || true)
   if [ -z "$field_id" ] || [ -z "$option_id" ]; then
     echo "Warning: could not resolve Status field or option '${status_label}'; skipping tracker status update."
     return 0
@@ -141,7 +146,7 @@ update_tracker_status() {
 
   # Resolve project item ID for the issue
   item_id=$(gh project item-list "$project_number" --owner "$owner" --format json 2>/dev/null \
-    | jq -r --argjson num "$issue_number" '.items[] | select(.content.number == $num) | .id // empty')
+    | jq -r --argjson num "$issue_number" '.items[] | select(.content.number == $num) | .id // empty' || true)
   if [ -z "$item_id" ]; then
     echo "Warning: issue #${issue_number} not found in project #${project_number}; skipping tracker status update."
     return 0
