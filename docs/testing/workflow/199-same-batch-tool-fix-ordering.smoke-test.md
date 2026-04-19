@@ -166,7 +166,7 @@ WORKFLOW_SKIP_FETCH=1 ./scripts/development-workflow/workflow-batch-plan.sh \
 **Expected result**:
 - Output contains `TOOL_FIX=unknown`
 
-### Step 9: AC3 — Exact-path matching (no false positives from superstrings)
+### Step 9: AC1 — Exact-path matching (no false positives from superstrings)
 
 Verify that a path like `scripts/development-workflow/pr-review-loop.sh.bak` does NOT trigger
 `TOOL_FIX=yes`:
