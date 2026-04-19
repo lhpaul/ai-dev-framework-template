@@ -1,7 +1,7 @@
 # Same-Batch Tool-Fix Ordering Hazard Detection — Implementation Plan
 
 **Spec**: [1_199-same-batch-tool-fix-ordering_specs.md](1_199-same-batch-tool-fix-ordering_specs.md)
-**Smoke test runbook**: [docs/testing/workflow/199-same-batch-tool-fix-ordering.smoke-test.md](../../../../testing/workflow/199-same-batch-tool-fix-ordering.smoke-test.md)
+**Smoke test runbook**: [docs/testing/workflow/199-same-batch-tool-fix-ordering.smoke-test.md](../../../testing/workflow/199-same-batch-tool-fix-ordering.smoke-test.md)
 
 ---
 
@@ -144,7 +144,7 @@ the existing Step 3 structure.
 9. Protocol 90 Step 3 contains the "same-batch tool-fix ordering hazard" subsection with all
    required content (maps to ACs 8–12, 14).
 
-**Smoke test runbook**: [`docs/testing/workflow/199-same-batch-tool-fix-ordering.smoke-test.md`](../../../../testing/workflow/199-same-batch-tool-fix-ordering.smoke-test.md)
+**Smoke test runbook**: [`docs/testing/workflow/199-same-batch-tool-fix-ordering.smoke-test.md`](../../../testing/workflow/199-same-batch-tool-fix-ordering.smoke-test.md)
 
 ---
 
