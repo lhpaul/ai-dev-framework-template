@@ -89,12 +89,18 @@ classify_tool_fix() {
 
   # Glob-equivalent: any docs/ai/development-workflow/protocols/*.md reference,
   # anchored on both sides to reject .md.bak and other superstrings.
+  # Both the detection (grep -qE) and the extraction (grep -oE) use the full
+  # boundary-anchored regex so superstrings like foo.md.bak are never captured.
+  # After -o extracts the full boundary match (which may include a leading
+  # non-path delimiter character), grep -oE again pulls out only the path.
   local protocols_regex
   protocols_regex="${boundary_lead}${PROTOCOLS_PREFIX}[^/[:space:]]+\\.md${boundary_trail}"
   if grep -qE "$protocols_regex" "${doc_files[@]}"; then
     while IFS= read -r match; do
       matched_paths+=("$match")
-    done < <(grep -hoE "${PROTOCOLS_PREFIX}[^/[:space:]]+\\.md" "${doc_files[@]}" | sort -u)
+    done < <(grep -hoE "$protocols_regex" "${doc_files[@]}" \
+               | grep -oE "${PROTOCOLS_PREFIX}[^/[:space:]]+\\.md" \
+               | sort -u)
   fi
 
   if [ "${#matched_paths[@]}" -gt 0 ]; then
