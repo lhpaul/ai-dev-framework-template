@@ -80,12 +80,21 @@ if [ -n "$WORKTREE_PATH" ]; then
     LOCK_REASON=$(git worktree list --porcelain | grep -A5 "^worktree $WORKTREE_PATH$" | grep "^locked" | sed 's/^locked //' || echo "unknown")
     echo "WARNING: Worktree '$WORKTREE_PATH' is locked (reason: $LOCK_REASON). Force-overriding — if this worktree belongs to an active agent, data may be lost."
     # Primary remediation: unlock then remove.
+    RETRY_ERR=""
+    RETRY_RC=1
     if git worktree unlock "$WORKTREE_PATH" 2>/dev/null; then
-      git worktree remove "$WORKTREE_PATH" --force
+      RETRY_ERR=$(git worktree remove "$WORKTREE_PATH" --force 2>&1) && RETRY_RC=0 || RETRY_RC=$?
     else
+      RETRY_ERR="'git worktree unlock' unavailable or failed"
+    fi
+    if [ "$RETRY_RC" -ne 0 ]; then
       # Fallback: double-force (bypasses lock without requiring unlock subcommand).
-      echo "WARNING: 'git worktree unlock' unavailable or failed; using double-force fallback."
-      git worktree remove "$WORKTREE_PATH" --force --force
+      echo "WARNING: ${RETRY_ERR}; using double-force fallback."
+      FORCE_ERR=$(git worktree remove "$WORKTREE_PATH" --force --force 2>&1) && FORCE_RC=0 || FORCE_RC=$?
+      if [ "$FORCE_RC" -ne 0 ]; then
+        echo "Error removing locked worktree '$WORKTREE_PATH': $FORCE_ERR" >&2
+        exit 1
+      fi
     fi
   elif [ $REMOVE_RC -ne 0 ]; then
     echo "Error removing worktree '$WORKTREE_PATH': $REMOVE_ERR" >&2
