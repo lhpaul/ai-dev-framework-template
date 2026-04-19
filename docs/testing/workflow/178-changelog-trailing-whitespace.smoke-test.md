@@ -22,7 +22,8 @@ Before running this smoke test:
 | Item | Value |
 |---|---|
 | Protocol file | `docs/ai/development-workflow/protocols/03-implement-development-protocol.md` |
-| Agent definition | `.claude/agents/developer.md` |
+| Agent definition (Claude) | `.claude/agents/developer.md` |
+| Agent definition (Cursor) | `.cursor/agents/developer.md` |
 
 ---
 
@@ -76,15 +77,17 @@ Before running this smoke test:
 2. Navigate to the **Key rules** bullet list.
 3. Confirm there is a bullet stating that CHANGELOG entries must have no trailing whitespace and no trailing blank lines before commit.
 4. Confirm the bullet mentions that intentional two-space Markdown hard line breaks are exempt.
+5. Open `.cursor/agents/developer.md`.
+6. Navigate to its **Key rules** bullet list and confirm the same bullet is present with identical wording to the bullet in `.claude/agents/developer.md` (both agent files must stay in sync).
 
-**Expected result**: Both confirmations pass.
+**Expected result**: All six confirmations pass — both files contain the new key rule with identical wording.
 
 ---
 
 ### Step 6: Verify No Existing Instructions Removed (AC5)
 
 1. In `03-implement-development-protocol.md`, confirm that all pre-existing CHANGELOG update instructions (e.g., "Add an entry under `[Unreleased]`", category guidance, unreleased-entry update rule) are still present in each path.
-2. In `.claude/agents/developer.md`, confirm that all pre-existing key rules (e.g., "Always update CHANGELOG before opening the PR") are still present and unchanged.
+2. In **both** `.claude/agents/developer.md` and `.cursor/agents/developer.md`, confirm that all pre-existing key rules (e.g., "Always update CHANGELOG before opening the PR") are still present and unchanged.
 
 **Expected result**: No pre-existing instruction has been removed or overwritten.
 
@@ -111,11 +114,18 @@ grep -n "two-space" \
 **Expected result**: At least 4 matches (one per path).
 
 ```bash
-# Confirm the developer agent key rule
+# Confirm the developer agent key rule in the Claude agent definition
 grep -n "trailing whitespace" .claude/agents/developer.md
 ```
 
 **Expected result**: At least 1 match in the key rules section.
+
+```bash
+# Confirm the same key rule in the Cursor agent definition
+grep -n "trailing whitespace" .cursor/agents/developer.md
+```
+
+**Expected result**: At least 1 match in the key rules section, with wording identical to the `.claude/agents/developer.md` bullet.
 
 ---
 
@@ -124,7 +134,7 @@ grep -n "trailing whitespace" .claude/agents/developer.md
 Each checkbox maps to an acceptance criterion from the spec.
 
 - [ ] AC1: `03-implement-development-protocol.md` includes an explicit, actionable CHANGELOG format verification instruction in every implementation path (Full Pipeline Step 6, Refactor Step 6, Fast Track Step 6, Hotfix Step 6), directing the agent to verify for trailing whitespace and trailing blank lines before staging.
-- [ ] AC2: `.claude/agents/developer.md` key rules section includes a note that the CHANGELOG entry must have no trailing whitespace or trailing blank lines before commit.
+- [ ] AC2: **Both** `.claude/agents/developer.md` **and** `.cursor/agents/developer.md` key rules sections include a note (worded identically across the two files) that the CHANGELOG entry must have no trailing whitespace or trailing blank lines before commit.
 - [ ] AC3: The instruction in the protocol specifies both defect patterns (trailing whitespace, trailing blank lines at end of entry) and the timing (after writing the CHANGELOG entry, before staging for commit).
 - [ ] AC4: The instruction explicitly states that intentional two-space Markdown hard line breaks must not be treated as trailing whitespace violations.
 - [ ] AC5: The changes do not remove or conflict with any existing CHANGELOG update instructions in the protocol or agent definition.
