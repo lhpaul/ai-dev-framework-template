@@ -426,8 +426,6 @@ Before dispatching any reviewer, classify each entry in the resolved list as `re
 | Codex runner / Codex skill | Yes | Yes |
 | Direct human (shell / CI with both CLIs available) | Yes | Yes |
 
-**Note for this PR (fix/185-codex-reviewer-runtime-fallback)**: The `codex` reviewer is not reachable from the Claude Code subagent context used during this implementation run. This is the exact limitation that issue #185 is fixing — the protocol previously had no explicit handling for this case. Per the `warn` (default) policy, `codex` was skipped and only `claude` ran for the Step 7a gate on this PR. This is documented transparently in the Step 7a summary comment on the PR.
-
 #### Policy resolution
 
 After classifying each reviewer, apply the configured policy. Read `internal_reviewers_unavailable_policy` from `.ai-dev-workflow.yaml` (or its local override in `.tmp/template-config.json`). If the key is absent, the default is `warn`.
