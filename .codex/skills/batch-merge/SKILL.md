@@ -45,4 +45,5 @@ Key rules:
 - Do not force-push or rebase PR branches.
 - Do not use `gh pr close` — the merge must be recognized by GitHub as `MERGED`.
 - Already-merged PRs stay merged even if the human aborts mid-batch.
+- `git push origin develop` failures are **batch-fatal**: stop processing further PRs immediately, run `git merge --abort` if a conflict exists, surface a clear error, and require human intervention before resuming.
 - `post-merge-cleanup` failures are reported but do not stop remaining merges.

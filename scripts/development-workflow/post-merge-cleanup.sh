@@ -153,7 +153,7 @@ update_tracker_status() {
   # Resolve project item ID and current status for the issue.
   # The item-list output is stored so we can read both id and current Status without a second API call.
   local item_json current_status target_order
-  item_json=$(gh project item-list "$project_number" --owner "$owner" --format json 2>/dev/null \
+  item_json=$(gh project item-list "$project_number" --owner "$owner" --limit 10000 --format json 2>/dev/null \
     | jq -c --argjson num "$issue_number" '.items[] | select(.content.number == $num)' || true)
   item_id=$(printf '%s' "$item_json" | jq -r '.id // empty' || true)
   if [ -z "$item_id" ]; then
