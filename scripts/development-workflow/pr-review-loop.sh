@@ -956,6 +956,9 @@ run_coderabbit_review() {
       )"
       if [ "${activity_count:-0}" -gt 0 ]; then
         coderabbit_any_activity=1
+        # Issue-comment activity means CodeRabbit finished this HEAD cycle, but unlike
+        # a formal PR review it does not hit the `break` above — continue to Phase 3.
+        break
       fi
     fi
 
