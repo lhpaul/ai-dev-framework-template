@@ -135,6 +135,19 @@ Add an entry under `[Unreleased]` in `CHANGELOG.md`:
 - Write from the user's perspective: what can they now do / what is now fixed?
 - If this PR fixes or adjusts an unreleased development that already has an `[Unreleased]` entry, update the existing entry instead of adding a new one; if the entry already describes the corrected behavior, no change is needed
 
+**CHANGELOG format verification (before staging)**: After writing the CHANGELOG entry, verify the entry for the following defects and fix them in-place before staging:
+
+1. **Trailing whitespace**: No line in the written entry should end with one or more whitespace characters. Note: intentional two-space Markdown hard line breaks (`<text>  ` with exactly two trailing spaces followed by a newline) are not trailing whitespace and must not be removed.
+2. **Trailing blank lines**: The entry must not end with two or more consecutive blank lines.
+
+A quick shell check for trailing whitespace on pending CHANGELOG changes (run **before** `git add`, per the "before staging" timing requirement):
+
+```bash
+git diff CHANGELOG.md | grep '^+' | grep -P '\s+$'
+```
+
+If this returns output, inspect each flagged line: leave intentional two-space Markdown hard line breaks (exactly two trailing spaces followed by a newline) intact, and fix any other trailing whitespace (e.g., a single trailing space, a tab, or three or more trailing spaces) before committing.
+
 ### Step 7: Commit & Push
 
 ```bash
@@ -236,6 +249,20 @@ git checkout -b refactor/[branch-slug]
 4. If scope is larger than the plan described, **stop and report**
 5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area
 6. Update CHANGELOG under `[Unreleased]` with a `Changed` entry (skip if this refactor adjusts unreleased work that already has an entry — update the existing entry instead, or leave it unchanged if it already describes the correct behavior).
+
+   **CHANGELOG format verification (before staging)**: After writing the CHANGELOG entry, verify the entry for the following defects and fix them in-place before staging:
+
+   1. **Trailing whitespace**: No line in the written entry should end with one or more whitespace characters. Note: intentional two-space Markdown hard line breaks (`<text>  ` with exactly two trailing spaces followed by a newline) are not trailing whitespace and must not be removed.
+   2. **Trailing blank lines**: The entry must not end with two or more consecutive blank lines.
+
+   A quick shell check for trailing whitespace on pending CHANGELOG changes (run **before** `git add`, per the "before staging" timing requirement):
+
+   ```bash
+   git diff CHANGELOG.md | grep '^+' | grep -P '\s+$'
+   ```
+
+   If this returns output, inspect each flagged line: leave intentional two-space Markdown hard line breaks (exactly two trailing spaces followed by a newline) intact, and fix any other trailing whitespace (e.g., a single trailing space, a tab, or three or more trailing spaces) before committing.
+
 7. Commit: `refactor([scope]): [description]`
 8. Push branch to remote
 9. Open a **draft** PR targeting `develop` with refactor-appropriate metadata (do **not** reuse Path 1 Step 8 verbatim — that path uses `feat(...)` and a spec link):
@@ -315,6 +342,19 @@ Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected
 
 Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (skip if this fixes unreleased work that already has an entry — update the existing entry instead, or leave it unchanged if it already describes the correct behavior).
 
+**CHANGELOG format verification (before staging)**: After writing the CHANGELOG entry, verify the entry for the following defects and fix them in-place before staging:
+
+1. **Trailing whitespace**: No line in the written entry should end with one or more whitespace characters. Note: intentional two-space Markdown hard line breaks (`<text>  ` with exactly two trailing spaces followed by a newline) are not trailing whitespace and must not be removed.
+2. **Trailing blank lines**: The entry must not end with two or more consecutive blank lines.
+
+A quick shell check for trailing whitespace on pending CHANGELOG changes (run **before** `git add`, per the "before staging" timing requirement):
+
+```bash
+git diff CHANGELOG.md | grep '^+' | grep -P '\s+$'
+```
+
+If this returns output, inspect each flagged line: leave intentional two-space Markdown hard line breaks (exactly two trailing spaces followed by a newline) intact, and fix any other trailing whitespace (e.g., a single trailing space, a tab, or three or more trailing spaces) before committing.
+
 ### Step 7: Commit & Push
 
 ```bash
@@ -384,6 +424,19 @@ Verify: build, lint, tests pass.
 ### Step 6: Update CHANGELOG
 
 Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (hotfixes fix released code, so a new entry is normally required).
+
+**CHANGELOG format verification (before staging)**: After writing the CHANGELOG entry, verify the entry for the following defects and fix them in-place before staging:
+
+1. **Trailing whitespace**: No line in the written entry should end with one or more whitespace characters. Note: intentional two-space Markdown hard line breaks (`<text>  ` with exactly two trailing spaces followed by a newline) are not trailing whitespace and must not be removed.
+2. **Trailing blank lines**: The entry must not end with two or more consecutive blank lines.
+
+A quick shell check for trailing whitespace on pending CHANGELOG changes (run **before** `git add`, per the "before staging" timing requirement):
+
+```bash
+git diff CHANGELOG.md | grep '^+' | grep -P '\s+$'
+```
+
+If this returns output, inspect each flagged line: leave intentional two-space Markdown hard line breaks (exactly two trailing spaces followed by a newline) intact, and fix any other trailing whitespace (e.g., a single trailing space, a tab, or three or more trailing spaces) before committing.
 
 ### Step 7: Commit & Push
 
