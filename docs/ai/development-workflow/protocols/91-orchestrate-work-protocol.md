@@ -495,7 +495,7 @@ Required fields:
 
 - **Effective reviewer set**: which reviewers actually ran (excluding skipped/unreachable ones)
 - **Skipped reviewers**: each reviewer skipped, with reason (e.g., `unreachable`, `override-excluded`)
-- **Final verdict**: `APPROVED`, `CHANGES_REQUESTED`, `hard-fail`, or `escalated — <reason>`
+- **Final verdict**: `APPROVED`, `hard-fail`, or `escalated — <reason>`
 
 Example format:
 
