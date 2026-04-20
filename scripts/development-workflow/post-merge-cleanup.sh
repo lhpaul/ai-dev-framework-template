@@ -227,7 +227,7 @@ if [ -n "$ISSUE_NUMBER" ]; then
     update_tracker_status "$ISSUE_NUMBER" "Plan Ready"
   fi
 else
-  echo "No issue number detected in branch name '$TO_DELETE', skipping issue close."
+  echo "No issue number detected in branch name '$TO_DELETE', skipping issue close and tracker update."
 fi
 
 echo ""
