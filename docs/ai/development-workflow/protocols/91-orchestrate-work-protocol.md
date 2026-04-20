@@ -449,7 +449,7 @@ Allowed values: `warn` (default), `fail-if-any-unavailable`.
 |---|---|---|
 | Zero reviewers reachable | Any | **Hard-fail** — post the Step 7a summary comment (as error/blocked comment per Use Case 2) and stop. Do NOT call `gh pr ready`. Escalate to human. |
 | One or more reviewers unreachable, at least one reachable | `warn` (default) | Post a warning comment to the PR naming each unreachable reviewer and the runner context, record each as `skipped (unreachable)`, then proceed with the reachable subset. |
-| Any reviewer unreachable | `fail-if-any-unavailable` | **Hard-fail** — treat the same as the zero-reachable case even when some reviewers are reachable. Post the Step 7a summary comment and stop. Do NOT call `gh pr ready`. Escalate to human. |
+| Any reviewer unreachable | `fail-if-any-unavailable` | **Hard-fail** — same outcome as zero-reachable (no reviewers dispatched, PR stays draft, escalate to human) even when some reviewers are reachable. Post the Step 7a summary comment using the hard-fail comment format **Case B** below and stop. Do NOT call `gh pr ready`. Escalate to human. |
 | All reviewers reachable | Any | Proceed normally — no warning comment, no deviation from the existing flow. |
 
 #### Warning comment format (one or more unreachable, `warn` policy)
