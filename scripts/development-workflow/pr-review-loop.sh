@@ -1277,6 +1277,13 @@ check_unresolved_threads() {
   #   $1 pr_number  - PR number (integer)
   #   $2 bot_logins - space-separated list of bot login strings to check
   #   $3 repo       - "owner/repo" slug
+  #
+  # Re-enable errexit within this function. When called from a command substitution
+  # with set +e active in the parent (as in the thread gate), the subshell inherits
+  # set +e. Without this explicit re-enablement, gh api graphql failures inside this
+  # function would be silently ignored and the function would always return exit 0,
+  # making the caller's error-handling code unreachable.
+  set -e
   local pr_number="$1"
   local bot_logins="$2"
   local repo="$3"
