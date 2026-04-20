@@ -73,7 +73,33 @@ echo "Deleting local branch '$TO_DELETE'..."
 WORKTREE_PATH=$(git worktree list --porcelain | grep -B2 "branch refs/heads/$TO_DELETE$" | grep "^worktree " | sed 's/^worktree //' || true)
 if [ -n "$WORKTREE_PATH" ]; then
   echo "Worktree '$WORKTREE_PATH' is still using branch '$TO_DELETE'. Removing worktree first..."
-  git worktree remove "$WORKTREE_PATH" --force
+  # Capture stderr so we can detect the locked-worktree condition.
+  REMOVE_ERR=$(git worktree remove "$WORKTREE_PATH" --force 2>&1) && REMOVE_RC=0 || REMOVE_RC=$?
+  if [ $REMOVE_RC -ne 0 ] && echo "$REMOVE_ERR" | grep -q "locked working tree"; then
+    # Detect lock reason from git worktree list --porcelain (the "locked" field).
+    LOCK_REASON=$(git worktree list --porcelain | grep -A5 "^worktree $WORKTREE_PATH$" | grep "^locked" | sed 's/^locked //' || echo "unknown")
+    echo "WARNING: Worktree '$WORKTREE_PATH' is locked (reason: $LOCK_REASON). Force-overriding — if this worktree belongs to an active agent, data may be lost."
+    # Primary remediation: unlock then remove.
+    RETRY_ERR=""
+    RETRY_RC=1
+    if git worktree unlock "$WORKTREE_PATH" 2>/dev/null; then
+      RETRY_ERR=$(git worktree remove "$WORKTREE_PATH" --force 2>&1) && RETRY_RC=0 || RETRY_RC=$?
+    else
+      RETRY_ERR="'git worktree unlock' unavailable or failed"
+    fi
+    if [ "$RETRY_RC" -ne 0 ]; then
+      # Fallback: double-force (bypasses lock without requiring unlock subcommand).
+      echo "WARNING: ${RETRY_ERR}; using double-force fallback."
+      FORCE_ERR=$(git worktree remove "$WORKTREE_PATH" --force --force 2>&1) && FORCE_RC=0 || FORCE_RC=$?
+      if [ "$FORCE_RC" -ne 0 ]; then
+        echo "Error removing locked worktree '$WORKTREE_PATH': $FORCE_ERR" >&2
+        exit 1
+      fi
+    fi
+  elif [ $REMOVE_RC -ne 0 ]; then
+    echo "Error removing worktree '$WORKTREE_PATH': $REMOVE_ERR" >&2
+    exit 1
+  fi
   echo "Worktree removed."
 fi
 # -D: branch is already merged on remote (squash/rebase merges don't leave tip in develop)
