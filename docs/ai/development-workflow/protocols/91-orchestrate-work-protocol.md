@@ -430,6 +430,21 @@ Before dispatching any reviewer, classify each entry in the resolved list as `re
 
 After classifying each reviewer, apply the configured policy. Read `internal_reviewers_unavailable_policy` from `.ai-dev-workflow.yaml` (or its local override in `.tmp/template-config.json`). If the key is absent, the default is `warn`.
 
+To override the policy locally without changing shared config, use `.tmp/template-config.json`:
+
+```json
+{
+  "overrides": {
+    "review": {
+      "internal_reviewers": ["claude"],
+      "internal_reviewers_unavailable_policy": "warn"
+    }
+  }
+}
+```
+
+Allowed values: `warn` (default), `fail-if-any-unavailable`.
+
 | Condition | Policy | Action |
 |---|---|---|
 | Zero reviewers reachable | Any | **Hard-fail** — post the Step 7a summary comment (as error/blocked comment per Use Case 2) and stop. Do NOT call `gh pr ready`. Escalate to human. |
