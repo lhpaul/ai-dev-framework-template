@@ -197,8 +197,11 @@ The **Portfolio Orchestrator**, **Work Item Runner**, or stage agent updates the
 When a PR is merged, the `post-merge-cleanup` command will:
 
 1. Extract the issue number from the branch name (e.g., `feature/42-user-auth` -> `42`)
-2. Close the GitHub issue: `gh issue close 42`
-3. Update the project item Status to **Merged** (via GraphQL)
+2. Apply the action appropriate for the branch type:
+   - `spec/*`: issue stays open; update project item Status to **Spec Ready**
+   - `implementation-plan/*`: issue stays open; update project item Status to **Plan Ready**
+   - `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`: close the GitHub issue (`gh issue close 42`) and update project item Status to **Merged**
+3. Each tracker update is best-effort: if `GITHUB_PROJECT_NUMBER` is unset or the API call fails, a warning is logged and the script continues without aborting
 
 ---
 
