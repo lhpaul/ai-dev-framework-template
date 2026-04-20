@@ -215,6 +215,61 @@ Group eligible items into explicit batches.
 - Two items where one depends on the other
 - Two implementations whose overlap is unclear and cannot be resolved cheaply
 
+### Same-batch tool-fix ordering hazard
+
+**Definition**: A **tool-fix item** is any work item whose spec or implementation plan document
+references modifications to any of the following canonical workflow tool files (relative to the
+repository root):
+
+- `scripts/development-workflow/pr-review-loop.sh`
+- `scripts/development-workflow/pr-ci-loop.sh`
+- `scripts/development-workflow/batch-merge.sh`
+- `scripts/development-workflow/post-merge-cleanup.sh`
+- Any file matching `docs/ai/development-workflow/protocols/*.md`
+- `.ai-dev-workflow.yaml`
+
+A **consumer item** is any non-tool-fix item in the same candidate batch that is not already
+`ready-for-human-review` before batch dispatch begins.
+
+**Detection sources**: `workflow-batch-plan.sh` emits `TOOL_FIX=yes|no|unknown` per item based
+on spec/plan document evidence (delimiter-aware regex scan of all `*.md` files in the development
+folder). The `TOOL_FIX_FILES=<comma-separated paths>` line is also emitted when `TOOL_FIX=yes`.
+The orchestrator may additionally classify from tracker title/description. If tracker-derived
+classification conflicts with script output (the script emits `TOOL_FIX=no` but the tracker
+title or description references a file from the canonical tool list), the orchestrator takes
+the **conservative path** and treats the item as a hazard candidate.
+
+**`TOOL_FIX=unknown` handling**: `unknown` is emitted when no spec or plan document exists in
+the development folder (e.g., the item is still in `Writing Spec` state). Treat `unknown` the
+same as `yes` — apply the serialize-first strategy (conservative default). `TOOL_FIX_FILES` is
+omitted when `TOOL_FIX` is `no` or `unknown`; parsers must treat a missing `TOOL_FIX_FILES` as
+an empty set.
+
+**Serialize-first rule**: When a tool-fix item and any consumer item appear in the same candidate
+batch, the tool-fix item **must** be dispatched alone in its own serial sub-batch first. The
+consumer items are held until the tool-fix PR is merged. After the tool-fix item reaches
+`ready-for-human-review`, the orchestrator pauses and reports the situation to the human: the
+tool-fix must be merged before the remaining consumer items are dispatched, because those items
+may invoke the affected tool during their own PR readiness loops. The batch summary must identify
+held consumer items and their reason (e.g., `held — pending tool-fix merge for item #N`).
+
+**Multiple tool-fix items**: When two or more tool-fix items appear in the same candidate batch,
+each is serialized into its own serial sub-batch dispatched one at a time before any consumer
+item is dispatched. The ordering among multiple tool-fix items follows the standard priority
+order — due date within 2 weeks (earliest first), then priority (Urgent → High → Normal → Low),
+then creation date (earliest first) — mirroring the Step 2 priority rules.
+
+**Already-waiting tool-fix**: If the tool-fix item is already `ready-for-human-review`, `Spec in
+Review`, or `Plan in Review` (already waiting for merge) before batch dispatch, the orchestrator
+reports it as a "pending tool-fix" blocker for the consumer items and holds those items without
+redispatching the tool-fix item.
+
+**Human override**: The orchestrator must **never** autonomously skip the serialize-first gate.
+Only an explicit human instruction enables parallel dispatch when an ordering hazard has been
+detected. When a human instructs override, the orchestrator logs the override and annotates the
+batch summary with a warning: "Human override: tool-fix ordering hazard acknowledged for item
+#N. Dispatching in parallel."
+
 **Codex fallback**:
 
 If the runner cannot execute multiple Work Item Runners concurrently, preserve the same batching decision but process that batch sequentially. Report the fallback explicitly in the summary.
