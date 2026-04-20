@@ -275,12 +275,12 @@ if [ -n "$ISSUE_NUMBER" ]; then
   elif [ "$BRANCH_TYPE" = "spec" ]; then
     # spec/* branches reference the issue but must not close it — the issue stays
     # open for the next workflow stage (writing the implementation plan).
-    echo "Plan/spec branch for issue #$ISSUE_NUMBER merged; issue stays open for the next workflow stage. Updating tracker status to Spec Ready..."
+    echo "Spec branch for issue #$ISSUE_NUMBER merged; issue stays open for the next workflow stage. Updating tracker status to Spec Ready..."
     update_tracker_status "$ISSUE_NUMBER" "Spec Ready"
   elif [ "$BRANCH_TYPE" = "plan" ]; then
     # implementation-plan/* branches reference the issue but must not close it —
     # the issue stays open for the next workflow stage (implementation).
-    echo "Plan/spec branch for issue #$ISSUE_NUMBER merged; issue stays open for the next workflow stage. Updating tracker status to Plan Ready..."
+    echo "Implementation plan branch for issue #$ISSUE_NUMBER merged; issue stays open for the next workflow stage. Updating tracker status to Plan Ready..."
     update_tracker_status "$ISSUE_NUMBER" "Plan Ready"
   fi
 else
