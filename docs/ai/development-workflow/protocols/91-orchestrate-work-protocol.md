@@ -301,7 +301,10 @@ A pre-tool-use hook can enforce the Write/Edit path rule automatically:
 4. If the target path does not start with `$WORKTREE_ROOT`, emit:
    `"GUARDRAIL: Write/Edit target '<path>' is outside the designated worktree
    '<WORKTREE_ROOT>'. Correct the path before proceeding."`
-5. The hook must NOT intercept read-only tools (`Read`, `Glob`, `Grep`).
+5. The hook is **non-blocking** — it warns but does not prevent the tool call. This
+   allows the agent to correct the path in subsequent calls and prevents cascading
+   failures from false positives.
+6. The hook must NOT intercept read-only tools (`Read`, `Glob`, `Grep`).
 
 4. **Suggested worktree path**: `<repo-root>/.claude/worktrees/<item-id>/<branch-prefix>-<slug>` where `<item-id>` is the issue number, tracker ID, or slug.
 
