@@ -501,24 +501,50 @@ This pattern also applies to PRs where an agent timed out mid-CI-loop: detect vi
 
 ### Step 5.2: Post-Agent Main Working Tree Verification (Parallel Batches Only)
 
-After each Work Item Runner returns in a **parallel batch**, immediately check that the main working tree was not modified by the agent:
+After each Work Item Runner returns in a **parallel batch**, immediately check the main working tree's branch and cleanliness. Handle all four postcondition states:
 
 ```bash
+INTEGRATION_BRANCH="develop"  # or read from .ai-dev-workflow.yaml integration_branch field
+MAIN_BRANCH=$(git -C <main-repo-root> rev-parse --abbrev-ref HEAD)
 MAIN_STATUS=$(git -C <main-repo-root> status --porcelain)
-if [ -n "$MAIN_STATUS" ]; then
-  echo "WARNING: main working tree has uncommitted modifications after agent for item <item-id> returned:"
+
+if [ "$MAIN_BRANCH" != "$INTEGRATION_BRANCH" ] && [ -z "$MAIN_STATUS" ]; then
+  # Case 1: Wrong branch + clean — auto-correct
+  echo "GUARDRAIL: main working tree was on '$MAIN_BRANCH' after agent for item <item-id> returned. Expected '$INTEGRATION_BRANCH'. Auto-correcting."
+  echo "Record as guardrail violation in retrospective notes: item <item-id> left main tree on wrong branch."
+  git -C <main-repo-root> switch "$INTEGRATION_BRANCH"
+  # Proceed normally after correction
+
+elif [ "$MAIN_BRANCH" != "$INTEGRATION_BRANCH" ] && [ -n "$MAIN_STATUS" ]; then
+  # Case 2: Wrong branch + dirty — halt and escalate
+  echo "ERROR: main working tree is on '$MAIN_BRANCH' (expected '$INTEGRATION_BRANCH') AND has uncommitted modifications after agent for item <item-id> returned."
   echo "$MAIN_STATUS"
+  echo "Do not dispatch additional agents. Report to the human: the main working tree has leaked branch state and uncommitted changes. The human must inspect, discard or commit these changes, and restore the main tree to '$INTEGRATION_BRANCH' before resuming the batch."
+  exit 1
+
+elif [ "$MAIN_BRANCH" = "$INTEGRATION_BRANCH" ] && [ -z "$MAIN_STATUS" ]; then
+  # Case 3: Correct branch + clean — proceed normally
+  :
+
+elif [ "$MAIN_BRANCH" = "$INTEGRATION_BRANCH" ] && [ -n "$MAIN_STATUS" ]; then
+  # Case 4: Correct branch + dirty — halt and escalate
+  echo "WARNING: main working tree is on '$INTEGRATION_BRANCH' but has uncommitted modifications after agent for item <item-id> returned:"
+  echo "$MAIN_STATUS"
+  echo "Possible cause: a stage agent leaked file writes outside the worktree boundary. Do not discard these changes without human review. Do not dispatch additional agents until the human inspects and resolves these changes."
+  exit 1
 fi
 ```
 
-If any modifications are detected:
+**Postcondition state summary:**
 
-1. **Do not discard the changes silently.** Log them for the human.
-2. **Do not dispatch additional agents** until the issue is resolved — a dirty main working tree may cause the next agent to incorporate leaked changes.
-3. **Report to the human** with the list of modified files and the item whose agent ran last. The likely cause is a stage agent that wrote files relative to the main repo root rather than the worktree path.
-4. **Ask the human** to inspect and discard (or commit to a separate branch) the leaked modifications before resuming the batch.
+| Main branch | Main cleanliness | Action |
+|---|---|---|
+| Wrong branch | Clean | Auto-correct: `git switch <integration-branch>`. Log as guardrail violation in retrospective notes. Proceed normally. |
+| Wrong branch | Dirty | Halt and escalate. Log full `git status --porcelain` output and item ID. Do not dispatch additional agents. |
+| Correct branch | Clean | Proceed normally. |
+| Correct branch | Dirty | Halt and escalate. Log full `git status --porcelain` output and item ID. Do not dispatch additional agents. |
 
-If the main working tree is clean, proceed normally with the next Work Item Runner or with Step 5.1 (PR verification).
+If the main working tree is clean and on the correct branch (Case 3), proceed normally with the next Work Item Runner or with Step 5.1 (PR verification).
 
 ### Retrospective notes during supervision
 

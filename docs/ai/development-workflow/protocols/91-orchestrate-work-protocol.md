@@ -205,6 +205,41 @@ cd <worktree-path>
 
 Use the pre-dispatch branch check from Step 2 (`git branch --list`, `git branch -r --list`) to determine which case applies. Case B and C are common when resuming "In Development" items, PRs with `needs-fixes`, or any item with prior work.
 
+**Critical: Worktree Git Discipline** (`BATCH_CONTEXT=true` only)
+
+When operating inside a worktree, **never** run the following commands against the main repo root:
+
+- `git switch <branch>`
+- `git checkout <branch>`
+- `git checkout -b <branch>`
+- `git reset [--hard|--soft|--mixed] ...`
+- `git restore ...`
+
+These commands change the branch or modify files in the main working tree, breaking isolation for all concurrent agents and the human operator. Violating this rule leaves the main repo in a broken state (e.g., pointing at a feature branch) that blocks all subsequent agents and the human operator until manually corrected.
+
+**Required alternatives:**
+
+- Run all git operations scoped to the worktree: `cd <worktree-path> && git <command>`
+- Or use the `-C` flag: `git -C <worktree-path> <command>`
+
+Read-only inspection of the main repo is always permitted and must use `-C` without switching branches:
+
+```bash
+git -C <main-repo-root> rev-parse --abbrev-ref HEAD
+```
+
+**Optional — platform-specific: pre-tool-use hook guidance**
+
+For runners that support pre-tool-use hooks (e.g., Claude Code), a non-blocking hook can be configured to warn when a prohibited git command is issued from the main repo root while a worktree is active. The hook should:
+
+1. Intercept tool calls for `Bash` commands.
+2. Check whether the command includes any of `switch`, `checkout`, `checkout -b`, `reset`, or `restore` as git subcommands.
+3. Compare the working directory of the command against the main repo root path.
+4. If the working directory matches the main repo root and the command is state-changing, emit a warning: `"GUARDRAIL WARNING: git state-changing command targeting main repo root detected while worktree is active. Use git -C <worktree-path> or cd <worktree-path> && git instead."`
+5. The hook is **non-blocking** — it warns but does not abort the command. Blocking hooks can cause cascading failures when legitimate read-only commands are incorrectly matched.
+
+This hook is advisory and not required for the guardrail to function. The Critical block above is the normative rule; this hook provides an additional safety signal for supported runners.
+
 **Important — stage protocol compatibility**: When working inside a worktree created with this method, the stage protocol's initial branching steps (`git fetch origin`, `git checkout develop`, `git pull origin develop`, `git checkout -b ...`) are **already satisfied** by the worktree creation above. The stage agent should skip those steps and proceed directly to the implementation work. If the stage agent runs `git checkout develop` inside the worktree, it will fail because `develop` is already checked out in the main working tree and git prevents the same branch from being checked out in multiple worktrees simultaneously.
 
 **Critical safety rule — never modify the main working tree's branch**: An agent running inside a worktree **must never** run `git checkout`, `git switch`, `git reset`, or any command that changes the checked-out branch of the **main working tree**. Violating this rule leaves the main repo in a broken state (e.g., pointing at a `worktree-agent-*` branch) that breaks subsequent operations for all other agents and for the human operator.
