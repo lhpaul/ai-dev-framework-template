@@ -1331,22 +1331,21 @@ check_unresolved_threads() {
         || { echo "WARN: check_unresolved_threads: GraphQL query failed for PR #$pr_number" >&2; return 1; }
     fi
 
-    has_next_page="$(printf '%s\n' "$result" | jq -re '.pageInfo.hasNextPage')" \
-      || { echo "WARN: check_unresolved_threads: malformed reviewThreads payload for PR #$pr_number" >&2; return 1; }
-    cursor="$(printf '%s\n' "$result" | jq -re '.pageInfo.endCursor // empty')" \
-      || { echo "WARN: check_unresolved_threads: malformed reviewThreads payload for PR #$pr_number" >&2; return 1; }
+    # Use jq -r (not -re) for boolean/nullable fields: jq -e exits non-zero when the
+    # output value is false or null, which would misinterpret valid values like
+    # hasNextPage=false or isResolved=false as errors. Rely on gh api's own exit code
+    # (caught above) for real API failures; use jq -r only for data extraction.
+    has_next_page="$(printf '%s\n' "$result" | jq -r '.pageInfo.hasNextPage')"
+    cursor="$(printf '%s\n' "$result" | jq -r '.pageInfo.endCursor // empty')"
 
     local thread_json
     while IFS= read -r thread_json; do
       [ -z "${thread_json:-}" ] && continue
 
       local is_resolved author body
-      is_resolved="$(printf '%s\n' "$thread_json" | jq -re '.isResolved')" \
-        || { echo "WARN: check_unresolved_threads: malformed thread JSON for PR #$pr_number" >&2; return 1; }
-      author="$(printf '%s\n' "$thread_json" | jq -re '.comments.nodes[0].author.login // ""')" \
-        || { echo "WARN: check_unresolved_threads: malformed thread JSON for PR #$pr_number" >&2; return 1; }
-      body="$(printf '%s\n' "$thread_json" | jq -re '.comments.nodes[0].body // ""')" \
-        || { echo "WARN: check_unresolved_threads: malformed thread JSON for PR #$pr_number" >&2; return 1; }
+      is_resolved="$(printf '%s\n' "$thread_json" | jq -r '.isResolved')"
+      author="$(printf '%s\n' "$thread_json" | jq -r '.comments.nodes[0].author.login // ""')"
+      body="$(printf '%s\n' "$thread_json" | jq -r '.comments.nodes[0].body // ""')"
 
       # Only count threads authored by configured bot logins.
       # Iterate via array to prevent glob expansion of bracket chars in "[bot]" strings.
