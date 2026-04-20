@@ -407,6 +407,73 @@ Example `.tmp/template-config.json` override format:
 
 If neither file defines `internal_reviewers`, fall back to running the stage-appropriate reviewer once (default behavior: `claude`).
 
+When `.tmp/template-config.json` supplies an override, log the following before running the availability check:
+
+> `INFO: Using internal_reviewers override from .tmp/template-config.json: [<override-list>]. Original list: [<yaml-list>].`
+
+No warning comment is posted for reviewers intentionally removed by the override list (`override-excluded`). If any reviewer still present in the override list is unreachable at runtime, post the standard warning comment for those unreachable reviewers (the runtime-availability check still applies to the override list).
+
+### Runtime-availability check
+
+Before dispatching any reviewer, classify each entry in the resolved list as `reachable` or `unreachable` based on the runner's execution context. The check is deterministic and requires no external network call — runner identity is a sufficient proxy for reviewer reachability (see [codex-reviewer-runtime-fallback spec](../../../specs/developments/20260417203329_codex-reviewer-runtime-fallback/1_codex-reviewer-runtime-fallback_specs.md) — BR-1 and BR-8).
+
+#### Reachability classification table
+
+| Runner context | `claude` reachable? | `codex` reachable? |
+|---|---|---|
+| Claude Code (direct human session) | Yes | No |
+| Claude Code subagent (dispatched by orchestrator) | Yes | No |
+| Codex runner / Codex skill | Yes | Yes |
+| Direct human (shell / CI with both CLIs available) | Yes | Yes |
+
+#### Policy resolution
+
+After classifying each reviewer, apply the configured policy. Read `internal_reviewers_unavailable_policy` from `.ai-dev-workflow.yaml` (or its local override in `.tmp/template-config.json`). If the key is absent, the default is `warn`.
+
+To override the policy locally without changing shared config, use `.tmp/template-config.json`:
+
+```json
+{
+  "overrides": {
+    "review": {
+      "internal_reviewers": ["claude"],
+      "internal_reviewers_unavailable_policy": "warn"
+    }
+  }
+}
+```
+
+Allowed values: `warn` (default), `fail-if-any-unavailable`.
+
+| Condition | Policy | Action |
+|---|---|---|
+| Zero reviewers reachable | Any | **Hard-fail** — post the Step 7a summary comment (as error/blocked comment per Use Case 2) and stop. Do NOT call `gh pr ready`. Escalate to human. |
+| One or more reviewers unreachable, at least one reachable | `warn` (default) | Post a warning comment to the PR naming each unreachable reviewer and the runner context, record each as `skipped (unreachable)`, then proceed with the reachable subset. |
+| Any reviewer unreachable | `fail-if-any-unavailable` | **Hard-fail** — same outcome as zero-reachable (no reviewers dispatched, PR stays draft, escalate to human) even when some reviewers are reachable. Post the Step 7a summary comment using the hard-fail comment format **Case B** below and stop. Do NOT call `gh pr ready`. Escalate to human. |
+| All reviewers reachable | Any | Proceed normally — no warning comment, no deviation from the existing flow. |
+
+#### Warning comment format (one or more unreachable, `warn` policy)
+
+Post via `gh pr comment` before dispatching any reviewer. Use the following wording for each unreachable reviewer:
+
+> `WARNING: internal_reviewer '<reviewer>' unreachable from current runner (<runner-context>) — skipping. Only '<reachable-list>' will run in this Step 7a cycle. Reviewer coverage is reduced from <total> to <reachable-count>.`
+
+Example for `codex` unreachable from a Claude Code subagent with `internal_reviewers: [claude, codex]`:
+
+> `WARNING: internal_reviewer 'codex' unreachable from current runner (Claude Code subagent) — skipping. Only 'claude' will run in this Step 7a cycle. Reviewer coverage is reduced from 2 to 1.`
+
+#### Hard-fail comment format
+
+Post via `gh pr comment`. This comment doubles as the BR-7 mandatory Step 7a summary comment in the hard-fail case. Use the appropriate template based on the hard-fail condition:
+
+**Case A — Zero reviewers reachable (any policy):**
+
+> `Step 7a BLOCKED: no internal reviewer is reachable from the current runner. Effective reviewer set: none. Reachable: []. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. To unblock: run Step 7a from a runner that supports all configured reviewers, or temporarily override 'review.internal_reviewers' via .tmp/template-config.json.`
+
+**Case B — `fail-if-any-unavailable` policy triggered (one or more reviewers unreachable, but at least one was reachable):**
+
+> `Step 7a BLOCKED: policy 'fail-if-any-unavailable' triggered — one or more internal reviewers are unreachable. No reviewers were dispatched. Effective reviewer set: none (policy block). Reachable: [<reachable-list>]. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. To unblock: run Step 7a from a runner where all configured reviewers are reachable, or set internal_reviewers_unavailable_policy to 'warn' temporarily, or override 'review.internal_reviewers' via .tmp/template-config.json.`
+
 ### Reviewer dispatch map
 
 For each reviewer in the resolved list, dispatch the stage-appropriate agent:
@@ -428,12 +495,38 @@ Initialize `internal_review_cycle = 0` at the start of Step 7a. Increment each t
 
 | Outcome | Action |
 |---|---|
-| All reviewers `APPROVED` | Run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then continue to Step 7 (external automated reviewers) |
+| All reviewers `APPROVED` | Post the Step 7a summary comment (see below), then run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then continue to Step 7 (external automated reviewers) |
 | Any reviewer returns `NEEDS REVISION` (fixable) and `internal_review_cycle < max_internal_review_cycles` | Fixes already applied by the agent; increment `internal_review_cycle`; re-run **all** internal reviewers from the beginning of the list |
-| Any reviewer returns `NEEDS REVISION` (fixable) and `internal_review_cycle >= max_internal_review_cycles` | Escalate to human — internal review is not converging |
-| Any reviewer returns `NEEDS REVISION` (product/design decision) | Stop and escalate to human before proceeding |
+| Any reviewer returns `NEEDS REVISION` (fixable) and `internal_review_cycle >= max_internal_review_cycles` | Post the Step 7a summary comment with verdict `escalated — max cycles reached`, then escalate to human |
+| Any reviewer returns `NEEDS REVISION` (product/design decision) | Post the Step 7a summary comment with verdict `escalated — human decision required`, then stop and escalate to human before proceeding |
 
 All internal reviewers must APPROVE before `gh pr ready` is called. If any reviewer finds issues, fix them and re-run ALL internal reviewers.
+
+#### Step 7a summary comment (mandatory)
+
+A Step 7a summary comment **must always be posted to the PR** when the gate exits — whether all reviewers ran, some were skipped, or the gate hard-failed (BR-7). Post via `gh pr comment` immediately before `gh pr ready` (in the success path) or immediately before stopping (in the hard-fail or escalation paths).
+
+Required fields:
+
+- **Effective reviewer set**: which reviewers actually ran (excluding skipped/unreachable ones)
+- **Skipped reviewers**: each reviewer skipped, with reason (e.g., `unreachable`, `override-excluded`)
+- **Final verdict**: `APPROVED`, `hard-fail`, or `escalated — <reason>`
+
+Example format:
+
+```markdown
+### Step 7a Internal Review Gate Summary
+
+**Effective reviewer set**: claude
+**Skipped reviewers**: codex (unreachable from Claude Code subagent)
+**Verdict**: APPROVED
+
+All reachable internal reviewers approved. Note: codex was unreachable from the current runner — reviewer coverage was reduced from 2 to 1. Human reviewers may re-run Step 7a from a Codex-capable runner if full coverage is required.
+```
+
+In the hard-fail case (zero reachable reviewers or `fail-if-any-unavailable` policy triggered), the hard-fail comment posted in the Runtime-availability check section above **already satisfies BR-7** — do not post a second summary comment.
+
+**Note**: The Step 7a summary comment is a distinct requirement from the Step 7 "Automated Reviewer Loop Summary" comment checked in Step 8c. The Step 7a summary covers the internal gate only; Step 8c's check targets the external automated reviewer loop (Step 7). These are separate comments and neither substitutes for the other.
 
 ### Step 7a loop parameters
 
@@ -747,7 +840,7 @@ Verify all of the following. If any check fails, **do not report ready** — tre
 | `ready-for-regression` label | Present in `labels[].name` for `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`; absent/ignored for `spec/*`, `implementation-plan/*` |
 | No `needs-fixes` label | `needs-fixes` absent from `labels[].name` |
 | All automated-reviewer `reviewThreads` resolved | GraphQL `reviewThreads.nodes[].isResolved=true` (or `✅ Addressed` in the first comment body) for every thread authored by a configured bot login. Evaluate via: `gh api graphql -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login}body}}}}}}}' -f owner=OWNER -f repo=REPO -F pr=NUMBER \| jq '.data.repository.pullRequest.reviewThreads.nodes[] \| select(.isResolved==false)'` — output must be empty for all bot-authored threads. Use cursor-based pagination for PRs with more than 100 threads. |
-| Automated reviewer loop summary | At least one comment whose body contains `"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"` (skip this check only when Step 7 was `skipped` because no review platforms are configured). **This is a hard requirement. Agents applying fixes MUST NOT remove or skip this check — the presence of the comment is the only reliable signal that Step 7 ran to completion. A PR that has `ready-for-human-review` but lacks this comment is in an incomplete state and must re-run Step 7.** |
+| Automated reviewer loop summary | At least one comment whose body contains `"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"` (skip this check only when Step 7 was `skipped` because no review platforms are configured). **This is a hard requirement. Agents applying fixes MUST NOT remove or skip this check — the presence of the comment is the only reliable signal that Step 7 ran to completion. A PR that has `ready-for-human-review` but lacks this comment is in an incomplete state and must re-run Step 7.** (Note: the Step 7a summary comment posted by the internal review gate is a distinct comment from a distinct step — it does not satisfy this check. This check targets the external automated reviewer loop summary from Step 7 only.) |
 | CI checks | All required status checks have `state: SUCCESS` or `conclusion: success` in `statusCheckRollup` (no check in `PENDING`, `FAILURE`, or `ERROR` state) |
 
 If any check fails:
