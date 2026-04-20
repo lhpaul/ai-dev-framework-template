@@ -83,7 +83,7 @@ AI developer agents writing `CHANGELOG.md` entries consistently produce trailing
 ## Acceptance Criteria
 
 - [ ] AC1: `03-implement-development-protocol.md` includes an explicit, actionable CHANGELOG format verification instruction in every implementation path (Full Pipeline Step 6, and the equivalent CHANGELOG update step in the Refactor, Fast Track, and Hotfix paths), directing the agent to verify the written CHANGELOG entry for trailing whitespace and trailing blank lines before staging.
-- [ ] AC2: `.claude/agents/developer.md` key rules section includes a note that the CHANGELOG entry must have no trailing whitespace or trailing blank lines before commit.
+- [ ] AC2: Both `.claude/agents/developer.md` and `.cursor/agents/developer.md` key rules sections include a note that the CHANGELOG entry must have no trailing whitespace or trailing blank lines before commit.
 - [ ] AC3: The instruction in the protocol is concrete and unambiguous — it specifies both defect patterns (trailing whitespace, trailing blank lines at end of entry) and the timing (after writing the CHANGELOG entry, before staging for commit).
 - [ ] AC4: The instruction explicitly states that intentional two-space Markdown hard line breaks must not be treated as trailing whitespace violations.
 - [ ] AC5: The changes do not remove or conflict with any existing CHANGELOG update instructions in the protocol or agent definition.

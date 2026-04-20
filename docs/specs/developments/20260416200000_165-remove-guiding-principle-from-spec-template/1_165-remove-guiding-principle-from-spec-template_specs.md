@@ -77,11 +77,14 @@ The spec template and all generated spec documents currently include a verbatim 
 - [ ] `docs/ai/development-workflow/templates/spec-template.md` no longer contains the "Guiding principle (important)" section.
 - [ ] `docs/ai/development-workflow/protocols/01-generate-spec-protocol.md` contains the "product-focused" authoring guidance (verbatim or equivalent) so that spec authors and agents generating specs can reference it.
 - [ ] `REVIEW.md` spec checklist does not require the "Guiding principle" section to be present; instead it checks that the spec does not contain implementation details (table names, endpoints, file paths, class names, migration design).
-- [ ] All 4 existing spec files that contain the "Guiding principle" section have it removed:
+- [ ] All existing spec files that contain the "Guiding principle" section have it removed:
   - `docs/specs/developments/20260413201328_retrospective-protocol/1_retrospective-protocol_specs.md`
   - `docs/specs/developments/20260414184900_batch-merge/1_batch-merge_specs.md`
   - `docs/specs/developments/20260416120000_136-shellcheck-workflow-scripts/1_136-shellcheck-workflow-scripts_specs.md`
   - `docs/specs/developments/20260416120000_agent-timeout-handling/1_agent-timeout-handling_specs.md`
+  - `docs/specs/developments/20260416120000_batch-merge-ff-pull-retry/1_batch-merge-ff-pull-retry_specs.md`
+  - `docs/specs/developments/20260416120000_coderabbit-success-fallback/1_coderabbit-success-fallback_specs.md`
+  - `docs/specs/developments/20260416180000_173-markdown-lint-plan-spec-docs/1_173-markdown-lint-plan-spec-docs_specs.md`
 - [ ] After the fix, new spec PRs do not trigger any automated reviewer finding about a missing "Guiding principle" section.
 
 ---

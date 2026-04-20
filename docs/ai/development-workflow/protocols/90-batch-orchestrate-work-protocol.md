@@ -67,7 +67,7 @@ From the tracker, collect for each open item:
 
 ```bash
 # For each candidate issue number, check if a merged PR already exists
-gh pr list --state merged --search "<issue-number>" --json number,title,headRefName \
+gh pr list --state merged --limit 1000 --search "<issue-number>" --json number,title,headRefName \
   --jq ".[] | select(.headRefName | test(\"/<issue-number>($|-)\"))"
 ```
 
@@ -299,13 +299,14 @@ Before dispatching a parallel batch, validate that each item can be isolated.
 For each item in the batch:
 
 ```bash
-# Check if the item's branch already has a worktree
-git worktree list | grep -F "<branch-name>"
+# Check if the item's branch already has a worktree (exact branch match)
+git worktree list --porcelain \
+  | awk '/^worktree / { wt=$2 } /^branch / { b=$2; sub("^refs/heads/","",b); if (b=="<branch-name>") print wt "\t" b }'
 
-# If no match, the pre-flight check passes for this item.
+# If no output, the pre-flight check passes for this item.
 # The Work Item Runner (Step 4, protocol 91) will create the worktree.
 
-# If a match is found and points to an active worktree:
+# If output is found and points to an active worktree:
 # - If the worktree is on the same branch and clean, it is safe to reuse
 # - If the worktree is on a different branch or dirty, the pre-flight fails
 ```

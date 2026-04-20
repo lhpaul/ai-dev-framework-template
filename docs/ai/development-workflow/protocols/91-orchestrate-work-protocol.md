@@ -322,7 +322,7 @@ After removing the worktree, verify that the CWD is still valid by running a sim
 
 **When not in a parallel batch**: Worktree creation is optional but recommended for large development folders or long-running work. If not using a dedicated worktree, ensure the working directory is clean before proceeding.
 
-**Permission-denial early exit (subagent runs only)**: If at any point during the run the harness responds with a message containing `"permission"` and `"denied"` (case-insensitive substring match — e.g., `"Permission to use Edit has been denied"`), the subagent must **immediately stop all further work** and return the following structured string to the Portfolio Orchestrator:
+**Permission-denial early exit (subagent runs only)**: If at any point during the run the harness responds with the known harness failure pattern — a message containing the phrase `"Permission to use"` AND a denied tool name (`Edit` or `Bash`) — the subagent must **immediately stop all further work** and return the following structured string to the Portfolio Orchestrator:
 
 ```
 SUBAGENT_PERMISSION_DENIAL: [tool] tool denied by harness. No partial work committed. Falling back to orchestrator inline execution.
@@ -339,7 +339,7 @@ This protocol stays scoped to one item. It may call different stage agents over 
 
 ### CHANGELOG in parallel batches
 
-Each item in a parallel batch adds its own CHANGELOG entry as normal during implementation. Do not pass `SKIP_CHANGELOG` signals or attempt consolidation — external reviewers enforce per-PR diff scope and will reject entries for work not in the current PR. CHANGELOG merge conflicts are resolved at merge time by the batch-merge auto-resolution (protocol 94 Step 4.3). See protocol 90 Step 3.6 for full rationale.
+See Protocol 90 Step 3.6 for the canonical CHANGELOG strategy in parallel batches. CHANGELOG merge conflicts are resolved at merge time by the batch-merge auto-resolution (Protocol 94 Step 4.3).
 
 ### Scope Boundary Rule for Dispatched Agents
 
@@ -385,7 +385,7 @@ SUBAGENT_PERMISSION_DENIAL: Edit tool denied by harness. No partial work committ
   git status --porcelain
   ```
 
-  If the output is non-empty, abort and exit with `SUBAGENT_PERMISSION_DENIAL:`.
+  If the output is non-empty, clean up the `.tmp/permission-preflight.tmp` artifact, emit a distinct error (`SELF_CHECK_DIRTY_WORKTREE: unexpected tracked file modifications detected — see git status output above`), and abort for human inspection. Do **not** emit `SUBAGENT_PERMISSION_DENIAL:` for this case.
 
 If the self-check succeeds, proceed normally to the creator-stage work.
 

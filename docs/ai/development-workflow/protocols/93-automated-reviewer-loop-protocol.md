@@ -147,7 +147,8 @@ After the review loop script returns `clean` for all platforms and before declar
 2. **For each reviewer comment**, check whether it has been addressed:
    - A reply from the PR author or agent confirming the fix (e.g., "Fixed in commit ...")
    - A "Resolved" status from the reviewer bot itself
-   - The comment is on a file/line that has been modified in a subsequent commit
+
+   A subsequent commit modifying the same file or line is **not** sufficient on its own — the concern may still be unresolved even if the line changed. Require an explicit resolution signal (bot "Resolved" status or a confirming author/agent reply) plus verification that the specific concern is actually addressed.
 
 3. **If any unaddressed comment is found**:
    - Dispatch a fixer to address it
