@@ -1312,8 +1312,12 @@ check_unresolved_threads() {
   while [ "$has_next_page" = "true" ]; do
     page=$((page + 1))
     if [ "$page" -gt "$max_pages" ]; then
-      echo "WARN: check_unresolved_threads: exceeded $max_pages pages for PR #$pr_number — some threads may not have been checked" >&2
-      break
+      # Fail-safe: returning non-zero prevents the caller from consuming a partial
+      # unresolved-thread count (threads past page 10 would be silently ignored, so a
+      # very large PR could otherwise be marked ready-for-human-review despite unresolved
+      # threads beyond the cap).
+      echo "WARN: check_unresolved_threads: exceeded $max_pages pages for PR #$pr_number; cannot confirm all threads checked" >&2
+      return 1
     fi
 
     local result
