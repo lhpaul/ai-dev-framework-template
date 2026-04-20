@@ -603,6 +603,7 @@ run_devin_review() {
                     .user.login == $bot and
                     .in_reply_to_id == null and
                     ((.body // "") | test("^✅") | not) and
+                    ((.body // "") | test("✅ Addressed") | not) and
                     ((.body // "") | test("No Issues Found"; "i") | not) and
                     (.id as $comment_id | ($resolved_ids | index($comment_id) | not))
                   )
@@ -766,7 +767,11 @@ run_devin_review() {
 is_coderabbit_blocking() {
   # Returns 0 (true) if the comment body contains a blocking severity marker.
   # Critical (🔴) and Major (🟠) are blocking; Minor (🟡) and Low (🟢) are not.
+  # However, CodeRabbit appends "✅ Addressed in commit ..." at the end of the
+  # comment body when the finding has been fixed in a subsequent commit. These
+  # resolved findings are NOT blocking even if they still contain 🔴/🟠 markers.
   local body="$1"
+  if printf '%s\n' "$body" | grep -q "✅ Addressed"; then return 1; fi
   if printf '%s\n' "$body" | grep -q "🔴"; then return 0; fi
   if printf '%s\n' "$body" | grep -q "🟠"; then return 0; fi
   return 1
@@ -898,6 +903,18 @@ run_coderabbit_review() {
   #
   local coderabbit_review_count=0
   local coderabbit_any_activity=0
+  local coderabbit_retrigger_attempted=0
+  local coderabbit_rate_limit_retries=0
+  local coderabbit_rate_limit_max_retries="${CODERABBIT_RATE_LIMIT_MAX_RETRIES:-2}"
+  local coderabbit_rate_limit_wait="${CODERABBIT_RATE_LIMIT_WAIT:-180}"
+  if ! [[ "$coderabbit_rate_limit_max_retries" =~ ^[0-9]+$ ]]; then
+    echo "WARN: CODERABBIT_RATE_LIMIT_MAX_RETRIES must be a non-negative integer; defaulting to 2" >&2
+    coderabbit_rate_limit_max_retries=2
+  fi
+  if ! [[ "$coderabbit_rate_limit_wait" =~ ^[0-9]+$ ]] || [ "$coderabbit_rate_limit_wait" -le 0 ]; then
+    echo "WARN: CODERABBIT_RATE_LIMIT_WAIT must be a positive integer; defaulting to 180" >&2
+    coderabbit_rate_limit_wait=180
+  fi
 
   while :; do
     # Check for any CodeRabbit review submitted after the HEAD commit
@@ -922,12 +939,19 @@ run_coderabbit_review() {
     # Also check for CodeRabbit issue comments (summary comment) as activity signal.
     # Filter by since_iso so historical comments from prior pushes do not incorrectly
     # mark this HEAD cycle as having activity (which would suppress stale-findings recovery).
+    # Exclude "Reviews paused" comments (pause marker) and "rate limit" comments (rate-limit
+    # marker) — neither represents a completed review and must not suppress rate-limit handling.
     if [ "$coderabbit_any_activity" -eq 0 ]; then
       local activity_count
       activity_count="$(
         gh api "repos/$repo/issues/$pr_number/comments" --paginate \
           | jq --arg bot "$bot_login" --arg since "$since_iso" '
-              [.[] | select(.user.login == $bot and .created_at > $since)] | length
+              [.[] | select(
+                  .user.login == $bot and
+                  .created_at > $since and
+                  ((.body // "") | test("Reviews paused|review paused"; "i") | not) and
+                  ((.body // "") | test("rate.?limit"; "i") | not)
+              )] | length
             '
       )"
       if [ "${activity_count:-0}" -gt 0 ]; then
@@ -935,8 +959,113 @@ run_coderabbit_review() {
       fi
     fi
 
+    # --- Auto-retrigger: detect CodeRabbit "reviews paused" state ---
+    # CodeRabbit auto-pauses reviews after many commits. When this happens, no
+    # review is posted for the current HEAD, causing the loop to time out. Detect
+    # the pause by checking for a "Reviews paused" issue comment and post
+    # "@coderabbitai review" to trigger a fresh review. Only attempt once.
+    if [ "$coderabbit_any_activity" -eq 0 ] && [ "$coderabbit_retrigger_attempted" -eq 0 ] && [ "$elapsed" -ge "$((max_wait / 2))" ]; then
+      # Check if the most recent CodeRabbit bot comment created after since_iso contains
+      # a "Reviews paused" marker. Use since_iso filter to avoid false positives from
+      # historical pause banners from prior HEAD commits.
+      local paused_count
+      paused_count="$(
+        gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+          | jq --arg bot "$bot_login" --arg since "$since_iso" '
+              [.[] | select(
+                  .user.login == $bot and
+                  .created_at > $since and
+                  ((.body // "") | test("Reviews paused|review paused"; "i"))
+              )] | length
+            '
+      )"
+      if [ "${paused_count:-0}" -gt 0 ]; then
+        echo "INFO: CodeRabbit reviews are paused — posting @coderabbitai review to trigger a fresh review" >&2
+        if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
+          coderabbit_retrigger_attempted=1
+          # Reset the elapsed timer to give the retrigger time to complete.
+          elapsed=0
+        else
+          echo "WARN: failed to post retrigger comment — will not reset timer" >&2
+          coderabbit_retrigger_attempted=1
+        fi
+        sleep "$poll_interval"
+        elapsed=$((elapsed + poll_interval))
+        continue
+      fi
+    fi
+
+    # --- Rate-limit detection: CodeRabbit posts a comment when it cannot review yet ---
+    # When CodeRabbit is rate-limited it posts an issue comment containing "rate limit"
+    # text. Detect this, wait, and retry up to coderabbit_rate_limit_max_retries times.
+    if [ "$coderabbit_any_activity" -eq 0 ] && [ "$coderabbit_rate_limit_retries" -lt "$coderabbit_rate_limit_max_retries" ]; then
+      local rate_limit_comment_count
+      rate_limit_comment_count="$(
+        gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+          | jq --arg bot "$bot_login" --arg since "$since_iso" '
+              [.[] | select(
+                  .user.login == $bot and
+                  .created_at > $since and
+                  ((.body // "") | test("rate.?limit"; "i"))
+              )] | length
+            '
+      )"
+      if [ "${rate_limit_comment_count:-0}" -gt 0 ]; then
+        coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
+        echo "INFO: CodeRabbit rate limit detected (retry $coderabbit_rate_limit_retries/$coderabbit_rate_limit_max_retries) — waiting ${coderabbit_rate_limit_wait}s before re-triggering" >&2
+        sleep "$coderabbit_rate_limit_wait"
+        # Do NOT reset since_iso — keep the original HEAD-commit timestamp so any review
+        # posted by CodeRabbit during or after the wait is still within the detection window.
+        elapsed=0
+        if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
+          echo "INFO: posted @coderabbitai review trigger after rate-limit wait" >&2
+        else
+          echo "WARN: failed to post @coderabbitai review trigger after rate-limit wait" >&2
+        fi
+        sleep "$poll_interval"
+        elapsed=$((elapsed + poll_interval))
+        continue
+      fi
+    fi
+
     if [ "$elapsed" -ge "$max_wait" ]; then
       if [ "$coderabbit_any_activity" -eq 0 ]; then
+        # --- SUCCESS commit-status fallback ---
+        # Before running stale-findings recovery or escalating, check whether CodeRabbit
+        # already posted a SUCCESS commit-status context for the current HEAD SHA. This
+        # happens during rate-limit windows on parallel batches: CodeRabbit signals the
+        # result via a commit status rather than an inline review comment. If found, treat
+        # the PR as clean and return immediately without scanning for stale findings.
+        # Context name is matched case-insensitively to guard against future renames.
+        local coderabbit_success_status_count
+        # Deduplicate by context (keep latest entry per context) before checking state,
+        # so a superseded status (e.g., an old success followed by a failure on the same
+        # context) is not counted. This matches the deduplication pattern used by the
+        # Devin adapter above.
+        coderabbit_success_status_count="$(
+          gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
+            | jq -s '[.[].[] | select(
+                    (.context // "" | ascii_downcase | test("coderabbit"))
+                  )]
+                  | group_by(.context) | map(max_by(.updated_at))
+                  | map(select(.state == "success"))
+                  | length'
+        )"
+        if [ "${coderabbit_success_status_count:-0}" -gt 0 ]; then
+          echo "INFO: CodeRabbit SUCCESS commit-status found for HEAD $head_sha — treating PR as clean (coderabbit_status_success_fallback)" >&2
+          print_kv RESULT clean
+          print_kv REASON coderabbit_status_success_fallback
+          print_kv PLATFORM "$platform"
+          print_kv PR_NUMBER "$pr_number"
+          print_kv BRANCH "$branch_name"
+          print_kv REVIEW_COMMENT_ID ""
+          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          print_kv COMMENT_COUNT 0
+          print_kv BLOCKING_COUNT 0
+          print_kv SUGGESTION_COUNT 0
+          return 0
+        fi
+
         # CodeRabbit didn't review this HEAD. Check for stale findings before skipping.
         # Only consider unresolved inline comments here. Exclude resolved findings
         # (replies starting with ✅ resolve their parent comment) — same pattern as Devin.
@@ -962,6 +1091,7 @@ run_coderabbit_review() {
                     .user.login == $bot and
                     .in_reply_to_id == null and
                     ((.body // "") | test("^✅") | not) and
+                    ((.body // "") | test("✅ Addressed") | not) and
                     (.id as $comment_id | ($resolved_ids | index($comment_id) | not))
                   )
                 | { path, line: (.line // .original_line // 0), body: (.body // "") }
@@ -1118,6 +1248,129 @@ run_coderabbit_review() {
   print_kv BLOCKING_COUNT 0
   print_kv SUGGESTION_COUNT "$suggestion_count"
   return 0
+}
+
+bot_login_for_platform() {
+  # Returns the GitHub bot login for a given review platform name.
+  # Used to filter reviewThreads by bot-authored comments only.
+  case "$1" in
+    coderabbit) printf 'coderabbitai[bot]\n' ;;
+    devin)      printf 'devin-ai-integration[bot]\n' ;;
+    greptile)   printf 'greptile-apps[bot]\n' ;;
+    *)          printf '\n' ;;
+  esac
+}
+
+check_unresolved_threads() {
+  # Enumerate all reviewThreads on a PR via the GitHub GraphQL API (cursor-based
+  # pagination), filter to bot-authored threads, and return the count of unresolved
+  # threads on stdout as a plain integer.
+  #
+  # A thread is considered resolved when:
+  #   - isResolved=true (GitHub resolved it via the Resolve button / mutation), OR
+  #   - the first comment body contains "✅ Addressed" (bot self-marked it resolved)
+  #
+  # Only threads whose first comment was authored by a configured bot login are counted.
+  # Human-authored threads are ignored.
+  #
+  # Arguments:
+  #   $1    pr_number  - PR number (integer)
+  #   $2    repo       - "owner/repo" slug
+  #   $3... bot_logins - one or more bot login strings (e.g. "coderabbitai[bot]")
+  #
+  # Bot logins are passed as individual positional arguments (not space-separated)
+  # to prevent Bash glob expansion of bracket characters in "[bot]" strings.
+  #
+  # Re-enable errexit within this function. When called from a command substitution
+  # with set +e active in the parent (as in the thread gate), the subshell inherits
+  # set +e. Without this explicit re-enablement, gh api graphql failures inside this
+  # function would be silently ignored and the function would always return exit 0,
+  # making the caller's error-handling code unreachable.
+  set -e
+  local pr_number="$1"
+  local repo="$2"
+  shift 2
+  # Remaining positional args are bot login strings; store in an array to avoid
+  # glob expansion when iterating (bracket characters in "[bot]" are safe in arrays).
+  local -a bot_logins=("$@")
+
+  local owner repo_name
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  local unresolved_count=0
+  local cursor=""
+  local has_next_page="true"
+  local page=0
+  local max_pages=10
+
+  # GraphQL query: paginate reviewThreads 100 at a time, fetch first comment per thread.
+  # Using inline query string to avoid heredoc quoting issues in subshells.
+  local graphql_query
+  graphql_query='query($owner:String!,$repo:String!,$pr:Int!,$cursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor}nodes{id isResolved comments(first:1){nodes{author{login}body}}}}}}}'
+
+  while [ "$has_next_page" = "true" ]; do
+    page=$((page + 1))
+    if [ "$page" -gt "$max_pages" ]; then
+      # Fail-safe: returning exit code 2 (page-cap exceeded) tells the caller to BLOCK
+      # the PR rather than degrade — threads past page 10 would be silently ignored,
+      # so a very large PR could otherwise be marked ready-for-human-review despite
+      # unresolved threads beyond the cap. Exit 3 (below) is for transient GraphQL
+      # failures where degrading gracefully (skip gate, trust the 0 unresolved) is
+      # acceptable.
+      echo "WARN: check_unresolved_threads: exceeded $max_pages pages for PR #$pr_number; cannot confirm all threads checked" >&2
+      return 2
+    fi
+
+    local result
+    if [ -n "$cursor" ]; then
+      result="$(gh api graphql \
+        -f query="$graphql_query" \
+        -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" -f cursor="$cursor" \
+        --jq '.data.repository.pullRequest.reviewThreads')" \
+        || { echo "WARN: check_unresolved_threads: GraphQL query failed for PR #$pr_number" >&2; return 3; }
+    else
+      result="$(gh api graphql \
+        -f query="$graphql_query" \
+        -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" \
+        --jq '.data.repository.pullRequest.reviewThreads')" \
+        || { echo "WARN: check_unresolved_threads: GraphQL query failed for PR #$pr_number" >&2; return 3; }
+    fi
+
+    # Use jq -r (not -re) for boolean/nullable fields: jq -e exits non-zero when the
+    # output value is false or null, which would misinterpret valid values like
+    # hasNextPage=false or isResolved=false as errors. Rely on gh api's own exit code
+    # (caught above) for real API failures; use jq -r only for data extraction.
+    has_next_page="$(printf '%s\n' "$result" | jq -r '.pageInfo.hasNextPage')"
+    cursor="$(printf '%s\n' "$result" | jq -r '.pageInfo.endCursor // empty')"
+
+    local thread_json
+    while IFS= read -r thread_json; do
+      [ -z "${thread_json:-}" ] && continue
+
+      local is_resolved author body
+      is_resolved="$(printf '%s\n' "$thread_json" | jq -r '.isResolved')"
+      author="$(printf '%s\n' "$thread_json" | jq -r '.comments.nodes[0].author.login // ""')"
+      body="$(printf '%s\n' "$thread_json" | jq -r '.comments.nodes[0].body // ""')"
+
+      # Only count threads authored by configured bot logins.
+      # Iterate via array to prevent glob expansion of bracket chars in "[bot]" strings.
+      local is_bot=0
+      local bot_login
+      for bot_login in "${bot_logins[@]}"; do
+        if [ "$author" = "$bot_login" ]; then is_bot=1; break; fi
+      done
+      [ "$is_bot" -eq 0 ] && continue
+
+      # Thread is resolved if isResolved=true (GitHub resolved) or body contains "✅ Addressed"
+      if [ "$is_resolved" = "true" ]; then continue; fi
+      if printf '%s\n' "$body" | grep -q "✅ Addressed"; then continue; fi
+
+      unresolved_count=$((unresolved_count + 1))
+    done < <(printf '%s\n' "$result" | jq -c '.nodes[]')
+  done
+
+  printf '%d\n' "$unresolved_count"
 }
 
 run_platform_review() {
@@ -1302,7 +1555,69 @@ if [ -z "$last_platform" ]; then
   print_kv COMMENT_COUNT 0
   print_kv BLOCKING_COUNT 0
   print_kv SUGGESTION_COUNT 0
+  print_kv UNRESOLVED_THREAD_COUNT 0
   exit 0
+fi
+
+# --- Unresolved review thread gate ---
+# When all platforms returned clean or skipped, check whether any bot-authored
+# review threads remain unresolved before declaring the aggregate result clean.
+# This catches Nitpick/Trivial/Minor severity threads that individual platform
+# handlers do not classify as blocking but that still need explicit resolution.
+if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; then
+  # Build the array of bot logins from the configured platforms.
+  # Using an array (not a space-separated string) prevents Bash glob expansion of
+  # bracket characters in "[bot]" strings during iteration.
+  declare -a unresolved_bot_logins=()
+  for _platform in "${platforms[@]}"; do
+    _login="$(bot_login_for_platform "$_platform")"
+    [ -n "$_login" ] && unresolved_bot_logins+=("$_login")
+  done
+
+  unresolved_thread_count=0
+  if [ "${#unresolved_bot_logins[@]}" -gt 0 ]; then
+    # Wrap with set +e so a transient GraphQL API failure does not crash the script
+    # (all platform reviews have already succeeded; we degrade gracefully on thread-check failure).
+    # Do NOT use 2>&1 — stderr (WARN messages) must remain on stderr so that only the
+    # integer count appears on stdout for clean capture into unresolved_thread_count.
+    # Bot logins are passed as individual positional args to avoid glob expansion.
+    thread_check_output=""
+    thread_check_status=0
+    set +e
+    thread_check_output="$(check_unresolved_threads "$pr_number" "$(repo_slug)" "${unresolved_bot_logins[@]}")"
+    thread_check_status=$?
+    set -e
+    if [ "$thread_check_status" -eq 2 ]; then
+      # Exit 2 = page-cap exceeded. Fail-safe: BLOCK the PR because we could not
+      # confirm all threads were inspected (threads past page 10 may be unresolved).
+      # This is different from a transient API failure (exit 3) where degrading is
+      # acceptable.
+      echo "WARN: check_unresolved_threads exceeded page cap — blocking PR as fail-safe" >&2
+      aggregate_result="needs_fixes"
+      aggregate_reason="unresolved_thread_check_incomplete"
+      unresolved_thread_count=0
+    elif [ "$thread_check_status" -ne 0 ]; then
+      # Exit 3 (or any other non-zero) = transient GraphQL API failure. Degrade:
+      # skip the thread gate and trust the 0 unresolved default. All platform reviews
+      # have already succeeded at this point so the PR state is otherwise clean.
+      echo "WARN: check_unresolved_threads failed (exit $thread_check_status) — skipping thread gate, treating as 0 unresolved" >&2
+      unresolved_thread_count=0
+    else
+      unresolved_thread_count="$thread_check_output"
+    fi
+  fi
+  print_kv UNRESOLVED_THREAD_COUNT "$unresolved_thread_count"
+
+  if [ "$unresolved_thread_count" -gt 0 ]; then
+    aggregate_result="needs_fixes"
+    aggregate_reason="unresolved_review_threads"
+    # Increment total_blocking_count so BLOCKING_COUNT reflects the unresolved threads.
+    # No BLOCKING_N_* entries are emitted for thread findings — callers must use
+    # REASON=unresolved_review_threads and UNRESOLVED_THREAD_COUNT to handle this case.
+    total_blocking_count=$((total_blocking_count + unresolved_thread_count))
+  fi
+else
+  print_kv UNRESOLVED_THREAD_COUNT 0
 fi
 
 print_kv RESULT "$aggregate_result"

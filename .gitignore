@@ -9,6 +9,11 @@ Thumbs.db
 
 # Claude Code
 .claude/settings.local.json
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+
+# Node
+node_modules/
 
 # Temp files
 .tmp/

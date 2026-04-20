@@ -22,8 +22,15 @@ description: After a development PR is merged and the remote branch deleted, syn
 
    If the item’s tracker status is already in a further-advanced state (e.g., already `In Development` when a spec branch merges), do not roll it back — leave it as-is.
    - **Linear**: Use the Linear MCP/skill to get the issue by ID and set its status (per `docs/ai/development-workflow/integrations/linear.md`).
-   - **GitHub Projects**: Update the project item Status field via the `gh` CLI / GraphQL (per `docs/ai/development-workflow/integrations/github-projects.md`); only close the issue with `gh issue close` for implementation branches (feature/fix/refactor/hotfix), not for spec or plan branches.
+   - **GitHub Issues/Projects**: The script already closes the GitHub issue for implementation branches (if a merged PR is found). You still need to update the GitHub Projects board status field via `gh` CLI / GraphQL (per `docs/ai/development-workflow/integrations/github-projects.md`).
    - **Other trackers**: Follow the same idea — set the issue to the appropriate status per the table above. See `docs/ai/development-workflow/integrations/issue-tracker.md` and the tracker-specific doc under `docs/ai/development-workflow/integrations/`.
    - If no issue identifier is present in the branch name or no tracker is in use, skip this step.
 
-The script (step 1) fetches origin, checks out `develop`, pulls, and deletes the local branch with `git branch -D` (force-delete; safe because the branch is already merged on the remote). Do not change the order or skip steps.
+**After cleanup and tracker update — suggest a retrospective if appropriate:**
+If this post-merge cleanup is the final action for a work item that was advanced in the current session (i.e., you drove the item through implementation, review, and merge in this conversation), suggest running a retrospective:
+
+> Would you like to run a retrospective on this session’s work?
+
+Only suggest this when the cleanup is for a standalone item run (not when called as part of a batch merge or orchestrator flow, which handle retrospectives at their own level). See `docs/ai/development-workflow/protocols/06-retrospective-protocol.md`.
+
+The script (step 1) fetches origin, checks out `develop`, pulls, deletes the local branch with `git branch -D` (force-delete; safe because the branch is already merged on the remote), and for implementation branches (`fix/*`, `feature/*`, `hotfix/*`, `refactor/*`) automatically closes the associated GitHub issue if a merged PR is found. Do not change the order or skip steps.

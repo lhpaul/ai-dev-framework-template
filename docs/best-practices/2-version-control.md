@@ -111,6 +111,7 @@ This project uses [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) forma
 - Every feature/fix/hotfix PR adds an entry under `[Unreleased]` **before merge**, with these exceptions:
   - Spec-only or plan-only PRs (documentation artifacts for upcoming work) — no entry needed
   - Fixes or changes to developments that have not been released yet — update the existing `[Unreleased]` entry instead of adding a new one; if the original entry already describes the corrected behavior, no change is needed
+  - **Parallel batch items** (when orchestrated by protocol 90): each PR adds its own CHANGELOG entry as normal; merge conflicts are resolved by batch-merge auto-resolution at merge time (see protocol 94 for details).
 - Never defer CHANGELOG entries to release time
 - Use the appropriate category: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`
 - Release PRs move `[Unreleased]` entries to a versioned section: `[X.Y.Z] - YYYY-MM-DD`

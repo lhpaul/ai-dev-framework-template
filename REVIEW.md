@@ -118,8 +118,14 @@ Check:
 - Logic and edge cases are correct
 - Security boundaries and validation are respected
 - Tests cover the changed business behavior
-- CHANGELOG and workflow-specific artifacts are updated when required (spec/plan-only PRs are exempt; fixes to unreleased work update existing entries rather than adding new ones)
+- CHANGELOG and workflow-specific artifacts are updated when required (spec/plan-only PRs are exempt; fixes to unreleased work update existing entries rather than adding new ones; in parallel batches, each PR adds its own CHANGELOG entry as normal; merge conflicts are resolved by batch-merge auto-resolution per protocol 94 Step 4.3)
 - New patterns are justified and consistent with the codebase
+
+Additional checks for **shell scripts** (`*.sh`):
+- Option parsing validates that required values are present before `shift`
+- All error paths emit structured output consistent with the script's output contract
+- User-supplied input (PR numbers, branch names) is validated before interpolation into file paths or commands
+- `|| true` does not silently swallow failures from external commands (e.g., `gh`, `git`) that the caller needs to know about
 
 Typical `blocking` issues:
 - Incorrect behavior

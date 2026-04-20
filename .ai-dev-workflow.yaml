@@ -26,6 +26,7 @@ review:
   # Supported today by pr-review-loop.sh: greptile, devin, coderabbit
   platforms:
     - devin
+    - coderabbit
 
   # Ordered list of internal AI reviewers to run sequentially on draft PRs
   # (Step 7a in 91-orchestrate-work-protocol.md) before converting to non-draft.
@@ -51,6 +52,18 @@ review:
   internal_reviewers:
     - claude
     - codex
+
+  # Optional: policy when a listed internal reviewer is unreachable from the current runner.
+  # Protocol 91 Step 7a enforces this policy at runtime.
+  #
+  # Allowed values:
+  #   warn                    — (default) Emit a warning comment on the PR and proceed with
+  #                             the reachable subset. Hard-fails only if zero reviewers are reachable.
+  #   fail-if-any-unavailable — Hard-fail the Step 7a gate whenever any listed reviewer is
+  #                             unreachable, even if others are reachable.
+  #
+  # Uncomment and set to override the default:
+  # internal_reviewers_unavailable_policy: warn
 
 issue_tracker:
   # Supported examples: linear, github_projects, github_issues, jira, clickup, notion, none

@@ -27,7 +27,7 @@ If you prefer different names (`small/medium/large`, `fast/standard/pro`, etc.),
 | Agent | Tier | Rationale |
 |---|---|---|
 | `orchestrator` | `economy` | **Portfolio Orchestrator**. Reads state, builds batches, and dispatches Work Item Runners; mechanical coordination that should stay fast and cheap. |
-| `item-orchestrator` | `economy` | **Work Item Runner**. Single-item control loop; mostly routing, resume logic, and readiness supervision rather than deep reasoning. |
+| `item-orchestrator` | `balanced` | **Work Item Runner**. Single-item control loop supervises review-fix-review cycles where parsing findings, determining correct fixes, and verifying them requires capable reasoning. Economy models struggle with multi-step reasoning in fix loops; balanced (sonnet minimum) is required. |
 | `automated-reviewer-loop` | `economy` | Runs review + CI loop for a PR; mechanical coordination like the orchestration agents, no deep reasoning required. |
 | `product-manager` | `balanced` | Spec writing requires creativity and structured thinking, but the spec template provides strong scaffolding. A balanced model handles this well at a reasonable cost. |
 | `spec-reviewer` | `balanced` | Review against a checklist. A balanced model is well within the capability required. |
@@ -37,6 +37,7 @@ If you prefer different names (`small/medium/large`, `fast/standard/pro`, etc.),
 | `code-reviewer` | `balanced` | Code review against known standards and a completed spec. A balanced model is capable here. |
 | `project-setup` | `balanced` | Structured onboarding conversation with clear protocol guidance. A balanced model is sufficient. |
 | `smoke-tester` | `balanced` | Executes the smoke test runbook using browser automation. A balanced model is sufficient for following step-by-step testing instructions. |
+| `retrospective` | `economy` | **Retrospective Analyst**. Reads PR metadata and git history, synthesizes findings into a categorized list; mechanical analysis that should stay fast and cheap. |
 
 ### Runner Notes
 
@@ -65,6 +66,7 @@ Agents only get `Bash` when they need it to carry a stage through branch creatio
 | `code-reviewer` | ✅ | ❌ | May run lint or tests to verify applied fixes |
 | `project-setup` | ✅ | ❌ | May need to initialize git, run project commands during setup |
 | `smoke-tester` | ✅ | ❌ | Runs browser automation and test scripts; needs Bash for execution |
+| `retrospective` | ✅ | ❌ | Needs `gh` CLI for PR metadata queries, `git` for history analysis, and `gh issue create` for backlog items; does not dispatch sub-agents |
 
 ---
 
@@ -78,7 +80,7 @@ Use your runner’s “one-off model override” mechanism.
 Claude Code example (if applicable):
 
 ```bash
-claude --agent developer --model claude-opus-4-5-20251101
+claude --agent developer --model claude-opus-4-7
 ```
 
 **Cursor:**
@@ -99,9 +101,64 @@ This affects all future invocations until changed back.
 
 - `fast`: Uses Cursor's fast model (recommended for economy-tier agents)
 - `inherit`: Uses the current Composer model (recommended for balanced/premium-tier agents)
-- Specific model ID: Uses that exact model (e.g., `claude-opus-4-6`, `gpt-4-turbo`)
+- Specific model ID: Uses that exact model (e.g., `claude-opus-4-7`, `gpt-4-turbo`)
 
 **Precedence**: When multiple agent locations exist (`.cursor/agents/`, `.claude/agents/`, `.codex/agents/`), Cursor uses `.cursor/agents/` first, then `.claude/agents/`, then `.codex/agents/`.
+
+---
+
+## Expected Run Durations
+
+The table below shows the typical and maximum expected wall-clock duration for the two agents most likely to be interrupted by an API stream timeout. Use these values to decide whether an agent run is still in progress or has likely timed out.
+
+| Agent | Typical run | Consider timed out if no progress after |
+|---|---|---|
+| `item-orchestrator` | 5–15 min | ~25 min |
+| `automated-reviewer-loop` | 2–10 min | ~20 min |
+
+These estimates assume a single development item with a normal review-fix cycle. Runs that encounter multiple fixer cycles, slow CI, or rate-limited external reviewers can exceed the typical range — escalate to human only when the maximum threshold is crossed with no visible progress.
+
+---
+
+## Resume a Timed-Out Agent Run
+
+Long-running item-orchestrator agents can be interrupted mid-run (e.g., "API Error: Stream idle timeout" after ~20 minutes), leaving a PR in a partially-advanced state. This section explains how to detect and safely resume an interrupted run.
+
+### Detection checklist
+
+Inspect the PR with:
+
+```bash
+gh pr view <pr_number> --json isDraft,labels,comments,statusCheckRollup
+```
+
+| Signal | Interpretation |
+|---|---|
+| PR is non-draft | The internal review gate (Step 7a) and `gh pr ready` completed |
+| `ready-for-regression` present | Step 7b applied the label |
+| `ready-for-human-review` present **but** no reviewer loop summary comment | **Incomplete** — the label was applied before Step 7 completed; the PR is not actually ready (**skip this check only when Step 7 was `skipped` because no review platforms are configured**) |
+| No comment containing `"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"` | Step 7 (external automated reviewers) did not finish (**skip this check only when no review platforms are configured**) |
+| CI checks absent or in PENDING/FAILURE state | Step 8 (CI loop) did not finish |
+| `needs-fixes` label present | A prior run detected issues but the fix loop did not complete |
+
+A PR that has readiness labels but **no reviewer loop summary comment** is the canonical sign of an interrupted run. The label alone is not a reliable completion signal.
+
+### Resume command
+
+```bash
+# Determine the correct next step
+./scripts/development-workflow/workflow-next-action.sh --pr <pr_number>
+
+# Then re-invoke the item-orchestrator (or automated-reviewer-loop agent) for the PR
+# Example (Claude Code):
+#   /run-item-work --pr <pr_number>
+```
+
+The item-orchestrator uses the Step 8c independent verification gate to detect any missing labels or comments and automatically re-enters the correct resume point (Step 7a, Step 7, or Step 8).
+
+### Warning
+
+**Do NOT manually apply `ready-for-human-review` to a PR that is missing the reviewer loop summary comment.** Doing so marks the PR as ready when the automated review step was never completed, defeating the purpose of the review loop. Always resume via the item-orchestrator and let it complete Step 7 and Step 8 before the label is applied.
 
 ---
 

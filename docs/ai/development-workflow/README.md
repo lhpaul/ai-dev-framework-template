@@ -202,7 +202,9 @@ The sections below keep this document usable as a master reference after the nar
 | Run reviewer loop | `/run-reviewer-loop` command (or `automated-reviewer-loop` agent) | `/run-reviewer-loop` | `workflow-reviewer-loop` skill | `docs/ai/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` |
 | Advance one item | `/run-item-work` command (or `item-orchestrator` agent) | `/run-item-work` | `workflow-item-orchestrator` skill | `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` |
 | Orchestrate portfolio | `/run-work` command (or `orchestrator` agent) | `/run-work` | `workflow-orchestrator` skill | `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
+| Batch merge | `/batch-merge` | `/batch-merge` | `batch-merge` skill | `docs/ai/development-workflow/protocols/94-batch-merge-protocol.md` |
 | Prepare release | `/prepare-release` | `/prepare-release` | — | `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md` |
+| Retrospective | `/retrospective` command | `/retrospective` | `workflow-retrospective` skill | `docs/ai/development-workflow/protocols/06-retrospective-protocol.md` |
 
 After opening release PRs, protocol `05` runs the automated reviewer loop, applies `ready-for-regression` on the **PR targeting `main`**, and runs the CI loop until checks are green (or escalation) — same persistence contract as other PR readiness work.
 
@@ -429,7 +431,7 @@ Use these documents when you need the detailed rules behind a part of the workfl
 
 Protocol prefixes are stable family identifiers, not a promise of contiguous numbering.
 
-- `01`-`05` are the current primary stage families in workflow order.
+- `01`-`06` are the current primary stage families in workflow order.
 - `00` is reserved for pre-stage backlog intake (creating tracker work items before spec work).
 - Generate and review protocols for the same stage share the same family number.
 - `90`-`99` are orchestration, readiness, and other cross-cutting operational protocols.
@@ -446,10 +448,12 @@ Protocol prefixes are stable family identifiers, not a promise of contiguous num
 - `docs/ai/development-workflow/protocols/03-review-implementation-protocol.md`
 - `docs/ai/development-workflow/protocols/04-smoke-test-protocol.md`
 - `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md`
+- `docs/ai/development-workflow/protocols/06-retrospective-protocol.md`
 - `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
 - `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`
 - `docs/ai/development-workflow/protocols/92-pr-readiness-signal-protocol.md`
 - `docs/ai/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`
+- `docs/ai/development-workflow/protocols/94-batch-merge-protocol.md`
 
 ### Review Contract
 
@@ -468,6 +472,7 @@ Repository helpers:
 - `scripts/development-workflow/workflow-next-action.sh`
 - `scripts/development-workflow/pr-review-loop.sh`
 - `scripts/development-workflow/pr-ci-loop.sh`
+- `scripts/development-workflow/batch-merge.sh`
 
 ### Integration Guides
 

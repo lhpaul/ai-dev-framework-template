@@ -13,7 +13,7 @@
 
 reviews:
   auto_review:
-    enabled: false
+    enabled: true
     drafts: false
     base_branches:
       - develop
