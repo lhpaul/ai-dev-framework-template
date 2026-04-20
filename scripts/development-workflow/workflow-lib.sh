@@ -205,6 +205,7 @@ workflow_config_provider() {
     in_section && /^[[:space:]][[:space:]]provider:[[:space:]]*/ {
       line = $0
       sub(/^[[:space:]]*provider:[[:space:]]*/, "", line)
+      sub(/[[:space:]]+#.*$/, "", line)
       print trim(line)
       exit
     }

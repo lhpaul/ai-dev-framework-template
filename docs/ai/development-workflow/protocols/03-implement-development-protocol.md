@@ -57,7 +57,7 @@ Complete this checklist **before writing any code**. It takes 5–10 minutes and
 
    ```bash
    # Example: grep for the key phrase or signal name across all relevant locations
-   grep -r "key phrase" docs/ .cursor/ .claude/ .codex/ AGENTS.md README.md REVIEW.md --include="*.md" -l
+   grep -r "key phrase" docs/ .cursor/ .claude/ .codex/ AGENTS.md README.md REVIEW.md --include="*.md" --include="*.mdc" -l
    ```
 
 Do not proceed to Step 2 until this checklist is complete and all six points are answered.
@@ -143,7 +143,7 @@ Add an entry under `[Unreleased]` in `CHANGELOG.md`:
 A quick shell check for trailing whitespace on pending CHANGELOG changes (run **before** `git add`, per the "before staging" timing requirement):
 
 ```bash
-git diff CHANGELOG.md | grep '^+' | grep -P '\s+$'
+git diff CHANGELOG.md | grep '^+' | grep -E '[[:space:]]+$'
 ```
 
 If this returns output, inspect each flagged line: leave intentional two-space Markdown hard line breaks (exactly two trailing spaces followed by a newline) intact, and fix any other trailing whitespace (e.g., a single trailing space, a tab, or three or more trailing spaces) before committing.
@@ -258,7 +258,7 @@ git checkout -b refactor/[branch-slug]
    A quick shell check for trailing whitespace on pending CHANGELOG changes (run **before** `git add`, per the "before staging" timing requirement):
 
    ```bash
-   git diff CHANGELOG.md | grep '^+' | grep -P '\s+$'
+   git diff CHANGELOG.md | grep '^+' | grep -E '[[:space:]]+$'
    ```
 
    If this returns output, inspect each flagged line: leave intentional two-space Markdown hard line breaks (exactly two trailing spaces followed by a newline) intact, and fix any other trailing whitespace (e.g., a single trailing space, a tab, or three or more trailing spaces) before committing.
@@ -350,7 +350,7 @@ Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (skip if this fixes u
 A quick shell check for trailing whitespace on pending CHANGELOG changes (run **before** `git add`, per the "before staging" timing requirement):
 
 ```bash
-git diff CHANGELOG.md | grep '^+' | grep -P '\s+$'
+git diff CHANGELOG.md | grep '^+' | grep -E '[[:space:]]+$'
 ```
 
 If this returns output, inspect each flagged line: leave intentional two-space Markdown hard line breaks (exactly two trailing spaces followed by a newline) intact, and fix any other trailing whitespace (e.g., a single trailing space, a tab, or three or more trailing spaces) before committing.
@@ -433,7 +433,7 @@ Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (hotfixes fix release
 A quick shell check for trailing whitespace on pending CHANGELOG changes (run **before** `git add`, per the "before staging" timing requirement):
 
 ```bash
-git diff CHANGELOG.md | grep '^+' | grep -P '\s+$'
+git diff CHANGELOG.md | grep '^+' | grep -E '[[:space:]]+$'
 ```
 
 If this returns output, inspect each flagged line: leave intentional two-space Markdown hard line breaks (exactly two trailing spaces followed by a newline) intact, and fix any other trailing whitespace (e.g., a single trailing space, a tab, or three or more trailing spaces) before committing.

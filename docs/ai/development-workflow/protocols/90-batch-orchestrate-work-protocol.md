@@ -306,14 +306,15 @@ git worktree list --porcelain \
 # If no output, the pre-flight check passes for this item.
 # The Work Item Runner (Step 4, protocol 91) will create the worktree.
 
-# If output is found and points to an active worktree:
-# - If the worktree is on the same branch and clean, it is safe to reuse
-# - If the worktree is on a different branch or dirty, the pre-flight fails
+# If output is found and points to an active worktree, verify cleanliness:
+# git -C <worktree-path> status --porcelain
+# - If empty output (clean) and same branch: it is safe to reuse
+# - If non-empty output (dirty) or on a different branch: the pre-flight fails
 ```
 
 **Failure handling**:
 
-If the pre-flight check finds an active worktree on a conflicting branch or in a dirty state:
+If the pre-flight check finds an active worktree that is dirty or on a conflicting branch:
 
 1. Stop the batch dispatch
 2. Report to the human which item(s) have conflicting worktrees
@@ -396,7 +397,13 @@ Do **not** redispatch the same subagent for the same item in the same batch run.
 
 ### Inline fallback (AC2)
 
-Execute the item from the main session using the worktree path that was already created for the item during dispatch. Re-evaluate item state from scratch:
+Execute the item from the main session. If the worktree was already created during dispatch, use that path. If the denial occurred before the worktree was created (early preflight failure in Protocol 91 Step 3.5), create it first:
+
+```bash
+git worktree add <path> <branch>
+```
+
+Re-evaluate item state from scratch:
 
 ```bash
 ./scripts/development-workflow/workflow-next-action.sh --branch <branch-name>
@@ -410,10 +417,10 @@ In the final batch summary (Step 6), mark the item with execution path `inline f
 
 ### Double-failure path (AC6)
 
-If the inline fallback itself encounters a permission denial on `Edit` or `Bash`, mark the item as `blocked` in the batch summary and notify the human:
+If the inline fallback itself encounters a permission denial on any tool, mark the item as `blocked` in the batch summary and notify the human:
 
-```
-[BLOCKED] Item #N: both subagent and inline fallback were denied [tool] access. Human intervention required.
+```text
+[BLOCKED] Item #N: both subagent and inline fallback were denied [DENIED_TOOL] access. Human intervention required.
 ```
 
 Do not retry further. Do not loop.
@@ -442,6 +449,21 @@ Before reporting any PR as ready for human review, **independently verify the ac
 
 ```bash
 gh pr view <pr_number> --json baseRefName,isDraft,labels,statusCheckRollup,comments
+```
+
+For the `reviewThreads` resolution check, `gh pr view --json` does not expose `reviewThreads`; use the GraphQL API directly:
+
+```bash
+gh api graphql -f query='
+  query($owner:String!, $repo:String!, $number:Int!) {
+    repository(owner:$owner, name:$repo) {
+      pullRequest(number:$number) {
+        reviewThreads(first: 100) {
+          nodes { isResolved comments(first: 1) { nodes { author { login } } } }
+        }
+      }
+    }
+  }' -F owner=<owner> -F repo=<repo> -F number=<pr_number>
 ```
 
 Verify all of the following. If any check fails, the PR is **not ready** — treat it the same as `needs-fixes` and return the item to active supervision:

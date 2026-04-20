@@ -5,7 +5,7 @@ description: >
   shows a categorized diff for review, applies approved changes, and generates
   ready-to-use git instructions (branch + commit + PR). Run from the project root.
   Usage: /sync-template [--local=/path/to/template] [--ref=<branch|tag>]
-allowed-tools: Bash(git rev-parse:*), Bash(git status:*), Bash(git branch:*), Bash(git clone:*), Bash(git diff:*), Bash(git add:*), Bash(git commit:*), Bash(git checkout:*), Bash(git push:*), Bash(rm:*), Bash(mkdir:*), Bash(date:*)
+allowed-tools: Read, Write, Edit, Glob, Grep, Bash(git rev-parse:*), Bash(git status:*), Bash(git branch:*), Bash(git clone:*), Bash(git diff:*), Bash(git add:*), Bash(git commit:*), Bash(git checkout:*), Bash(git push:*), Bash(cat:*), Bash(cp:*), Bash(find:*), Bash(ls:*), Bash(mkdir:*), Bash(rm:*), Bash(date:*), Bash(jq:*), Bash(diff:*), Bash(chmod:*)
 ---
 
 Follow this workflow exactly when invoked. Do not skip steps or reorder them.
@@ -35,10 +35,13 @@ or
 Save the user's answer to `.tmp/template-config.json` before continuing (create the `.tmp` directory if needed; it is gitignored).
 
 **Remote fetch** (when a URL source is used):
+
 ```bash
-git clone --depth=1 --branch=<ref> <url> /tmp/template-sync-$(date +%s)
+TEMPLATE_TEMP_DIR="/tmp/template-sync-$(date +%s)"
+git clone --depth=1 --branch=<ref> <url> "$TEMPLATE_TEMP_DIR"
 ```
-Remember the temp path — you must clean it up at the end.
+
+Store the exact path in `TEMPLATE_TEMP_DIR` — you must clean up this specific directory at the end (never use a wildcard).
 If `--ref` is not specified for a remote source, use the default branch (`main`).
 
 Once the template source is resolved, read its `CHANGELOG.md` and extract the latest version number (first `[X.Y.Z]` entry after `[Unreleased]` if present, otherwise the first versioned entry). Store it as `TEMPLATE_VERSION`.
@@ -182,14 +185,17 @@ Then ask:
 
 ## Step 4 — Apply changes (only after approval)
 
+Apply approved changes:
+
 - Copy/overwrite all Add and Update files from the template source into the project
 - For files requiring manual review: apply only those the user explicitly approved (including any optional additive updates to project-specific files — merge or add only, never remove project-specific content)
 - Do **not** delete any file
 - Do **not** overwrite project-specific files; for those paths only additive/merge changes are allowed, and only with explicit approval
 
-If the template source was a remote clone, clean it up now:
+If the template source was a remote clone, clean up the exact temp directory recorded in Step 0:
+
 ```bash
-rm -rf /tmp/template-sync-*
+rm -rf "$TEMPLATE_TEMP_DIR"   # use the exact path, not a wildcard
 ```
 
 ---
@@ -206,11 +212,9 @@ git checkout -b feature/sync-template-v{TEMPLATE_VERSION}
 git diff --stat
 
 # 3. Stage and commit (only after you've reviewed the changes)
-git add REVIEW.md docs/ai/ .claude/agents/ .claude/commands/ .claude/skills/ .cursor/ \
-  scripts/development-workflow/ scripts/README.md \
-  docs/best-practices/1-general.md \
-  docs/best-practices/2-version-control.md \
-  docs/best-practices/3-testing.md
+# Note: 'git add .' stages all approved changes including any special-handling or
+# project-specific files that were approved in Step 3.
+git add .
 git commit -m "chore(template): sync framework updates from template v{TEMPLATE_VERSION}"
 
 # 4. Push and open PR
