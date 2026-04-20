@@ -14,7 +14,7 @@ This feature ensures newly created or materially updated GitHub Actions workflow
 
 ### Use Case 1: Agent creates a new workflow file with secure defaults
 
-**Actor**: Developer agent implementing a task that adds `.github/workflows/*.yml`
+**Actor**: Developer agent implementing a task that adds workflow files under `.github/workflows/` (`*.yml` or `*.yaml`)
 **Preconditions**:
 - The task requires adding a new GitHub Actions workflow file.
 - The repository uses GitHub Actions with `uses:`-based reusable actions.
@@ -68,7 +68,7 @@ This feature ensures newly created or materially updated GitHub Actions workflow
 
 ## Business Rules
 
-- New or significantly modified workflow files under `.github/workflows/*.yml` must declare explicit `permissions` at workflow or job level.
+- New or significantly modified workflow files under `.github/workflows/` (`*.yml` or `*.yaml`) must declare explicit `permissions` at workflow or job level.
 - Default permission posture is least privilege; use `contents: read` unless a narrower/broader explicit scope is required by workflow behavior.
 - Every `uses:` reference must be pinned to a full commit SHA; floating tags alone are not acceptable.
 - Version tags should remain visible as adjacent comments for readability and maintenance.
@@ -87,7 +87,7 @@ This feature ensures newly created or materially updated GitHub Actions workflow
 
 ## Acceptance Criteria
 
-- [ ] AC1: When a task creates a new file under `.github/workflows/`, the resulting workflow contains an explicit `permissions` block with least-privilege defaults.
+- [ ] AC1: When a task creates a new workflow file (`*.yml` or `*.yaml`) under `.github/workflows/`, the resulting workflow contains an explicit `permissions` block with least-privilege defaults.
 - [ ] AC2: Every `uses:` entry in newly created workflow files is pinned to a full commit SHA, with a nearby comment preserving the intended version tag.
 - [ ] AC3: When an existing workflow is significantly modified, the resulting file still satisfies AC1 and AC2 (or is remediated in the same PR).
 - [ ] AC4: The implementation workflow guidance includes a clear checklist that agents apply before opening a PR when workflow files are added or significantly modified.
