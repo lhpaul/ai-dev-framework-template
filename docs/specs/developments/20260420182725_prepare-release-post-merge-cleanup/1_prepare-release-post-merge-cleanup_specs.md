@@ -115,4 +115,4 @@ When a versioned release finishes, maintainers follow the prepare-release workfl
 
 ## Open Questions
 
-1. Should bulk “Merged → Released” apply to every project item in **Merged**, or only items linked to the release (e.g. via milestone, label, or explicit list)? *Resolution deferred to implementation plan; default preference: only items confirmed in scope for the shipped version.*
+> TODO: Should bulk “Merged → Released” apply to every project item in **Merged**, or only items linked to the release (e.g. via milestone, label, or explicit list)? Resolution deferred to the implementation plan; default preference: only items confirmed in scope for the shipped version.
