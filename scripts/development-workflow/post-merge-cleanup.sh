@@ -150,11 +150,68 @@ update_tracker_status() {
     return 0
   fi
 
-  # Resolve project item ID for the issue.
-  item_id=$(gh project item-list "$project_number" --owner "$owner" --format json 2>/dev/null \
-    | jq -r --argjson num "$issue_number" '.items[] | select(.content.number == $num) | .id // empty' || true)
+  # Resolve project item ID and current status for the issue.
+  # The item-list output is stored so we can read both id and current Status without a second API call.
+  local item_json current_status target_order
+  item_json=$(gh project item-list "$project_number" --owner "$owner" --format json 2>/dev/null \
+    | jq -c --argjson num "$issue_number" '.items[] | select(.content.number == $num)' || true)
+  item_id=$(printf '%s' "$item_json" | jq -r '.id // empty' || true)
   if [ -z "$item_id" ]; then
     echo "Warning: issue #${issue_number} not found in project #${project_number}; skipping tracker status update."
+    return 0
+  fi
+
+  # Rollback prevention: do not set the status to a less-advanced state than the current one.
+  # Protocol 91 Step 10: "If the item's tracker status is already in a further-advanced state,
+  # do not roll it back — leave it as-is."
+  # Status ordering (lower index = earlier stage):
+  #   0:Backlog 1:Writing Spec 2:Spec in Review 3:Spec Ready
+  #   4:Writing Plan 5:Plan in Review 6:Plan Ready
+  #   7:In Development 8:Development in Review 9:Merged 10:Released
+  current_status=$(printf '%s' "$item_json" | jq -r '.status // empty' || true)
+  target_order=0
+  local i=0
+  local s
+  while IFS= read -r s; do
+    if [ "$s" = "$status_label" ]; then
+      target_order=$i
+    fi
+    i=$((i + 1))
+  done <<EOF
+Backlog
+Writing Spec
+Spec in Review
+Spec Ready
+Writing Plan
+Plan in Review
+Plan Ready
+In Development
+Development in Review
+Merged
+Released
+EOF
+  local current_order=0
+  i=0
+  while IFS= read -r s; do
+    if [ "$s" = "$current_status" ]; then
+      current_order=$i
+    fi
+    i=$((i + 1))
+  done <<EOF
+Backlog
+Writing Spec
+Spec in Review
+Spec Ready
+Writing Plan
+Plan in Review
+Plan Ready
+In Development
+Development in Review
+Merged
+Released
+EOF
+  if [ -n "$current_status" ] && [ "$current_order" -gt "$target_order" ]; then
+    echo "Issue #${issue_number} is already at status '${current_status}' (more advanced than '${status_label}'); skipping rollback."
     return 0
   fi
 
