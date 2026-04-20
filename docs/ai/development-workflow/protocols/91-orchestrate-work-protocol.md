@@ -411,7 +411,7 @@ When `.tmp/template-config.json` supplies an override, log the following before 
 
 > `INFO: Using internal_reviewers override from .tmp/template-config.json: [<override-list>]. Original list: [<yaml-list>].`
 
-No warning comment is posted to the PR in this case — the developer knowingly excluded reviewers from the override list.
+No warning comment is posted for reviewers intentionally removed by the override list (`override-excluded`). If any reviewer still present in the override list is unreachable at runtime, post the standard warning comment for those unreachable reviewers (the runtime-availability check still applies to the override list).
 
 ### Runtime-availability check
 
