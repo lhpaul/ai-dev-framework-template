@@ -105,43 +105,186 @@ fi
 # -D: branch is already merged on remote (squash/rebase merges don't leave tip in develop)
 git branch -D "$TO_DELETE"
 
-# --- Close associated GitHub issue (if any) ---
-# Extract issue number from branch name patterns like fix/123-slug or fix/123 (slug optional per conventions)
+# --- Update tracker status and close associated GitHub issue (if any) ---
+# update_tracker_status <issue_number> <status_label>
+#
+# Best-effort: logs a warning and returns 0 on any failure so that git cleanup
+# always completes regardless of GitHub Projects API availability.
+#
+# Requires GITHUB_PROJECT_NUMBER (and optionally GITHUB_PROJECT_OWNER) to be set
+# in the environment. Falls back to querying the repo owner via 'gh repo view'.
+#
+# Every `gh`/`jq` pipeline is wrapped with `|| true` so that, under
+# `set -euo pipefail`, a failed API call (auth missing, rate-limit, project not
+# found, etc.) produces an empty string the `[ -z ... ]` guard can detect and
+# handle — rather than aborting the entire script.
+update_tracker_status() {
+  local issue_number="$1"
+  local status_label="$2"
+  local owner project_number project_id field_json field_id option_id item_id
+
+  # Resolve owner and project number. The `|| true` guard on the `gh repo view`
+  # fallback is mandatory: under `set -euo pipefail`, a failed command
+  # substitution in a parameter expansion default would propagate non-zero and
+  # abort the script before the `[ -z "$owner" ]` guard below can emit the
+  # warning and return 0.
+  owner="${GITHUB_PROJECT_OWNER:-$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || true)}"
+  project_number="${GITHUB_PROJECT_NUMBER:-}"
+  if [ -z "$owner" ] || [ -z "$project_number" ]; then
+    echo "Warning: GITHUB_PROJECT_OWNER or GITHUB_PROJECT_NUMBER not set; skipping tracker status update."
+    return 0
+  fi
+
+  project_id=$(gh project view "$project_number" --owner "$owner" --format json 2>/dev/null | jq -r '.id // empty' || true)
+  if [ -z "$project_id" ]; then
+    echo "Warning: could not resolve project ID for project #${project_number}; skipping tracker status update."
+    return 0
+  fi
+
+  # Resolve Status field ID and option ID for the requested label.
+  field_json=$(gh project field-list "$project_number" --owner "$owner" --format json 2>/dev/null || true)
+  field_id=$(printf '%s' "$field_json" | jq -r '.fields[] | select(.name == "Status") | .id // empty' || true)
+  option_id=$(printf '%s' "$field_json" | jq -r --arg label "$status_label" '.fields[] | select(.name == "Status") | .options[] | select(.name == $label) | .id // empty' || true)
+  if [ -z "$field_id" ] || [ -z "$option_id" ]; then
+    echo "Warning: could not resolve Status field or option '${status_label}'; skipping tracker status update."
+    return 0
+  fi
+
+  # Resolve project item ID and current status for the issue.
+  # The item-list output is stored so we can read both id and current Status without a second API call.
+  local item_json current_status target_order
+  item_json=$(gh project item-list "$project_number" --owner "$owner" --format json 2>/dev/null \
+    | jq -c --argjson num "$issue_number" '.items[] | select(.content.number == $num)' || true)
+  item_id=$(printf '%s' "$item_json" | jq -r '.id // empty' || true)
+  if [ -z "$item_id" ]; then
+    echo "Warning: issue #${issue_number} not found in project #${project_number}; skipping tracker status update."
+    return 0
+  fi
+
+  # Rollback prevention: do not set the status to a less-advanced state than the current one.
+  # Protocol 91 Step 10: "If the item's tracker status is already in a further-advanced state,
+  # do not roll it back — leave it as-is."
+  # Status ordering (lower index = earlier stage):
+  #   0:Backlog 1:Writing Spec 2:Spec in Review 3:Spec Ready
+  #   4:Writing Plan 5:Plan in Review 6:Plan Ready
+  #   7:In Development 8:Development in Review 9:Merged 10:Released
+  current_status=$(printf '%s' "$item_json" | jq -r '.status // empty' || true)
+  target_order=0
+  local i=0
+  local s
+  while IFS= read -r s; do
+    if [ "$s" = "$status_label" ]; then
+      target_order=$i
+    fi
+    i=$((i + 1))
+  done <<EOF
+Backlog
+Writing Spec
+Spec in Review
+Spec Ready
+Writing Plan
+Plan in Review
+Plan Ready
+In Development
+Development in Review
+Merged
+Released
+EOF
+  local current_order=0
+  i=0
+  while IFS= read -r s; do
+    if [ "$s" = "$current_status" ]; then
+      current_order=$i
+    fi
+    i=$((i + 1))
+  done <<EOF
+Backlog
+Writing Spec
+Spec in Review
+Spec Ready
+Writing Plan
+Plan in Review
+Plan Ready
+In Development
+Development in Review
+Merged
+Released
+EOF
+  if [ -n "$current_status" ] && [ "$current_order" -gt "$target_order" ]; then
+    echo "Issue #${issue_number} is already at status '${current_status}' (more advanced than '${status_label}'); skipping rollback."
+    return 0
+  fi
+
+  echo "Updating tracker status for issue #${issue_number} to '${status_label}'..."
+  gh api graphql -f query="
+    mutation {
+      updateProjectV2ItemFieldValue(input: {
+        projectId: \"${project_id}\"
+        itemId: \"${item_id}\"
+        fieldId: \"${field_id}\"
+        value: { singleSelectOptionId: \"${option_id}\" }
+      }) {
+        projectV2Item { id }
+      }
+    }
+  " 2>/dev/null || echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker status not updated."
+}
+
+# Unified issue-number extraction: covers all branch prefixes in a single pass.
+# Sets ISSUE_NUMBER and BRANCH_TYPE; both remain empty if the branch name does
+# not match any known prefix/number pattern.
 ISSUE_NUMBER=""
+BRANCH_TYPE=""
 if [[ "$TO_DELETE" =~ ^(fix|feature|hotfix|refactor)/([0-9]+)($|-) ]]; then
   ISSUE_NUMBER="${BASH_REMATCH[2]}"
-elif [[ "$TO_DELETE" =~ ^(spec|implementation-plan)/([0-9]+)($|-) ]]; then
-  # spec/* and implementation-plan/* branches reference the issue, but the issue
-  # must stay open for the next workflow stage — do not close it.
-  STAGE_ISSUE="${BASH_REMATCH[2]}"
-  echo "Plan/spec branch for issue #$STAGE_ISSUE merged; issue stays open for the next workflow stage (not closing)."
+  BRANCH_TYPE="implementation"
+elif [[ "$TO_DELETE" =~ ^(spec)/([0-9]+)($|-) ]]; then
+  ISSUE_NUMBER="${BASH_REMATCH[2]}"
+  BRANCH_TYPE="spec"
+elif [[ "$TO_DELETE" =~ ^(implementation-plan)/([0-9]+)($|-) ]]; then
+  ISSUE_NUMBER="${BASH_REMATCH[2]}"
+  BRANCH_TYPE="plan"
 fi
 
 if [ -n "$ISSUE_NUMBER" ]; then
-  if ISSUE_STATE=$(gh issue view "$ISSUE_NUMBER" --json state --jq '.state' 2>/dev/null); then
-    if [ "$ISSUE_STATE" = "OPEN" ]; then
-      # Find the merged PR for this branch
-      if MERGED_PR=$(gh pr list --state merged --head "$TO_DELETE" --json number --jq '.[0].number // empty' 2>/dev/null); then
-        : # gh succeeded; MERGED_PR may still be empty if no matching PR exists
+  if [ "$BRANCH_TYPE" = "implementation" ]; then
+    # Close the issue when an implementation branch (feature/fix/hotfix/refactor) is merged.
+    if ISSUE_STATE=$(gh issue view "$ISSUE_NUMBER" --json state --jq '.state' 2>/dev/null); then
+      if [ "$ISSUE_STATE" = "OPEN" ]; then
+        # Find the merged PR for this branch.
+        if MERGED_PR=$(gh pr list --state merged --head "$TO_DELETE" --json number --jq '.[0].number // empty' 2>/dev/null); then
+          : # gh succeeded; MERGED_PR may still be empty if no matching PR exists
+        else
+          echo "Warning: could not query merged PRs for branch '$TO_DELETE' (gh command failed). Leaving issue #$ISSUE_NUMBER open."
+          MERGED_PR=""
+        fi
+        if [ -n "$MERGED_PR" ]; then
+          CLOSE_COMMENT="Closed by PR #${MERGED_PR}."
+          echo "Closing issue #$ISSUE_NUMBER..."
+          gh issue close "$ISSUE_NUMBER" --comment "$CLOSE_COMMENT" 2>/dev/null || echo "Warning: could not close issue #$ISSUE_NUMBER"
+        else
+          echo "No merged PR found for branch '$TO_DELETE'; leaving issue #$ISSUE_NUMBER open."
+        fi
       else
-        echo "Warning: could not query merged PRs for branch '$TO_DELETE' (gh command failed). Leaving issue #$ISSUE_NUMBER open."
-        MERGED_PR=""
-      fi
-      if [ -n "$MERGED_PR" ]; then
-        CLOSE_COMMENT="Closed by PR #${MERGED_PR}."
-        echo "Closing issue #$ISSUE_NUMBER..."
-        gh issue close "$ISSUE_NUMBER" --comment "$CLOSE_COMMENT" 2>/dev/null || echo "Warning: could not close issue #$ISSUE_NUMBER"
-      else
-        echo "No merged PR found for branch '$TO_DELETE'; leaving issue #$ISSUE_NUMBER open."
+        echo "Issue #$ISSUE_NUMBER is already $ISSUE_STATE, skipping close."
       fi
     else
-      echo "Issue #$ISSUE_NUMBER is already $ISSUE_STATE, skipping close."
+      echo "Warning: could not query issue #$ISSUE_NUMBER (gh command failed). Skipping issue close."
     fi
-  else
-    echo "Warning: could not query issue #$ISSUE_NUMBER (gh command failed). Skipping issue close."
+    update_tracker_status "$ISSUE_NUMBER" "Merged"
+  elif [ "$BRANCH_TYPE" = "spec" ]; then
+    # spec/* branches reference the issue but must not close it — the issue stays
+    # open for the next workflow stage (writing the implementation plan).
+    echo "Spec branch for issue #$ISSUE_NUMBER merged; issue stays open for the next workflow stage. Updating tracker status to Spec Ready..."
+    update_tracker_status "$ISSUE_NUMBER" "Spec Ready"
+  elif [ "$BRANCH_TYPE" = "plan" ]; then
+    # implementation-plan/* branches reference the issue but must not close it —
+    # the issue stays open for the next workflow stage (implementation).
+    echo "Implementation plan branch for issue #$ISSUE_NUMBER merged; issue stays open for the next workflow stage. Updating tracker status to Plan Ready..."
+    update_tracker_status "$ISSUE_NUMBER" "Plan Ready"
   fi
 else
-  echo "No issue number detected in branch name '$TO_DELETE', skipping issue close."
+  echo "No issue number detected in branch name '$TO_DELETE', skipping issue close and tracker update."
 fi
 
 echo ""
