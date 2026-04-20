@@ -372,7 +372,7 @@ Before calling any creator-stage agent or making any file edits, perform a light
 If either tool call is denied (harness responds with a permission-denied message), exit immediately before any creator-stage work:
 
 ```
-SUBAGENT_PERMISSION_DENIAL: Edit tool denied by harness. No partial work committed. Falling back to orchestrator inline execution.
+SUBAGENT_PERMISSION_DENIAL: [DENIED_TOOL] tool denied by harness. No partial work committed. Falling back to orchestrator inline execution.
 ```
 
 **Self-check rules**:

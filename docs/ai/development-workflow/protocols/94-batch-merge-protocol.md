@@ -5,6 +5,8 @@
 
 **Shell helper**: `scripts/development-workflow/batch-merge.sh`
 
+**Governance**: The agent assists with merge execution but does **not** merge autonomously. Every merge in this protocol requires explicit human confirmation of the merge plan (Step 3) before any `git merge` runs. This satisfies the repository's human-gate policy.
+
 ---
 
 ## When to use this protocol
@@ -198,7 +200,7 @@ After a clean or resolved merge, in order:
 
    ```bash
    BRANCH="$(gh pr view <number> --json headRefName --jq '.headRefName')"
-   WORKTREE_PATH=$(git worktree list --porcelain | grep -B2 "branch refs/heads/$BRANCH$" | grep "^worktree " | sed 's/^worktree //' || true)
+   WORKTREE_PATH=$(git worktree list --porcelain | awk -v branch="branch refs/heads/$BRANCH" '/^worktree / { sub(/^worktree /, ""); wt=$0 } $0 == branch { print wt; exit }' || true)
    if [ -n "$WORKTREE_PATH" ]; then
      git worktree remove "$WORKTREE_PATH" --force
    fi

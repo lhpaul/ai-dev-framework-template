@@ -1588,14 +1588,13 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
     thread_check_status=$?
     set -e
     if [ "$thread_check_status" -eq 2 ]; then
-      # Exit 2 = page-cap exceeded. Fail-safe: BLOCK the PR because we could not
-      # confirm all threads were inspected (threads past page 10 may be unresolved).
-      # This is different from a transient API failure (exit 3) where degrading is
-      # acceptable.
-      echo "WARN: check_unresolved_threads exceeded page cap — blocking PR as fail-safe" >&2
-      aggregate_result="needs_fixes"
+      # Exit 2 = page-cap exceeded. Escalate: the audit was incomplete so we cannot
+      # confirm threads past page 10 are resolved. This is not a fixable finding —
+      # sending it through the fixer loop is pointless. Hard-stop for human inspection.
+      echo "WARN: check_unresolved_threads exceeded page cap — escalating for manual inspection" >&2
+      aggregate_result="escalate"
       aggregate_reason="unresolved_thread_check_incomplete"
-      unresolved_thread_count=0
+      unresolved_thread_count="unknown"
     elif [ "$thread_check_status" -ne 0 ]; then
       # Exit 3 (or any other non-zero) = transient GraphQL API failure. Degrade:
       # skip the thread gate and trust the 0 unresolved default. All platform reviews
@@ -1608,7 +1607,7 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
   fi
   print_kv UNRESOLVED_THREAD_COUNT "$unresolved_thread_count"
 
-  if [ "$unresolved_thread_count" -gt 0 ]; then
+  if [ "$unresolved_thread_count" != "unknown" ] && [ "$unresolved_thread_count" -gt 0 ]; then
     aggregate_result="needs_fixes"
     aggregate_reason="unresolved_review_threads"
     # Increment total_blocking_count so BLOCKING_COUNT reflects the unresolved threads.

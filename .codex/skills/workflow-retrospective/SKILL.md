@@ -13,5 +13,5 @@ Recommended model tier: `economy`
 4. Gather GitHub PR metadata (review cycles, finding types, labels, merge conflicts) and git history (commit patterns, fix-commit ratio) using `gh`. When conversation context is available, also analyze manual interventions, human corrections, and agent deviations from the current session.
 5. Synthesize findings into a categorized list using the fixed taxonomy and severity signals defined in the protocol.
 6. Present findings to the human. For each opportunity, accept the human's choice of "Address now", "Add to backlog", or "Skip" — then execute the chosen action.
-7. "Address now": apply simple fix, commit, push (no new PR or review loop). "Add to backlog": create GitHub issue directly via `gh issue create`. "Skip": move on.
+7. "Address now": apply simple fix on a `fix/[slug]` branch, open a PR to `develop`, and proceed through normal review/CI gates — do not push directly to shared branches. "Add to backlog": create GitHub issue directly via `gh issue create`. "Skip": move on.
 8. After all opportunities are acted on, post a confirmation summary table.

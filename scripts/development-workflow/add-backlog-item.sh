@@ -41,7 +41,7 @@ resolve_cmd() {
 }
 
 create_cmd() {
-  cd_workflow_repo_root
+  local caller_pwd="$PWD"
   local title="" body="" body_file="" labels=()
 
   while [ $# -gt 0 ]; do
@@ -73,6 +73,11 @@ create_cmd() {
         ;;
     esac
   done
+
+  if [ -n "$body_file" ] && [ "$body_file" != "-" ] && [[ "$body_file" != /* ]]; then
+    body_file="$caller_pwd/$body_file"
+  fi
+  cd_workflow_repo_root
 
   local kind
   kind="$(workflow_backlog_destination_kind)"

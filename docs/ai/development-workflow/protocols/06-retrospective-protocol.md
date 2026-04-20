@@ -222,17 +222,16 @@ Execute each chosen action in the order the human specified (or in the order the
 
 ### Address now
 
-1. Assess whether the opportunity is truly simple enough to apply without a review loop.
-   - If **yes**: apply the fix directly, commit, and push on the current or appropriate branch.
+1. Assess whether the opportunity is truly simple enough to address immediately.
+   - If **yes**: apply the fix on a dedicated workflow branch (e.g., `fix/[slug]`) and open a PR targeting `develop`.
    - If **no**: inform the human that the fix is more complex than it appears and recommend "Add to backlog" instead. Explain why (e.g., "This change touches 4 files and would benefit from a proper review loop").
 2. After applying a fix:
    - Commit with a descriptive message: `fix([scope]): [description]`
-   - Push to the appropriate branch
+   - Push the workflow branch and open a PR through the repository's normal review/CI path
    - Report what changed with a short diff or summary
 
 **Constraints**:
-- Do **not** open a new PR for "Address now" changes
-- Do **not** run a review loop for "Address now" changes
+- Do **not** push retrospective code changes directly to shared branches (`develop`/`main`)
 - If the fix requires changes to multiple files, a schema migration, or introduces a new pattern, stop and recommend "Add to backlog" instead
 
 ### Add to backlog
