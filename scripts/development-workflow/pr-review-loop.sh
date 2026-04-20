@@ -1250,6 +1250,129 @@ run_coderabbit_review() {
   return 0
 }
 
+bot_login_for_platform() {
+  # Returns the GitHub bot login for a given review platform name.
+  # Used to filter reviewThreads by bot-authored comments only.
+  case "$1" in
+    coderabbit) printf 'coderabbitai[bot]\n' ;;
+    devin)      printf 'devin-ai-integration[bot]\n' ;;
+    greptile)   printf 'greptile-apps[bot]\n' ;;
+    *)          printf '\n' ;;
+  esac
+}
+
+check_unresolved_threads() {
+  # Enumerate all reviewThreads on a PR via the GitHub GraphQL API (cursor-based
+  # pagination), filter to bot-authored threads, and return the count of unresolved
+  # threads on stdout as a plain integer.
+  #
+  # A thread is considered resolved when:
+  #   - isResolved=true (GitHub resolved it via the Resolve button / mutation), OR
+  #   - the first comment body contains "✅ Addressed" (bot self-marked it resolved)
+  #
+  # Only threads whose first comment was authored by a configured bot login are counted.
+  # Human-authored threads are ignored.
+  #
+  # Arguments:
+  #   $1    pr_number  - PR number (integer)
+  #   $2    repo       - "owner/repo" slug
+  #   $3... bot_logins - one or more bot login strings (e.g. "coderabbitai[bot]")
+  #
+  # Bot logins are passed as individual positional arguments (not space-separated)
+  # to prevent Bash glob expansion of bracket characters in "[bot]" strings.
+  #
+  # Re-enable errexit within this function. When called from a command substitution
+  # with set +e active in the parent (as in the thread gate), the subshell inherits
+  # set +e. Without this explicit re-enablement, gh api graphql failures inside this
+  # function would be silently ignored and the function would always return exit 0,
+  # making the caller's error-handling code unreachable.
+  set -e
+  local pr_number="$1"
+  local repo="$2"
+  shift 2
+  # Remaining positional args are bot login strings; store in an array to avoid
+  # glob expansion when iterating (bracket characters in "[bot]" are safe in arrays).
+  local -a bot_logins=("$@")
+
+  local owner repo_name
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  local unresolved_count=0
+  local cursor=""
+  local has_next_page="true"
+  local page=0
+  local max_pages=10
+
+  # GraphQL query: paginate reviewThreads 100 at a time, fetch first comment per thread.
+  # Using inline query string to avoid heredoc quoting issues in subshells.
+  local graphql_query
+  graphql_query='query($owner:String!,$repo:String!,$pr:Int!,$cursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor}nodes{id isResolved comments(first:1){nodes{author{login}body}}}}}}}'
+
+  while [ "$has_next_page" = "true" ]; do
+    page=$((page + 1))
+    if [ "$page" -gt "$max_pages" ]; then
+      # Fail-safe: returning exit code 2 (page-cap exceeded) tells the caller to BLOCK
+      # the PR rather than degrade — threads past page 10 would be silently ignored,
+      # so a very large PR could otherwise be marked ready-for-human-review despite
+      # unresolved threads beyond the cap. Exit 3 (below) is for transient GraphQL
+      # failures where degrading gracefully (skip gate, trust the 0 unresolved) is
+      # acceptable.
+      echo "WARN: check_unresolved_threads: exceeded $max_pages pages for PR #$pr_number; cannot confirm all threads checked" >&2
+      return 2
+    fi
+
+    local result
+    if [ -n "$cursor" ]; then
+      result="$(gh api graphql \
+        -f query="$graphql_query" \
+        -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" -f cursor="$cursor" \
+        --jq '.data.repository.pullRequest.reviewThreads')" \
+        || { echo "WARN: check_unresolved_threads: GraphQL query failed for PR #$pr_number" >&2; return 3; }
+    else
+      result="$(gh api graphql \
+        -f query="$graphql_query" \
+        -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" \
+        --jq '.data.repository.pullRequest.reviewThreads')" \
+        || { echo "WARN: check_unresolved_threads: GraphQL query failed for PR #$pr_number" >&2; return 3; }
+    fi
+
+    # Use jq -r (not -re) for boolean/nullable fields: jq -e exits non-zero when the
+    # output value is false or null, which would misinterpret valid values like
+    # hasNextPage=false or isResolved=false as errors. Rely on gh api's own exit code
+    # (caught above) for real API failures; use jq -r only for data extraction.
+    has_next_page="$(printf '%s\n' "$result" | jq -r '.pageInfo.hasNextPage')"
+    cursor="$(printf '%s\n' "$result" | jq -r '.pageInfo.endCursor // empty')"
+
+    local thread_json
+    while IFS= read -r thread_json; do
+      [ -z "${thread_json:-}" ] && continue
+
+      local is_resolved author body
+      is_resolved="$(printf '%s\n' "$thread_json" | jq -r '.isResolved')"
+      author="$(printf '%s\n' "$thread_json" | jq -r '.comments.nodes[0].author.login // ""')"
+      body="$(printf '%s\n' "$thread_json" | jq -r '.comments.nodes[0].body // ""')"
+
+      # Only count threads authored by configured bot logins.
+      # Iterate via array to prevent glob expansion of bracket chars in "[bot]" strings.
+      local is_bot=0
+      local bot_login
+      for bot_login in "${bot_logins[@]}"; do
+        if [ "$author" = "$bot_login" ]; then is_bot=1; break; fi
+      done
+      [ "$is_bot" -eq 0 ] && continue
+
+      # Thread is resolved if isResolved=true (GitHub resolved) or body contains "✅ Addressed"
+      if [ "$is_resolved" = "true" ]; then continue; fi
+      if printf '%s\n' "$body" | grep -q "✅ Addressed"; then continue; fi
+
+      unresolved_count=$((unresolved_count + 1))
+    done < <(printf '%s\n' "$result" | jq -c '.nodes[]')
+  done
+
+  printf '%d\n' "$unresolved_count"
+}
+
 run_platform_review() {
   local platform="$1"
   local pr_number="$2"
@@ -1432,7 +1555,69 @@ if [ -z "$last_platform" ]; then
   print_kv COMMENT_COUNT 0
   print_kv BLOCKING_COUNT 0
   print_kv SUGGESTION_COUNT 0
+  print_kv UNRESOLVED_THREAD_COUNT 0
   exit 0
+fi
+
+# --- Unresolved review thread gate ---
+# When all platforms returned clean or skipped, check whether any bot-authored
+# review threads remain unresolved before declaring the aggregate result clean.
+# This catches Nitpick/Trivial/Minor severity threads that individual platform
+# handlers do not classify as blocking but that still need explicit resolution.
+if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; then
+  # Build the array of bot logins from the configured platforms.
+  # Using an array (not a space-separated string) prevents Bash glob expansion of
+  # bracket characters in "[bot]" strings during iteration.
+  declare -a unresolved_bot_logins=()
+  for _platform in "${platforms[@]}"; do
+    _login="$(bot_login_for_platform "$_platform")"
+    [ -n "$_login" ] && unresolved_bot_logins+=("$_login")
+  done
+
+  unresolved_thread_count=0
+  if [ "${#unresolved_bot_logins[@]}" -gt 0 ]; then
+    # Wrap with set +e so a transient GraphQL API failure does not crash the script
+    # (all platform reviews have already succeeded; we degrade gracefully on thread-check failure).
+    # Do NOT use 2>&1 — stderr (WARN messages) must remain on stderr so that only the
+    # integer count appears on stdout for clean capture into unresolved_thread_count.
+    # Bot logins are passed as individual positional args to avoid glob expansion.
+    thread_check_output=""
+    thread_check_status=0
+    set +e
+    thread_check_output="$(check_unresolved_threads "$pr_number" "$(repo_slug)" "${unresolved_bot_logins[@]}")"
+    thread_check_status=$?
+    set -e
+    if [ "$thread_check_status" -eq 2 ]; then
+      # Exit 2 = page-cap exceeded. Fail-safe: BLOCK the PR because we could not
+      # confirm all threads were inspected (threads past page 10 may be unresolved).
+      # This is different from a transient API failure (exit 3) where degrading is
+      # acceptable.
+      echo "WARN: check_unresolved_threads exceeded page cap — blocking PR as fail-safe" >&2
+      aggregate_result="needs_fixes"
+      aggregate_reason="unresolved_thread_check_incomplete"
+      unresolved_thread_count=0
+    elif [ "$thread_check_status" -ne 0 ]; then
+      # Exit 3 (or any other non-zero) = transient GraphQL API failure. Degrade:
+      # skip the thread gate and trust the 0 unresolved default. All platform reviews
+      # have already succeeded at this point so the PR state is otherwise clean.
+      echo "WARN: check_unresolved_threads failed (exit $thread_check_status) — skipping thread gate, treating as 0 unresolved" >&2
+      unresolved_thread_count=0
+    else
+      unresolved_thread_count="$thread_check_output"
+    fi
+  fi
+  print_kv UNRESOLVED_THREAD_COUNT "$unresolved_thread_count"
+
+  if [ "$unresolved_thread_count" -gt 0 ]; then
+    aggregate_result="needs_fixes"
+    aggregate_reason="unresolved_review_threads"
+    # Increment total_blocking_count so BLOCKING_COUNT reflects the unresolved threads.
+    # No BLOCKING_N_* entries are emitted for thread findings — callers must use
+    # REASON=unresolved_review_threads and UNRESOLVED_THREAD_COUNT to handle this case.
+    total_blocking_count=$((total_blocking_count + unresolved_thread_count))
+  fi
+else
+  print_kv UNRESOLVED_THREAD_COUNT 0
 fi
 
 print_kv RESULT "$aggregate_result"
