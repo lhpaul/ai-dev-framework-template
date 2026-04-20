@@ -1312,12 +1312,14 @@ check_unresolved_threads() {
   while [ "$has_next_page" = "true" ]; do
     page=$((page + 1))
     if [ "$page" -gt "$max_pages" ]; then
-      # Fail-safe: returning non-zero prevents the caller from consuming a partial
-      # unresolved-thread count (threads past page 10 would be silently ignored, so a
-      # very large PR could otherwise be marked ready-for-human-review despite unresolved
-      # threads beyond the cap).
+      # Fail-safe: returning exit code 2 (page-cap exceeded) tells the caller to BLOCK
+      # the PR rather than degrade — threads past page 10 would be silently ignored,
+      # so a very large PR could otherwise be marked ready-for-human-review despite
+      # unresolved threads beyond the cap. Exit 3 (below) is for transient GraphQL
+      # failures where degrading gracefully (skip gate, trust the 0 unresolved) is
+      # acceptable.
       echo "WARN: check_unresolved_threads: exceeded $max_pages pages for PR #$pr_number; cannot confirm all threads checked" >&2
-      return 1
+      return 2
     fi
 
     local result
@@ -1326,13 +1328,13 @@ check_unresolved_threads() {
         -f query="$graphql_query" \
         -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" -f cursor="$cursor" \
         --jq '.data.repository.pullRequest.reviewThreads')" \
-        || { echo "WARN: check_unresolved_threads: GraphQL query failed for PR #$pr_number" >&2; return 1; }
+        || { echo "WARN: check_unresolved_threads: GraphQL query failed for PR #$pr_number" >&2; return 3; }
     else
       result="$(gh api graphql \
         -f query="$graphql_query" \
         -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" \
         --jq '.data.repository.pullRequest.reviewThreads')" \
-        || { echo "WARN: check_unresolved_threads: GraphQL query failed for PR #$pr_number" >&2; return 1; }
+        || { echo "WARN: check_unresolved_threads: GraphQL query failed for PR #$pr_number" >&2; return 3; }
     fi
 
     # Use jq -r (not -re) for boolean/nullable fields: jq -e exits non-zero when the
@@ -1585,7 +1587,19 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
     thread_check_output="$(check_unresolved_threads "$pr_number" "$(repo_slug)" "${unresolved_bot_logins[@]}")"
     thread_check_status=$?
     set -e
-    if [ "$thread_check_status" -ne 0 ]; then
+    if [ "$thread_check_status" -eq 2 ]; then
+      # Exit 2 = page-cap exceeded. Fail-safe: BLOCK the PR because we could not
+      # confirm all threads were inspected (threads past page 10 may be unresolved).
+      # This is different from a transient API failure (exit 3) where degrading is
+      # acceptable.
+      echo "WARN: check_unresolved_threads exceeded page cap — blocking PR as fail-safe" >&2
+      aggregate_result="needs_fixes"
+      aggregate_reason="unresolved_thread_check_incomplete"
+      unresolved_thread_count=0
+    elif [ "$thread_check_status" -ne 0 ]; then
+      # Exit 3 (or any other non-zero) = transient GraphQL API failure. Degrade:
+      # skip the thread gate and trust the 0 unresolved default. All platform reviews
+      # have already succeeded at this point so the PR state is otherwise clean.
       echo "WARN: check_unresolved_threads failed (exit $thread_check_status) — skipping thread gate, treating as 0 unresolved" >&2
       unresolved_thread_count=0
     else
