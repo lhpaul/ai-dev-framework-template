@@ -1274,9 +1274,12 @@ check_unresolved_threads() {
   # Human-authored threads are ignored.
   #
   # Arguments:
-  #   $1 pr_number  - PR number (integer)
-  #   $2 bot_logins - space-separated list of bot login strings to check
-  #   $3 repo       - "owner/repo" slug
+  #   $1    pr_number  - PR number (integer)
+  #   $2    repo       - "owner/repo" slug
+  #   $3... bot_logins - one or more bot login strings (e.g. "coderabbitai[bot]")
+  #
+  # Bot logins are passed as individual positional arguments (not space-separated)
+  # to prevent Bash glob expansion of bracket characters in "[bot]" strings.
   #
   # Re-enable errexit within this function. When called from a command substitution
   # with set +e active in the parent (as in the thread gate), the subshell inherits
@@ -1285,8 +1288,11 @@ check_unresolved_threads() {
   # making the caller's error-handling code unreachable.
   set -e
   local pr_number="$1"
-  local bot_logins="$2"
-  local repo="$3"
+  local repo="$2"
+  shift 2
+  # Remaining positional args are bot login strings; store in an array to avoid
+  # glob expansion when iterating (bracket characters in "[bot]" are safe in arrays).
+  local -a bot_logins=("$@")
 
   local owner repo_name
   owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
@@ -1315,30 +1321,38 @@ check_unresolved_threads() {
       result="$(gh api graphql \
         -f query="$graphql_query" \
         -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" -f cursor="$cursor" \
-        --jq '.data.repository.pullRequest.reviewThreads')"
+        --jq '.data.repository.pullRequest.reviewThreads')" \
+        || { echo "WARN: check_unresolved_threads: GraphQL query failed for PR #$pr_number" >&2; return 1; }
     else
       result="$(gh api graphql \
         -f query="$graphql_query" \
         -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" \
-        --jq '.data.repository.pullRequest.reviewThreads')"
+        --jq '.data.repository.pullRequest.reviewThreads')" \
+        || { echo "WARN: check_unresolved_threads: GraphQL query failed for PR #$pr_number" >&2; return 1; }
     fi
 
-    has_next_page="$(printf '%s\n' "$result" | jq -r '.pageInfo.hasNextPage')"
-    cursor="$(printf '%s\n' "$result" | jq -r '.pageInfo.endCursor // empty')"
+    has_next_page="$(printf '%s\n' "$result" | jq -re '.pageInfo.hasNextPage')" \
+      || { echo "WARN: check_unresolved_threads: malformed reviewThreads payload for PR #$pr_number" >&2; return 1; }
+    cursor="$(printf '%s\n' "$result" | jq -re '.pageInfo.endCursor // empty')" \
+      || { echo "WARN: check_unresolved_threads: malformed reviewThreads payload for PR #$pr_number" >&2; return 1; }
 
     local thread_json
     while IFS= read -r thread_json; do
       [ -z "${thread_json:-}" ] && continue
 
       local is_resolved author body
-      is_resolved="$(printf '%s\n' "$thread_json" | jq -r '.isResolved')"
-      author="$(printf '%s\n' "$thread_json" | jq -r '.comments.nodes[0].author.login // ""')"
-      body="$(printf '%s\n' "$thread_json" | jq -r '.comments.nodes[0].body // ""')"
+      is_resolved="$(printf '%s\n' "$thread_json" | jq -re '.isResolved')" \
+        || { echo "WARN: check_unresolved_threads: malformed thread JSON for PR #$pr_number" >&2; return 1; }
+      author="$(printf '%s\n' "$thread_json" | jq -re '.comments.nodes[0].author.login // ""')" \
+        || { echo "WARN: check_unresolved_threads: malformed thread JSON for PR #$pr_number" >&2; return 1; }
+      body="$(printf '%s\n' "$thread_json" | jq -re '.comments.nodes[0].body // ""')" \
+        || { echo "WARN: check_unresolved_threads: malformed thread JSON for PR #$pr_number" >&2; return 1; }
 
-      # Only count threads authored by configured bot logins
+      # Only count threads authored by configured bot logins.
+      # Iterate via array to prevent glob expansion of bracket chars in "[bot]" strings.
       local is_bot=0
       local bot_login
-      for bot_login in $bot_logins; do
+      for bot_login in "${bot_logins[@]}"; do
         if [ "$author" = "$bot_login" ]; then is_bot=1; break; fi
       done
       [ "$is_bot" -eq 0 ] && continue
@@ -1546,25 +1560,26 @@ fi
 # This catches Nitpick/Trivial/Minor severity threads that individual platform
 # handlers do not classify as blocking but that still need explicit resolution.
 if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; then
-  # Derive the space-separated list of bot logins from the configured platforms.
-  unresolved_bot_logins=""
+  # Build the array of bot logins from the configured platforms.
+  # Using an array (not a space-separated string) prevents Bash glob expansion of
+  # bracket characters in "[bot]" strings during iteration.
+  declare -a unresolved_bot_logins=()
   for _platform in "${platforms[@]}"; do
     _login="$(bot_login_for_platform "$_platform")"
-    [ -n "$_login" ] && unresolved_bot_logins="$unresolved_bot_logins $_login"
+    [ -n "$_login" ] && unresolved_bot_logins+=("$_login")
   done
-  # Trim leading/trailing whitespace
-  unresolved_bot_logins="$(printf '%s\n' "$unresolved_bot_logins" | xargs 2>/dev/null || printf '%s\n' "$unresolved_bot_logins")"
 
   unresolved_thread_count=0
-  if [ -n "$unresolved_bot_logins" ]; then
+  if [ "${#unresolved_bot_logins[@]}" -gt 0 ]; then
     # Wrap with set +e so a transient GraphQL API failure does not crash the script
     # (all platform reviews have already succeeded; we degrade gracefully on thread-check failure).
     # Do NOT use 2>&1 — stderr (WARN messages) must remain on stderr so that only the
     # integer count appears on stdout for clean capture into unresolved_thread_count.
+    # Bot logins are passed as individual positional args to avoid glob expansion.
     thread_check_output=""
     thread_check_status=0
     set +e
-    thread_check_output="$(check_unresolved_threads "$pr_number" "$unresolved_bot_logins" "$(repo_slug)")"
+    thread_check_output="$(check_unresolved_threads "$pr_number" "$(repo_slug)" "${unresolved_bot_logins[@]}")"
     thread_check_status=$?
     set -e
     if [ "$thread_check_status" -ne 0 ]; then
