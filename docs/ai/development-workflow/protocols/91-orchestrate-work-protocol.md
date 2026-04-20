@@ -275,6 +275,37 @@ This hook is advisory and not required for the guardrail to function. The Critic
 
   If the branch is wrong or unexpected modifications are present, **stop and report to the human** rather than attempting an automated fix. The human must inspect and discard (or commit to a separate branch) any leaked changes before the next batch dispatch.
 
+**Critical safety rule — Write and Edit paths inside a worktree**: Every `Write` and
+`Edit` tool call issued within an active worktree session **must** target a path under
+`<worktree-path>/...`. Any path that does NOT begin with the resolved `<worktree-path>`
+value is a main-repo path — treat it as a red flag and correct it before calling the tool.
+
+- Before calling `Write` or `Edit`, mentally verify: "Does this absolute path start with
+  `<worktree-path>/`?" If not, prepend `<worktree-path>/` to the relative portion of the
+  path.
+- The item-orchestrator must include the resolved literal value of `<worktree-path>` in
+  every stage-agent handoff (not just the first), so each agent can validate paths against
+  it independently.
+- Paths under `<worktree-path>/.tmp/` are within the worktree boundary and are permitted.
+- This rule applies only when `BATCH_CONTEXT=true` and a dedicated worktree exists; for
+  non-batch runs, no reminder is injected.
+
+**Optional: pre-tool-use hook for WORKTREE_ROOT validation**
+
+A pre-tool-use hook can enforce the Write/Edit path rule automatically:
+
+1. Set the `WORKTREE_ROOT` environment variable to the resolved worktree path when
+   launching the agent session.
+2. In the hook, intercept `Write` and `Edit` tool calls only.
+3. If `WORKTREE_ROOT` is unset, skip the check (non-worktree session — no-op).
+4. If the target path does not start with `$WORKTREE_ROOT`, emit:
+   `"GUARDRAIL: Write/Edit target '<path>' is outside the designated worktree
+   '<WORKTREE_ROOT>'. Correct the path before proceeding."`
+5. The hook is **non-blocking** — it warns but does not prevent the tool call. This
+   allows the agent to correct the path in subsequent calls and prevents cascading
+   failures from false positives.
+6. The hook must NOT intercept read-only tools (`Read`, `Glob`, `Grep`).
+
 4. **Suggested worktree path**: `<repo-root>/.claude/worktrees/<item-id>/<branch-prefix>-<slug>` where `<item-id>` is the issue number, tracker ID, or slug.
 
 5. After the item reaches a terminal condition, the cleanup script will remove the worktree:
