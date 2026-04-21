@@ -17,6 +17,17 @@
 
 ---
 
+## Verification Log
+
+> Record reproducible plan-time verification commands that influenced scope, counts, or file lists. Include repo revision and concrete results.
+
+| Check | Command / query | Result |
+|---|---|---|
+| Repo revision | `git rev-parse --short HEAD` | [short SHA] |
+| [Pattern/search validation] | `[exact command]` | [count and key paths] |
+
+---
+
 ## Layer-by-Layer Changes
 
 > Delete any layers that don't apply to this feature.
@@ -55,7 +66,7 @@
 1. [Scenario 1 — maps to Acceptance Criterion N]
 2. [Scenario 2]
 
-**Smoke test runbook**: [`docs/testing/[section]/[slug].smoke-test.md`](../../testing/[section]/[slug].smoke-test.md)
+**Smoke test runbook**: `docs/testing/[section]/[slug].smoke-test.md`
 
 **Regression suite**: If the repository has an automated regression test suite, include a checklist item in the relevant layer for a new regression spec that covers the smoke test runbook scenarios above. Omit this if no regression suite exists in the repository.
 

@@ -135,6 +135,21 @@ Use the current timestamp for `YYYYMMDDHHMMSS`.
 - Explicitly list what is **out of scope** for this feature (MVP boundary)
 - Keep spec decisions **product-facing**; defer technical design to the implementation plan
 
+### Brief Coverage Requirements (mandatory when a tracker brief exists)
+
+When a tracker issue or work-item brief exists, add these artifacts before opening the draft PR:
+
+1. Build a **Brief Objective List** from discrete requirement bullets/checklists in the brief.
+2. Create a **Coverage Matrix** that maps every brief objective to either:
+   - one or more acceptance criteria, or
+   - an explicit entry under `## Out of Scope (MVP)`.
+3. For each objective deferred to out of scope, include a **Deferral Note** with:
+   - the objective wording (or stable paraphrase),
+   - rationale for deferral, and
+   - whether human confirmation is requested.
+
+No objective may be silently dropped. If an objective is not mapped in the matrix, the spec is incomplete and must not proceed to PR-ready steps.
+
 ### Spec Snippet Example
 
 ```markdown
@@ -171,6 +186,7 @@ If no blocking human decision remains:
 7. Open a **draft** PR targeting `develop` with:
    - Title: `docs(spec): [feature-name]`
    - Body: summary of the feature, link to the spec file, list of open questions (if any)
+   - When a tracker brief exists: Coverage Matrix summary (each brief objective mapped to AC reference(s) or Out-of-Scope entry) and Deferral Notes for each objective intentionally moved to Out of Scope
 8. Return the branch + PR details to the **Work Item Runner**
 
 ---
