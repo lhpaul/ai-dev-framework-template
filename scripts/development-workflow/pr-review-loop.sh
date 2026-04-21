@@ -786,10 +786,14 @@ coderabbit_thread_gate_clean() {
   local pr_number="$1" repo="$2" bot_login="$3" branch_name="$4"
   local platform="coderabbit"
   local out st
+  # check_unresolved_threads re-enables errexit internally; capture and restore
+  # shellopts so set -e does not leak into run_coderabbit_review (dead rc capture).
+  local prev_errexit
+  prev_errexit="$(set +o | grep errexit)"
   set +e
   out="$(check_unresolved_threads "$pr_number" "$repo" "$bot_login")"
   st=$?
-  set -e
+  eval "$prev_errexit"
   if [ "$st" -eq 2 ]; then
     echo "WARN: check_unresolved_threads exceeded page cap for PR #$pr_number (CodeRabbit pass)" >&2
     print_kv RESULT escalate
@@ -819,6 +823,7 @@ coderabbit_thread_gate_clean() {
     print_kv COMMENT_COUNT "$out"
     print_kv BLOCKING_COUNT "$out"
     print_kv SUGGESTION_COUNT 0
+    print_kv UNRESOLVED_THREAD_COUNT "$out"
     return 1
   fi
   return 0
