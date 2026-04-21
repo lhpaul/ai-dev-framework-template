@@ -1597,7 +1597,7 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
       echo "WARN: check_unresolved_threads exceeded page cap — escalating for manual inspection" >&2
       aggregate_result="escalate"
       aggregate_reason="unresolved_thread_check_incomplete"
-      unresolved_thread_count="unknown"
+      unresolved_thread_count=-1
     elif [ "$thread_check_status" -ne 0 ]; then
       # Exit 3 (or any other non-zero) = transient GraphQL API failure. Degrade:
       # skip the thread gate and trust the 0 unresolved default. All platform reviews
@@ -1610,7 +1610,7 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
   fi
   print_kv UNRESOLVED_THREAD_COUNT "$unresolved_thread_count"
 
-  if [ "$unresolved_thread_count" != "unknown" ] && [ "$unresolved_thread_count" -gt 0 ]; then
+  if [ "$unresolved_thread_count" -gt 0 ]; then
     aggregate_result="needs_fixes"
     aggregate_reason="unresolved_review_threads"
     # Increment total_blocking_count so BLOCKING_COUNT reflects the unresolved threads.
