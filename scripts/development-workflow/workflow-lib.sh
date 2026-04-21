@@ -246,3 +246,90 @@ workflow_backlog_destination_kind() {
       ;;
   esac
 }
+
+workflow_status_order() {
+  case "$1" in
+    Backlog) printf '0\n' ;;
+    "Writing Spec") printf '1\n' ;;
+    "Spec in Review") printf '2\n' ;;
+    "Spec Ready") printf '3\n' ;;
+    "Writing Plan") printf '4\n' ;;
+    "Plan in Review") printf '5\n' ;;
+    "Plan Ready") printf '6\n' ;;
+    "In Development") printf '7\n' ;;
+    "Development in Review") printf '8\n' ;;
+    Merged) printf '9\n' ;;
+    Released) printf '10\n' ;;
+    *) printf -- '-1\n' ;;
+  esac
+}
+
+# update_tracker_status_best_effort <issue_number> <status_label> [required_current_status]
+#
+# Best-effort update for GitHub Projects Status field.
+# - Returns 0 in all warning/failure cases to avoid blocking caller flows.
+# - Respects status progression ordering and never rolls status backward.
+# - Uses GITHUB_PROJECT_OWNER/GITHUB_PROJECT_NUMBER when set; owner falls back
+#   to the repository owner if omitted.
+update_tracker_status_best_effort() {
+  local issue_number="$1"
+  local status_label="$2"
+  local required_current_status="${3:-}"
+  local owner project_number project_id field_json field_id option_id item_json item_id current_status
+  local target_order current_order
+
+  owner="${GITHUB_PROJECT_OWNER:-$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || true)}"
+  project_number="${GITHUB_PROJECT_NUMBER:-}"
+  if [ -z "$owner" ] || [ -z "$project_number" ]; then
+    echo "Warning: GITHUB_PROJECT_OWNER or GITHUB_PROJECT_NUMBER not set; skipping tracker status update."
+    return 0
+  fi
+
+  project_id=$(gh project view "$project_number" --owner "$owner" --format json 2>/dev/null | jq -r '.id // empty' || true)
+  if [ -z "$project_id" ]; then
+    echo "Warning: could not resolve project ID for project #${project_number}; skipping tracker status update."
+    return 0
+  fi
+
+  field_json=$(gh project field-list "$project_number" --owner "$owner" --format json 2>/dev/null || true)
+  field_id=$(printf '%s' "$field_json" | jq -r '.fields[] | select(.name == "Status") | .id // empty' || true)
+  option_id=$(printf '%s' "$field_json" | jq -r --arg label "$status_label" '.fields[] | select(.name == "Status") | .options[] | select(.name == $label) | .id // empty' || true)
+  if [ -z "$field_id" ] || [ -z "$option_id" ]; then
+    echo "Warning: could not resolve Status field or option '${status_label}'; skipping tracker status update."
+    return 0
+  fi
+
+  item_json=$(gh project item-list "$project_number" --owner "$owner" --limit 10000 --format json 2>/dev/null \
+    | jq -c --argjson num "$issue_number" '.items[] | select(.content.number == $num)' || true)
+  item_id=$(printf '%s' "$item_json" | jq -r '.id // empty' || true)
+  if [ -z "$item_id" ]; then
+    echo "Warning: issue #${issue_number} not found in project #${project_number}; skipping tracker status update."
+    return 0
+  fi
+
+  current_status=$(printf '%s' "$item_json" | jq -r '.status // empty' || true)
+  if [ -n "$required_current_status" ] && [ "$current_status" != "$required_current_status" ]; then
+    echo "Issue #${issue_number} current status '${current_status:-unknown}' does not match required source status '${required_current_status}'; skipping update."
+    return 0
+  fi
+  target_order="$(workflow_status_order "$status_label")"
+  current_order="$(workflow_status_order "$current_status")"
+  if [ "$target_order" -ge 0 ] && [ "$current_order" -gt "$target_order" ]; then
+    echo "Issue #${issue_number} is already at status '${current_status}' (more advanced than '${status_label}'); skipping rollback."
+    return 0
+  fi
+
+  echo "Updating tracker status for issue #${issue_number} to '${status_label}'..."
+  gh api graphql -f query="
+    mutation {
+      updateProjectV2ItemFieldValue(input: {
+        projectId: \"${project_id}\"
+        itemId: \"${item_id}\"
+        fieldId: \"${field_id}\"
+        value: { singleSelectOptionId: \"${option_id}\" }
+      }) {
+        projectV2Item { id }
+      }
+    }
+  " 2>/dev/null || echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker status not updated."
+}
