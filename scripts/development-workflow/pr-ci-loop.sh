@@ -70,12 +70,28 @@ min_no_checks_wait=$((poll_interval * 2))
 
 while :; do
   checks_json="$(gh pr view "$pr_number" --json statusCheckRollup)"
-  total_check_count="$(
-    printf '%s\n' "$checks_json" | jq '(.statusCheckRollup // []) | length'
-  )"
-  pending_count="$(
+  # statusCheckRollup can include historical duplicates for the same check.
+  # Keep only the latest entry per check name to avoid stale conclusions.
+  normalized_checks_json="$(
     printf '%s\n' "$checks_json" | jq '
       (.statusCheckRollup // [])
+      | map(
+          . + {
+            __check_name: (.name // .context // .workflowName // "unknown"),
+            __check_ts: (.completedAt // .startedAt // "")
+          }
+        )
+      | sort_by(.__check_name, .__check_ts)
+      | group_by(.__check_name)
+      | map(last | del(.__check_name, .__check_ts))
+    '
+  )"
+  total_check_count="$(
+    printf '%s\n' "$normalized_checks_json" | jq 'length'
+  )"
+  pending_count="$(
+    printf '%s\n' "$normalized_checks_json" | jq '
+      .
       | map(select(
           ((.status // "") != "" and (.status != "COMPLETED"))
           or (.state == "EXPECTED")
@@ -87,8 +103,8 @@ while :; do
     '
   )"
   pending_list="$(
-    printf '%s\n' "$checks_json" | jq -r '
-      (.statusCheckRollup // [])
+    printf '%s\n' "$normalized_checks_json" | jq -r '
+      .
       | map(select(
           ((.status // "") != "" and (.status != "COMPLETED"))
           or (.state == "EXPECTED")
@@ -101,8 +117,8 @@ while :; do
     '
   )"
   failing_count="$(
-    printf '%s\n' "$checks_json" | jq '
-      (.statusCheckRollup // [])
+    printf '%s\n' "$normalized_checks_json" | jq '
+      .
       | map(select(
           (.conclusion == "FAILURE")
           or (.conclusion == "CANCELLED")
@@ -116,8 +132,8 @@ while :; do
     '
   )"
   failing_list="$(
-    printf '%s\n' "$checks_json" | jq -r '
-      (.statusCheckRollup // [])
+    printf '%s\n' "$normalized_checks_json" | jq -r '
+      .
       | map(select(
           (.conclusion == "FAILURE")
           or (.conclusion == "CANCELLED")
