@@ -186,8 +186,7 @@ If no blocking human decision remains:
 7. Open a **draft** PR targeting `develop` with:
    - Title: `docs(spec): [feature-name]`
    - Body: summary of the feature, link to the spec file, list of open questions (if any)
-   - Coverage Matrix summary: each brief objective mapped to AC reference(s) or Out-of-Scope entry
-   - Deferral Notes for each objective intentionally moved to Out of Scope
+   - When a tracker brief exists: Coverage Matrix summary (each brief objective mapped to AC reference(s) or Out-of-Scope entry) and Deferral Notes for each objective intentionally moved to Out of Scope
 8. Return the branch + PR details to the **Work Item Runner**
 
 ---
