@@ -70,6 +70,12 @@
 
 **Regression suite**: If the repository has an automated regression test suite, include a checklist item in the relevant layer for a new regression spec that covers the smoke test runbook scenarios above. Omit this if no regression suite exists in the repository.
 
+### Parser-risk addendum (include only when Step 3 classifier applies)
+
+- **Edge-case enumeration**: List concrete parser/scanner inputs that cover boundary variants, negative lookalikes, multi-match lines, nested/overlapping patterns when relevant, and normative-spec flexibility when applicable (for example, CommonMark closing fence length >= opening fence length).
+- **Unit test mapping**: Name a unit test file and map at least one automated unit test per enumerated edge case.
+- **Suppression semantics (if applicable)**: Name recognized suppression directives, allowed placement, and behavior when multiple suppressions appear on one line.
+
 ---
 
 ## Seed Data

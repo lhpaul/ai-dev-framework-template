@@ -89,6 +89,13 @@ Check:
 - Steps are specific enough to execute without guessing
 - Ordering is feasible and dependencies are explicit
 - When pattern-based completeness applies, enumerated counts/paths are validated against the plan's Verification Log commands and outputs
+- Parser-risk completeness (when protocol `02-generate-implementation-plan-protocol.md` Step 3 parser-risk signals apply):
+  - Edge-case enumeration is present and concrete
+  - A unit test file is named with at least one automated test mapped per enumerated case
+  - When suppressions are part of the proposed feature, suppression semantics explicitly define:
+    - Recognized directives
+    - Allowed placement
+    - Interpretation of multiple suppressions on one line
 - Documentation updates are listed or intentionally declared unnecessary
 - Seed data, generated artifacts, and follow-up tasks are called out when applicable
 - The proposed approach matches existing architecture and repo patterns
