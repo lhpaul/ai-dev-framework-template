@@ -66,7 +66,7 @@ Before running this smoke test:
 
 **Maps to**: AC6
 
-1. Configure a test subagent to return `SUBAGENT_PERMISSION_DENIAL: Edit tool denied`.
+1. Configure a test subagent to return `SUBAGENT_PERMISSION_DENIAL: Edit tool denied on path <denied-path>. No partial work committed. Falling back to orchestrator inline execution.`.
 2. Configure the main-session inline execution to also encounter an `Edit` permission denial.
 3. Run the batch.
 
