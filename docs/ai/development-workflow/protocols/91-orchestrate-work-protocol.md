@@ -322,7 +322,7 @@ After removing the worktree, verify that the CWD is still valid by running a sim
 
 **When not in a parallel batch**: Worktree creation is optional but recommended for large development folders or long-running work. If not using a dedicated worktree, ensure the working directory is clean before proceeding.
 
-**Permission-denial early exit (subagent runs only)**: If at any point during the run the harness responds with the known harness failure pattern — a message containing the phrase `"Permission to use"` AND a denied tool name (`Edit` or `Bash`) — the subagent must **immediately stop all further work** and return the following structured string to the Portfolio Orchestrator:
+**Permission-denial early exit (subagent runs only)**: If at any point during the run the harness responds with the known harness failure pattern — a message containing the phrase `"Permission to use"` AND a denied tool name (`Edit`, `Write`, or `Bash`) — the subagent must **immediately stop all further work** and return the following structured string to the Portfolio Orchestrator:
 
 ```
 SUBAGENT_PERMISSION_DENIAL: [tool] tool denied on path <denied-path>. No partial work committed. Falling back to orchestrator inline execution.
@@ -383,7 +383,7 @@ Before calling any creator-stage agent or making any file edits, perform a light
 If either tool call is denied (harness responds with a permission-denied message), exit immediately before any creator-stage work:
 
 ```
-SUBAGENT_PERMISSION_DENIAL: [DENIED_TOOL] tool denied by harness. No partial work committed. Falling back to orchestrator inline execution.
+SUBAGENT_PERMISSION_DENIAL: [DENIED_TOOL] tool denied on path <denied-path>. No partial work committed. Falling back to orchestrator inline execution.
 ```
 
 **Self-check rules**:
