@@ -99,6 +99,8 @@ Files the developer edits during implementation (this plan already targets them;
 
 **None** for `AGENTS.md` / `docs/project/*` unless the implementation PR discovers a broken link after renames.
 
+- [ ] `docs/ai/development-workflow/integrations/issue-tracker.md` — only if protocol edits assume GitHub-only fields; add a short tracker-agnostic note per spec **Out of Scope (MVP)** (non-GitHub trackers)
+
 ---
 
 ## Risks & Mitigations
