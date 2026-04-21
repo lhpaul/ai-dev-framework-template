@@ -23,6 +23,8 @@
 #   PR_BASE=<base-branch>
 #   PR_LABELS=<label1,label2,...>
 #   PR_READY_LABEL=true|false
+#   PR_IS_DRAFT=true|false
+#   PR_HAS_NEEDS_FIXES=true|false
 #   PR_HAS_CHANGELOG=true|false
 #   PR_CREATED_AT=<ISO-8601>
 #   PR_ORDER=<1-based index in merge order>
