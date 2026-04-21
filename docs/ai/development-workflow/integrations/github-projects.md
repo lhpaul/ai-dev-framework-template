@@ -205,6 +205,29 @@ When a PR is merged, the `post-merge-cleanup` command will:
 
 ---
 
+## Release Post-Merge Cleanup
+
+After a release branch has merged to both `main` and `develop`, use:
+
+```bash
+./scripts/development-workflow/prepare-release-post-merge-cleanup.sh vX.Y.Z --issues 101,102
+```
+
+This script:
+
+1. Verifies both release PRs are merged before any branch deletion
+2. Deletes `release/vX.Y.Z` on `origin` and locally (when safe)
+3. Transitions explicit scoped issues from merged-to-integration to released-to-production
+
+Status label defaults and overrides:
+
+- `GITHUB_PROJECT_STATUS_MERGED` (default: `Merged`)
+- `GITHUB_PROJECT_STATUS_RELEASED` (default: `Released`)
+
+Use explicit issue numbers to avoid accidental broad transitions. Items not included in the shipped release should remain unchanged.
+
+---
+
 ## Prerequisites
 
 - **`gh` CLI** authenticated with a token that has `project` and `repo` scopes:

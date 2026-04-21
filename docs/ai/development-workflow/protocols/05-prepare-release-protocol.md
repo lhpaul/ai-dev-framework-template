@@ -178,9 +178,68 @@ When the production PR is ready (or clearly escalated):
 
 1. **Merge the `main` PR first** — the tag `v[X.Y.Z]` is created automatically by CI on merge (`.github/workflows/auto-tag-release.yml`)
 2. Then merge the `develop` backport PR
-3. Do not delete the release branch until both PRs are merged
+3. Run Step 9 post-merge cleanup only after both PRs are merged
 
 If Step 7 escalated or CI timed out, report status and blockers before merge.
+
+---
+
+## Step 9: Post-Merge Cleanup (Branch + Tracker)
+
+Run this step only after both release PRs from `release/v[X.Y.Z]` are merged.
+
+### 9.1 Verify merged state before deletion
+
+Confirm the release branch has:
+
+- One merged PR to `main`
+- One merged PR to `develop`
+- No remaining open PRs to either base
+
+If either merged PR is missing, or one PR is still open, stop. Do **not** delete the release branch and do **not** run tracker release transitions.
+
+### 9.2 Preferred command (single entry point)
+
+Use the helper script:
+
+```bash
+./scripts/development-workflow/prepare-release-post-merge-cleanup.sh v[X.Y.Z] --issues <issue1,issue2,...>
+```
+
+The script performs all required checks and actions in order:
+
+1. Verifies both merged PRs exist (`main` and `develop`) and no open PR remains.
+2. Deletes remote branch `release/v[X.Y.Z]` (or logs that it is already absent).
+3. Deletes local branch `release/v[X.Y.Z]` when safe.
+4. Transitions explicit in-scope tracker items from merged-to-integration to released-to-production.
+
+### 9.3 Manual equivalent (when script cannot be used)
+
+```bash
+# verify merged PRs first (examples)
+gh pr list --head "release/v[X.Y.Z]" --base main --state merged --json number
+gh pr list --head "release/v[X.Y.Z]" --base develop --state merged --json number
+
+# delete remote branch (only after both merges)
+git push origin --delete "release/v[X.Y.Z]"
+
+# delete local branch (switch away first if currently checked out)
+git switch develop
+git branch -d "release/v[X.Y.Z]"
+```
+
+If local deletion fails because the branch is checked out in another worktree, switch away in that worktree and retry.
+
+### 9.4 Tracker transition: `Merged` -> `Released` for in-scope items
+
+Use the same GitHub Projects v2 update path documented in [`github-projects.md`](../integrations/github-projects.md). The helper script accepts explicit issue numbers (`--issue`/`--issues`) to keep scope safe.
+
+- Default status names: `Merged` and `Released`
+- Optional env overrides:
+  - `GITHUB_PROJECT_STATUS_MERGED`
+  - `GITHUB_PROJECT_STATUS_RELEASED`
+
+Only transition work items explicitly confirmed as part of the shipped release. Do not bulk-move all project items in `Merged` unless a human explicitly asks for that scope.
 
 ---
 
