@@ -7,7 +7,7 @@
 
 ## Summary
 
-**Approach**: Add a single top-level section to `docs/ai/development-workflow/protocols/03-implement-development-protocol.md` immediately after the “Which Path to Use?” table (before `## Path 1: Full Pipeline`) so every implementation path sees it. The section defines when the gate applies (new or materially changed `.github/workflows/*.yml`), states that the checklist must be satisfied **before** opening or updating a development PR with those changes, and embeds an explicit Markdown checklist covering least-privilege `permissions`, pinned `uses:` SHAs with version comments, optional `paths` / `paths-ignore`, and optional `concurrency`. Add one-line cross-references from Path 2 (Refactor) and Path 3 (Fast Track) Step 1 prep lists pointing agents to that section when their branch will touch workflow files, so the rule is not Full-Pipeline-only in practice.
+**Approach**: Add a single top-level section to `docs/ai/development-workflow/protocols/03-implement-development-protocol.md` immediately after the “Which Path to Use?” table (before `## Path 1: Full Pipeline`) so every implementation path sees it. The section defines when the gate applies (new or materially changed `.github/workflows/*.yml`), states that the checklist must be satisfied **before** opening or updating a development PR with those changes, and embeds an explicit Markdown checklist covering least-privilege `permissions`, pinned `uses:` SHAs with version comments, optional `paths` / `paths-ignore`, and optional `concurrency`. Add one-line cross-references from Path 2 (Refactor), Path 3 (Fast Track), and Path 4 (Hotfix) Step 1 prep lists pointing agents to that section when their branch will touch workflow files, so the rule is not Full-Pipeline-only in practice.
 
 **Estimated complexity**: **S**
 
@@ -47,6 +47,7 @@
   - **Checklist** (checkbox list): explicit minimum `permissions:` (default read-only guidance `contents: read` when sufficient); every third-party `uses:` pinned to full commit SHA with `# vX.Y.Z` (or equivalent) comment; `paths` / `paths-ignore` when the workflow should only run for certain paths; `concurrency` when duplicate runs on the same ref are harmful; exceptions documented in the PR description.
 - [ ] Same file — in **Path 2: Refactor** → Step 1 numbered list, add a bullet: when the change set includes `.github/workflows/*.yml`, complete the GitHub Actions workflow security section above before coding.
 - [ ] Same file — in **Path 3: Fast Track** → Step 1 (or equivalent prep) add the same pointer if a fast-track change can include workflow files (even rare, keeps the contract complete).
+- [ ] Same file — in **Path 4: Hotfix** → Step 1 prep add the same pointer when the hotfix branch will touch `.github/workflows/*.yml`.
 
 ---
 
@@ -101,7 +102,7 @@ None — illustrative YAML for `permissions` / `uses:` may appear in the protoco
 
 1. Re-read the merged spec and this plan in the feature branch workspace.
 2. Insert `## GitHub Actions workflow security (mandatory when applicable)` in `03-implement-development-protocol.md` at the location described above; include trigger, timing, and full checklist aligned with spec Business Rules.
-3. Add Refactor and Fast Track cross-reference bullets so non–Full-Pipeline paths that touch workflows are covered.
+3. Add Refactor, Fast Track, and Hotfix cross-reference bullets so non–Full-Pipeline paths that touch workflows are covered.
 4. Proofread: every spec acceptance criterion satisfied by explicit protocol text.
 5. Run markdown lint / heuristic lint on touched paths if the implementation PR’s CI includes them.
 6. Execute the smoke test runbook on the implementation PR branch before marking the feature PR human-ready.
