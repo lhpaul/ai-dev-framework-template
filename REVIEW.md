@@ -92,7 +92,10 @@ Check:
 - Parser-risk completeness (when protocol `02-generate-implementation-plan-protocol.md` Step 3 parser-risk signals apply):
   - Edge-case enumeration is present and concrete
   - A unit test file is named with at least one automated test mapped per enumerated case
-  - Suppression semantics subsection is present when suppressions are part of the proposed feature
+  - When suppressions are part of the proposed feature, suppression semantics explicitly define:
+    - Recognized directives
+    - Allowed placement
+    - Interpretation of multiple suppressions on one line
 - Documentation updates are listed or intentionally declared unnecessary
 - Seed data, generated artifacts, and follow-up tasks are called out when applicable
 - The proposed approach matches existing architecture and repo patterns
