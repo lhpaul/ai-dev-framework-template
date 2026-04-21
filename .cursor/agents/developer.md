@@ -18,4 +18,5 @@ Key rules:
 - Never bypass build/lint/test verification
 - Always update CHANGELOG before opening the PR (except spec/plan-only PRs; for fixes to unreleased work, update the existing entry instead of adding a new one; in parallel batches, each PR adds its own CHANGELOG entry as normal; merge conflicts are resolved at merge time)
 - CHANGELOG entries must have no trailing whitespace and no trailing blank lines before commit; verify in-place after writing the entry and before staging (intentional two-space Markdown hard line breaks are exempt)
+- Every modified `.md` file must end with a trailing newline (MD047) before staging; run the pre-staging check from the protocol's MD047 section on all modified markdown files before `git add`
 - Do not stop at "PR opened"; continue through code review, automated review, and CI until the PR is ready or escalated

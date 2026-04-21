@@ -159,6 +159,18 @@ git diff CHANGELOG.md | grep '^+' | grep -E '[[:space:]]+$'
 
 If this returns output, inspect each flagged line: leave intentional two-space Markdown hard line breaks (exactly two trailing spaces followed by a newline) intact, and fix any other trailing whitespace (e.g., a single trailing space, a tab, or three or more trailing spaces) before committing.
 
+**MD047 trailing-newline check (before staging)**: After editing any markdown file, verify that every modified `.md` file ends with a newline (MD047). Run this check on each markdown file you are about to stage:
+
+```bash
+# Check each modified .md file for a missing trailing newline (run before git add)
+git diff --name-only | grep '\.md$' | while read f; do
+  python3 -c "import sys; d=open(sys.argv[1],'rb').read(); sys.exit(0 if d.endswith(b'\n') else 1)" "$f" \
+    || echo "MISSING trailing newline: $f"
+done
+```
+
+If any file is flagged, append a newline to it (e.g., `echo "" >> <file>` or reopen and save in your editor) before staging.
+
 ### Step 7: Commit & Push
 
 ```bash
@@ -275,6 +287,18 @@ git checkout -b refactor/[branch-slug]
 
    If this returns output, inspect each flagged line: leave intentional two-space Markdown hard line breaks (exactly two trailing spaces followed by a newline) intact, and fix any other trailing whitespace (e.g., a single trailing space, a tab, or three or more trailing spaces) before committing.
 
+   **MD047 trailing-newline check (before staging)**: After editing any markdown file, verify that every modified `.md` file ends with a newline (MD047). Run this check on each markdown file you are about to stage:
+
+   ```bash
+   # Check each modified .md file for a missing trailing newline (run before git add)
+   git diff --name-only | grep '\.md$' | while read f; do
+     python3 -c "import sys; d=open(sys.argv[1],'rb').read(); sys.exit(0 if d.endswith(b'\n') else 1)" "$f" \
+       || echo "MISSING trailing newline: $f"
+   done
+   ```
+
+   If any file is flagged, append a newline to it (e.g., `echo "" >> <file>` or reopen and save in your editor) before staging.
+
 7. Commit: `refactor([scope]): [description]`
 8. Push branch to remote
 9. Open a **draft** PR targeting `develop` with refactor-appropriate metadata (do **not** reuse Path 1 Step 8 verbatim — that path uses `feat(...)` and a spec link):
@@ -369,6 +393,18 @@ git diff CHANGELOG.md | grep '^+' | grep -E '[[:space:]]+$'
 
 If this returns output, inspect each flagged line: leave intentional two-space Markdown hard line breaks (exactly two trailing spaces followed by a newline) intact, and fix any other trailing whitespace (e.g., a single trailing space, a tab, or three or more trailing spaces) before committing.
 
+**MD047 trailing-newline check (before staging)**: After editing any markdown file, verify that every modified `.md` file ends with a newline (MD047). Run this check on each markdown file you are about to stage:
+
+```bash
+# Check each modified .md file for a missing trailing newline (run before git add)
+git diff --name-only | grep '\.md$' | while read f; do
+  python3 -c "import sys; d=open(sys.argv[1],'rb').read(); sys.exit(0 if d.endswith(b'\n') else 1)" "$f" \
+    || echo "MISSING trailing newline: $f"
+done
+```
+
+If any file is flagged, append a newline to it (e.g., `echo "" >> <file>` or reopen and save in your editor) before staging.
+
 ### Step 7: Commit & Push
 
 ```bash
@@ -453,6 +489,18 @@ git diff CHANGELOG.md | grep '^+' | grep -E '[[:space:]]+$'
 ```
 
 If this returns output, inspect each flagged line: leave intentional two-space Markdown hard line breaks (exactly two trailing spaces followed by a newline) intact, and fix any other trailing whitespace (e.g., a single trailing space, a tab, or three or more trailing spaces) before committing.
+
+**MD047 trailing-newline check (before staging)**: After editing any markdown file, verify that every modified `.md` file ends with a newline (MD047). Run this check on each markdown file you are about to stage:
+
+```bash
+# Check each modified .md file for a missing trailing newline (run before git add)
+git diff --name-only | grep '\.md$' | while read f; do
+  python3 -c "import sys; d=open(sys.argv[1],'rb').read(); sys.exit(0 if d.endswith(b'\n') else 1)" "$f" \
+    || echo "MISSING trailing newline: $f"
+done
+```
+
+If any file is flagged, append a newline to it (e.g., `echo "" >> <file>` or reopen and save in your editor) before staging.
 
 ### Step 7: Commit & Push
 
