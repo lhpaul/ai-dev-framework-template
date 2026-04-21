@@ -325,10 +325,15 @@ After removing the worktree, verify that the CWD is still valid by running a sim
 **Permission-denial early exit (subagent runs only)**: If at any point during the run the harness responds with the known harness failure pattern — a message containing the phrase `"Permission to use"` AND a denied tool name (`Edit`, `Write`, or `Bash`) — the subagent must **immediately stop all further work** and return the following structured string to the Portfolio Orchestrator:
 
 ```
-SUBAGENT_PERMISSION_DENIAL: [tool] tool denied on path <denied-path>. No partial work committed. Falling back to orchestrator inline execution.
+SUBAGENT_PERMISSION_DENIAL: [tool] tool denied on <denied-target>. No partial work committed. Falling back to orchestrator inline execution.
 ```
 
-The `<denied-path>` field must list every path for which permission was denied. This is mandatory so the orchestrator can identify and resolve the permission gap before retrying. Use a comma-separated list of absolute, normalized paths, sorted lexicographically, with no duplicates and no surrounding spaces (e.g., `.claude/agents/developer.md,.cursor/agents/developer.md`). When only one path was denied, write it without a trailing comma.
+The `<denied-target>` field identifies what was denied and must be populated as follows:
+
+- **`Edit` or `Write` denial**: list every denied file path as a comma-separated list of repo-relative, normalized paths, sorted lexicographically, with no duplicates and no surrounding spaces (e.g., `.claude/agents/developer.md,.cursor/agents/developer.md`). When only one path was denied, write it without a trailing comma.
+- **`Bash` denial**: use the denied command pattern as reported by the harness (e.g., `Bash(gh api:*)`). There is no file path to report for a Bash denial.
+
+This field is mandatory in all cases so the orchestrator can identify and resolve the permission gap before retrying.
 
 **No silent workarounds — this is an absolute rule**: When `Edit` or `Write` is denied for any path (including `.claude/agents/**`, `.cursor/agents/**`, or any other file), the subagent MUST NOT use any alternative mechanism to write the same content. The following substitutions are all explicitly prohibited:
 
@@ -383,7 +388,7 @@ Before calling any creator-stage agent or making any file edits, perform a light
 If either tool call is denied (harness responds with a permission-denied message), exit immediately before any creator-stage work:
 
 ```
-SUBAGENT_PERMISSION_DENIAL: [DENIED_TOOL] tool denied on path <denied-path>. No partial work committed. Falling back to orchestrator inline execution.
+SUBAGENT_PERMISSION_DENIAL: [DENIED_TOOL] tool denied on <denied-target>. No partial work committed. Falling back to orchestrator inline execution.
 ```
 
 **Self-check rules**:

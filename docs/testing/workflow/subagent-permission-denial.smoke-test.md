@@ -23,7 +23,7 @@ Before running this smoke test:
 | Item | Value |
 |---|---|
 | Simulated denied tools | `Edit`, `Write`, `Bash` |
-| Structured exit string | `SUBAGENT_PERMISSION_DENIAL: Edit tool denied on path <denied-path>. No partial work committed. Falling back to orchestrator inline execution.` |
+| Structured exit string | `SUBAGENT_PERMISSION_DENIAL: Edit tool denied on <denied-target>. No partial work committed. Falling back to orchestrator inline execution.` |
 | Test item | Any single Spec Ready or Plan Ready item in the tracker |
 
 ---
@@ -48,7 +48,7 @@ Before running this smoke test:
 
 1. Configure a test subagent to return the following output and exit:
    ```
-   SUBAGENT_PERMISSION_DENIAL: Edit tool denied on path <denied-path>. No partial work committed. Falling back to orchestrator inline execution.
+   SUBAGENT_PERMISSION_DENIAL: Edit tool denied on <denied-target>. No partial work committed. Falling back to orchestrator inline execution.
    ```
 2. Run a batch orchestration session with one eligible item and the mock subagent.
 3. Observe the Portfolio Orchestrator's response after the subagent returns.
@@ -66,7 +66,7 @@ Before running this smoke test:
 
 **Maps to**: AC6
 
-1. Configure a test subagent to return `SUBAGENT_PERMISSION_DENIAL: Edit tool denied on path <denied-path>. No partial work committed. Falling back to orchestrator inline execution.`.
+1. Configure a test subagent to return `SUBAGENT_PERMISSION_DENIAL: Edit tool denied on <denied-target>. No partial work committed. Falling back to orchestrator inline execution.`.
 2. Configure the main-session inline execution to also encounter an `Edit` permission denial.
 3. Run the batch.
 
@@ -87,7 +87,7 @@ Before running this smoke test:
 3. Allow the pre-flight self-check to run.
 
 **Expected results**:
-- The subagent exits immediately with: `SUBAGENT_PERMISSION_DENIAL: Edit tool denied on path <denied-path>. No partial work committed. Falling back to orchestrator inline execution.`
+- The subagent exits immediately with: `SUBAGENT_PERMISSION_DENIAL: Edit tool denied on <denied-target>. No partial work committed. Falling back to orchestrator inline execution.`
 - No creator-stage file (spec, plan, feature code) has been written or committed.
 - No tracked files are modified (verify with `git status --porcelain` — clean).
 - The `.tmp/` self-check file (if created) is cleaned up.
