@@ -32,7 +32,7 @@ Before running this smoke test:
 
 ### Step 1: Spec protocol — brief coverage mechanics
 
-**Maps to**: **AC3**, **AC1** (synthetic three-objective scenario)
+**Maps to**: **AC3**, **AC2**, **AC1** (synthetic three-objective scenario)
 
 1. Open `01-generate-spec-protocol.md`.
 2. Verify the document defines all of: **Brief Objective List**, **Coverage Matrix** (mapping each objective to AC ids or `## Out of Scope (MVP)`), and a requirement that the **draft PR body** includes a Coverage Matrix summary before human-ready automation.

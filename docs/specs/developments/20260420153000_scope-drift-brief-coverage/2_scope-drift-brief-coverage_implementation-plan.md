@@ -65,7 +65,7 @@
 
 **Key scenarios to test**:
 
-1. Protocol 01 documents matrix + deferral PR requirements — maps to **AC3**, **AC1** (synthetic brief scenario described in smoke runbook)
+1. Protocol 01 documents matrix + deferral PR requirements — maps to **AC3**, **AC2**, **AC1** (synthetic brief scenario described in smoke runbook)
 2. Protocol 02 documents Verification Log + pattern-vs-freeze — maps to **AC4**
 3. Fixture + live `rg` proves plan text cannot copy stale counts — maps to **AC5**
 4. `REVIEW.md` lists new blocking bullets — maps to **AC6**, **AC7**
@@ -127,6 +127,7 @@ None (documentation-only work).
 4. Update `REVIEW.md` spec and plan checklists — **AC6**, **AC7**
 5. Optional: agent entrypoint files and Codex skill one-liners — supports discoverability for **AC3**, **AC4**
 6. Run markdownlint on touched Markdown paths per `AGENTS.md`; fix violations
-7. Execute smoke runbook steps on the implementation PR branch before marking development done
+7. Update `CHANGELOG.md` under `[Unreleased]` with an entry for the **feature implementation** PR (protocol / `REVIEW.md` / fixture changes), following `AGENTS.md` conventions
+8. Execute smoke runbook steps on the implementation PR branch before marking development done
 
 Each step should leave the repo internally consistent (no dangling references to headings that do not exist).
