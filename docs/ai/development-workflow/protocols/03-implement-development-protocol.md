@@ -162,8 +162,8 @@ If this returns output, inspect each flagged line: leave intentional two-space M
 **MD047 trailing-newline check (before staging)**: After editing any markdown file, verify that every modified `.md` file ends with a newline (MD047). Run this check on each markdown file you are about to stage:
 
 ```bash
-# Check each modified or newly created .md file for a missing trailing newline (run before git add)
-{ git diff --name-only; git ls-files --others --exclude-standard; } | grep '\.md$' | sort -u | while read -r f; do
+# Check each modified (non-deleted) or newly created .md file for a missing trailing newline (run before git add)
+{ git diff --name-only --diff-filter=d; git ls-files --others --exclude-standard; } | grep '\.md$' | sort -u | while read -r f; do
   python3 -c "import sys; d=open(sys.argv[1],'rb').read(); sys.exit(0 if d.endswith(b'\n') else 1)" "$f" \
     || echo "MISSING trailing newline: $f"
 done
@@ -290,8 +290,8 @@ git checkout -b refactor/[branch-slug]
    **MD047 trailing-newline check (before staging)**: After editing any markdown file, verify that every modified `.md` file ends with a newline (MD047). Run this check on each markdown file you are about to stage:
 
    ```bash
-   # Check each modified or newly created .md file for a missing trailing newline (run before git add)
-   { git diff --name-only; git ls-files --others --exclude-standard; } | grep '\.md$' | sort -u | while read -r f; do
+   # Check each modified (non-deleted) or newly created .md file for a missing trailing newline (run before git add)
+   { git diff --name-only --diff-filter=d; git ls-files --others --exclude-standard; } | grep '\.md$' | sort -u | while read -r f; do
      python3 -c "import sys; d=open(sys.argv[1],'rb').read(); sys.exit(0 if d.endswith(b'\n') else 1)" "$f" \
        || echo "MISSING trailing newline: $f"
    done
@@ -396,8 +396,8 @@ If this returns output, inspect each flagged line: leave intentional two-space M
 **MD047 trailing-newline check (before staging)**: After editing any markdown file, verify that every modified `.md` file ends with a newline (MD047). Run this check on each markdown file you are about to stage:
 
 ```bash
-# Check each modified or newly created .md file for a missing trailing newline (run before git add)
-{ git diff --name-only; git ls-files --others --exclude-standard; } | grep '\.md$' | sort -u | while read -r f; do
+# Check each modified (non-deleted) or newly created .md file for a missing trailing newline (run before git add)
+{ git diff --name-only --diff-filter=d; git ls-files --others --exclude-standard; } | grep '\.md$' | sort -u | while read -r f; do
   python3 -c "import sys; d=open(sys.argv[1],'rb').read(); sys.exit(0 if d.endswith(b'\n') else 1)" "$f" \
     || echo "MISSING trailing newline: $f"
 done
@@ -493,8 +493,8 @@ If this returns output, inspect each flagged line: leave intentional two-space M
 **MD047 trailing-newline check (before staging)**: After editing any markdown file, verify that every modified `.md` file ends with a newline (MD047). Run this check on each markdown file you are about to stage:
 
 ```bash
-# Check each modified or newly created .md file for a missing trailing newline (run before git add)
-{ git diff --name-only; git ls-files --others --exclude-standard; } | grep '\.md$' | sort -u | while read -r f; do
+# Check each modified (non-deleted) or newly created .md file for a missing trailing newline (run before git add)
+{ git diff --name-only --diff-filter=d; git ls-files --others --exclude-standard; } | grep '\.md$' | sort -u | while read -r f; do
   python3 -c "import sys; d=open(sys.argv[1],'rb').read(); sys.exit(0 if d.endswith(b'\n') else 1)" "$f" \
     || echo "MISSING trailing newline: $f"
 done
