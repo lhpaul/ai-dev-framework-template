@@ -19,13 +19,13 @@ Use it for every pre-PR review gate and as the normalization layer for PR review
 |---|---|---|
 | `blocking` | Incorrect behavior, spec/plan deviation, broken workflow contract, security issue, missing critical validation or tests | Fix before PR is ready |
 | `important` | Edge-case gap, maintainability issue, unclear design choice, incomplete workflow update | Fix by default unless a human decision is required |
-| `suggestion` | Improvement that is optional and low-risk | Report or fix at discretion |
+| `suggestion` | Improvement that is optional and low-risk | Fix by default; report if scope-expanding or requires a product decision |
 
 ### Fix vs. Report
 
 Fix directly when:
 - The correct change is clear and low-risk
-- The issue is `blocking` or `important`
+- The issue is `blocking`, `important`, or `suggestion`
 - The change is mechanical: links, wording, formatting, naming, checklist completion, or deterministic script/doc updates
 
 Report instead of fixing when:
