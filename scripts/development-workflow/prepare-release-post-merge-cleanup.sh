@@ -41,6 +41,7 @@ normalize_release_branch() {
   value="${value#refs/heads/}"
   case "$value" in
     release/v*) printf '%s\n' "$value" ;;
+    release/*) printf 'release/v%s\n' "${value#release/}" ;;
     v*) printf 'release/%s\n' "$value" ;;
     *) printf 'release/v%s\n' "$value" ;;
   esac
@@ -174,7 +175,7 @@ for issue in "${ISSUE_NUMBERS[@]}"; do
     echo "Warning: could not read issue #$issue; skipping tracker update."
     continue
   fi
-  update_tracker_status_best_effort "$issue" "$RELEASED_LABEL"
+  update_tracker_status_best_effort "$issue" "$RELEASED_LABEL" "$MERGED_LABEL"
 done
 
 echo "Release post-merge cleanup complete."

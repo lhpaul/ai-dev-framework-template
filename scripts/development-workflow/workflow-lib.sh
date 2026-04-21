@@ -264,7 +264,7 @@ workflow_status_order() {
   esac
 }
 
-# update_tracker_status_best_effort <issue_number> <status_label>
+# update_tracker_status_best_effort <issue_number> <status_label> [required_current_status]
 #
 # Best-effort update for GitHub Projects Status field.
 # - Returns 0 in all warning/failure cases to avoid blocking caller flows.
@@ -274,6 +274,7 @@ workflow_status_order() {
 update_tracker_status_best_effort() {
   local issue_number="$1"
   local status_label="$2"
+  local required_current_status="${3:-}"
   local owner project_number project_id field_json field_id option_id item_json item_id current_status
   local target_order current_order
 
@@ -307,6 +308,10 @@ update_tracker_status_best_effort() {
   fi
 
   current_status=$(printf '%s' "$item_json" | jq -r '.status // empty' || true)
+  if [ -n "$required_current_status" ] && [ "$current_status" != "$required_current_status" ]; then
+    echo "Issue #${issue_number} current status '${current_status:-unknown}' does not match required source status '${required_current_status}'; skipping update."
+    return 0
+  fi
   target_order="$(workflow_status_order "$status_label")"
   current_order="$(workflow_status_order "$current_status")"
   if [ "$target_order" -ge 0 ] && [ "$current_order" -gt "$target_order" ]; then
