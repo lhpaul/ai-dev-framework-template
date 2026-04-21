@@ -328,7 +328,7 @@ After removing the worktree, verify that the CWD is still valid by running a sim
 SUBAGENT_PERMISSION_DENIAL: [tool] tool denied on path <denied-path>. No partial work committed. Falling back to orchestrator inline execution.
 ```
 
-The `<denied-path>` field must list every path for which permission was denied. This is mandatory so the orchestrator can identify and resolve the permission gap before retrying.
+The `<denied-path>` field must list every path for which permission was denied. This is mandatory so the orchestrator can identify and resolve the permission gap before retrying. Use a comma-separated list of absolute, normalized paths, sorted lexicographically, with no duplicates and no surrounding spaces (e.g., `.claude/agents/developer.md,.cursor/agents/developer.md`). When only one path was denied, write it without a trailing comma.
 
 **No silent workarounds — this is an absolute rule**: When `Edit` or `Write` is denied for any path (including `.claude/agents/**`, `.cursor/agents/**`, or any other file), the subagent MUST NOT use any alternative mechanism to write the same content. The following substitutions are all explicitly prohibited:
 
