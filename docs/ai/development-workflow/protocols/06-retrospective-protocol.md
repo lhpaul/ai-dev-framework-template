@@ -168,6 +168,7 @@ For each opportunity, recommend one of:
 
 - **Address now** — suitable for changes the agent can self-assess as simple and safe to apply without a review loop (e.g., one-line config fix, missing label in a YAML file, a `.gitignore` entry)
 - **Add to backlog** — suitable for anything requiring implementation planning, cross-file changes, or a review loop
+- **Contribute upstream** — suitable only for **workflow, tooling, or template-process** insights that would benefit every downstream consumer of this template (not product/domain/business retrospectives)
 
 The recommended action is a suggestion. The human makes the final choice.
 
@@ -210,7 +211,7 @@ Present the categorized findings to the human in a structured format:
 
 Then ask the human to choose an action for each opportunity:
 
-> For each finding above, please choose: **Address now**, **Add to backlog**, or **Skip**.
+> For each finding above, please choose: **Address now**, **Add to backlog**, **Contribute upstream** (workflow-only insights to the template repository), or **Skip**.
 
 Wait for the human's choices before executing any action.
 
@@ -314,6 +315,18 @@ Report the created issue with its URL.
 **Constraints**:
 - Do **not** run the full `00-add-backlog-item-protocol.md` flow — that would disrupt the retrospective with its own alignment conversation
 - The issue body must contain enough context that someone picking it up later can understand what was observed without needing the original conversation
+
+### Contribute upstream
+
+Only when the human explicitly chose **Contribute upstream** for a finding that qualifies as **workflow/tooling/template-process** (per the scope rules above). This path is **opt-in** and must never run without an explicit per-finding choice.
+
+1. Confirm the default upstream repository and issue tracker with the human when ambiguous (typically the public template repository this project was derived from).
+2. Create a new issue on the **template** repository using `gh issue create` (or the tracker’s equivalent), with label **`template-feedback`** (create the label first if it does not exist), and a body that includes:
+   - The retrospective insight (Observed / Impact / Proposed improvement), anonymized if needed
+   - A link or name of the downstream repository that produced the insight (only with human consent)
+   - Reference to the original retrospective scope (PR numbers, batch id, or date)
+
+3. Do **not** close the downstream retrospective item automatically — the upstream issue is additive visibility, not a replacement for local backlog tracking.
 
 ### Skip
 

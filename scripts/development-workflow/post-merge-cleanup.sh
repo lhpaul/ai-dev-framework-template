@@ -73,6 +73,8 @@ echo "Deleting local branch '$TO_DELETE'..."
 WORKTREE_PATH=$(git worktree list --porcelain | grep -B2 "branch refs/heads/$TO_DELETE$" | grep "^worktree " | sed 's/^worktree //' || true)
 if [ -n "$WORKTREE_PATH" ]; then
   echo "Worktree '$WORKTREE_PATH' is still using branch '$TO_DELETE'. Removing worktree first..."
+  # Proactive unlock: agent processes often leave worktrees locked; unlock is idempotent when not locked.
+  git worktree unlock "$WORKTREE_PATH" 2>/dev/null || true
   # Capture stderr so we can detect the locked-worktree condition.
   REMOVE_ERR=$(git worktree remove "$WORKTREE_PATH" --force 2>&1) && REMOVE_RC=0 || REMOVE_RC=$?
   if [ "$REMOVE_RC" -ne 0 ] && echo "$REMOVE_ERR" | grep -q "locked working tree"; then
