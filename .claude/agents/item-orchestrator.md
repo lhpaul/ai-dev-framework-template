@@ -23,3 +23,11 @@ That document is the single source of truth for this supporting role. Key respon
   `<worktree-path>/` is a main-repo path — correct it before calling the tool. Include
   the literal resolved `<worktree-path>` value in every stage-agent handoff so each
   dispatched agent can validate its own paths independently.
+
+**Permission-denial protocol (subagent runs only)**: If the `Edit` or `Write` tool is denied for **any path** — including `.claude/agents/**`, `.cursor/agents/**`, or any other file — the subagent MUST immediately stop all further work and return:
+
+```
+SUBAGENT_PERMISSION_DENIAL: [tool] tool denied on path <denied-path>. No partial work committed. Falling back to orchestrator inline execution.
+```
+
+Using `Bash`, Python subprocess, `gh api --method PUT`, or any other alternative mechanism to write the same file is **explicitly prohibited**. Silent workarounds bypass hook validation, break the orchestrator's fallback tracking, and violate the protocol contract. The denied path(s) must be listed so the orchestrator can resolve the permission gap before retrying. See Protocol 91 Step 3 for the complete permission-denial contract.

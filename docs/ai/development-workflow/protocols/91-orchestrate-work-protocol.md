@@ -325,8 +325,19 @@ After removing the worktree, verify that the CWD is still valid by running a sim
 **Permission-denial early exit (subagent runs only)**: If at any point during the run the harness responds with the known harness failure pattern — a message containing the phrase `"Permission to use"` AND a denied tool name (`Edit` or `Bash`) — the subagent must **immediately stop all further work** and return the following structured string to the Portfolio Orchestrator:
 
 ```
-SUBAGENT_PERMISSION_DENIAL: [tool] tool denied by harness. No partial work committed. Falling back to orchestrator inline execution.
+SUBAGENT_PERMISSION_DENIAL: [tool] tool denied on path <denied-path>. No partial work committed. Falling back to orchestrator inline execution.
 ```
+
+The `<denied-path>` field must list every path for which permission was denied. This is mandatory so the orchestrator can identify and resolve the permission gap before retrying.
+
+**No silent workarounds — this is an absolute rule**: When `Edit` or `Write` is denied for any path (including `.claude/agents/**`, `.cursor/agents/**`, or any other file), the subagent MUST NOT use any alternative mechanism to write the same content. The following substitutions are all explicitly prohibited:
+
+- `Bash` with `echo`, `cat`, `tee`, `printf`, `>`, or any shell redirection
+- Python subprocess (`python3 -c "open(...).write(...)"` or equivalent)
+- `gh api --method PUT /repos/.../contents/...` (GitHub Contents API)
+- Any other indirect write path
+
+**Rationale**: These side-channel writes bypass the canonical `Edit`/`Write` tool pipeline, which means any pre-tool-use hooks (e.g., path validation, write tracking) do not fire. They also make it impossible for the Portfolio Orchestrator to detect that a permission gap exists and perform the correct inline fallback. Silent degradation to a workaround tool is a protocol violation that erodes the orchestrator's ability to track item state reliably.
 
 Before exiting:
 - Do **not** apply any PR labels.

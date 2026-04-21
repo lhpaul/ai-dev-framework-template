@@ -15,6 +15,10 @@
       "Bash(git stash:*)",
       "Bash(git status:*)",
       "Bash(pnpm:*)",
+      "Edit(.claude/agents/**)",
+      "Write(.claude/agents/**)",
+      "Edit(.cursor/agents/**)",
+      "Write(.cursor/agents/**)",
       "WebFetch(domain:github.com)"
     ]
   }
