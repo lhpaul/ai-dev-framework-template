@@ -78,7 +78,7 @@ while :; do
       | map(
           . + {
             __check_name: (.name // .context // .workflowName // "unknown"),
-            __check_ts: (.completedAt // .startedAt // "")
+            __check_ts: (.startedAt // .completedAt // "")
           }
         )
       | sort_by(.__check_name, .__check_ts)
