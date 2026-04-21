@@ -98,6 +98,13 @@ Execute each step from the implementation plan in order.
 - If the scope is larger than the plan described, **stop and report**
 - After each logical chunk of work, verify your changes are still building
 
+**GitHub Actions workflow security checklist** (required when creating or significantly modifying `.github/workflows/*.yml` files):
+
+- Add an explicit `permissions:` block at workflow or job scope with least privilege (default to `contents: read` unless broader access is required)
+- Pin all `uses:` references to a full commit SHA, with the pinned version tag noted in an adjacent comment (for example: `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2`)
+- Add `paths:` / `paths-ignore:` filters when the workflow only needs to run for specific files or directories
+- Add a `concurrency` group when duplicate runs on the same ref should be prevented
+
 **After schema/model changes** (if applicable):
 
 - Run type generation if your project uses generated types from the schema
