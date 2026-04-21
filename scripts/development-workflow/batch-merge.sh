@@ -309,18 +309,21 @@ cmd_merge() {
 
   # Revalidate the PR immediately before merging. A PR may have been
   # retargeted, closed, or labeled needs-fixes since discovery.
-  local pr_json branch base state
-  pr_json="$(gh pr view "$pr_num" --json headRefName,baseRefName,state,labels 2>/dev/null)" || \
+  local pr_json branch base state is_draft
+  pr_json="$(gh pr view "$pr_num" --json headRefName,baseRefName,state,labels,isDraft 2>/dev/null)" || \
     merge_die "Could not fetch metadata for PR #${pr_num}"
 
   branch="$(printf '%s' "$pr_json" | jq -r '.headRefName')"
   base="$(printf '%s' "$pr_json" | jq -r '.baseRefName')"
   state="$(printf '%s' "$pr_json" | jq -r '.state')"
+  is_draft="$(printf '%s' "$pr_json" | jq -r '.isDraft')"
 
   [ "$base" = "$TARGET_BASE" ] || \
     merge_die "PR #${pr_num} targets '${base}', not '${TARGET_BASE}'"
   [ "$state" = "OPEN" ] || \
     merge_die "PR #${pr_num} is not open (state: ${state})"
+  [ "$is_draft" = "false" ] || \
+    merge_die "PR #${pr_num} is a draft"
 
   if printf '%s' "$pr_json" | jq -e '.labels[].name | select(. == "needs-fixes")' >/dev/null 2>&1; then
     merge_die "PR #${pr_num} is labeled needs-fixes"
