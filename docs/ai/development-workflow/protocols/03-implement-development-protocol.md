@@ -17,6 +17,17 @@
 
 ---
 
+## GitHub Actions Workflow Security Checklist
+
+When your change creates or materially modifies `.github/workflows/*.yml`, complete this checklist before opening the development PR.
+
+- Add an explicit `permissions:` block at workflow or job scope with least privilege (default to `contents: read` unless broader access is required)
+- Pin all `uses:` references to a full commit SHA, with the pinned version tag noted in an adjacent comment (for example: `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2`)
+- Add `paths:` / `paths-ignore:` filters when the workflow only needs to run for specific files or directories
+- Add a `concurrency` group when duplicate runs on the same ref should be prevented
+
+---
+
 ## Path 1: Full Pipeline
 
 ### Step 1: Non-Negotiable Prep
@@ -207,6 +218,7 @@ Read **all** of the following before writing a single line of code. Do not skip.
 4. `docs/best-practices/` — all best practice docs
 5. Relevant existing code — read actual files for the areas you will modify
 6. If an issue tracker exists for this item, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for `In Development (Refactor)` expectations before coding.
+7. If your changes touch `.github/workflows/*.yml`, apply `## GitHub Actions Workflow Security Checklist` before opening the PR.
 
 Extract from your reading:
 
@@ -302,6 +314,8 @@ gh pr create --draft --base develop --title "refactor([scope]): [short descripti
 
 Read the brief. If the work item exists in an issue tracker, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for `In Development (Fast Track)` expectations.
 
+If your changes touch `.github/workflows/*.yml`, apply `## GitHub Actions Workflow Security Checklist` before opening the PR.
+
 ### Step 1b: Pre-Implementation Scope Checklist
 
 Complete this checklist **before writing any code**. It takes 5–10 minutes and prevents review round-trips caused by missed files, scope drift, or inconsistencies with related files.
@@ -384,6 +398,8 @@ Hand off to the Work Item Runner per Path 1 `### Step 9: Handoff to Work Item Ru
 ### Step 1: Read Brief
 
 Read the incident brief from the human.
+
+If your changes touch `.github/workflows/*.yml`, apply `## GitHub Actions Workflow Security Checklist` before opening the PR.
 
 ### Step 2: Confirm Production
 
