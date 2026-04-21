@@ -134,6 +134,12 @@ Use the current timestamp for `YYYYMMDDHHMMSS`.
 - If the feature has multiple actors, each actor gets its own use case section
 - Explicitly list what is **out of scope** for this feature (MVP boundary)
 - Keep spec decisions **product-facing**; defer technical design to the implementation plan
+- Use **domain and user language** in use cases, business rules, and UX sections — do not embed API field names, JSON keys, method names, or other code identifiers (they belong in the implementation plan, not the product spec)
+- For multi-entity or high-edge-case briefs: keep **terminology consistent** across sections, keep acceptance criteria **verifiable in a test environment**, and use **Open Questions** (when present in the template) only for genuine product ambiguities — not as a dump for implementation unknowns (those belong in the plan or out-of-scope deferrals)
+
+### Before opening the draft PR (self-check)
+
+Skim the spec body once more for: accidental **Open Questions** sections when forbidden, **copy/paste character corruption**, mixed terminology for the same concept, and acceptance criteria that cannot be verified without guessing environment or data setup.
 
 ### Brief Coverage Requirements (mandatory when a tracker brief exists)
 

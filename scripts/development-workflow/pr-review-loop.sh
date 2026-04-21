@@ -777,6 +777,53 @@ is_coderabbit_blocking() {
   return 1
 }
 
+# Returns 0 when CodeRabbit may treat the PR as thread-clean for this pass.
+# Returns 1 after emitting RESULT=needs_fixes (unresolved GraphQL threads).
+# Returns 2 after emitting RESULT=escalate (thread page cap exceeded).
+# On transient GraphQL failure (exit 3 from check_unresolved_threads), returns 0
+# to match the aggregate thread gate degrade behavior at script EOF.
+coderabbit_thread_gate_clean() {
+  local pr_number="$1" repo="$2" bot_login="$3" branch_name="$4"
+  local platform="coderabbit"
+  local out st
+  set +e
+  out="$(check_unresolved_threads "$pr_number" "$repo" "$bot_login")"
+  st=$?
+  set -e
+  if [ "$st" -eq 2 ]; then
+    echo "WARN: check_unresolved_threads exceeded page cap for PR #$pr_number (CodeRabbit pass)" >&2
+    print_kv RESULT escalate
+    print_kv REASON unresolved_thread_check_incomplete
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 2
+  fi
+  if [ "$st" -ne 0 ]; then
+    echo "WARN: check_unresolved_threads failed in CodeRabbit pass (exit $st) — not blocking on threads" >&2
+    return 0
+  fi
+  if [ "${out:-0}" -gt 0 ]; then
+    print_kv RESULT needs_fixes
+    print_kv REASON coderabbit_unresolved_review_threads
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT "$out"
+    print_kv BLOCKING_COUNT "$out"
+    print_kv SUGGESTION_COUNT 0
+    return 1
+  fi
+  return 0
+}
+
 run_coderabbit_review() {
   local pr_number="$1"
   local branch_name="$2"
@@ -1055,18 +1102,27 @@ run_coderabbit_review() {
                   | length'
         )"
         if [ "${coderabbit_success_status_count:-0}" -gt 0 ]; then
-          echo "INFO: CodeRabbit SUCCESS commit-status found for HEAD $head_sha — treating PR as clean (coderabbit_status_success_fallback)" >&2
-          print_kv RESULT clean
-          print_kv REASON coderabbit_status_success_fallback
-          print_kv PLATFORM "$platform"
-          print_kv PR_NUMBER "$pr_number"
-          print_kv BRANCH "$branch_name"
-          print_kv REVIEW_COMMENT_ID ""
-          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-          print_kv COMMENT_COUNT 0
-          print_kv BLOCKING_COUNT 0
-          print_kv SUGGESTION_COUNT 0
-          return 0
+          # SUCCESS status can appear while older CodeRabbit review threads stay unresolved
+          # on the PR. Do not short-circuit to clean until GraphQL thread audit passes.
+          coderabbit_thread_gate_clean "$pr_number" "$repo" "$bot_login" "$branch_name"
+          cr_success_gate_rc=$?
+          if [ "$cr_success_gate_rc" -eq 0 ]; then
+            echo "INFO: CodeRabbit SUCCESS commit-status found for HEAD $head_sha — treating PR as clean (coderabbit_status_success_fallback)" >&2
+            print_kv RESULT clean
+            print_kv REASON coderabbit_status_success_fallback
+            print_kv PLATFORM "$platform"
+            print_kv PR_NUMBER "$pr_number"
+            print_kv BRANCH "$branch_name"
+            print_kv REVIEW_COMMENT_ID ""
+            print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+            print_kv COMMENT_COUNT 0
+            print_kv BLOCKING_COUNT 0
+            print_kv SUGGESTION_COUNT 0
+            return 0
+          fi
+          if [ "$cr_success_gate_rc" -eq 1 ] || [ "$cr_success_gate_rc" -eq 2 ]; then
+            return "$cr_success_gate_rc"
+          fi
         fi
 
         # CodeRabbit didn't review this HEAD. Check for stale findings before skipping.
@@ -1241,6 +1297,11 @@ run_coderabbit_review() {
   fi
 
   rm -f "$blocking_lines_file"
+  coderabbit_thread_gate_clean "$pr_number" "$repo" "$bot_login" "$branch_name"
+  cr_phase3_gate_rc=$?
+  if [ "$cr_phase3_gate_rc" -ne 0 ]; then
+    return "$cr_phase3_gate_rc"
+  fi
   print_kv RESULT clean
   print_kv PLATFORM "$platform"
   print_kv PR_NUMBER "$pr_number"

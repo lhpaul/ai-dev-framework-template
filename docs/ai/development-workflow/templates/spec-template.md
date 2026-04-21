@@ -8,6 +8,8 @@
 
 <!-- 2-4 sentences describing what this feature does and why it exists. -->
 
+**Language**: Describe outcomes in product and user terms. Do not use API field names, database column names, JSON keys, or code symbols in this document — use plain-language labels and map technical identifiers only in the implementation plan.
+
 ---
 
 ## Use Cases

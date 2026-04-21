@@ -89,6 +89,7 @@ docs/ai/                          <- full tree, all files recursively
 .claude/agents/                   <- all *.md files
 .claude/commands/                 <- all *.md files
 .claude/skills/                   <- all *.md files (including this skill itself)
+.codex/skills/                    <- Codex skill trees shipped with the template (SKILL.md and assets)
 .cursor/commands/                 <- all *.md files
 .cursor/agents/                   <- all *.md files
 .cursor/rules/                    <- all *.mdc files
@@ -98,6 +99,8 @@ docs/best-practices/1-general.md
 docs/best-practices/2-version-control.md
 docs/best-practices/3-testing.md
 ```
+
+**Comparison method:** For each directory in the list above, enumerate files with `find` (or equivalent) and compare each path to the template using `cmp` or `diff -q`. Do not rely on ad-hoc agent inspection alone for the always-sync trees — a missed directory is a silent sync gap.
 
 For each file in these paths:
 - **Exists in template, not in project** → classify as **Add**
@@ -177,7 +180,7 @@ Template version: v0.4.0  |  Project branch: develop
 ```
 
 Then ask:
-> "Ready to apply the changes above? For the files marked as new or modified, I'll apply them automatically. For files requiring manual review (including optional additive updates for project-specific files), please tell me which ones to apply."
+> "Ready to apply the changes above? For paths listed under **New files** and **Modified files** in the **always-sync** section only, I can apply them in one batch when you confirm. Special-handling and optional additive-update sections always need explicit per-path approval — bulk phrases like \"apply all\" never include those categories."
 
 **Do not modify any files until you have explicit confirmation.**
 
@@ -187,7 +190,8 @@ Then ask:
 
 Apply approved changes:
 
-- Copy/overwrite all Add and Update files from the template source into the project
+- Copy/overwrite all **Add** and **Update** files **from the always-sync Step 3 section only** when the user confirms that batch. Phrases such as "apply all", "apply everything", or "yes to all" mean **always-sync files only** — they **never** authorize applying **special-handling** paths (`.github/workflows/deploy.yml`, `e2e-regression.yml`, `e2e/`, `.claude/settings.json`, etc.) or **optional additive updates**; those require the user to name each approved path (or `none`).
+- **Placeholder guard for workflow YAML** (`.github/workflows/deploy.yml`, `.github/workflows/e2e-regression.yml`): Before overwriting the project copy with the template, compare line counts. If the **project** file has **more lines** than the template and the template has **fewer than 70%** of the project's line count, treat this as likely "real implementation → template placeholder" and **refuse** unless the user sends a **second** explicit confirmation naming that exact file.
 - For files requiring manual review: apply only those the user explicitly approved (including any optional additive updates to project-specific files — merge or add only, never remove project-specific content)
 - Do **not** delete any file
 - Do **not** overwrite project-specific files; for those paths only additive/merge changes are allowed, and only with explicit approval
@@ -212,9 +216,13 @@ git checkout -b feature/sync-template-v{TEMPLATE_VERSION}
 git diff --stat
 
 # 3. Stage and commit (only after you've reviewed the changes)
-# Note: 'git add .' stages all approved changes including any special-handling or
-# project-specific files that were approved in Step 3.
-git add .
+# Stage only approved paths — avoid 'git add .' so unapproved files never enter the commit.
+git add REVIEW.md docs/ai/ .claude/agents/ .claude/commands/ .claude/skills/ .codex/skills/ .cursor/ \
+  scripts/development-workflow/ scripts/README.md \
+  docs/best-practices/1-general.md \
+  docs/best-practices/2-version-control.md \
+  docs/best-practices/3-testing.md
+# If the user explicitly approved additional paths in Step 4, 'git add' those paths too.
 git commit -m "chore(template): sync framework updates from template v{TEMPLATE_VERSION}"
 
 # 4. Push and open PR

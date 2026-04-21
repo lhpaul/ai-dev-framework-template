@@ -70,6 +70,15 @@ Also handle the case where a platform posted blocking findings after a previous 
 
 If unresolved findings exist: dispatch a fixer agent, wait for the push, then proceed to the scripts. Do not re-trigger the reviewer loop against stale findings — fix first.
 
+### Shell script fix verification (fixer agents)
+
+When findings target `*.sh` workflow scripts (especially under `scripts/development-workflow/`), the fixer must **verify locally before pushing**:
+
+1. Run `bash -n <path>` on every edited script for syntax errors.
+2. Run at least one **narrow behavioral check** appropriate to the change — for example exercising the edited code path with a small controlled input, running the script’s `--help`, or running the smallest documented smoke command for that script.
+
+If verification fails, iterate without pushing. When a prior attempt introduced regressions (e.g., misunderstood `IFS`, `read`, or `git worktree list --porcelain` ordering), prefer the **orchestrating agent** applying the fix inline with full conversation context rather than re-dispatching a blind fixer on the same subtle finding.
+
 ### Run the loops
 
 Execute **Step 7a: Internal Review Gate**, **Step 7: Automated Reviewer Loop**, **Step 8: CI Loop**, **Step 8a: Label Readiness Checklist**, **Step 8b: Update Tracker Status**, and **Step 8c: Post-Label Independent Verification** exactly as defined in `91-orchestrate-work-protocol.md` (scripts, result interpretation, sequential platform policy, fixer mapping, parameters, and labels). Do not duplicate that logic here — follow 91.

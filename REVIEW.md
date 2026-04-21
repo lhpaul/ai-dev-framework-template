@@ -136,6 +136,9 @@ Additional checks for **shell scripts** (`*.sh`):
 - User-supplied input (PR numbers, branch names) is validated before interpolation into file paths or commands
 - `|| true` does not silently swallow failures from external commands (e.g., `gh`, `git`) that the caller needs to know about
 
+Additional checks for **database migrations** (when a migration adds or changes triggers, functions, or backfills):
+- **Trigger/backfill arithmetic parity**: If both a trigger and a backfill compute the same derived value, they must use the **same formula**, including guards such as `GREATEST`, `LEAST`, `COALESCE`, and null handling. A trigger that differs from its backfill is a latent production bug.
+
 Typical `blocking` issues:
 - Incorrect behavior
 - Security flaw

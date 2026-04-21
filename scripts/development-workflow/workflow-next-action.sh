@@ -267,4 +267,7 @@ linear_issue=""
 if [ -n "$spec_file" ] && linear_line="$(grep -m 1 '^\*\*Linear Issue\*\*: ' "$spec_file" 2>/dev/null)"; then
   linear_issue="$(printf '%s\n' "$linear_line" | sed 's/^\*\*Linear Issue\*\*: //' | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
 fi
-[ -n "$linear_issue" ] && print_kv LINEAR_ISSUE "$linear_issue"
+if [ -n "$linear_issue" ]; then
+  print_kv LINEAR_ISSUE "$linear_issue"
+fi
+exit 0
