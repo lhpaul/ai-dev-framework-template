@@ -57,6 +57,7 @@ Check:
 - Required spec template sections are present and no placeholders are unintentionally left behind
 - Use cases are explicit: actor, trigger, steps, outcome
 - Acceptance criteria are specific and testable
+- When a tracker issue is linked, brief objectives are fully covered via a visible matrix: each objective maps to AC(s) or explicit out-of-scope deferral with rationale
 - Business rules are unambiguous and non-contradictory
 - Scope boundaries and out-of-scope items are explicit
 - Status or enum changes include display labels and transitions
@@ -87,6 +88,7 @@ Check:
 - Every use case and acceptance criterion from the spec (or from the work item brief for Refactor items) is addressed
 - Steps are specific enough to execute without guessing
 - Ordering is feasible and dependencies are explicit
+- When pattern-based completeness applies, enumerated counts/paths are validated against the plan's Verification Log commands and outputs
 - Documentation updates are listed or intentionally declared unnecessary
 - Seed data, generated artifacts, and follow-up tasks are called out when applicable
 - The proposed approach matches existing architecture and repo patterns

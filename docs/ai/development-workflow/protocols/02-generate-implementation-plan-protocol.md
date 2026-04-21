@@ -96,6 +96,9 @@ docs/specs/developments/[timestamp]_[feature-slug]/2_[feature-slug]_implementati
 - Every change must reference an acceptance criterion from the spec (for Refactor items, reference the work item brief or stated restructuring goals instead)
 - Seed data requirements must be explicit — what data, in which files, for which test scenarios
 - **Documentation**: Explicitly consider project documentation in `docs/`. The plan must list every doc in `docs/` (including `AGENTS.md` if relevant) that the developer must update after implementation, or state "None" only when the feature truly affects no project docs. Do not plan the doc edits — only list them for the developer to execute.
+- **Pattern completeness checks**: When the spec intent implies "all files/items matching pattern X", do not trust stale enumerations. Re-run a live repo query at plan-write time and use those results in the plan's file list and counts.
+- **Explicit freeze exception**: You may copy a fixed enumeration only when the spec explicitly freezes scope to a named subset; quote that spec section in the plan.
+- **Verification Log required**: Every plan must include a reproducible Verification Log (command/query, repo SHA, and resulting counts/paths that drive scope statements).
 
 ### Examples
 
