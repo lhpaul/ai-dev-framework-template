@@ -105,6 +105,7 @@ Typical `blocking` issues:
 - Plan steps do not cover required acceptance criteria
 - The plan requires guessing at implementation details
 - The plan introduces unsafe or contradictory architecture decisions
+- A CHANGELOG literal in the Implementation Order uses conventional-commit format (`fix(scope): message`) instead of the project's `**Bold Title** (#N):` format
 
 Typical `important` issues:
 - Vague wording like "update as needed"
