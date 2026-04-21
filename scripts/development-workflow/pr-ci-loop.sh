@@ -77,13 +77,23 @@ while :; do
       (.statusCheckRollup // [])
       | map(
           . + {
-            __check_name: (.name // .context // .workflowName // "unknown"),
-            __check_ts: (.startedAt // .completedAt // "")
+            __check_key: (
+              if (.context // "") != "" then
+                "status:" + .context
+              elif (.workflowName // "") != "" and (.name // "") != "" then
+                "check:" + .workflowName + "/" + .name
+              elif (.name // "") != "" then
+                "check:" + .name
+              else
+                "unknown"
+              end
+            ),
+            __check_ts: (.startedAt // .completedAt // .createdAt // "")
           }
         )
-      | sort_by(.__check_name, .__check_ts)
-      | group_by(.__check_name)
-      | map(last | del(.__check_name, .__check_ts))
+      | sort_by(.__check_key, .__check_ts)
+      | group_by(.__check_key)
+      | map(last | del(.__check_key, .__check_ts))
     '
   )"
   total_check_count="$(
