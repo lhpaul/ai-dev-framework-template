@@ -86,9 +86,9 @@ None — documentation-only change.
 
 ## Implementation Order
 
-1. Edit `02-generate-implementation-plan-protocol.md` — add the full Step 3 parser-risk subsection (classification + three elements + suppression + spec cross-link).
-2. Edit `implementation-plan-template.md` — add the optional parser-risk addendum block.
-3. Edit `REVIEW.md` — extend Plan Review Checklist with parser-risk bullets.
-4. Edit `.cursor/agents/tech-lead.md` and `.claude/agents/tech-lead.md` — add identical classifier guidance after the protocol pointer.
+1. Amend `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` — add the full Step 3 parser-risk subsection (classification + three elements + suppression + spec cross-link).
+2. Update `docs/ai/development-workflow/templates/implementation-plan-template.md` — add the optional parser-risk addendum block.
+3. Extend `REVIEW.md` — add parser-risk bullets under Plan Review Checklist.
+4. Update `.cursor/agents/tech-lead.md` and `.claude/agents/tech-lead.md` — add identical classifier guidance after the protocol pointer.
 5. Update `CHANGELOG.md` under `[Unreleased]` for issue #201.
 6. Run the smoke test runbook mentally or locally on the implementation branch before opening the implementation PR.
