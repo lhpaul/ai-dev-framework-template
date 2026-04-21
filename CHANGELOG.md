@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Implementation plan (issue #186)**: scope drift detection between issue brief and generated spec, plus plan-time verification against live repo search — see `docs/specs/developments/20260420153000_scope-drift-brief-coverage/2_scope-drift-brief-coverage_implementation-plan.md` and `docs/testing/workflow/186-scope-drift-brief-coverage.smoke-test.md`.
+
 ### Fixed
 
 - **CodeRabbit completion via issue comments** (`pr-review-loop.sh`): when CodeRabbit posts only an issue-thread summary (no `pulls/{id}/reviews` entry) for the current HEAD, the poll loop now proceeds to Phase 3 instead of spinning until `timeout` and returning a false `escalate`.
