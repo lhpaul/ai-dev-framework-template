@@ -154,7 +154,8 @@ if git show-ref --quiet "refs/heads/$RELEASE_BRANCH"; then
   fi
 
   echo "Deleting local branch '$RELEASE_BRANCH'..."
-  if ! git branch -d "$RELEASE_BRANCH"; then
+  # -D is intentional: squash/rebase merges often make -d fail despite merged PRs.
+  if ! git branch -D "$RELEASE_BRANCH"; then
     echo "Could not delete local branch '$RELEASE_BRANCH' cleanly." >&2
     echo "If it is checked out elsewhere, switch away in that worktree and retry." >&2
     exit 1

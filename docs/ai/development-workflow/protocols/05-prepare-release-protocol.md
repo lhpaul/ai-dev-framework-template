@@ -225,7 +225,7 @@ git push origin --delete "release/v[X.Y.Z]"
 
 # delete local branch (switch away first if currently checked out)
 git switch develop
-git branch -d "release/v[X.Y.Z]"
+git branch -D "release/v[X.Y.Z]"
 ```
 
 If local deletion fails because the branch is checked out in another worktree, switch away in that worktree and retry.
