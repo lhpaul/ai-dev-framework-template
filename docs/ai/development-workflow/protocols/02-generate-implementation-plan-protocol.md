@@ -100,6 +100,36 @@ docs/specs/developments/[timestamp]_[feature-slug]/2_[feature-slug]_implementati
 - **Explicit freeze exception**: You may copy a fixed enumeration only when the spec explicitly freezes scope to a named subset; quote that spec section in the plan.
 - **Verification Log required**: Every plan must include a reproducible Verification Log (command/query, repo SHA, and resulting counts/paths that drive scope statements).
 
+### Parser-risk plans: custom parsers, regex, and structured-text scanning
+
+Treat this block as conditional guidance. Apply it only when the plan is parser-risk.
+
+**Classification (parser-risk):** classify a plan as parser-risk when Layer-by-Layer changes introduce or materially change any of the following:
+
+- Files under conventional tooling paths such as `scripts/lint/`, `scripts/parse/`, or similar parse/lint scanner directories
+- New or renamed modules whose names imply lint/parser/scanner/tokenizer/regex-engine responsibilities (for example `*lint*.py`, `*parser*.mjs`, `*scanner*.ts`)
+- Explicit behavior described as regex-heavy scanning, structured-text parsing, or rule engines over markdown, code, config, or logs
+
+If none of these signals apply, skip this entire block.
+
+**Mandatory when parser-risk — Edge-case enumeration:** include a dedicated subsection with concrete inputs (not vague statements like "handle edge cases"). Cover at minimum:
+
+- Boundary-character variants
+- Negative cases (strings that resemble matches but must not match)
+- Multiple occurrences on one line
+- Nested or overlapping constructs where relevant
+- Normative-spec flexibility when applicable (for example CommonMark closing fence length >= opening fence length)
+
+**Mandatory when parser-risk — Unit tests:** in the Testing Strategy, name a concrete unit test file and map at least one automated unit test per enumerated edge case. Smoke-only or manual-only plans are insufficient for parser-risk work.
+
+**Conditional — Suppression semantics:** when the feature supports inline/directive suppressions, add a subsection naming:
+
+- Which directives are recognized
+- Where directives can appear
+- How multiple suppressions on one line are interpreted
+
+For acceptance intent and terminology, reference `docs/specs/developments/20260420120000_201-tech-lead-parser-regex-plan-requirements/1_201-tech-lead-parser-regex-plan-requirements_specs.md`.
+
 ### Examples
 
 ```markdown

@@ -10,6 +10,8 @@ Follow the implementation plan generation protocol exactly as defined in:
 
 That document is the single source of truth for this stage. Always read the approved spec (or the work item brief for Refactor items) and relevant codebase sections before proposing an approach. Once ambiguity is resolved, continue through reviewer gate, PR creation, and PR readiness unless the protocol requires human input.
 
+Before finalizing Step 3, classify parser-risk using the deterministic signals in protocol 02 (tooling-path parser/lint changes, parser/scanner-oriented module naming, or explicit regex/structured-text scanning behavior). When parser-risk applies, include the mandatory edge-case enumeration and unit-test mapping subsections before deep Layer-by-Layer walkthroughs. If suppressions are part of the feature, include suppression semantics (recognized directives, placement, and multi-suppression behavior).
+
 When the spec language implies pattern-based completeness, follow protocol 02's live-search vs spec-frozen enumeration rules and include a reproducible Verification Log.
 
 **Note**: This agent handles premium-tier reasoning tasks (architecture decisions). For best results, ensure your Cursor Composer is using a high-reasoning model (e.g., Claude Opus, GPT-4, or equivalent) when invoking this subagent, or edit this file to set `model:` to a specific premium model ID.
