@@ -46,8 +46,14 @@ Before running this smoke test:
 **Maps to**: AC-1, AC-5, BR-1, BR-2, BR-7, Use Case 1
 
 1. In the downstream test repo (with at least one outdated always-sync file), invoke the sync-template command:
-   - Claude Code: `/sync-template --local=/path/to/upstream-template`
-   - Cursor: `/sync-template --local=/path/to/upstream-template`
+   - Claude Code:
+     ```bash
+     /sync-template --local=/path/to/upstream-template
+     ```
+   - Cursor:
+     ```bash
+     /sync-template --local=/path/to/upstream-template
+     ```
 2. Before confirming any changes, read the sync summary.
 
 **Expected result**:
@@ -146,7 +152,10 @@ Before running this smoke test:
 
 **Maps to**: BR-5, AGENTS.md Workflow Commands table
 
-1. In a Codex-enabled environment, invoke the `workflow-sync-template` skill with the same `--local` argument.
+1. In a Codex-enabled environment, invoke the `workflow-sync-template` skill with the same `--local` argument:
+   ```bash
+   workflow-sync-template --local=/path/to/upstream-template
+   ```
 2. Verify the skill produces the same summary structure as the Claude Code command.
 
 **Expected result**:

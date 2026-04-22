@@ -100,11 +100,11 @@
   ```
   The manifest is the single authoritative source of truth per BR-1. It must be human-readable per AC-7 and BR-5.
 
-- [ ] Define the HTML-comment annotation scheme for mixed-content files. Two marker styles:
-  - Block: `<!-- TEMPLATE-OWNED-START: <label> -->` ... `<!-- TEMPLATE-OWNED-END: <label> -->`
-  - Inline: `<!-- TEMPLATE-OWNED -->` (single-line sections)
+- [ ] Define the HTML-comment annotation scheme for mixed-content files. Canonical marker format (unlabeled — same syntax used in all references throughout this plan):
+  - Block: `<!-- TEMPLATE-OWNED-START -->` ... `<!-- TEMPLATE-OWNED-END -->`
+  - Inline: `<!-- TEMPLATE-OWNED -->` (single-line sections where a block is not needed)
 
-  These markers work in all three AI tools (Claude Code, Cursor, Codex) because they parse Markdown and YAML files as text, and HTML comments are valid in both. Human readable in editors and GitHub diff view (AC-7, BR-5).
+  These markers work in all three AI tools (Claude Code, Cursor, Codex) because they parse Markdown and YAML files as text, and HTML comments are valid in both. Human-readable in editors and GitHub diff view (AC-7, BR-5).
 
 - [ ] Add `<!-- TEMPLATE-OWNED-START -->` / `<!-- TEMPLATE-OWNED-END -->` markers to the workflow table section of `AGENTS.md`. The table between the `## Development Workflow` heading and the `### Codex Skills` heading is template-owned. Project fills in the `## Project Overview` and `## Repository Structure` sections.
 
