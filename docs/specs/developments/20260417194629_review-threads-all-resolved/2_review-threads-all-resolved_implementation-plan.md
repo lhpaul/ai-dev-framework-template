@@ -25,9 +25,9 @@
 
 ### Protocol Documentation
 
-- [ ] **`docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`** — Update Step 8c's independent-verification checklist to include an explicit `reviewThreads` GraphQL check as a hard gate, aligned with AC3. Also update the Automated Reviewer Loop Summary template in Step 7 to include a "Reply-only resolutions" section that lists threads resolved via reply + mutation (no code fix) with a short rationale, aligned with AC5.
+- [ ] **`docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`** — Update Step 8c's independent-verification checklist to include an explicit `reviewThreads` GraphQL check as a hard gate, aligned with AC3. Also update the Automated Reviewer Loop Summary template in Step 7 to include a "Reply-only resolutions" section that lists threads resolved via reply + mutation (no code fix) with a short rationale, aligned with AC5.
 
-- [ ] **`docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`** — Update Step 5.1's post-dispatch PR verification checklist to include the same `reviewThreads` unresolved-thread check, aligned with AC7.
+- [ ] **`docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`** — Update Step 5.1's post-dispatch PR verification checklist to include the same `reviewThreads` unresolved-thread check, aligned with AC7.
 
 ---
 
@@ -248,7 +248,7 @@ fi
 
 8. **Verify `shellcheck` passes** — run `shellcheck scripts/development-workflow/pr-review-loop.sh` in the worktree and fix any warnings before committing.
 
-9. **Verify markdown lint passes** — run `npx markdownlint-cli2 "docs/specs/developments/**/*.md" "docs/testing/workflow/**/*.md" "docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md" "docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md"` in the worktree.
+9. **Verify markdown lint passes** — run `npx markdownlint-cli2 "docs/specs/developments/**/*.md" "docs/testing/workflow/**/*.md" "docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md" "docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md"` in the worktree.
 
 10. **Update CHANGELOG** — add an entry under `[Unreleased]` describing this change.
 

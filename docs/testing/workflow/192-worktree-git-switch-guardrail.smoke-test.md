@@ -21,8 +21,8 @@ Before running this smoke test:
 
 | Item | Value |
 |---|---|
-| Protocol 91 path | `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` |
-| Protocol 90 path | `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
+| Protocol 91 path | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` |
+| Protocol 90 path | `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
 | Claude agent path | `.claude/agents/item-orchestrator.md` |
 | Cursor agent path | `.cursor/agents/item-orchestrator.md` |
 
@@ -34,7 +34,7 @@ Before running this smoke test:
 
 **Maps to**: Acceptance Criterion 1
 
-1. Open `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`
+1. Open `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
 2. Navigate to Step 3 "Worktree isolation for parallel batches"
 3. Locate the clearly marked "Critical: Worktree Git Discipline" section
 
@@ -48,7 +48,7 @@ Before running this smoke test:
 
 **Maps to**: Acceptance Criterion 5 (optional)
 
-1. Continuing in `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` Step 3
+1. Continuing in `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` Step 3
 2. Locate the optional pre-tool-use hook guidance note near the Critical block
 
 **Expected result**:
@@ -60,7 +60,7 @@ Before running this smoke test:
 
 **Maps to**: Acceptance Criterion 2
 
-1. Open `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
+1. Open `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
 2. Navigate to Step 5.2 "Post-Agent Main Working Tree Verification"
 3. Review the wrong-branch + clean case
 

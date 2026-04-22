@@ -50,11 +50,11 @@ the existing Step 3 structure.
 
      The chosen strategy must ensure `pr-review-loop.sh` does **not** match
      `pr-review-loop.sh.bak`, and the protocols glob does not match `.md.bak`.
-  4. For the glob `docs/ai/development-workflow/protocols/*.md`, match lines that contain a
-     path starting with `docs/ai/development-workflow/protocols/` and ending with `.md` at a
+  4. For the glob `docs/workflow/development-workflow/protocols/*.md`, match lines that contain a
+     path starting with `docs/workflow/development-workflow/protocols/` and ending with `.md` at a
      path-segment boundary. The regex must anchor on both sides of the matched filename to
      reject superstrings — for example
-     `(^|[^[:alnum:]_./-])docs/ai/development-workflow/protocols/[^/[:space:]]+\.md([^[:alnum:]_./-]|$)`
+     `(^|[^[:alnum:]_./-])docs/workflow/development-workflow/protocols/[^/[:space:]]+\.md([^[:alnum:]_./-]|$)`
      — so `foo.md.bak` or a filename embedded in a longer identifier does not incorrectly match.
   5. Collects all matched canonical paths into a comma-separated list.
   6. Emits `TOOL_FIX=yes` and `TOOL_FIX_FILES=<list>` when at least one canonical path is
@@ -81,13 +81,13 @@ the existing Step 3 structure.
   - `scripts/development-workflow/pr-ci-loop.sh`
   - `scripts/development-workflow/batch-merge.sh`
   - `scripts/development-workflow/post-merge-cleanup.sh`
-  - `docs/ai/development-workflow/protocols/` (prefix match ending with `.md` — covers any
+  - `docs/workflow/development-workflow/protocols/` (prefix match ending with `.md` — covers any
     protocol file in the directory)
   - `.ai-dev-workflow.yaml`
 
 ### Protocol Documentation
 
-- [ ] In `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
+- [ ] In `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
   **Step 3**, add a new subsection **"Same-batch tool-fix ordering hazard"** (placed after the
   existing "Do not batch together" list and before the "Codex fallback" paragraph). The
   subsection must cover all of the following, mapping directly to the spec's acceptance criteria:
@@ -172,7 +172,7 @@ None. All tests use development folder fixtures created during smoke testing.
 
 ## Documentation Updates
 
-- [ ] `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — updated
+- [ ] `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — updated
   as part of this implementation (Step 3 additive subsection). No separate post-implementation
   doc update needed beyond what the plan steps cover.
 
@@ -185,7 +185,7 @@ change modifies only tooling internals and the orchestration protocol.
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| `grep -F` exact-path matching for the protocols glob produces false negatives for valid protocol paths | Low | Medium | Use a two-part grep: fixed-string prefix `docs/ai/development-workflow/protocols/` combined with a pattern requiring `.md` suffix; test against known fixtures |
+| `grep -F` exact-path matching for the protocols glob produces false negatives for valid protocol paths | Low | Medium | Use a two-part grep: fixed-string prefix `docs/workflow/development-workflow/protocols/` combined with a pattern requiring `.md` suffix; test against known fixtures |
 | Protocol 90 Step 3 wording introduces an ambiguity about what "already waiting for merge" means | Low | Low | Use the exact status names from the spec (`ready-for-human-review`, `Spec in Review`, `Plan in Review`) in the protocol text |
 | `TOOL_FIX_FILES` line omitted for `no`/`unknown` confuses orchestrator parsers that expect it | Low | Low | Document explicitly in Step 3 that the line is only emitted when `TOOL_FIX=yes`; parsers must treat a missing `TOOL_FIX_FILES` as an empty set |
 
@@ -203,7 +203,7 @@ CANONICAL_EXACT_PATHS=(
   "scripts/development-workflow/post-merge-cleanup.sh"
   ".ai-dev-workflow.yaml"
 )
-PROTOCOLS_PREFIX="docs/ai/development-workflow/protocols/"
+PROTOCOLS_PREFIX="docs/workflow/development-workflow/protocols/"
 
 classify_tool_fix() {
   local dev_path="$1"
@@ -240,7 +240,7 @@ classify_tool_fix() {
     fi
   done
 
-  # Glob-equivalent: any docs/ai/development-workflow/protocols/*.md reference, anchored
+  # Glob-equivalent: any docs/workflow/development-workflow/protocols/*.md reference, anchored
   # on both sides to reject .md.bak and other superstrings.
   local protocols_regex="${boundary_lead}${PROTOCOLS_PREFIX}[^/[:space:]]+\\.md${boundary_trail}"
   if grep -qE "$protocols_regex" "${doc_files[@]}"; then
@@ -270,7 +270,7 @@ classify_tool_fix() {
 3. In the main `for development_path` loop, call `classify_tool_fix` and capture its output.
    Emit `TOOL_FIX=<value>` using `print_kv`. When `TOOL_FIX=yes`, also emit
    `TOOL_FIX_FILES=<comma-separated matched paths>` using `print_kv`.
-4. Read `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` Step 3
+4. Read `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` Step 3
    in full, identify the exact insertion point (after "Do not batch together" list, before
    "Codex fallback" paragraph).
 5. Insert the **"Same-batch tool-fix ordering hazard"** subsection at that location, covering

@@ -23,14 +23,14 @@
 
 ### Shared workflow documentation (protocols / templates / review contract)
 
-- [ ] **`docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md`** — In **Step 3: Write the Implementation Plan** (after the existing "Quality guardrails" bullet list and before the "### Examples" subsection), insert a new top-level subsection titled **"Parser-risk plans: custom parsers, regex, and structured-text scanning"** containing:
+- [ ] **`docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md`** — In **Step 3: Write the Implementation Plan** (after the existing "Quality guardrails" bullet list and before the "### Examples" subsection), insert a new top-level subsection titled **"Parser-risk plans: custom parsers, regex, and structured-text scanning"** containing:
   - **Classification (parser-risk)**: Deterministic signals — treat a plan as parser-risk when Layer-by-Layer changes introduce or materially change any of: (a) files under `scripts/lint/`, `scripts/parse/`, or similar conventional tooling directories; (b) new or renamed modules whose filenames suggest lint, parser, scanner, tokenizer, or regex-engine responsibilities (e.g. `*lint*.py`, `*parser*.mjs`, `*scanner*.ts`); (c) explicit description of regex-heavy scanning, structured-text parsing, or rule engines over markdown/code/config/logs. State that if **none** of these apply, the author skips the entire conditional block.
   - **Mandatory when parser-risk — Edge-case enumeration**: Bulleted guidance requiring specific example inputs (not vague "handle edge cases") covering at minimum: boundary-character variants; negative cases (strings that resemble matches but must not match); multiple occurrences on one line; nested or overlapping constructs where relevant; normative-spec flexibility when applicable (e.g. CommonMark closing fence length ≥ opening fence length).
   - **Mandatory when parser-risk — Unit tests**: Require the Testing Strategy to name a concrete unit test file (language appropriate to the repo) and map **at least one automated unit test per enumerated edge case**; state explicitly that smoke-only or manual-only plans are insufficient for parser-risk work.
   - **Conditional — Suppression semantics**: If the feature supports inline or directive-based suppression, require a short subsection naming recognized directives, where they may appear, and how multiple suppressions on one line are interpreted.
   - Cross-reference this spec file path once for traceability (relative link from repo root is acceptable). (AC1, BR in spec)
 
-- [ ] **`docs/ai/development-workflow/templates/implementation-plan-template.md`** — After the existing `## Testing Strategy` section (or within it as a clearly delimited block), add a short **optional** markdown block titled **"Parser-risk addendum (include only when Step 3 classifier applies)"** with placeholder headings: Edge-case enumeration; Unit test mapping; Suppression semantics (if applicable). Each heading should restate in one line what must appear so template users mirror protocol language without duplicating the full protocol text. (AC1, AC4 discoverability)
+- [ ] **`docs/workflow/development-workflow/templates/implementation-plan-template.md`** — After the existing `## Testing Strategy` section (or within it as a clearly delimited block), add a short **optional** markdown block titled **"Parser-risk addendum (include only when Step 3 classifier applies)"** with placeholder headings: Edge-case enumeration; Unit test mapping; Suppression semantics (if applicable). Each heading should restate in one line what must appear so template users mirror protocol language without duplicating the full protocol text. (AC1, AC4 discoverability)
 
 - [ ] **`REVIEW.md`** — Under **## Plan Review Checklist** / **Check:**, add a compact bullet group **"Parser-risk completeness (when the plan triggers parser-risk signals per protocol 02 Step 3)"** that requires reviewers to verify: (1) edge-case enumeration present and concrete; (2) unit test file named with per-case mapping; (3) suppression subsection present when suppressions exist. (AC3)
 
@@ -65,8 +65,8 @@ None — documentation-only change.
 
 ## Documentation Updates
 
-- [ ] `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` — primary deliverable (see Layer-by-Layer)
-- [ ] `docs/ai/development-workflow/templates/implementation-plan-template.md` — parser-risk addendum (see Layer-by-Layer)
+- [ ] `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` — primary deliverable (see Layer-by-Layer)
+- [ ] `docs/workflow/development-workflow/templates/implementation-plan-template.md` — parser-risk addendum (see Layer-by-Layer)
 - [ ] `REVIEW.md` — plan review checklist (see Layer-by-Layer)
 - [ ] `.cursor/agents/tech-lead.md` — author guidance (see Layer-by-Layer)
 - [ ] `.claude/agents/tech-lead.md` — author guidance (see Layer-by-Layer)
@@ -86,8 +86,8 @@ None — documentation-only change.
 
 ## Implementation Order
 
-1. Amend `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` — add the full Step 3 parser-risk subsection (classification + three elements + suppression + spec cross-link).
-2. Update `docs/ai/development-workflow/templates/implementation-plan-template.md` — add the optional parser-risk addendum block.
+1. Amend `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` — add the full Step 3 parser-risk subsection (classification + three elements + suppression + spec cross-link).
+2. Update `docs/workflow/development-workflow/templates/implementation-plan-template.md` — add the optional parser-risk addendum block.
 3. Extend `REVIEW.md` — add parser-risk bullets under Plan Review Checklist.
 4. Update `.cursor/agents/tech-lead.md` and `.claude/agents/tech-lead.md` — add identical classifier guidance after the protocol pointer.
 5. Update `CHANGELOG.md` under `[Unreleased]` for issue #201.

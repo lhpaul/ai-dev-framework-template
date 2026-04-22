@@ -6,7 +6,7 @@ description: Advance a single workflow item end-to-end. Use when you already kno
 
 Follow the single-item orchestration protocol exactly as defined in:
 
-`docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`
+`docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
 
 Key responsibilities:
 

@@ -6,7 +6,7 @@
 This protocol is **tool-agnostic**. It is invoked via:
 - Claude Code: `project-setup` agent
 - Cursor: `/setup-project` command
-- Any other AI tool: "Follow the setup protocol at `docs/ai/setup/protocol.md`"
+- Any other AI tool: "Follow the setup protocol at `docs/workflow/setup/protocol.md`"
 
 ---
 
@@ -152,9 +152,9 @@ Ask:
 - Do you use any MCP servers with your AI tool? (for context: Supabase, database access, etc.)
 
 Document the answers and point to the relevant integration docs:
-- Issue tracker → `docs/ai/development-workflow/integrations/linear.md` (or note the alternative)
-- Automated review → `docs/ai/development-workflow/integrations/greptile.md` and/or `docs/ai/development-workflow/integrations/devin.md`
-- CI/CD deployment placeholders → `docs/ai/development-workflow/integrations/ci-cd-deployment.md` (if enabled)
+- Issue tracker → `docs/workflow/development-workflow/integrations/linear.md` (or note the alternative)
+- Automated review → `docs/workflow/development-workflow/integrations/greptile.md` and/or `docs/workflow/development-workflow/integrations/devin.md`
+- CI/CD deployment placeholders → `docs/workflow/development-workflow/integrations/ci-cd-deployment.md` (if enabled)
 
 If the user selects any workflow integration providers, generate `.ai-dev-workflow.yaml` at the repo root. Prefer the versioned nested schema:
 
@@ -271,4 +271,4 @@ After the PR is opened, tell the human:
 > Once merged, you're ready to start development. To kick off your first feature:
 > - Claude Code: use the `product-manager` agent
 > - Cursor: run `/generate-new-feature`
-> - Any other tool: ask your AI to follow `docs/ai/development-workflow/protocols/01-generate-spec-protocol.md`"
+> - Any other tool: ask your AI to follow `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md`"

@@ -2,7 +2,7 @@
 
 This document defines **tracker-agnostic** expectations for how agents should use a work-item tracker (Linear, GitHub Issues, Jira, etc.) as an input source.
 
-> Tracker-specific setup (APIs/MCP) lives in `docs/ai/development-workflow/integrations/`.
+> Tracker-specific setup (APIs/MCP) lives in `docs/workflow/development-workflow/integrations/`.
 > If this repository uses a tracker, declare it in `.ai-dev-workflow.yaml` under `issue_tracker.provider`.
 
 ---

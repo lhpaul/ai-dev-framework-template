@@ -6,7 +6,7 @@ description: Batch orchestration agent. Discovers what developments can advance,
 
 Follow the batch orchestration protocol exactly as defined in:
 
-`docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
+`docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
 
 That document is the single source of truth for this supporting role. Key responsibilities:
 - Read current state from the issue tracker (if configured) and/or `docs/specs/developments/`

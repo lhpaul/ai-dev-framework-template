@@ -19,7 +19,7 @@ The script will: fetch origin, checkout `develop`, pull, delete the local branch
 Do not skip steps or change the order. If the script fails, show the error and stop.
 
 **After the script succeeds — update the issue tracker (if configured):**
-The merged branch name often contains an issue identifier (e.g. `feature/ENG-123-user-auth` → `ENG-123`, or `feature/42-user-auth` → `#42`). If so, update that issue in the project’s issue tracker using the branch-type-based status table from Step 10 of `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`:
+The merged branch name often contains an issue identifier (e.g. `feature/ENG-123-user-auth` → `ENG-123`, or `feature/42-user-auth` → `#42`). If so, update that issue in the project’s issue tracker using the branch-type-based status table from Step 10 of `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`:
 
 | Merged branch type | Set tracker status to |
 |---|---|
@@ -29,11 +29,11 @@ The merged branch name often contains an issue identifier (e.g. `feature/ENG-123
 
 If the item’s tracker status is already in a further-advanced state (e.g., already `In Development` when a spec branch merges), do not roll it back — leave it as-is.
 
-For **GitHub Issues/Projects**: the script already closes the GitHub issue for implementation branches (if a merged PR is found). You still need to update the GitHub Projects board status field via `gh` CLI / GraphQL (see `docs/ai/development-workflow/integrations/github-projects.md`). For **Linear**, use the Linear MCP to set the issue status (see `docs/ai/development-workflow/integrations/linear.md`). For other trackers, set the equivalent status; see `docs/ai/development-workflow/integrations/issue-tracker.md`. If the branch has no issue ID or no tracker is in use, skip this step.
+For **GitHub Issues/Projects**: the script already closes the GitHub issue for implementation branches (if a merged PR is found). You still need to update the GitHub Projects board status field via `gh` CLI / GraphQL (see `docs/workflow/development-workflow/integrations/github-projects.md`). For **Linear**, use the Linear MCP to set the issue status (see `docs/workflow/development-workflow/integrations/linear.md`). For other trackers, set the equivalent status; see `docs/workflow/development-workflow/integrations/issue-tracker.md`. If the branch has no issue ID or no tracker is in use, skip this step.
 
 **After cleanup and tracker update — suggest a retrospective if appropriate:**
 If this post-merge cleanup is the final action for a work item that was advanced in the current session (i.e., you drove the item through implementation, review, and merge in this conversation), suggest running a retrospective:
 
 > Would you like to run a retrospective on this session's work?
 
-Only suggest this when the cleanup is for a standalone item run (not when called as part of a batch merge or orchestrator flow, which handle retrospectives at their own level). See `docs/ai/development-workflow/protocols/06-retrospective-protocol.md`.
+Only suggest this when the cleanup is for a standalone item run (not when called as part of a batch merge or orchestrator flow, which handle retrospectives at their own level). See `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md`.

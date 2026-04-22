@@ -159,13 +159,13 @@ Typical `important` issues:
 
 - Prefer Claude Code's native review capability for the pre-PR review gate.
 - Use the checklist in this file as the review rubric.
-- If a repo compatibility protocol is explicitly requested, use the corresponding wrapper protocol under `docs/ai/development-workflow/protocols/`.
+- If a repo compatibility protocol is explicitly requested, use the corresponding wrapper protocol under `docs/workflow/development-workflow/protocols/`.
 
 ### Codex
 
 - Prefer Codex native review/code-review capability for the pre-PR review gate.
 - Use the checklist in this file as the review rubric.
-- If a repo compatibility protocol is explicitly requested, use the corresponding wrapper protocol under `docs/ai/development-workflow/protocols/`.
+- If a repo compatibility protocol is explicitly requested, use the corresponding wrapper protocol under `docs/workflow/development-workflow/protocols/`.
 
 ### Cursor
 
@@ -177,7 +177,7 @@ Typical `important` issues:
 - Use the CodeRabbit CLI as an optional pre-push review tool for local changes.
 - In Claude Code: `/coderabbit:review`. Standalone: `cr` or `cr --agent`.
 - CodeRabbit CLI findings complement the pre-PR review gate but do not replace it.
-- See [`docs/ai/development-workflow/integrations/coderabbit.md`](docs/ai/development-workflow/integrations/coderabbit.md) for setup and usage modes.
+- See [`docs/workflow/development-workflow/integrations/coderabbit.md`](docs/workflow/development-workflow/integrations/coderabbit.md) for setup and usage modes.
 
 ### Automated PR Reviewers
 

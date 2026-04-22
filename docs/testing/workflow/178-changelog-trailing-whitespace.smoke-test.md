@@ -21,7 +21,7 @@ Before running this smoke test:
 
 | Item | Value |
 |---|---|
-| Protocol file | `docs/ai/development-workflow/protocols/03-implement-development-protocol.md` |
+| Protocol file | `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` |
 | Agent definition (Claude) | `.claude/agents/developer.md` |
 | Agent definition (Cursor) | `.cursor/agents/developer.md` |
 
@@ -31,7 +31,7 @@ Before running this smoke test:
 
 ### Step 1: Verify Full Pipeline Path (AC1, AC3, AC4)
 
-1. Open `docs/ai/development-workflow/protocols/03-implement-development-protocol.md`.
+1. Open `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md`.
 2. Navigate to **Path 1: Full Pipeline**, **Step 6: Update CHANGELOG**.
 3. Confirm that immediately after the existing entry-writing guidance there is a **CHANGELOG format verification** sub-step.
 4. Confirm the sub-step names both defect patterns:
@@ -100,7 +100,7 @@ Run the following commands and verify the output:
 ```bash
 # Confirm verification instruction appears in all four paths
 grep -n "CHANGELOG format verification" \
-  docs/ai/development-workflow/protocols/03-implement-development-protocol.md
+  docs/workflow/development-workflow/protocols/03-implement-development-protocol.md
 ```
 
 **Expected result**: Exactly 4 matches (one per path).
@@ -108,7 +108,7 @@ grep -n "CHANGELOG format verification" \
 ```bash
 # Confirm the hard-line-break exclusion is present in each occurrence
 grep -n "two-space" \
-  docs/ai/development-workflow/protocols/03-implement-development-protocol.md
+  docs/workflow/development-workflow/protocols/03-implement-development-protocol.md
 ```
 
 **Expected result**: At least 4 matches (one per path).

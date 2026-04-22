@@ -7,7 +7,7 @@
 
 ## Summary
 
-**Approach**: Modify `run_coderabbit_review()` in `scripts/development-workflow/pr-review-loop.sh` to check the GitHub commit-status contexts for the current HEAD SHA after the retry budget is exhausted but before the stale-findings recovery path runs. If a CodeRabbit commit-status context with `state: SUCCESS` is found and no blocking inline comments exist for the current HEAD, the function returns `clean` with `REASON=coderabbit_status_success_fallback` instead of falling through to stale-findings or escalation. Also update `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` Step 3.7 to document this fallback.
+**Approach**: Modify `run_coderabbit_review()` in `scripts/development-workflow/pr-review-loop.sh` to check the GitHub commit-status contexts for the current HEAD SHA after the retry budget is exhausted but before the stale-findings recovery path runs. If a CodeRabbit commit-status context with `state: SUCCESS` is found and no blocking inline comments exist for the current HEAD, the function returns `clean` with `REASON=coderabbit_status_success_fallback` instead of falling through to stale-findings or escalation. Also update `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` Step 3.7 to document this fallback.
 
 **Estimated complexity**: S
 
@@ -46,7 +46,7 @@
 
 ### Documentation
 
-- [ ] In `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`, update Step 3.7 to document the new fallback:
+- [ ] In `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`, update Step 3.7 to document the new fallback:
   - Describe the new behavior: when all retry budget is exhausted and no CodeRabbit review comment was posted, the script checks for a CodeRabbit commit-status context with `state: SUCCESS`. If found, the result is `clean` with `REASON=coderabbit_status_success_fallback`.
   - Remove the statement "The PR can still advance to `ready-for-human-review`" that currently applies only to the stale/skipped path — that statement remains valid but the new fallback path should be described first.
   - Keep the note about manually posting `@coderabbitai review` as an optional step for human reviewers.
@@ -79,7 +79,7 @@
 
 ## Documentation Updates
 
-- [ ] `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — Update Step 3.7 as described in the Layer-by-Layer Changes section above. This is included in-scope per Acceptance Criterion 6.
+- [ ] `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — Update Step 3.7 as described in the Layer-by-Layer Changes section above. This is included in-scope per Acceptance Criterion 6.
 
 No other project docs (`docs/project/`, `AGENTS.md`, `docs/best-practices/`) are affected by this fix — it is entirely internal to the `pr-review-loop.sh` script and its corresponding orchestration protocol note.
 
@@ -141,6 +141,6 @@ fi
 1. Read the full `run_coderabbit_review()` function in `scripts/development-workflow/pr-review-loop.sh` and identify the exact insertion point: the `if [ "$elapsed" -ge "$max_wait" ]` block, inside the `if [ "$coderabbit_any_activity" -eq 0 ]` guard, before the stale-findings query.
 2. Add `local coderabbit_success_status_count` to the local declarations block at the top of `run_coderabbit_review()`.
 3. Insert the SUCCESS commit-status fallback block (API query + conditional `return 0`) at the identified location.
-4. Update `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` Step 3.7 to document the new fallback.
+4. Update `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` Step 3.7 to document the new fallback.
 5. Verify the smoke test runbook scenarios manually or with a dry-run review of the script diff.
 6. Update CHANGELOG.md under `[Unreleased]` with the fix entry.

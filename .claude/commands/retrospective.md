@@ -6,7 +6,7 @@ description: Run a retrospective analysis on completed work to identify process 
 
 Follow the retrospective protocol exactly as defined in:
 
-`docs/ai/development-workflow/protocols/06-retrospective-protocol.md`
+`docs/workflow/development-workflow/protocols/06-retrospective-protocol.md`
 
 - **Scope**: Analyze the PRs from the current session or the scope hint provided (PR number, branch name, or batch date). When no hint is given, default to recent PRs in the repository.
 - **Data sources**: GitHub PR metadata (via `gh`) and, when conversation context is available, the current session's conversation history.

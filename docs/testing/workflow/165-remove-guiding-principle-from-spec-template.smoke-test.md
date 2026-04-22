@@ -20,8 +20,8 @@ Before running this smoke test:
 
 | Item | Value |
 |---|---|
-| Spec template | `docs/ai/development-workflow/templates/spec-template.md` |
-| Spec generation protocol | `docs/ai/development-workflow/protocols/01-generate-spec-protocol.md` |
+| Spec template | `docs/workflow/development-workflow/templates/spec-template.md` |
+| Spec generation protocol | `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md` |
 | Review contract | `REVIEW.md` |
 | Retrospective spec | `docs/specs/developments/20260413201328_retrospective-protocol/1_retrospective-protocol_specs.md` |
 | Batch merge spec | `docs/specs/developments/20260414184900_batch-merge/1_batch-merge_specs.md` |
@@ -39,7 +39,7 @@ Before running this smoke test:
 
 **Maps to**: Acceptance Criterion 1
 
-1. Open `docs/ai/development-workflow/templates/spec-template.md`.
+1. Open `docs/workflow/development-workflow/templates/spec-template.md`.
 2. Search for the text `Guiding principle`.
 3. Search for the text `product-focused`.
 
@@ -51,7 +51,7 @@ Before running this smoke test:
 
 **Maps to**: Acceptance Criterion 2
 
-1. Open `docs/ai/development-workflow/protocols/01-generate-spec-protocol.md`.
+1. Open `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md`.
 2. Search for guidance that instructs spec authors to write product-focused content and avoid implementation details.
 
 **Expected result**: The file contains a section (e.g., "Product-first boundary (critical)") that instructs authors to write user-facing behavior and avoid implementation details such as database tables, endpoints, file paths, or class names.
@@ -101,8 +101,8 @@ For each of the following files:
 
 Each checkbox maps to an acceptance criterion from the spec.
 
-- [ ] `docs/ai/development-workflow/templates/spec-template.md` does not contain the "Guiding principle (important)" section.
-- [ ] `docs/ai/development-workflow/protocols/01-generate-spec-protocol.md` contains product-focused authoring guidance (verbatim or equivalent).
+- [ ] `docs/workflow/development-workflow/templates/spec-template.md` does not contain the "Guiding principle (important)" section.
+- [ ] `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md` contains product-focused authoring guidance (verbatim or equivalent).
 - [ ] `REVIEW.md` spec checklist does not require the "Guiding principle" section; instead it checks that specs avoid implementation details.
 - [ ] `docs/specs/developments/20260413201328_retrospective-protocol/1_retrospective-protocol_specs.md` does not contain the "Guiding principle (important)" section.
 - [ ] `docs/specs/developments/20260414184900_batch-merge/1_batch-merge_specs.md` does not contain the "Guiding principle (important)" section.

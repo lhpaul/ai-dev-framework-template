@@ -17,7 +17,7 @@ Before starting, read:
 - `docs/best-practices/` — all best practice docs
 - Relevant existing code — read actual files, don't assume structure
 - **Project documentation**: Scan `docs/` (e.g. `docs/project/`, `docs/best-practices/`, `AGENTS.md`, and any feature- or domain-specific docs) so the plan can explicitly list which of these need updates after implementation.
-- If an issue tracker exists for this item, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for expectations while the work item is entering **Writing Plan** (Full Pipeline: after spec is merged; Refactor: directly from Backlog).
+- If an issue tracker exists for this item, follow `docs/workflow/development-workflow/integrations/issue-tracker.md` for expectations while the work item is entering **Writing Plan** (Full Pipeline: after spec is merged; Refactor: directly from Backlog).
 
 **Tracker workflow status**: The **Work Item Runner** owns workflow-status transitions for this stage. When this protocol is run under normal orchestration, expect the runner to set **Writing Plan** before dispatch, **Plan in Review** when the PR is human-ready, and **Plan Ready** only after merge. If you invoke this protocol standalone, mirror the same status progression manually.
 
@@ -81,7 +81,7 @@ Pause only if:
 
 ## Step 3: Write the Implementation Plan
 
-Using the template at `docs/ai/development-workflow/templates/implementation-plan-template.md`, write the implementation plan.
+Using the template at `docs/workflow/development-workflow/templates/implementation-plan-template.md`, write the implementation plan.
 
 **Output location**:
 
@@ -142,7 +142,7 @@ For acceptance intent and terminology, reference `docs/specs/developments/202604
 
 ## Step 4: Write the Smoke Test Runbook
 
-Create the smoke test runbook using the template at `docs/ai/development-workflow/templates/smoke-test-runbook-template.md`.
+Create the smoke test runbook using the template at `docs/workflow/development-workflow/templates/smoke-test-runbook-template.md`.
 
 **Output location**:
 
@@ -182,6 +182,6 @@ After the draft PR exists, the **Work Item Runner** owns the rest of the lifecyc
 - Apply `ready-for-human-review` and move the tracker to **Plan in Review** when the PR is human-ready
 - Stop only when the PR is waiting on human review / merge or the run has escalated
 
-If this protocol is invoked **standalone** rather than through the Work Item Runner, hand off manually by following `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` from the newly opened draft PR.
+If this protocol is invoked **standalone** rather than through the Work Item Runner, hand off manually by following `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` from the newly opened draft PR.
 
-See `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/ai/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
+See `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.

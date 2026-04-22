@@ -194,7 +194,7 @@ For each item that passed the Step 2 eligibility check:
 
 All tracker status updates for the batch must complete **before** any Work Item Runner is dispatched. This ensures observers see the correct in-flight status from the moment work starts, not retroactively after the creator stage finishes.
 
-See `docs/ai/development-workflow/integrations/github-projects.md` for the tracker API details used to add items to the project board and update their status.
+See `docs/workflow/development-workflow/integrations/github-projects.md` for the tracker API details used to add items to the project board and update their status.
 
 ---
 
@@ -225,7 +225,7 @@ repository root):
 - `scripts/development-workflow/pr-ci-loop.sh`
 - `scripts/development-workflow/batch-merge.sh`
 - `scripts/development-workflow/post-merge-cleanup.sh`
-- Any file matching `docs/ai/development-workflow/protocols/*.md`
+- Any file matching `docs/workflow/development-workflow/protocols/*.md`
 - `.ai-dev-workflow.yaml`
 
 A **consumer item** is any non-tool-fix item in the same candidate batch that is not already
@@ -612,7 +612,7 @@ If any PR is still in progress or labeled `needs-fixes`, continue supervising (S
 
 3. **Present the validated merge plan to the human** and require explicit approval before any merge starts. The human must confirm before the orchestrator invokes `94-batch-merge-protocol.md`.
 
-4. **Once the human approves**, follow `docs/ai/development-workflow/protocols/94-batch-merge-protocol.md` starting from **Step 3.5** (the pre-merge clean-state check and sequential merge loop). The merge plan confirmation (Protocol 94 Step 3) has already been satisfied by Step 5.5.3 above, but Step 3.5 has **not** been satisfied and must still run. Pass only the approved ordered PR list after Step 5.5.2 filtering, and include skipped entries in the final summary.
+4. **Once the human approves**, follow `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md` starting from **Step 3.5** (the pre-merge clean-state check and sequential merge loop). The merge plan confirmation (Protocol 94 Step 3) has already been satisfied by Step 5.5.3 above, but Step 3.5 has **not** been satisfied and must still run. Pass only the approved ordered PR list after Step 5.5.2 filtering, and include skipped entries in the final summary.
 
 5. **Include the batch-merge summary** (Step 5 of Protocol 94) in the orchestrator's Step 6 summary output.
 
@@ -653,4 +653,4 @@ Instead, suggest the retrospective **after the human confirms the PRs have been 
 
 > Would you like to run a retrospective on this batch's work?
 
-If the human agrees, follow `docs/ai/development-workflow/protocols/06-retrospective-protocol.md`. The retrospective will analyze the PRs from this batch using both GitHub data and the conversation context from this session.
+If the human agrees, follow `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md`. The retrospective will analyze the PRs from this batch using both GitHub data and the conversation context from this session.

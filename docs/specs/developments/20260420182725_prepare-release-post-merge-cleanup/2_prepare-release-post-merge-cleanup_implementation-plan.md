@@ -7,7 +7,7 @@
 
 ## Summary
 
-**Approach**: Extend `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md` with an explicit post-merge sequence (after both the `main` release PR and the `develop` backport PR are merged): verify merge state with `gh`, delete `release/vX.Y.Z` on `origin`, delete the local release branch when safe, then transition scoped tracker items from the integration-merged status to the shipped terminal status using the same GitHub Projects v2 GraphQL patterns as `scripts/development-workflow/post-merge-cleanup.sh` (`gh project field-list`, `gh project item-list`, `gh api graphql` mutation). Implement a dedicated helper script (e.g. `scripts/development-workflow/prepare-release-post-merge-cleanup.sh`) so operators and agents run one audited entry point instead of ad hoc commands; the script sources shared helpers from `workflow-lib.sh` where practical and logs skip reasons when project env vars are missing.
+**Approach**: Extend `docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md` with an explicit post-merge sequence (after both the `main` release PR and the `develop` backport PR are merged): verify merge state with `gh`, delete `release/vX.Y.Z` on `origin`, delete the local release branch when safe, then transition scoped tracker items from the integration-merged status to the shipped terminal status using the same GitHub Projects v2 GraphQL patterns as `scripts/development-workflow/post-merge-cleanup.sh` (`gh project field-list`, `gh project item-list`, `gh api graphql` mutation). Implement a dedicated helper script (e.g. `scripts/development-workflow/prepare-release-post-merge-cleanup.sh`) so operators and agents run one audited entry point instead of ad hoc commands; the script sources shared helpers from `workflow-lib.sh` where practical and logs skip reasons when project env vars are missing.
 
 **Estimated complexity**: **M**  
 **Rationale**: Touches protocol docs, a new script with git and GitHub edge cases, configuration surface for status labels, and must stay aligned with existing `update_tracker_status` ordering / rollback rules — more than a single-file tweak, but no application runtime.
@@ -37,13 +37,13 @@
 ### Infrastructure / Configuration
 
 - [ ] Optional: document advisory keys under `.ai-dev-workflow.yaml` (e.g. `issue_tracker.status_labels.released`) **or** environment variables only (`GITHUB_PROJECT_STATUS_MERGED`, `GITHUB_PROJECT_STATUS_RELEASED`) — pick one primary mechanism in implementation and reference the other as override; must not require secrets in repo files.
-- [ ] Reuse existing `GITHUB_PROJECT_OWNER` / `GITHUB_PROJECT_NUMBER` contract from `post-merge-cleanup.sh` / `docs/ai/development-workflow/integrations/github-projects.md`.
+- [ ] Reuse existing `GITHUB_PROJECT_OWNER` / `GITHUB_PROJECT_NUMBER` contract from `post-merge-cleanup.sh` / `docs/workflow/development-workflow/integrations/github-projects.md`.
 
 ### Documentation / Workflow
 
-- [ ] **`docs/ai/development-workflow/protocols/05-prepare-release-protocol.md`**: Replace or extend current Step 8 (“Inform the Human”) so it clearly separates (a) pre-merge handoff from (b) post-merge cleanup. Add numbered substeps: confirm both PRs merged via `gh pr view` or `gh pr list` queries; **do not** delete the branch if either PR is open or only one merged (**AC**: one-PR-merged edge case). Document `git push origin --delete release/vX.Y.Z` and local `git branch -d` / `switch` away if branch checked out (**UC1**, **AC**).
+- [ ] **`docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md`**: Replace or extend current Step 8 (“Inform the Human”) so it clearly separates (a) pre-merge handoff from (b) post-merge cleanup. Add numbered substeps: confirm both PRs merged via `gh pr view` or `gh pr list` queries; **do not** delete the branch if either PR is open or only one merged (**AC**: one-PR-merged edge case). Document `git push origin --delete release/vX.Y.Z` and local `git branch -d` / `switch` away if branch checked out (**UC1**, **AC**).
 - [ ] Same protocol: document tracker transition (**UC2**, **AC**): only items explicitly in scope for this release (default per spec open question: not a blind “all Merged in project” bulk unless human opts in); reference the new script’s flags (e.g. explicit issue numbers, or allowlisted query) in prose.
-- [ ] **`docs/ai/development-workflow/integrations/github-projects.md`**: Add configuration for shipped status display name / option resolution (parallel to how `Merged` is discovered today).
+- [ ] **`docs/workflow/development-workflow/integrations/github-projects.md`**: Add configuration for shipped status display name / option resolution (parallel to how `Merged` is discovered today).
 - [ ] **Command wrappers** (`.cursor/commands/prepare-release.md`, `.claude/commands/prepare-release.md`): One-line note that post-merge cleanup is defined in protocol Step 9 (or whatever final numbering is) so humans do not assume the command ends at PR merge.
 
 ### Scripts
@@ -88,10 +88,10 @@
 
 Post-implementation edits (not done in this plan PR):
 
-- [ ] `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md` — add post-merge branch + tracker sequence; renumber steps if needed.
-- [ ] `docs/ai/development-workflow/integrations/github-projects.md` — document `Released` / configurable status and any new env vars.
+- [ ] `docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md` — add post-merge branch + tracker sequence; renumber steps if needed.
+- [ ] `docs/workflow/development-workflow/integrations/github-projects.md` — document `Released` / configurable status and any new env vars.
 - [ ] `.cursor/commands/prepare-release.md` and `.claude/commands/prepare-release.md` — pointer to post-merge section after merge.
-- [ ] `docs/ai/development-workflow/README.md` — only if the master workflow table needs a one-line note that release completes with post-merge cleanup (optional if protocol cross-link is enough).
+- [ ] `docs/workflow/development-workflow/README.md` — only if the master workflow table needs a one-line note that release completes with post-merge cleanup (optional if protocol cross-link is enough).
 - [ ] `CHANGELOG.md` — under `[Unreleased]` when the **implementation** PR merges (not this plan PR), per repo changelog rules.
 
 ---

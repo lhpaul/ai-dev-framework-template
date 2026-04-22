@@ -8,7 +8,7 @@ alwaysApply: false
 
 This project follows a staged AI-assisted development workflow. The canonical reference is:
 
-`docs/ai/development-workflow/README.md`
+`docs/workflow/development-workflow/README.md`
 
 Repository-specific workflow providers live in `.ai-dev-workflow.yaml`. Today, `review.platforms` is consumed by `pr-review-loop.sh` (Step 7) and `review.internal_reviewers` is consumed by the Step 7a internal review gate protocol; other sections are advisory until more tooling adopts them.
 
@@ -16,12 +16,12 @@ Repository-specific workflow providers live in `.ai-dev-workflow.yaml`. Today, `
 
 | Stage | Protocol |
 |---|---|
-| Write spec | `docs/ai/development-workflow/protocols/01-generate-spec-protocol.md` |
-| Write plan | `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
-| Implement | `docs/ai/development-workflow/protocols/03-implement-development-protocol.md` |
-| Review gate | `REVIEW.md` and the compatibility wrappers under `docs/ai/development-workflow/protocols/` |
-| Batch orchestrate | `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
-| Orchestrate one item | `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` |
+| Write spec | `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md` |
+| Write plan | `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
+| Implement | `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` |
+| Review gate | `REVIEW.md` and the compatibility wrappers under `docs/workflow/development-workflow/protocols/` |
+| Batch orchestrate | `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
+| Orchestrate one item | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` |
 
 ### Key rules
 

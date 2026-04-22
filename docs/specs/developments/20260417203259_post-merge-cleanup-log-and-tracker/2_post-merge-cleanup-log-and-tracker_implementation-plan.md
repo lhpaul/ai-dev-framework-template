@@ -11,7 +11,7 @@
 
 **Estimated complexity**: S
 
-**Rationale**: Both changes are confined to a single shell script with no dependencies on other files. The GraphQL pattern is already documented in `docs/ai/development-workflow/integrations/github-projects.md` and similar patterns exist elsewhere in the workflow. No schema changes, no frontend, no new packages.
+**Rationale**: Both changes are confined to a single shell script with no dependencies on other files. The GraphQL pattern is already documented in `docs/workflow/development-workflow/integrations/github-projects.md` and similar patterns exist elsewhere in the workflow. No schema changes, no frontend, no new packages.
 
 **Dependencies**: None. (The #177 plan adds `git worktree unlock` + force-remove near the `git worktree remove` call — a disjoint line range from the issue-number detection block and the new tracker update block. The two changes will apply cleanly on top of each other.)
 
@@ -42,7 +42,7 @@
   - Issue detected + closed (implementation): the existing close log lines are preserved; add one line for tracker update.
   - No issue number detected: one line (existing), no tracker update.
 
-### Documentation (`docs/ai/development-workflow/integrations/github-projects.md`)
+### Documentation (`docs/workflow/development-workflow/integrations/github-projects.md`)
 
 - [ ] **Align "Post-Merge Cleanup" section (Step 3)**: Update the step list under "Post-Merge Cleanup" (currently only mentions closing the issue and setting status to `Merged`) to reflect that all branch types now update tracker status:
   - `spec/*` → `Spec Ready`
@@ -74,7 +74,7 @@ Not applicable. This feature modifies a shell script with no database or seed da
 
 ## Documentation Updates
 
-- [ ] `docs/ai/development-workflow/integrations/github-projects.md` — update the "Post-Merge Cleanup" section to list all three status transitions (Spec Ready, Plan Ready, Merged) rather than only Merged. *(This update is planned in the Layer-by-Layer Changes above and executed during implementation.)*
+- [ ] `docs/workflow/development-workflow/integrations/github-projects.md` — update the "Post-Merge Cleanup" section to list all three status transitions (Spec Ready, Plan Ready, Merged) rather than only Merged. *(This update is planned in the Layer-by-Layer Changes above and executed during implementation.)*
 
 No other project docs require changes. `AGENTS.md`/`CLAUDE.md` reference the `post-merge-cleanup` command but do not describe its internal tracker behavior. `docs/best-practices/2-version-control.md` and Protocol 91 Step 10 already list the correct status transitions without prescribing how the script implements them.
 
@@ -182,9 +182,9 @@ update_tracker_status() {
    - For `BRANCH_TYPE=spec` and `BRANCH_TYPE=plan`: emit one log line (issue stays open) and call `update_tracker_status`.
    - For `BRANCH_TYPE=implementation`: preserve the existing issue-close logic; after the close block, call `update_tracker_status "$ISSUE_NUMBER" "Merged"`.
    - For no issue number: emit the existing single log line (unchanged).
-5. Update `docs/ai/development-workflow/integrations/github-projects.md` — "Post-Merge Cleanup" section.
+5. Update `docs/workflow/development-workflow/integrations/github-projects.md` — "Post-Merge Cleanup" section.
 6. Write the smoke test runbook at `docs/testing/workflow/184-post-merge-cleanup-log-and-tracker.smoke-test.md`.
 7. Run `shellcheck scripts/development-workflow/post-merge-cleanup.sh` and fix any warnings.
-8. Run markdown lint on changed `.md` files: `npx markdownlint-cli2 "docs/specs/developments/20260417203259_post-merge-cleanup-log-and-tracker/*.md" "docs/testing/workflow/184-post-merge-cleanup-log-and-tracker.smoke-test.md" "docs/ai/development-workflow/integrations/github-projects.md"`.
+8. Run markdown lint on changed `.md` files: `npx markdownlint-cli2 "docs/specs/developments/20260417203259_post-merge-cleanup-log-and-tracker/*.md" "docs/testing/workflow/184-post-merge-cleanup-log-and-tracker.smoke-test.md" "docs/workflow/development-workflow/integrations/github-projects.md"`.
 9. Update `CHANGELOG.md` under `[Unreleased]` with an entry for this fix.
 10. Verify the main working tree is clean and all changes are committed to the implementation branch.

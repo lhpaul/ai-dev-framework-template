@@ -37,7 +37,7 @@ review:
     - "docs/**"
   # Reference files that provide context for reviews
   context:
-    - "docs/ai/development-workflow/README.md"
+    - "docs/workflow/development-workflow/README.md"
     - "docs/best-practices/*.md"
 ```
 

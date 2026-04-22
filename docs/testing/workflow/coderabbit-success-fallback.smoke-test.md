@@ -167,7 +167,7 @@ Before running this smoke test:
 
 **Maps to**: Acceptance Criterion 6
 
-1. Open `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`.
+1. Open `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`.
 2. Locate Step 3.7.
 3. Verify the section now describes the SUCCESS commit-status fallback behavior: when retry budget is exhausted and no inline review was posted, the script checks for a CodeRabbit `SUCCESS` commit-status. If found (and no blocking inline comments), it returns `clean` with `REASON=coderabbit_status_success_fallback`.
 
@@ -184,7 +184,7 @@ Each checkbox maps to an acceptance criterion from the spec.
 - [ ] AC3: When blocking CodeRabbit inline comments (Critical or Major) are present → fallback does not apply; `RESULT=needs_fixes` regardless of commit-status
 - [ ] AC4: `REASON=coderabbit_status_success_fallback` key-value is present in script output when fallback triggers
 - [ ] AC5: Greptile and Devin platform handlers contain no references to the new fallback logic
-- [ ] AC6: `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` Step 3.7 documents the new fallback behavior
+- [ ] AC6: `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` Step 3.7 documents the new fallback behavior
 
 ---
 

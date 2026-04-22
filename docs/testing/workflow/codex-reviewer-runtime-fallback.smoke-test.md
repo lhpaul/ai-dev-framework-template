@@ -22,7 +22,7 @@ Before running this smoke test:
 
 | Item | Value |
 |---|---|
-| Protocol file | `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` |
+| Protocol file | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` |
 | Config file | `.ai-dev-workflow.yaml` |
 | Local override file | `.tmp/template-config.json` (gitignored) |
 | Internal reviewers (default config) | `[claude, codex]` |
@@ -34,7 +34,7 @@ Before running this smoke test:
 
 ### Step 1: Verify Protocol 91 Step 7a contains the runtime-availability check sub-section
 
-- Open `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`
+- Open `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
 - Locate Step 7a
 - Verify the sub-section "Runtime-availability check" appears before the "Reviewer dispatch map" table
 

@@ -21,8 +21,8 @@ Before running this smoke test:
 
 | Item | Value |
 |---|---|
-| Spec protocol | `docs/ai/development-workflow/protocols/01-generate-spec-protocol.md` |
-| Plan protocol | `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
+| Spec protocol | `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md` |
+| Plan protocol | `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
 | Review contract | `REVIEW.md` |
 | AC5 fixture | `docs/testing/workflow/fixtures/186-scope-drift-pattern-enumeration-mismatch.md` (created during implementation) |
 

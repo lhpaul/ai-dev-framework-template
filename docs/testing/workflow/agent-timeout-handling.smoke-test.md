@@ -13,9 +13,9 @@ Before running this smoke test:
 
 - [ ] Implementation is complete and merged into `develop`
 - [ ] You have access to the three updated files:
-  - `docs/ai/development-workflow/agent-model-config.md`
-  - `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`
-  - `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
+  - `docs/workflow/development-workflow/agent-model-config.md`
+  - `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
+  - `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
 - [ ] No running environment or database is required — this is a documentation review
 
 ---
@@ -36,7 +36,7 @@ Before running this smoke test:
 
 **Maps to**: Acceptance Criterion 2
 
-1. Open `docs/ai/development-workflow/agent-model-config.md`
+1. Open `docs/workflow/development-workflow/agent-model-config.md`
 2. Locate the section covering expected run durations for agents
 3. Confirm the section includes documented durations for `item-orchestrator` and `automated-reviewer-loop`
 4. Confirm each entry specifies a typical range and a "consider timeout at" threshold
@@ -49,7 +49,7 @@ Before running this smoke test:
 
 **Maps to**: Acceptance Criterion 3
 
-1. Open `docs/ai/development-workflow/agent-model-config.md`
+1. Open `docs/workflow/development-workflow/agent-model-config.md`
 2. Locate the "Resume a Timed-Out Agent Run" section (or equivalent heading)
 3. Within 30 seconds, identify:
    a. The detection checklist (which signals indicate an incomplete run)
@@ -64,7 +64,7 @@ Before running this smoke test:
 
 **Maps to**: Acceptance Criterion 1
 
-1. Open `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`
+1. Open `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
 2. Navigate to Step 8c (Post-Label Independent Verification)
 3. Locate the verification table
 4. Find the row for "Automated reviewer loop summary"
@@ -79,7 +79,7 @@ Before running this smoke test:
 
 **Maps to**: Acceptance Criterion 4
 
-1. Open `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
+1. Open `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
 2. Navigate to Step 5.1 (Post-Dispatch PR Verification) or the section immediately following it
 3. Locate the "Stale / Incomplete PR Detection" subsection (or equivalent heading)
 4. Confirm the subsection includes:

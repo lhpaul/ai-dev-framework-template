@@ -105,12 +105,12 @@ create_cmd() {
   fi
 
   if [ "$kind" = "linear" ]; then
-    echo "add-backlog-item: Linear backlog creation is not performed by this script. Use Linear MCP/API per docs/ai/development-workflow/integrations/linear.md" >&2
+    echo "add-backlog-item: Linear backlog creation is not performed by this script. Use Linear MCP/API per docs/workflow/development-workflow/integrations/linear.md" >&2
     exit 2
   fi
 
   if [ "$kind" = "none" ]; then
-    echo "add-backlog-item: issue_tracker.provider is unset or none. Configure .ai-dev-workflow.yaml or ask the human where to create the item (see docs/ai/development-workflow/protocols/00-add-backlog-item-protocol.md)" >&2
+    echo "add-backlog-item: issue_tracker.provider is unset or none. Configure .ai-dev-workflow.yaml or ask the human where to create the item (see docs/workflow/development-workflow/protocols/00-add-backlog-item-protocol.md)" >&2
     exit 3
   fi
 

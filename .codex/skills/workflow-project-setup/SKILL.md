@@ -8,6 +8,6 @@ description: Run the repository's project setup workflow. Use when initializing 
 Recommended model tier: `balanced`
 
 1. Read `AGENTS.md` for repository-wide rules.
-2. Read `docs/ai/setup/protocol.md`.
+2. Read `docs/workflow/setup/protocol.md`.
 3. Follow that protocol exactly in the current repository.
 4. Treat the protocol as canonical. Do not restate or fork it inside this skill.

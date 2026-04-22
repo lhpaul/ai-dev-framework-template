@@ -36,7 +36,7 @@ Before running this smoke test:
 
 **Maps to**: Acceptance Criterion — “no step tells them to delete the release branch before both PRs are merged”
 
-1. Open `docs/ai/development-workflow/protocols/05-prepare-release-protocol.md`.
+1. Open `docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md`.
 2. Search for the post-merge / cleanup section added for this feature.
 3. Confirm the text states branch deletion is allowed **only after** both the production (`main`) and backport (`develop`) PRs for that release branch are merged.
 

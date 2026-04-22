@@ -21,7 +21,7 @@ Every piece of information lives in exactly one place. Before adding content:
 | `AGENTS.md` | AI agent guidance, commands, key conventions |
 | `docs/project/` | Project-specific context (domain, architecture, stack, DB) |
 | `docs/best-practices/` | Coding standards and conventions |
-| `docs/ai/development-workflow/` | Workflow protocols, templates, integrations |
+| `docs/workflow/development-workflow/` | Workflow protocols, templates, integrations |
 | `docs/specs/developments/` | Feature specs and implementation plans |
 | `docs/testing/` | Smoke test runbooks |
 

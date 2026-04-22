@@ -49,8 +49,8 @@
 
 ### Documentation / Workflow (primary surface)
 
-- [ ] `docs/ai/development-workflow/protocols/01-generate-spec-protocol.md` — insert a dedicated subsection after alignment (or within Step 3 quality guardrails) documenting Brief Objective List, Coverage Matrix, PR description summary, and Deferral Notes per UC1–UC3, BR-1–BR-3; wire Step 5 PR body bullet to require the matrix summary — **AC3**
-- [ ] `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` — add plan-writer rules for pattern vs frozen enumeration, mandatory Verification Log (command, repo SHA, outputs affecting counts/paths), and cross-links to UC4–UC5 — **AC4**
+- [ ] `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md` — insert a dedicated subsection after alignment (or within Step 3 quality guardrails) documenting Brief Objective List, Coverage Matrix, PR description summary, and Deferral Notes per UC1–UC3, BR-1–BR-3; wire Step 5 PR body bullet to require the matrix summary — **AC3**
+- [ ] `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` — add plan-writer rules for pattern vs frozen enumeration, mandatory Verification Log (command, repo SHA, outputs affecting counts/paths), and cross-links to UC4–UC5 — **AC4**
 - [ ] `REVIEW.md` — extend **Spec Review Checklist** with a blocking bullet: when a tracker issue is linked, verify brief-to-spec coverage (matrix or equivalent trace) — **AC6**; extend **Plan Review Checklist** with a blocking bullet: when pattern-based completeness applies, verify counts/paths against the plan’s Verification Log — **AC7**
 - [ ] `.claude/agents/product-manager.md` and `.cursor/agents/product-manager.md` — add a single sentence pointing to the new brief-coverage subsection in protocol 01 (optional but recommended for discoverability) — supports **AC3**
 - [ ] `.claude/agents/tech-lead.md` and `.cursor/agents/tech-lead.md` — add a single sentence pointing to enumeration vs live-search rules in protocol 02 — supports **AC4**
@@ -88,8 +88,8 @@
 
 Files the developer edits during implementation (this plan already targets them; no separate `docs/project/*` churn unless review finds a glossary gap):
 
-- [ ] `docs/ai/development-workflow/protocols/01-generate-spec-protocol.md`
-- [ ] `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md`
+- [ ] `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md`
+- [ ] `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md`
 - [ ] `REVIEW.md`
 - [ ] `docs/testing/workflow/186-scope-drift-brief-coverage.smoke-test.md` (created in Plan Ready stage alongside this file)
 - [ ] `docs/testing/workflow/fixtures/186-scope-drift-pattern-enumeration-mismatch.md` (new in Development)
@@ -99,7 +99,7 @@ Files the developer edits during implementation (this plan already targets them;
 
 **None** for `AGENTS.md` / `docs/project/*` unless the implementation PR discovers a broken link after renames.
 
-- [ ] `docs/ai/development-workflow/integrations/issue-tracker.md` — only if protocol edits assume GitHub-only fields; add a short tracker-agnostic note per spec **Out of Scope (MVP)** (non-GitHub trackers)
+- [ ] `docs/workflow/development-workflow/integrations/issue-tracker.md` — only if protocol edits assume GitHub-only fields; add a short tracker-agnostic note per spec **Out of Scope (MVP)** (non-GitHub trackers)
 
 ---
 
@@ -108,7 +108,7 @@ Files the developer edits during implementation (this plan already targets them;
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
 | Protocol text becomes too long; agents skip it | Med | Med | Use scannable headings + a short checklist table at the top of each new subsection |
-| AC5 fixture drifts as repo grows | Low | Med | Fixture uses a **stable path subset** (e.g. only `docs/ai/development-workflow/protocols/*.md`) and documents the exact `rg` pattern so counts remain meaningful |
+| AC5 fixture drifts as repo grows | Low | Med | Fixture uses a **stable path subset** (e.g. only `docs/workflow/development-workflow/protocols/*.md`) and documents the exact `rg` pattern so counts remain meaningful |
 | Parallel wording between 01/02 protocols and `REVIEW.md` diverges | Med | Med | Single source of truth in protocols; `REVIEW.md` bullets only point to behaviors already spelled out there |
 
 ---

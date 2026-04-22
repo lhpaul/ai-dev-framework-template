@@ -25,7 +25,7 @@
 
 ### Protocol / Documentation Layer
 
-- [ ] **`docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` — Step 7a**: Insert a new sub-section titled **"Runtime-availability check"** immediately before the existing "Reviewer dispatch map" table. The sub-section must:
+- [ ] **`docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — Step 7a**: Insert a new sub-section titled **"Runtime-availability check"** immediately before the existing "Reviewer dispatch map" table. The sub-section must:
   1. Instruct the runner to classify each reviewer in the resolved list as `reachable` or `unreachable` based on runner-context identity (BR-8).
   2. Define the reachability classification table for known runners and reviewers (e.g., Claude Code subagent cannot invoke `codex`; direct human or Codex runner can invoke both).
   3. Apply the resolved policy:
@@ -36,9 +36,9 @@
   5. Specify the hard-fail PR comment format (Use Case 2, step 3 exact wording), which doubles as the BR-7 summary comment in that case.
   6. Specify the local override log message format (Use Case 4, step 5 exact wording).
 
-- [ ] **`docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` — Step 7a "Step 7a summary comment" requirement**: Add a new rule in the multi-reviewer execution rules table (or as a standalone paragraph) mandating that a Step 7a summary comment is always posted to the PR when the gate exits — whether all reviewers ran, some were skipped, or the gate hard-failed (BR-7). Specify the required fields: effective reviewer set, skipped reviewers (with reason), and final verdict. Clarify that the hard-fail comment from BR-3 already satisfies this requirement; no separate comment is needed in that case.
+- [ ] **`docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — Step 7a "Step 7a summary comment" requirement**: Add a new rule in the multi-reviewer execution rules table (or as a standalone paragraph) mandating that a Step 7a summary comment is always posted to the PR when the gate exits — whether all reviewers ran, some were skipped, or the gate hard-failed (BR-7). Specify the required fields: effective reviewer set, skipped reviewers (with reason), and final verdict. Clarify that the hard-fail comment from BR-3 already satisfies this requirement; no separate comment is needed in that case.
 
-- [ ] **`docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` — Step 8c independent verification**: Update the "Automated reviewer loop summary" check note to clarify that the Step 7a summary comment satisfies a different requirement (internal gate visibility) and does not substitute for the Step 7 "Automated Reviewer Loop Summary" comment required for `ready-for-human-review`. No functional change to Step 8c is needed; add a brief parenthetical to avoid confusion.
+- [ ] **`docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — Step 8c independent verification**: Update the "Automated reviewer loop summary" check note to clarify that the Step 7a summary comment satisfies a different requirement (internal gate visibility) and does not substitute for the Step 7 "Automated Reviewer Loop Summary" comment required for `ready-for-human-review`. No functional change to Step 8c is needed; add a brief parenthetical to avoid confusion.
 
 ---
 
@@ -66,7 +66,7 @@ Not applicable — this feature is a protocol/documentation change with no runti
 
 ## Documentation Updates
 
-- [ ] `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` — primary change (see Layer-by-Layer Changes above)
+- [ ] `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — primary change (see Layer-by-Layer Changes above)
 - [ ] `.ai-dev-workflow.yaml` — add `internal_reviewers_unavailable_policy` as a commented-out optional key with its default value and allowed values documented inline
 
 ---

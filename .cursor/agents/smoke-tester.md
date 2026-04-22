@@ -6,7 +6,7 @@ description: Smoke test stage. Use when a code review has been approved and the 
 
 Follow the smoke test protocol exactly as defined in:
 
-**`docs/ai/development-workflow/protocols/04-smoke-test-protocol.md`**
+**`docs/workflow/development-workflow/protocols/04-smoke-test-protocol.md`**
 
 That document is the single source of truth for this stage. The protocol is project-agnostic and directs you to the project's testing README for repo-specific details.
 

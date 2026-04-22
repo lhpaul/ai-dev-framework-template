@@ -474,7 +474,7 @@ Instead, suggest the retrospective **after the human confirms the PR has been me
 
 > Would you like to run a retrospective on this session's work?
 
-If the human agrees, follow `docs/ai/development-workflow/protocols/06-retrospective-protocol.md`. The retrospective will analyze the PRs from this item run using both GitHub data and the conversation context from this session.
+If the human agrees, follow `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md`. The retrospective will analyze the PRs from this item run using both GitHub data and the conversation context from this session.
 
 **When `BATCH_CONTEXT=true`** (dispatched by the Portfolio Orchestrator): suppress the retrospective suggestion entirely. The Portfolio Orchestrator will suggest the retrospective after the full batch has been merged, not when PRs reach `ready-for-human-review`.
 
@@ -913,7 +913,7 @@ After the label readiness checklist passes, update the tracker status to reflect
 - For **plan PRs** (`implementation-plan/*`): set tracker status to `Plan in Review`
 - For **implementation PRs** (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`): set tracker status to `Development in Review`
 
-See `docs/ai/development-workflow/integrations/github-projects.md` for tracker API details.
+See `docs/workflow/development-workflow/integrations/github-projects.md` for tracker API details.
 
 ---
 

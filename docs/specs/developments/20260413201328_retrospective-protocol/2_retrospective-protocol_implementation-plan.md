@@ -21,7 +21,7 @@
 
 ### Protocol Document
 
-- [ ] Create `docs/ai/development-workflow/protocols/06-retrospective-protocol.md` — the core retrospective protocol document covering:
+- [ ] Create `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md` — the core retrospective protocol document covering:
   - Protocol metadata (agent role, purpose)
   - Step 1: Resolve scope — determine which PRs to analyze (from scope hint, current session, or recent repo PRs)
   - Step 2: Gather data — query GitHub PR metadata (review cycles, finding types, labels, merge conflicts) and git history (commit patterns, fix-commit ratio); when conversation context is available, also analyze manual interventions, human corrections, agent deviations
@@ -35,8 +35,8 @@
 
 ### Integration into Existing Protocols
 
-- [x] Update `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — Step 6 does NOT immediately suggest a retrospective after the batch summary (which is shown at `ready-for-human-review` state, before merge). Instead, defers the suggestion until after the human confirms batch PRs have been merged (via `/batch-merge`, `/post-merge-cleanup`, or explicit signal). Maps to: AC 9
-- [x] Update `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` — Step 6 does NOT immediately suggest a retrospective after the item summary. Defers until after the human confirms the PR has been merged (via `/post-merge-cleanup` or explicit signal). When `BATCH_CONTEXT=true`, suppress the suggestion entirely. Maps to: AC 10
+- [x] Update `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — Step 6 does NOT immediately suggest a retrospective after the batch summary (which is shown at `ready-for-human-review` state, before merge). Instead, defers the suggestion until after the human confirms batch PRs have been merged (via `/batch-merge`, `/post-merge-cleanup`, or explicit signal). Maps to: AC 9
+- [x] Update `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — Step 6 does NOT immediately suggest a retrospective after the item summary. Defers until after the human confirms the PR has been merged (via `/post-merge-cleanup` or explicit signal). When `BATCH_CONTEXT=true`, suppress the suggestion entirely. Maps to: AC 10
 
 ### Platform Commands / Skills
 
@@ -75,7 +75,7 @@ No seed data is required. The retrospective protocol operates on existing GitHub
 
 ## Documentation Updates
 
-- [ ] `docs/ai/development-workflow/README.md` — add `06-retrospective-protocol.md` to the Core Protocols list and add a `/retrospective` row to the Commands By Stage table
+- [ ] `docs/workflow/development-workflow/README.md` — add `06-retrospective-protocol.md` to the Core Protocols list and add a `/retrospective` row to the Commands By Stage table
 - [ ] `AGENTS.md` — add a `/retrospective` row to the Workflow Commands table and the Maintenance Commands or a new "Analysis" section
 
 ---
@@ -91,13 +91,13 @@ No seed data is required. The retrospective protocol operates on existing GitHub
 
 ## Implementation Order
 
-1. Create `docs/ai/development-workflow/protocols/06-retrospective-protocol.md` — the core protocol document
-2. Update `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — defer retrospective suggestion to post-merge (Step 6 does NOT immediately suggest; defers until human confirms PRs merged)
-3. Update `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` — defer retrospective suggestion to post-merge (Step 6 does NOT immediately suggest; defers until human confirms PR merged; suppressed entirely when `BATCH_CONTEXT=true`)
+1. Create `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md` — the core protocol document
+2. Update `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — defer retrospective suggestion to post-merge (Step 6 does NOT immediately suggest; defers until human confirms PRs merged)
+3. Update `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — defer retrospective suggestion to post-merge (Step 6 does NOT immediately suggest; defers until human confirms PR merged; suppressed entirely when `BATCH_CONTEXT=true`)
 4. Create `.claude/commands/retrospective.md` — Claude Code command
 5. Create `.cursor/agents/retrospective.md` — Cursor agent
 6. Create `.codex/skills/workflow-retrospective/SKILL.md` and `.codex/skills/workflow-retrospective/agents/openai.yaml` — Codex skill
-7. Update `docs/ai/development-workflow/README.md` — add protocol and command references
+7. Update `docs/workflow/development-workflow/README.md` — add protocol and command references
 8. Update `AGENTS.md` — add `/retrospective` to workflow commands table
 9. Verify smoke test runbook
 10. Update CHANGELOG

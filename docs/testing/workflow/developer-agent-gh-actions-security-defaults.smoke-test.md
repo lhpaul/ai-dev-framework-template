@@ -12,7 +12,7 @@
 Before running this smoke test:
 
 - [ ] The implementation PR for #200 has been merged into `develop` (or you are reviewing the feature branch pre-merge)
-- [ ] Local checkout includes `docs/ai/development-workflow/protocols/03-implement-development-protocol.md`
+- [ ] Local checkout includes `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md`
 
 ---
 
@@ -20,7 +20,7 @@ Before running this smoke test:
 
 | Item | Value |
 |---|---|
-| Canonical protocol | `docs/ai/development-workflow/protocols/03-implement-development-protocol.md` |
+| Canonical protocol | `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` |
 | Workflow glob | `.github/workflows/*.yml` |
 
 ---
@@ -31,7 +31,7 @@ Before running this smoke test:
 
 **Maps to**: Acceptance criterion — “clearly titled section … for **GitHub Actions workflow security**”
 
-1. Open `docs/ai/development-workflow/protocols/03-implement-development-protocol.md`.
+1. Open `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md`.
 2. Locate a top-level `##` heading whose title includes **GitHub Actions** and **workflow** / **security** (exact wording may vary slightly but must be unambiguous).
 3. Confirm the section appears **before** `## Path 1: Full Pipeline` (so it is not hidden deep inside one path only).
 

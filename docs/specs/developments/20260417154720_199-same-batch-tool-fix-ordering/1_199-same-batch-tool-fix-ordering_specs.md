@@ -157,7 +157,7 @@ item ahead of its consumers or surface a human confirmation gate before parallel
   - `scripts/development-workflow/pr-ci-loop.sh`
   - `scripts/development-workflow/batch-merge.sh`
   - `scripts/development-workflow/post-merge-cleanup.sh`
-  - Any file matching the glob `docs/ai/development-workflow/protocols/*.md`
+  - Any file matching the glob `docs/workflow/development-workflow/protocols/*.md`
   - `.ai-dev-workflow.yaml`
 - **Serialize-first is the default**: when a tool-fix item and a consumer item are in the same
   candidate batch, the tool-fix item must be dispatched in its own serial sub-batch first. The
@@ -195,9 +195,9 @@ item ahead of its consumers or surface a human confirmation gate before parallel
   and `TOOL_FIX_FILES=` containing the exact repo-relative path
   `scripts/development-workflow/pr-ci-loop.sh` (exact-path match, not a substring).
 - [ ] When `workflow-batch-plan.sh` is run against a development folder whose spec/plan document
-  references a `docs/ai/development-workflow/protocols/*.md` file, the output includes
+  references a `docs/workflow/development-workflow/protocols/*.md` file, the output includes
   `TOOL_FIX=yes` and `TOOL_FIX_FILES=` containing the exact matched protocol file path
-  (e.g., `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`),
+  (e.g., `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`),
   matched via string equality or an anchored regex.
 - [ ] When `workflow-batch-plan.sh` is run against a development folder whose spec/plan document
   references `scripts/development-workflow/batch-merge.sh`, the output includes `TOOL_FIX=yes`

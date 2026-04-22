@@ -118,7 +118,7 @@ Where `<PROJECT_NUMBER>` is the project number (find it via `gh project list`) a
 
 **`linear`**: Use the Linear MCP tool to list open issues in the relevant team or project. See [`integrations/linear.md`](../integrations/linear.md) for setup details.
 
-**`jira`**, **`clickup`**, **`notion`**: Use their respective MCP tools or APIs to fetch open backlog items (see integration guides in `docs/ai/development-workflow/integrations/` if available).
+**`jira`**, **`clickup`**, **`notion`**: Use their respective MCP tools or APIs to fetch open backlog items (see integration guides in `docs/workflow/development-workflow/integrations/` if available).
 
 **`none`** or provider unavailable: Skip this substep and note in the presentation that no tracker check was performed.
 
@@ -271,7 +271,7 @@ rm -f "$TEMP_FILE"
 
 **`linear`**: Use the Linear MCP tool to read the issue description, append the new observation section, and update the issue. See [`integrations/linear.md`](../integrations/linear.md) for setup details.
 
-**`jira`**, **`clickup`**, **`notion`**: Use their respective MCP tools or APIs to read and update the issue body (see integration guides in `docs/ai/development-workflow/integrations/` if available).
+**`jira`**, **`clickup`**, **`notion`**: Use their respective MCP tools or APIs to read and update the issue body (see integration guides in `docs/workflow/development-workflow/integrations/` if available).
 
 **`none`** or provider unavailable: Fall back to **Create new** and note that the existing item could not be expanded programmatically.
 
