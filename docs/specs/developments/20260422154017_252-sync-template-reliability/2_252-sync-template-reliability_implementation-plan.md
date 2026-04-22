@@ -136,7 +136,7 @@ All three sync-template artefacts must be updated to consume `sync-manifest.yaml
 
 - [ ] Create the directory `.codex/skills/workflow-sync-template/`.
 - [ ] Create `SKILL.md` as a thin wrapper that loads `.claude/commands/sync-template.md` and delegates to the same manifest-driven procedure. Follow the existing Codex skill pattern (see `.codex/skills/workflow-plan-writer/SKILL.md` for structure).
-- [ ] Register the skill in AGENTS.md under the Workflow Commands table row for `Sync framework updates`.
+- [ ] Register the skill in AGENTS.md under the Maintenance Commands table row for `Sync framework updates from template` (update the Codex column from `—` to `workflow-sync-template`).
 
 ---
 
