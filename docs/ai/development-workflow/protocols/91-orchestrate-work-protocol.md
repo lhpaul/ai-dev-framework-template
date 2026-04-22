@@ -251,29 +251,42 @@ This hook is advisory and not required for the guardrail to function. The Critic
   git -C /path/to/main-repo rev-parse --abbrev-ref HEAD
   ```
 
-- After the item reaches a terminal condition and **before** removing the worktree, verify the main working tree is still on the expected integration branch **and has no uncommitted modifications**. Resolve the expected branch from your workflow context (typically `develop` for this template, but use whatever `integration_branch` is configured for the repo):
+- After the item reaches a terminal condition and **before** removing the worktree, verify the main working tree is still on the expected integration branch **and has no uncommitted modifications**. This check mirrors Protocol 90 Step 5.2 — use the same four-case handling described there. Resolve the expected branch from your workflow context (typically `develop` for this template, but use whatever `integration_branch` is configured for the repo):
 
   ```bash
-  EXPECTED_BRANCH="<integration-branch>"  # e.g., develop (or main in repos configured that way)
+  INTEGRATION_BRANCH="<integration-branch>"  # e.g., develop (or main in repos configured that way)
   MAIN_BRANCH=$(git -C <main-repo-root> rev-parse --abbrev-ref HEAD)
-  if [ "$MAIN_BRANCH" != "$EXPECTED_BRANCH" ]; then
-    echo "ERROR: main working tree is on '$MAIN_BRANCH', expected '$EXPECTED_BRANCH'. Do not proceed — restore the main branch manually."
-    exit 1
-  fi
-
-  # Check for uncommitted modifications in the main working tree
   MAIN_STATUS=$(git -C <main-repo-root> status --porcelain)
-  if [ -n "$MAIN_STATUS" ]; then
-    echo "WARNING: main working tree has uncommitted modifications after worktree agent completed:"
+
+  if [ "$MAIN_BRANCH" != "$INTEGRATION_BRANCH" ] && [ -z "$MAIN_STATUS" ]; then
+    # Case 1: Wrong branch + clean — auto-correct and log guardrail violation
+    echo "GUARDRAIL: main working tree was on '$MAIN_BRANCH' after this agent completed. Expected '$INTEGRATION_BRANCH'. Auto-correcting."
+    echo "IMPORTANT: Record this as a guardrail violation in retrospective notes — the agent likely ran in the main tree instead of the worktree, or leaked a branch switch."
+    git -C <main-repo-root> switch "$INTEGRATION_BRANCH"
+    # Proceed normally after correction
+
+  elif [ "$MAIN_BRANCH" != "$INTEGRATION_BRANCH" ] && [ -n "$MAIN_STATUS" ]; then
+    # Case 2: Wrong branch + dirty — halt and escalate
+    echo "ERROR: main working tree is on '$MAIN_BRANCH' (expected '$INTEGRATION_BRANCH') AND has uncommitted modifications."
     echo "$MAIN_STATUS"
-    echo "Unexpected changes detected in the main working tree; these may indicate a leak and must be reviewed before proceeding."
+    echo "Do not proceed. The human must inspect, discard or commit these changes, and restore the main tree to '$INTEGRATION_BRANCH' before the next dispatch."
+    exit 1
+
+  elif [ "$MAIN_BRANCH" = "$INTEGRATION_BRANCH" ] && [ -z "$MAIN_STATUS" ]; then
+    # Case 3: Correct branch + clean — proceed normally
+    :
+
+  elif [ "$MAIN_BRANCH" = "$INTEGRATION_BRANCH" ] && [ -n "$MAIN_STATUS" ]; then
+    # Case 4: Correct branch + dirty — halt and escalate
+    echo "WARNING: main working tree is on '$INTEGRATION_BRANCH' but has uncommitted modifications:"
+    echo "$MAIN_STATUS"
     echo "Possible cause: a stage agent leaked file writes outside the worktree boundary."
-    echo "Do NOT commit or discard these changes without human review."
+    echo "Do NOT commit or discard these changes without human review. Do not dispatch additional agents."
     exit 1
   fi
   ```
 
-  If the branch is wrong or unexpected modifications are present, **stop and report to the human** rather than attempting an automated fix. The human must inspect and discard (or commit to a separate branch) any leaked changes before the next batch dispatch.
+  For Case 1, auto-correct is safe because the tree is clean — no uncommitted work is at risk. The guardrail violation must still be logged in retrospective notes because it indicates the isolation boundary was breached (the agent likely ran in the main tree rather than the worktree, or a stage protocol issued a branch-switching command that leaked into the main tree). For Cases 2 and 4, **stop and report to the human** — the human must inspect and resolve before the next batch dispatch.
 
 **Critical safety rule — Write and Edit paths inside a worktree**: Every `Write` and
 `Edit` tool call issued within an active worktree session **must** target a path under
