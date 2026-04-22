@@ -212,9 +212,9 @@ None — all changes are `git mv` and `sed`-style text substitutions.
 5. **Verify zero residual references**: run `find . -type f \( -name "*.md" -o -name "*.mdc" -o -name "*.yaml" -o -name "*.yml" -o -name "*.sh" -o -name "*.json" \) -not -path "./.git/*" -not -path "./.claude/worktrees/*" -not -path "./docs/specs/developments/20260422093111_251-rename-docs-ai-to-workflow/*" -not -path "./docs/testing/workflow/251-rename-docs-ai-to-workflow.smoke-test.md" -print0 | xargs -0 grep -n "docs/ai/"` and confirm empty output. If any remain, fix them. (The two excluded paths are self-referencing subject-matter files for this issue.)
 6. **Verify directory structure**: confirm `docs/workflow/development-workflow/`, `docs/workflow/setup/` exist and `docs/ai/` is gone.
 7. **Verify scripts work**: `bash -n scripts/development-workflow/workflow-batch-plan.sh` (syntax check); confirm `PROTOCOLS_PREFIX` variable now reads `docs/workflow/development-workflow/protocols/`.
-8. **Commit**: `refactor: rename docs/ai/ to docs/workflow/ (#251)`
-9. **Push and open draft PR**: targeting `develop`.
-10. **Update `CHANGELOG.md`** under `[Unreleased]`:
+8. **Update `CHANGELOG.md`** under `[Unreleased]` (before commit):
     ```
     - **Rename docs/ai/ to docs/workflow/** (#251): renamed the `docs/ai/` directory to `docs/workflow/` to clarify framework ownership. Updated all cross-references across agent definitions, Cursor/Codex wrappers, scripts, protocol files, and root documentation. No content changes — pure structural refactor.
     ```
+9. **Commit**: `refactor: rename docs/ai/ to docs/workflow/ (#251)`
+10. **Push and open draft PR**: targeting `develop`.
