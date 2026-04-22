@@ -134,6 +134,8 @@ fi
 
 If either check fails, **stop immediately** and report to the human. Do not attempt any merges with a dirty or mis-branched working tree — leaked modifications may be incorporated into merge commits and corrupt `develop`.
 
+**Defense-in-depth note**: Protocol 90 Step 5.2 runs an equivalent check immediately after each Work Item Runner returns — before any orchestrator action, including batch-merge handoff. This Step 3.5 check is a second line of defense for cases where Step 5.2 was not run (e.g., manual invocation of batch-merge, or a non-parallel-batch context). Both checks are required; neither substitutes for the other.
+
 ---
 
 ## Step 4: Sequential Merge Loop

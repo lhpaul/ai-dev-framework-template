@@ -524,6 +524,8 @@ This pattern also applies to PRs where an agent timed out mid-CI-loop: detect vi
 
 ### Step 5.2: Post-Agent Main Working Tree Verification (Parallel Batches Only)
 
+**Timing**: Run this check immediately after each Work Item Runner returns — **before** Step 5.1 (PR verification), before dispatching the next Work Item Runner, and before any orchestrator action that assumes the integration branch context (e.g., invoking batch-merge, pushing to `develop`). A leaked branch state in the main working tree can silently corrupt subsequent operations if not caught here.
+
 After each Work Item Runner returns in a **parallel batch**, immediately check the main working tree's branch and cleanliness. Handle all four postcondition states:
 
 ```bash
@@ -562,12 +564,12 @@ fi
 
 | Main branch | Main cleanliness | Action |
 |---|---|---|
-| Wrong branch | Clean | Auto-correct: `git switch <integration-branch>`. Log as guardrail violation in retrospective notes. Proceed normally. |
+| Wrong branch | Clean | Auto-correct: `git switch <integration-branch>`. Log as guardrail violation in retrospective notes — a wrong-branch + clean result typically means the agent ran in the main tree instead of its isolated worktree, or a stage protocol issued a branch-switching command that leaked out of the worktree boundary. Proceed normally after correction. |
 | Wrong branch | Dirty | Halt and escalate. Log full `git status --porcelain` output and item ID. Do not dispatch additional agents. |
 | Correct branch | Clean | Proceed normally. |
 | Correct branch | Dirty | Halt and escalate. Log full `git status --porcelain` output and item ID. Do not dispatch additional agents. |
 
-If the main working tree is clean and on the correct branch (Case 3), proceed normally with the next Work Item Runner or with Step 5.1 (PR verification).
+If the main working tree is clean and on the correct branch (Case 3), proceed normally with Step 5.1 (PR verification) and then with the next Work Item Runner dispatch if any remain in the batch.
 
 ### Retrospective notes during supervision
 
