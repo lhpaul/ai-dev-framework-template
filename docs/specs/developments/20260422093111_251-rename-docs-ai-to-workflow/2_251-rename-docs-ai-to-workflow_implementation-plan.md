@@ -143,8 +143,8 @@ All substitutions replace the literal string `docs/ai/` with `docs/workflow/` (a
 
 #### docs/specs and docs/testing historical archive
 
-- [ ] All `*.md` files under `docs/specs/developments/` that contain `docs/ai/` references — these are historical plan/spec documents and must stay internally consistent after the rename
-- [ ] All `*.md` files under `docs/testing/workflow/` that contain `docs/ai/` references
+- [ ] All `*.md` files under `docs/specs/developments/` that contain `docs/ai/` references — **excluding** `docs/specs/developments/20260422093111_251-rename-docs-ai-to-workflow/` (this plan file itself uses `docs/ai/` as subject matter describing the rename)
+- [ ] All `*.md` files under `docs/testing/workflow/` that contain `docs/ai/` references — **excluding** `docs/testing/workflow/251-rename-docs-ai-to-workflow.smoke-test.md` (uses `docs/ai/` as subject matter in verification steps)
 
 #### docs/workflow/ internal self-references
 
@@ -166,7 +166,7 @@ After the rename, the protocol and README files that previously lived under `doc
 3. Cross-references in agent definitions, commands, and scripts resolve to valid paths
 4. `workflow-batch-plan.sh` can be invoked and correctly constructs protocol file paths using the new `docs/workflow/development-workflow/protocols/` prefix
 5. `sync-template` command's "always-sync" list shows `docs/workflow/` not `docs/ai/`
-6. `find . -type f \( -name "*.md" -o -name "*.mdc" -o -name "*.yaml" -o -name "*.yml" -o -name "*.sh" -o -name "*.json" \) -not -path "./.git/*" -not -path "./.claude/worktrees/*" -print0 | xargs -0 grep -l "docs/ai/"` returns no matches (zero residual references)
+6. `find . -type f \( -name "*.md" -o -name "*.mdc" -o -name "*.yaml" -o -name "*.yml" -o -name "*.sh" -o -name "*.json" \) -not -path "./.git/*" -not -path "./.claude/worktrees/*" -not -path "./docs/specs/developments/20260422093111_251-rename-docs-ai-to-workflow/*" -not -path "./docs/testing/workflow/251-rename-docs-ai-to-workflow.smoke-test.md" -print0 | xargs -0 grep -l "docs/ai/"` returns no matches (zero residual references outside of the self-referencing plan/smoke-test files for this issue)
 
 **Smoke test runbook**: `docs/testing/workflow/251-rename-docs-ai-to-workflow.smoke-test.md`
 
@@ -190,7 +190,7 @@ None — this is a pure structural refactor with no runtime data.
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| Missed reference (residual `docs/ai/` after rename) | Medium | Medium | Run `find . -type f \( -name "*.md" -o -name "*.mdc" -o -name "*.yaml" -o -name "*.yml" -o -name "*.sh" -o -name "*.json" \) -not -path "./.git/*" -not -path "./.claude/worktrees/*" -print0 \| xargs -0 grep -n "docs/ai/"` after all substitutions and verify zero output |
+| Missed reference (residual `docs/ai/` after rename) | Medium | Medium | Run the `find` command from Implementation Order step 5 (includes self-referencing exclusions) after all substitutions and verify zero output |
 | `workflow-batch-plan.sh` breaks at runtime | Low | High | PROTOCOLS_PREFIX variable is the single point to update; verify script can list protocol files from the new path |
 | `sync-template` sync list out of date | Low | Medium | Both `.claude/commands/sync-template.md` and `.claude/skills/sync-template.md` have their always-sync path list updated as part of this work |
 | Historical docs/specs files out of sync | Low | Low | Archive files are informational only; update them for consistency but no tooling depends on their paths |
@@ -207,9 +207,9 @@ None — all changes are `git mv` and `sed`-style text substitutions.
 
 1. **Fetch and verify baseline**: run `git fetch origin && git status` to confirm clean worktree on `refactor/251-rename-docs-ai-to-workflow` (from `develop`).
 2. **Rename the directory**: `git mv docs/ai docs/workflow` — this moves the entire subtree and stages the rename for commit.
-3. **Update cross-references in all non-docs/workflow files**: use a global search-and-replace of `docs/ai/` → `docs/workflow/` (and `docs/ai` → `docs/workflow` where the trailing slash is absent) across all tracked files listed in the Layer-by-Layer section above. Do not modify files under `.claude/worktrees/` or `.git/`.
+3. **Update cross-references in all non-docs/workflow files**: use a global search-and-replace of `docs/ai/` → `docs/workflow/` (and `docs/ai` → `docs/workflow` where the trailing slash is absent) across all tracked files listed in the Layer-by-Layer section above. Do not modify files under `.claude/worktrees/` or `.git/`. **Exception**: do NOT substitute inside `docs/specs/developments/20260422093111_251-rename-docs-ai-to-workflow/` or `docs/testing/workflow/251-rename-docs-ai-to-workflow.smoke-test.md` — these two files use `docs/ai/` as subject matter describing the rename and must keep those references unchanged.
 4. **Update internal self-references inside the renamed tree**: run the same substitution for `*.md` files under `docs/workflow/` that still reference the old `docs/ai/` path.
-5. **Verify zero residual references**: run `find . -type f \( -name "*.md" -o -name "*.mdc" -o -name "*.yaml" -o -name "*.yml" -o -name "*.sh" -o -name "*.json" \) -not -path "./.git/*" -not -path "./.claude/worktrees/*" -print0 | xargs -0 grep -n "docs/ai/"` and confirm empty output. If any remain, fix them.
+5. **Verify zero residual references**: run `find . -type f \( -name "*.md" -o -name "*.mdc" -o -name "*.yaml" -o -name "*.yml" -o -name "*.sh" -o -name "*.json" \) -not -path "./.git/*" -not -path "./.claude/worktrees/*" -not -path "./docs/specs/developments/20260422093111_251-rename-docs-ai-to-workflow/*" -not -path "./docs/testing/workflow/251-rename-docs-ai-to-workflow.smoke-test.md" -print0 | xargs -0 grep -n "docs/ai/"` and confirm empty output. If any remain, fix them. (The two excluded paths are self-referencing subject-matter files for this issue.)
 6. **Verify directory structure**: confirm `docs/workflow/development-workflow/`, `docs/workflow/setup/` exist and `docs/ai/` is gone.
 7. **Verify scripts work**: `bash -n scripts/development-workflow/workflow-batch-plan.sh` (syntax check); confirm `PROTOCOLS_PREFIX` variable now reads `docs/workflow/development-workflow/protocols/`.
 8. **Commit**: `refactor: rename docs/ai/ to docs/workflow/ (#251)`
