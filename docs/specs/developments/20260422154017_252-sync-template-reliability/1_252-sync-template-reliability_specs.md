@@ -4,6 +4,29 @@
 
 ---
 
+## Brief Coverage (issue #252)
+
+Brief objectives extracted from the issue description, mapped to spec coverage:
+
+| Brief objective | Spec coverage |
+|---|---|
+| Introduce a machine-readable manifest (e.g., `sync-manifest.yaml`) as the authoritative list of always-sync vs. project-specific files | AC-1, AC-2, AC-5, AC-6, AC-7; BR-1, BR-5, BR-7 |
+| Annotate template-owned sections in mixed-content files (structured markers or separate include files) so the sync tool can identify exactly what needs updating | AC-3, Use Case 3; BR-3, BR-6 |
+| Refactor the sync skill/command to consume the manifest rather than embed the file list inline | AC-1, AC-2; BR-1, BR-7 |
+| Reduce cognitive load and make it harder to accidentally skip files | AC-5; BR-2, BR-7; UX Rules |
+| Graceful fallback when manifest is absent | AC-4; BR-4 |
+| Changes must remain compatible with all supported AI tools (Claude Code, Cursor, Codex) | BR-5 |
+| Use `docs/workflow/` paths throughout (post-#251 rename) | Scope note; no separate AC required — paths appear only in plan/implementation artefacts, not in product spec |
+
+**Deferral notes**:
+
+- "Use `docs/workflow/` paths throughout": This is an implementation-level path
+  convention, not a product requirement. The spec is product-focused and does not
+  contain file-system paths. The plan and implementation will use `docs/workflow/`
+  paths as required. No deferral to Out of Scope needed.
+
+---
+
 ## Overview
 
 Downstream repositories that adopt this template must periodically pull in
