@@ -1,3 +1,4 @@
+# <!-- TEMPLATE-OWNED-START -->
 # AI Development Workflow Configuration
 #
 # This file declares which workflow integrations this repository uses.
@@ -17,6 +18,7 @@
 # Behavior for automated PR review:
 # - If this file is absent, or review.platforms is omitted or empty, the review
 #   loop reports skipped (not configured).
+# <!-- TEMPLATE-OWNED-END -->
 
 schema_version: 1
 
