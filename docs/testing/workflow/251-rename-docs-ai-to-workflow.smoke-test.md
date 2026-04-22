@@ -43,20 +43,23 @@ test -d docs/workflow/setup && echo "PASS: setup dir present" || echo "FAIL: set
 ### Step 2: Verify zero residual `docs/ai/` references
 
 ```bash
-grep -r "docs/ai/" . \
-  --include="*.md" --include="*.mdc" --include="*.yaml" --include="*.yml" \
-  --include="*.sh" --include="*.json" \
-  --exclude-dir=.git --exclude-dir=.claude \
-  | wc -l
+find . -type f \
+  \( -name "*.md" -o -name "*.mdc" -o -name "*.yaml" -o -name "*.yml" \
+     -o -name "*.sh" -o -name "*.json" \) \
+  -not -path "./.git/*" \
+  -not -path "./.claude/worktrees/*" \
+  -print0 | xargs -0 grep -l "docs/ai/" | wc -l
 ```
 
 **Expected result**: Output is `0`. Any non-zero count is a failure; inspect with:
 
 ```bash
-grep -r "docs/ai/" . \
-  --include="*.md" --include="*.mdc" --include="*.yaml" --include="*.yml" \
-  --include="*.sh" --include="*.json" \
-  --exclude-dir=.git --exclude-dir=.claude
+find . -type f \
+  \( -name "*.md" -o -name "*.mdc" -o -name "*.yaml" -o -name "*.yml" \
+     -o -name "*.sh" -o -name "*.json" \) \
+  -not -path "./.git/*" \
+  -not -path "./.claude/worktrees/*" \
+  -print0 | xargs -0 grep -n "docs/ai/"
 ```
 
 ### Step 3: Verify key protocol files are accessible at new paths
@@ -101,9 +104,11 @@ grep "docs/ai" .claude/agents/*.md | wc -l
 ```bash
 grep "docs/workflow/development-workflow" AGENTS.md | wc -l
 grep "docs/ai" AGENTS.md | wc -l
+grep "docs/workflow/development-workflow" README.md | wc -l
+grep "docs/ai" README.md | wc -l
 ```
 
-**Expected result**: First count is greater than 0; second count is 0.
+**Expected result**: First and third counts are greater than 0; second and fourth counts are 0.
 
 ---
 
