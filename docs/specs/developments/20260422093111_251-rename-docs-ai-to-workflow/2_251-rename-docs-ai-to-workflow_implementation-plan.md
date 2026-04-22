@@ -21,8 +21,8 @@
 | Check | Command / query | Result |
 |---|---|---|
 | Repo revision | `git rev-parse --short HEAD` (in main repo) | `a3ea49c` |
-| Files with `docs/ai/` refs (excl. worktrees) | `grep -rn "docs/ai/" --include="*.md" --include="*.yaml" --include="*.yml" --include="*.sh" --include="*.json" --exclude-dir=".claude" --exclude-dir=".git" -l` | 98 files |
-| Total `docs/ai/` occurrences (excl. worktrees) | `grep -rn "docs/ai/" ... | wc -l` | 388 occurrences |
+| Files with `docs/ai/` refs (excl. worktrees) | `grep -rn "docs/ai/" --include="*.md" --include="*.mdc" --include="*.yaml" --include="*.yml" --include="*.sh" --include="*.json" --exclude-dir=".claude" --exclude-dir=".git" -l` | 108 files |
+| Total `docs/ai/` occurrences (excl. worktrees) | `grep -rn "docs/ai/" ... | wc -l` | 396 occurrences |
 | Files with `docs/ai/` refs (non-docs/ai, non-specs, non-testing, non-codex, non-cursor) | filtered grep | 30 files (root + scripts) |
 | Hardcoded `docs/ai/` literals in scripts | `grep -rn "docs/ai/" scripts/ --include="*.sh"` | 4 occurrences in 2 files: `workflow-batch-plan.sh` (line 45 + comment line 90), `add-backlog-item.sh` (lines 108 + 113) |
 | `sync-template` command path list | grep in `.claude/commands/sync-template.md` and `.claude/skills/sync-template.md` | Both list `docs/ai/` in "always-sync" and in commit example |
@@ -85,7 +85,7 @@ All substitutions replace the literal string `docs/ai/` with `docs/workflow/` (a
 - [ ] `.codex/skills/workflow-spec-reviewer/SKILL.md`
 - [ ] `.codex/skills/workflow-spec-writer/SKILL.md`
 
-#### Cursor agents and commands
+#### Cursor agents, commands, and rules
 
 - [ ] `.cursor/agents/automated-reviewer-loop.md`
 - [ ] `.cursor/agents/code-reviewer.md`
@@ -115,6 +115,8 @@ All substitutions replace the literal string `docs/ai/` with `docs/workflow/` (a
 - [ ] `.cursor/commands/run-work.md`
 - [ ] `.cursor/commands/setup-project.md`
 - [ ] `.cursor/commands/sync-template.md`
+- [ ] `.cursor/rules/workflow.mdc` — 7 `docs/ai/` references (workflow README + 5 protocol links + review-wrappers note)
+- [ ] `.cursor/rules/documentation.mdc` — 1 `docs/ai/` reference (directory description table)
 
 #### Root documentation
 
@@ -188,7 +190,7 @@ None — this is a pure structural refactor with no runtime data.
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| Missed reference (residual `docs/ai/` after rename) | Medium | Medium | Run `grep -r "docs/ai/" . --exclude-dir=.git --exclude-dir=.claude` after all substitutions and verify zero output |
+| Missed reference (residual `docs/ai/` after rename) | Medium | Medium | Run `grep -r "docs/ai/" . --include="*.md" --include="*.mdc" --include="*.yaml" --include="*.yml" --include="*.sh" --include="*.json" --exclude-dir=.git --exclude-dir=.claude` after all substitutions and verify zero output |
 | `workflow-batch-plan.sh` breaks at runtime | Low | High | PROTOCOLS_PREFIX variable is the single point to update; verify script can list protocol files from the new path |
 | `sync-template` sync list out of date | Low | Medium | Both `.claude/commands/sync-template.md` and `.claude/skills/sync-template.md` have their always-sync path list updated as part of this work |
 | Historical docs/specs files out of sync | Low | Low | Archive files are informational only; update them for consistency but no tooling depends on their paths |
@@ -207,7 +209,7 @@ None — all changes are `git mv` and `sed`-style text substitutions.
 2. **Rename the directory**: `git mv docs/ai docs/workflow` — this moves the entire subtree and stages the rename for commit.
 3. **Update cross-references in all non-docs/workflow files**: use a global search-and-replace of `docs/ai/` → `docs/workflow/` (and `docs/ai` → `docs/workflow` where the trailing slash is absent) across all tracked files listed in the Layer-by-Layer section above. Do not modify files under `.claude/worktrees/` or `.git/`.
 4. **Update internal self-references inside the renamed tree**: run the same substitution for `*.md` files under `docs/workflow/` that still reference the old `docs/ai/` path.
-5. **Verify zero residual references**: run `grep -r "docs/ai/" . --include="*.md" --include="*.yaml" --include="*.yml" --include="*.sh" --include="*.json" --exclude-dir=.git --exclude-dir=.claude` and confirm empty output. If any remain, fix them.
+5. **Verify zero residual references**: run `grep -r "docs/ai/" . --include="*.md" --include="*.mdc" --include="*.yaml" --include="*.yml" --include="*.sh" --include="*.json" --exclude-dir=.git --exclude-dir=.claude` and confirm empty output. If any remain, fix them.
 6. **Verify directory structure**: confirm `docs/workflow/development-workflow/`, `docs/workflow/setup/` exist and `docs/ai/` is gone.
 7. **Verify scripts work**: `bash -n scripts/development-workflow/workflow-batch-plan.sh` (syntax check); confirm `PROTOCOLS_PREFIX` variable now reads `docs/workflow/development-workflow/protocols/`.
 8. **Commit**: `refactor: rename docs/ai/ to docs/workflow/ (#251)`

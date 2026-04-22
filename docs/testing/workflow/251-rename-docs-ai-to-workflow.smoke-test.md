@@ -44,7 +44,7 @@ test -d docs/workflow/setup && echo "PASS: setup dir present" || echo "FAIL: set
 
 ```bash
 grep -r "docs/ai/" . \
-  --include="*.md" --include="*.yaml" --include="*.yml" \
+  --include="*.md" --include="*.mdc" --include="*.yaml" --include="*.yml" \
   --include="*.sh" --include="*.json" \
   --exclude-dir=.git --exclude-dir=.claude \
   | wc -l
@@ -54,7 +54,7 @@ grep -r "docs/ai/" . \
 
 ```bash
 grep -r "docs/ai/" . \
-  --include="*.md" --include="*.yaml" --include="*.yml" \
+  --include="*.md" --include="*.mdc" --include="*.yaml" --include="*.yml" \
   --include="*.sh" --include="*.json" \
   --exclude-dir=.git --exclude-dir=.claude
 ```
