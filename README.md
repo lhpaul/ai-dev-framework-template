@@ -77,7 +77,7 @@ The setup agent will have a structured conversation with you to understand your 
 │   │   ├── 3-testing.md                   # Testing standards
 │   │   └── STACK-SPECIFIC.md              # PLACEHOLDER (fill via setup agent)
 │   │
-│   └── ai/
+│   └── workflow/
 │       └── development-workflow/
 │           ├── README.md                  # Master workflow document
 │           ├── agent-model-config.md      # Model tier policy and overrides
