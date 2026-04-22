@@ -195,7 +195,7 @@ This feature affects documentation-format artefacts (Markdown, YAML). There is n
 5. Update `.claude/skills/sync-template.md` with the same changes as step 4 (skills mirror commands).
 6. Update `.cursor/commands/sync-template.md` with the same changes as step 4.
 7. Create `.codex/skills/workflow-sync-template/SKILL.md` thin wrapper.
-8. Update project docs per **Documentation Updates** section above (`AGENTS.md` Workflow Commands table, `docs/workflow/development-workflow/README.md` Maintenance Commands table).
+8. Update project docs per **Documentation Updates** section above: update `AGENTS.md` Maintenance Commands table — add `workflow-sync-template` to the Codex column of the "Sync framework updates from template" row.
 9. Verify smoke test runbook (`docs/testing/workflow/252-sync-template-reliability.smoke-test.md`).
 10. Update `CHANGELOG.md` under `[Unreleased]`:
     ```
