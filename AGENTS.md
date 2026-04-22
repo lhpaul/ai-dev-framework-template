@@ -46,6 +46,7 @@ Always refer to these docs for authoritative guidance:
 
 ---
 
+<!-- TEMPLATE-OWNED-START -->
 ## Development Workflow
 
 This project uses a staged AI-assisted development workflow. See [`docs/workflow/development-workflow/README.md`](docs/workflow/development-workflow/README.md) for the full specification.
@@ -89,8 +90,10 @@ For normal Codex usage, start with `workflow-orchestrator`. It is the primary po
 
 | Task | Claude Code | Cursor | Codex |
 |---|---|---|---|
-| Sync framework updates from template | `/sync-template` | `/sync-template` | — |
+| Sync framework updates from template | `/sync-template` | `/sync-template` | `workflow-sync-template` skill |
 | Post-merge cleanup (fetch, develop, pull, delete local branch; update issue tracker) | `/post-merge-cleanup` | `/post-merge-cleanup` | `post-merge-cleanup` skill |
+
+<!-- TEMPLATE-OWNED-END -->
 
 ---
 

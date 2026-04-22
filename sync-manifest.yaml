@@ -1,0 +1,117 @@
+# sync-manifest.yaml
+# Authoritative list of all framework-managed files and their sync category.
+# Consumed by sync-template artefacts (Claude Code, Cursor, Codex) at runtime.
+#
+# Schema version: 1
+#
+# Categories:
+#   always_sync       - Framework-owned files. Must be kept in sync with the upstream template.
+#                       The agent presents all out-of-date entries to the maintainer before
+#                       applying; the maintainer may decline individual files but no always-sync
+#                       file with a diff may be silently omitted from the summary (BR-2, BR-7).
+#   special_handling  - Files that may have project-specific customisations.
+#                       Always show the full diff; the maintainer decides per file.
+#   project_specific  - Files owned by the downstream project. Never overwrite.
+#                       The agent may propose additive updates but must preserve all
+#                       project-specific content. Files with mixed_content: true contain
+#                       both template-owned and project-owned sections separated by
+#                       annotation markers (see annotation_scheme below).
+#
+# Annotation schemes (used in mixed_content files):
+#   html_comments     - Markers in Markdown files:
+#                         <!-- TEMPLATE-OWNED-START --> ... <!-- TEMPLATE-OWNED-END -->
+#                       Markers in YAML files (must be wrapped in YAML comment syntax):
+#                         # <!-- TEMPLATE-OWNED-START --> ... # <!-- TEMPLATE-OWNED-END -->
+#
+# NOTE: If a new framework file is added to the template, add a corresponding entry here.
+# Files absent from this manifest will not be included in always-sync batches.
+# (CI-enforced manifest completeness is out of scope for this iteration — see issue #252.)
+
+schema_version: 1
+
+categories:
+  always_sync:
+    - path: REVIEW.md
+      note: canonical review contract for spec, plan, and code review gates
+    - path: docs/workflow/
+      glob: "**/*"
+      note: full workflow documentation tree (all files recursively)
+    - path: .claude/agents/
+      glob: "*.md"
+      note: Claude Code agent definitions
+    - path: .claude/commands/
+      glob: "*.md"
+      note: Claude Code slash commands
+    - path: .claude/skills/
+      glob: "*.md"
+      note: Claude Code skills
+    - path: .codex/skills/
+      glob: "**/*"
+      note: Codex skill trees shipped with the template (SKILL.md and assets)
+    - path: .cursor/commands/
+      glob: "*.md"
+      note: Cursor slash commands
+    - path: .cursor/agents/
+      glob: "*.md"
+      note: Cursor subagent definitions
+    - path: .cursor/rules/
+      glob: "*.mdc"
+      note: Cursor rules files
+    - path: scripts/development-workflow/
+      glob: "**/*"
+      note: workflow helper scripts (state inspection, PR/CI loops, etc.)
+    - path: scripts/README.md
+      note: purpose and usage of scripts in scripts/
+    - path: docs/best-practices/1-general.md
+      note: general coding standards
+    - path: docs/best-practices/2-version-control.md
+      note: git and branching conventions
+    - path: docs/best-practices/3-testing.md
+      note: testing standards
+
+  special_handling:
+    - path: .claude/settings.json
+      note: may have project-specific tool permissions
+    - path: .claude/settings.local.json.example
+      note: local settings example file
+    - path: .github/workflows/auto-tag-release.yml
+      note: automated release tagging; add if CI is set up
+    - path: .github/workflows/deploy.yml
+      note: placeholder deployment workflow; customize with project-specific deploy logic
+    - path: .github/workflows/e2e-regression.yml
+      note: label-gated e2e/regression placeholder; customize with project-specific test logic
+    - path: e2e/
+      glob: "**/*"
+      note: placeholder e2e/regression test project (Playwright); customize with project-specific tests
+
+  project_specific:
+    - path: AGENTS.md
+      mixed_content: true
+      annotation_scheme: html_comments
+      note: >
+        workflow table (## Development Workflow section) is template-owned;
+        project fills in ## Project Overview and ## Repository Structure sections
+    - path: README.md
+      note: project-specific README; template version is a starting point only
+    - path: CHANGELOG.md
+      note: project maintains its own changelog; never overwrite
+    - path: .ai-dev-workflow.yaml
+      mixed_content: true
+      annotation_scheme: html_comments
+      note: >
+        schema description comments are template-owned;
+        provider selections (platforms, internal_reviewers, etc.) are project-specific
+    - path: docs/project/
+      glob: "**/*"
+      note: project domain docs; entirely project-specific
+    - path: docs/best-practices/STACK-SPECIFIC.md
+      note: stack summary; project fills in its own technology choices
+    - path: docs/best-practices/stack/
+      glob: "**/*"
+      note: per-technology convention files; project-specific
+    - path: .gitignore
+      note: project-specific ignore rules
+    - path: CLAUDE.md
+      note: symlink to AGENTS.md; project-specific
+    - path: GEMINI.md
+      note: symlink to AGENTS.md; project-specific
