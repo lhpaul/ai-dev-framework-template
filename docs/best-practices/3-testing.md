@@ -40,7 +40,7 @@ Smoke tests validate key user journeys in a running environment. They are define
 docs/testing/[app-or-section]/[feature-slug].smoke-test.md
 ```
 
-See the [smoke test runbook template](../ai/development-workflow/templates/smoke-test-runbook-template.md) for the standard format, and [docs/testing/README.md](../testing/README.md) for how to execute them in this repo.
+See the [smoke test runbook template](../workflow/development-workflow/templates/smoke-test-runbook-template.md) for the standard format, and [docs/testing/README.md](../testing/README.md) for how to execute them in this repo.
 
 Smoke tests should be run:
 - Before every release

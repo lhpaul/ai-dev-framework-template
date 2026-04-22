@@ -26,13 +26,13 @@ Coding standards and conventions. Stack-specific practices are generated during 
 
 | File | Description |
 |---|---|
-| [ai/development-workflow/README.md](ai/development-workflow/README.md) | Master workflow document — start here |
-| [ai/development-workflow/agent-model-config.md](ai/development-workflow/agent-model-config.md) | Model tier policy and override guidance |
+| [ai/development-workflow/README.md](workflow/development-workflow/README.md) | Master workflow document — start here |
+| [ai/development-workflow/agent-model-config.md](workflow/development-workflow/agent-model-config.md) | Model tier policy and override guidance |
 | [.ai-dev-workflow.yaml](../.ai-dev-workflow.yaml) | Repo-level workflow integration manifest |
-| [ai/development-workflow/protocols/](ai/development-workflow/protocols/) | Canonical stage-by-stage protocols |
-| [ai/development-workflow/templates/](ai/development-workflow/templates/) | Document templates (spec, plan, smoke test) |
-| [ai/development-workflow/integrations/](ai/development-workflow/integrations/) | Optional tool integrations |
-| [ai/setup/protocol.md](ai/setup/protocol.md) | Project setup protocol (onboarding) |
+| [ai/development-workflow/protocols/](workflow/development-workflow/protocols/) | Canonical stage-by-stage protocols |
+| [ai/development-workflow/templates/](workflow/development-workflow/templates/) | Document templates (spec, plan, smoke test) |
+| [ai/development-workflow/integrations/](workflow/development-workflow/integrations/) | Optional tool integrations |
+| [ai/setup/protocol.md](workflow/setup/protocol.md) | Project setup protocol (onboarding) |
 
 ## Feature Specs
 

@@ -6,7 +6,7 @@
 
 **Audience**: AI agents running smoke tests (smoke-tester agent, Cursor run-smoke-test command, or equivalent).
 
-The smoke test *process* (inputs, output format, pass criteria, fail handling) is defined in the [Smoke Test Protocol](../ai/development-workflow/protocols/04-smoke-test-protocol.md). This guide covers **how** to execute tests in this specific repo.
+The smoke test *process* (inputs, output format, pass criteria, fail handling) is defined in the [Smoke Test Protocol](../workflow/development-workflow/protocols/04-smoke-test-protocol.md). This guide covers **how** to execute tests in this specific repo.
 
 If this repository has a preferred browser automation provider, declare it in `.ai-dev-workflow.yaml` under `browser_automation.provider`.
 
@@ -186,4 +186,4 @@ rm -f /tmp/smoke-test*.mjs && rm -rf /tmp/smoke-screenshots
 
 ## References
 
-- **Smoke test process and output format**: [Smoke Test Protocol](../ai/development-workflow/protocols/04-smoke-test-protocol.md)
+- **Smoke test process and output format**: [Smoke Test Protocol](../workflow/development-workflow/protocols/04-smoke-test-protocol.md)
