@@ -10,7 +10,7 @@
 **Approach**: Rename the `docs/ai/` directory tree to `docs/workflow/` and update every cross-reference in the repository — across agent definitions, Cursor/Codex wrappers, scripts, protocol files, AGENTS.md, README.md, REVIEW.md, CHANGELOG.md, and the sync-template command — to point to `docs/workflow/`. The rename itself is performed with `git mv`; all cross-reference updates are pure text substitutions with no content changes. The sync-template command and `workflow-batch-plan.sh` script contain hardcoded `docs/ai/` path literals that must be updated so the tooling continues to work correctly.
 
 **Estimated complexity**: M
-**Rationale**: Large surface area (388 cross-reference occurrences across ~100 tracked files) but changes are entirely mechanical text substitutions. No logic changes. Some care required to update the sync-template command's "always-sync" path list and to update spec/plan/smoke-test historical archive files that reference the old path.
+**Rationale**: Large surface area (430 cross-reference occurrences across 131 tracked files, excluding `.claude/worktrees/` and `.git/`) but changes are entirely mechanical text substitutions. No logic changes. Some care required to update the sync-template command's "always-sync" path list and to update spec/plan/smoke-test historical archive files that reference the old path.
 
 **Dependencies**: None
 
