@@ -21,8 +21,8 @@
 | Check | Command / query | Result |
 |---|---|---|
 | Repo revision | `git rev-parse --short HEAD` (in main repo) | `a3ea49c` |
-| Files with `docs/ai/` refs (excl. worktrees) | `grep -rn "docs/ai/" --include="*.md" --include="*.mdc" --include="*.yaml" --include="*.yml" --include="*.sh" --include="*.json" --exclude-dir=".claude" --exclude-dir=".git" -l` | 108 files |
-| Total `docs/ai/` occurrences (excl. worktrees) | `grep -rn "docs/ai/" ... | wc -l` | 396 occurrences |
+| Files with `docs/ai/` refs (excl. `.claude/worktrees/` and `.git/`) | `find . -type f \( -name "*.md" -o -name "*.mdc" -o -name "*.yaml" -o -name "*.yml" -o -name "*.sh" -o -name "*.json" \) -not -path "./.git/*" -not -path "./.claude/worktrees/*" -print0 \| xargs -0 grep -l "docs/ai/" \| wc -l` | 131 files |
+| Total `docs/ai/` occurrences (excl. `.claude/worktrees/` and `.git/`) | same `find` pipeline with `-c` and `awk` sum | 430 occurrences |
 | Files with `docs/ai/` refs (non-docs/ai, non-specs, non-testing, non-codex, non-cursor) | filtered grep | 30 files (root + scripts) |
 | Hardcoded `docs/ai/` literals in scripts | `grep -rn "docs/ai/" scripts/ --include="*.sh"` | 4 occurrences in 2 files: `workflow-batch-plan.sh` (line 45 + comment line 90), `add-backlog-item.sh` (lines 108 + 113) |
 | `sync-template` command path list | grep in `.claude/commands/sync-template.md` and `.claude/skills/sync-template.md` | Both list `docs/ai/` in "always-sync" and in commit example |
@@ -166,7 +166,7 @@ After the rename, the protocol and README files that previously lived under `doc
 3. Cross-references in agent definitions, commands, and scripts resolve to valid paths
 4. `workflow-batch-plan.sh` can be invoked and correctly constructs protocol file paths using the new `docs/workflow/development-workflow/protocols/` prefix
 5. `sync-template` command's "always-sync" list shows `docs/workflow/` not `docs/ai/`
-6. `grep -r "docs/ai/" . --exclude-dir=.git --exclude-dir=.claude` returns no matches (zero residual references)
+6. `find . -type f \( -name "*.md" -o -name "*.mdc" -o -name "*.yaml" -o -name "*.yml" -o -name "*.sh" -o -name "*.json" \) -not -path "./.git/*" -not -path "./.claude/worktrees/*" -print0 | xargs -0 grep -l "docs/ai/"` returns no matches (zero residual references)
 
 **Smoke test runbook**: `docs/testing/workflow/251-rename-docs-ai-to-workflow.smoke-test.md`
 
