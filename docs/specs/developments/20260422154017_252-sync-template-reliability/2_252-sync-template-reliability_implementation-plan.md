@@ -26,7 +26,7 @@
 | Codex sync skill present? | `find .codex/skills -name "*sync*"` | empty — no existing Codex sync skill |
 | Inline always-sync list exists? | `grep -c "Always sync" .claude/commands/sync-template.md` | 1 (confirmed: hard-coded list in all three artefacts) |
 | docs/testing/workflow/ existing runbooks | `ls docs/testing/workflow/` | 24 files — naming pattern confirmed as `<issue-id>-<slug>.smoke-test.md` |
-| AGENTS.md sync-related mention | `grep -n "sync" AGENTS.md` | Line referencing `/sync-template` command and `workflow-sync-template` skill |
+| AGENTS.md sync-related mention | `grep -n "sync" AGENTS.md` | Line 92: `/sync-template` command in Maintenance Commands table; Codex column is `—` (skill to be added by this plan) |
 
 ---
 
@@ -171,8 +171,7 @@ This feature affects documentation-format artefacts (Markdown, YAML). There is n
 
 ## Documentation Updates
 
-- [ ] `AGENTS.md` — Add `workflow-sync-template` to the Workflow Commands table (Codex column for "Sync framework updates from template") after implementation.
-- [ ] `docs/workflow/development-workflow/README.md` — Verify the sync-template row in the Maintenance Commands table references the new Codex skill `workflow-sync-template`.
+- [ ] `AGENTS.md` — Two updates after implementation: (1) Add `workflow-sync-template` to the Codex column of the Maintenance Commands table row for "Sync framework updates from template" (currently `—`); (2) if the Workflow Commands table also has a sync-template entry for Codex, update that column as well.
 
 ---
 
