@@ -21,7 +21,7 @@
 
 ### Infrastructure / Configuration
 
-- [ ] `docs/ai/development-workflow/protocols/03-implement-development-protocol.md` — Insert a CHANGELOG format verification sub-step into the CHANGELOG update step for every implementation path:
+- [ ] `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` — Insert a CHANGELOG format verification sub-step into the CHANGELOG update step for every implementation path:
   - **Full Pipeline Path 1, Step 6** (`### Step 6: Update CHANGELOG`): add verification instruction after the entry-writing guidance.
   - **Refactor Path 2, Step 6** (the `Update CHANGELOG` bullet inside Refactor Steps): add the same verification instruction.
   - **Fast Track Path 3, Step 6** (`### Step 6: Update CHANGELOG`): add the same verification instruction.
@@ -54,7 +54,7 @@ None — this feature is documentation/protocol-only. No runtime seed data is re
 
 ## Documentation Updates
 
-- [ ] `docs/ai/development-workflow/protocols/03-implement-development-protocol.md` — Updated as the primary deliverable (all four CHANGELOG update steps). No further documentation updates are needed beyond what is listed under Layer-by-Layer Changes.
+- [ ] `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` — Updated as the primary deliverable (all four CHANGELOG update steps). No further documentation updates are needed beyond what is listed under Layer-by-Layer Changes.
 - [ ] `.claude/agents/developer.md` and `.cursor/agents/developer.md` — Both updated as the secondary deliverable (the shared key rules section must receive the same new bullet in each file).
 
 No other project docs (`docs/project/`, `docs/best-practices/`, `AGENTS.md`, etc.) are affected by this change.
@@ -105,7 +105,7 @@ No other project docs (`docs/project/`, `docs/best-practices/`, `AGENTS.md`, etc
    lint violations are introduced:
    ```bash
    npx markdownlint-cli2 \
-     "docs/ai/development-workflow/protocols/03-implement-development-protocol.md" \
+     "docs/workflow/development-workflow/protocols/03-implement-development-protocol.md" \
      ".claude/agents/developer.md" \
      ".cursor/agents/developer.md"
    ```

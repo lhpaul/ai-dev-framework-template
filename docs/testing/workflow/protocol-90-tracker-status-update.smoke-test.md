@@ -34,7 +34,7 @@ Before running this smoke test:
 
 ### Step 1: Verify new Step 2.5 exists in Protocol 90
 
-- Open `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
+- Open `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
 - Confirm a **Step 2.5: Pre-Dispatch Tracker Status Update** (or equivalent heading) appears between Step 2 and Step 3
 - Confirm it documents:
   - Adding missing items to the project board
@@ -47,7 +47,7 @@ Before running this smoke test:
 
 ### Step 2: Verify Protocol 91 pre-dispatch note
 
-- Open `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`
+- Open `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
 - Navigate to **Step 2: Determine the Next Deterministic Action**
 - Confirm a note or row exists instructing the Work Item Runner to update tracker status before dispatching a creator agent when the item's current status is stale (e.g., still `Backlog` for a Refactor item)
 

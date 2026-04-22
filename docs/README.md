@@ -2,7 +2,7 @@
 
 ## Project Documentation
 
-These files describe your specific project. They are generated via the [project setup agent](../docs/ai/setup/protocol.md) and refined over time.
+These files describe your specific project. They are generated via the [project setup agent](../docs/workflow/setup/protocol.md) and refined over time.
 
 | File | Description |
 |---|---|

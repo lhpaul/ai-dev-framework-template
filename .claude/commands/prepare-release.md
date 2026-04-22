@@ -5,7 +5,7 @@ allowed-tools: Bash(git checkout:*), Bash(git fetch:*), Bash(git pull:*), Bash(g
 
 Follow the release protocol exactly as defined in:
 
-`docs/ai/development-workflow/protocols/05-prepare-release-protocol.md`
+`docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md`
 
 Key rules:
 

@@ -12,11 +12,11 @@ This protocol runs **before** spec/plan/implementation stages. It does not write
 
 Before creating anything, read:
 
-- [`docs/ai/development-workflow/integrations/issue-tracker.md`](../integrations/issue-tracker.md) — tracker-agnostic rules (do not guess; ask when unclear).
+- [`docs/workflow/development-workflow/integrations/issue-tracker.md`](../integrations/issue-tracker.md) — tracker-agnostic rules (do not guess; ask when unclear).
 - [`.ai-dev-workflow.yaml`](../../../../.ai-dev-workflow.yaml) — `issue_tracker.provider` declares the configured tracker integration.
 - Tracker-specific guides as needed:
-  - [`docs/ai/development-workflow/integrations/linear.md`](../integrations/linear.md)
-  - [`docs/ai/development-workflow/integrations/github-projects.md`](../integrations/github-projects.md)
+  - [`docs/workflow/development-workflow/integrations/linear.md`](../integrations/linear.md)
+  - [`docs/workflow/development-workflow/integrations/github-projects.md`](../integrations/github-projects.md)
 
 Optional deterministic helper (destination resolution and GitHub issue creation):
 

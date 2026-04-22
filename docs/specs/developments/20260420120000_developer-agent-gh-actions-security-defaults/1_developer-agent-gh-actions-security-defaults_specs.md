@@ -71,7 +71,7 @@ This feature defines a **mandatory pre-PR checklist** for any implementation wor
 
 ## Business Rules
 
-- The **GitHub Actions workflow security checklist** must live in or be linked prominently from `docs/ai/development-workflow/protocols/03-implement-development-protocol.md` so agents using that protocol cannot miss it. A short standalone file under `docs/best-practices/stack/` is allowed only if the protocol links to it as canonical for this checklist (implementation-plan stage decides exact structure).
+- The **GitHub Actions workflow security checklist** must live in or be linked prominently from `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` so agents using that protocol cannot miss it. A short standalone file under `docs/best-practices/stack/` is allowed only if the protocol links to it as canonical for this checklist (implementation-plan stage decides exact structure).
 - For any new or materially changed workflow under `.github/workflows/*.yml`, the implementing agent must complete the checklist **before** opening the development PR (or before pushing workflow changes if the PR already exists and the agent is adding workflows in a follow-up commit—same gate: no workflow PR state without checklist compliance).
 - The checklist must require, at minimum:
   - **Least-privilege `permissions`**: an explicit `permissions:` block at workflow or job level set to the minimum needed; when the job only reads repository content, default guidance is `contents: read` unless a broader permission is documented as required.
@@ -84,7 +84,7 @@ This feature defines a **mandatory pre-PR checklist** for any implementation wor
 
 ## Acceptance Criteria
 
-- [ ] `docs/ai/development-workflow/protocols/03-implement-development-protocol.md` contains a clearly titled section (or a single prominent link to a canonical subsection) for **GitHub Actions workflow security** used during implementation.
+- [ ] `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` contains a clearly titled section (or a single prominent link to a canonical subsection) for **GitHub Actions workflow security** used during implementation.
 - [ ] That section includes an explicit checklist covering: explicit minimum `permissions:` (with default read-only guidance), pinning `uses:` to full SHAs with version comments, optional path-based triggers, and optional concurrency controls—aligned with the Business Rules above.
 - [ ] The protocol text states that the checklist must be satisfied **before** a development PR is opened when the change adds or materially modifies `.github/workflows/*.yml`.
 - [ ] A reviewer can confirm compliance by reading the protocol and the workflow file(s) in a single pass, without needing undocumented tribal knowledge.

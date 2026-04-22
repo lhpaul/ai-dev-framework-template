@@ -6,7 +6,7 @@ description: Backlog stage. Creates one backlog work item from natural-language 
 
 Follow the backlog-item protocol exactly as defined in:
 
-`docs/ai/development-workflow/protocols/00-add-backlog-item-protocol.md`
+`docs/workflow/development-workflow/protocols/00-add-backlog-item-protocol.md`
 
 Key responsibilities:
 
@@ -15,6 +15,6 @@ Key responsibilities:
 - If the user request is missing title, problem/outcome, or other essential context, ask **targeted** clarifying questions before creating anything.
 - Create **exactly one** backlog item in the confirmed destination.
 - For GitHub Issues (including when the provider is `github_projects`), prefer `./scripts/development-workflow/add-backlog-item.sh create --title "..." --body-file -` when `gh` is authenticated; otherwise follow the protocol manually.
-- For Linear, use Linear MCP/API per `docs/ai/development-workflow/integrations/linear.md` when the shell helper cannot create the item.
+- For Linear, use Linear MCP/API per `docs/workflow/development-workflow/integrations/linear.md` when the shell helper cannot create the item.
 - Do not silently assume a tracker or duplicate items across clarification turns.
 - Return the created item identifier, URL, and a short recap to the user.

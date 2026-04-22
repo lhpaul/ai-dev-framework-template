@@ -21,10 +21,10 @@
 
 ### Documentation / Protocol Layer
 
-- [ ] **`docs/ai/development-workflow/agent-model-config.md`** — Add an "Expected Run Durations" subsection under the Agent Assignments table that documents typical and maximum run durations for `item-orchestrator` and `automated-reviewer-loop` agents. (Acceptance Criterion 2)
-- [ ] **`docs/ai/development-workflow/agent-model-config.md`** — Add a "Resume a Timed-Out Agent Run" section that covers: (a) how to detect an incomplete run (checklist of signals: labels, review summary comment, CI state), (b) the command to resume (`workflow-next-action.sh --pr <N>` or re-invoking the item-orchestrator), and (c) an explicit warning not to manually apply `ready-for-human-review` without completing the review loop. (Acceptance Criterion 3)
-- [ ] **`docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`** — Confirm that Step 8c's reviewer loop summary comment check is clearly stated and explicitly marked as non-removable by an agent. Add a brief explanatory note to the existing check row in the Step 8c table. (Acceptance Criterion 1)
-- [ ] **`docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`** — Add a "Stale / Incomplete PR Detection" subsection to Step 5.1 (Post-Dispatch PR Verification) that documents the detection heuristic (non-draft, readiness labels present, review summary comment absent → incomplete), the manual detection command, and the action to take (re-dispatch item-orchestrator to resume from Step 7). (Acceptance Criterion 4)
+- [ ] **`docs/workflow/development-workflow/agent-model-config.md`** — Add an "Expected Run Durations" subsection under the Agent Assignments table that documents typical and maximum run durations for `item-orchestrator` and `automated-reviewer-loop` agents. (Acceptance Criterion 2)
+- [ ] **`docs/workflow/development-workflow/agent-model-config.md`** — Add a "Resume a Timed-Out Agent Run" section that covers: (a) how to detect an incomplete run (checklist of signals: labels, review summary comment, CI state), (b) the command to resume (`workflow-next-action.sh --pr <N>` or re-invoking the item-orchestrator), and (c) an explicit warning not to manually apply `ready-for-human-review` without completing the review loop. (Acceptance Criterion 3)
+- [ ] **`docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`** — Confirm that Step 8c's reviewer loop summary comment check is clearly stated and explicitly marked as non-removable by an agent. Add a brief explanatory note to the existing check row in the Step 8c table. (Acceptance Criterion 1)
+- [ ] **`docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`** — Add a "Stale / Incomplete PR Detection" subsection to Step 5.1 (Post-Dispatch PR Verification) that documents the detection heuristic (non-draft, readiness labels present, review summary comment absent → incomplete), the manual detection command, and the action to take (re-dispatch item-orchestrator to resume from Step 7). (Acceptance Criterion 4)
 
 ---
 
@@ -51,9 +51,9 @@ None — this feature is documentation-only and requires no seed data.
 
 ## Documentation Updates
 
-- [ ] `docs/ai/development-workflow/agent-model-config.md` — Updated as part of this implementation (Acceptance Criteria 2 and 3). This is the primary output of the feature; no separate post-implementation update is needed.
-- [ ] `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` — Updated as part of this implementation (Acceptance Criterion 1).
-- [ ] `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — Updated as part of this implementation (Acceptance Criterion 4).
+- [ ] `docs/workflow/development-workflow/agent-model-config.md` — Updated as part of this implementation (Acceptance Criteria 2 and 3). This is the primary output of the feature; no separate post-implementation update is needed.
+- [ ] `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — Updated as part of this implementation (Acceptance Criterion 1).
+- [ ] `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — Updated as part of this implementation (Acceptance Criterion 4).
 
 No other `docs/project/` files, `AGENTS.md`, or `docs/best-practices/` files require changes — this feature is scoped to AI workflow protocol documents.
 
@@ -71,11 +71,11 @@ No other `docs/project/` files, `AGENTS.md`, or `docs/best-practices/` files req
 
 ## Implementation Order
 
-1. Read `docs/ai/development-workflow/agent-model-config.md` in full to understand the current structure and identify the correct insertion point for the new sections.
+1. Read `docs/workflow/development-workflow/agent-model-config.md` in full to understand the current structure and identify the correct insertion point for the new sections.
 2. Add the "Expected Run Durations" subsection to `agent-model-config.md` immediately after the Agent Assignments table. Include a two-column table: `item-orchestrator` (typical 5–15 min; consider timeout at ~25 min) and `automated-reviewer-loop` (typical 2–10 min; consider timeout at ~20 min).
 3. Add the "Resume a Timed-Out Agent Run" section to `agent-model-config.md`, immediately after the "Expected Run Durations" subsection. Include: (a) detection checklist (non-draft PR, some labels applied, reviewer loop summary comment absent, CI incomplete), (b) resume command (`./scripts/development-workflow/workflow-next-action.sh --pr <N>` or re-invoking the item-orchestrator), and (c) bold warning not to manually apply `ready-for-human-review` without completing Step 7.
-4. Read Step 8c of `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`. Verify the reviewer loop summary comment check row in the table is explicitly stated and clear. Add a note below the table row — or update the wording — to explicitly state that this check is a hard requirement that must not be removed by agents applying fixes.
-5. Read Step 5.1 of `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`. Add a "Stale / Incomplete PR Detection" subsection after the main verification table. The subsection must include: the detection heuristic, a one-line detection shell command (using `gh pr view --json` to check for label+comment state), and the required action (re-dispatch item-orchestrator to resume from Step 7).
+4. Read Step 8c of `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`. Verify the reviewer loop summary comment check row in the table is explicitly stated and clear. Add a note below the table row — or update the wording — to explicitly state that this check is a hard requirement that must not be removed by agents applying fixes.
+5. Read Step 5.1 of `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`. Add a "Stale / Incomplete PR Detection" subsection after the main verification table. The subsection must include: the detection heuristic, a one-line detection shell command (using `gh pr view --json` to check for label+comment state), and the required action (re-dispatch item-orchestrator to resume from Step 7).
 6. Cross-read all three updated files for consistency: confirm references between them are accurate, no wording contradicts the spec's business rules, and each section satisfies its mapped acceptance criterion.
 7. Verify smoke test runbook is complete and maps to all acceptance criteria. (Note: CHANGELOG update is not required — plan-only PRs are exempt per `docs/best-practices/2-version-control.md`.)
 

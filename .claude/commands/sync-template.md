@@ -85,7 +85,7 @@ Compare the following **framework-level paths** from the template against the cu
 
 ```
 REVIEW.md                         <- canonical review contract for spec, plan, and code review gates
-docs/ai/                          <- full tree, all files recursively
+docs/workflow/                          <- full tree, all files recursively
 .claude/agents/                   <- all *.md files
 .claude/commands/                 <- all *.md files
 .claude/skills/                   <- all *.md files (including this skill itself)
@@ -161,7 +161,7 @@ Template version: v0.4.0  |  Project branch: develop
   .claude/agents/developer.md
     Line 3: model: claude-sonnet-4-5 -> model: claude-sonnet-4-6
 
-  docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md
+  docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
     [diff summary]
 
 ### Already up to date (no changes)
@@ -217,7 +217,7 @@ git diff --stat
 
 # 3. Stage and commit (only after you've reviewed the changes)
 # Stage only approved paths — avoid 'git add .' so unapproved files never enter the commit.
-git add REVIEW.md docs/ai/ .claude/agents/ .claude/commands/ .claude/skills/ .codex/skills/ .cursor/ \
+git add REVIEW.md docs/workflow/ .claude/agents/ .claude/commands/ .claude/skills/ .codex/skills/ .cursor/ \
   scripts/development-workflow/ scripts/README.md \
   docs/best-practices/1-general.md \
   docs/best-practices/2-version-control.md \

@@ -8,7 +8,7 @@ description: Review implemented changes against the repository's code review wor
 Recommended model tier: `balanced`
 
 1. Read `AGENTS.md` for repository-wide rules.
-2. Read `docs/ai/development-workflow/protocols/03-review-implementation-protocol.md`.
+2. Read `docs/workflow/development-workflow/protocols/03-review-implementation-protocol.md`.
 3. Follow that protocol exactly.
 4. Keep findings first, ordered by severity, with concrete file references.
 5. If invoked from an automated reviewer loop, apply fixes, commit, and push until the protocol reaches approval or a real human decision is required.

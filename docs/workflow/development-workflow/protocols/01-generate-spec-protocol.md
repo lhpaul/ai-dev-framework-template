@@ -30,7 +30,7 @@ Before starting, read:
 
 - `docs/project/1-business-domain.md` — domain context, entities, glossary
 - `docs/project/3-software-architecture.md` — architecture constraints
-- The feature brief. If you have an issue tracker configured, follow `docs/ai/development-workflow/integrations/issue-tracker.md` to get the current brief.
+- The feature brief. If you have an issue tracker configured, follow `docs/workflow/development-workflow/integrations/issue-tracker.md` to get the current brief.
 
 **Tracker workflow status**: The **Work Item Runner** owns workflow-status transitions for this stage. When this protocol is run under normal orchestration, expect the runner to set **Writing Spec** before dispatch, **Spec in Review** when the PR is human-ready, and **Spec Ready** only after merge. If you invoke this protocol standalone, mirror the same status progression manually.
 
@@ -117,7 +117,7 @@ Rules:
 
 ## Step 3: Write the Spec
 
-Using the template at `docs/ai/development-workflow/templates/spec-template.md`, write the spec document.
+Using the template at `docs/workflow/development-workflow/templates/spec-template.md`, write the spec document.
 
 **Output location**:
 
@@ -206,6 +206,6 @@ After the draft PR exists, the **Work Item Runner** owns the rest of the lifecyc
 - Apply `ready-for-human-review` and move the tracker to **Spec in Review** when the PR is human-ready
 - Stop only when the PR is waiting on human review / merge or the run has escalated
 
-If this protocol is invoked **standalone** rather than through the Work Item Runner, hand off manually by following `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` from the newly opened draft PR.
+If this protocol is invoked **standalone** rather than through the Work Item Runner, hand off manually by following `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` from the newly opened draft PR.
 
-See `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/ai/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
+See `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.

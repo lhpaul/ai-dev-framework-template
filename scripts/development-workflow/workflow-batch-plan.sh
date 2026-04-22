@@ -42,7 +42,7 @@ CANONICAL_EXACT_PATHS=(
   "scripts/development-workflow/post-merge-cleanup.sh"
   ".ai-dev-workflow.yaml"
 )
-PROTOCOLS_PREFIX="docs/ai/development-workflow/protocols/"
+PROTOCOLS_PREFIX="docs/workflow/development-workflow/protocols/"
 
 # classify_tool_fix <development-folder-path>
 #
@@ -87,7 +87,7 @@ classify_tool_fix() {
     fi
   done
 
-  # Glob-equivalent: any docs/ai/development-workflow/protocols/*.md reference,
+  # Glob-equivalent: any docs/workflow/development-workflow/protocols/*.md reference,
   # anchored on both sides to reject .md.bak and other superstrings.
   # Both the detection (grep -qE) and the extraction (grep -oE) use the full
   # boundary-anchored regex so superstrings like foo.md.bak are never captured.

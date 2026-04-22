@@ -7,7 +7,7 @@ tools: Read, Grep, Glob, Write, Edit, Bash, Agent
 
 Follow the single-item orchestration protocol exactly as defined in:
 
-`docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`
+`docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
 
 That document is the single source of truth for this supporting role. Key responsibilities:
 - Stay scoped to one item at a time

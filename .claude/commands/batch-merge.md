@@ -8,7 +8,7 @@ allowed-tools: Bash(./scripts/development-workflow/batch-merge.sh:*), Bash(./scr
 # If using a different issue tracker, add its MCP tool names here (e.g. mcp__jira__update_issue).
 ---
 
-Follow `docs/ai/development-workflow/protocols/94-batch-merge-protocol.md` exactly.
+Follow `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md` exactly.
 
 **Auto-discovery** (no arguments): discovers all PRs labeled `ready-for-human-review` targeting `develop`.
 

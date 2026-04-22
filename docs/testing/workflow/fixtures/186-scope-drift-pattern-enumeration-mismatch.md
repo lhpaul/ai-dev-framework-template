@@ -6,14 +6,14 @@ This fixture simulates a stale spec excerpt where intent is "all matching files"
 
 Guidance must be added to all files matching pattern:
 
-`docs/ai/development-workflow/protocols/*-protocol.md`
+`docs/workflow/development-workflow/protocols/*-protocol.md`
 
 Current (stale) enumeration in spec text:
 
-- `docs/ai/development-workflow/protocols/01-generate-spec-protocol.md`
-- `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md`
-- `docs/ai/development-workflow/protocols/03-implement-development-protocol.md`
+- `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md`
+- `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md`
+- `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md`
 
 ## Verification Intent
 
-A plan writer should run a live query (for example `rg --files docs/ai/development-workflow/protocols`) and use current repository results for counts/paths rather than copying the stale list above.
+A plan writer should run a live query (for example `rg --files docs/workflow/development-workflow/protocols`) and use current repository results for counts/paths rather than copying the stale list above.

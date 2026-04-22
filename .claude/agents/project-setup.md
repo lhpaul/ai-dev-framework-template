@@ -7,6 +7,6 @@ tools: Read, Grep, Glob, Write, Edit, Bash
 
 Follow the project setup protocol exactly as defined in:
 
-`docs/ai/setup/protocol.md`
+`docs/workflow/setup/protocol.md`
 
 That document is the single source of truth for this stage. Do not improvise the conversation structure — follow the protocol step by step.

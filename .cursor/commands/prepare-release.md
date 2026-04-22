@@ -4,7 +4,7 @@ description: Prepare a release from develop. Creates the release branch, updates
 
 Follow the release protocol exactly as defined in:
 
-`docs/ai/development-workflow/protocols/05-prepare-release-protocol.md`
+`docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md`
 
 Key rules:
 

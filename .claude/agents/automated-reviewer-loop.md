@@ -7,7 +7,7 @@ tools: Read, Grep, Glob, Write, Edit, Bash, Agent
 
 Follow the standalone automated reviewer loop protocol:
 
-`docs/ai/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`
+`docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`
 
 That document is the single source of truth. Key responsibilities:
 - Determine target PR from user input (explicit number, "current" branch, or all open workflow PRs if requested)

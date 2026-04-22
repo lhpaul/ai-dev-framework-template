@@ -40,7 +40,7 @@ Read **all** of the following before writing a single line of code. Do not skip.
 4. `docs/project/3-software-architecture.md` — architecture patterns
 5. `docs/best-practices/` — all best practice docs
 6. Relevant existing code — read actual files for the areas you will modify
-7. If an issue tracker exists for this item, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for `In Development (Full Pipeline)` expectations before coding.
+7. If an issue tracker exists for this item, follow `docs/workflow/development-workflow/integrations/issue-tracker.md` for `In Development (Full Pipeline)` expectations before coding.
 
 Extract from your reading:
 
@@ -210,9 +210,9 @@ After the draft PR exists, the **Work Item Runner** owns the rest of the lifecyc
 
 **Label derivation rule**: The `ready-for-regression` label requirement is determined by the **branch prefix**, not by the content of the PR. `feature/*` branches always require `ready-for-regression` regardless of whether the changes are code, documentation, or configuration. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table.
 
-If this protocol is invoked **standalone** rather than through the Work Item Runner, hand off manually by following `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` from the newly opened draft PR.
+If this protocol is invoked **standalone** rather than through the Work Item Runner, hand off manually by following `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` from the newly opened draft PR.
 
-See `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/ai/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
+See `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
 
 ---
 
@@ -229,7 +229,7 @@ Read **all** of the following before writing a single line of code. Do not skip.
 3. `docs/project/3-software-architecture.md` — architecture patterns
 4. `docs/best-practices/` — all best practice docs
 5. Relevant existing code — read actual files for the areas you will modify
-6. If an issue tracker exists for this item, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for `In Development (Refactor)` expectations before coding.
+6. If an issue tracker exists for this item, follow `docs/workflow/development-workflow/integrations/issue-tracker.md` for `In Development (Refactor)` expectations before coding.
 7. If your changes touch `.github/workflows/*.yml`, apply `## GitHub Actions Workflow Security Checklist` before opening the PR.
 
 Extract from your reading:
@@ -316,7 +316,7 @@ gh pr create --draft --base develop --title "refactor([scope]): [short descripti
 
 **Important**: Always use `--base develop` to explicitly target the `develop` branch.
 
-10. Hand off to the Work Item Runner with the same lifecycle expectations as Path 1 Step 9 (internal review gate, automated reviewer loop, CI, labels). **Label derivation rule**: `refactor/*` branches always require `ready-for-regression` based on branch prefix, not content type. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table. See `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/ai/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
+10. Hand off to the Work Item Runner with the same lifecycle expectations as Path 1 Step 9 (internal review gate, automated reviewer loop, CI, labels). **Label derivation rule**: `refactor/*` branches always require `ready-for-regression` based on branch prefix, not content type. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table. See `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
 
 ---
 
@@ -336,7 +336,7 @@ gh pr create --draft --base develop --title "refactor([scope]): [short descripti
 
 ### Step 1: Read Brief
 
-Read the brief. If the work item exists in an issue tracker, follow `docs/ai/development-workflow/integrations/issue-tracker.md` for `In Development (Fast Track)` expectations.
+Read the brief. If the work item exists in an issue tracker, follow `docs/workflow/development-workflow/integrations/issue-tracker.md` for `In Development (Fast Track)` expectations.
 
 If your changes touch `.github/workflows/*.yml`, apply `## GitHub Actions Workflow Security Checklist` before opening the PR.
 

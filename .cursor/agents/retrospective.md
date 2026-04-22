@@ -6,7 +6,7 @@ description: Retrospective analysis agent. Analyzes completed work (a batch or i
 
 Follow the retrospective protocol exactly as defined in:
 
-`docs/ai/development-workflow/protocols/06-retrospective-protocol.md`
+`docs/workflow/development-workflow/protocols/06-retrospective-protocol.md`
 
 That document is the single source of truth for this role. Key responsibilities:
 - Resolve scope from the user's hint (PR number, branch, batch date) or default to recent PRs in the repository

@@ -20,8 +20,8 @@ Before running this smoke test:
 
 | Item | Value |
 |---|---|
-| Protocol 02 path | `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
-| Plan template path | `docs/ai/development-workflow/templates/implementation-plan-template.md` |
+| Protocol 02 path | `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
+| Plan template path | `docs/workflow/development-workflow/templates/implementation-plan-template.md` |
 | Review contract path | `REVIEW.md` |
 | Cursor tech-lead agent | `.cursor/agents/tech-lead.md` |
 | Claude tech-lead agent | `.claude/agents/tech-lead.md` |
@@ -34,7 +34,7 @@ Before running this smoke test:
 
 **Maps to**: Acceptance criterion — conditional block with three mandatory elements
 
-1. Open `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md`
+1. Open `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md`
 2. Locate Step 3 and the subsection for parser-risk / custom text scanning
 
 **Expected result**:
@@ -48,7 +48,7 @@ Before running this smoke test:
 
 **Maps to**: Acceptance criterion — template supports deriving an outline
 
-1. Open `docs/ai/development-workflow/templates/implementation-plan-template.md`
+1. Open `docs/workflow/development-workflow/templates/implementation-plan-template.md`
 2. Find the optional parser-risk addendum
 
 **Expected result**:

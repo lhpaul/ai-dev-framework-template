@@ -6,7 +6,7 @@ description: Run a retrospective analysis on completed work to identify process 
 
 Follow the retrospective protocol exactly as defined in:
 
-`docs/ai/development-workflow/protocols/06-retrospective-protocol.md`
+`docs/workflow/development-workflow/protocols/06-retrospective-protocol.md`
 
 Key responsibilities:
 

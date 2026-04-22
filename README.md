@@ -32,7 +32,7 @@ Use the project-setup agent: Task the agent with "Initialize this project using 
 ### With any other AI tool
 Ask your AI assistant to:
 ```
-Follow the project setup protocol at docs/ai/setup/protocol.md
+Follow the project setup protocol at docs/workflow/setup/protocol.md
 ```
 
 The setup agent will have a structured conversation with you to understand your project, then generate:
@@ -166,7 +166,7 @@ Released
 - **Fast Track** (`fix/[slug]` from develop): bugs and simple changes that don't need a spec or plan
 - **Hotfix** (`hotfix/[slug]` from main): critical production bugs that need immediate deployment
 
-See [`docs/ai/development-workflow/README.md`](docs/ai/development-workflow/README.md) for the full workflow specification.
+See [`docs/workflow/development-workflow/README.md`](docs/workflow/development-workflow/README.md) for the full workflow specification.
 
 ---
 
@@ -194,7 +194,7 @@ Use the item-orchestrator agent to start and advance work for [feature or issue 
 ### Cursor
 - Rules in `.cursor/rules/` provide automatic context
 - Commands in `.cursor/commands/` are invoked with `/command-name`
-- Workflow agents in `.cursor/agents/` (e.g. `/developer`, `/orchestrator`, `/item-orchestrator`) run stage-specific protocols; see `docs/ai/development-workflow/agent-model-config.md` for model config
+- Workflow agents in `.cursor/agents/` (e.g. `/developer`, `/orchestrator`, `/item-orchestrator`) run stage-specific protocols; see `docs/workflow/development-workflow/agent-model-config.md` for model config
 - MCP servers can be configured in `.cursor/.mcp.json`
 
 Example commands:
@@ -240,17 +240,17 @@ Use $workflow-item-orchestrator to start and advance work for [feature or issue 
 
 ### Other AI Tools (Gemini CLI, etc.)
 - Point your tool at `AGENTS.md` for project context
-- Ask it to follow protocols in `docs/ai/development-workflow/protocols/`
+- Ask it to follow protocols in `docs/workflow/development-workflow/protocols/`
 - The protocols are plain markdown — any AI can follow them
 
 ---
 
 ## Optional Integrations
 
-- **Issue Tracker (e.g., Linear)**: See [`docs/ai/development-workflow/integrations/linear.md`](docs/ai/development-workflow/integrations/linear.md)
-- **Automated PR Review (e.g., Greptile)**: See [`docs/ai/development-workflow/integrations/greptile.md`](docs/ai/development-workflow/integrations/greptile.md)
-- **GitHub Projects board**: See [`docs/ai/development-workflow/integrations/github-projects.md`](docs/ai/development-workflow/integrations/github-projects.md)
-- **CI/CD deployment placeholders**: See [`docs/ai/development-workflow/integrations/ci-cd-deployment.md`](docs/ai/development-workflow/integrations/ci-cd-deployment.md)
+- **Issue Tracker (e.g., Linear)**: See [`docs/workflow/development-workflow/integrations/linear.md`](docs/workflow/development-workflow/integrations/linear.md)
+- **Automated PR Review (e.g., Greptile)**: See [`docs/workflow/development-workflow/integrations/greptile.md`](docs/workflow/development-workflow/integrations/greptile.md)
+- **GitHub Projects board**: See [`docs/workflow/development-workflow/integrations/github-projects.md`](docs/workflow/development-workflow/integrations/github-projects.md)
+- **CI/CD deployment placeholders**: See [`docs/workflow/development-workflow/integrations/ci-cd-deployment.md`](docs/workflow/development-workflow/integrations/ci-cd-deployment.md)
 
 ---
 
@@ -288,7 +288,7 @@ When you improve a protocol, agent, or best practice in this template repo, copy
 
 Framework-level paths to propagate:
 
-- `docs/ai/`
+- `docs/workflow/`
 - `.claude/agents/`
 - `.claude/skills/`
 - `.codex/skills/`

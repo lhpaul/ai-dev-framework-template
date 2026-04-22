@@ -1,6 +1,6 @@
 # Development workflow scripts
 
-Scripts used by the staged AI development workflow. Referenced by `docs/ai/development-workflow/` and by the Codex skills in `.codex/skills/`. Run from the repository root.
+Scripts used by the staged AI development workflow. Referenced by `docs/workflow/development-workflow/` and by the Codex skills in `.codex/skills/`. Run from the repository root.
 
 ## `install-codex-skills.sh`
 
@@ -32,7 +32,7 @@ What it does:
 
 - `resolve` prints `ISSUE_TRACKER_PROVIDER`, `DESTINATION_KIND` (`github`, `linear`, `other`, `none`), and a `CREATE_VIA` hint for agents.
 - `create` runs `gh issue create` when the destination kind is `github` (requires authenticated `gh`).
-- For Linear or unsupported providers, exits non-zero with guidance so agents follow `docs/ai/development-workflow/protocols/00-add-backlog-item-protocol.md` instead of guessing.
+- For Linear or unsupported providers, exits non-zero with guidance so agents follow `docs/workflow/development-workflow/protocols/00-add-backlog-item-protocol.md` instead of guessing.
 
 Use this when:
 

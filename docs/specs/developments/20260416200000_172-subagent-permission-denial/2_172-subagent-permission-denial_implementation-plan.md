@@ -21,7 +21,7 @@
 
 ### Protocol Documents
 
-#### `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`
+#### `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
 
 - [ ] **AC5** — Add a new named section "Pre-flight permission self-check (subagent runs only)" immediately after the existing Step 3 dispatch strategy section. The section must specify:
   - When the subagent starts (after receiving handoff context), before any creator-stage file edit or tool call, attempt a lightweight sanity check (e.g., write a single-line comment to a `.tmp/` file) to verify `Edit` and `Bash` are accessible.
@@ -35,7 +35,7 @@
   - Immediately stop all further work and return a structured error string starting with `SUBAGENT_PERMISSION_DENIAL:`.
   - Not apply any PR labels, not commit any partial work, and not update tracker status before exiting.
 
-#### `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
+#### `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
 
 - [ ] **AC1, AC2, AC3, AC4, AC6** — Add a new subsection "Step 4.1: Subagent Permission-Denial Detection and Inline Fallback" immediately after the existing Step 4 (Dispatch Work Item Runners). The subsection must specify:
 
@@ -80,8 +80,8 @@ Not applicable. This feature modifies protocol documents only; no application da
 
 ## Documentation Updates
 
-- [ ] `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` — updated as part of implementation (primary deliverable; not a separate doc update)
-- [ ] `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — updated as part of implementation (primary deliverable; not a separate doc update)
+- [ ] `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — updated as part of implementation (primary deliverable; not a separate doc update)
+- [ ] `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — updated as part of implementation (primary deliverable; not a separate doc update)
 
 No other project docs in `docs/project/`, `docs/best-practices/`, or `AGENTS.md` are affected by this change. The change is internal to the AI workflow protocol layer.
 
@@ -123,10 +123,10 @@ if subagent_output contains "SUBAGENT_PERMISSION_DENIAL:":
 
 ## Implementation Order
 
-1. Update `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`:
+1. Update `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`:
    - Add "Pre-flight permission self-check" section after Step 3.
    - Add permission-denial early-exit paragraph to Step 3 worktree isolation section.
-2. Update `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`:
+2. Update `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`:
    - Add "Step 4.1: Subagent Permission-Denial Detection and Inline Fallback" after Step 4.
 3. Write smoke test runbook at `docs/testing/workflow/subagent-permission-denial.smoke-test.md`.
 4. Commit, push, and open draft PR targeting `develop`.

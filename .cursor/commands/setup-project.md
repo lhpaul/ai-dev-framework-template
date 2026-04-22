@@ -4,6 +4,6 @@ description: Initialize a new project from this template. Runs a guided conversa
 
 Follow the project setup protocol exactly as defined in:
 
-`docs/ai/setup/protocol.md`
+`docs/workflow/setup/protocol.md`
 
 Do not improvise the conversation structure — follow the protocol step by step.

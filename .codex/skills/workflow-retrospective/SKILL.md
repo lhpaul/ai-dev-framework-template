@@ -8,7 +8,7 @@ description: Run a retrospective analysis on completed work to identify process 
 Recommended model tier: `economy`
 
 1. Read `AGENTS.md` for repository-wide rules.
-2. Read `docs/ai/development-workflow/protocols/06-retrospective-protocol.md`.
+2. Read `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md`.
 3. Resolve scope from the user's request (PR number, branch name, batch date) or default to recent PRs in the repository.
 4. Gather GitHub PR metadata (review cycles, finding types, labels, merge conflicts) and git history (commit patterns, fix-commit ratio) using `gh`. When conversation context is available, also analyze manual interventions, human corrections, and agent deviations from the current session.
 5. Synthesize findings into a categorized list using the fixed taxonomy and severity signals defined in the protocol.

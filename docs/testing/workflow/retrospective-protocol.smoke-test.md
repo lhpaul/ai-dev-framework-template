@@ -13,7 +13,7 @@ Before running this smoke test:
 
 - [ ] Repository has at least one merged or open PR with review history (comments, review cycles, labels)
 - [ ] `gh` CLI is authenticated and functional (`gh auth status`)
-- [ ] The retrospective protocol document exists at `docs/ai/development-workflow/protocols/06-retrospective-protocol.md`
+- [ ] The retrospective protocol document exists at `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md`
 - [ ] The `/retrospective` command/skill is available in the platform being tested
 
 ---

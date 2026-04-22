@@ -5,7 +5,7 @@ description: Merge all ready PRs in a parallel batch into develop sequentially, 
 
 # Batch Merge
 
-Follow `docs/ai/development-workflow/protocols/94-batch-merge-protocol.md` exactly.
+Follow `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md` exactly.
 
 1. **Auto-discovery mode** (no explicit PR numbers): run:
 
