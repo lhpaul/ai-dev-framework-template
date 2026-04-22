@@ -100,15 +100,21 @@
   ```
   The manifest is the single authoritative source of truth per BR-1. It must be human-readable per AC-7 and BR-5.
 
-- [ ] Define the HTML-comment annotation scheme for mixed-content files. Canonical marker format (unlabeled — same syntax used in all references throughout this plan):
+- [ ] Define the annotation scheme for mixed-content files. Two canonical marker forms, chosen by file type:
+
+  **Markdown files** (e.g., `AGENTS.md`):
   - Block: `<!-- TEMPLATE-OWNED-START -->` ... `<!-- TEMPLATE-OWNED-END -->`
   - Inline: `<!-- TEMPLATE-OWNED -->` (single-line sections where a block is not needed)
 
-  These markers work in all three AI tools (Claude Code, Cursor, Codex) because they parse Markdown and YAML files as text, and HTML comments are valid in both. Human-readable in editors and GitHub diff view (AC-7, BR-5).
+  **YAML files** (e.g., `.ai-dev-workflow.yaml`): HTML comments are NOT valid YAML syntax and would cause parse errors. Markers must be wrapped in YAML comment syntax:
+  - Block: `# <!-- TEMPLATE-OWNED-START -->` ... `# <!-- TEMPLATE-OWNED-END -->`
+  - Inline: `# <!-- TEMPLATE-OWNED -->` (single-line)
+
+  Both forms are human-readable in editors and GitHub diff view (AC-7, BR-5). All three AI tools (Claude Code, Cursor, Codex) parse these files as text and will recognize either form when the extraction logic handles both.
 
 - [ ] Add `<!-- TEMPLATE-OWNED-START -->` / `<!-- TEMPLATE-OWNED-END -->` markers to the workflow table section of `AGENTS.md`. The table between the `## Development Workflow` heading and the `### Codex Skills` heading is template-owned. Project fills in the `## Project Overview` and `## Repository Structure` sections.
 
-- [ ] Add similar markers around the `review:` / `issue_tracker:` / `vcs:` / `browser_automation:` schema documentation block in `.ai-dev-workflow.yaml` (comment block at the top of each section heading). Note: the `platforms:` and `providers:` values under each section are project-specific.
+- [ ] Add YAML-comment markers (`# <!-- TEMPLATE-OWNED-START -->` / `# <!-- TEMPLATE-OWNED-END -->`) around the schema documentation block in `.ai-dev-workflow.yaml`. The comment block at the top of each section heading (`review:`, `issue_tracker:`, `vcs:`, `browser_automation:`) is template-owned. The `platforms:` and `providers:` values under each section are project-specific.
 
 ### Shared Packages / Libraries (Sync Artefacts)
 
@@ -120,7 +126,10 @@ All three sync-template artefacts must be updated to consume `sync-manifest.yaml
 - [ ] **Step 2 — Always sync**: Replace the hard-coded path list with: "If `SYNC_MANIFEST` is loaded, read `categories.always_sync` from the manifest and enumerate those paths from the template. If `SYNC_MANIFEST=absent`, fall back to the embedded list below and display the warning: `Warning: sync manifest not found in upstream template. Using embedded file list — results may be incomplete.`" Keep the embedded list as the fallback.
 - [ ] **Step 2 — Special handling**: Same pattern — read `categories.special_handling` from manifest when available, fall back to embedded list.
 - [ ] **Step 2 — Project-specific**: Same pattern — read `categories.project_specific` from manifest. For entries with `mixed_content: true`, additionally read the `annotation_scheme` field and apply the mixed-content extraction logic described below.
-- [ ] **Mixed-content extraction logic** (new subsection in Step 2): When a file has `mixed_content: true` and `annotation_scheme: html_comments`, extract only the template-owned sections (delimited by `<!-- TEMPLATE-OWNED-START -->` / `<!-- TEMPLATE-OWNED-END -->`) when comparing to the upstream. Show only those sections in the diff. Label unextracted sections as "preserved — no change" (UX Rule 2). If markers are absent or malformed in the downstream copy, flag the file as "unstructured — full review required" (UX Rule 3).
+- [ ] **Mixed-content extraction logic** (new subsection in Step 2): When a file has `mixed_content: true` and `annotation_scheme: html_comments`, extract only the template-owned sections when comparing to the upstream. Detection must handle both marker forms by file extension:
+  - For `.md` files: match bare `<!-- TEMPLATE-OWNED-START -->` / `<!-- TEMPLATE-OWNED-END -->` lines.
+  - For `.yaml` / `.yml` files: match `# <!-- TEMPLATE-OWNED-START -->` / `# <!-- TEMPLATE-OWNED-END -->` lines (YAML comment prefix required).
+  Show only the extracted sections in the diff. Label unextracted sections as "preserved — no change" (UX Rule 2). If markers are absent or malformed in the downstream copy, flag the file as "unstructured — full review required" (UX Rule 3).
 - [ ] **Step 3 — Summary format**: Update the summary to show file counts per category before asking for confirmation (UX Rule 1 / AC-5). Add a new section: "Files skipped (up-to-date): N" and "Files declined by maintainer: N" to satisfy AC-5 and UX Rule 4. The disposition of every always-sync file (updated, up-to-date, skipped by maintainer) must appear in the summary.
 - [ ] **Step 5 — Git instructions**: Update the `git add` staging instruction to reference `sync-manifest.yaml` in addition to the always-sync paths. Add a note: "If sync-manifest.yaml was updated, stage it as well."
 
