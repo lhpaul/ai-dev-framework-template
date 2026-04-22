@@ -68,6 +68,8 @@ categories:
       note: git and branching conventions
     - path: docs/best-practices/3-testing.md
       note: testing standards
+    - path: sync-manifest.yaml
+      note: this manifest file itself; must be synced so downstream projects receive manifest updates
 
   special_handling:
     - path: .claude/settings.json
