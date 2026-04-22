@@ -50,10 +50,11 @@ find . -type f \
   -not -path "./.claude/worktrees/*" \
   -not -path "./docs/specs/developments/20260422093111_251-rename-docs-ai-to-workflow/*" \
   -not -path "./docs/testing/workflow/251-rename-docs-ai-to-workflow.smoke-test.md" \
+  -not -path "./CHANGELOG.md" \
   -print0 | xargs -0 grep -l "docs/ai" | wc -l
 ```
 
-**Expected result**: Output is `0`. The two excluded paths (`docs/specs/developments/20260422093111_251-rename-docs-ai-to-workflow/` and this smoke test file) intentionally retain `docs/ai` as subject matter describing the rename. Any non-zero count for other files is a failure; inspect with:
+**Expected result**: Output is `0`. The excluded paths intentionally retain `docs/ai` as subject matter: the plan directory and this smoke test file (describing the rename), and `CHANGELOG.md` (whose new entry names the old path for historical reference). Any non-zero count for other files is a failure; inspect with:
 
 ```bash
 find . -type f \
@@ -63,6 +64,7 @@ find . -type f \
   -not -path "./.claude/worktrees/*" \
   -not -path "./docs/specs/developments/20260422093111_251-rename-docs-ai-to-workflow/*" \
   -not -path "./docs/testing/workflow/251-rename-docs-ai-to-workflow.smoke-test.md" \
+  -not -path "./CHANGELOG.md" \
   -print0 | xargs -0 grep -n "docs/ai"
 ```
 
@@ -120,7 +122,7 @@ grep "docs/ai" README.md | wc -l
 
 - [ ] `docs/ai/` directory does not exist after implementation
 - [ ] `docs/workflow/` contains the complete subtree (`development-workflow/`, `setup/`, with all child directories)
-- [ ] Zero occurrences of `docs/ai` (with or without trailing slash) in any tracked file (excluding `.claude/worktrees/`, `.git/`, this smoke-test file itself, and the implementation plan under `docs/specs/developments/20260422093111_251-rename-docs-ai-to-workflow/` — those two files intentionally retain `docs/ai` as subject matter)
+- [ ] Zero occurrences of `docs/ai` (with or without trailing slash) in any tracked file (excluding `.claude/worktrees/`, `.git/`, `CHANGELOG.md`, this smoke-test file itself, and the implementation plan under `docs/specs/developments/20260422093111_251-rename-docs-ai-to-workflow/` — those three paths intentionally retain `docs/ai` as subject matter)
 - [ ] `workflow-batch-plan.sh` `PROTOCOLS_PREFIX` variable uses `docs/workflow/` prefix
 - [ ] `sync-template` always-sync path list entries use `docs/workflow/`
 - [ ] All `.claude/agents/*.md` files reference `docs/workflow/` only
