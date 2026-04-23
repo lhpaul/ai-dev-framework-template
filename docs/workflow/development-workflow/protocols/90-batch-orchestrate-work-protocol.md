@@ -529,6 +529,7 @@ gh pr view <pr_number> --json isDraft,labels,comments \
 | `false` | `true` | any | `false` | Incomplete run (post-regression, pre-Step-7) |
 | `false` | any | `true` | `false` | Incomplete run (post-label, pre-Step-7) |
 | `false` | `false` | `false` | `false` | **Pre-label orphaned run** — treat as incomplete |
+| `false` | `true` | `false` | `true` | Incomplete run (post-regression, post-summary, pre-ready-label) — apply `ready-for-human-review` label, then proceed to Step 5.1 |
 | `false` | any | `true` | `true` | Ready (proceed to Step 5.1 full verification) |
 
 For the pre-label orphaned case (`isDraft=false`, no labels, no summary): the PR is not a fresh PR awaiting first dispatch — it is an orphaned in-progress run. Treat it the same as other incomplete states and redispatch the Work Item Runner to resume from Step 7a.
