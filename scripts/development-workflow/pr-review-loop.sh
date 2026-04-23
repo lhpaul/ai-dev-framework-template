@@ -926,7 +926,7 @@ coderabbit_thread_gate_clean() {
         sleep 5
         continue
       fi
-      echo "ERROR: check_unresolved_threads GraphQL failure for PR #$pr_number (CodeRabbit pass) — all $thread_audit_max_retries attempts failed; escalating" >&2
+      echo "ERROR: check_unresolved_threads GraphQL failure for PR #$pr_number (CodeRabbit pass) — all $thread_audit_attempt attempts ($thread_audit_max_retries retries) failed; escalating" >&2
       print_kv RESULT escalate
       print_kv REASON review_thread_audit_failed
       print_kv PLATFORM "$platform"
@@ -1867,7 +1867,7 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
       # Escalate: we cannot confirm threads are resolved, so RESULT=clean must not be
       # emitted. Never degrade gracefully — a silent bypass of the thread audit can
       # allow PRs with unresolved review threads to be labeled ready-for-human-review.
-      echo "ERROR: check_unresolved_threads failed (exit $thread_check_status, $thread_audit_attempt/$thread_audit_max_retries attempts) — escalating (thread audit required)" >&2
+      echo "ERROR: check_unresolved_threads failed (exit $thread_check_status, $thread_audit_attempt attempts / $thread_audit_max_retries retries) — escalating (thread audit required)" >&2
       aggregate_result="escalate"
       aggregate_reason="review_thread_audit_failed"
       unresolved_thread_count=-1
