@@ -264,6 +264,52 @@ workflow_status_order() {
   esac
 }
 
+# is_terminal_tracker_status <status>
+#
+# Returns 0 (true) if the status is a terminal state that means no further
+# workflow work is needed: Released, Merged, or Cancelled.
+# Returns 1 (false) for any other status (including empty/unknown).
+is_terminal_tracker_status() {
+  local status="$1"
+  case "$status" in
+    Released|Merged|Cancelled) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# get_tracker_status_for_issue <issue_number>
+#
+# Queries GitHub Projects for the current Status of the given issue.
+# Prints the status string (e.g. "Merged", "Released", "In Development").
+# Prints an empty string when:
+#   - GITHUB_PROJECT_NUMBER is unset (GitHub Projects not configured)
+#   - The issue is not found in the project
+#   - Any API call fails
+# Returns 0 in all cases (non-blocking).
+# Uses GITHUB_PROJECT_OWNER/GITHUB_PROJECT_NUMBER when set; owner falls back
+# to the repository owner if omitted.
+get_tracker_status_for_issue() {
+  local issue_number="$1"
+  local owner project_number item_json current_status
+
+  owner="${GITHUB_PROJECT_OWNER:-$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || true)}"
+  project_number="${GITHUB_PROJECT_NUMBER:-}"
+  if [ -z "$owner" ] || [ -z "$project_number" ]; then
+    printf ''
+    return 0
+  fi
+
+  item_json=$(gh project item-list "$project_number" --owner "$owner" --limit 10000 --format json 2>/dev/null \
+    | jq -c --argjson num "$issue_number" '.items[] | select(.content.number == $num)' 2>/dev/null || true)
+  if [ -z "$item_json" ]; then
+    printf ''
+    return 0
+  fi
+
+  current_status=$(printf '%s' "$item_json" | jq -r '.status // empty' 2>/dev/null || true)
+  printf '%s' "${current_status:-}"
+}
+
 # update_tracker_status_best_effort <issue_number> <status_label> [required_current_status]
 #
 # Best-effort update for GitHub Projects Status field.
