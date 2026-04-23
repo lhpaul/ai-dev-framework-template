@@ -880,39 +880,84 @@ is_coderabbit_blocking() {
 
 # Returns 0 when CodeRabbit may treat the PR as thread-clean for this pass.
 # Returns 1 after emitting RESULT=needs_fixes (unresolved GraphQL threads).
-# Returns 2 after emitting RESULT=escalate (thread page cap exceeded).
-# On transient GraphQL failure (exit 3 from check_unresolved_threads), returns 0
-# to match the aggregate thread gate degrade behavior at script EOF.
+# Returns 2 after emitting RESULT=escalate (thread page cap exceeded or
+#   GraphQL failure after all retries exhausted).
+# On transient GraphQL failure (exit 3 from check_unresolved_threads), retries
+# up to THREAD_AUDIT_MAX_RETRIES times before escalating. Never returns 0 when
+# the thread audit could not be completed — RESULT=clean is only emitted by the
+# caller once this function returns 0 with a confirmed zero unresolved count.
 coderabbit_thread_gate_clean() {
   local pr_number="$1" repo="$2" bot_login="$3" branch_name="$4"
   local platform="coderabbit"
   local out st
+  local thread_audit_max_retries="${THREAD_AUDIT_MAX_RETRIES:-3}"
+  local thread_audit_attempt=0
+
   # check_unresolved_threads re-enables errexit internally; capture and restore
   # shellopts so set -e does not leak into run_coderabbit_review (dead rc capture).
   local prev_errexit
   prev_errexit="$(set +o | grep errexit)"
-  set +e
-  out="$(check_unresolved_threads "$pr_number" "$repo" "$bot_login")"
-  st=$?
-  eval "$prev_errexit"
-  if [ "$st" -eq 2 ]; then
-    echo "WARN: check_unresolved_threads exceeded page cap for PR #$pr_number (CodeRabbit pass)" >&2
-    print_kv RESULT escalate
-    print_kv REASON unresolved_thread_check_incomplete
-    print_kv PLATFORM "$platform"
-    print_kv PR_NUMBER "$pr_number"
-    print_kv BRANCH "$branch_name"
-    print_kv REVIEW_COMMENT_ID ""
-    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-    print_kv COMMENT_COUNT 0
-    print_kv BLOCKING_COUNT 0
-    print_kv SUGGESTION_COUNT 0
-    return 2
-  fi
-  if [ "$st" -ne 0 ]; then
-    echo "WARN: check_unresolved_threads failed in CodeRabbit pass (exit $st) — not blocking on threads" >&2
-    return 0
-  fi
+
+  while true; do
+    thread_audit_attempt=$((thread_audit_attempt + 1))
+    set +e
+    out="$(check_unresolved_threads "$pr_number" "$repo" "$bot_login")"
+    st=$?
+    eval "$prev_errexit"
+
+    if [ "$st" -eq 2 ]; then
+      echo "WARN: check_unresolved_threads exceeded page cap for PR #$pr_number (CodeRabbit pass)" >&2
+      print_kv RESULT escalate
+      print_kv REASON unresolved_thread_check_incomplete
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 2
+    fi
+
+    if [ "$st" -eq 3 ]; then
+      if [ "$thread_audit_attempt" -lt "$thread_audit_max_retries" ]; then
+        echo "WARN: check_unresolved_threads GraphQL failure for PR #$pr_number (CodeRabbit pass, attempt $thread_audit_attempt/$thread_audit_max_retries) — retrying" >&2
+        sleep 5
+        continue
+      fi
+      echo "ERROR: check_unresolved_threads GraphQL failure for PR #$pr_number (CodeRabbit pass) — all $thread_audit_max_retries attempts failed; escalating" >&2
+      print_kv RESULT escalate
+      print_kv REASON review_thread_audit_failed
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 2
+    fi
+
+    if [ "$st" -ne 0 ]; then
+      echo "ERROR: check_unresolved_threads unexpected exit $st for PR #$pr_number (CodeRabbit pass) — escalating" >&2
+      print_kv RESULT escalate
+      print_kv REASON review_thread_audit_failed
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 2
+    fi
+
+    break
+  done
+
   if [ "${out:-0}" -gt 0 ]; then
     print_kv RESULT needs_fixes
     print_kv REASON coderabbit_unresolved_review_threads
@@ -1527,8 +1572,8 @@ check_unresolved_threads() {
       # the PR rather than degrade — threads past page 10 would be silently ignored,
       # so a very large PR could otherwise be marked ready-for-human-review despite
       # unresolved threads beyond the cap. Exit 3 (below) is for transient GraphQL
-      # failures where degrading gracefully (skip gate, trust the 0 unresolved) is
-      # acceptable.
+      # failures; callers must escalate (not degrade) on exit 3 to prevent RESULT=clean
+      # when the thread audit could not be completed.
       echo "WARN: check_unresolved_threads: exceeded $max_pages pages for PR #$pr_number; cannot confirm all threads checked" >&2
       return 2
     fi
@@ -1787,17 +1832,28 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
 
   unresolved_thread_count=0
   if [ "${#unresolved_bot_logins[@]}" -gt 0 ]; then
-    # Wrap with set +e so a transient GraphQL API failure does not crash the script
-    # (all platform reviews have already succeeded; we degrade gracefully on thread-check failure).
-    # Do NOT use 2>&1 — stderr (WARN messages) must remain on stderr so that only the
-    # integer count appears on stdout for clean capture into unresolved_thread_count.
+    # Do NOT use 2>&1 — stderr (WARN/ERROR messages) must remain on stderr so that only
+    # the integer count appears on stdout for clean capture into unresolved_thread_count.
     # Bot logins are passed as individual positional args to avoid glob expansion.
+    # Retry up to THREAD_AUDIT_MAX_RETRIES times on transient GraphQL failures (exit 3)
+    # before escalating. Never degrade to treating the audit as clean on failure.
+    local thread_audit_max_retries="${THREAD_AUDIT_MAX_RETRIES:-3}"
+    local thread_audit_attempt=0
     thread_check_output=""
     thread_check_status=0
-    set +e
-    thread_check_output="$(check_unresolved_threads "$pr_number" "$(repo_slug)" "${unresolved_bot_logins[@]}")"
-    thread_check_status=$?
-    set -e
+    while true; do
+      thread_audit_attempt=$((thread_audit_attempt + 1))
+      set +e
+      thread_check_output="$(check_unresolved_threads "$pr_number" "$(repo_slug)" "${unresolved_bot_logins[@]}")"
+      thread_check_status=$?
+      set -e
+      if [ "$thread_check_status" -eq 3 ] && [ "$thread_audit_attempt" -lt "$thread_audit_max_retries" ]; then
+        echo "WARN: check_unresolved_threads GraphQL failure (aggregate gate, attempt $thread_audit_attempt/$thread_audit_max_retries) — retrying" >&2
+        sleep 5
+        continue
+      fi
+      break
+    done
     if [ "$thread_check_status" -eq 2 ]; then
       # Exit 2 = page-cap exceeded. Escalate: the audit was incomplete so we cannot
       # confirm threads past page 10 are resolved. This is not a fixable finding —
@@ -1807,11 +1863,14 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
       aggregate_reason="unresolved_thread_check_incomplete"
       unresolved_thread_count=-1
     elif [ "$thread_check_status" -ne 0 ]; then
-      # Exit 3 (or any other non-zero) = transient GraphQL API failure. Degrade:
-      # skip the thread gate and trust the 0 unresolved default. All platform reviews
-      # have already succeeded at this point so the PR state is otherwise clean.
-      echo "WARN: check_unresolved_threads failed (exit $thread_check_status) — skipping thread gate, treating as 0 unresolved" >&2
-      unresolved_thread_count=0
+      # Exit 3 after all retries (or any other non-zero) = GraphQL audit failure.
+      # Escalate: we cannot confirm threads are resolved, so RESULT=clean must not be
+      # emitted. Never degrade gracefully — a silent bypass of the thread audit can
+      # allow PRs with unresolved review threads to be labeled ready-for-human-review.
+      echo "ERROR: check_unresolved_threads failed (exit $thread_check_status, $thread_audit_attempt/$thread_audit_max_retries attempts) — escalating (thread audit required)" >&2
+      aggregate_result="escalate"
+      aggregate_reason="review_thread_audit_failed"
+      unresolved_thread_count=-1
     else
       unresolved_thread_count="$thread_check_output"
     fi
