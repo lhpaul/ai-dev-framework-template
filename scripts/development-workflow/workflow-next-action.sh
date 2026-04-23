@@ -88,12 +88,18 @@ if [ -n "$pr_number" ]; then
       exit 0
       ;;
     *)
-      # Detect pre-label orphaned run: non-draft PR with no readiness labels and no
-      # reviewer loop summary comment — the agent timed out before post-review steps ran.
+      # Detect pre-label orphaned run: non-draft PR with no readiness labels (neither
+      # ready-for-regression nor ready-for-human-review) and no reviewer loop summary
+      # comment — the agent timed out before post-review steps ran.
+      # PRs with ready-for-regression but no ready-for-human-review are an "incomplete
+      # run (post-regression)" — distinct from the pre-label orphaned case.
       is_draft="$(printf '%s\n' "$pr_json" | jq -r '.isDraft')"
       has_review_summary="$(printf '%s\n' "$pr_json" | jq -r '[.comments[].body] | any(test("Automated Reviewer Loop Summary|No blocking PR feedback")) | tostring')"
       if [ "$is_draft" = "false" ] && [ "$has_review_summary" = "false" ]; then
-        print_kv ORPHANED_PR true
+        case ",$labels," in
+          *,ready-for-regression,*) ;;  # Not orphaned — incomplete run (post-regression, pre-Step-7)
+          *) print_kv ORPHANED_PR true ;;
+        esac
       fi
       print_kv NEXT_ACTION resolve-pr-readiness
       exit 0
@@ -126,12 +132,18 @@ if [ -n "$branch_name" ]; then
         exit 0
         ;;
       *)
-        # Detect pre-label orphaned run: non-draft PR with no readiness labels and no
-        # reviewer loop summary comment — the agent timed out before post-review steps ran.
+        # Detect pre-label orphaned run: non-draft PR with no readiness labels (neither
+        # ready-for-regression nor ready-for-human-review) and no reviewer loop summary
+        # comment — the agent timed out before post-review steps ran.
+        # PRs with ready-for-regression but no ready-for-human-review are an "incomplete
+        # run (post-regression)" — distinct from the pre-label orphaned case.
         is_draft="$(printf '%s\n' "$pr_json" | jq -r '.isDraft')"
         has_review_summary="$(printf '%s\n' "$pr_json" | jq -r '[.comments[].body] | any(test("Automated Reviewer Loop Summary|No blocking PR feedback")) | tostring')"
         if [ "$is_draft" = "false" ] && [ "$has_review_summary" = "false" ]; then
-          print_kv ORPHANED_PR true
+          case ",$labels," in
+            *,ready-for-regression,*) ;;  # Not orphaned — incomplete run (post-regression, pre-Step-7)
+            *) print_kv ORPHANED_PR true ;;
+          esac
         fi
         print_kv NEXT_ACTION resolve-pr-readiness
         exit 0
