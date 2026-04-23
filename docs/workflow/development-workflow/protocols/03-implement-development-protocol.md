@@ -270,6 +270,33 @@ git checkout -b refactor/[branch-slug]
 ```
 
 3. Implement following the plan order. Follow `docs/best-practices/` for all code written.
+
+   **Mass-rename sub-step (applies when the refactor renames a path, identifier, or string across multiple files):**
+
+   After performing any global substitution (find-and-replace, `sed`, `git mv`, or IDE rename), verify all three reference categories before committing:
+
+   | Category | What to check | Example pattern |
+   |---|---|---|
+   | **Link targets** | `[text](old-path)` — both the link target and `text` when text mirrors the old path | `[docs/ai/old](docs/workflow/old)` |
+   | **Display text in links** | `[old-path-text](new-path)` — link target already updated but display text still shows the old string | `[docs/ai/old](docs/workflow/new)` |
+   | **Non-link occurrences** | Bare old-string in prose, code blocks, directory trees, YAML values, and shell scripts | `docs/ai/old` inside a code fence |
+
+   Run a residual-occurrence check immediately after the substitution and before staging:
+
+   ```bash
+   # Replace "old-string" with the actual old path / identifier being renamed
+   grep -r "old-string" . --include="*.md" --include="*.yaml" --include="*.sh" \
+     --exclude-dir=".git" --exclude-dir="worktrees" -l
+   # Output should be empty, or contain only files where the old string
+   # appears intentionally as subject-matter text (e.g., a CHANGELOG entry
+   # describing the rename, or a comment explaining the old name).
+   ```
+
+   For each file listed in the output:
+   1. Open it and confirm whether the occurrence is intentional (e.g., historical CHANGELOG entry, explanatory comment) or a missed substitution.
+   2. Fix every missed substitution before staging.
+   3. Re-run the check until the output contains only intentional occurrences.
+
 4. If scope is larger than the plan described, **stop and report**
 5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area
 6. Update CHANGELOG under `[Unreleased]` with a `Changed` entry (skip if this refactor adjusts unreleased work that already has an entry — update the existing entry instead, or leave it unchanged if it already describes the correct behavior).
