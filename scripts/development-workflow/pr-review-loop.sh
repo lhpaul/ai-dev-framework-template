@@ -41,7 +41,10 @@ else
   _LOCK_CMD="$(cat "$_LOCK_DIR/cmd" 2>/dev/null || true)"
   if [ -n "$_LOCK_PID" ] && kill -0 "$_LOCK_PID" 2>/dev/null && [ "$_LOCK_CMD" = "$(basename "$0")" ]; then
     echo "ERROR: pr-review-loop.sh is already running for PR #${_PR_ARG:-unknown} (PID $_LOCK_PID). Exiting to prevent parallel execution." >&2
-    exit 75  # EX_TEMPFAIL — lock contention; not a review result (not 0/1/2)
+    print_kv RESULT escalate
+    print_kv REASON lock_contention
+    print_kv PR_NUMBER "${_PR_ARG:-}"
+    exit 75  # EX_TEMPFAIL — lock contention; not a normal review result (0/1/2)
   fi
   # Stale lock (process gone or belongs to a different script) — reclaim atomically.
   # Use mv (atomic rename) to move the stale dir out of the way, then mkdir.
@@ -56,6 +59,9 @@ else
     _OWN_LOCK=1
   else
     echo "ERROR: pr-review-loop.sh is already running for PR #${_PR_ARG:-unknown} (concurrent startup race). Exiting to prevent parallel execution." >&2
+    print_kv RESULT escalate
+    print_kv REASON lock_contention
+    print_kv PR_NUMBER "${_PR_ARG:-}"
     exit 75
   fi
 fi
@@ -69,7 +75,9 @@ Runs the automated PR review loop for one or more platforms in sequence. Before
 triggering a new review, each platform checks for existing blocking findings. If
 any platform reports blocking findings, the script stops immediately and exits 1.
 If a platform times out or escalates, the script exits 2. If all configured
-platforms are clean or skipped, the script exits 0.
+platforms are clean or skipped, the script exits 0. If a second instance is
+detected for the same PR number, the script emits RESULT=escalate with
+REASON=lock_contention and exits 75 (EX_TEMPFAIL).
 
 Platform selection (in priority order):
   1. --platform flag(s) passed on the command line
@@ -78,6 +86,7 @@ Platform selection (in priority order):
 Outputs stable key=value lines including:
   RESULT=clean|needs_fixes|escalate|skipped
   PLATFORM_<n>_NAME / PLATFORM_<n>_RESULT
+  REASON=lock_contention (when exit code is 75)
 EOF
 }
 
