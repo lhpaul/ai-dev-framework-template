@@ -69,7 +69,7 @@ cd_workflow_repo_root
 
 if [ -n "$pr_number" ]; then
   require_gh
-  pr_json="$(gh pr view "$pr_number" --json headRefName,labels)"
+  pr_json="$(gh pr view "$pr_number" --json headRefName,labels,isDraft,comments)"
   branch_name="$(printf '%s\n' "$pr_json" | jq -r '.headRefName')"
   labels="$(printf '%s\n' "$pr_json" | jq -r '[.labels[].name] | join(",")')"
 
@@ -88,6 +88,13 @@ if [ -n "$pr_number" ]; then
       exit 0
       ;;
     *)
+      # Detect pre-label orphaned run: non-draft PR with no readiness labels and no
+      # reviewer loop summary comment — the agent timed out before post-review steps ran.
+      is_draft="$(printf '%s\n' "$pr_json" | jq -r '.isDraft')"
+      has_review_summary="$(printf '%s\n' "$pr_json" | jq -r '[.comments[].body] | any(test("Automated Reviewer Loop Summary|No blocking PR feedback")) | tostring')"
+      if [ "$is_draft" = "false" ] && [ "$has_review_summary" = "false" ]; then
+        print_kv ORPHANED_PR true
+      fi
       print_kv NEXT_ACTION resolve-pr-readiness
       exit 0
       ;;
@@ -106,7 +113,7 @@ if [ -n "$branch_name" ]; then
   print_kv REVIEW_AGENT "$(reviewer_for_branch "$branch_name")"
 
   if [ -n "$pr_number" ]; then
-    pr_json="$(gh pr view "$pr_number" --json labels)"
+    pr_json="$(gh pr view "$pr_number" --json labels,isDraft,comments)"
     labels="$(printf '%s\n' "$pr_json" | jq -r '[.labels[].name] | join(",")')"
     print_kv PR_NUMBER "$pr_number"
     case ",$labels," in
@@ -119,6 +126,13 @@ if [ -n "$branch_name" ]; then
         exit 0
         ;;
       *)
+        # Detect pre-label orphaned run: non-draft PR with no readiness labels and no
+        # reviewer loop summary comment — the agent timed out before post-review steps ran.
+        is_draft="$(printf '%s\n' "$pr_json" | jq -r '.isDraft')"
+        has_review_summary="$(printf '%s\n' "$pr_json" | jq -r '[.comments[].body] | any(test("Automated Reviewer Loop Summary|No blocking PR feedback")) | tostring')"
+        if [ "$is_draft" = "false" ] && [ "$has_review_summary" = "false" ]; then
+          print_kv ORPHANED_PR true
+        fi
         print_kv NEXT_ACTION resolve-pr-readiness
         exit 0
         ;;
