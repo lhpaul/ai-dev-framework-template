@@ -155,7 +155,7 @@ After writing, run a quick sanity check to confirm there is exactly one instance
 
 ```bash
 # Replace "Changed" with your actual category (Added, Fixed, etc.)
-grep -c "^### Changed" CHANGELOG.md
+awk '/^## \[Unreleased\]/{found=1} /^## \[/{if(found && !/Unreleased/) exit} found' CHANGELOG.md | grep -c "^### Changed"
 # Expected output: 1
 ```
 
@@ -289,7 +289,7 @@ git checkout -b refactor/[branch-slug]
 5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area
 6. Update CHANGELOG under `[Unreleased]` with a `Changed` entry (skip if this refactor adjusts unreleased work that already has an entry — update the existing entry instead, or leave it unchanged if it already describes the correct behavior).
 
-   **Duplicate-section prevention (check before writing)**: Before writing the CHANGELOG entry, read the existing `[Unreleased]` block and check whether a `### Changed` section header already exists. If it does, append your bullet(s) to the existing section — do **not** create a new `### Changed` header. If `### Changed` does not yet exist under `[Unreleased]`, create it. After writing, verify with `grep -c "^### Changed" CHANGELOG.md` that the count is exactly 1; if greater than 1, merge the duplicate sections before staging.
+   **Duplicate-section prevention (check before writing)**: Before writing the CHANGELOG entry, read the existing `[Unreleased]` block and check whether a `### Changed` section header already exists. If it does, append your bullet(s) to the existing section — do **not** create a new `### Changed` header. If `### Changed` does not yet exist under `[Unreleased]`, create it. After writing, verify that the header appears exactly once within the `[Unreleased]` block: `awk '/^## \[Unreleased\]/{found=1} /^## \[/{if(found && !/Unreleased/) exit} found' CHANGELOG.md | grep -c "^### Changed"` — expected output: 1; if greater than 1, merge the duplicate sections before staging.
 
    **CHANGELOG format verification (before staging)**: After writing the CHANGELOG entry, verify the entry for the following defects and fix them in-place before staging:
 
@@ -397,7 +397,7 @@ Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected
 
 Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (skip if this fixes unreleased work that already has an entry — update the existing entry instead, or leave it unchanged if it already describes the correct behavior).
 
-**Duplicate-section prevention (check before writing)**: Before writing the CHANGELOG entry, read the existing `[Unreleased]` block and check whether a `### Fixed` section header already exists. If it does, append your bullet(s) to the existing section — do **not** create a new `### Fixed` header. If `### Fixed` does not yet exist under `[Unreleased]`, create it. After writing, verify with `grep -c "^### Fixed" CHANGELOG.md` that the count is exactly 1; if greater than 1, merge the duplicate sections before staging.
+**Duplicate-section prevention (check before writing)**: Before writing the CHANGELOG entry, read the existing `[Unreleased]` block and check whether a `### Fixed` section header already exists. If it does, append your bullet(s) to the existing section — do **not** create a new `### Fixed` header. If `### Fixed` does not yet exist under `[Unreleased]`, create it. After writing, verify that the header appears exactly once within the `[Unreleased]` block: `awk '/^## \[Unreleased\]/{found=1} /^## \[/{if(found && !/Unreleased/) exit} found' CHANGELOG.md | grep -c "^### Fixed"` — expected output: 1; if greater than 1, merge the duplicate sections before staging.
 
 **CHANGELOG format verification (before staging)**: After writing the CHANGELOG entry, verify the entry for the following defects and fix them in-place before staging:
 
@@ -496,7 +496,7 @@ Verify: build, lint, tests pass.
 
 Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (hotfixes fix released code, so a new entry is normally required).
 
-**Duplicate-section prevention (check before writing)**: Before writing the CHANGELOG entry, read the existing `[Unreleased]` block and check whether a `### Fixed` section header already exists. If it does, append your bullet(s) to the existing section — do **not** create a new `### Fixed` header. If `### Fixed` does not yet exist under `[Unreleased]`, create it. After writing, verify with `grep -c "^### Fixed" CHANGELOG.md` that the count is exactly 1; if greater than 1, merge the duplicate sections before staging.
+**Duplicate-section prevention (check before writing)**: Before writing the CHANGELOG entry, read the existing `[Unreleased]` block and check whether a `### Fixed` section header already exists. If it does, append your bullet(s) to the existing section — do **not** create a new `### Fixed` header. If `### Fixed` does not yet exist under `[Unreleased]`, create it. After writing, verify that the header appears exactly once within the `[Unreleased]` block: `awk '/^## \[Unreleased\]/{found=1} /^## \[/{if(found && !/Unreleased/) exit} found' CHANGELOG.md | grep -c "^### Fixed"` — expected output: 1; if greater than 1, merge the duplicate sections before staging.
 
 **CHANGELOG format verification (before staging)**: After writing the CHANGELOG entry, verify the entry for the following defects and fix them in-place before staging:
 
