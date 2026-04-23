@@ -104,27 +104,27 @@ GitHub Projects status updates can be performed entirely via `gh` CLI and Bash â
 
 ### One-shot status update (recommended pattern)
 
-Use the following script pattern when a stage completes and the tracker status must advance. Requires `GITHUB_PROJECT_NUMBER` and `GITHUB_OWNER` environment variables (or hard-coded values).
+Use the following script pattern when a stage completes and the tracker status must advance. Requires `GITHUB_PROJECT_NUMBER` and `GITHUB_PROJECT_OWNER` environment variables (or hard-coded values).
 
 ```bash
-OWNER="<OWNER>"           # GitHub user or org owning the project
+PROJECT_OWNER="<OWNER>"   # GitHub user or org owning the project (matches GITHUB_PROJECT_OWNER)
 PROJECT_NUMBER=<NUMBER>   # GitHub project number (from URL or `gh project list`)
 ISSUE_NUMBER=<ISSUE>      # GitHub issue number to update
 
 # 1. Get the project node ID
-PROJECT_ID=$(gh project view "$PROJECT_NUMBER" --owner "$OWNER" --format json --jq '.id')
+PROJECT_ID=$(gh project view "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json --jq '.id')
 
 # 2. Get the item ID for this issue
-ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" --owner "$OWNER" --format json \
+ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json \
   | jq -r --argjson n "$ISSUE_NUMBER" '.items[] | select(.content.number == $n) | .id')
 
 # 3. Get the Status field ID
-STATUS_FIELD_ID=$(gh project field-list "$PROJECT_NUMBER" --owner "$OWNER" --format json \
+STATUS_FIELD_ID=$(gh project field-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json \
   | jq -r '.fields[] | select(.name == "Status") | .id')
 
 # 4. Get the option ID for the target status (e.g., "Development in Review")
 TARGET_STATUS="Development in Review"
-OPTION_ID=$(gh project field-list "$PROJECT_NUMBER" --owner "$OWNER" --format json \
+OPTION_ID=$(gh project field-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json \
   | jq -r --arg s "$TARGET_STATUS" \
     '.fields[] | select(.name == "Status") | .options[] | select(.name == $s) | .id')
 
@@ -155,7 +155,7 @@ gh api graphql -f query="
 Field IDs and option IDs are stable within a project. To avoid repeated `field-list` calls, agents may cache them in a `.tmp/github-project-ids.json` file (gitignored path) at the start of a session:
 
 ```bash
-gh project field-list "$PROJECT_NUMBER" --owner "$OWNER" --format json > .tmp/github-project-ids.json
+gh project field-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json > .tmp/github-project-ids.json
 ```
 
 Re-fetch if the file is missing or older than 24 hours.
