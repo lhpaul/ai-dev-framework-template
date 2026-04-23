@@ -164,12 +164,35 @@ If no blocking human decision remains:
 2. Create branch: `git checkout -b implementation-plan/[branch-slug]` from `develop`
 3. Write the plan file
 4. Write the smoke test runbook
-5. Commit: `docs: add implementation plan for [feature-name]`
-6. Push: `git push -u origin implementation-plan/[branch-slug]`
-7. Open a **draft** PR targeting `develop` with:
+5. **Pre-commit lint check (mandatory — do not skip)**:
+
+   Run `markdownlint-cli2` on the plan file and smoke test runbook before staging. This catches broken relative links (wrong `../../` depth), trailing spaces, and missing trailing newlines that would otherwise fail CI and require a fix commit.
+
+   ```bash
+   # Resolve the repo root (works whether running in the main tree or an isolated worktree).
+   # NOTE: git rev-parse --show-toplevel returns the *worktree* directory inside a worktree,
+   # not the main repo. Use --git-common-dir instead, which always points to the shared .git/.
+   REPO_ROOT=$(git rev-parse --git-common-dir)/..
+
+   # Run markdownlint-cli2 using the repo root's node_modules
+   "$REPO_ROOT/node_modules/.bin/markdownlint-cli2" \
+     "docs/specs/developments/[timestamp]_[feature-slug]/2_[feature-slug]_implementation-plan.md" \
+     "docs/testing/[app-or-section]/[feature-slug].smoke-test.md"
+   ```
+
+   Fix any reported violations before proceeding to the commit step. Common violations to look for:
+   - **Broken relative links** (`relative-links`): verify every `[text](../../path/to/file.md)` path resolves from the file's location. Count the `../` segments carefully — off-by-one depth errors (e.g., `../../../../` where `../../../` is correct) will not be obvious by inspection alone. The lint step is the authoritative check.
+   - **Trailing spaces** (MD009): no line should end with whitespace except intentional two-space hard line breaks.
+   - **Missing trailing newline** (MD047): every file must end with a single newline.
+
+   > **Worktree note**: When running inside a git worktree (e.g., when dispatched by the Portfolio Orchestrator), `node_modules/` does not exist inside the worktree directory. The `$(git rev-parse --git-common-dir)/..` expression resolves to the main repo root in both the main tree and any worktree.
+
+6. Commit: `docs: add implementation plan for [feature-name]`
+7. Push: `git push -u origin implementation-plan/[branch-slug]`
+8. Open a **draft** PR targeting `develop` with:
    - Title: `docs(plan): [feature-name]`
    - Body: summary of the approach, complexity estimate, key risks, link to plan and runbook
-8. Return the branch + PR details to the **Work Item Runner**
+9. Return the branch + PR details to the **Work Item Runner**
 
 ---
 
