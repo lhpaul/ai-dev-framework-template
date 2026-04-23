@@ -104,11 +104,11 @@ GitHub Projects status updates can be performed entirely via `gh` CLI and Bash â
 
 ### One-shot status update (recommended pattern)
 
-Use the following script pattern when a stage completes and the tracker status must advance. Requires `GITHUB_PROJECT_NUMBER` and `GITHUB_PROJECT_OWNER` environment variables (or hard-coded values).
+Use the following script pattern when a stage completes and the tracker status must advance. Replace the placeholder values below with your project owner and number, or set `GITHUB_PROJECT_OWNER` and `GITHUB_PROJECT_NUMBER` environment variables if preferred.
 
 ```bash
-PROJECT_OWNER="<OWNER>"   # GitHub user or org owning the project (matches GITHUB_PROJECT_OWNER)
-PROJECT_NUMBER=<NUMBER>   # GitHub project number (from URL or `gh project list`)
+PROJECT_OWNER="${GITHUB_PROJECT_OWNER:-<OWNER>}"   # GitHub user or org owning the project
+PROJECT_NUMBER="${GITHUB_PROJECT_NUMBER:-<NUMBER>}" # GitHub project number (from URL or `gh project list`)
 ISSUE_NUMBER=<ISSUE>      # GitHub issue number to update
 
 # 1. Get the project node ID
@@ -122,8 +122,9 @@ ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --limi
 STATUS_FIELD_ID=$(gh project field-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json \
   | jq -r '.fields[] | select(.name == "Status") | .id')
 
-# 4. Get the option ID for the target status (e.g., "Development in Review")
-TARGET_STATUS="Development in Review"
+# 4. Get the option ID for the target status
+# (Use the appropriate value from the table in "Status values by workflow stage" below)
+TARGET_STATUS="Development in Review"  # Example for feature/*/fix/*/refactor/*/hotfix/* PR
 OPTION_ID=$(gh project field-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json \
   | jq -r --arg s "$TARGET_STATUS" \
     '.fields[] | select(.name == "Status") | .options[] | select(.name == $s) | .id')
