@@ -240,6 +240,23 @@ For runners that support pre-tool-use hooks (e.g., Claude Code), a non-blocking 
 
 This hook is advisory and not required for the guardrail to function. The Critical block above is the normative rule; this hook provides an additional safety signal for supported runners.
 
+**Common worktree gotcha — `git rev-parse --show-toplevel` returns the worktree path, not the main repo root**
+
+When an agent runs inside an isolated worktree (`.claude/worktrees/<branch>/`), `git rev-parse --show-toplevel` returns the *worktree* path rather than the main repo root. Any script or agent instruction that relies on this command to locate `node_modules/`, project-level config files, or other resources installed at the main repo root will construct wrong paths.
+
+Use `git rev-parse --git-common-dir` instead — it always returns the `.git` directory of the *main* repo regardless of which worktree is active. Strip the `/.git` suffix to get the main repo root:
+
+```bash
+# Wrong — returns the worktree path when run inside an isolated worktree:
+REPO_ROOT=$(git rev-parse --show-toplevel)
+
+# Correct — always returns the main repo root:
+REPO_ROOT=$(git rev-parse --git-common-dir)
+REPO_ROOT=${REPO_ROOT%/.git}  # strip the /.git suffix
+```
+
+Apply this pattern whenever a stage agent, script, or implementation step needs to reference `node_modules/`, root-level config files, or any path that lives at the main repo root rather than in the worktree.
+
 **Important — stage protocol compatibility**: When working inside a worktree created with this method, the stage protocol's initial branching steps (`git fetch origin`, `git checkout develop`, `git pull origin develop`, `git checkout -b ...`) are **already satisfied** by the worktree creation above. The stage agent should skip those steps and proceed directly to the implementation work. If the stage agent runs `git checkout develop` inside the worktree, it will fail because `develop` is already checked out in the main working tree and git prevents the same branch from being checked out in multiple worktrees simultaneously.
 
 **Critical safety rule — never modify the main working tree's branch**: An agent running inside a worktree **must never** run `git checkout`, `git switch`, `git reset`, or any command that changes the checked-out branch of the **main working tree**. Violating this rule leaves the main repo in a broken state (e.g., pointing at a `worktree-agent-*` branch) that breaks subsequent operations for all other agents and for the human operator.
