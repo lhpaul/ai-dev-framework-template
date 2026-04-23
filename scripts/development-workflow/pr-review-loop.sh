@@ -921,7 +921,7 @@ coderabbit_thread_gate_clean() {
     fi
 
     if [ "$st" -eq 3 ]; then
-      if [ "$thread_audit_attempt" -lt "$thread_audit_max_retries" ]; then
+      if [ "$thread_audit_attempt" -le "$thread_audit_max_retries" ]; then
         echo "WARN: check_unresolved_threads GraphQL failure for PR #$pr_number (CodeRabbit pass, attempt $thread_audit_attempt/$thread_audit_max_retries) — retrying" >&2
         sleep 5
         continue
@@ -1847,7 +1847,7 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
       thread_check_output="$(check_unresolved_threads "$pr_number" "$(repo_slug)" "${unresolved_bot_logins[@]}")"
       thread_check_status=$?
       set -e
-      if [ "$thread_check_status" -eq 3 ] && [ "$thread_audit_attempt" -lt "$thread_audit_max_retries" ]; then
+      if [ "$thread_check_status" -eq 3 ] && [ "$thread_audit_attempt" -le "$thread_audit_max_retries" ]; then
         echo "WARN: check_unresolved_threads GraphQL failure (aggregate gate, attempt $thread_audit_attempt/$thread_audit_max_retries) — retrying" >&2
         sleep 5
         continue
