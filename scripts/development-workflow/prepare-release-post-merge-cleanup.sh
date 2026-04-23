@@ -7,12 +7,20 @@
 # - optionally transitions explicit issue numbers from merged -> released
 #
 # Usage:
-#   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh <version|release-branch> [--issue N]... [--issues N,N,...]
+#   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh <version|release-branch> [--issue N]... [--issues N,N,...] [--best-effort]
 #
 # Examples:
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh 1.2.3
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh v1.2.3 --issue 232 --issue 240
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh release/v1.2.3 --issues 232,240
+#   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh release/v1.2.3 --issues 232,240 --best-effort
+#
+# Exit codes when --issues is supplied (unless --best-effort is passed):
+#   0  All supplied issues had updated==1 per issue (or no issues supplied)
+#   1  updated==0 after processing all issues, or at least one hard failure occurred
+#
+# Output (when --issues is supplied):
+#   Emits structured key/value summary line:  UPDATED=N SKIPPED=N FAILED=N
 #
 # Env overrides:
 #   GITHUB_PROJECT_STATUS_MERGED   (default: Merged)
@@ -30,10 +38,11 @@ require_gh
 MERGED_LABEL="${GITHUB_PROJECT_STATUS_MERGED:-Merged}"
 RELEASED_LABEL="${GITHUB_PROJECT_STATUS_RELEASED:-Released}"
 RELEASE_INPUT=""
+BEST_EFFORT=false
 declare -a ISSUE_NUMBERS=()
 
 usage() {
-  echo "Usage: $0 <version|release-branch> [--issue N]... [--issues N,N,...]" >&2
+  echo "Usage: $0 <version|release-branch> [--issue N]... [--issues N,N,...] [--best-effort]" >&2
 }
 
 normalize_release_branch() {
@@ -86,6 +95,10 @@ while [ $# -gt 0 ]; do
       fi
       parse_issue_csv "$2"
       shift 2
+      ;;
+    --best-effort)
+      BEST_EFFORT=true
+      shift
       ;;
     -h|--help)
       usage
@@ -166,17 +179,60 @@ fi
 
 if [ "${#ISSUE_NUMBERS[@]}" -eq 0 ]; then
   echo "No issues supplied; skipping tracker release transitions."
+  echo "Release post-merge cleanup complete."
   exit 0
 fi
 
 echo "Transitioning scoped issues from '$MERGED_LABEL' to '$RELEASED_LABEL'..."
+TRACKER_UPDATED=0
+TRACKER_SKIPPED=0
+TRACKER_FAILED=0
+
 for issue in "${ISSUE_NUMBERS[@]}"; do
   ISSUE_STATE=$(gh issue view "$issue" --json state --jq '.state' 2>/dev/null || true)
   if [ -z "$ISSUE_STATE" ]; then
     echo "Warning: could not read issue #$issue; skipping tracker update."
+    TRACKER_SKIPPED=$((TRACKER_SKIPPED + 1))
     continue
   fi
-  update_tracker_status_best_effort "$issue" "$RELEASED_LABEL" "$MERGED_LABEL"
+  # Capture output from the best-effort helper to classify the outcome.
+  # The helper always exits 0; we distinguish outcomes by its stdout:
+  #   "Updating tracker status..."  (followed by successful GraphQL JSON) -> updated
+  #   "Warning: ... skipping ..."                                          -> skipped
+  #   "Warning: GraphQL mutation failed ..."                               -> failed
+  TRACKER_OUT=$(update_tracker_status_best_effort "$issue" "$RELEASED_LABEL" "$MERGED_LABEL" 2>&1)
+  echo "$TRACKER_OUT"
+  if echo "$TRACKER_OUT" | grep -q "^Updating tracker status"; then
+    if echo "$TRACKER_OUT" | grep -q "Warning: GraphQL mutation failed"; then
+      TRACKER_FAILED=$((TRACKER_FAILED + 1))
+    else
+      TRACKER_UPDATED=$((TRACKER_UPDATED + 1))
+    fi
+  elif echo "$TRACKER_OUT" | grep -q "Warning:"; then
+    TRACKER_SKIPPED=$((TRACKER_SKIPPED + 1))
+  else
+    # Unexpected output pattern — treat conservatively as a skip
+    TRACKER_SKIPPED=$((TRACKER_SKIPPED + 1))
+  fi
 done
+
+echo "UPDATED=$TRACKER_UPDATED SKIPPED=$TRACKER_SKIPPED FAILED=$TRACKER_FAILED"
+
+if [ "$BEST_EFFORT" = "true" ]; then
+  echo "Release post-merge cleanup complete."
+  exit 0
+fi
+
+if [ "$TRACKER_FAILED" -gt 0 ]; then
+  echo "Error: $TRACKER_FAILED tracker transition(s) failed for release $RELEASE_BRANCH." >&2
+  echo "Pass --best-effort to suppress this error and exit 0 regardless of transition outcomes." >&2
+  exit 1
+fi
+
+if [ "$TRACKER_UPDATED" -eq 0 ]; then
+  echo "Error: no tracker transitions succeeded (UPDATED=0) for release $RELEASE_BRANCH." >&2
+  echo "Pass --best-effort to suppress this error and exit 0 regardless of transition outcomes." >&2
+  exit 1
+fi
 
 echo "Release post-merge cleanup complete."
