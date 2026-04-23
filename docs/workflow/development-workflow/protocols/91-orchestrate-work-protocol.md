@@ -935,31 +935,7 @@ How to perform the update depends on the configured `issue_tracker.provider` in 
 
 #### GitHub Projects (provider: `github_projects`) — use `gh` CLI
 
-GitHub Projects status updates are fully supported via `gh` CLI and require no MCP server. Subagents in any execution context (including parallel batch runs) **must** use this Bash path rather than MCP:
-
-```bash
-# Look up the project item ID for this issue
-ITEM_ID=$(gh project item-list <PROJECT_NUMBER> --owner <OWNER> --limit 10000 --format json \
-  | jq -r '.items[] | select(.content.number == <ISSUE_NUMBER>) | .id')
-
-# Look up the Status field ID and target option ID
-gh project field-list <PROJECT_NUMBER> --owner <OWNER> --format json
-
-# Update the status
-gh api graphql -f query='
-  mutation {
-    updateProjectV2ItemFieldValue(input: {
-      projectId: "<PROJECT_ID>"
-      itemId: "<ITEM_ID>"
-      fieldId: "<STATUS_FIELD_ID>"
-      value: { singleSelectOptionId: "<OPTION_ID>" }
-    }) {
-      projectV2Item { id }
-    }
-  }'
-```
-
-See `docs/workflow/development-workflow/integrations/github-projects.md` for field IDs, option IDs, and ready-to-use CLI patterns.
+GitHub Projects status updates are fully supported via `gh` CLI and require no MCP server. Subagents in any execution context (including parallel batch runs) **must** use the CLI update pattern rather than MCP. Follow the "One-shot status update (recommended pattern)" section in [`docs/workflow/development-workflow/integrations/github-projects.md`](../integrations/github-projects.md) for the full commands and ID-resolution steps.
 
 #### Other providers (Linear, Jira, etc.) — report and defer
 
