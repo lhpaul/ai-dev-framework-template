@@ -44,9 +44,12 @@ else
     exit 75  # EX_TEMPFAIL — lock contention; not a review result (not 0/1/2)
   fi
   # Stale lock (process gone or belongs to a different script) — reclaim atomically.
-  # Remove the stale dir and retry mkdir. If two callers reach this point
-  # simultaneously, only one mkdir will succeed; the other exits via the else branch.
-  rm -rf "$_LOCK_DIR"
+  # Use mv (atomic rename) to move the stale dir out of the way, then mkdir.
+  # If two callers reach this point simultaneously, only one mv succeeds (rename
+  # is atomic on POSIX); the loser's mv fails because the source is gone. Then
+  # both try mkdir; only one succeeds and the other exits via the else branch.
+  mv "$_LOCK_DIR" "${_LOCK_DIR}.stale.$$" 2>/dev/null || true
+  rm -rf "${_LOCK_DIR}.stale.$$" 2>/dev/null || true
   if mkdir "$_LOCK_DIR" 2>/dev/null; then
     printf '%d\n' "$$"           > "$_LOCK_DIR/pid"
     printf '%s\n' "$(basename "$0")" > "$_LOCK_DIR/cmd"
