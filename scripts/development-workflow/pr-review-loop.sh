@@ -878,6 +878,18 @@ is_coderabbit_blocking() {
   return 1
 }
 
+# Returns the validated THREAD_AUDIT_MAX_RETRIES value (a positive integer).
+# If the environment variable is unset, empty, non-integer, or non-positive,
+# emits a WARN on stderr and returns the default (3).
+thread_audit_max_retries_value() {
+  local value="${THREAD_AUDIT_MAX_RETRIES:-3}"
+  if ! printf '%s' "$value" | grep -qE '^[0-9]+$' || [ "$value" -le 0 ] 2>/dev/null; then
+    echo "WARN: THREAD_AUDIT_MAX_RETRIES must be a positive integer; defaulting to 3" >&2
+    value=3
+  fi
+  printf '%s\n' "$value"
+}
+
 # Returns 0 when CodeRabbit may treat the PR as thread-clean for this pass.
 # Returns 1 after emitting RESULT=needs_fixes (unresolved GraphQL threads).
 # Returns 2 after emitting RESULT=escalate (thread page cap exceeded or
@@ -890,7 +902,8 @@ coderabbit_thread_gate_clean() {
   local pr_number="$1" repo="$2" bot_login="$3" branch_name="$4"
   local platform="coderabbit"
   local out st
-  local thread_audit_max_retries="${THREAD_AUDIT_MAX_RETRIES:-3}"
+  local thread_audit_max_retries
+  thread_audit_max_retries="$(thread_audit_max_retries_value)"
   local thread_audit_attempt=0
 
   # check_unresolved_threads re-enables errexit internally; capture and restore
@@ -1837,7 +1850,7 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
     # Bot logins are passed as individual positional args to avoid glob expansion.
     # Retry up to THREAD_AUDIT_MAX_RETRIES times on transient GraphQL failures (exit 3)
     # before escalating. Never degrade to treating the audit as clean on failure.
-    thread_audit_max_retries="${THREAD_AUDIT_MAX_RETRIES:-3}"
+    thread_audit_max_retries="$(thread_audit_max_retries_value)"
     thread_audit_attempt=0
     thread_check_output=""
     thread_check_status=0
