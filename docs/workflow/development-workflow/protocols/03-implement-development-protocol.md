@@ -595,7 +595,7 @@ Fix all ShellCheck warnings before committing. Do not commit `.sh` files with Sh
 To write the entry correctly:
 
 1. Determine the next patch version from the most recent released section header (e.g., if the latest is `[1.0.0]`, the hotfix version is `[1.0.1]`).
-2. Insert a new versioned section **above** `[Unreleased]` in `CHANGELOG.md`:
+2. Insert a new versioned section as the **first `##` section** in `CHANGELOG.md` — above all existing `##` headers, including any prior hotfix versions and `[Unreleased]`. This ensures `auto-tag-release.yml` always extracts the correct (newest) version via `grep -m 1 '^## '`. Do not insert it between `[Unreleased]` and a previous hotfix; insert it at the very top of the versioned history:
 
 ```markdown
 ## [1.0.1] - YYYY-MM-DD
