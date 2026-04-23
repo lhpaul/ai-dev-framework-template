@@ -285,7 +285,7 @@ git checkout -b refactor/[branch-slug]
 
    ```bash
    # Replace "old-string" with the actual old path / identifier being renamed
-   grep -r "old-string" . --include="*.md" --include="*.yaml" --include="*.yml" --include="*.sh" \
+   grep -r "old-string" . --include="*.md" --include="*.mdc" --include="*.yaml" --include="*.yml" --include="*.sh" \
      --exclude-dir=".git" --exclude-dir="worktrees" -l
    # Output should be empty, or contain only files where the old string
    # appears intentionally as subject-matter text (e.g., a CHANGELOG entry
