@@ -7,10 +7,15 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 source "$SCRIPT_DIR/workflow-lib.sh"
 
 # --- Single-instance guard ---
-# Prevent two simultaneous invocations for the same PR. The lock file is stored
-# in /tmp and includes the PR number so parallel runs on different PRs are allowed.
-# The guard uses PID tracking: if the PID recorded in the lock file is still alive
-# and belongs to an invocation of this script, exit immediately.
+# Prevent two simultaneous invocations for the same PR. Uses an atomic mkdir
+# lock directory (POSIX-guaranteed atomic) so two concurrent callers cannot
+# both acquire the lock. The lock dir name includes the PR number so parallel
+# runs for different PRs do not interfere with each other.
+#
+# Layout:
+#   /tmp/pr-review-loop-<pr>.lockdir/   — lock directory (atomic creation)
+#   /tmp/pr-review-loop-<pr>.lockdir/pid — PID of the owner process
+#   /tmp/pr-review-loop-<pr>.lockdir/cmd — basename of script ($0) for verification
 _PR_ARG=""
 _skip_next=0
 for _arg in "$@"; do
@@ -21,19 +26,37 @@ for _arg in "$@"; do
   esac
 done
 unset _skip_next
-_LOCK_FILE="/tmp/pr-review-loop-${_PR_ARG:-unknown}.lock"
+_LOCK_DIR="/tmp/pr-review-loop-${_PR_ARG:-unknown}.lockdir"
 _OWN_LOCK=0
 
-if [ -f "$_LOCK_FILE" ]; then
-  _LOCK_PID="$(cat "$_LOCK_FILE" 2>/dev/null || true)"
-  if [ -n "$_LOCK_PID" ] && kill -0 "$_LOCK_PID" 2>/dev/null; then
+if mkdir "$_LOCK_DIR" 2>/dev/null; then
+  # We created the lock dir atomically — we own the lock.
+  printf '%d\n' "$$"           > "$_LOCK_DIR/pid"
+  printf '%s\n' "$(basename "$0")" > "$_LOCK_DIR/cmd"
+  _OWN_LOCK=1
+else
+  # Lock dir already exists — check whether the recorded owner is still alive
+  # and actually belongs to this script (guards against stale locks from crashes).
+  _LOCK_PID="$(cat "$_LOCK_DIR/pid" 2>/dev/null || true)"
+  _LOCK_CMD="$(cat "$_LOCK_DIR/cmd" 2>/dev/null || true)"
+  if [ -n "$_LOCK_PID" ] && kill -0 "$_LOCK_PID" 2>/dev/null && [ "$_LOCK_CMD" = "$(basename "$0")" ]; then
     echo "ERROR: pr-review-loop.sh is already running for PR #${_PR_ARG:-unknown} (PID $_LOCK_PID). Exiting to prevent parallel execution." >&2
     exit 75  # EX_TEMPFAIL — lock contention; not a review result (not 0/1/2)
   fi
+  # Stale lock (process gone or belongs to a different script) — reclaim atomically.
+  # Remove the stale dir and retry mkdir. If two callers reach this point
+  # simultaneously, only one mkdir will succeed; the other exits via the else branch.
+  rm -rf "$_LOCK_DIR"
+  if mkdir "$_LOCK_DIR" 2>/dev/null; then
+    printf '%d\n' "$$"           > "$_LOCK_DIR/pid"
+    printf '%s\n' "$(basename "$0")" > "$_LOCK_DIR/cmd"
+    _OWN_LOCK=1
+  else
+    echo "ERROR: pr-review-loop.sh is already running for PR #${_PR_ARG:-unknown} (concurrent startup race). Exiting to prevent parallel execution." >&2
+    exit 75
+  fi
 fi
-printf '%d\n' "$$" > "$_LOCK_FILE"
-_OWN_LOCK=1
-trap '[ "$_OWN_LOCK" -eq 1 ] && rm -f "$_LOCK_FILE"' EXIT
+trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"' EXIT
 
 usage() {
   cat <<'EOF'
