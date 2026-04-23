@@ -126,7 +126,7 @@ Before committing, verify:
 
 ```bash
 # If any .sh files are modified, run ShellCheck before committing
-CHANGED_SH=$(git diff --name-only --diff-filter=d | grep '\.sh$' || true)
+CHANGED_SH=$({ git diff --name-only --diff-filter=d; git ls-files --others --exclude-standard; } | grep '\.sh$' | sort -u || true)
 if [ -n "$CHANGED_SH" ]; then
   echo "Running ShellCheck on modified .sh files..."
   # shellcheck disable=SC2086
@@ -347,7 +347,7 @@ git checkout -b refactor/[branch-slug]
 5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area. If any `.sh` files were modified, run ShellCheck before committing:
 
    ```bash
-   CHANGED_SH=$(git diff --name-only --diff-filter=d | grep '\.sh$' || true)
+   CHANGED_SH=$({ git diff --name-only --diff-filter=d; git ls-files --others --exclude-standard; } | grep '\.sh$' | sort -u || true)
    if [ -n "$CHANGED_SH" ]; then
      echo "Running ShellCheck on modified .sh files..."
      # shellcheck disable=SC2086
@@ -466,7 +466,7 @@ Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected
 **ShellCheck (if any `.sh` files were modified)**:
 
 ```bash
-CHANGED_SH=$(git diff --name-only --diff-filter=d | grep '\.sh$' || true)
+CHANGED_SH=$({ git diff --name-only --diff-filter=d; git ls-files --others --exclude-standard; } | grep '\.sh$' | sort -u || true)
 if [ -n "$CHANGED_SH" ]; then
   echo "Running ShellCheck on modified .sh files..."
   # shellcheck disable=SC2086
@@ -578,7 +578,7 @@ Verify: build, lint, tests pass.
 **ShellCheck (if any `.sh` files were modified)**:
 
 ```bash
-CHANGED_SH=$(git diff --name-only --diff-filter=d | grep '\.sh$' || true)
+CHANGED_SH=$({ git diff --name-only --diff-filter=d; git ls-files --others --exclude-standard; } | grep '\.sh$' | sort -u || true)
 if [ -n "$CHANGED_SH" ]; then
   echo "Running ShellCheck on modified .sh files..."
   # shellcheck disable=SC2086
