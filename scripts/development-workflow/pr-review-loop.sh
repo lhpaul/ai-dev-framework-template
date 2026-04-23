@@ -1837,8 +1837,8 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
     # Bot logins are passed as individual positional args to avoid glob expansion.
     # Retry up to THREAD_AUDIT_MAX_RETRIES times on transient GraphQL failures (exit 3)
     # before escalating. Never degrade to treating the audit as clean on failure.
-    local thread_audit_max_retries="${THREAD_AUDIT_MAX_RETRIES:-3}"
-    local thread_audit_attempt=0
+    thread_audit_max_retries="${THREAD_AUDIT_MAX_RETRIES:-3}"
+    thread_audit_attempt=0
     thread_check_output=""
     thread_check_status=0
     while true; do
