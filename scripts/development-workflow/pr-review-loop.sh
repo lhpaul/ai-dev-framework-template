@@ -6,6 +6,67 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 
+# --- Single-instance guard ---
+# Prevent two simultaneous invocations for the same PR. Uses an atomic mkdir
+# lock directory (POSIX-guaranteed atomic) so two concurrent callers cannot
+# both acquire the lock. The lock dir name includes the PR number so parallel
+# runs for different PRs do not interfere with each other.
+#
+# Layout:
+#   /tmp/pr-review-loop-<pr>.lockdir/   — lock directory (atomic creation)
+#   /tmp/pr-review-loop-<pr>.lockdir/pid — PID of the owner process
+#   /tmp/pr-review-loop-<pr>.lockdir/cmd — basename of script ($0) for verification
+_PR_ARG=""
+_skip_next=0
+for _arg in "$@"; do
+  if [ "$_skip_next" -eq 1 ]; then _skip_next=0; continue; fi
+  case "$_arg" in
+    --branch|--platform|--poll-interval|--max-wait) _skip_next=1 ;;
+    [0-9]*) _PR_ARG="$_arg"; break ;;
+  esac
+done
+unset _skip_next
+_LOCK_DIR="/tmp/pr-review-loop-${_PR_ARG:-unknown}.lockdir"
+_OWN_LOCK=0
+
+if mkdir "$_LOCK_DIR" 2>/dev/null; then
+  # We created the lock dir atomically — we own the lock.
+  printf '%d\n' "$$"           > "$_LOCK_DIR/pid"
+  printf '%s\n' "$(basename "$0")" > "$_LOCK_DIR/cmd"
+  _OWN_LOCK=1
+else
+  # Lock dir already exists — check whether the recorded owner is still alive
+  # and actually belongs to this script (guards against stale locks from crashes).
+  _LOCK_PID="$(cat "$_LOCK_DIR/pid" 2>/dev/null || true)"
+  _LOCK_CMD="$(cat "$_LOCK_DIR/cmd" 2>/dev/null || true)"
+  if [ -n "$_LOCK_PID" ] && kill -0 "$_LOCK_PID" 2>/dev/null && [ "$_LOCK_CMD" = "$(basename "$0")" ]; then
+    echo "ERROR: pr-review-loop.sh is already running for PR #${_PR_ARG:-unknown} (PID $_LOCK_PID). Exiting to prevent parallel execution." >&2
+    print_kv RESULT escalate
+    print_kv REASON lock_contention
+    print_kv PR_NUMBER "${_PR_ARG:-}"
+    exit 75  # EX_TEMPFAIL — lock contention; not a normal review result (0/1/2)
+  fi
+  # Stale lock (process gone or belongs to a different script) — reclaim atomically.
+  # Use mv (atomic rename) to move the stale dir out of the way, then mkdir.
+  # If two callers reach this point simultaneously, only one mv succeeds (rename
+  # is atomic on POSIX); the loser's mv fails because the source is gone. Then
+  # both try mkdir; only one succeeds and the other exits via the else branch.
+  mv "$_LOCK_DIR" "${_LOCK_DIR}.stale.$$" 2>/dev/null || true
+  rm -rf "${_LOCK_DIR}.stale.$$" 2>/dev/null || true
+  if mkdir "$_LOCK_DIR" 2>/dev/null; then
+    printf '%d\n' "$$"           > "$_LOCK_DIR/pid"
+    printf '%s\n' "$(basename "$0")" > "$_LOCK_DIR/cmd"
+    _OWN_LOCK=1
+  else
+    echo "ERROR: pr-review-loop.sh is already running for PR #${_PR_ARG:-unknown} (concurrent startup race). Exiting to prevent parallel execution." >&2
+    print_kv RESULT escalate
+    print_kv REASON lock_contention
+    print_kv PR_NUMBER "${_PR_ARG:-}"
+    exit 75
+  fi
+fi
+trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"' EXIT
+
 usage() {
   cat <<'EOF'
 Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,coderabbit] [--poll-interval seconds] [--max-wait seconds]
@@ -14,7 +75,9 @@ Runs the automated PR review loop for one or more platforms in sequence. Before
 triggering a new review, each platform checks for existing blocking findings. If
 any platform reports blocking findings, the script stops immediately and exits 1.
 If a platform times out or escalates, the script exits 2. If all configured
-platforms are clean or skipped, the script exits 0.
+platforms are clean or skipped, the script exits 0. If a second instance is
+detected for the same PR number, the script emits RESULT=escalate with
+REASON=lock_contention and exits 75 (EX_TEMPFAIL).
 
 Platform selection (in priority order):
   1. --platform flag(s) passed on the command line
@@ -23,6 +86,7 @@ Platform selection (in priority order):
 Outputs stable key=value lines including:
   RESULT=clean|needs_fixes|escalate|skipped
   PLATFORM_<n>_NAME / PLATFORM_<n>_RESULT
+  REASON=lock_contention (when exit code is 75)
 EOF
 }
 
@@ -1104,7 +1168,48 @@ run_coderabbit_review() {
       )"
       if [ "${rate_limit_comment_count:-0}" -gt 0 ]; then
         coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
-        echo "INFO: CodeRabbit rate limit detected (retry $coderabbit_rate_limit_retries/$coderabbit_rate_limit_max_retries) — waiting ${coderabbit_rate_limit_wait}s before re-triggering" >&2
+        echo "INFO: CodeRabbit rate limit detected (retry $coderabbit_rate_limit_retries/$coderabbit_rate_limit_max_retries) — checking for SUCCESS commit status before waiting" >&2
+        # --- Early SUCCESS check before retry wait ---
+        # Check whether CodeRabbit already posted a SUCCESS commit status for the current
+        # HEAD SHA. This happens when CodeRabbit signals the result via a commit status
+        # during a rate-limit window on a parallel batch. If found, skip the retry wait
+        # entirely and treat the PR as clean via coderabbit_status_success_fallback.
+        local coderabbit_early_success_count
+        coderabbit_early_success_count="$(
+          gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
+            | jq -s '[.[].[] | select(
+                    (.context // "" | ascii_downcase | test("coderabbit"))
+                  )]
+                  | group_by(.context) | map(max_by(.updated_at))
+                  | map(select(.state == "success"))
+                  | length'
+        )"
+        if [ "${coderabbit_early_success_count:-0}" -gt 0 ]; then
+          # SUCCESS status can appear while older CodeRabbit review threads stay unresolved
+          # on the PR. Do not short-circuit to clean until GraphQL thread audit passes —
+          # same pattern as the timeout SUCCESS fallback below.
+          local cr_early_gate_rc
+          coderabbit_thread_gate_clean "$pr_number" "$repo" "$bot_login" "$branch_name"
+          cr_early_gate_rc=$?
+          if [ "$cr_early_gate_rc" -eq 0 ]; then
+            echo "INFO: CodeRabbit SUCCESS commit-status found for HEAD $head_sha before retry wait — treating PR as clean (coderabbit_status_success_fallback)" >&2
+            print_kv RESULT clean
+            print_kv REASON coderabbit_status_success_fallback
+            print_kv PLATFORM "$platform"
+            print_kv PR_NUMBER "$pr_number"
+            print_kv BRANCH "$branch_name"
+            print_kv REVIEW_COMMENT_ID ""
+            print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+            print_kv COMMENT_COUNT 0
+            print_kv BLOCKING_COUNT 0
+            print_kv SUGGESTION_COUNT 0
+            return 0
+          fi
+          if [ "$cr_early_gate_rc" -eq 1 ] || [ "$cr_early_gate_rc" -eq 2 ]; then
+            return "$cr_early_gate_rc"
+          fi
+        fi
+        echo "INFO: no SUCCESS commit status found — waiting ${coderabbit_rate_limit_wait}s before re-triggering" >&2
         sleep "$coderabbit_rate_limit_wait"
         # Do NOT reset since_iso — keep the original HEAD-commit timestamp so any review
         # posted by CodeRabbit during or after the wait is still within the detection window.
