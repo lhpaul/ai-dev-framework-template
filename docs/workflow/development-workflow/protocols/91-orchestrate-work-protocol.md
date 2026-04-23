@@ -244,15 +244,14 @@ This hook is advisory and not required for the guardrail to function. The Critic
 
 When an agent runs inside an isolated worktree (`.claude/worktrees/<branch>/`), `git rev-parse --show-toplevel` returns the *worktree* path rather than the main repo root. Any script or agent instruction that relies on this command to locate `node_modules/`, project-level config files, or other resources installed at the main repo root will construct wrong paths.
 
-Use `git rev-parse --git-common-dir` instead — it always returns the `.git` directory of the *main* repo regardless of which worktree is active. Strip the `/.git` suffix to get the main repo root:
+Use `git rev-parse --git-common-dir` instead — it always points to the `.git` directory of the *main* repo regardless of which worktree is active. Append `/..` to get the main repo root:
 
 ```bash
 # Wrong — returns the worktree path when run inside an isolated worktree:
 REPO_ROOT=$(git rev-parse --show-toplevel)
 
-# Correct — always returns the main repo root:
-REPO_ROOT=$(git rev-parse --git-common-dir)
-REPO_ROOT=${REPO_ROOT%/.git}  # strip the /.git suffix
+# Correct — always returns the main repo root, even from a worktree:
+REPO_ROOT=$(git rev-parse --git-common-dir)/..
 ```
 
 Apply this pattern whenever a stage agent, script, or implementation step needs to reference `node_modules/`, root-level config files, or any path that lives at the main repo root rather than in the worktree.
