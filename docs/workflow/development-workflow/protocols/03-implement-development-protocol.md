@@ -212,14 +212,20 @@ After the draft PR exists, the **Work Item Runner** owns the rest of the lifecyc
 
 **Pre-label ordering gate (hard sequential gate — do not skip)**:
 
-Before applying `ready-for-regression` or `ready-for-human-review`, the Work Item Runner (or this protocol when invoked standalone) **must** verify all of the following conditions **in order**. Block on each step until it passes; do not proceed to the next step while the current step is still unmet:
+Before applying any readiness label, the Work Item Runner (or this protocol when invoked standalone) **must** satisfy the following two-phase sequence. Each phase must be fully satisfied before proceeding to the next. Do not collapse both phases or apply both labels simultaneously.
 
-1. **Reviewer loop summary comment is present**: At least one PR comment containing `"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"` must exist on the PR. This is the only reliable signal that Step 7 ran to completion. Do not apply any readiness label before this comment exists. (Skip this check only when no review platforms are configured and Step 7 result was `skipped`.)
-2. **All CI checks are in a terminal state**: Every required status check in `statusCheckRollup` must have `state: SUCCESS`, `state: FAILURE`, `conclusion: success`, or `conclusion: skipped` — no check may be in `PENDING`, `null`, or `IN_PROGRESS` state. Do not apply any readiness label while any check is still pending.
-3. **All automated-reviewer threads are resolved**: Every review thread authored by a configured bot (e.g., `coderabbitai[bot]`, `devin[bot]`) must have `isResolved: true`. Unresolved bot threads block labeling.
-4. **Only then apply labels in sequence**: `ready-for-regression` first (Step 7b), then `ready-for-human-review` (Step 8a). Never reverse this order or apply both simultaneously.
+**Phase 1 — before applying `ready-for-regression` (Step 7b)**:
 
-This gate mirrors `91-orchestrate-work-protocol.md` Steps 8a and 8c. When invoked through the Work Item Runner, those steps enforce this gate automatically. When invoked standalone, run this gate explicitly before calling `gh pr edit --add-label`.
+1. **Reviewer loop summary comment is present**: At least one PR comment containing `"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"` must exist on the PR. This is the only reliable signal that Step 7 ran to completion. Do not apply `ready-for-regression` before this comment exists. (Skip this check only when no review platforms are configured and Step 7 result was `skipped`.)
+2. **All automated-reviewer threads are resolved**: Every review thread authored by a configured bot (e.g., `coderabbitai[bot]`, `devin[bot]`) must have `isResolved: true`. Unresolved bot threads block labeling.
+3. **Apply `ready-for-regression`** (Step 7b). This label triggers label-gated e2e/regression CI checks.
+
+**Phase 2 — before applying `ready-for-human-review` (Step 8a), after CI settles**:
+
+4. **All CI checks are in a terminal state with no failures**: Every required status check in `statusCheckRollup` must have `state: SUCCESS` or `conclusion: success` / `conclusion: skipped` — no check may be in `PENDING`, `null`, `IN_PROGRESS`, `FAILURE`, or `ERROR` state. Do not apply `ready-for-human-review` while any check is still pending or failed.
+5. **Apply `ready-for-human-review`** (Step 8a).
+
+This two-phase sequence matches `91-orchestrate-work-protocol.md` Steps 7b → 8 → 8a → 8c. When invoked through the Work Item Runner, those steps enforce this gate automatically. When invoked standalone, run this gate explicitly before calling `gh pr edit --add-label`.
 
 If this protocol is invoked **standalone** rather than through the Work Item Runner, hand off manually by following `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` from the newly opened draft PR.
 
