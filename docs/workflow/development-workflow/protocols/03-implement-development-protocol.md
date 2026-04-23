@@ -222,10 +222,10 @@ Before applying any readiness label, the Work Item Runner (or this protocol when
 
 **Phase 2 — before applying `ready-for-human-review` (Step 8a), after CI settles**:
 
-4. **All CI checks are in a terminal state with no failures**: Every required status check in `statusCheckRollup` must have `state: SUCCESS` or `conclusion: success` / `conclusion: skipped` — no check may be in `PENDING`, `null`, `IN_PROGRESS`, `FAILURE`, or `ERROR` state. Do not apply `ready-for-human-review` while any check is still pending or failed.
+4. **All CI checks are green**: Every required status check in `statusCheckRollup` must have passed or been skipped — no check may be in `PENDING`, `null`, `IN_PROGRESS`, `FAILURE`, or `ERROR` state. Do not apply `ready-for-human-review` while any check is still pending or failed. (See `91-orchestrate-work-protocol.md` Step 8 and `pr-ci-loop.sh` for the authoritative CI polling logic.)
 5. **Apply `ready-for-human-review`** (Step 8a).
 
-This two-phase sequence matches `91-orchestrate-work-protocol.md` Steps 7b → 8 → 8a → 8c. When invoked through the Work Item Runner, those steps enforce this gate automatically. When invoked standalone, run this gate explicitly before calling `gh pr edit --add-label`.
+This two-phase sequence aligns with `91-orchestrate-work-protocol.md` Steps 7b → 8 → 8a → 8c. When invoked through the Work Item Runner, those steps enforce this gate automatically. When invoked standalone, run this gate explicitly before calling `gh pr edit --add-label`.
 
 If this protocol is invoked **standalone** rather than through the Work Item Runner, hand off manually by following `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` from the newly opened draft PR.
 
