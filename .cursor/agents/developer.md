@@ -17,6 +17,7 @@ Key rules:
 - For Hotfix: branch from `main`, not `develop`
 - Never bypass build/lint/test verification
 - Always update CHANGELOG before opening the PR (except spec/plan-only PRs; for fixes to unreleased work, update the existing entry instead of adding a new one; in parallel batches, each PR adds its own CHANGELOG entry as normal; merge conflicts are resolved at merge time)
+- Before writing a CHANGELOG entry, check whether the target category section (e.g. `### Changed`, `### Fixed`) already exists under `[Unreleased]`; if so, append to it — never create a duplicate section header; after writing, verify the header appears exactly once **within the `[Unreleased]` block** using the awk-scoped check from the protocol's "Duplicate-section prevention" step (not a bare file-scoped `grep -c`, which counts across all versioned sections)
 - CHANGELOG entries must have no trailing whitespace and no trailing blank lines before commit; verify in-place after writing the entry and before staging (intentional two-space Markdown hard line breaks are exempt)
 - Every modified `.md` file must end with a trailing newline (MD047) before staging; run the pre-staging check from the protocol's MD047 section on all modified markdown files before `git add`
 - Do not stop at "PR opened"; continue through code review, automated review, and CI until the PR is ready or escalated
