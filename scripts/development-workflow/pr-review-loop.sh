@@ -12,11 +12,15 @@ source "$SCRIPT_DIR/workflow-lib.sh"
 # The guard uses PID tracking: if the PID recorded in the lock file is still alive
 # and belongs to an invocation of this script, exit immediately.
 _PR_ARG=""
+_skip_next=0
 for _arg in "$@"; do
+  if [ "$_skip_next" -eq 1 ]; then _skip_next=0; continue; fi
   case "$_arg" in
+    --branch|--platform|--poll-interval|--max-wait) _skip_next=1 ;;
     [0-9]*) _PR_ARG="$_arg"; break ;;
   esac
 done
+unset _skip_next
 _LOCK_FILE="/tmp/pr-review-loop-${_PR_ARG:-unknown}.lock"
 _OWN_LOCK=0
 
