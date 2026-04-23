@@ -115,7 +115,7 @@ ISSUE_NUMBER=<ISSUE>      # GitHub issue number to update
 PROJECT_ID=$(gh project view "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json --jq '.id')
 
 # 2. Get the item ID for this issue
-ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json \
+ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --limit 10000 --format json \
   | jq -r --argjson n "$ISSUE_NUMBER" '.items[] | select(.content.number == $n) | .id')
 
 # 3. Get the Status field ID
