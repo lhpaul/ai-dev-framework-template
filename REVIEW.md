@@ -111,6 +111,7 @@ Typical `important` issues:
 - Vague wording like "update as needed"
 - Missing documentation/test updates
 - Incomplete dependency or rollout notes
+- Verification steps in Implementation Order steps use complex shell commands that are hard to verify by reading: flag any multi-flag grep one-liner with exclusion scopes or self-referencing globs, hardcoded file counts that go stale, or broad exclusion patterns that may silently under-count. Suggest replacing with a human-readable "run and confirm output" assertion instead.
 
 ---
 
