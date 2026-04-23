@@ -6,6 +6,31 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 
+# --- Single-instance guard ---
+# Prevent two simultaneous invocations for the same PR. The lock file is stored
+# in /tmp and includes the PR number so parallel runs on different PRs are allowed.
+# The guard uses PID tracking: if the PID recorded in the lock file is still alive
+# and belongs to an invocation of this script, exit immediately.
+_PR_ARG=""
+for _arg in "$@"; do
+  case "$_arg" in
+    [0-9]*) _PR_ARG="$_arg"; break ;;
+  esac
+done
+_LOCK_FILE="/tmp/pr-review-loop-${_PR_ARG:-unknown}.lock"
+_OWN_LOCK=0
+
+if [ -f "$_LOCK_FILE" ]; then
+  _LOCK_PID="$(cat "$_LOCK_FILE" 2>/dev/null || true)"
+  if [ -n "$_LOCK_PID" ] && kill -0 "$_LOCK_PID" 2>/dev/null; then
+    echo "ERROR: pr-review-loop.sh is already running for PR #${_PR_ARG:-unknown} (PID $_LOCK_PID). Exiting to prevent parallel execution." >&2
+    exit 1
+  fi
+fi
+printf '%d\n' "$$" > "$_LOCK_FILE"
+_OWN_LOCK=1
+trap '[ "$_OWN_LOCK" -eq 1 ] && rm -f "$_LOCK_FILE"' EXIT
+
 usage() {
   cat <<'EOF'
 Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,coderabbit] [--poll-interval seconds] [--max-wait seconds]
@@ -1067,7 +1092,37 @@ run_coderabbit_review() {
       )"
       if [ "${rate_limit_comment_count:-0}" -gt 0 ]; then
         coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
-        echo "INFO: CodeRabbit rate limit detected (retry $coderabbit_rate_limit_retries/$coderabbit_rate_limit_max_retries) — waiting ${coderabbit_rate_limit_wait}s before re-triggering" >&2
+        echo "INFO: CodeRabbit rate limit detected (retry $coderabbit_rate_limit_retries/$coderabbit_rate_limit_max_retries) — checking for SUCCESS commit status before waiting" >&2
+        # --- Early SUCCESS check before retry wait ---
+        # Check whether CodeRabbit already posted a SUCCESS commit status for the current
+        # HEAD SHA. This happens when CodeRabbit signals the result via a commit status
+        # during a rate-limit window on a parallel batch. If found, skip the retry wait
+        # entirely and treat the PR as clean via coderabbit_status_success_fallback.
+        local coderabbit_early_success_count
+        coderabbit_early_success_count="$(
+          gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
+            | jq -s '[.[].[] | select(
+                    (.context // "" | ascii_downcase | test("coderabbit"))
+                  )]
+                  | group_by(.context) | map(max_by(.updated_at))
+                  | map(select(.state == "success"))
+                  | length'
+        )"
+        if [ "${coderabbit_early_success_count:-0}" -gt 0 ]; then
+          echo "INFO: CodeRabbit SUCCESS commit-status found for HEAD $head_sha before retry wait — treating PR as clean (coderabbit_status_success_fallback)" >&2
+          print_kv RESULT clean
+          print_kv REASON coderabbit_status_success_fallback
+          print_kv PLATFORM "$platform"
+          print_kv PR_NUMBER "$pr_number"
+          print_kv BRANCH "$branch_name"
+          print_kv REVIEW_COMMENT_ID ""
+          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          print_kv COMMENT_COUNT 0
+          print_kv BLOCKING_COUNT 0
+          print_kv SUGGESTION_COUNT 0
+          return 0
+        fi
+        echo "INFO: no SUCCESS commit status found — waiting ${coderabbit_rate_limit_wait}s before re-triggering" >&2
         sleep "$coderabbit_rate_limit_wait"
         # Do NOT reset since_iso — keep the original HEAD-commit timestamp so any review
         # posted by CodeRabbit during or after the wait is still within the detection window.
