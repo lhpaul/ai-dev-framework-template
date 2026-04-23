@@ -619,7 +619,7 @@ For each PR in the batch, inspect the "Automated Reviewer Loop Summary" comment 
 # Check whether a PR's reviewer loop summary indicates CodeRabbit skipped (no_review)
 gh pr view <pr_number> --json comments \
   --jq '[.comments[].body | select(test("Automated Reviewer Loop Summary"))] | last // ""' \
-  | grep -qi "coderabbit_skipped_no_review\|skipped (no_review)"
+  | grep -qiE "coderabbit_skipped_no_review|skipped \(no_review\)"
 ```
 
 If the command exits 0 (match found), the PR requires a CodeRabbit re-trigger.
