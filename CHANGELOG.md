@@ -7,10 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- **Spec template Open Questions removal instruction** (#302): clarified the instruction comment in `spec-template.md` and the Step 2 rule in `01-generate-spec-protocol.md` to explicitly require deleting the entire `## Open Questions` heading and body (not replacing content with a placeholder comment) when all questions are resolved.
-
 ### Added
 
 - **Sync-template manifest-driven reliability** (#252): Introduce `sync-manifest.yaml` as the authoritative file list for sync-template; add `<!-- TEMPLATE-OWNED-START -->` / `<!-- TEMPLATE-OWNED-END -->` HTML-comment annotation markers to mixed-content files (`AGENTS.md`, `.ai-dev-workflow.yaml`); update all sync-template artefacts (`.claude/commands/sync-template.md`, `.claude/skills/sync-template.md`, `.cursor/commands/sync-template.md`) to consume the manifest with graceful fallback when absent; add new Codex skill `workflow-sync-template`; update `AGENTS.md` Maintenance Commands table to include `workflow-sync-template` in the Codex column.
@@ -38,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Spec template Open Questions removal instruction** (#302): clarified the instruction comment in `spec-template.md` and the Step 2 rule in `01-generate-spec-protocol.md` to explicitly require deleting the entire `## Open Questions` heading and body (not replacing content with a placeholder comment) when all questions are resolved.
 - **Document Codex-reviewer runner-context constraint in `.ai-dev-workflow.yaml`** (#291): added an inline comment after the `- codex` entry and an explanatory comment block above `internal_reviewers` clarifying that `codex` is typically only reachable when Codex is the top-level runner itself — not from Claude Code subagents, Cursor subagents, headless environments, or any nested runner context. The `warn` policy (default) already handles this gracefully; the new comments make the constraint visible in the config file that operators edit directly, so the recurring "Skipped: codex" PR warnings are no longer surprising. A future GitHub-integration-based path will enable Codex review from any runner. For now, operators can suppress the warning by removing `codex` from the list or using a `.tmp/template-config.json` local override.
 - **Worktree gotcha: `git rev-parse --show-toplevel` returns worktree path** (#293): Protocol 91 Step 3 now documents that `git rev-parse --show-toplevel` returns the *worktree* path (e.g., `.claude/worktrees/agent-xyz/`) rather than the main repo root when run inside an isolated worktree. The correct alternative — `$(git rev-parse --git-common-dir)/..` — is shown alongside the existing worktree git discipline block; `.claude/agents/item-orchestrator.md` and `.cursor/agents/item-orchestrator.md` add a matching concise gotcha note.
 - **Pre-push ShellCheck self-check for `.sh` file changes** (#292): `03-implement-development-protocol.md` now requires running `shellcheck --severity=warning` on any modified or newly created `.sh` files before committing, across all four implementation paths (Full Pipeline, Refactor, Fast Track, Hotfix). This agent-side gate mirrors the existing CI `shellcheck.yml` check and prevents ShellCheck violations from surfacing in the external reviewer loop (CodeRabbit/Devin), reducing unnecessary review-loop churn. `.claude/agents/developer.md` and `.cursor/agents/developer.md` key-rules sections were updated with a matching rule.
