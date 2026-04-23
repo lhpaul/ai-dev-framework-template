@@ -314,6 +314,10 @@ update_tracker_status_best_effort() {
   fi
   target_order="$(workflow_status_order "$status_label")"
   current_order="$(workflow_status_order "$current_status")"
+  if [ "$current_order" -eq -1 ] && [ -z "$required_current_status" ]; then
+    echo "Warning: Issue #${issue_number} current status '${current_status:-unknown}' is unrecognized; skipping update to '${status_label}' to avoid silent state corruption. Provide required_current_status to proceed anyway."
+    return 0
+  fi
   if [ "$target_order" -ge 0 ] && [ "$current_order" -gt "$target_order" ]; then
     echo "Issue #${issue_number} is already at status '${current_status}' (more advanced than '${status_label}'); skipping rollback."
     return 0
