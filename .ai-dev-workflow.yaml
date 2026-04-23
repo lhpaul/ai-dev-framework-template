@@ -44,6 +44,16 @@ review:
   #               implementation-plan/* -> workflow-plan-reviewer
   #               feature/*/refactor/*/fix/*/hotfix/* -> workflow-code-reviewer
   #
+  # Runner-context constraint:
+  #   'codex' is only reachable when the runner is a Codex or Cursor environment.
+  #   It is NOT reachable from Claude Code (direct session or subagent context).
+  #   When running from Claude Code, Protocol 91 Step 7a will classify 'codex' as
+  #   unreachable and emit a warning comment on the PR, then proceed with only
+  #   'claude' under the default 'warn' policy. This is expected behaviour — not
+  #   a misconfiguration. If you run exclusively from Claude Code and want to
+  #   suppress the recurring warning, remove 'codex' from this list or override
+  #   it locally via .tmp/template-config.json (see below).
+  #
   # Local override: developers who do not have access to all tools listed here
   # can override this list locally by creating .tmp/template-config.json in the
   # repository root (this path is gitignored). Format:
@@ -53,7 +63,7 @@ review:
   # Step 7a for the full multi-reviewer gate procedure.
   internal_reviewers:
     - claude
-    - codex
+    - codex  # reachable only from Codex/Cursor runners; skipped with a warning from Claude Code
 
   # Optional: policy when a listed internal reviewer is unreachable from the current runner.
   # Protocol 91 Step 7a enforces this policy at runtime.
