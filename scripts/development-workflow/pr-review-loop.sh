@@ -24,7 +24,7 @@ if [ -f "$_LOCK_FILE" ]; then
   _LOCK_PID="$(cat "$_LOCK_FILE" 2>/dev/null || true)"
   if [ -n "$_LOCK_PID" ] && kill -0 "$_LOCK_PID" 2>/dev/null; then
     echo "ERROR: pr-review-loop.sh is already running for PR #${_PR_ARG:-unknown} (PID $_LOCK_PID). Exiting to prevent parallel execution." >&2
-    exit 1
+    exit 75  # EX_TEMPFAIL — lock contention; not a review result (not 0/1/2)
   fi
 fi
 printf '%d\n' "$$" > "$_LOCK_FILE"
@@ -1109,18 +1109,29 @@ run_coderabbit_review() {
                   | length'
         )"
         if [ "${coderabbit_early_success_count:-0}" -gt 0 ]; then
-          echo "INFO: CodeRabbit SUCCESS commit-status found for HEAD $head_sha before retry wait — treating PR as clean (coderabbit_status_success_fallback)" >&2
-          print_kv RESULT clean
-          print_kv REASON coderabbit_status_success_fallback
-          print_kv PLATFORM "$platform"
-          print_kv PR_NUMBER "$pr_number"
-          print_kv BRANCH "$branch_name"
-          print_kv REVIEW_COMMENT_ID ""
-          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-          print_kv COMMENT_COUNT 0
-          print_kv BLOCKING_COUNT 0
-          print_kv SUGGESTION_COUNT 0
-          return 0
+          # SUCCESS status can appear while older CodeRabbit review threads stay unresolved
+          # on the PR. Do not short-circuit to clean until GraphQL thread audit passes —
+          # same pattern as the timeout SUCCESS fallback below.
+          local cr_early_gate_rc
+          coderabbit_thread_gate_clean "$pr_number" "$repo" "$bot_login" "$branch_name"
+          cr_early_gate_rc=$?
+          if [ "$cr_early_gate_rc" -eq 0 ]; then
+            echo "INFO: CodeRabbit SUCCESS commit-status found for HEAD $head_sha before retry wait — treating PR as clean (coderabbit_status_success_fallback)" >&2
+            print_kv RESULT clean
+            print_kv REASON coderabbit_status_success_fallback
+            print_kv PLATFORM "$platform"
+            print_kv PR_NUMBER "$pr_number"
+            print_kv BRANCH "$branch_name"
+            print_kv REVIEW_COMMENT_ID ""
+            print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+            print_kv COMMENT_COUNT 0
+            print_kv BLOCKING_COUNT 0
+            print_kv SUGGESTION_COUNT 0
+            return 0
+          fi
+          if [ "$cr_early_gate_rc" -eq 1 ] || [ "$cr_early_gate_rc" -eq 2 ]; then
+            return "$cr_early_gate_rc"
+          fi
         fi
         echo "INFO: no SUCCESS commit status found — waiting ${coderabbit_rate_limit_wait}s before re-triggering" >&2
         sleep "$coderabbit_rate_limit_wait"
