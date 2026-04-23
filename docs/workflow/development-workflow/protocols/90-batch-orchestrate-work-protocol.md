@@ -194,6 +194,23 @@ For each item that passed the Step 2 eligibility check:
 
 All tracker status updates for the batch must complete **before** any Work Item Runner is dispatched. This ensures observers see the correct in-flight status from the moment work starts, not retroactively after the creator stage finishes.
 
+### Routing: CLI vs. MCP
+
+How to perform tracker updates depends on the configured `issue_tracker.provider` in `.ai-dev-workflow.yaml`:
+
+- **GitHub Projects** (`provider: github_projects`): use `gh` CLI via Bash. No MCP server required. See `docs/workflow/development-workflow/integrations/github-projects.md` for ready-to-use CLI patterns.
+- **Other providers** (Linear, Jira, etc.): use the configured MCP server. The Portfolio Orchestrator always has MCP access, so these updates can be performed directly here at Step 2.5.
+
+### Orchestrator ownership of tracker transitions for non-CLI providers
+
+For issue tracker providers where no CLI equivalent exists (e.g., Linear via MCP), subagent Work Item Runners **cannot** update tracker status because MCP servers are not available in subagent execution contexts. In these cases:
+
+- The **Portfolio Orchestrator owns all tracker status transitions** for the batch — both pre-dispatch (this step) and post-readiness (the `Development in Review` / `Spec in Review` / `Plan in Review` transitions that happen after a PR reaches `ready-for-human-review`).
+- Subagents will return a `TRACKER_UPDATE_REQUIRED:` line in their summary when they could not perform the update themselves (see Step 8b of `91-orchestrate-work-protocol.md`).
+- After each Work Item Runner returns, the Portfolio Orchestrator must scan its summary for `TRACKER_UPDATE_REQUIRED:` lines and apply those transitions via MCP before moving on to the next item.
+
+For GitHub Projects, subagents CAN perform their own Step 8b update via `gh` CLI, so the orchestrator does not need to collect and replay those transitions. The `TRACKER_UPDATE_REQUIRED:` pattern only arises for providers without CLI support.
+
 See `docs/workflow/development-workflow/integrations/github-projects.md` for the tracker API details used to add items to the project board and update their status.
 
 ---
@@ -441,7 +458,8 @@ After a Work Item Runner returns:
 2. If the tracker is unavailable, fall back to `workflow-next-action.sh` but flag to the human that status may be stale.
 3. If the next action is still deterministic because the Work Item Runner returned early or was interrupted, redispatch / resume that same item.
 4. Stop supervising that item only when it is waiting on a human, blocked, or escalated.
-5. **When a human confirms PRs have been merged**: run post-merge status transitions per the table in Step 10 of `91-orchestrate-work-protocol.md` — set tracker status to `Spec Ready`, `Plan Ready`, or `Merged` depending on the branch type of the merged PR — and clean up local branches and worktrees associated with the merged PRs.
+5. **Collect deferred tracker transitions**: scan the Work Item Runner's summary for any `TRACKER_UPDATE_REQUIRED:` lines. These are transitions that the subagent could not perform (e.g., because the provider requires MCP and MCP is not available in the subagent context). Apply each deferred transition now via MCP before moving on to the next item. For GitHub Projects, subagents use `gh` CLI directly and do not emit `TRACKER_UPDATE_REQUIRED:` — this step only applies to providers without CLI support (e.g., Linear).
+6. **When a human confirms PRs have been merged**: run post-merge status transitions per the table in Step 10 of `91-orchestrate-work-protocol.md` — set tracker status to `Spec Ready`, `Plan Ready`, or `Merged` depending on the branch type of the merged PR — and clean up local branches and worktrees associated with the merged PRs.
 
 ### Step 5.1: Post-Dispatch PR Verification
 

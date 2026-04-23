@@ -929,7 +929,51 @@ After the label readiness checklist passes, update the tracker status to reflect
 - For **plan PRs** (`implementation-plan/*`): set tracker status to `Plan in Review`
 - For **implementation PRs** (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`): set tracker status to `Development in Review`
 
-See `docs/workflow/development-workflow/integrations/github-projects.md` for tracker API details.
+### Routing: CLI vs. MCP
+
+How to perform the update depends on the configured `issue_tracker.provider` in `.ai-dev-workflow.yaml` and the execution context:
+
+#### GitHub Projects (provider: `github_projects`) — use `gh` CLI
+
+GitHub Projects status updates are fully supported via `gh` CLI and require no MCP server. Subagents in any execution context (including parallel batch runs) **must** use this Bash path rather than MCP:
+
+```bash
+# Look up the project item ID for this issue
+ITEM_ID=$(gh project item-list <PROJECT_NUMBER> --owner <OWNER> --format json \
+  | jq -r '.items[] | select(.content.number == <ISSUE_NUMBER>) | .id')
+
+# Look up the Status field ID and target option ID
+gh project field-list <PROJECT_NUMBER> --owner <OWNER> --format json
+
+# Update the status
+gh api graphql -f query='
+  mutation {
+    updateProjectV2ItemFieldValue(input: {
+      projectId: "<PROJECT_ID>"
+      itemId: "<ITEM_ID>"
+      fieldId: "<STATUS_FIELD_ID>"
+      value: { singleSelectOptionId: "<OPTION_ID>" }
+    }) {
+      projectV2Item { id }
+    }
+  }'
+```
+
+See `docs/workflow/development-workflow/integrations/github-projects.md` for field IDs, option IDs, and ready-to-use CLI patterns.
+
+#### Other providers (Linear, Jira, etc.) — report and defer
+
+For issue tracker providers that have no supported `gh`-equivalent CLI, MCP server access is required. Because MCP servers are not available in subagent execution contexts:
+
+- **Subagents** must **not** attempt the tracker update directly. Instead, include the required transition in the summary returned to the orchestrator:
+
+  ```
+  TRACKER_UPDATE_REQUIRED: set issue #<N> status to "<target_status>"
+  ```
+
+- **The orchestrator** (or the human invoking the Work Item Runner directly) is responsible for performing the MCP-based status update after the subagent returns.
+
+If neither the CLI path nor MCP is available, log a warning and continue — do not block labeling or PR readiness on a tracker update failure.
 
 ---
 
