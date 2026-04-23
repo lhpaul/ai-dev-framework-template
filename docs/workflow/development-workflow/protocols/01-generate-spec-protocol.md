@@ -111,6 +111,7 @@ Rules:
 - Do not invent answers to open questions — list them explicitly
 - Do not block on open questions if enough is known to start; begin the spec and revisit
 - When the human answers an open question, update the spec immediately and remove it from the list
+- When all questions are resolved, **delete the entire Open Questions section** — the heading (`## Open Questions`) and its entire body. Do NOT leave the heading in place or replace the content with a placeholder comment such as `<!-- No open questions at this time -->`
 - If an open question is blocking, escalate to the human before proceeding
 
 ---
