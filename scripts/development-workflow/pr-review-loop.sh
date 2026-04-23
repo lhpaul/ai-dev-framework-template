@@ -372,6 +372,9 @@ run_devin_review() {
   local existing_reviews=""
   local existing_blocking_file=""
   local existing_blocking_count=0
+  local existing_inline_blocking_count=0
+  local inline_comment_count=0
+  local review_state=""
   local comment_json=""
   local review_json=""
   local body=""
@@ -427,18 +430,16 @@ run_devin_review() {
               .submitted_at > $since and
               (
                 .state == "CHANGES_REQUESTED" or
-                (
-                  .state == "COMMENTED" and
-                  (.body // "" | test("^\\*\\*Devin Review\\*\\*"; "i"))
-                )
+                .state == "COMMENTED"
               )
             )
-          | { path: "", line: 0, body: (.body // "review without body") }
+          | { path: "", line: 0, body: (.body // "review without body"), state: .state }
           | @json
         '
   )"
-
   existing_blocking_file="$(mktemp)"
+  # Process inline comments first so existing_blocking_count reflects inline findings
+  # before we evaluate COMMENTED reviews (used for the inline-findings gate below).
   while IFS= read -r comment_json; do
     [ -z "${comment_json:-}" ] && continue
     body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
@@ -448,13 +449,31 @@ run_devin_review() {
     existing_blocking_count=$((existing_blocking_count + 1))
     printf '%s\n' "$comment_json" >> "$existing_blocking_file"
   done <<< "$existing_comments"
+  # Snapshot the inline blocking count before processing reviews (used below).
+  existing_inline_blocking_count="$existing_blocking_count"
 
   while IFS= read -r review_json; do
     [ -z "${review_json:-}" ] && continue
     body="$(printf '%s\n' "$review_json" | jq -r '.body')"
+    review_state="$(printf '%s\n' "$review_json" | jq -r '.state // ""')"
     [ -z "$body" ] && continue
     if printf '%s\n' "$body" | grep -qi "No Issues Found"; then continue; fi
     if printf '%s\n' "$body" | grep -q "^✅"; then continue; fi
+    # For COMMENTED reviews, only treat as blocking when:
+    # (a) the body starts with "**Devin Review**" (Devin uses COMMENTED instead of
+    #     CHANGES_REQUESTED regardless of finding severity), OR
+    # (b) there are blocking inline comments from Devin (the COMMENTED review is the
+    #     umbrella review object that accompanies those inline findings).
+    # COMMENTED reviews with no inline findings are informational and not blocking.
+    if [ "$review_state" = "COMMENTED" ]; then
+      if printf '%s\n' "$body" | grep -qi "^\\*\\*Devin Review\\*\\*"; then
+        : # falls through to blocking logic below
+      elif [ "$existing_inline_blocking_count" -gt 0 ]; then
+        : # COMMENTED review with inline findings — treat as blocking
+      else
+        continue  # COMMENTED review with no inline findings — not blocking
+      fi
+    fi
     existing_blocking_count=$((existing_blocking_count + 1))
     printf '%s\n' "$review_json" >> "$existing_blocking_file"
   done <<< "$existing_reviews"
@@ -693,21 +712,21 @@ run_devin_review() {
             .submitted_at > $since and
             (
               .state == "CHANGES_REQUESTED" or
-              (
-                .state == "COMMENTED" and
-                (.body // "" | test("^\\*\\*Devin Review\\*\\*"; "i"))
-              )
+              .state == "COMMENTED"
             )
           )
         | {
             path: "",
             line: 0,
-            body: (.body // "review without body")
+            body: (.body // "review without body"),
+            state: .state
           }
         | @json
       '
   )"
 
+  # Count blocking inline comments from this HEAD for the COMMENTED-with-findings check.
+  inline_comment_count=0
   while IFS= read -r comment_json; do
     [ -z "${comment_json:-}" ] && continue
     body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
@@ -716,15 +735,33 @@ run_devin_review() {
     if printf '%s\n' "$body" | grep -q "^✅"; then continue; fi
     comment_count=$((comment_count + 1))
     blocking_count=$((blocking_count + 1))
+    inline_comment_count=$((inline_comment_count + 1))
     printf '%s\n' "$comment_json" >> "$blocking_lines_file"
   done <<< "$comments"
 
   while IFS= read -r review_json; do
     [ -z "${review_json:-}" ] && continue
     body="$(printf '%s\n' "$review_json" | jq -r '.body')"
+    review_state="$(printf '%s\n' "$review_json" | jq -r '.state // ""')"
     [ -z "$body" ] && continue
     if printf '%s\n' "$body" | grep -qi "No Issues Found"; then continue; fi
     if printf '%s\n' "$body" | grep -q "^✅"; then continue; fi
+    # For COMMENTED reviews, only treat as blocking when:
+    # (a) the body starts with "**Devin Review**" (Devin uses COMMENTED instead of
+    #     CHANGES_REQUESTED regardless of finding severity), OR
+    # (b) there are blocking inline comments from Devin (the COMMENTED review is the
+    #     umbrella review object that accompanies those inline findings).
+    # Non-matching COMMENTED reviews with no inline comments are informational and
+    # not blocking.
+    if [ "$review_state" = "COMMENTED" ]; then
+      if printf '%s\n' "$body" | grep -qi "^\\*\\*Devin Review\\*\\*"; then
+        : # falls through to blocking logic below
+      elif [ "$inline_comment_count" -gt 0 ]; then
+        : # COMMENTED review with inline findings — treat as blocking
+      else
+        continue  # COMMENTED review with no inline comments — not blocking
+      fi
+    fi
     comment_count=$((comment_count + 1))
     blocking_count=$((blocking_count + 1))
     printf '%s\n' "$review_json" >> "$blocking_lines_file"

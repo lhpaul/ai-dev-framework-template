@@ -40,7 +40,16 @@ gh api repos/{owner}/{repo}/pulls/<number>/comments
 
 #### Blocking classification (Devin)
 
-Treat GitHub `COMMENTED` reviews from Devin (`devin-ai-integration`) whose body starts with `**Devin Review**` as **blocking**, the same as `CHANGES_REQUESTED`. Do not treat a `COMMENTED` Devin review as non-blocking just because the state is not `CHANGES_REQUESTED`.
+Devin always uses `COMMENTED` as its review state regardless of finding severity — it never uses `CHANGES_REQUESTED`, even for bugs. A Devin `COMMENTED` review must be treated as **blocking** (same as `CHANGES_REQUESTED`) when **either** of the following is true:
+
+- The review body starts with `**Devin Review**` (Devin's standard summary format), OR
+- The review is accompanied by unresolved inline PR review comments from `devin-ai-integration[bot]` (the `COMMENTED` review is the umbrella review object for those inline findings)
+
+Only treat a `COMMENTED` Devin review as non-blocking when **both** of the following hold:
+- The body does NOT start with `**Devin Review**`, AND
+- There are NO unresolved inline PR review comments from Devin on the current HEAD
+
+This behavior is implemented in `pr-review-loop.sh` (`run_devin_review`): the existing-reviews filter now includes all `COMMENTED` and `CHANGES_REQUESTED` reviews from Devin, and the blocking classification loop skips a `COMMENTED` review only when neither the body prefix matches nor any blocking inline comments exist.
 
 #### What counts as an unresolved finding
 

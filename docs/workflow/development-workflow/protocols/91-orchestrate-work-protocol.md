@@ -755,7 +755,7 @@ When an automated review platform returns inline comments, classify them before 
 
 - Treat a comment as a **soft suggestion** only when every non-empty, non-code line starts with an advisory prefix such as `Consider`, `You might`, `An alternative`, `Optionally`, `It could be cleaner to`, `Perhaps`, `Maybe`, `You could`, `One option is`, or `Alternatively`.
 - Treat any other inline comment as **blocking**.
-- Treat `CHANGES_REQUESTED` reviews from any automated reviewer as **blocking**. Treat `COMMENTED` reviews from Devin (identified by a `**Devin Review**` body prefix) as **blocking**; for other platforms, `COMMENTED` reviews are not automatically blocking.
+- Treat `CHANGES_REQUESTED` reviews from any automated reviewer as **blocking**. Treat `COMMENTED` reviews from Devin as **blocking** when the body starts with `**Devin Review**` OR when the review is accompanied by unresolved inline PR review comments from `devin-ai-integration[bot]`; a `COMMENTED` Devin review is non-blocking only when neither condition holds. For other platforms, `COMMENTED` reviews are not automatically blocking. See `93-automated-reviewer-loop-protocol.md` for full Devin blocking classification rules.
 
 Soft suggestions may be reported in summaries, but they do not change the loop result to `needs_fixes`. Any blocking finding does.
 
