@@ -125,10 +125,10 @@ Before committing, verify:
 **ShellCheck (if any `.sh` files were modified)**:
 
 ```bash
-# If any .sh files are staged, run ShellCheck before committing
-CHANGED_SH=$(git diff --cached --name-only --diff-filter=d | grep '\.sh$' || true)
+# If any .sh files are modified, run ShellCheck before committing
+CHANGED_SH=$(git diff --name-only --diff-filter=d | grep '\.sh$' || true)
 if [ -n "$CHANGED_SH" ]; then
-  echo "Running ShellCheck on staged .sh files..."
+  echo "Running ShellCheck on modified .sh files..."
   # shellcheck disable=SC2086
   shellcheck --severity=warning $CHANGED_SH
 fi
@@ -347,9 +347,9 @@ git checkout -b refactor/[branch-slug]
 5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area. If any `.sh` files were modified, run ShellCheck before committing:
 
    ```bash
-   CHANGED_SH=$(git diff --cached --name-only --diff-filter=d | grep '\.sh$' || true)
+   CHANGED_SH=$(git diff --name-only --diff-filter=d | grep '\.sh$' || true)
    if [ -n "$CHANGED_SH" ]; then
-     echo "Running ShellCheck on staged .sh files..."
+     echo "Running ShellCheck on modified .sh files..."
      # shellcheck disable=SC2086
      shellcheck --severity=warning $CHANGED_SH
    fi
@@ -466,9 +466,9 @@ Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected
 **ShellCheck (if any `.sh` files were modified)**:
 
 ```bash
-CHANGED_SH=$(git diff --cached --name-only --diff-filter=d | grep '\.sh$' || true)
+CHANGED_SH=$(git diff --name-only --diff-filter=d | grep '\.sh$' || true)
 if [ -n "$CHANGED_SH" ]; then
-  echo "Running ShellCheck on staged .sh files..."
+  echo "Running ShellCheck on modified .sh files..."
   # shellcheck disable=SC2086
   shellcheck --severity=warning $CHANGED_SH
 fi
@@ -578,9 +578,9 @@ Verify: build, lint, tests pass.
 **ShellCheck (if any `.sh` files were modified)**:
 
 ```bash
-CHANGED_SH=$(git diff --cached --name-only --diff-filter=d | grep '\.sh$' || true)
+CHANGED_SH=$(git diff --name-only --diff-filter=d | grep '\.sh$' || true)
 if [ -n "$CHANGED_SH" ]; then
-  echo "Running ShellCheck on staged .sh files..."
+  echo "Running ShellCheck on modified .sh files..."
   # shellcheck disable=SC2086
   shellcheck --severity=warning $CHANGED_SH
 fi
