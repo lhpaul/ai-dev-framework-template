@@ -8,12 +8,13 @@
 ## Summary
 
 **Approach**: Clarify in `.ai-dev-workflow.yaml` that `codex` as an internal
-reviewer is only reachable in Cursor/Codex runner environments, not from Claude
-Code (direct or subagent). Add an inline comment next to the `codex` entry and
-expand the comment block above `internal_reviewers` to document the
-runner-context constraint. No code or protocol changes are needed because
-Protocol 91 Step 7a already handles the runtime-availability check and
-`warn` policy correctly.
+reviewer is typically only reachable from top-level Codex or Cursor runners
+(primary runner process only) — not reachable from any subagent, headless, or
+nested runner contexts (including Claude Code subagents and Cursor subagents).
+Add an inline comment next to the `codex` entry and expand the comment block
+above `internal_reviewers` to document the runner-context constraint. No code or
+protocol changes are needed because Protocol 91 Step 7a already handles the
+runtime-availability check and `warn` policy correctly.
 
 **Estimated complexity**: XS
 
@@ -32,10 +33,13 @@ no explanation in the config they control.
 ### Infrastructure / Configuration
 
 - [ ] **`.ai-dev-workflow.yaml`** — Expand the `internal_reviewers` comment block
-  to document that `codex` is only reachable in Cursor/Codex runner environments.
-  Add an inline comment after the `- codex` list entry. The clarification should:
-  1. State that `codex` is only reachable when running from a Codex or Cursor
-     runner (not from Claude Code direct or subagent context).
+  to document that `codex` is only reliably reachable from top-level Codex or
+  Cursor runners (primary runner process only), not from any subagent, headless,
+  or nested contexts. Add an inline comment after the `- codex` list entry. The
+  clarification should:
+  1. State that `codex` is typically only reachable when Codex or Cursor is the
+     top-level runner itself — not from Claude Code subagents, Cursor subagents,
+     headless environments, or any nested runner context.
   2. Note that the `warn` policy (default) gracefully handles the unreachability
      and the gate proceeds with `claude` only when running from Claude Code.
   3. Reference the local override option (`.tmp/template-config.json`) for
