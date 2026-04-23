@@ -358,7 +358,7 @@ CodeRabbit enforces a per-hour rate limit on automated reviews. When multiple PR
 
 If the retry budget is exhausted and no CodeRabbit inline review has appeared, `pr-review-loop.sh` first checks whether CodeRabbit posted a **SUCCESS commit-status context** for the current HEAD SHA (via `GET /repos/{owner}/{repo}/commits/{sha}/statuses`). During rate-limit windows, CodeRabbit sometimes signals a clean result via a commit status rather than an inline review comment. When a CodeRabbit `SUCCESS` commit-status is found, the script exits immediately with `RESULT=clean` and `REASON=coderabbit_status_success_fallback` — no human intervention is required and the PR advances to the CI loop normally. The fallback reason is included in the automated reviewer loop summary comment on the PR.
 
-Only when no SUCCESS commit-status is found does the script fall through to stale-findings recovery, which may yield `skipped (no_review)`. The PR can still advance to `ready-for-human-review` in that case as well. When all PRs in the batch reach their individual reviewer-loop terminal states, Step 5.3 re-triggers CodeRabbit on any PR whose reviewer loop summary indicates `skipped (no_review)` for CodeRabbit and re-runs the reviewer loop for those PRs before the batch is declared complete.
+Only when no SUCCESS commit-status is found does the script fall through to stale-findings recovery, which may yield `RESULT=skipped` / `REASON=no_review`. The PR can still advance to `ready-for-human-review` in that case as well. When all PRs in the batch reach their individual reviewer-loop terminal states, Step 5.3 re-triggers CodeRabbit on any PR whose reviewer loop summary indicates `skipped (no_review)` for CodeRabbit and re-runs the reviewer loop for those PRs before the batch is declared complete.
 
 ---
 
@@ -613,13 +613,13 @@ These notes feed directly into the post-merge retrospective and provide context 
 
 ### Detection
 
-For each PR in the batch, inspect the "Automated Reviewer Loop Summary" comment posted by `pr-review-loop.sh` and look for a `skipped (no_review)` outcome associated with CodeRabbit. The canonical signal is the presence of `REASON=coderabbit_skipped_no_review` in the summary comment body, or equivalently the text `skipped (no_review)` in a CodeRabbit row of the summary table.
+For each PR in the batch, inspect the "Automated Reviewer Loop Summary" comment posted by the orchestrator after the reviewer loop exits and look for a `skipped (no_review)` outcome associated with CodeRabbit. The canonical signal emitted by `pr-review-loop.sh` is `RESULT=skipped` paired with `REASON=no_review` (two separate key-value lines in the script output); in the summary comment table this appears as `skipped (no_review)` in the CodeRabbit row.
 
 ```bash
-# Check whether a PR's reviewer loop summary indicates CodeRabbit skipped (no_review)
+# Check whether a PR's reviewer loop summary indicates CodeRabbit skipped with no_review
 gh pr view <pr_number> --json comments \
   --jq '[.comments[].body | select(test("Automated Reviewer Loop Summary"))] | last // ""' \
-  | grep -qiE "coderabbit_skipped_no_review|skipped \(no_review\)"
+  | grep -qiE "REASON=no_review|skipped \(no_review\)"
 ```
 
 If the command exits 0 (match found), the PR requires a CodeRabbit re-trigger.
