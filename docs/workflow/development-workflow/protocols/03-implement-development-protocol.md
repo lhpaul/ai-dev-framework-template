@@ -277,7 +277,7 @@ git checkout -b refactor/[branch-slug]
 
    | Category | What to check | Example pattern |
    |---|---|---|
-   | **Link targets** | `[text](old-path)` — both the link target and `text` when text mirrors the old path | `[docs/ai/old](docs/workflow/old)` |
+   | **Link targets** | `[text](old-path)` — both the link target and `text` when text mirrors the old path | `[docs/ai/old](docs/ai/old)` |
    | **Display text in links** | `[old-path-text](new-path)` — link target already updated but display text still shows the old string | `[docs/ai/old](docs/workflow/new)` |
    | **Non-link occurrences** | Bare old-string in prose, code blocks, directory trees, YAML values, and shell scripts | `docs/ai/old` inside a code fence |
 
