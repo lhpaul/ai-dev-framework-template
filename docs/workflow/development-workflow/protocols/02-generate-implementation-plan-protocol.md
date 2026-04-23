@@ -169,8 +169,10 @@ If no blocking human decision remains:
    Run `markdownlint-cli2` on the plan file and smoke test runbook before staging. This catches broken relative links (wrong `../../` depth), trailing spaces, and missing trailing newlines that would otherwise fail CI and require a fix commit.
 
    ```bash
-   # Resolve the repo root (works whether running in the main tree or a worktree)
-   REPO_ROOT=$(git rev-parse --show-toplevel)
+   # Resolve the repo root (works whether running in the main tree or an isolated worktree).
+   # NOTE: git rev-parse --show-toplevel returns the *worktree* directory inside a worktree,
+   # not the main repo. Use --git-common-dir instead, which always points to the shared .git/.
+   REPO_ROOT=$(git rev-parse --git-common-dir)/..
 
    # Run markdownlint-cli2 using the repo root's node_modules
    "$REPO_ROOT/node_modules/.bin/markdownlint-cli2" \
@@ -183,7 +185,7 @@ If no blocking human decision remains:
    - **Trailing spaces** (MD009): no line should end with whitespace except intentional two-space hard line breaks.
    - **Missing trailing newline** (MD047): every file must end with a single newline.
 
-   > **Worktree note**: When running inside a git worktree (e.g., when dispatched by the Portfolio Orchestrator), `node_modules/` does not exist inside the worktree directory. Use `REPO_ROOT=$(git rev-parse --show-toplevel)` to locate the correct binary regardless of working directory.
+   > **Worktree note**: When running inside a git worktree (e.g., when dispatched by the Portfolio Orchestrator), `node_modules/` does not exist inside the worktree directory. The `$(git rev-parse --git-common-dir)/..` expression resolves to the main repo root in both the main tree and any worktree.
 
 6. Commit: `docs: add implementation plan for [feature-name]`
 7. Push: `git push -u origin implementation-plan/[branch-slug]`
