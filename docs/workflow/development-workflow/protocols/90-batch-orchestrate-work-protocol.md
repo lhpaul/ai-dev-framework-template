@@ -637,6 +637,18 @@ If any PR is still in progress or labeled `needs-fixes`, continue supervising (S
 
 5. **Include the batch-merge summary** (Step 5 of Protocol 94) in the orchestrator's Step 6 summary output.
 
+### Batch-merge routing rule (mandatory)
+
+When merging a parallel implementation batch, **always** invoke `batch-merge.sh discover --prs <list>` followed by execution of `94-batch-merge-protocol.md`. Direct `gh pr merge` calls are only acceptable for single-PR merges or non-implementation PRs (spec, plan). **Never** use `gh pr merge` individually for parallel implementation batches — it bypasses CHANGELOG auto-resolution (Protocol 94 Step 4.3) and active-worktree awareness.
+
+| Merge scenario | Required tool |
+|---|---|
+| Parallel implementation batch (2+ PRs) | `batch-merge.sh` + Protocol 94 |
+| Single implementation PR | `gh pr merge` is acceptable |
+| Spec or plan PR (any count) | `gh pr merge` is acceptable |
+
+Violating this rule causes CHANGELOG merge conflicts that must be resolved manually, as observed in the Batch 4 incident (2026-04-22).
+
 ### Governance note
 
 The orchestrator prepares and validates the batch but **does not merge autonomously**. The human's explicit approval at Step 5.5 (above) is the required merge gate. This aligns with the policy in `2_batch-merge_implementation-plan.md`: "The agent executes `git merge` locally, but only after the human explicitly confirms the merge plan."
