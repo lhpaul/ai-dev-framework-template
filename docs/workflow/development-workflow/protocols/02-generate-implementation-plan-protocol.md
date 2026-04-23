@@ -100,6 +100,11 @@ docs/specs/developments/[timestamp]_[feature-slug]/2_[feature-slug]_implementati
 - **Explicit freeze exception**: You may copy a fixed enumeration only when the spec explicitly freezes scope to a named subset; quote that spec section in the plan.
 - **Verification Log required**: Every plan must include a reproducible Verification Log (command/query, repo SHA, and resulting counts/paths that drive scope statements).
 - **CHANGELOG literal format**: When the Implementation Order includes a literal CHANGELOG entry for the developer to copy, it must follow the project's `**Bold Title** (#N):` format (e.g., `- **Fix tech-lead CHANGELOG format** (#226): ...`). Never use conventional-commit format (`fix(scope): message`) in a CHANGELOG literal — that format is for git commit messages, not CHANGELOG entries. The impl agent will copy the literal verbatim; a wrong format wastes a reviewer cycle.
+- **Verification command simplicity**: Verification steps in Implementation Order steps must be simple and human-readable. Follow these rules:
+  - Prefer prose assertions ("confirm the output lists only the renamed files") over exact file counts or byte counts.
+  - Avoid multi-flag grep one-liners that are difficult to verify by reading (e.g., complex exclusion scopes, self-referencing exclusion globs, chained pipes with hard-coded counts).
+  - For mass-rename or substitution operations: include an explicit "run the command and confirm the output matches expectations" sanity check rather than prescribing the exact expected count — counts go stale as the repo evolves and breed fix commits when reviewers find mismatches.
+  - A verification step is correct if a developer can execute it, read the output, and confidently determine pass/fail without consulting an external reference.
 
 ### Parser-risk plans: custom parsers, regex, and structured-text scanning
 
