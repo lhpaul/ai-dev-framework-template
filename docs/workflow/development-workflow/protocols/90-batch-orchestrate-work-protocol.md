@@ -501,6 +501,14 @@ A PR may appear "almost ready" — non-draft, with readiness labels applied — 
 
 The reviewer loop summary comment is the only reliable indicator that Step 7 ran to completion. `ready-for-human-review` alone is NOT a reliable completion signal. This check applies only when review platforms are configured — skip it for repos where Step 7 is `skipped` (no platforms configured).
 
+**Pre-label orphaned PR** (early timeout — applies to all PR types):
+
+A distinct failure mode occurs when an agent times out so early that it never reaches the post-review labeling steps. The PR is left non-draft but has **no** `ready-for-human-review` label, **no** `ready-for-regression` label (for implementation PRs), and **no** reviewer loop summary comment. This looks identical to a freshly-opened, unreviewed PR and is invisible to the label-presence heuristics above.
+
+> non-draft + no `ready-for-human-review` + no `ready-for-regression` (implementation PRs) + no reviewer loop summary comment = pre-label orphaned run
+
+Treat any non-draft PR on a workflow branch (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, `spec/*`, `implementation-plan/*`) that belongs to a known in-flight item and has none of the above signals as a pre-label orphaned run. Do not assume it is a fresh PR that has not yet entered the reviewer loop.
+
 Use this command to detect the incomplete state for a specific PR:
 
 ```bash
@@ -513,12 +521,25 @@ gh pr view <pr_number> --json isDraft,labels,comments \
   }'
 ```
 
+**Classification table** (evaluate in order; first matching row wins):
+
+| `isDraft` | `hasRegressionLabel` | `hasReadyLabel` | `hasReviewSummary` | Classification |
+|---|---|---|---|---|
+| `true` | any | any | any | Draft PR — run Step 7a and convert to non-draft |
+| `false` | `true` | any | `false` | Incomplete run (post-regression, pre-Step-7) |
+| `false` | any | `true` | `false` | Incomplete run (post-label, pre-Step-7) |
+| `false` | `false` | `false` | `false` | **Pre-label orphaned run** — treat as incomplete |
+| `false` | `true` | `false` | `true` | Incomplete run (post-regression, post-summary, pre-ready-label) — apply `ready-for-human-review` label, then proceed to Step 5.1 |
+| `false` | any | `true` | `true` | Ready (proceed to Step 5.1 full verification) |
+
+For the pre-label orphaned case (`isDraft=false`, no labels, no summary): the PR is not a fresh PR awaiting first dispatch — it is an orphaned in-progress run. Treat it the same as other incomplete states and redispatch the Work Item Runner to resume from Step 7a.
+
 **Expected action when incomplete state is detected**:
 
 1. Log the incomplete PR in your retrospective notes.
 2. Remove `ready-for-human-review` if present: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.
 3. Add `needs-fixes`: `gh pr edit <pr_number> --add-label "needs-fixes"`.
-4. Redispatch the Work Item Runner with a resume hint to pick up from Step 7.
+4. Redispatch the Work Item Runner with a resume hint to pick up from Step 7a (internal review gate).
 
 This pattern also applies to PRs where an agent timed out mid-CI-loop: detect via `statusCheckRollup` entries in `ERROR` state, or `PENDING` state that has exceeded the configured max-wait threshold (see `pr-ci-loop.sh` timeout), and re-dispatch accordingly. Do not treat `PENDING` alone as a timeout signal — CI checks that are legitimately running will show as `PENDING` until they complete.
 
