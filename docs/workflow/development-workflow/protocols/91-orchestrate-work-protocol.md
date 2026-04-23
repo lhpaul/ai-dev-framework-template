@@ -939,7 +939,7 @@ GitHub Projects status updates are fully supported via `gh` CLI and require no M
 
 ```bash
 # Look up the project item ID for this issue
-ITEM_ID=$(gh project item-list <PROJECT_NUMBER> --owner <OWNER> --format json \
+ITEM_ID=$(gh project item-list <PROJECT_NUMBER> --owner <OWNER> --limit 10000 --format json \
   | jq -r '.items[] | select(.content.number == <ISSUE_NUMBER>) | .id')
 
 # Look up the Status field ID and target option ID
