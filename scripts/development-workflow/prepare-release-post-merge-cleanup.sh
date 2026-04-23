@@ -16,7 +16,7 @@
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh release/v1.2.3 --issues 232,240 --best-effort
 #
 # Exit codes when --issues is supplied (unless --best-effort is passed):
-#   0  All supplied issues had updated==1 per issue (or no issues supplied)
+#   0  At least one issue was updated and no hard failures occurred (or no issues supplied)
 #   1  updated==0 after processing all issues, or at least one hard failure occurred
 #
 # Output (when --issues is supplied):
