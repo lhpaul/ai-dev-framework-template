@@ -122,6 +122,20 @@ Execute each step from the implementation plan in order.
 
 Before committing, verify:
 
+**ShellCheck (if any `.sh` files were modified)**:
+
+```bash
+# If any .sh files are modified, run ShellCheck before committing
+CHANGED_SH=$({ git diff --name-only --diff-filter=d; git ls-files --others --exclude-standard; } | grep '\.sh$' | sort -u || true)
+if [ -n "$CHANGED_SH" ]; then
+  echo "Running ShellCheck on modified .sh files..."
+  # shellcheck disable=SC2086
+  shellcheck --severity=warning $CHANGED_SH
+fi
+```
+
+Fix all ShellCheck warnings before committing. Do not commit `.sh` files with ShellCheck violations — they will fail the CI `shellcheck.yml` check and trigger unnecessary review-loop churn.
+
 ```bash
 # Build — must succeed
 [your build command]
@@ -330,7 +344,19 @@ git checkout -b refactor/[branch-slug]
    3. Re-run the check until the output contains only intentional occurrences.
 
 4. If scope is larger than the plan described, **stop and report**
-5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area
+5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area. If any `.sh` files were modified, run ShellCheck before committing:
+
+   ```bash
+   CHANGED_SH=$({ git diff --name-only --diff-filter=d; git ls-files --others --exclude-standard; } | grep '\.sh$' | sort -u || true)
+   if [ -n "$CHANGED_SH" ]; then
+     echo "Running ShellCheck on modified .sh files..."
+     # shellcheck disable=SC2086
+     shellcheck --severity=warning $CHANGED_SH
+   fi
+   ```
+
+   Fix all ShellCheck warnings before committing.
+
 6. Update CHANGELOG under `[Unreleased]` with a `Changed` entry (skip if this refactor adjusts unreleased work that already has an entry — update the existing entry instead, or leave it unchanged if it already describes the correct behavior).
 
    **Duplicate-section prevention (check before writing)**: Before writing the CHANGELOG entry, read the existing `[Unreleased]` block and check whether a `### Changed` section header already exists. If it does, append your bullet(s) to the existing section — do **not** create a new `### Changed` header. If `### Changed` does not yet exist under `[Unreleased]`, create it. After writing, verify that the header appears exactly once within the `[Unreleased]` block: `awk '/^## \[Unreleased\]/{found=1} /^## \[/{if(found && !/Unreleased/) exit} found' CHANGELOG.md | grep -c "^### Changed"` — expected output: 1; if greater than 1, merge the duplicate sections before staging.
@@ -437,6 +463,19 @@ Implement the fix.
 
 Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area.
 
+**ShellCheck (if any `.sh` files were modified)**:
+
+```bash
+CHANGED_SH=$({ git diff --name-only --diff-filter=d; git ls-files --others --exclude-standard; } | grep '\.sh$' | sort -u || true)
+if [ -n "$CHANGED_SH" ]; then
+  echo "Running ShellCheck on modified .sh files..."
+  # shellcheck disable=SC2086
+  shellcheck --severity=warning $CHANGED_SH
+fi
+```
+
+Fix all ShellCheck warnings before committing. Do not commit `.sh` files with ShellCheck violations — they will fail the CI `shellcheck.yml` check and trigger unnecessary review-loop churn.
+
 ### Step 6: Update CHANGELOG
 
 Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (skip if this fixes unreleased work that already has an entry — update the existing entry instead, or leave it unchanged if it already describes the correct behavior).
@@ -535,6 +574,19 @@ Implement the minimal fix (do not bundle unrelated changes).
 ### Step 5: Verify
 
 Verify: build, lint, tests pass.
+
+**ShellCheck (if any `.sh` files were modified)**:
+
+```bash
+CHANGED_SH=$({ git diff --name-only --diff-filter=d; git ls-files --others --exclude-standard; } | grep '\.sh$' | sort -u || true)
+if [ -n "$CHANGED_SH" ]; then
+  echo "Running ShellCheck on modified .sh files..."
+  # shellcheck disable=SC2086
+  shellcheck --severity=warning $CHANGED_SH
+fi
+```
+
+Fix all ShellCheck warnings before committing. Do not commit `.sh` files with ShellCheck violations — they will fail the CI `shellcheck.yml` check and trigger unnecessary review-loop churn.
 
 ### Step 6: Update CHANGELOG
 
