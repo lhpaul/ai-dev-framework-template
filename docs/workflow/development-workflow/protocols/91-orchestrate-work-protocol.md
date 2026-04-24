@@ -980,7 +980,7 @@ gh api graphql -f query='
         | select((.comments.nodes[0].body // "") | test("✅ Addressed") | not)'
 ```
 
-The bot login list above matches the default `review.platforms` in `.ai-dev-workflow.yaml`. Update it if your project uses different or additional review bots.
+The bot login list above is a superset covering all platforms supported by `pr-review-loop.sh` (`coderabbit`, `devin`, `greptile`). The current default `review.platforms` in `.ai-dev-workflow.yaml` configures only `devin` and `coderabbit`. Update the list if your project uses different or additional review bots.
 
 The output must contain no unresolved threads from configured bot reviewers (e.g. `coderabbitai[bot]`, `devin-ai-integration[bot]`) before this step passes. A thread is considered resolved when `isResolved: true` **or** the first comment body contains `✅ Addressed` (CodeRabbit appends this when a fix commit lands). Any unresolved bot-authored thread that does not meet either condition — regardless of severity, including Nitpick and Trivial — blocks this check. For PRs with more than 100 threads, implement cursor-based pagination: add `pageInfo { hasNextPage endCursor }` to the `reviewThreads` field selection, capture `endCursor` from each response, and repeat the query with `reviewThreads(first: 100, after: $cursor)` until `hasNextPage` is false.
 
