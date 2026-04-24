@@ -11,6 +11,7 @@
 
 Before running this smoke test:
 
+- [ ] The implementation PR for this feature has been merged to `develop`
 - [ ] You have `gh` CLI access to the repository and to a test template repository (a real or test GitHub repo you control)
 - [ ] The repository under test has a `.ai-dev-workflow.yaml` file
 - [ ] You have access to a recent retrospective scenario (or can simulate one by reading the retrospective protocol)

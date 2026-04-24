@@ -183,15 +183,9 @@ Read `template.repository` from `.ai-dev-workflow.yaml`.
 8. **Run markdownlint-cli2 pre-commit check** on all modified `.md` files, including `CHANGELOG.md`:
 
    ```bash
-   REPO_ROOT=$(git rev-parse --git-common-dir)/..
-   "$REPO_ROOT/node_modules/.bin/markdownlint-cli2" \
-     "docs/specs/developments/20260424165259_retro-template-backlog-crossref/2_retro-template-backlog-crossref_implementation-plan.md" \
-     "docs/testing/workflow/retro-template-backlog-crossref.smoke-test.md" \
-     "docs/workflow/development-workflow/protocols/06-retrospective-protocol.md" \
-     "docs/workflow/development-workflow/README.md" \
-     ".claude/commands/sync-template.md" \
-     ".cursor/commands/sync-template.md" \
-     ".codex/skills/workflow-sync-template/SKILL.md" \
+   npx markdownlint-cli2 \
+     "docs/specs/developments/**/*.md" \
+     "docs/testing/workflow/**/*.md" \
      "CHANGELOG.md"
    ```
 
