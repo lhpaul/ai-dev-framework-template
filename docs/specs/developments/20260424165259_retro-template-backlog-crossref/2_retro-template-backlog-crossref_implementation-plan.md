@@ -150,7 +150,7 @@ Read `template.repository` from `.ai-dev-workflow.yaml`.
    - If repository unreachable: mark all findings "Template check unavailable" (warning, BR-5)
    - Carry classification into Step 4 output: show label + template issue number or version comparison inline with each finding
 
-   Verify: confirm Step 3b heading appears between Step 3a and Step 3b (the taxonomy section), that BR-1 skip condition is present, and that the three classification labels match the spec's Classification Labels table.
+   Verify: confirm Step 3b heading appears immediately after Step 3a (before the "Categorization taxonomy" subsection), that BR-1 skip condition is present, and that the three classification labels match the spec's Classification Labels table.
 
 4. **Update `.claude/commands/sync-template.md`** — in "Step 5 — Generate git instructions", add a sub-step after the git instructions block:
    - After applying template changes and before printing the git instructions, write `TEMPLATE_VERSION` to `.ai-dev-workflow.yaml` under `template.last_synced_version`
@@ -182,5 +182,5 @@ Read `template.repository` from `.ai-dev-workflow.yaml`.
 8. **Update `CHANGELOG.md`** under `[Unreleased]`:
 
    ```
-   - **feat(retrospective): template-aware backlog cross-reference with version tracking** (#299): Adds optional `template.repository` and `template.last_synced_version` fields to `.ai-dev-workflow.yaml`. Extends retrospective Step 3 to classify findings against the upstream template backlog (already tracked / already fixed / contribute upstream). Updates sync-template skill to record the last-synced version automatically. Backwards-compatible — silently skipped when not configured.
+   - **Retrospective template-aware backlog cross-reference with version tracking** (#299): Adds optional `template.repository` and `template.last_synced_version` fields to `.ai-dev-workflow.yaml`. Extends retrospective Step 3 to classify findings against the upstream template backlog (already tracked / already fixed / contribute upstream). Updates sync-template skill to record the last-synced version automatically. Backwards-compatible — silently skipped when not configured.
    ```
