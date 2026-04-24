@@ -91,6 +91,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Policy grep coverage before multi-file changes** (#316): `03-implement-development-protocol.md` Step 1b item 6 (all four paths) and the Quality Rules section now require grepping for all existing references to a policy **before writing any code** — the grep is the discovery step, not a confirmation step. Instructions no longer say "if documented in more than one location" (which assumed prior knowledge of sibling files); they now direct agents to run the grep unconditionally to discover all locations, list every matched file as a candidate, and explicitly confirm coverage of each before submitting. `.claude/agents/developer.md` and `.cursor/agents/developer.md` were updated with a matching key rule.
 
+- **Script-emitted signal verification in developer protocol** (#317): `03-implement-development-protocol.md` Step 1b (all four paths) now includes a mandatory item 7 requiring developers to read the relevant source script and verify the exact string before committing whenever protocol text cites a script-emitted signal value (`REASON=`, `RESULT=`, `STATUS=`, etc.). The Quality Rules section adds a matching bullet with an example `grep -n 'REASON=' scripts/development-workflow/pr-review-loop.sh` command. `.claude/agents/developer.md` and `.cursor/agents/developer.md` were updated with a matching key rule.
+
 ## [0.22.0] - 2026-04-20
 
 ### Added
