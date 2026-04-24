@@ -96,7 +96,7 @@ No other `docs/project/` or `AGENTS.md` files require updates for this feature.
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| Step 5 version-recording change in sync-template disrupts existing sync flow | Low | Low | The recording step is purely additive — it writes to a new field that did not exist before. The git instructions already include `.ai-dev-workflow.yaml` staging. |
+| Step 5 version-recording change in sync-template disrupts existing sync flow | Low | Low | The recording step is purely additive — it writes to a new field that did not exist before. Implementation Order step 4 adds `.ai-dev-workflow.yaml` to the git stage instructions so the updated file is included in the commit. |
 | Retrospective Step 3b calling `gh issue list` on external template repo fails in offline/restricted environments | Low | Low | BR-5 graceful degradation: mark all findings as "Template check unavailable" and continue |
 | Parallel worktrees or batch agents write different `last_synced_version` values to `.ai-dev-workflow.yaml` | Low | Low | `last_synced_version` is written only by the sync-template skill (BR-7), which is always run in a single-developer context, not in parallel batch orchestration |
 
@@ -163,7 +163,7 @@ Read `template.repository` from `.ai-dev-workflow.yaml`.
 
    Verify: confirm the forward-reference on line ~125 now says "Step 3c", confirm the `### 3b. Template cross-reference` heading appears immediately before the renamed `### 3c. Categorization taxonomy`, confirm the three classification labels match the spec's Classification Labels table, and confirm that `already-tracked` presentation output includes Skip/Expand suggestion text.
 
-4. **Update `.claude/commands/sync-template.md`** — in "Step 5 — Generate git instructions", add a sub-step after the git instructions block:
+4. **Update `.claude/commands/sync-template.md`** — in "Step 5 — Generate git instructions", add a sub-step before the git instructions block:
    - After applying template changes and before printing the git instructions, write `TEMPLATE_VERSION` to `.ai-dev-workflow.yaml` under `template.last_synced_version`
    - Print confirmation: `"Recorded last-synced template version: v{TEMPLATE_VERSION}"`
    - Include `.ai-dev-workflow.yaml` in the `git add` instructions shown to the user
