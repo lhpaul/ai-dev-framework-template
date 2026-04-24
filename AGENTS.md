@@ -121,6 +121,9 @@ npx markdownlint-cli2 "docs/specs/developments/**/*.md" "docs/testing/workflow/*
 # Heuristic rules (GLOB001, COUNT001):
 find docs/specs/developments docs/testing/workflow -name "*.md" -print0 \
   | xargs -0 python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md
+
+# Duplicate section-header check (detects repeated ### Fixed / ### Added etc. within a ## block):
+bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md
 ```
 
 ---
