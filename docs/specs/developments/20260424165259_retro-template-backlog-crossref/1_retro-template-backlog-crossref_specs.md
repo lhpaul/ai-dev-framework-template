@@ -139,6 +139,7 @@ The template cross-reference step assigns exactly one classification label to ea
 - [ ] `.ai-dev-workflow.yaml` in this template repository documents the `template.repository` and `template.last_synced_version` fields with comments explaining their purpose
 - [ ] When a retrospective finding shares an exact protocol name or file path with a template issue's title or body, the finding matches that issue (exact match criterion per BR-4)
 - [ ] When a retrospective finding and a template issue share three or more significant keywords and no exact match exists, the finding matches that issue (keyword overlap criterion per BR-4)
+- [ ] When a retrospective finding and a template issue share the same categorization taxonomy label (e.g., both tagged as `workflow-process`) and describe overlapping symptoms, the finding matches that issue (shared root-cause category criterion per BR-4)
 
 ---
 
