@@ -42,7 +42,7 @@
 
 - [ ] `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md` — insert a new Step 3b "Template cross-reference" immediately after Step 3a (existing backlog query). The existing `### 3b. Categorization taxonomy` heading (line 140) must be renamed to `### 3c. Categorization taxonomy`, and the forward-reference on line 125 ("After categorizing all findings in Step 3b below") must be updated to reference "Step 3c". The new Step 3b checks `template.repository` in `.ai-dev-workflow.yaml`; if absent or empty, the step is silently skipped (BR-1). If present, the step queries the template repo's issues, classifies each finding into one of three buckets (BR-2), and carries the classification into Step 4 presentation.
 
-- [ ] `.claude/commands/sync-template.md` — add a new sub-step at the end of "Step 5 — Generate git instructions": after the git instructions are printed, record `TEMPLATE_VERSION` into `.ai-dev-workflow.yaml`'s `template.last_synced_version` field and include the updated file in the git stage instructions. Add the confirmation line `"Recorded last-synced template version: vX.Y.Z"` to the Step 3 summary.
+- [ ] `.claude/commands/sync-template.md` — add a new sub-step in "Step 5 — Generate git instructions": after applying template changes and before printing the git instructions, record `TEMPLATE_VERSION` into `.ai-dev-workflow.yaml`'s `template.last_synced_version` field and include the updated file in the git stage instructions. Print a confirmation line `"Recorded last-synced template version: vX.Y.Z"` as part of the Step 5 output.
 
 - [ ] `.cursor/commands/sync-template.md` — same change as the Claude command above (parallel file).
 
@@ -172,7 +172,7 @@ Read `template.repository` from `.ai-dev-workflow.yaml`.
 
 5. **Update `.cursor/commands/sync-template.md`** — apply the identical Step 5 change as step 4 above. Verify: confirm the changes match the Claude command version.
 
-6. **Update `.codex/skills/workflow-sync-template/SKILL.md`** — add a bullet after step 3 (or equivalent last step): "After generating git instructions, record `TEMPLATE_VERSION` to `.ai-dev-workflow.yaml` under `template.last_synced_version` per the canonical sync-template protocol Step 5." Verify: confirm the bullet is present and references the protocol.
+6. **Update `.codex/skills/workflow-sync-template/SKILL.md`** — add a bullet after step 3 (or equivalent last step): "After applying template changes and before generating git instructions, record `TEMPLATE_VERSION` to `.ai-dev-workflow.yaml` under `template.last_synced_version` per the canonical sync-template protocol Step 5." Verify: confirm the bullet is present and references the protocol.
 
 7. **Run markdownlint-cli2 pre-commit check** on all modified `.md` files:
 
