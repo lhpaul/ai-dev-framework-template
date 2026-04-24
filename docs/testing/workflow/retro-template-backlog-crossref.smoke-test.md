@@ -185,7 +185,7 @@ Run Step 3b cross-reference and observe the classification for each.
 - [ ] When `template.repository` is absent or empty, Step 3b produces no output and the retrospective is identical to pre-feature behavior
 - [ ] When `template.repository` is configured and reachable, each finding carries exactly one of the three classification labels before Step 4 presentation
 - [ ] Finding matching an open template issue shows "Already in template backlog: template#NNN" with the issue number and suggests Skip or Expand as alternatives to creating a new upstream issue (AC 3)
-- [ ] Finding matching a closed issue with a newer fix version shows "Already fixed upstream in vX.Y.Z — you are on vY.Y.Y; consider syncing instead of contributing"
+- [ ] Finding matching a closed issue with a newer fix version shows "Already fixed upstream in vX.Y.Z — you are on vA.B.C; consider syncing instead of contributing"
 - [ ] When `last_synced_version` is absent, a would-be "already-fixed" finding falls back to "Contribute upstream candidate" with a note about unknown synced version
 - [ ] When fix version cannot be determined, the finding falls back to "Contribute upstream candidate" with a note about unknown fix version
 - [ ] When `template.repository` is malformed, Step 3b emits an error and all findings show "Template check unavailable"
