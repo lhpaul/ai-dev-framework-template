@@ -24,7 +24,7 @@ When a downstream project runs a retrospective, the analyst currently has no way
 1. The analyst reads the workflow configuration and detects the template repository reference
 2. The analyst queries the template repository for open issues
 3. For each retrospective finding, the analyst compares it against the open template issues
-4. For each finding that does not match an open issue, the analyst checks closed template issues whose associated fix version is newer than the downstream project's last-synced version
+4. For each finding that does not match an open issue, the analyst checks closed template issues. If `template.last_synced_version` is set, a closed issue is relevant when its fix version is newer than the last-synced version. If `template.last_synced_version` is absent, the analyst skips version comparison and classifies these findings as "Contribute upstream candidate" with a note that the synced version is unknown (see BR-3)
 5. Each finding is labeled with one of three classifications (see Business Rules)
 6. The classification is carried into the findings presentation (Step 4) alongside the existing tracker-match results
 
@@ -102,6 +102,21 @@ When a downstream project runs a retrospective, the analyst currently has no way
 - **BR-7 — last_synced_version is written by sync-template only**: Only the sync-template skill writes `template.last_synced_version`. The retrospective protocol reads it but never writes it
 - **BR-8 — Backward compatibility**: Projects that have not added the `template` section to their workflow configuration must experience zero behavior change in their retrospective runs
 - **BR-9 — Malformed repository reference**: If `template.repository` is set but its value is malformed (e.g., not a valid `owner/repo` slug), the step reports an error to the retrospective output and marks all findings as "Template check unavailable", the same classification outcome as BR-5 (unreachable repository) but with error severity instead of warning severity. The step never silently skips when a value is present but invalid
+
+---
+
+## Classification Labels
+
+The template cross-reference step assigns exactly one classification label to each retrospective finding when the template repository check runs. These are not status transitions — each label is assigned once during classification and does not change.
+
+| Label | Display text | Description |
+|---|---|---|
+| `already-tracked` | Already in template backlog | A matching open issue exists in the template repository |
+| `already-fixed` | Already fixed upstream | A matching closed issue exists whose fix shipped in a newer template version than the downstream's last-synced version |
+| `contribute-upstream` | Contribute upstream candidate | No matching open or relevant closed issue found; the finding appears new and is a candidate for upstream contribution |
+| `check-unavailable` | Template check unavailable | The template repository was unreachable (warning) or the repository reference was malformed (error); classification could not be performed |
+
+**Label assignment**: No transitions — each finding receives one label during the cross-reference step and retains it through presentation.
 
 ---
 
