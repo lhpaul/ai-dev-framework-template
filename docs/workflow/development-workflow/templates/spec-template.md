@@ -105,7 +105,7 @@
 
 ## Open Questions
 
-<!-- List unresolved questions. Remove this section when all are answered. -->
+<!-- List unresolved questions here. When all questions are answered, delete this entire section — the heading and everything below it. Do NOT replace it with a placeholder comment such as "No open questions at this time". -->
 
 1. [Question 1]
 2. [Question 2]
