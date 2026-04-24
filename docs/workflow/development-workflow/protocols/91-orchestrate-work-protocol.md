@@ -976,6 +976,7 @@ gh api graphql -f query='
   }' -F owner=<owner> -F repo=<repo> -F number=<pr_number> \
   | jq '.data.repository.pullRequest.reviewThreads.nodes[]
         | select(.isResolved == false)
+        | select(.comments.nodes[0].author.login as $a | ["coderabbitai[bot]","devin-ai-integration[bot]","greptile-apps[bot]"] | index($a) != null)
         | select((.comments.nodes[0].body // "") | test("✅ Addressed") | not)'
 ```
 
