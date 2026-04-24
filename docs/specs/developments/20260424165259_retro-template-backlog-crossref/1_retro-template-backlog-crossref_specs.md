@@ -39,7 +39,7 @@ When a downstream project runs a retrospective, the analyst currently has no way
 
 **Considerations**:
 - If the template repository is unreachable at analysis time, the analyst records a warning for each finding and continues without the cross-reference (graceful degradation)
-- If the configured template repository reference is malformed, the analyst reports an error and skips the step entirely
+- If the configured template repository reference is malformed, the analyst reports an error and marks all findings as "Template check unavailable" (same outcome as an unreachable repository)
 
 ---
 
@@ -98,9 +98,10 @@ When a downstream project runs a retrospective, the analyst currently has no way
 - **BR-3 — Version comparison requires last_synced_version**: The "Already fixed upstream" classification is only possible when `template.last_synced_version` is set. When it is absent, closed issues are treated as "unknown sync status" and findings that would match them fall back to "Contribute upstream candidate" with a note that the synced version is unknown
 - **BR-4 — Matching heuristic**: A finding matches a template issue when the finding's affected area (protocol name, file path, or category) overlaps with the issue's title or labels. The same three-criterion matching heuristic used in the existing Step 3a tracker query applies: exact path/name match, strong keyword overlap, or shared root-cause category
 - **BR-5 — Graceful degradation**: If the template repository is unreachable, the step adds a warning to the retrospective output and marks all findings as "Template check unavailable" rather than blocking the retrospective
-- **BR-6 — Closed-issue version resolution**: The fix version for a closed template issue is the template release version in which the issue's fix first shipped. If the fix version cannot be determined, the issue is treated as "version unknown" and the "Already fixed upstream" classification is not applied
+- **BR-6 — Closed-issue version resolution**: The fix version for a closed template issue is the template release version in which the issue's fix first shipped. If the fix version cannot be determined, the finding falls back to "Contribute upstream candidate" with a note that the fix version is unknown (parallel to the BR-3 fallback for absent `last_synced_version`)
 - **BR-7 — last_synced_version is written by sync-template only**: Only the sync-template skill writes `template.last_synced_version`. The retrospective protocol reads it but never writes it
 - **BR-8 — Backward compatibility**: Projects that have not added the `template` section to their workflow configuration must experience zero behavior change in their retrospective runs
+- **BR-9 — Malformed repository reference**: If `template.repository` is set but its value is malformed (e.g., not a valid `owner/repo` slug), the step reports an error to the retrospective output and marks all findings as "Template check unavailable", the same outcome as BR-5 (unreachable repository). The step never silently skips when a value is present but invalid
 
 ---
 
@@ -111,6 +112,8 @@ When a downstream project runs a retrospective, the analyst currently has no way
 - [ ] When a finding matches an open template issue, the presentation includes the template issue number (e.g., "Already in template backlog: template#123") and suggests Skip or Expand as alternatives to creating a new issue
 - [ ] When a finding matches a closed template issue whose fix version is newer than `template.last_synced_version`, the presentation includes both the fix version and the downstream's current synced version (e.g., "Already fixed upstream in v0.24.0 — you are on v0.22.0; consider syncing instead of contributing")
 - [ ] When `template.last_synced_version` is absent and a closed issue would otherwise match, the finding is classified as "Contribute upstream candidate" with a note that the synced version is unknown
+- [ ] When a finding matches a closed template issue whose fix version cannot be determined, the finding is classified as "Contribute upstream candidate" with a note that the fix version is unknown
+- [ ] When `template.repository` is set but its value is malformed, the retrospective completes with an error message and all findings show "Template check unavailable" rather than failing silently
 - [ ] When the template repository is unreachable, the retrospective completes with a warning and all findings show "Template check unavailable" rather than failing
 - [ ] After a successful sync-template run, `.ai-dev-workflow.yaml` contains `template.last_synced_version` set to the version that was just synced
 - [ ] The sync-template git instructions include `.ai-dev-workflow.yaml` in the staged files list
