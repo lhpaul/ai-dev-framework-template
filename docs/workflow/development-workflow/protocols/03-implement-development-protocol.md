@@ -64,10 +64,10 @@ Complete this checklist **before writing any code**. It takes 5–10 minutes and
    - What are the failure modes or missing inputs?
    - Are there related files that must stay consistent with the changed files?
 5. **Cross-reference related protocols**: if any changed file references or is referenced by other protocol documents, read those documents and confirm your changes are consistent with them.
-6. **Cross-reference consistency check** (required when the change modifies policy or rule text): if the rule or policy you are changing is documented in more than one location, grep for key phrases before writing any code, list every location, and confirm each location will be updated consistently. Verify that headings, signal names, and language do not contradict each other across files.
+6. **Cross-reference consistency check** (required when the change modifies policy or rule text): grep for all existing references to the policy being changed **before writing any code**. Do not rely on your prior knowledge of where a policy lives — the grep is how you discover all locations. Run the search across all relevant directories and file types, list every matched file, and confirm each location will be updated consistently. Verify that headings, signal names, and language do not contradict each other across files. All matched files are candidates for the same update; explicitly confirm coverage of each before submitting.
 
    ```bash
-   # Example: grep for the key phrase or signal name across all relevant locations
+   # Run this BEFORE writing any code — grep discovers all locations that must change together
    grep -r "key phrase" docs/ .cursor/ .claude/ .codex/ AGENTS.md README.md REVIEW.md --include="*.md" --include="*.mdc" -l
    ```
 
@@ -299,7 +299,12 @@ Complete this checklist **before writing any code**. It takes 5–10 minutes and
    - Are there callers or dependents of the refactored code that must be updated in sync?
    - What behavior is preserved vs. changed?
 5. **Cross-reference related protocols**: if any changed file references or is referenced by other protocol documents, read those documents and confirm your changes are consistent with them.
-6. **Cross-reference consistency check** (required when the change modifies policy or rule text): if the rule or policy you are changing is documented in more than one location, grep for key phrases before writing any code, list every location, and confirm each location will be updated consistently. Verify that headings, signal names, and language do not contradict each other across files.
+6. **Cross-reference consistency check** (required when the change modifies policy or rule text): grep for all existing references to the policy being changed **before writing any code**. Do not rely on your prior knowledge of where a policy lives — the grep is how you discover all locations. Run the search across all relevant directories and file types, list every matched file, and confirm each location will be updated consistently. Verify that headings, signal names, and language do not contradict each other across files. All matched files are candidates for the same update; explicitly confirm coverage of each before submitting.
+
+   ```bash
+   # Run this BEFORE writing any code — grep discovers all locations that must change together
+   grep -r "key phrase" docs/ .cursor/ .claude/ .codex/ AGENTS.md README.md REVIEW.md --include="*.md" --include="*.mdc" -l
+   ```
 
 Do not proceed to the Refactor Steps until this checklist is complete and all six points are answered.
 
@@ -436,7 +441,12 @@ Complete this checklist **before writing any code**. It takes 5–10 minutes and
 3. **Verify scope**: confirm all listed changes are within the issue's stated scope. Remove anything that is not.
 4. **Consider edge cases**: what if the branch already exists locally or remotely? What if this runs in a worktree? What are the failure modes?
 5. **Cross-reference related protocols**: if any changed file references or is referenced by other protocol documents, read those documents and confirm your changes are consistent with them.
-6. **Cross-reference consistency check** (required when the change modifies policy or rule text): if the rule or policy you are changing is documented in more than one location, grep for key phrases before writing any code, list every location, and confirm each location will be updated consistently. Verify that headings, signal names, and language do not contradict each other across files.
+6. **Cross-reference consistency check** (required when the change modifies policy or rule text): grep for all existing references to the policy being changed **before writing any code**. Do not rely on your prior knowledge of where a policy lives — the grep is how you discover all locations. Run the search across all relevant directories and file types, list every matched file, and confirm each location will be updated consistently. Verify that headings, signal names, and language do not contradict each other across files. All matched files are candidates for the same update; explicitly confirm coverage of each before submitting.
+
+   ```bash
+   # Run this BEFORE writing any code — grep discovers all locations that must change together
+   grep -r "key phrase" docs/ .cursor/ .claude/ .codex/ AGENTS.md README.md REVIEW.md --include="*.md" --include="*.mdc" -l
+   ```
 
 Do not proceed to Step 2 until this checklist is complete and all six points are answered.
 
@@ -552,7 +562,12 @@ Complete this checklist **before writing any code**. It takes 5–10 minutes and
 3. **Verify scope**: confirm all listed changes address the production incident directly. Remove anything that is not strictly necessary.
 4. **Consider edge cases**: what if the branch already exists locally or remotely? What is the minimal safe change? Are there related files that must stay consistent?
 5. **Cross-reference related protocols**: if the fix touches shared utilities or configuration files used by other flows, confirm consistency.
-6. **Cross-reference consistency check** (required when the fix modifies policy or rule text): if the rule or policy you are changing is documented in more than one location, grep for key phrases before writing any code, list every location, and confirm each location will be updated consistently. Verify that headings, signal names, and language do not contradict each other across files.
+6. **Cross-reference consistency check** (required when the fix modifies policy or rule text): grep for all existing references to the policy being changed **before writing any code**. Do not rely on your prior knowledge of where a policy lives — the grep is how you discover all locations. Run the search across all relevant directories and file types, list every matched file, and confirm each location will be updated consistently. Verify that headings, signal names, and language do not contradict each other across files. All matched files are candidates for the same update; explicitly confirm coverage of each before submitting.
+
+   ```bash
+   # Run this BEFORE writing any code — grep discovers all locations that must change together
+   grep -r "key phrase" docs/ .cursor/ .claude/ .codex/ AGENTS.md README.md REVIEW.md --include="*.md" --include="*.mdc" -l
+   ```
 
 Do not proceed to Step 3 until this checklist is complete and all six points are answered.
 
@@ -707,12 +722,13 @@ When you encounter something the spec or plan doesn't cover:
 
 ## Quality Rules
 
-- **Cross-reference consistency**: When a change modifies policy or rule text that appears in multiple files (protocols, agent instructions, best-practice docs, Cursor agents, Codex skills, etc.), every location must be updated in the same PR. Before opening the PR:
-  1. Grep for key phrases and signal names from the changed rule across all relevant locations (`docs/`, `AGENTS.md`, `README.md`, `REVIEW.md`, `.cursor/`, `.claude/`, `.codex/`)
-  2. Confirm every matched location is updated consistently
-  3. Verify headings, signal names, and language do not contradict each other across files
+- **Cross-reference consistency**: When a change modifies policy or rule text, grep for all existing references to that policy **before writing any code** — do not assume you already know all locations. The grep is the discovery step. Before opening the PR:
+  1. Grep for key phrases and signal names from the changed rule across all relevant locations (`docs/`, `AGENTS.md`, `README.md`, `REVIEW.md`, `.cursor/`, `.claude/`, `.codex/`) — including sibling agent instruction files (`.cursor/agents/`, `.claude/agents/`) and Cursor rules (`.cursor/rules/`)
+  2. List every matched file as a candidate for the same update
+  3. Explicitly confirm coverage of each matched file before submitting
+  4. Verify headings, signal names, and language do not contradict each other across files
 
-  Skipping this check is the primary cause of multi-cycle review loops on cross-cutting documentation changes.
+  Skipping this grep is the primary cause of multi-cycle review loops on cross-cutting documentation changes (e.g., updating a protocol but missing `.cursor/rules/workflow.mdc` and `AGENTS.md` that mirror the same policy text).
 
 - **Scope boundary**: Modify **only** files directly related to the assigned issue. If a code review or linter finding requires changes outside the issue's scope (e.g., fixing issues in adjacent modules, refactoring unrelated utilities, or addressing tech debt in other areas):
   1. **Do not fix it** in the current PR
