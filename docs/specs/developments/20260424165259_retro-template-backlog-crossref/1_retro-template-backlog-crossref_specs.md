@@ -101,7 +101,7 @@ When a downstream project runs a retrospective, the analyst currently has no way
 - **BR-6 — Closed-issue version resolution**: The fix version for a closed template issue is the template release version in which the issue's fix first shipped. If the fix version cannot be determined, the finding falls back to "Contribute upstream candidate" with a note that the fix version is unknown (parallel to the BR-3 fallback for absent `last_synced_version`)
 - **BR-7 — last_synced_version is written by sync-template only**: Only the sync-template skill writes `template.last_synced_version`. The retrospective protocol reads it but never writes it
 - **BR-8 — Backward compatibility**: Projects that have not added the `template` section to their workflow configuration must experience zero behavior change in their retrospective runs
-- **BR-9 — Malformed repository reference**: If `template.repository` is set but its value is malformed (e.g., not a valid `owner/repo` slug), the step reports an error to the retrospective output and marks all findings as "Template check unavailable", the same outcome as BR-5 (unreachable repository). The step never silently skips when a value is present but invalid
+- **BR-9 — Malformed repository reference**: If `template.repository` is set but its value is malformed (e.g., not a valid `owner/repo` slug), the step reports an error to the retrospective output and marks all findings as "Template check unavailable", the same classification outcome as BR-5 (unreachable repository) but with error severity instead of warning severity. The step never silently skips when a value is present but invalid
 
 ---
 
