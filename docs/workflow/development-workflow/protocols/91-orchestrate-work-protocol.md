@@ -961,6 +961,29 @@ After Steps 8a and 8b complete, perform one final independent verification of th
 gh pr view <pr_number> --json baseRefName,isDraft,labels,statusCheckRollup,comments
 ```
 
+For the `reviewThreads` resolution check, `gh pr view --json` does not expose `reviewThreads`; use the GraphQL API directly. **This query is mandatory — do not skip it or rely on self-tracked thread state:**
+
+```bash
+gh api graphql -f query='
+  query($owner:String!, $repo:String!, $number:Int!) {
+    repository(owner:$owner, name:$repo) {
+      pullRequest(number:$number) {
+        reviewThreads(first: 100) {
+          nodes { isResolved comments(first: 1) { nodes { author { login } body } } }
+        }
+      }
+    }
+  }' -f owner=<owner> -f repo=<repo> -F number=<pr_number> \
+  | jq '.data.repository.pullRequest.reviewThreads.nodes[]
+        | select(.isResolved == false)
+        | select(.comments.nodes[0].author.login as $a | ["coderabbitai[bot]","devin-ai-integration[bot]","greptile-apps[bot]"] | index($a) != null)
+        | select((.comments.nodes[0].body // "") | test("✅ Addressed") | not)'
+```
+
+The bot login list above is a superset covering all platforms supported by `pr-review-loop.sh` (`coderabbit`, `devin`, `greptile`). The current default `review.platforms` in `.ai-dev-workflow.yaml` configures only `devin` and `coderabbit`. Update the list if your project uses different or additional review bots.
+
+The output must contain no unresolved threads from configured bot reviewers (e.g. `coderabbitai[bot]`, `devin-ai-integration[bot]`) before this step passes. A thread is considered resolved when `isResolved: true` **or** the first comment body contains `✅ Addressed` (CodeRabbit appends this when a fix commit lands). Any unresolved bot-authored thread that does not meet either condition — regardless of severity, including Nitpick and Trivial — blocks this check. For PRs with more than 100 threads, implement cursor-based pagination: add `pageInfo { hasNextPage endCursor }` to the `reviewThreads` field selection, capture `endCursor` from each response, and repeat the query with `reviewThreads(first: 100, after: $cursor)` until `hasNextPage` is false.
+
 Verify all of the following. If any check fails, **do not report ready** — treat it the same as `needs-fixes` and re-enter the fix loop from Step 7a:
 
 | Check | Pass condition |
@@ -970,7 +993,7 @@ Verify all of the following. If any check fails, **do not report ready** — tre
 | `ready-for-human-review` label | Present in `labels[].name` |
 | `ready-for-regression` label | Present in `labels[].name` for `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`; absent/ignored for `spec/*`, `implementation-plan/*` |
 | No `needs-fixes` label | `needs-fixes` absent from `labels[].name` |
-| All automated-reviewer `reviewThreads` resolved | GraphQL `reviewThreads.nodes[].isResolved=true` (or `✅ Addressed` in the first comment body) for every thread authored by a configured bot login. Evaluate via: `gh api graphql -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login}body}}}}}}}' -f owner=OWNER -f repo=REPO -F pr=NUMBER \| jq '.data.repository.pullRequest.reviewThreads.nodes[] \| select(.isResolved==false)'` — output must be empty for all bot-authored threads. Use cursor-based pagination for PRs with more than 100 threads. |
+| All automated-reviewer `reviewThreads` resolved | GraphQL query above returns empty output — `isResolved: true` (or first comment body contains `✅ Addressed`) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured) |
 | Automated reviewer loop summary | At least one comment whose body contains `"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"` (skip this check only when Step 7 was `skipped` because no review platforms are configured). **This is a hard requirement. Agents applying fixes MUST NOT remove or skip this check — the presence of the comment is the only reliable signal that Step 7 ran to completion. A PR that has `ready-for-human-review` but lacks this comment is in an incomplete state and must re-run Step 7.** (Note: the Step 7a summary comment posted by the internal review gate is a distinct comment from a distinct step — it does not satisfy this check. This check targets the external automated reviewer loop summary from Step 7 only.) |
 | CI checks | All required status checks have `state: SUCCESS` or `conclusion: success` in `statusCheckRollup` (no check in `PENDING`, `FAILURE`, or `ERROR` state) |
 
