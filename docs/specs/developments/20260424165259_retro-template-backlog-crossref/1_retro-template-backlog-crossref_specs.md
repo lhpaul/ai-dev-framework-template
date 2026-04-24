@@ -59,6 +59,8 @@ When a downstream project runs a retrospective, the analyst currently has no way
 
 **Information shown**: Nothing — the step is invisible to the analyst and the human when not configured
 
+**Actions available**: None — the step is skipped entirely
+
 **Considerations**:
 - This use case covers all existing downstream projects that have not yet added the new configuration fields
 
@@ -82,6 +84,8 @@ When a downstream project runs a retrospective, the analyst currently has no way
 - A confirmation line in the sync summary: "Recorded last_synced_version: vX.Y.Z in .ai-dev-workflow.yaml"
 - The git stage instructions include `.ai-dev-workflow.yaml`
 
+**Actions available**: None — the version recording is automatic as part of the sync operation
+
 **Considerations**:
 - If the workflow configuration file does not yet contain a `template` section, the skill creates it
 - If the field already exists with a different value, the skill overwrites it with the new version
@@ -96,7 +100,7 @@ When a downstream project runs a retrospective, the analyst currently has no way
   - "Already fixed upstream" — a matching closed issue exists whose fix shipped in a template version newer than the downstream project's `last_synced_version`; include both the fix version and the downstream's current synced version
   - "Contribute upstream candidate" — no matching open or relevant closed issue found; the finding appears to be new and is a candidate for upstream contribution
 - **BR-3 — Version comparison requires last_synced_version**: The "Already fixed upstream" classification is only possible when `template.last_synced_version` is set. When it is absent, closed issues are treated as "unknown sync status" and findings that would match them fall back to "Contribute upstream candidate" with a note that the synced version is unknown
-- **BR-4 — Matching heuristic**: A finding matches a template issue when the finding's affected area (protocol name, file path, or category) overlaps with the issue's title or labels. The same three-criterion matching heuristic used in the existing Step 3a tracker query applies: exact path/name match, strong keyword overlap, or shared root-cause category
+- **BR-4 — Matching heuristic**: A finding matches a template issue when the finding's affected area (protocol name, file path, or category) overlaps with the issue's title, body, or labels. The same three-criterion matching heuristic used in the existing Step 3a tracker query applies: exact path/name match, strong keyword overlap, or shared root-cause category
 - **BR-5 — Graceful degradation**: If the template repository is unreachable, the step adds a warning to the retrospective output and marks all findings as "Template check unavailable" rather than blocking the retrospective
 - **BR-6 — Closed-issue version resolution**: The fix version for a closed template issue is the template release version in which the issue's fix first shipped. If the fix version cannot be determined, the finding falls back to "Contribute upstream candidate" with a note that the fix version is unknown (parallel to the BR-3 fallback for absent `last_synced_version`)
 - **BR-7 — last_synced_version is written by sync-template only**: Only the sync-template skill writes `template.last_synced_version`. The retrospective protocol reads it but never writes it
