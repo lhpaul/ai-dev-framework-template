@@ -170,7 +170,7 @@ Read `template.repository` from `.ai-dev-workflow.yaml`.
 
    Verify: confirm the new sub-step appears in Step 5 and the git add list includes `.ai-dev-workflow.yaml`.
 
-5. **Update `.cursor/commands/sync-template.md`** — apply the identical Step 5 change as step 4 above. Verify: confirm the changes match the Claude command version.
+5. **Update `.cursor/commands/sync-template.md`** — apply the same sync-template update described in step 4 above (add a sub-step before the git instructions block that records `TEMPLATE_VERSION`). Verify: confirm the changes match the Claude command version.
 
 6. **Update `.codex/skills/workflow-sync-template/SKILL.md`** — add a new step 7 after the existing step 6 (the last step): "After applying template changes and before generating git instructions, record `TEMPLATE_VERSION` to `.ai-dev-workflow.yaml` under `template.last_synced_version` per the canonical sync-template protocol Step 5." Verify: confirm the new step appears after the existing step 6 and references the protocol.
 
