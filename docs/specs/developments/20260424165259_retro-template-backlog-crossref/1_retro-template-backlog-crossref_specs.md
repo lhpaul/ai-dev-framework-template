@@ -38,7 +38,7 @@ When a downstream project runs a retrospective, the analyst currently has no way
 - The human can accept or override any classification during the review step
 
 **Considerations**:
-- If the template repository is unreachable at analysis time, the analyst records a warning for each finding and continues without the cross-reference (graceful degradation)
+- If the template repository is unreachable at analysis time, the analyst records a warning and marks each finding as "Template check unavailable" (graceful degradation per BR-5)
 - If the configured template repository reference is malformed, the analyst reports an error and marks all findings as "Template check unavailable" (same outcome as an unreachable repository)
 
 ---
@@ -137,6 +137,8 @@ The template cross-reference step assigns exactly one classification label to ea
 - [ ] After a successful sync-template run, `.ai-dev-workflow.yaml` contains `template.last_synced_version` set to the version that was just synced
 - [ ] The sync-template git instructions include `.ai-dev-workflow.yaml` in the staged files list
 - [ ] `.ai-dev-workflow.yaml` in this template repository documents the `template.repository` and `template.last_synced_version` fields with comments explaining their purpose
+- [ ] When a retrospective finding shares an exact protocol name or file path with a template issue's title or body, the finding matches that issue (exact match criterion per BR-4)
+- [ ] When a retrospective finding and a template issue share three or more significant keywords and no exact match exists, the finding matches that issue (keyword overlap criterion per BR-4)
 
 ---
 
