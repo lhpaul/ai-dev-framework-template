@@ -71,7 +71,14 @@ Complete this checklist **before writing any code**. It takes 5–10 minutes and
    grep -r "key phrase" docs/ .cursor/ .claude/ .codex/ AGENTS.md README.md REVIEW.md --include="*.md" --include="*.mdc" -l
    ```
 
-Do not proceed to Step 2 until this checklist is complete and all six points are answered.
+7. **Script-emitted signal verification** (required when the change writes or edits protocol text that cites a script-emitted signal value such as `REASON=`, `RESULT=`, or `STATUS=`): read the relevant source script and verify the exact string before committing. Do not cite a signal value from memory or from protocol text alone — the script is the authoritative source.
+
+   ```bash
+   # Example: verify the exact REASON= value emitted by pr-review-loop.sh
+   grep -n 'REASON=' scripts/development-workflow/pr-review-loop.sh
+   ```
+
+Do not proceed to Step 2 until this checklist is complete and all seven points are answered.
 
 ### Step 2: Human Review Shortcut (Optional)
 
@@ -306,7 +313,14 @@ Complete this checklist **before writing any code**. It takes 5–10 minutes and
    grep -r "key phrase" docs/ .cursor/ .claude/ .codex/ AGENTS.md README.md REVIEW.md --include="*.md" --include="*.mdc" -l
    ```
 
-Do not proceed to the Refactor Steps until this checklist is complete and all six points are answered.
+7. **Script-emitted signal verification** (required when the change writes or edits protocol text that cites a script-emitted signal value such as `REASON=`, `RESULT=`, or `STATUS=`): read the relevant source script and verify the exact string before committing. Do not cite a signal value from memory or from protocol text alone — the script is the authoritative source.
+
+   ```bash
+   # Example: verify the exact REASON= value emitted by pr-review-loop.sh
+   grep -n 'REASON=' scripts/development-workflow/pr-review-loop.sh
+   ```
+
+Do not proceed to the Refactor Steps until this checklist is complete and all seven points are answered.
 
 ### Refactor Steps
 
@@ -448,7 +462,14 @@ Complete this checklist **before writing any code**. It takes 5–10 minutes and
    grep -r "key phrase" docs/ .cursor/ .claude/ .codex/ AGENTS.md README.md REVIEW.md --include="*.md" --include="*.mdc" -l
    ```
 
-Do not proceed to Step 2 until this checklist is complete and all six points are answered.
+7. **Script-emitted signal verification** (required when the change writes or edits protocol text that cites a script-emitted signal value such as `REASON=`, `RESULT=`, or `STATUS=`): read the relevant source script and verify the exact string before committing. Do not cite a signal value from memory or from protocol text alone — the script is the authoritative source.
+
+   ```bash
+   # Example: verify the exact REASON= value emitted by pr-review-loop.sh
+   grep -n 'REASON=' scripts/development-workflow/pr-review-loop.sh
+   ```
+
+Do not proceed to Step 2 until this checklist is complete and all seven points are answered.
 
 ### Step 2: Ambiguity Check
 
@@ -569,7 +590,14 @@ Complete this checklist **before writing any code**. It takes 5–10 minutes and
    grep -r "key phrase" docs/ .cursor/ .claude/ .codex/ AGENTS.md README.md REVIEW.md --include="*.md" --include="*.mdc" -l
    ```
 
-Do not proceed to Step 3 until this checklist is complete and all six points are answered.
+7. **Script-emitted signal verification** (required when the fix writes or edits protocol text that cites a script-emitted signal value such as `REASON=`, `RESULT=`, or `STATUS=`): read the relevant source script and verify the exact string before committing. Do not cite a signal value from memory or from protocol text alone — the script is the authoritative source.
+
+   ```bash
+   # Example: verify the exact REASON= value emitted by pr-review-loop.sh
+   grep -n 'REASON=' scripts/development-workflow/pr-review-loop.sh
+   ```
+
+Do not proceed to Step 3 until this checklist is complete and all seven points are answered.
 
 ### Step 3: Branch
 
@@ -729,6 +757,13 @@ When you encounter something the spec or plan doesn't cover:
   4. Verify headings, signal names, and language do not contradict each other across files
 
   Skipping this grep is the primary cause of multi-cycle review loops on cross-cutting documentation changes (e.g., updating a protocol but missing `.cursor/rules/workflow.mdc` and `AGENTS.md` that mirror the same policy text).
+
+- **Script-emitted signal verification**: When writing or editing protocol text that cites a script-emitted signal value (e.g., `REASON=`, `RESULT=`, `STATUS=`), read the relevant source script and verify the exact string before committing. Do not copy a signal value from memory or from other protocol text — the source script is the authoritative value. A one-line grep takes seconds and prevents broken references from shipping:
+
+  ```bash
+  # Verify the exact REASON= values emitted by pr-review-loop.sh before citing them in protocol text
+  grep -n 'REASON=' scripts/development-workflow/pr-review-loop.sh
+  ```
 
 - **Scope boundary**: Modify **only** files directly related to the assigned issue. If a code review or linter finding requires changes outside the issue's scope (e.g., fixing issues in adjacent modules, refactoring unrelated utilities, or addressing tech debt in other areas):
   1. **Do not fix it** in the current PR
