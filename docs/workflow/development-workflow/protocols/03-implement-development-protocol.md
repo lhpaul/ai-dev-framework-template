@@ -71,12 +71,6 @@ Complete this checklist **before writing any code**. It takes 5–10 minutes and
    grep -r "key phrase" docs/ .cursor/ .claude/ .codex/ AGENTS.md README.md REVIEW.md --include="*.md" --include="*.mdc" -l
    ```
 
-   For documentation or policy changes, also search sibling config and agent instruction files that may mirror the same policy text:
-
-   ```bash
-   grep -r "key phrase" .cursor/ .claude/ --include="*.md" --include="*.mdc" -l
-   ```
-
 Do not proceed to Step 2 until this checklist is complete and all six points are answered.
 
 ### Step 2: Human Review Shortcut (Optional)
