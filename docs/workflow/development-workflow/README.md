@@ -387,12 +387,18 @@ vcs:
 
 browser_automation:
   provider: playwright_mcp
+
+template:
+  repository: ""
+  last_synced_version: ""
 ```
 
 Important implementation notes:
 
 - `review.platforms` is consumed by `scripts/development-workflow/pr-review-loop.sh` for external automated PR review (Step 7). If the config file is absent, or `review.platforms` is omitted or empty, automated PR review is treated as not configured and the review loop reports `skipped`.
 - `review.internal_reviewers` is consumed by the Step 7a internal review gate protocol (`91-orchestrate-work-protocol.md`). If omitted, the gate falls back to running the stage-appropriate `claude` reviewer once. Developers can override the list locally via `.tmp/template-config.json` (gitignored).
+- `template.repository` is an optional `owner/repo` reference to the upstream template repository. When set, the retrospective protocol (Step 3b) cross-references each finding against that repository's issue tracker to classify findings as already tracked, already fixed, or a new upstream contribution candidate. Leave empty or omit to skip this step entirely.
+- `template.last_synced_version` is written automatically by the sync-template skill after a successful sync (e.g., `v0.22.0`). The retrospective uses this value to identify closed template issues whose fix landed in a version newer than the downstream's last sync, surfacing "just sync" opportunities.
 
 Provider-specific setup still lives in the integration guides under `docs/workflow/development-workflow/integrations/`.
 
