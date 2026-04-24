@@ -1,0 +1,186 @@
+# Retrospective: Template-Aware Backlog Cross-Reference with Version Tracking — Implementation Plan
+
+**Spec**: [1_retro-template-backlog-crossref_specs.md](./1_retro-template-backlog-crossref_specs.md)
+**Smoke test runbook**: [retro-template-backlog-crossref.smoke-test.md](../../../testing/workflow/retro-template-backlog-crossref.smoke-test.md)
+
+---
+
+## Summary
+
+**Approach**: Add two optional fields (`template.repository` and `template.last_synced_version`) to `.ai-dev-workflow.yaml` with comments explaining their purpose. Extend the retrospective protocol Step 3a to classify each finding against three buckets when the template repository is configured. Update the sync-template skill (all three carrier files: `.claude/commands/sync-template.md`, `.cursor/commands/sync-template.md`, `.codex/skills/workflow-sync-template/SKILL.md`) to record the last-synced version after a successful sync. Document the new config fields in `docs/workflow/development-workflow/README.md`.
+
+**Estimated complexity**: S
+
+**Rationale**: All changes are documentation and configuration only — no code execution paths, no schema migrations, no UI components. The largest change is a new subsection (Step 3b) inserted into the retrospective protocol and a small inline update to the sync-template skill. No existing logic is removed; everything new is guarded by an explicit opt-in condition.
+
+**Dependencies**: None
+
+---
+
+## Verification Log
+
+| Check | Command / query | Result |
+|---|---|---|
+| Repo revision | `git rev-parse --short HEAD` | `a314508` |
+| Retrospective protocol line count | `wc -l docs/workflow/development-workflow/protocols/06-retrospective-protocol.md` | 350 lines |
+| Sync-template Claude command line count | `wc -l .claude/commands/sync-template.md` | 296 lines |
+| Sync-template Cursor command line count | `wc -l .cursor/commands/sync-template.md` | 287 lines |
+| Codex sync-template skill files | `ls .codex/skills/workflow-sync-template/` | `SKILL.md` only |
+| .ai-dev-workflow.yaml line count | `wc -l .ai-dev-workflow.yaml` | 96 lines |
+| README workflow config section | `grep -n "schema_version" docs/workflow/development-workflow/README.md` | line 373 |
+| Existing retro smoke test | `ls docs/testing/workflow/ \| grep retro` | `retrospective-protocol.smoke-test.md` |
+
+---
+
+## Layer-by-Layer Changes
+
+### Infrastructure / Configuration
+
+- [ ] `.ai-dev-workflow.yaml` — add `template:` section with two optional fields (`repository` and `last_synced_version`) with inline comments explaining their purpose. Place the section after the `browser_automation:` section.
+
+### Documentation / Protocol Files
+
+- [ ] `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md` — insert a new Step 3b "Template cross-reference" immediately after Step 3a (existing backlog query). The step checks `template.repository` in `.ai-dev-workflow.yaml`; if absent or empty, the step is silently skipped (BR-1). If present, the step queries the template repo's issues, classifies each finding into one of three buckets (BR-2), and carries the classification into Step 4 presentation.
+
+- [ ] `.claude/commands/sync-template.md` — add a new sub-step at the end of "Step 5 — Generate git instructions": after the git instructions are printed, record `TEMPLATE_VERSION` into `.ai-dev-workflow.yaml`'s `template.last_synced_version` field and include the updated file in the git stage instructions. Add the confirmation line `"Recorded last-synced template version: vX.Y.Z"` to the Step 3 summary.
+
+- [ ] `.cursor/commands/sync-template.md` — same change as the Claude command above (parallel file).
+
+- [ ] `.codex/skills/workflow-sync-template/SKILL.md` — add a note that after generating git instructions, the skill must also record the last-synced version in `.ai-dev-workflow.yaml` per the canonical sync-template protocol.
+
+- [ ] `docs/workflow/development-workflow/README.md` — extend the "Workflow Configuration" section's schema example to include the `template:` section, and add a bullet under "Important implementation notes" explaining what the two fields do.
+
+---
+
+## Testing Strategy
+
+**Test types**: Smoke (manual walkthrough via runbook)
+
+**Key scenarios to test**:
+
+1. Template repository not configured — retrospective runs without any mention of template cross-reference (maps to AC: "when template repository reference is absent, retrospective runs identically to pre-feature behavior")
+2. Template repository configured, repository reachable — each finding carries a classification label before Step 4 (maps to AC: "each finding carries one of the three classification labels")
+3. `already-tracked` classification — finding matches an open template issue; presentation includes template issue number (maps to AC: "presentation includes template issue number")
+4. `already-fixed` classification — finding matches a closed issue whose fix version is newer than `last_synced_version` (maps to AC: "presentation includes both fix version and downstream's synced version")
+5. `last_synced_version` absent, closed issue match — finding falls back to "Contribute upstream candidate" with a note (maps to AC)
+6. Fix version unknown — finding falls back to "Contribute upstream candidate" with a note (maps to AC)
+7. Malformed repository reference — retrospective completes with error, all findings show "Template check unavailable" (maps to AC)
+8. Repository unreachable — retrospective completes with warning, all findings show "Template check unavailable" (maps to AC)
+9. Sync-template successful run — `.ai-dev-workflow.yaml` contains updated `last_synced_version`; git instructions include the file (maps to AC)
+
+**Smoke test runbook**: `docs/testing/workflow/retro-template-backlog-crossref.smoke-test.md`
+
+---
+
+## Seed Data
+
+| Entity | Values / Scenario | File |
+|---|---|---|
+| No seed data required | All scenarios are protocol-level text walkthroughs | N/A |
+
+---
+
+## Documentation Updates
+
+- [ ] `docs/workflow/development-workflow/README.md` — covered in Layer-by-Layer Changes above (extend schema example + add implementation notes bullet)
+- [ ] `.ai-dev-workflow.yaml` — covered in Layer-by-Layer Changes above (add `template:` section)
+
+No other `docs/project/` or `AGENTS.md` files require updates for this feature.
+
+---
+
+## Risks & Mitigations
+
+| Risk | Likelihood | Impact | Mitigation |
+|---|---|---|---|
+| Step 5 version-recording change in sync-template disrupts existing sync flow | Low | Low | The recording step is purely additive — it writes to a new field that did not exist before. The git instructions already include `.ai-dev-workflow.yaml` staging. |
+| Retrospective Step 3b calling `gh issue list` on external template repo fails in offline/restricted environments | Low | Low | BR-5 graceful degradation: mark all findings as "Template check unavailable" and continue |
+| Parallel worktrees or batch agents write different `last_synced_version` values to `.ai-dev-workflow.yaml` | Low | Low | `last_synced_version` is written only by the sync-template skill (BR-7), which is always run in a single-developer context, not in parallel batch orchestration |
+
+---
+
+## Code Samples
+
+The following are illustrative — adapt during implementation.
+
+```yaml
+# Illustrative — adapt during implementation
+# New section to append to .ai-dev-workflow.yaml after browser_automation:
+template:
+  # Optional: upstream template repository reference (owner/repo format for GitHub).
+  # When set, the retrospective protocol (Step 3b) cross-references each finding
+  # against this repository's issue tracker. Leave empty or omit to skip.
+  repository: ""
+
+  # Optional: the template version last applied by the sync-template skill.
+  # Written automatically by sync-template after a successful sync.
+  # Used by the retrospective cross-reference step to identify "already fixed upstream" findings.
+  last_synced_version: ""
+```
+
+```markdown
+<!-- Illustrative — adapt during implementation -->
+<!-- Insertion point: immediately after Step 3a in 06-retrospective-protocol.md -->
+
+### 3b. Template cross-reference (opt-in — skipped when not configured)
+
+Read `template.repository` from `.ai-dev-workflow.yaml`.
+
+- **If absent or empty**: skip this substep silently. Do not mention it in output (BR-1, BR-8).
+- **If present but malformed** (not `owner/repo` format): mark all findings as "Template check unavailable" (error severity) and continue. Report error in Step 4 output (BR-9).
+- **If well-formed**: query the template repository's open issues, then for each finding classify into one bucket (BR-2 through BR-6).
+```
+
+---
+
+## Implementation Order
+
+1. **Add `template:` section to `.ai-dev-workflow.yaml`** — append after `browser_automation:`. Include `repository: ""` and `last_synced_version: ""` with comment blocks explaining each field. Verify: open the file and confirm the new section is present with correct YAML indentation.
+
+2. **Extend `docs/workflow/development-workflow/README.md` Workflow Configuration section** — add the `template:` block to the schema YAML example (lines ~373–390) and add one bullet to the "Important implementation notes" list explaining `template.repository` and `template.last_synced_version`. Verify: confirm the schema example includes the new section and the notes list mentions both fields.
+
+3. **Update `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md`** — insert Step 3b immediately after Step 3a (the existing backlog cross-reference substep, ending at line ~138). Step 3b must:
+   - Read `template.repository` from `.ai-dev-workflow.yaml`
+   - Silently skip if absent/empty
+   - Report error and fall back to "Template check unavailable" if malformed
+   - Query open template issues via `gh issue list --repo <owner/repo> --state open --limit 200 --json number,title,body,labels`
+   - Query closed template issues via `gh issue list --repo <owner/repo> --state closed --limit 500 --json number,title,body,labels,closedAt`
+   - For each finding, apply BR-4 matching heuristic (exact path match, 3+ keyword overlap, shared category label)
+   - Assign exactly one classification per BR-2 (already-tracked, already-fixed, contribute-upstream) with BR-3/BR-6 fallbacks when version data is absent
+   - If repository unreachable: mark all findings "Template check unavailable" (warning, BR-5)
+   - Carry classification into Step 4 output: show label + template issue number or version comparison inline with each finding
+
+   Verify: confirm Step 3b heading appears between Step 3a and Step 3b (the taxonomy section), that BR-1 skip condition is present, and that the three classification labels match the spec's Classification Labels table.
+
+4. **Update `.claude/commands/sync-template.md`** — in "Step 5 — Generate git instructions", add a sub-step after the git instructions block:
+   - After applying template changes and before printing the git instructions, write `TEMPLATE_VERSION` to `.ai-dev-workflow.yaml` under `template.last_synced_version`
+   - Print confirmation: `"Recorded last-synced template version: v{TEMPLATE_VERSION}"`
+   - Include `.ai-dev-workflow.yaml` in the `git add` instructions shown to the user
+
+   Verify: confirm the new sub-step appears in Step 5 and the git add list includes `.ai-dev-workflow.yaml`.
+
+5. **Update `.cursor/commands/sync-template.md`** — apply the identical Step 5 change as step 4 above. Verify: confirm the changes match the Claude command version.
+
+6. **Update `.codex/skills/workflow-sync-template/SKILL.md`** — add a bullet after step 3 (or equivalent last step): "After generating git instructions, record `TEMPLATE_VERSION` to `.ai-dev-workflow.yaml` under `template.last_synced_version` per the canonical sync-template protocol Step 5." Verify: confirm the bullet is present and references the protocol.
+
+7. **Run markdownlint-cli2 pre-commit check** on all modified `.md` files:
+
+   ```bash
+   REPO_ROOT=$(git rev-parse --git-common-dir)/..
+   "$REPO_ROOT/node_modules/.bin/markdownlint-cli2" \
+     "docs/specs/developments/20260424165259_retro-template-backlog-crossref/2_retro-template-backlog-crossref_implementation-plan.md" \
+     "docs/testing/workflow/retro-template-backlog-crossref.smoke-test.md" \
+     "docs/workflow/development-workflow/protocols/06-retrospective-protocol.md" \
+     "docs/workflow/development-workflow/README.md" \
+     ".claude/commands/sync-template.md" \
+     ".cursor/commands/sync-template.md" \
+     ".codex/skills/workflow-sync-template/SKILL.md"
+   ```
+
+   Fix any violations before committing.
+
+8. **Update `CHANGELOG.md`** under `[Unreleased]`:
+
+   ```
+   - **feat(retrospective): template-aware backlog cross-reference with version tracking** (#299): Adds optional `template.repository` and `template.last_synced_version` fields to `.ai-dev-workflow.yaml`. Extends retrospective Step 3 to classify findings against the upstream template backlog (already tracked / already fixed / contribute upstream). Updates sync-template skill to record the last-synced version automatically. Backwards-compatible — silently skipped when not configured.
+   ```
