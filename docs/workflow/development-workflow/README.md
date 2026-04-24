@@ -336,6 +336,14 @@ Path: `hotfix/[slug]` from `main` -> implement -> review gate -> smoke test as n
 
 The backport is not optional. It prevents `main` and `develop` from drifting apart.
 
+**CHANGELOG**: Hotfix entries go in a **new versioned section** (e.g., `[1.0.1] - YYYY-MM-DD`), not under `[Unreleased]`. A hotfix is released immediately when it merges to `main`, so it does not belong in the unreleased block. Determine the next patch version from the most recent released section header, then insert the new versioned section as the **first `##` section** in `CHANGELOG.md` (above all existing headers, including prior hotfix versions and `[Unreleased]`). This ensures the auto-tagging workflow extracts the correct version via `grep -m 1 '^## '`.
+
+**Branch lifecycle**: The `hotfix/[slug]` branch merges to `main` and is then deleted. The backport uses a separate `backport/hotfix/[slug]` branch created from `origin/main` (the post-merge state), targeting `develop`. The hotfix branch is **not** reused for the backport.
+
+**Auto-tagging**: When a `hotfix/*` PR merges to `main`, `auto-tag-release.yml` extracts the version from the `CHANGELOG.md` versioned section (the entry added in Step 6 of `03-implement-development-protocol.md`), creates the corresponding tag, and opens a GitHub release. No manual tagging is required.
+
+See `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` Path 4 for the full step-by-step hotfix procedure including the backport process.
+
 ### PR Readiness
 
 Use the following labels consistently when label tooling is available:

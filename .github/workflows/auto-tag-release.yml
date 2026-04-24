@@ -1,5 +1,7 @@
-# Automatically creates a git tag and GitHub release when a release/* PR is merged into main.
-# The tag is extracted from the branch name (e.g., release/v1.2.0 → tag v1.2.0).
+# Automatically creates a git tag and GitHub release when a release/* or hotfix/* PR is merged into main.
+# For release/* branches: the tag is extracted from the branch name (e.g., release/v1.2.0 → tag v1.2.0).
+# For hotfix/* branches: the version is extracted from the topmost versioned section in CHANGELOG.md
+#   (the entry written by the developer as part of the hotfix process per 03-implement-development-protocol.md).
 # Release notes are pulled from the matching section in CHANGELOG.md.
 name: Auto-tag release
 
@@ -13,26 +15,43 @@ jobs:
   tag:
     if: >
       github.event.pull_request.merged == true &&
-      startsWith(github.event.pull_request.head.ref, 'release/')
+      (startsWith(github.event.pull_request.head.ref, 'release/') ||
+       startsWith(github.event.pull_request.head.ref, 'hotfix/'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - name: Extract version from branch name
+      - name: Checkout merged commit
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+
+      - name: Extract version
         id: extract_version
         env:
           BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
-          VERSION="${BRANCH#release/}"
+          if [[ "$BRANCH" == release/* ]]; then
+            # release/* — version is encoded in the branch name
+            VERSION="${BRANCH#release/}"
+          else
+            # hotfix/* — version is the topmost versioned section in CHANGELOG.md.
+            # The developer writes ## [X.Y.Z] - YYYY-MM-DD above [Unreleased] per the hotfix protocol.
+            # Guard: the first ## section must be a versioned header, not [Unreleased] or anything else.
+            FIRST_H2=$(grep -m 1 '^## ' CHANGELOG.md || true)
+            if ! printf '%s\n' "$FIRST_H2" | grep -Eq '^## \[[0-9]+\.[0-9]+\.[0-9]+'; then
+              echo "ERROR: Hotfix requires the topmost CHANGELOG section to be a versioned header (## [X.Y.Z] - YYYY-MM-DD)."
+              echo "       Found: ${FIRST_H2:-<no ## header found>}"
+              echo "       Add the hotfix versioned section above [Unreleased] before merging."
+              exit 1
+            fi
+            VERSION_CLEAN=$(printf '%s\n' "$FIRST_H2" | sed 's/^## \[\([^]]*\)\].*/\1/')
+            VERSION="v${VERSION_CLEAN}"
+          fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Detected version: $VERSION"
-
-      - name: Checkout merged commit
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
-          fetch-depth: 0
 
       - name: Extract release notes from CHANGELOG
         id: release_notes

@@ -590,9 +590,26 @@ Fix all ShellCheck warnings before committing. Do not commit `.sh` files with Sh
 
 ### Step 6: Update CHANGELOG
 
-Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (hotfixes fix released code, so a new entry is normally required).
+**Hotfix CHANGELOG exception — versioned section, not `[Unreleased]`**: Because a hotfix patches already-released code on `main`, its CHANGELOG entry must go in a **new versioned section** (e.g., `[1.0.1] - YYYY-MM-DD`), not under `[Unreleased]`. The `[Unreleased]` block contains work that has not yet been released; a hotfix is released immediately when the `hotfix/*` PR merges to `main`.
 
-**Duplicate-section prevention (check before writing)**: Before writing the CHANGELOG entry, read the existing `[Unreleased]` block and check whether a `### Fixed` section header already exists. If it does, append your bullet(s) to the existing section — do **not** create a new `### Fixed` header. If `### Fixed` does not yet exist under `[Unreleased]`, create it. After writing, verify that the header appears exactly once within the `[Unreleased]` block: `awk '/^## \[Unreleased\]/{found=1} /^## \[/{if(found && !/Unreleased/) exit} found' CHANGELOG.md | grep -c "^### Fixed"` — expected output: 1; if greater than 1, merge the duplicate sections before staging.
+To write the entry correctly:
+
+1. Determine the next patch version from the most recent released section header (e.g., if the latest is `[1.0.0]`, the hotfix version is `[1.0.1]`).
+2. Insert a new versioned section as the **first `##` section** in `CHANGELOG.md` — above all existing `##` headers, including any prior hotfix versions and `[Unreleased]`. This ensures `auto-tag-release.yml` always extracts the correct (newest) version via `grep -m 1 '^## '`. Do not insert it between `[Unreleased]` and a previous hotfix; insert it at the very top of the versioned history:
+
+```markdown
+## [1.0.1] - YYYY-MM-DD
+
+### Fixed
+
+- **Your hotfix description** (hotfix): brief user-facing summary of what was patched.
+```
+
+3. Do **not** add an entry under `[Unreleased]` for hotfix PRs.
+
+**Duplicate-section prevention (check before writing)**: Before inserting the new versioned section, confirm no section with the same version number already exists in `CHANGELOG.md`. After writing, run: `grep -c "^## \[1\.0\.1\]" CHANGELOG.md` (replace `1.0.1` with the actual version) — expected output: 1.
+
+> **Note for backport PRs**: When the hotfix content is backported to `develop` (Step 9 below), do **not** add another CHANGELOG entry. The versioned entry already exists in `CHANGELOG.md` on `main`, and the backport merge will carry it to `develop` automatically.
 
 **CHANGELOG format verification (before staging)**: After writing the CHANGELOG entry, verify the entry for the following defects and fix them in-place before staging:
 
@@ -641,7 +658,37 @@ gh pr create --draft --base main --title "fix([scope]): [description] (hotfix)" 
 
 Hand off to the Work Item Runner per Path 1 `### Step 9: Handoff to Work Item Runner`. **Label derivation rule**: `hotfix/*` branches always require `ready-for-regression` based on branch prefix, not content type. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table.
 
-**After merge**: notify the human that a backport PR (main → develop) must be opened to prevent branch drift.
+**After the `hotfix/*` PR merges to `main`**: perform the mandatory backport to prevent `main` and `develop` from drifting apart.
+
+#### Backport process (mandatory)
+
+The `hotfix/*` branch is **not** reused for the backport. Create a dedicated backport branch from `main` after the hotfix merge:
+
+```bash
+git fetch origin
+git checkout -b backport/hotfix/[slug] origin/main
+```
+
+Open a PR targeting `develop`:
+
+```bash
+gh pr create --draft --base develop \
+  --title "chore(hotfix): backport [slug] to develop" \
+  --body "Backports hotfix '[slug]' (merged to main) to keep develop in sync.
+
+Closes the backport requirement for hotfix/[slug]."
+```
+
+Run the same internal review gate, automated reviewer loop, and CI loop as any other implementation PR. Apply `ready-for-regression` and `ready-for-human-review` labels when the PR is clean. The backport PR can be merged by the human alongside or after the main hotfix review.
+
+**Branch lifecycle summary**:
+
+| Branch | Created from | Merges into | Reused for backport? |
+|---|---|---|---|
+| `hotfix/[slug]` | `main` | `main` | No |
+| `backport/hotfix/[slug]` | `origin/main` (post-merge) | `develop` | — |
+
+**CHANGELOG on backport PR**: Do **not** add a new CHANGELOG entry on the backport branch. The versioned entry written in Step 6 already exists in `main` and will flow into `develop` via the merge.
 
 ---
 
