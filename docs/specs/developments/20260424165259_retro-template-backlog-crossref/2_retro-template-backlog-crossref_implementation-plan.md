@@ -172,9 +172,15 @@ Read `template.repository` from `.ai-dev-workflow.yaml`.
 
 5. **Update `.cursor/commands/sync-template.md`** — apply the identical Step 5 change as step 4 above. Verify: confirm the changes match the Claude command version.
 
-6. **Update `.codex/skills/workflow-sync-template/SKILL.md`** — add a bullet after step 3 (or equivalent last step): "After applying template changes and before generating git instructions, record `TEMPLATE_VERSION` to `.ai-dev-workflow.yaml` under `template.last_synced_version` per the canonical sync-template protocol Step 5." Verify: confirm the bullet is present and references the protocol.
+6. **Update `.codex/skills/workflow-sync-template/SKILL.md`** — add a new step 7 after the existing step 6 (the last step): "After applying template changes and before generating git instructions, record `TEMPLATE_VERSION` to `.ai-dev-workflow.yaml` under `template.last_synced_version` per the canonical sync-template protocol Step 5." Verify: confirm the new step appears after the existing step 6 and references the protocol.
 
-7. **Run markdownlint-cli2 pre-commit check** on all modified `.md` files:
+7. **Update `CHANGELOG.md`** under `[Unreleased]`:
+
+   ```
+   - **Retrospective template-aware backlog cross-reference with version tracking** (#299): Adds optional `template.repository` and `template.last_synced_version` fields to `.ai-dev-workflow.yaml`. Extends retrospective Step 3 to classify findings against the upstream template backlog (already tracked / already fixed / contribute upstream). Updates sync-template skill to record the last-synced version automatically. Backwards-compatible — silently skipped when not configured.
+   ```
+
+8. **Run markdownlint-cli2 pre-commit check** on all modified `.md` files, including `CHANGELOG.md`:
 
    ```bash
    REPO_ROOT=$(git rev-parse --git-common-dir)/..
@@ -185,13 +191,8 @@ Read `template.repository` from `.ai-dev-workflow.yaml`.
      "docs/workflow/development-workflow/README.md" \
      ".claude/commands/sync-template.md" \
      ".cursor/commands/sync-template.md" \
-     ".codex/skills/workflow-sync-template/SKILL.md"
+     ".codex/skills/workflow-sync-template/SKILL.md" \
+     "CHANGELOG.md"
    ```
 
    Fix any violations before committing.
-
-8. **Update `CHANGELOG.md`** under `[Unreleased]`:
-
-   ```
-   - **Retrospective template-aware backlog cross-reference with version tracking** (#299): Adds optional `template.repository` and `template.last_synced_version` fields to `.ai-dev-workflow.yaml`. Extends retrospective Step 3 to classify findings against the upstream template backlog (already tracked / already fixed / contribute upstream). Updates sync-template skill to record the last-synced version automatically. Backwards-compatible — silently skipped when not configured.
-   ```
