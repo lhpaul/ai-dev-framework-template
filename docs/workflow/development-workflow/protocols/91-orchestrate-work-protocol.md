@@ -929,7 +929,27 @@ After the label readiness checklist passes, update the tracker status to reflect
 - For **plan PRs** (`implementation-plan/*`): set tracker status to `Plan in Review`
 - For **implementation PRs** (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`): set tracker status to `Development in Review`
 
-See `docs/workflow/development-workflow/integrations/github-projects.md` for tracker API details.
+### Routing: CLI vs. MCP
+
+How to perform the update depends on the configured `issue_tracker.provider` in `.ai-dev-workflow.yaml` and the execution context:
+
+#### GitHub Projects (provider: `github_projects`) — use `gh` CLI
+
+GitHub Projects status updates are fully supported via `gh` CLI and require no MCP server. Subagents in any execution context (including parallel batch runs) **must** use the CLI update pattern rather than MCP. Follow the "One-shot status update (recommended pattern)" section in [`docs/workflow/development-workflow/integrations/github-projects.md`](../integrations/github-projects.md) for the full commands and ID-resolution steps.
+
+#### Other providers (Linear, Jira, etc.) — report and defer
+
+For issue tracker providers that have no supported `gh`-equivalent CLI, MCP server access is required. Because MCP servers are not available in subagent execution contexts:
+
+- **Subagents** must **not** attempt the tracker update directly. Instead, include the required transition in the summary returned to the orchestrator:
+
+  ```
+  TRACKER_UPDATE_REQUIRED: set issue #<N> status to "<target_status>"
+  ```
+
+- **The orchestrator** (or the human invoking the Work Item Runner directly) is responsible for performing the MCP-based status update after the subagent returns.
+
+If neither the CLI path nor MCP is available, log a warning and continue — do not block labeling or PR readiness on a tracker update failure.
 
 ---
 

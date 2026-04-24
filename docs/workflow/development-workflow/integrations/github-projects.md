@@ -98,6 +98,71 @@ When `gh` is available, the script detects merged PRs via `gh pr list --state me
 
 ---
 
+## CLI Update Patterns for Agents and Subagents
+
+GitHub Projects status updates can be performed entirely via `gh` CLI and Bash — no MCP server is required. This means subagent Work Item Runners dispatched from parallel batch runs can update tracker status directly at Step 8b without deferring to the orchestrator.
+
+### One-shot status update (recommended pattern)
+
+Use the following script pattern when a stage completes and the tracker status must advance. Replace the placeholder values below with your project owner and number, or set `GITHUB_PROJECT_OWNER` and `GITHUB_PROJECT_NUMBER` environment variables if preferred.
+
+```bash
+PROJECT_OWNER="${GITHUB_PROJECT_OWNER:-<OWNER>}"   # GitHub user or org owning the project
+PROJECT_NUMBER="${GITHUB_PROJECT_NUMBER:-<NUMBER>}" # GitHub project number (from URL or `gh project list`)
+ISSUE_NUMBER=<ISSUE>      # GitHub issue number to update
+
+# 1. Get the project node ID
+PROJECT_ID=$(gh project view "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json --jq '.id')
+
+# 2. Get the item ID for this issue
+ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --limit 10000 --format json \
+  | jq -r --argjson n "$ISSUE_NUMBER" '.items[] | select(.content.number == $n) | .id')
+
+# 3. Get the Status field ID
+STATUS_FIELD_ID=$(gh project field-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json \
+  | jq -r '.fields[] | select(.name == "Status") | .id')
+
+# 4. Get the option ID for the target status
+# (Use the appropriate value from the table in "Status values by workflow stage" below)
+TARGET_STATUS="Development in Review"  # Example for feature/*/fix/*/refactor/*/hotfix/* PR
+OPTION_ID=$(gh project field-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json \
+  | jq -r --arg s "$TARGET_STATUS" \
+    '.fields[] | select(.name == "Status") | .options[] | select(.name == $s) | .id')
+
+# 5. Apply the update
+gh api graphql -f query="
+  mutation {
+    updateProjectV2ItemFieldValue(input: {
+      projectId: \"$PROJECT_ID\"
+      itemId: \"$ITEM_ID\"
+      fieldId: \"$STATUS_FIELD_ID\"
+      value: { singleSelectOptionId: \"$OPTION_ID\" }
+    }) {
+      projectV2Item { id }
+    }
+  }"
+```
+
+### Status values by workflow stage (Step 8b targets)
+
+| PR type | Target status string |
+|---|---|
+| `spec/*` PR ready for human review | `Spec in Review` |
+| `implementation-plan/*` PR ready for human review | `Plan in Review` |
+| `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PR ready for human review | `Development in Review` |
+
+### Caching field and option IDs
+
+Field IDs and option IDs are stable within a project. To avoid repeated `field-list` calls, agents may cache them in a `.tmp/github-project-ids.json` file (gitignored path) at the start of a session:
+
+```bash
+gh project field-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json > .tmp/github-project-ids.json
+```
+
+Re-fetch if the file is missing or older than 24 hours.
+
+---
+
 ## Orchestrator Instructions (with GitHub Projects)
 
 When the **Portfolio Orchestrator** has `gh` CLI access, it should:
