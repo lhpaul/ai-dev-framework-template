@@ -72,7 +72,7 @@ When a downstream project runs a retrospective, the analyst currently has no way
 - The downstream project's workflow configuration file is writable
 
 **Steps**:
-1. The sync-template skill determines the template version it just synced from (already computed as `TEMPLATE_VERSION` in the existing skill)
+1. The sync-template skill determines the template version it just synced from
 2. After all changes are applied and before generating git instructions, the skill writes the version into the workflow configuration file under the `template.last_synced_version` field
 3. The git instructions shown to the developer include staging the updated workflow configuration file
 
@@ -91,14 +91,14 @@ When a downstream project runs a retrospective, the analyst currently has no way
 ## Business Rules
 
 - **BR-1 — Opt-in only**: The template cross-reference step runs if and only if `template.repository` is set in the workflow configuration. An absent or empty value means the step is skipped silently.
-- **BR-2 — Three-bucket classification**: Each finding must be assigned exactly one of the following labels:
+- **BR-2 — Three-bucket classification**: When the template repository is reachable, each finding must be assigned exactly one of the following labels:
   - "Already in template backlog" — a matching open issue exists in the template repository; include the template issue number
   - "Already fixed upstream" — a matching closed issue exists whose fix shipped in a template version newer than the downstream project's `last_synced_version`; include both the fix version and the downstream's current synced version
   - "Contribute upstream candidate" — no matching open or relevant closed issue found; the finding appears to be new and is a candidate for upstream contribution
 - **BR-3 — Version comparison requires last_synced_version**: The "Already fixed upstream" classification is only possible when `template.last_synced_version` is set. When it is absent, closed issues are treated as "unknown sync status" and findings that would match them fall back to "Contribute upstream candidate" with a note that the synced version is unknown
 - **BR-4 — Matching heuristic**: A finding matches a template issue when the finding's affected area (protocol name, file path, or category) overlaps with the issue's title or labels. The same three-criterion matching heuristic used in the existing Step 3a tracker query applies: exact path/name match, strong keyword overlap, or shared root-cause category
 - **BR-5 — Graceful degradation**: If the template repository is unreachable, the step adds a warning to the retrospective output and marks all findings as "Template check unavailable" rather than blocking the retrospective
-- **BR-6 — Closed-issue version parsing**: Fix version for a closed template issue is determined by parsing the template repository's CHANGELOG.md — specifically, finding the first versioned section heading that references the issue number, or that appears after the issue's close date. If the version cannot be determined from the CHANGELOG, the issue is treated as "version unknown" and the "Already fixed upstream" classification is not applied
+- **BR-6 — Closed-issue version resolution**: The fix version for a closed template issue is the template release version in which the issue's fix first shipped. If the fix version cannot be determined, the issue is treated as "version unknown" and the "Already fixed upstream" classification is not applied
 - **BR-7 — last_synced_version is written by sync-template only**: Only the sync-template skill writes `template.last_synced_version`. The retrospective protocol reads it but never writes it
 - **BR-8 — Backward compatibility**: Projects that have not added the `template` section to their workflow configuration must experience zero behavior change in their retrospective runs
 
