@@ -358,7 +358,7 @@ CodeRabbit enforces a per-hour rate limit on automated reviews. When multiple PR
 
 If the retry budget is exhausted and no CodeRabbit inline review has appeared, `pr-review-loop.sh` first checks whether CodeRabbit posted a **SUCCESS commit-status context** for the current HEAD SHA (via `GET /repos/{owner}/{repo}/commits/{sha}/statuses`). During rate-limit windows, CodeRabbit sometimes signals a clean result via a commit status rather than an inline review comment. When a CodeRabbit `SUCCESS` commit-status is found, the script exits immediately with `RESULT=clean` and `REASON=coderabbit_status_success_fallback` — no human intervention is required and the PR advances to the CI loop normally. The fallback reason is included in the automated reviewer loop summary comment on the PR.
 
-Only when no SUCCESS commit-status is found does the script fall through to stale-findings recovery, which may yield `skipped (no_review)`. The PR can still advance to `ready-for-human-review` in that case as well. A human reviewer can optionally post `@coderabbitai review` on the PR after the rate-limit window resets to obtain a full inline review.
+Only when no SUCCESS commit-status is found does the script fall through to stale-findings recovery, which may yield `RESULT=skipped` / `REASON=no_review`. The PR can still advance to `ready-for-human-review` in that case as well. When all PRs in the batch reach their individual reviewer-loop terminal states, Step 5.3 re-triggers CodeRabbit on any PR whose reviewer loop summary indicates `skipped (no_review)` for CodeRabbit and re-runs the reviewer loop for those PRs before the batch is declared complete.
 
 ---
 
@@ -602,6 +602,66 @@ As you supervise the batch, **proactively save issues, human corrections, and an
 - Whether the human had to intervene and how
 
 These notes feed directly into the post-merge retrospective and provide context that GitHub data alone cannot capture.
+
+---
+
+## Step 5.3: Post-Batch CodeRabbit Re-trigger (Parallel Batches Only)
+
+**When to run**: After **all** Work Item Runners in a parallel batch have returned and Step 5.1 verification has completed for each PR. Run this step before Step 5.5 (batch-merge handoff).
+
+**Purpose**: When CodeRabbit exhausts its per-hour rate-limit budget across a parallel batch, some PRs receive a `skipped (no_review)` outcome from the per-PR reviewer loop (Step 3.7). This step detects those PRs, re-triggers CodeRabbit on each, and re-runs the reviewer loop for any affected PR before the batch is declared complete. Without this step, PRs that silently skipped CodeRabbit would require the human to run a second reviewer loop manually.
+
+### Detection
+
+For each PR in the batch, inspect the "Automated Reviewer Loop Summary" comment posted by the orchestrator after the reviewer loop exits and look for a `skipped (no_review)` outcome associated with CodeRabbit. The canonical signal emitted by `pr-review-loop.sh` is `RESULT=skipped` paired with `REASON=no_review` (two separate key-value lines in the script output); in the summary comment table this appears as `skipped (no_review)` in the CodeRabbit row.
+
+```bash
+# Check whether a PR's reviewer loop summary indicates CodeRabbit skipped with no_review
+gh pr view <pr_number> --json comments \
+  --jq '[.comments[].body | select(test("Automated Reviewer Loop Summary"))] | last // ""' \
+  | grep -qiE "REASON=no_review|skipped \(no_review\)"
+```
+
+If the command exits 0 (match found), the PR requires a CodeRabbit re-trigger.
+
+### Re-trigger procedure
+
+For each PR identified in the detection step:
+
+1. **Remove `ready-for-human-review`** and **remove `ready-for-regression`** (if present — they will be re-applied after the re-triggered review passes):
+
+   ```bash
+   gh pr edit <pr_number> --remove-label "ready-for-human-review" --remove-label "ready-for-regression"
+   ```
+
+2. **Post `@coderabbitai review`** to request a fresh CodeRabbit review:
+
+   ```bash
+   gh pr comment <pr_number> --body "@coderabbitai review"
+   ```
+
+3. **Re-run the reviewer loop** for this PR:
+
+   ```bash
+   ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name>
+   ```
+
+4. **Re-apply labels and run Step 5.1 verification** (same as the standard post-reviewer-loop flow in Step 5):
+   - If the re-triggered loop exits `clean`: apply `ready-for-regression` (Step 7b), run `pr-ci-loop.sh` (Step 8), run Step 8a label readiness checklist, and re-apply `ready-for-human-review`.
+   - If the loop exits `needs_fixes`: dispatch the matching fixer agent and continue supervising this PR.
+   - If the loop exits `escalate` or exhausts `max_cycles`: escalate to human and mark the PR as blocked in the batch summary.
+
+### Skipping conditions
+
+Skip Step 5.3 entirely when any of the following is true:
+
+- CodeRabbit is not listed in `review.platforms` in `.ai-dev-workflow.yaml` — there is no CodeRabbit to re-trigger.
+- The batch contained only a single PR — rate-limit budget exhaustion across a batch requires multiple concurrent PRs.
+- No PR in the batch has a `skipped (no_review)` CodeRabbit signal in its reviewer loop summary — all PRs received a full or status-fallback review.
+
+### Retry budget
+
+The re-trigger uses the same `max_cycles` counter as the normal reviewer loop (Step 7). If a PR was already close to `max_cycles` during its initial run, count those cycles and do not exceed the limit during re-trigger. When the limit is reached, escalate to human.
 
 ---
 
