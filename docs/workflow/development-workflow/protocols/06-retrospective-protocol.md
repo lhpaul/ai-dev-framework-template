@@ -164,6 +164,7 @@ If the repository is unreachable (network error, auth failure, or `gh` reports t
 | `already-tracked` | Already in template backlog | Finding matches an **open** template issue (see matching heuristic below) |
 | `already-fixed` | Already fixed upstream | Finding matches a **closed** template issue AND the fix version is newer than `template.last_synced_version` |
 | `contribute-upstream` | Contribute upstream candidate | Finding does not match any template issue, or matches a closed issue but version comparison is inconclusive |
+| `check-unavailable` | Template check unavailable | Template repository was unreachable (warning) or malformed (error); classification could not be performed |
 
 **Matching heuristic** (apply in priority order — first criterion that matches wins):
 
