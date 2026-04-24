@@ -7,7 +7,7 @@
 
 ## Summary
 
-**Approach**: Add two optional fields (`template.repository` and `template.last_synced_version`) to `.ai-dev-workflow.yaml` with comments explaining their purpose. Extend the retrospective protocol Step 3a to classify each finding against three buckets when the template repository is configured. Update the sync-template skill (all three carrier files: `.claude/commands/sync-template.md`, `.cursor/commands/sync-template.md`, `.codex/skills/workflow-sync-template/SKILL.md`) to record the last-synced version after a successful sync. Document the new config fields in `docs/workflow/development-workflow/README.md`.
+**Approach**: Add two optional fields (`template.repository` and `template.last_synced_version`) to `.ai-dev-workflow.yaml` with comments explaining their purpose. Extend the retrospective protocol Step 3 with a new substep 3b that classifies each finding against three buckets when the template repository is configured (the existing `### 3b. Categorization taxonomy` becomes `### 3c.` and the forward-reference at line 125 of the protocol is updated accordingly). Update the sync-template skill (all three carrier files: `.claude/commands/sync-template.md`, `.cursor/commands/sync-template.md`, `.codex/skills/workflow-sync-template/SKILL.md`) to record the last-synced version after a successful sync. Document the new config fields in `docs/workflow/development-workflow/README.md`.
 
 **Estimated complexity**: S
 
@@ -40,7 +40,7 @@
 
 ### Documentation / Protocol Files
 
-- [ ] `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md` — insert a new Step 3b "Template cross-reference" immediately after Step 3a (existing backlog query). The step checks `template.repository` in `.ai-dev-workflow.yaml`; if absent or empty, the step is silently skipped (BR-1). If present, the step queries the template repo's issues, classifies each finding into one of three buckets (BR-2), and carries the classification into Step 4 presentation.
+- [ ] `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md` — insert a new Step 3b "Template cross-reference" immediately after Step 3a (existing backlog query). The existing `### 3b. Categorization taxonomy` heading (line 140) must be renamed to `### 3c. Categorization taxonomy`, and the forward-reference on line 125 ("After categorizing all findings in Step 3b below") must be updated to reference "Step 3c". The new Step 3b checks `template.repository` in `.ai-dev-workflow.yaml`; if absent or empty, the step is silently skipped (BR-1). If present, the step queries the template repo's issues, classifies each finding into one of three buckets (BR-2), and carries the classification into Step 4 presentation.
 
 - [ ] `.claude/commands/sync-template.md` — add a new sub-step at the end of "Step 5 — Generate git instructions": after the git instructions are printed, record `TEMPLATE_VERSION` into `.ai-dev-workflow.yaml`'s `template.last_synced_version` field and include the updated file in the git stage instructions. Add the confirmation line `"Recorded last-synced template version: vX.Y.Z"` to the Step 3 summary.
 
@@ -120,7 +120,9 @@ template:
 
 ```markdown
 <!-- Illustrative — adapt during implementation -->
-<!-- Insertion point: immediately after Step 3a in 06-retrospective-protocol.md -->
+<!-- Insertion point: after Step 3a (line ~138) in 06-retrospective-protocol.md, -->
+<!-- before the renamed ### 3c. Categorization taxonomy.                          -->
+<!-- Also rename existing ### 3b to ### 3c and update the line-125 forward-ref.   -->
 
 ### 3b. Template cross-reference (opt-in — skipped when not configured)
 
@@ -139,10 +141,16 @@ Read `template.repository` from `.ai-dev-workflow.yaml`.
 
 2. **Extend `docs/workflow/development-workflow/README.md` Workflow Configuration section** — add the `template:` block to the schema YAML example (lines ~373–390) and add one bullet to the "Important implementation notes" list explaining `template.repository` and `template.last_synced_version`. Verify: confirm the schema example includes the new section and the notes list mentions both fields.
 
-3. **Update `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md`** — insert Step 3b immediately after Step 3a (the existing backlog cross-reference substep, ending at line ~138). Step 3b must:
+3. **Update `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md`** — three coordinated edits:
+
+   a. **Rename existing `### 3b. Categorization taxonomy` (line 140) to `### 3c. Categorization taxonomy`** to make room for the new Step 3b.
+
+   b. **Update the forward-reference on line 125**: change "After categorizing all findings in Step 3b below" to "After categorizing all findings in Step 3c below".
+
+   c. **Insert the new `### 3b. Template cross-reference (opt-in — skipped when not configured)`** between the end of Step 3a (line ~138) and the now-renamed Step 3c. The new Step 3b must:
    - Read `template.repository` from `.ai-dev-workflow.yaml`
-   - Silently skip if absent/empty
-   - Report error and fall back to "Template check unavailable" if malformed
+   - Silently skip if absent/empty (do not mention in output per BR-1, BR-8)
+   - Report error (not warning) and fall back to "Template check unavailable" if malformed (not `owner/repo` format per BR-9)
    - Query open template issues via `gh issue list --repo <owner/repo> --state open --limit 200 --json number,title,body,labels`
    - Query closed template issues via `gh issue list --repo <owner/repo> --state closed --limit 500 --json number,title,body,labels,closedAt`
    - For each finding, apply BR-4 matching heuristic (exact path match, 3+ keyword overlap, shared category label)
@@ -150,7 +158,7 @@ Read `template.repository` from `.ai-dev-workflow.yaml`.
    - If repository unreachable: mark all findings "Template check unavailable" (warning, BR-5)
    - Carry classification into Step 4 output: show label + template issue number or version comparison inline with each finding
 
-   Verify: confirm Step 3b heading appears immediately after Step 3a (before the "Categorization taxonomy" subsection), that BR-1 skip condition is present, and that the three classification labels match the spec's Classification Labels table.
+   Verify: confirm the forward-reference on line ~125 now says "Step 3c", confirm the `### 3b. Template cross-reference` heading appears immediately before the renamed `### 3c. Categorization taxonomy`, and confirm the three classification labels match the spec's Classification Labels table.
 
 4. **Update `.claude/commands/sync-template.md`** — in "Step 5 — Generate git instructions", add a sub-step after the git instructions block:
    - After applying template changes and before printing the git instructions, write `TEMPLATE_VERSION` to `.ai-dev-workflow.yaml` under `template.last_synced_version`
