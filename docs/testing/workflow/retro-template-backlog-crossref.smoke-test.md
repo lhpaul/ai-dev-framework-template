@@ -62,7 +62,7 @@ Before running this smoke test:
 3. Observe Step 3b output
 
 **Expected result**:
-- Finding matching open issue: labeled "Already in template backlog: template#NNN"
+- Finding matching open issue: labeled "Already in template backlog: template#NNN" **and the presentation suggests Skip or Expand as alternatives to creating a new upstream issue** (per AC 3)
 - Finding matching newer closed issue: labeled "Already fixed upstream in vX.Y.Z — you are on v0.22.0; consider syncing instead of contributing"
 - Finding with no match: labeled "Contribute upstream candidate"
 - All three labels appear before Step 4 presentation
@@ -152,6 +152,28 @@ Before running this smoke test:
 
 ---
 
+### Step 9: BR-4 matching heuristic — exact match, keyword overlap, category match
+
+**Maps to**: AC 12 (exact path match), AC 13 (keyword overlap), AC 14 (shared root-cause category)
+
+Prerequisites: `template.repository` is configured and the test template repo is reachable.
+
+Set up three retrospective findings in the session:
+
+1. **Finding A** (exact path match): a finding whose affected area is an exact file path that also appears verbatim in a template issue's title or body (e.g., `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md`)
+2. **Finding B** (keyword overlap): a finding that shares 3+ significant keywords with a template issue but no exact path or name match (e.g., both mention "retrospective", "backlog", "cross-reference")
+3. **Finding C** (category match): a finding tagged `workflow-process` in a template issue that also describes overlapping workflow symptoms, but without an exact path or keyword overlap threshold
+
+Run Step 3b cross-reference and observe the classification for each.
+
+**Expected result**:
+- Finding A classified as "Already in template backlog: template#NNN" (exact match criterion per BR-4, AC 12)
+- Finding B classified as "Already in template backlog: template#NNN" or another bucket, depending on open/closed status (keyword overlap criterion per BR-4, AC 13)
+- Finding C classified based on category label overlap (shared root-cause category criterion per BR-4, AC 14)
+- No finding is left unclassified when a match criterion applies
+
+---
+
 ### Last Step: Revert test configuration
 
 - Restore `.ai-dev-workflow.yaml` to its original state (remove or clear the `template:` section if you added it only for testing)
@@ -162,7 +184,7 @@ Before running this smoke test:
 
 - [ ] When `template.repository` is absent or empty, Step 3b produces no output and the retrospective is identical to pre-feature behavior
 - [ ] When `template.repository` is configured and reachable, each finding carries exactly one of the three classification labels before Step 4 presentation
-- [ ] Finding matching an open template issue shows "Already in template backlog: template#NNN" with the issue number
+- [ ] Finding matching an open template issue shows "Already in template backlog: template#NNN" with the issue number and suggests Skip or Expand as alternatives to creating a new upstream issue (AC 3)
 - [ ] Finding matching a closed issue with a newer fix version shows "Already fixed upstream in vX.Y.Z — you are on vY.Y.Y; consider syncing instead of contributing"
 - [ ] When `last_synced_version` is absent, a would-be "already-fixed" finding falls back to "Contribute upstream candidate" with a note about unknown synced version
 - [ ] When fix version cannot be determined, the finding falls back to "Contribute upstream candidate" with a note about unknown fix version
@@ -171,6 +193,9 @@ Before running this smoke test:
 - [ ] After a successful sync-template run, `.ai-dev-workflow.yaml` has `template.last_synced_version` set to the synced version
 - [ ] The sync-template git instructions include `.ai-dev-workflow.yaml` in the staged files list
 - [ ] `.ai-dev-workflow.yaml` `template:` section has comments explaining both fields
+- [ ] A finding whose affected area matches an exact protocol name or file path in a template issue's title or body is classified as "Already in template backlog" (exact match criterion, AC 12)
+- [ ] A finding sharing three or more significant keywords with a template issue (no exact match) is classified via keyword overlap criterion (AC 13)
+- [ ] A finding sharing the same categorization taxonomy label and overlapping symptoms with a template issue is classified via shared root-cause category criterion (AC 14)
 
 ---
 

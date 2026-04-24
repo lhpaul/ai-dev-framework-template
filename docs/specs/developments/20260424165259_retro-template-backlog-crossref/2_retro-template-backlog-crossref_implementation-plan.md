@@ -60,13 +60,16 @@
 
 1. Template repository not configured — retrospective runs without any mention of template cross-reference (maps to AC: "when template repository reference is absent, retrospective runs identically to pre-feature behavior")
 2. Template repository configured, repository reachable — each finding carries a classification label before Step 4 (maps to AC: "each finding carries one of the three classification labels")
-3. `already-tracked` classification — finding matches an open template issue; presentation includes template issue number (maps to AC: "presentation includes template issue number")
+3. `already-tracked` classification — finding matches an open template issue; presentation includes template issue number AND suggests Skip or Expand as alternatives to creating a new upstream issue (maps to AC 3)
 4. `already-fixed` classification — finding matches a closed issue whose fix version is newer than `last_synced_version` (maps to AC: "presentation includes both fix version and downstream's synced version")
 5. `last_synced_version` absent, closed issue match — finding falls back to "Contribute upstream candidate" with a note (maps to AC)
 6. Fix version unknown — finding falls back to "Contribute upstream candidate" with a note (maps to AC)
 7. Malformed repository reference — retrospective completes with error, all findings show "Template check unavailable" (maps to AC)
 8. Repository unreachable — retrospective completes with warning, all findings show "Template check unavailable" (maps to AC)
 9. Sync-template successful run — `.ai-dev-workflow.yaml` contains updated `last_synced_version`; git instructions include the file (maps to AC)
+10. Exact path match (AC 12) — finding whose affected area is an exact file path in a template issue's title or body is classified as "Already in template backlog"
+11. Keyword overlap match (AC 13) — finding sharing 3+ significant keywords with a template issue (no exact match) is classified correctly
+12. Category label match (AC 14) — finding sharing same categorization taxonomy label and overlapping symptoms is classified correctly
 
 **Smoke test runbook**: `docs/testing/workflow/retro-template-backlog-crossref.smoke-test.md`
 
@@ -156,9 +159,9 @@ Read `template.repository` from `.ai-dev-workflow.yaml`.
    - For each finding, apply BR-4 matching heuristic (exact path match, 3+ keyword overlap, shared category label)
    - Assign exactly one classification per BR-2 (already-tracked, already-fixed, contribute-upstream) with BR-3/BR-6 fallbacks when version data is absent
    - If repository unreachable: mark all findings "Template check unavailable" (warning, BR-5)
-   - Carry classification into Step 4 output: show label + template issue number or version comparison inline with each finding
+   - Carry classification into Step 4 output: show label + template issue number or version comparison inline with each finding. For `already-tracked` findings, also suggest Skip or Expand as alternatives to creating a new upstream issue (per AC 3)
 
-   Verify: confirm the forward-reference on line ~125 now says "Step 3c", confirm the `### 3b. Template cross-reference` heading appears immediately before the renamed `### 3c. Categorization taxonomy`, and confirm the three classification labels match the spec's Classification Labels table.
+   Verify: confirm the forward-reference on line ~125 now says "Step 3c", confirm the `### 3b. Template cross-reference` heading appears immediately before the renamed `### 3c. Categorization taxonomy`, confirm the three classification labels match the spec's Classification Labels table, and confirm that `already-tracked` presentation output includes Skip/Expand suggestion text.
 
 4. **Update `.claude/commands/sync-template.md`** — in "Step 5 — Generate git instructions", add a sub-step after the git instructions block:
    - After applying template changes and before printing the git instructions, write `TEMPLATE_VERSION` to `.ai-dev-workflow.yaml` under `template.last_synced_version`
