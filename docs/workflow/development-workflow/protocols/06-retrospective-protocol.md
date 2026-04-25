@@ -122,7 +122,7 @@ Where `<PROJECT_NUMBER>` is the project number (find it via `gh project list`) a
 
 **`none`** or provider unavailable: Skip this substep and note in the presentation that no tracker check was performed.
 
-For each issue retrieved, extract its title and a short description. After categorizing all findings in Step 3b below, match each finding against the retrieved items using these criteria (in priority order):
+For each issue retrieved, extract its title and a short description. After categorizing all findings in Step 3c below, match each finding against the retrieved items using these criteria (in priority order):
 
 1. **Exact match**: The finding's affected file path or protocol name appears in the existing item's title or body
 2. **Strong keyword overlap**: Three or more significant keywords (excluding stopwords like "the", "a", "is") appear in both the finding and the existing item title/body
@@ -137,7 +137,75 @@ Record:
 
 Carry this mapping into Step 4 (presentation) and Step 5 (action execution).
 
-### 3b. Categorization taxonomy
+### 3b. Template cross-reference (opt-in — skipped when not configured)
+
+Read `template.repository` from `.ai-dev-workflow.yaml`.
+
+- **If absent or empty**: skip this substep silently. Do not mention it in output.
+- **If present but malformed** (not `owner/repo` format): mark all findings as `check-unavailable` with `check_status: error` and continue. Report the error inline with each finding in Step 4 output.
+- **If well-formed**: proceed with the queries and classification below.
+
+**Query the template repository's issues:**
+
+```bash
+# Open issues (potential "already tracked" matches)
+gh issue list --repo <owner/repo> --state open --limit 200 --json number,title,body,labels,updatedAt,url
+
+# Closed issues (potential "already fixed" matches)
+gh issue list --repo <owner/repo> --state closed --limit 500 --json number,title,body,labels,milestone,closedAt,updatedAt,url
+
+# Template CHANGELOG (for fix-version mapping by issue reference)
+gh api repos/<owner>/<repo>/contents/CHANGELOG.md --jq '.content' | base64 --decode > /tmp/template-CHANGELOG.md
+
+# Parse CHANGELOG to build issue → version map (follows Keep a Changelog format):
+# 1. Identify version section headings — lines matching `## [x.y.z]` or `## x.y.z` (ignore `## [Unreleased]`)
+# 2. Within each version block, extract all issue references matching `#NNN` (where NNN is one or more digits)
+# 3. Map each issue number to the version of its enclosing section (e.g., #123 → 1.2.3)
+# 4. Use this map for all "already-fixed" version comparisons below
+# Example entry: { "123": "1.2.3", "456": "1.1.0" }
+```
+
+If the repository is unreachable (network error, auth failure, or `gh` reports the repo as not found): mark all findings as `check-unavailable` with `check_status: warning` and continue. Do not block Step 4 on a network failure.
+
+**Classify each finding into exactly one bucket:**
+
+| Bucket | Label | Condition |
+|---|---|---|
+| `already-tracked` | Already in template backlog | Finding matches an **open** template issue (see matching heuristic below) |
+| `already-fixed` | Already fixed upstream | Finding matches a **closed** template issue AND the fix version is newer than `template.last_synced_version` |
+| `contribute-upstream` | Contribute upstream candidate | Finding does not match any template issue, matches a closed issue but version comparison is inconclusive, or matches a closed issue whose fix version is older than or equal to `template.last_synced_version` (fix already synced — may be a different issue or an incomplete upstream fix) |
+| `check-unavailable` | Template check unavailable | Template repository was unreachable (warning) or malformed (error); classification could not be performed |
+
+**Matching heuristic** (apply in priority order — first criterion that matches wins):
+
+1. **Exact path match**: The finding's affected file path appears verbatim in the template issue's title or body.
+2. **Keyword overlap**: Three or more significant keywords (excluding stopwords like "the", "a", "is") appear in both the finding description and the issue title/body.
+3. **Category label match** *(second-pass only — apply after Step 3c taxonomy assignment is complete)*: The finding and the template issue share the same categorization taxonomy label (e.g., both are `workflow-process`) and describe overlapping symptoms. Skip this criterion on the first pass if taxonomy labels have not yet been assigned; re-run matching after Step 3c completes.
+
+When a finding matches multiple template issues, prefer the most recently updated open issue (for `already-tracked`) or the most recently updated closed issue (for `already-fixed`) using the `updatedAt` field.
+
+**Version comparison fallbacks:**
+
+- If `template.last_synced_version` is absent or empty: a closed-issue match falls back to `contribute-upstream` with a note: "Template version not recorded — run sync-template to capture last-synced version."
+- If the closed issue has no parseable fix version from CHANGELOG issue-reference mapping (fallback order: CHANGELOG `#NNN` reference → milestone name → `closedAt` mapped to nearest release tag): fall back to `contribute-upstream` with a note: "Fix version unknown."
+
+**Carry classification into Step 4 output:**
+
+Show the bucket label inline with each finding in the presentation. For `already-tracked` findings, also include:
+- The matching template issue number and title
+- The suggestion: "Consider **Skip** (already tracked upstream) or **Expand existing** (add downstream context to the template issue) as alternatives to creating a new upstream issue."
+
+For `already-fixed` findings, also include:
+- The matching template issue number and title
+- The fix version (if determinable) and the downstream's `last_synced_version`
+
+For `contribute-upstream` findings, no extra annotation is required beyond the label.
+
+For `check-unavailable` findings, also include:
+- The reason classification was unavailable (e.g., "Template repository unreachable" or "Malformed template repository configuration")
+- The suggestion: "Fix configuration or network access and re-run the retrospective to enable template cross-reference."
+
+### 3c. Categorization taxonomy
 
 Assign each opportunity exactly one category:
 
@@ -202,6 +270,8 @@ Present the categorized findings to the human in a structured format:
 **Impact**: [What it caused or could cause if unaddressed]
 **Recommended action**: Address now | Add to backlog
 **Related existing item**: #NNN — [title] | No existing backlog item found
+**Template cross-reference**: `already-tracked` | `already-fixed` | `contribute-upstream` | `check-unavailable`
+  *(Only include this field if Step 3b was executed — i.e., if `template.repository` was configured)*
 
 ---
 

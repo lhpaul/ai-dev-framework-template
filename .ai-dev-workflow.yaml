@@ -94,3 +94,14 @@ vcs:
 browser_automation:
   # Supported examples: cursor_ide_browser_mcp, playwright_mcp, playwright_cli, none
   provider: playwright_cli
+
+template:
+  # Optional: upstream template repository reference (owner/repo format for GitHub).
+  # When set, the retrospective protocol (Step 3b) cross-references each finding
+  # against the specified template repository's issue tracker. Leave empty or omit to skip.
+  repository: ""
+
+  # Optional: the template version last applied by the sync-template skill.
+  # Written automatically by sync-template after a successful sync.
+  # Used by the retrospective cross-reference step to identify "already fixed upstream" findings.
+  last_synced_version: ""

@@ -17,3 +17,4 @@ Recommended model tier: `economy`
    - For mixed-content files (`mixed_content: true`, `annotation_scheme: html_comments`), apply the extraction logic defined in the protocol's "Mixed-content extraction logic" section.
 5. Present the structured sync summary (always-sync counts, new/modified/up-to-date breakdown) before asking for confirmation.
 6. Do not apply any changes until the user explicitly confirms.
+7. After applying template changes and before generating git instructions, record `TEMPLATE_VERSION` to `.ai-dev-workflow.yaml` under `template.last_synced_version` per the canonical sync-template protocol Step 5. Include `.ai-dev-workflow.yaml` in the `git add` instructions shown to the user.

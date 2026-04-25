@@ -247,7 +247,13 @@ rm -rf /tmp/template-sync-*
 
 ## Step 5 — Generate git instructions
 
-Print ready-to-use git instructions (do not execute them — let the user run them after reviewing the changes):
+Before printing the git instructions, record the last-synced template version:
+
+1. Read `.ai-dev-workflow.yaml` from the project root.
+2. Set (or update) `template.last_synced_version` to `v{TEMPLATE_VERSION}` under the `template:` key. If the `template:` key does not exist yet, append the section after the `browser_automation:` block.
+3. Print: `Recorded last-synced template version: v{TEMPLATE_VERSION}`
+
+Then print ready-to-use git instructions (do not execute them — let the user run them after reviewing the changes):
 
 ```bash
 # 1. Create a sync branch
@@ -264,6 +270,8 @@ git add REVIEW.md docs/workflow/ .claude/agents/ .claude/commands/ .claude/skill
   docs/best-practices/3-testing.md
 # If sync-manifest.yaml was updated, stage it as well:
 git add sync-manifest.yaml
+# Stage the updated last_synced_version field:
+git add .ai-dev-workflow.yaml
 git commit -m "chore(template): sync framework updates from template v{TEMPLATE_VERSION}"
 
 # 4. Push and open PR
