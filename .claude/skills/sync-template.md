@@ -265,6 +265,8 @@ git add REVIEW.md docs/workflow/ .claude/agents/ .claude/commands/ .claude/skill
   docs/best-practices/3-testing.md
 # If sync-manifest.yaml was updated, stage it as well:
 git add sync-manifest.yaml
+# Stage the updated last_synced_version field:
+git add .ai-dev-workflow.yaml
 git commit -m "chore(template): sync framework updates from template v{TEMPLATE_VERSION}"
 
 # 4. Push and open PR
