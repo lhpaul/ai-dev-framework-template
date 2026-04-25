@@ -98,7 +98,7 @@ browser_automation:
 template:
   # Optional: upstream template repository reference (owner/repo format for GitHub).
   # When set, the retrospective protocol (Step 3b) cross-references each finding
-  # against this repository's issue tracker. Leave empty or omit to skip.
+  # against the specified template repository's issue tracker. Leave empty or omit to skip.
   repository: ""
 
   # Optional: the template version last applied by the sync-template skill.
