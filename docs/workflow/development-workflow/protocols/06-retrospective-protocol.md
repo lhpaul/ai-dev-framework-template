@@ -142,7 +142,7 @@ Carry this mapping into Step 4 (presentation) and Step 5 (action execution).
 Read `template.repository` from `.ai-dev-workflow.yaml`.
 
 - **If absent or empty**: skip this substep silently. Do not mention it in output.
-- **If present but malformed** (not `owner/repo` format): mark all findings as "Template check unavailable" (error severity) and continue. Report the error inline with each finding in Step 4 output.
+- **If present but malformed** (not `owner/repo` format): mark all findings as `check-unavailable` with `check_status: error` and continue. Report the error inline with each finding in Step 4 output.
 - **If well-formed**: proceed with the queries and classification below.
 
 **Query the template repository's issues:**
@@ -165,7 +165,7 @@ gh api repos/<owner>/<repo>/contents/CHANGELOG.md --jq '.content' | base64 --dec
 # Example entry: { "123": "1.2.3", "456": "1.1.0" }
 ```
 
-If the repository is unreachable (network error, auth failure, or `gh` reports the repo as not found): mark all findings as "Template check unavailable" (warning severity) and continue. Do not block Step 4 on a network failure.
+If the repository is unreachable (network error, auth failure, or `gh` reports the repo as not found): mark all findings as `check-unavailable` with `check_status: warning` and continue. Do not block Step 4 on a network failure.
 
 **Classify each finding into exactly one bucket:**
 
@@ -270,6 +270,7 @@ Present the categorized findings to the human in a structured format:
 **Impact**: [What it caused or could cause if unaddressed]
 **Recommended action**: Address now | Add to backlog
 **Related existing item**: #NNN — [title] | No existing backlog item found
+**Template cross-reference**: `already-tracked` | `already-fixed` | `contribute-upstream` | `check-unavailable` | Not checked
 
 ---
 

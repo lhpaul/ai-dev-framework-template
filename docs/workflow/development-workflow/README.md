@@ -476,7 +476,7 @@ Protocol prefixes are stable family identifiers, not a promise of contiguous num
 ### Tooling And Configuration
 
 - `docs/workflow/development-workflow/agent-model-config.md`
-- `.ai-dev-workflow.yaml` - repo-level workflow integration manifest (`review.platforms`, `review.internal_reviewers`, `issue_tracker.provider`, `vcs.provider`, `browser_automation.provider`)
+- `.ai-dev-workflow.yaml` - repo-level workflow integration manifest (`review.platforms`, `review.internal_reviewers`, `template.repository`, `template.last_synced_version`, `issue_tracker.provider`, `vcs.provider`, `browser_automation.provider`)
 
 Repository helpers:
 
