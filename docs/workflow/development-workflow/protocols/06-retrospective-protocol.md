@@ -149,10 +149,15 @@ Read `template.repository` from `.ai-dev-workflow.yaml`.
 
 ```bash
 # Open issues (potential "already tracked" matches)
-gh issue list --repo <owner/repo> --state open --limit 200 --json number,title,body,labels
+gh issue list --repo <owner/repo> --state open --limit 200 --json number,title,body,labels,updatedAt,url
 
 # Closed issues (potential "already fixed" matches)
-gh issue list --repo <owner/repo> --state closed --limit 500 --json number,title,body,labels,closedAt
+gh issue list --repo <owner/repo> --state closed --limit 500 --json number,title,body,labels,milestone,closedAt,updatedAt,url
+
+# Template CHANGELOG (for fix-version mapping by issue reference)
+gh api repos/<owner>/<repo>/contents/CHANGELOG.md --jq '.content' | base64 --decode > /tmp/template-CHANGELOG.md
+# Parse each version section heading (e.g., ## [1.2.3] - 2026-01-01) and scan for issue references (e.g., #123).
+# Build a map: issue_number -> fixed_in_version. Use this map for all "already-fixed" version comparisons below.
 ```
 
 If the repository is unreachable (network error, auth failure, or `gh` reports the repo as not found): mark all findings as "Template check unavailable" (warning severity) and continue. Do not block Step 4 on a network failure.
@@ -170,14 +175,14 @@ If the repository is unreachable (network error, auth failure, or `gh` reports t
 
 1. **Exact path match**: The finding's affected file path appears verbatim in the template issue's title or body.
 2. **Keyword overlap**: Three or more significant keywords (excluding stopwords like "the", "a", "is") appear in both the finding description and the issue title/body.
-3. **Category label match**: The finding and the template issue share the same categorization taxonomy label (e.g., both are `workflow-process`) and describe overlapping symptoms.
+3. **Category label match** *(second-pass only — apply after Step 3c taxonomy assignment is complete)*: The finding and the template issue share the same categorization taxonomy label (e.g., both are `workflow-process`) and describe overlapping symptoms. Skip this criterion on the first pass if taxonomy labels have not yet been assigned; re-run matching after Step 3c completes.
 
-When a finding matches multiple template issues, prefer the most recently updated open issue (for `already-tracked`) or the most recently closed issue (for `already-fixed`).
+When a finding matches multiple template issues, prefer the most recently updated open issue (for `already-tracked`) or the most recently updated closed issue (for `already-fixed`) using the `updatedAt` field.
 
 **Version comparison fallbacks:**
 
 - If `template.last_synced_version` is absent or empty: a closed-issue match falls back to `contribute-upstream` with a note: "Template version not recorded — run sync-template to capture last-synced version."
-- If the closed issue has no parseable fix version (no milestone, tag reference, or `closedAt` that maps to a release): fall back to `contribute-upstream` with a note: "Fix version unknown."
+- If the closed issue has no parseable fix version from CHANGELOG issue-reference mapping (fallback order: CHANGELOG `#NNN` reference → milestone name → `closedAt` mapped to nearest release tag): fall back to `contribute-upstream` with a note: "Fix version unknown."
 
 **Carry classification into Step 4 output:**
 
