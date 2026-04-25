@@ -270,7 +270,8 @@ Present the categorized findings to the human in a structured format:
 **Impact**: [What it caused or could cause if unaddressed]
 **Recommended action**: Address now | Add to backlog
 **Related existing item**: #NNN — [title] | No existing backlog item found
-**Template cross-reference**: `already-tracked` | `already-fixed` | `contribute-upstream` | `check-unavailable` | Not checked
+**Template cross-reference**: `already-tracked` | `already-fixed` | `contribute-upstream` | `check-unavailable`
+  *(Only include this field if Step 3b was executed — i.e., if `template.repository` was configured)*
 
 ---
 
