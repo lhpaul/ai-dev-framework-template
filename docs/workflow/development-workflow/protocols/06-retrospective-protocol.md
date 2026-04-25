@@ -156,8 +156,13 @@ gh issue list --repo <owner/repo> --state closed --limit 500 --json number,title
 
 # Template CHANGELOG (for fix-version mapping by issue reference)
 gh api repos/<owner>/<repo>/contents/CHANGELOG.md --jq '.content' | base64 --decode > /tmp/template-CHANGELOG.md
-# Parse each version section heading (e.g., ## [1.2.3] - 2026-01-01) and scan for issue references (e.g., #123).
-# Build a map: issue_number -> fixed_in_version. Use this map for all "already-fixed" version comparisons below.
+
+# Parse CHANGELOG to build issue → version map (follows Keep a Changelog format):
+# 1. Identify version section headings — lines matching `## [x.y.z]` or `## x.y.z` (ignore `## [Unreleased]`)
+# 2. Within each version block, extract all issue references matching `#NNN` (where NNN is one or more digits)
+# 3. Map each issue number to the version of its enclosing section (e.g., #123 → 1.2.3)
+# 4. Use this map for all "already-fixed" version comparisons below
+# Example entry: { "123": "1.2.3", "456": "1.1.0" }
 ```
 
 If the repository is unreachable (network error, auth failure, or `gh` reports the repo as not found): mark all findings as "Template check unavailable" (warning severity) and continue. Do not block Step 4 on a network failure.
@@ -195,6 +200,10 @@ For `already-fixed` findings, also include:
 - The fix version (if determinable) and the downstream's `last_synced_version`
 
 For `contribute-upstream` findings, no extra annotation is required beyond the label.
+
+For `check-unavailable` findings, also include:
+- The reason classification was unavailable (e.g., "Template repository unreachable" or "Malformed template repository configuration")
+- The suggestion: "Fix configuration or network access and re-run the retrospective to enable template cross-reference."
 
 ### 3c. Categorization taxonomy
 
