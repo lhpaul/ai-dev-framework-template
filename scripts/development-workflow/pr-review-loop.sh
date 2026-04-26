@@ -905,6 +905,9 @@ coderabbit_thread_gate_clean() {
   local thread_audit_max_retries
   thread_audit_max_retries="$(thread_audit_max_retries_value)"
   local thread_audit_attempt=0
+  # GraphQL author.login returns the login WITHOUT the "[bot]" suffix that the
+  # REST API uses. Strip it here so check_unresolved_threads comparisons work.
+  local graphql_bot_login="${bot_login%\[bot\]}"
 
   # check_unresolved_threads re-enables errexit internally; capture and restore
   # shellopts so set -e does not leak into run_coderabbit_review (dead rc capture).
@@ -914,7 +917,7 @@ coderabbit_thread_gate_clean() {
   while true; do
     thread_audit_attempt=$((thread_audit_attempt + 1))
     set +e
-    out="$(check_unresolved_threads "$pr_number" "$repo" "$bot_login")"
+    out="$(check_unresolved_threads "$pr_number" "$repo" "$graphql_bot_login")"
     st=$?
     eval "$prev_errexit"
 
@@ -1523,9 +1526,9 @@ bot_login_for_platform() {
   # Returns the GitHub bot login for a given review platform name.
   # Used to filter reviewThreads by bot-authored comments only.
   case "$1" in
-    coderabbit) printf 'coderabbitai[bot]\n' ;;
-    devin)      printf 'devin-ai-integration[bot]\n' ;;
-    greptile)   printf 'greptile-apps[bot]\n' ;;
+    coderabbit) printf 'coderabbitai\n' ;;
+    devin)      printf 'devin-ai-integration\n' ;;
+    greptile)   printf 'greptile-apps\n' ;;
     *)          printf '\n' ;;
   esac
 }
