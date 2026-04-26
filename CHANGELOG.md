@@ -5,11 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Added
-
-- **Sync-template migration notes** (`sync-manifest.yaml`, sync-template skill and commands): `sync-manifest.yaml` gains a `migration_notes` section for versioned manual migration steps. The sync-template skill and command variants now read this section and present a required pre-sync checklist whenever the downstream project's `last_synced_version` predates a breaking structural change. First entry: `docs/ai/ → docs/workflow/` rename (v0.23.0). Fully backwards-compatible — silently skipped when no applicable notes exist.
+## [0.23.1] - 2026-04-26
 
 ### Fixed
 
@@ -20,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   threads even when unresolved bot threads existed. Fixed by removing the `[bot]` suffix from
   `bot_login_for_platform()` return values to match the GraphQL API contract. Updated documentation
   and smoke test to reflect that GraphQL returns bare bot login strings.
+
+## [Unreleased]
+
+### Added
+
+- **Sync-template migration notes** (`sync-manifest.yaml`, sync-template skill and commands): `sync-manifest.yaml` gains a `migration_notes` section for versioned manual migration steps. The sync-template skill and command variants now read this section and present a required pre-sync checklist whenever the downstream project's `last_synced_version` predates a breaking structural change. First entry: `docs/ai/ → docs/workflow/` rename (v0.23.0). Fully backwards-compatible — silently skipped when no applicable notes exist.
 
 ## [0.23.0] - 2026-04-25
 
@@ -494,7 +496,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.23.1...HEAD
+[0.23.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.23.0...v0.23.1
 [0.23.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.20.0...v0.21.0
