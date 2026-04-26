@@ -117,3 +117,33 @@ categories:
       note: symlink to AGENTS.md; project-specific
     - path: GEMINI.md
       note: symlink to AGENTS.md; project-specific
+
+# migration_notes: versioned manual steps required when syncing across a breaking structural change.
+#
+# Each entry is shown to the maintainer when their last_synced_version is older than
+# `applies_if_syncing_from_before` (semver comparison). If last_synced_version is absent
+# (first sync or unknown), all entries are shown.
+#
+# The agent must present all applicable notes and require explicit acknowledgment
+# before proceeding to Step 2 (file comparison). Migration steps must be completed
+# and committed before the sync diff is applied.
+#
+# Fields:
+#   version                       - template version that introduced the breaking change
+#   title                         - short label shown in the pre-sync summary
+#   description                   - what changed and why migration is needed
+#   applies_if_syncing_from_before - show this note when last_synced_version < this value
+#   manual_steps                  - ordered list of shell commands or instructions the maintainer must run
+migration_notes:
+  - version: "0.23.0"
+    title: "docs/ai/ renamed to docs/workflow/"
+    description: >
+      The framework documentation directory was renamed from docs/ai/ to docs/workflow/.
+      If the project still has a docs/ai/ directory, it must be renamed before the sync
+      diff is applied — otherwise the template files land in docs/workflow/ while the old
+      docs/ai/ tree remains, leaving both directories in place.
+    applies_if_syncing_from_before: "0.23.0"
+    manual_steps:
+      - "Check whether the old directory exists: ls docs/ai/ 2>/dev/null && echo 'exists' || echo 'already renamed'"
+      - "If it exists, rename it: git mv docs/ai docs/workflow"
+      - "Commit the rename before applying template file updates: git add -A && git commit -m 'refactor: rename docs/ai to docs/workflow (template migration to v0.23.0)'"

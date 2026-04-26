@@ -51,6 +51,36 @@ Once the template source is resolved, read its `CHANGELOG.md` and extract the la
 - If found: read it and store its contents as `SYNC_MANIFEST`. The manifest is the authoritative file list (BR-1).
 - If absent: set `SYNC_MANIFEST=absent`. The graceful fallback (BR-4 / AC-4) activates in Step 2 — the embedded lists below are used and a warning is shown.
 
+**Migration notes check**: If `SYNC_MANIFEST` is loaded, read `migration_notes` from it. Read `template.last_synced_version` from the project's `.ai-dev-workflow.yaml` (if the file or field is absent, treat it as unknown — show all notes).
+
+For each entry in `migration_notes`: compare `entry.applies_if_syncing_from_before` against `last_synced_version` using semver. Show the entry if:
+- `last_synced_version` is unknown/absent, **or**
+- `last_synced_version` is strictly less than `entry.applies_if_syncing_from_before`
+
+If any applicable notes exist, present them as a **required pre-sync checklist** before continuing:
+
+```
+⚠️  Migration steps required before this sync can proceed
+═══════════════════════════════════════════════════════════
+The following breaking structural changes were introduced between your last-synced
+version and v{TEMPLATE_VERSION}. You must complete these steps and commit them
+before the file sync diff is applied.
+
+[For each applicable note:]
+  ── {entry.title} (introduced in v{entry.version}) ──
+  {entry.description}
+  Steps:
+    1. {step 1}
+    2. {step 2}
+    ...
+═══════════════════════════════════════════════════════════
+Have you completed all migration steps above and committed the changes? (yes/no)
+```
+
+**Do not proceed to Step 1 until the human answers "yes".** If they answer "no", stop and remind them to complete the steps first.
+
+If no applicable notes exist, continue silently.
+
 ---
 
 ## Step 1 — Pre-flight checks on the current project
