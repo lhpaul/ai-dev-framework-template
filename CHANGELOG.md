@@ -13,7 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Bot login format mismatch in GraphQL thread audit** (`pr-review-loop.sh`): `bot_login_for_platform()` passed `[bot]`-suffixed bot logins to `check_unresolved_threads`, but the GitHub GraphQL API returns `author.login` without the suffix for bot-authored comments. The string comparison always failed, causing the unresolved thread gate to report zero unresolved threads even when unresolved bot threads existed. Fixed by removing the `[bot]` suffix from `bot_login_for_platform()` return values to match the GraphQL API contract. Updated documentation and smoke test to reflect that GraphQL returns bare bot login strings.
+- **Bot login format mismatch in GraphQL thread audit** (`pr-review-loop.sh`):
+  `bot_login_for_platform()` passed `[bot]`-suffixed bot logins to `check_unresolved_threads`,
+  but the GitHub GraphQL API returns `author.login` without the suffix for bot-authored comments.
+  The string comparison always failed, causing the unresolved thread gate to report zero unresolved
+  threads even when unresolved bot threads existed. Fixed by removing the `[bot]` suffix from
+  `bot_login_for_platform()` return values to match the GraphQL API contract. Updated documentation
+  and smoke test to reflect that GraphQL returns bare bot login strings.
 
 ## [0.23.0] - 2026-04-25
 
