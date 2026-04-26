@@ -259,7 +259,7 @@ Before printing the git instructions, record the last-synced template version:
        last_synced_version: "v{TEMPLATE_VERSION}"
      ```
    - Command to update existing section: `yq eval '.template.last_synced_version = "v{TEMPLATE_VERSION}"' -i .ai-dev-workflow.yaml`
-   - Command to create new section (if missing): Use a YAML library or insert the schema block above after verifying the file is valid YAML and not malformed.
+   - Command to create new section (if missing): `yq eval '.template.repository = "" | .template.last_synced_version = "v{TEMPLATE_VERSION}"' -i .ai-dev-workflow.yaml` (yq will create the `template:` key if absent; key order in YAML is cosmetic, so exact positioning after `browser_automation:` is not critical)
    - Error handling: If `.ai-dev-workflow.yaml` does not exist or is malformed YAML, abort with error: "Error: cannot modify .ai-dev-workflow.yaml — file does not exist or is malformed. Please fix the file manually before retrying."
 3. Print: `Recorded last-synced template version: v{TEMPLATE_VERSION}` (only after successful write)
 
