@@ -21,7 +21,7 @@
 
 ### Protocol Documentation
 
-- [ ] **`docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`** — In the Step 3 worktree isolation block (after the existing `git switch`/`git reset` safety rule), add an explicit `Write`/`Edit` path guardrail subsection (see Implementation Order Step 1 for the exact prose placement and required content).
+- [ ] **`docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`** — In the Step 3 worktree isolation block (after the existing `git switch`/`git reset` safety rule), add an explicit `Write`/`Edit` path guardrail subsection (see Implementation Order Step 1 for the exact prose placement and required content).
 
 ### Agent Prompt Files
 
@@ -63,7 +63,7 @@ No seed data required. All changes are documentation-only.
 
 ## Documentation Updates
 
-- [ ] `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` — Primary change target (Step 3 worktree isolation section). Already listed under Layer-by-Layer Changes.
+- [ ] `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — Primary change target (Step 3 worktree isolation section). Already listed under Layer-by-Layer Changes.
 - [ ] `.claude/agents/item-orchestrator.md` — Primary change target (agent prompt). Already listed under Layer-by-Layer Changes.
 - [ ] `.cursor/agents/item-orchestrator.md` — Primary change target (agent prompt, dual-sync). Already listed under Layer-by-Layer Changes.
 
@@ -142,7 +142,7 @@ Append after the existing key responsibilities list (after the last bullet point
 
 ## Implementation Order
 
-1. **Update Protocol 91 Step 3** — In `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`, locate the "Critical safety rule — never modify the main working tree's branch" bullet block inside the Step 3 worktree isolation section. Immediately after that block (before the "4. Suggested worktree path" item), insert the "Write and Edit paths inside a worktree" critical safety rule prose and the optional pre-tool-use hook design block (see Code Samples above).
+1. **Update Protocol 91 Step 3** — In `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`, locate the "Critical safety rule — never modify the main working tree's branch" bullet block inside the Step 3 worktree isolation section. Immediately after that block (before the "4. Suggested worktree path" item), insert the "Write and Edit paths inside a worktree" critical safety rule prose and the optional pre-tool-use hook design block (see Code Samples above).
 
 2. **Update `.claude/agents/item-orchestrator.md`** — Append the worktree Write/Edit path discipline bullet to the existing key responsibilities list (after the last existing bullet, before the end of the file). See Code Samples above for the exact bullet text. Keep the `---` frontmatter and `tools:` line unchanged.
 

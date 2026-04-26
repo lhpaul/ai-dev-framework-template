@@ -25,7 +25,7 @@ Not applicable — this is a doc-only change.
 
 ### Workflow Protocol Documentation
 
-- [ ] `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — Add new **Step 2.5: Pre-Dispatch Tracker Status Update** section between existing Step 2 and Step 3. This step must:
+- [ ] `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — Add new **Step 2.5: Pre-Dispatch Tracker Status Update** section between existing Step 2 and Step 3. This step must:
   - Enumerate every item that passed the Step 2 eligibility check
   - For each item, check whether it already exists in the configured project board; add it if missing
   - For each item, update its tracker status to the appropriate in-flight value based on the next action that will be dispatched:
@@ -38,7 +38,7 @@ Not applicable — this is a doc-only change.
   - Log each update (added to board / status changed / already correct) for transparency
   - Only after all updates complete, proceed to Step 3
 
-- [ ] `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` — Add a short note in **Step 2: Determine the Next Deterministic Action** (under "What can advance now?") to clarify that when the Work Item Runner is invoked directly (not via Protocol 90) and the item's tracker status is stale (e.g., still `Backlog` when the Refactor type dictates `Writing Plan`), the runner must update the status before dispatching the creator agent — mirroring Protocol 90's new Step 2.5. Reference the same status-transition table. This covers the single-item dispatch path (issue #159 explicitly calls for Protocol 91 to be updated as well).
+- [ ] `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — Add a short note in **Step 2: Determine the Next Deterministic Action** (under "What can advance now?") to clarify that when the Work Item Runner is invoked directly (not via Protocol 90) and the item's tracker status is stale (e.g., still `Backlog` when the Refactor type dictates `Writing Plan`), the runner must update the status before dispatching the creator agent — mirroring Protocol 90's new Step 2.5. Reference the same status-transition table. This covers the single-item dispatch path (issue #159 explicitly calls for Protocol 91 to be updated as well).
 
 ---
 
@@ -65,8 +65,8 @@ Not applicable — this is a protocol documentation change; no seed data is requ
 
 ## Documentation Updates
 
-- [ ] `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — Primary change: add Step 2.5 as described above
-- [ ] `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` — Secondary change: add pre-dispatch status note to Step 2
+- [ ] `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — Primary change: add Step 2.5 as described above
+- [ ] `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — Secondary change: add pre-dispatch status note to Step 2
 
 No other project docs require updating. The change does not affect architecture, best practices, repo structure, AGENTS.md, or other files.
 
@@ -84,8 +84,8 @@ No other project docs require updating. The change does not affect architecture,
 
 ## Implementation Order
 
-1. Edit `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`: insert new Step 2.5 section after the existing Step 2 content, before the Step 3 heading
-2. Edit `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`: add pre-dispatch tracker status note to Step 2 ("What can advance now?" table or its prose)
+1. Edit `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`: insert new Step 2.5 section after the existing Step 2 content, before the Step 3 heading
+2. Edit `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`: add pre-dispatch tracker status note to Step 2 ("What can advance now?" table or its prose)
 3. Update `CHANGELOG.md` with an entry under `[Unreleased]` for this protocol improvement
 4. Verify smoke test runbook scenarios manually against the updated protocol text
 5. Update project docs per **Documentation Updates** section above (both files are the target, so this step is already covered by steps 1–2)

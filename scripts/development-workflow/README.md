@@ -1,6 +1,6 @@
 # Development workflow scripts
 
-Scripts used by the staged AI development workflow. Referenced by `docs/ai/development-workflow/` and by the Codex skills in `.codex/skills/`. Run from the repository root.
+Scripts used by the staged AI development workflow. Referenced by `docs/workflow/development-workflow/` and by the Codex skills in `.codex/skills/`. Run from the repository root.
 
 ## `install-codex-skills.sh`
 
@@ -32,7 +32,7 @@ What it does:
 
 - `resolve` prints `ISSUE_TRACKER_PROVIDER`, `DESTINATION_KIND` (`github`, `linear`, `other`, `none`), and a `CREATE_VIA` hint for agents.
 - `create` runs `gh issue create` when the destination kind is `github` (requires authenticated `gh`).
-- For Linear or unsupported providers, exits non-zero with guidance so agents follow `docs/ai/development-workflow/protocols/00-add-backlog-item-protocol.md` instead of guessing.
+- For Linear or unsupported providers, exits non-zero with guidance so agents follow `docs/workflow/development-workflow/protocols/00-add-backlog-item-protocol.md` instead of guessing.
 
 Use this when:
 
@@ -175,6 +175,27 @@ Usage:
 
 Use this when:
 - You have merged a feature/plan/spec PR and deleted the remote branch, and want to clean up the local branch and update develop.
+
+### `prepare-release-post-merge-cleanup.sh`
+
+After both release PRs (`release/*` -> `main` and `release/*` -> `develop`) are merged, verify merge state, remove the release branch remotely and locally, and optionally transition scoped tracker items from `Merged` to `Released`.
+
+Usage:
+
+```bash
+./scripts/development-workflow/prepare-release-post-merge-cleanup.sh <version|release-branch> [--issue N]... [--issues N,N,...]
+```
+
+Examples:
+
+```bash
+./scripts/development-workflow/prepare-release-post-merge-cleanup.sh v1.2.3 --issues 232,240
+./scripts/development-workflow/prepare-release-post-merge-cleanup.sh release/v1.2.3 --issue 232
+```
+
+Use this when:
+- Both release PRs are already merged and you need deterministic release-branch cleanup.
+- You want explicit, scoped tracker transitions to the terminal shipped status.
 
 ### `batch-merge.sh`
 

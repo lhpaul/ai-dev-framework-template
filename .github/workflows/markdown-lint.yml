@@ -14,6 +14,7 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - 'scripts/lint/markdown-heuristic-lint.py'
+      - 'scripts/lint/check-changelog-duplicate-headers.sh'
 
 jobs:
   markdown-lint:
@@ -70,3 +71,6 @@ jobs:
             md_files+=("CHANGELOG.md")
           fi
           python3 scripts/lint/markdown-heuristic-lint.py "${md_files[@]}"
+
+      - name: Check CHANGELOG for duplicate section headers
+        run: bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md

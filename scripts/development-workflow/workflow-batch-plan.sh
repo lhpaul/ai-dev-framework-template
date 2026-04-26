@@ -42,7 +42,7 @@ CANONICAL_EXACT_PATHS=(
   "scripts/development-workflow/post-merge-cleanup.sh"
   ".ai-dev-workflow.yaml"
 )
-PROTOCOLS_PREFIX="docs/ai/development-workflow/protocols/"
+PROTOCOLS_PREFIX="docs/workflow/development-workflow/protocols/"
 
 # classify_tool_fix <development-folder-path>
 #
@@ -87,7 +87,7 @@ classify_tool_fix() {
     fi
   done
 
-  # Glob-equivalent: any docs/ai/development-workflow/protocols/*.md reference,
+  # Glob-equivalent: any docs/workflow/development-workflow/protocols/*.md reference,
   # anchored on both sides to reject .md.bak and other superstrings.
   # Both the detection (grep -qE) and the extraction (grep -oE) use the full
   # boundary-anchored regex so superstrings like foo.md.bak are never captured.
@@ -109,6 +109,46 @@ classify_tool_fix() {
   else
     printf 'no\n'
   fi
+}
+
+# extract_github_issue_number <development-folder-path>
+#
+# Extracts the GitHub issue number from the spec or plan markdown files in a
+# development folder.  Looks for lines matching:
+#   **Issue**: #NNN
+#   **Issue**: [#NNN](...)
+# and also tries the folder slug prefix pattern (e.g. "291-some-slug" -> 291).
+#
+# Prints the bare numeric issue number, or an empty string when not found.
+extract_github_issue_number() {
+  local dev_path="$1"
+  local doc_files=() issue_number="" line
+
+  while IFS= read -r f; do
+    doc_files+=("$f")
+  done < <(find "$dev_path" -maxdepth 1 -name '*.md' | sort)
+
+  # Scan markdown files for "**Issue**: #NNN" or "**Issue**: [#NNN](...)"
+  for f in "${doc_files[@]}"; do
+    while IFS= read -r line; do
+      # Match: **Issue**: #123  or  **Issue**: [#123](url)
+      if printf '%s\n' "$line" | grep -qE '^\*\*Issue\*\*:[[:space:]]*\[?#[0-9]+'; then
+        issue_number="$(printf '%s\n' "$line" | grep -oE '#[0-9]+' | head -1 | tr -d '#')"
+        break 2
+      fi
+    done < "$f"
+  done
+
+  # Fallback: extract leading issue number from folder slug (e.g. "291-some-slug").
+  if [ -z "$issue_number" ]; then
+    local slug
+    slug="$(basename "$dev_path" | sed 's/^[0-9]\{14\}_//')"
+    if printf '%s\n' "$slug" | grep -qE '^[0-9]+-'; then
+      issue_number="$(printf '%s\n' "$slug" | grep -oE '^[0-9]+')"
+    fi
+  fi
+
+  printf '%s' "${issue_number:-}"
 }
 
 cd_workflow_repo_root
@@ -151,6 +191,21 @@ for development_path in "${development_paths[@]}"; do
   fi
 
   slug="$(basename "$development_path" | sed 's/^[0-9]\{14\}_//')"
+
+  # Skip development folders whose tracker status is terminal (Released, Merged,
+  # Cancelled).  When GitHub Projects is configured (GITHUB_PROJECT_NUMBER set),
+  # query the tracker for each candidate and skip stale folders early — before
+  # running the more expensive workflow-next-action.sh call.
+  if [ -n "${GITHUB_PROJECT_NUMBER:-}" ]; then
+    issue_number="$(extract_github_issue_number "$development_path")"
+    if [ -n "$issue_number" ]; then
+      tracker_status="$(get_tracker_status_for_issue "$issue_number")"
+      if is_terminal_tracker_status "$tracker_status"; then
+        echo "Skipping $development_path: tracker status is terminal ('$tracker_status') for issue #$issue_number" >&2
+        continue
+      fi
+    fi
+  fi
 
   # Classify tool-fix BEFORE workflow-next-action.sh so TOOL_FIX is always
   # emitted, even for folders where next-action exits non-zero (e.g., no

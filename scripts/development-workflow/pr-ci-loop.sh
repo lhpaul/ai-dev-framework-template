@@ -70,12 +70,38 @@ min_no_checks_wait=$((poll_interval * 2))
 
 while :; do
   checks_json="$(gh pr view "$pr_number" --json statusCheckRollup)"
-  total_check_count="$(
-    printf '%s\n' "$checks_json" | jq '(.statusCheckRollup // []) | length'
-  )"
-  pending_count="$(
+  # statusCheckRollup can include historical duplicates for the same check.
+  # Keep only the latest entry per check name to avoid stale conclusions.
+  normalized_checks_json="$(
     printf '%s\n' "$checks_json" | jq '
       (.statusCheckRollup // [])
+      | map(
+          . + {
+            __check_key: (
+              if (.context // "") != "" then
+                "status:" + .context
+              elif (.workflowName // "") != "" and (.name // "") != "" then
+                "check:" + .workflowName + "/" + .name
+              elif (.name // "") != "" then
+                "check:" + .name
+              else
+                "unknown"
+              end
+            ),
+            __check_ts: (.startedAt // .completedAt // .createdAt // "")
+          }
+        )
+      | sort_by(.__check_key, .__check_ts)
+      | group_by(.__check_key)
+      | map(last | del(.__check_key, .__check_ts))
+    '
+  )"
+  total_check_count="$(
+    printf '%s\n' "$normalized_checks_json" | jq 'length'
+  )"
+  pending_count="$(
+    printf '%s\n' "$normalized_checks_json" | jq '
+      .
       | map(select(
           ((.status // "") != "" and (.status != "COMPLETED"))
           or (.state == "EXPECTED")
@@ -87,8 +113,8 @@ while :; do
     '
   )"
   pending_list="$(
-    printf '%s\n' "$checks_json" | jq -r '
-      (.statusCheckRollup // [])
+    printf '%s\n' "$normalized_checks_json" | jq -r '
+      .
       | map(select(
           ((.status // "") != "" and (.status != "COMPLETED"))
           or (.state == "EXPECTED")
@@ -101,8 +127,8 @@ while :; do
     '
   )"
   failing_count="$(
-    printf '%s\n' "$checks_json" | jq '
-      (.statusCheckRollup // [])
+    printf '%s\n' "$normalized_checks_json" | jq '
+      .
       | map(select(
           (.conclusion == "FAILURE")
           or (.conclusion == "CANCELLED")
@@ -116,8 +142,8 @@ while :; do
     '
   )"
   failing_list="$(
-    printf '%s\n' "$checks_json" | jq -r '
-      (.statusCheckRollup // [])
+    printf '%s\n' "$normalized_checks_json" | jq -r '
+      .
       | map(select(
           (.conclusion == "FAILURE")
           or (.conclusion == "CANCELLED")

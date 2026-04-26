@@ -99,7 +99,7 @@ This fix adds a fallback path: if the CodeRabbit review-loop retry budget is exh
 - [ ] When existing blocking CodeRabbit inline comments (Critical or Major) are present on the current HEAD, the fallback does not apply regardless of commit-status state; the script returns `needs_fixes`.
 - [ ] The `REASON=coderabbit_status_success_fallback` key-value is included in the script output when the fallback is triggered.
 - [ ] The Greptile and Devin platform handlers are unaffected by this change.
-- [ ] `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` Step 3.7 is updated to document the new fallback behavior so orchestrators know the manual workaround is no longer needed.
+- [ ] `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` Step 3.7 is updated to document the new fallback behavior so orchestrators know the manual workaround is no longer needed.
 
 ---
 

@@ -6,6 +6,67 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 
+# --- Single-instance guard ---
+# Prevent two simultaneous invocations for the same PR. Uses an atomic mkdir
+# lock directory (POSIX-guaranteed atomic) so two concurrent callers cannot
+# both acquire the lock. The lock dir name includes the PR number so parallel
+# runs for different PRs do not interfere with each other.
+#
+# Layout:
+#   /tmp/pr-review-loop-<pr>.lockdir/   — lock directory (atomic creation)
+#   /tmp/pr-review-loop-<pr>.lockdir/pid — PID of the owner process
+#   /tmp/pr-review-loop-<pr>.lockdir/cmd — basename of script ($0) for verification
+_PR_ARG=""
+_skip_next=0
+for _arg in "$@"; do
+  if [ "$_skip_next" -eq 1 ]; then _skip_next=0; continue; fi
+  case "$_arg" in
+    --branch|--platform|--poll-interval|--max-wait) _skip_next=1 ;;
+    [0-9]*) _PR_ARG="$_arg"; break ;;
+  esac
+done
+unset _skip_next
+_LOCK_DIR="/tmp/pr-review-loop-${_PR_ARG:-unknown}.lockdir"
+_OWN_LOCK=0
+
+if mkdir "$_LOCK_DIR" 2>/dev/null; then
+  # We created the lock dir atomically — we own the lock.
+  printf '%d\n' "$$"           > "$_LOCK_DIR/pid"
+  printf '%s\n' "$(basename "$0")" > "$_LOCK_DIR/cmd"
+  _OWN_LOCK=1
+else
+  # Lock dir already exists — check whether the recorded owner is still alive
+  # and actually belongs to this script (guards against stale locks from crashes).
+  _LOCK_PID="$(cat "$_LOCK_DIR/pid" 2>/dev/null || true)"
+  _LOCK_CMD="$(cat "$_LOCK_DIR/cmd" 2>/dev/null || true)"
+  if [ -n "$_LOCK_PID" ] && kill -0 "$_LOCK_PID" 2>/dev/null && [ "$_LOCK_CMD" = "$(basename "$0")" ]; then
+    echo "ERROR: pr-review-loop.sh is already running for PR #${_PR_ARG:-unknown} (PID $_LOCK_PID). Exiting to prevent parallel execution." >&2
+    print_kv RESULT escalate
+    print_kv REASON lock_contention
+    print_kv PR_NUMBER "${_PR_ARG:-}"
+    exit 75  # EX_TEMPFAIL — lock contention; not a normal review result (0/1/2)
+  fi
+  # Stale lock (process gone or belongs to a different script) — reclaim atomically.
+  # Use mv (atomic rename) to move the stale dir out of the way, then mkdir.
+  # If two callers reach this point simultaneously, only one mv succeeds (rename
+  # is atomic on POSIX); the loser's mv fails because the source is gone. Then
+  # both try mkdir; only one succeeds and the other exits via the else branch.
+  mv "$_LOCK_DIR" "${_LOCK_DIR}.stale.$$" 2>/dev/null || true
+  rm -rf "${_LOCK_DIR}.stale.$$" 2>/dev/null || true
+  if mkdir "$_LOCK_DIR" 2>/dev/null; then
+    printf '%d\n' "$$"           > "$_LOCK_DIR/pid"
+    printf '%s\n' "$(basename "$0")" > "$_LOCK_DIR/cmd"
+    _OWN_LOCK=1
+  else
+    echo "ERROR: pr-review-loop.sh is already running for PR #${_PR_ARG:-unknown} (concurrent startup race). Exiting to prevent parallel execution." >&2
+    print_kv RESULT escalate
+    print_kv REASON lock_contention
+    print_kv PR_NUMBER "${_PR_ARG:-}"
+    exit 75
+  fi
+fi
+trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"' EXIT
+
 usage() {
   cat <<'EOF'
 Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,coderabbit] [--poll-interval seconds] [--max-wait seconds]
@@ -14,7 +75,9 @@ Runs the automated PR review loop for one or more platforms in sequence. Before
 triggering a new review, each platform checks for existing blocking findings. If
 any platform reports blocking findings, the script stops immediately and exits 1.
 If a platform times out or escalates, the script exits 2. If all configured
-platforms are clean or skipped, the script exits 0.
+platforms are clean or skipped, the script exits 0. If a second instance is
+detected for the same PR number, the script emits RESULT=escalate with
+REASON=lock_contention and exits 75 (EX_TEMPFAIL).
 
 Platform selection (in priority order):
   1. --platform flag(s) passed on the command line
@@ -23,6 +86,7 @@ Platform selection (in priority order):
 Outputs stable key=value lines including:
   RESULT=clean|needs_fixes|escalate|skipped
   PLATFORM_<n>_NAME / PLATFORM_<n>_RESULT
+  REASON=lock_contention (when exit code is 75)
 EOF
 }
 
@@ -372,6 +436,9 @@ run_devin_review() {
   local existing_reviews=""
   local existing_blocking_file=""
   local existing_blocking_count=0
+  local existing_inline_blocking_count=0
+  local inline_comment_count=0
+  local review_state=""
   local comment_json=""
   local review_json=""
   local body=""
@@ -427,18 +494,16 @@ run_devin_review() {
               .submitted_at > $since and
               (
                 .state == "CHANGES_REQUESTED" or
-                (
-                  .state == "COMMENTED" and
-                  (.body // "" | test("^\\*\\*Devin Review\\*\\*"; "i"))
-                )
+                .state == "COMMENTED"
               )
             )
-          | { path: "", line: 0, body: (.body // "review without body") }
+          | { path: "", line: 0, body: (.body // "review without body"), state: .state }
           | @json
         '
   )"
-
   existing_blocking_file="$(mktemp)"
+  # Process inline comments first so existing_blocking_count reflects inline findings
+  # before we evaluate COMMENTED reviews (used for the inline-findings gate below).
   while IFS= read -r comment_json; do
     [ -z "${comment_json:-}" ] && continue
     body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
@@ -448,13 +513,31 @@ run_devin_review() {
     existing_blocking_count=$((existing_blocking_count + 1))
     printf '%s\n' "$comment_json" >> "$existing_blocking_file"
   done <<< "$existing_comments"
+  # Snapshot the inline blocking count before processing reviews (used below).
+  existing_inline_blocking_count="$existing_blocking_count"
 
   while IFS= read -r review_json; do
     [ -z "${review_json:-}" ] && continue
     body="$(printf '%s\n' "$review_json" | jq -r '.body')"
+    review_state="$(printf '%s\n' "$review_json" | jq -r '.state // ""')"
     [ -z "$body" ] && continue
     if printf '%s\n' "$body" | grep -qi "No Issues Found"; then continue; fi
     if printf '%s\n' "$body" | grep -q "^✅"; then continue; fi
+    # For COMMENTED reviews, only treat as blocking when:
+    # (a) the body starts with "**Devin Review**" (Devin uses COMMENTED instead of
+    #     CHANGES_REQUESTED regardless of finding severity), OR
+    # (b) there are blocking inline comments from Devin (the COMMENTED review is the
+    #     umbrella review object that accompanies those inline findings).
+    # COMMENTED reviews with no inline findings are informational and not blocking.
+    if [ "$review_state" = "COMMENTED" ]; then
+      if printf '%s\n' "$body" | grep -qi "^\\*\\*Devin Review\\*\\*"; then
+        : # falls through to blocking logic below
+      elif [ "$existing_inline_blocking_count" -gt 0 ]; then
+        : # COMMENTED review with inline findings — treat as blocking
+      else
+        continue  # COMMENTED review with no inline findings — not blocking
+      fi
+    fi
     existing_blocking_count=$((existing_blocking_count + 1))
     printf '%s\n' "$review_json" >> "$existing_blocking_file"
   done <<< "$existing_reviews"
@@ -693,21 +776,21 @@ run_devin_review() {
             .submitted_at > $since and
             (
               .state == "CHANGES_REQUESTED" or
-              (
-                .state == "COMMENTED" and
-                (.body // "" | test("^\\*\\*Devin Review\\*\\*"; "i"))
-              )
+              .state == "COMMENTED"
             )
           )
         | {
             path: "",
             line: 0,
-            body: (.body // "review without body")
+            body: (.body // "review without body"),
+            state: .state
           }
         | @json
       '
   )"
 
+  # Count blocking inline comments from this HEAD for the COMMENTED-with-findings check.
+  inline_comment_count=0
   while IFS= read -r comment_json; do
     [ -z "${comment_json:-}" ] && continue
     body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
@@ -716,15 +799,33 @@ run_devin_review() {
     if printf '%s\n' "$body" | grep -q "^✅"; then continue; fi
     comment_count=$((comment_count + 1))
     blocking_count=$((blocking_count + 1))
+    inline_comment_count=$((inline_comment_count + 1))
     printf '%s\n' "$comment_json" >> "$blocking_lines_file"
   done <<< "$comments"
 
   while IFS= read -r review_json; do
     [ -z "${review_json:-}" ] && continue
     body="$(printf '%s\n' "$review_json" | jq -r '.body')"
+    review_state="$(printf '%s\n' "$review_json" | jq -r '.state // ""')"
     [ -z "$body" ] && continue
     if printf '%s\n' "$body" | grep -qi "No Issues Found"; then continue; fi
     if printf '%s\n' "$body" | grep -q "^✅"; then continue; fi
+    # For COMMENTED reviews, only treat as blocking when:
+    # (a) the body starts with "**Devin Review**" (Devin uses COMMENTED instead of
+    #     CHANGES_REQUESTED regardless of finding severity), OR
+    # (b) there are blocking inline comments from Devin (the COMMENTED review is the
+    #     umbrella review object that accompanies those inline findings).
+    # Non-matching COMMENTED reviews with no inline comments are informational and
+    # not blocking.
+    if [ "$review_state" = "COMMENTED" ]; then
+      if printf '%s\n' "$body" | grep -qi "^\\*\\*Devin Review\\*\\*"; then
+        : # falls through to blocking logic below
+      elif [ "$inline_comment_count" -gt 0 ]; then
+        : # COMMENTED review with inline findings — treat as blocking
+      else
+        continue  # COMMENTED review with no inline comments — not blocking
+      fi
+    fi
     comment_count=$((comment_count + 1))
     blocking_count=$((blocking_count + 1))
     printf '%s\n' "$review_json" >> "$blocking_lines_file"
@@ -775,6 +876,116 @@ is_coderabbit_blocking() {
   if printf '%s\n' "$body" | grep -q "🔴"; then return 0; fi
   if printf '%s\n' "$body" | grep -q "🟠"; then return 0; fi
   return 1
+}
+
+# Returns the validated THREAD_AUDIT_MAX_RETRIES value (a positive integer).
+# If the environment variable is unset, empty, non-integer, or non-positive,
+# emits a WARN on stderr and returns the default (3).
+thread_audit_max_retries_value() {
+  local value="${THREAD_AUDIT_MAX_RETRIES:-3}"
+  if ! printf '%s' "$value" | grep -qE '^[0-9]+$' || [ "$value" -le 0 ] 2>/dev/null; then
+    echo "WARN: THREAD_AUDIT_MAX_RETRIES must be a positive integer; defaulting to 3" >&2
+    value=3
+  fi
+  printf '%s\n' "$value"
+}
+
+# Returns 0 when CodeRabbit may treat the PR as thread-clean for this pass.
+# Returns 1 after emitting RESULT=needs_fixes (unresolved GraphQL threads).
+# Returns 2 after emitting RESULT=escalate (thread page cap exceeded or
+#   GraphQL failure after all retries exhausted).
+# On transient GraphQL failure (exit 3 from check_unresolved_threads), retries
+# up to THREAD_AUDIT_MAX_RETRIES times before escalating. Never returns 0 when
+# the thread audit could not be completed — RESULT=clean is only emitted by the
+# caller once this function returns 0 with a confirmed zero unresolved count.
+coderabbit_thread_gate_clean() {
+  local pr_number="$1" repo="$2" bot_login="$3" branch_name="$4"
+  local platform="coderabbit"
+  local out st
+  local thread_audit_max_retries
+  thread_audit_max_retries="$(thread_audit_max_retries_value)"
+  local thread_audit_attempt=0
+
+  # check_unresolved_threads re-enables errexit internally; capture and restore
+  # shellopts so set -e does not leak into run_coderabbit_review (dead rc capture).
+  local prev_errexit
+  prev_errexit="$(set +o | grep errexit)"
+
+  while true; do
+    thread_audit_attempt=$((thread_audit_attempt + 1))
+    set +e
+    out="$(check_unresolved_threads "$pr_number" "$repo" "$bot_login")"
+    st=$?
+    eval "$prev_errexit"
+
+    if [ "$st" -eq 2 ]; then
+      echo "WARN: check_unresolved_threads exceeded page cap for PR #$pr_number (CodeRabbit pass)" >&2
+      print_kv RESULT escalate
+      print_kv REASON unresolved_thread_check_incomplete
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 2
+    fi
+
+    if [ "$st" -eq 3 ]; then
+      if [ "$thread_audit_attempt" -le "$thread_audit_max_retries" ]; then
+        echo "WARN: check_unresolved_threads GraphQL failure for PR #$pr_number (CodeRabbit pass, attempt $thread_audit_attempt/$thread_audit_max_retries) — retrying" >&2
+        sleep 5
+        continue
+      fi
+      echo "ERROR: check_unresolved_threads GraphQL failure for PR #$pr_number (CodeRabbit pass) — all $thread_audit_attempt attempts ($thread_audit_max_retries retries) failed; escalating" >&2
+      print_kv RESULT escalate
+      print_kv REASON review_thread_audit_failed
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 2
+    fi
+
+    if [ "$st" -ne 0 ]; then
+      echo "ERROR: check_unresolved_threads unexpected exit $st for PR #$pr_number (CodeRabbit pass) — escalating" >&2
+      print_kv RESULT escalate
+      print_kv REASON review_thread_audit_failed
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 2
+    fi
+
+    break
+  done
+
+  if [ "${out:-0}" -gt 0 ]; then
+    print_kv RESULT needs_fixes
+    print_kv REASON coderabbit_unresolved_review_threads
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT "$out"
+    print_kv BLOCKING_COUNT "$out"
+    print_kv SUGGESTION_COUNT 0
+    print_kv UNRESOLVED_THREAD_COUNT "$out"
+    return 1
+  fi
+  return 0
 }
 
 run_coderabbit_review() {
@@ -956,6 +1167,9 @@ run_coderabbit_review() {
       )"
       if [ "${activity_count:-0}" -gt 0 ]; then
         coderabbit_any_activity=1
+        # Issue-comment activity means CodeRabbit finished this HEAD cycle, but unlike
+        # a formal PR review it does not hit the `break` above — continue to Phase 3.
+        break
       fi
     fi
 
@@ -1012,7 +1226,48 @@ run_coderabbit_review() {
       )"
       if [ "${rate_limit_comment_count:-0}" -gt 0 ]; then
         coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
-        echo "INFO: CodeRabbit rate limit detected (retry $coderabbit_rate_limit_retries/$coderabbit_rate_limit_max_retries) — waiting ${coderabbit_rate_limit_wait}s before re-triggering" >&2
+        echo "INFO: CodeRabbit rate limit detected (retry $coderabbit_rate_limit_retries/$coderabbit_rate_limit_max_retries) — checking for SUCCESS commit status before waiting" >&2
+        # --- Early SUCCESS check before retry wait ---
+        # Check whether CodeRabbit already posted a SUCCESS commit status for the current
+        # HEAD SHA. This happens when CodeRabbit signals the result via a commit status
+        # during a rate-limit window on a parallel batch. If found, skip the retry wait
+        # entirely and treat the PR as clean via coderabbit_status_success_fallback.
+        local coderabbit_early_success_count
+        coderabbit_early_success_count="$(
+          gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
+            | jq -s '[.[].[] | select(
+                    (.context // "" | ascii_downcase | test("coderabbit"))
+                  )]
+                  | group_by(.context) | map(max_by(.updated_at))
+                  | map(select(.state == "success"))
+                  | length'
+        )"
+        if [ "${coderabbit_early_success_count:-0}" -gt 0 ]; then
+          # SUCCESS status can appear while older CodeRabbit review threads stay unresolved
+          # on the PR. Do not short-circuit to clean until GraphQL thread audit passes —
+          # same pattern as the timeout SUCCESS fallback below.
+          local cr_early_gate_rc
+          coderabbit_thread_gate_clean "$pr_number" "$repo" "$bot_login" "$branch_name"
+          cr_early_gate_rc=$?
+          if [ "$cr_early_gate_rc" -eq 0 ]; then
+            echo "INFO: CodeRabbit SUCCESS commit-status found for HEAD $head_sha before retry wait — treating PR as clean (coderabbit_status_success_fallback)" >&2
+            print_kv RESULT clean
+            print_kv REASON coderabbit_status_success_fallback
+            print_kv PLATFORM "$platform"
+            print_kv PR_NUMBER "$pr_number"
+            print_kv BRANCH "$branch_name"
+            print_kv REVIEW_COMMENT_ID ""
+            print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+            print_kv COMMENT_COUNT 0
+            print_kv BLOCKING_COUNT 0
+            print_kv SUGGESTION_COUNT 0
+            return 0
+          fi
+          if [ "$cr_early_gate_rc" -eq 1 ] || [ "$cr_early_gate_rc" -eq 2 ]; then
+            return "$cr_early_gate_rc"
+          fi
+        fi
+        echo "INFO: no SUCCESS commit status found — waiting ${coderabbit_rate_limit_wait}s before re-triggering" >&2
         sleep "$coderabbit_rate_limit_wait"
         # Do NOT reset since_iso — keep the original HEAD-commit timestamp so any review
         # posted by CodeRabbit during or after the wait is still within the detection window.
@@ -1052,18 +1307,27 @@ run_coderabbit_review() {
                   | length'
         )"
         if [ "${coderabbit_success_status_count:-0}" -gt 0 ]; then
-          echo "INFO: CodeRabbit SUCCESS commit-status found for HEAD $head_sha — treating PR as clean (coderabbit_status_success_fallback)" >&2
-          print_kv RESULT clean
-          print_kv REASON coderabbit_status_success_fallback
-          print_kv PLATFORM "$platform"
-          print_kv PR_NUMBER "$pr_number"
-          print_kv BRANCH "$branch_name"
-          print_kv REVIEW_COMMENT_ID ""
-          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-          print_kv COMMENT_COUNT 0
-          print_kv BLOCKING_COUNT 0
-          print_kv SUGGESTION_COUNT 0
-          return 0
+          # SUCCESS status can appear while older CodeRabbit review threads stay unresolved
+          # on the PR. Do not short-circuit to clean until GraphQL thread audit passes.
+          coderabbit_thread_gate_clean "$pr_number" "$repo" "$bot_login" "$branch_name"
+          cr_success_gate_rc=$?
+          if [ "$cr_success_gate_rc" -eq 0 ]; then
+            echo "INFO: CodeRabbit SUCCESS commit-status found for HEAD $head_sha — treating PR as clean (coderabbit_status_success_fallback)" >&2
+            print_kv RESULT clean
+            print_kv REASON coderabbit_status_success_fallback
+            print_kv PLATFORM "$platform"
+            print_kv PR_NUMBER "$pr_number"
+            print_kv BRANCH "$branch_name"
+            print_kv REVIEW_COMMENT_ID ""
+            print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+            print_kv COMMENT_COUNT 0
+            print_kv BLOCKING_COUNT 0
+            print_kv SUGGESTION_COUNT 0
+            return 0
+          fi
+          if [ "$cr_success_gate_rc" -eq 1 ] || [ "$cr_success_gate_rc" -eq 2 ]; then
+            return "$cr_success_gate_rc"
+          fi
         fi
 
         # CodeRabbit didn't review this HEAD. Check for stale findings before skipping.
@@ -1238,6 +1502,11 @@ run_coderabbit_review() {
   fi
 
   rm -f "$blocking_lines_file"
+  coderabbit_thread_gate_clean "$pr_number" "$repo" "$bot_login" "$branch_name"
+  cr_phase3_gate_rc=$?
+  if [ "$cr_phase3_gate_rc" -ne 0 ]; then
+    return "$cr_phase3_gate_rc"
+  fi
   print_kv RESULT clean
   print_kv PLATFORM "$platform"
   print_kv PR_NUMBER "$pr_number"
@@ -1316,8 +1585,8 @@ check_unresolved_threads() {
       # the PR rather than degrade — threads past page 10 would be silently ignored,
       # so a very large PR could otherwise be marked ready-for-human-review despite
       # unresolved threads beyond the cap. Exit 3 (below) is for transient GraphQL
-      # failures where degrading gracefully (skip gate, trust the 0 unresolved) is
-      # acceptable.
+      # failures; callers must escalate (not degrade) on exit 3 to prevent RESULT=clean
+      # when the thread audit could not be completed.
       echo "WARN: check_unresolved_threads: exceeded $max_pages pages for PR #$pr_number; cannot confirm all threads checked" >&2
       return 2
     fi
@@ -1576,32 +1845,45 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
 
   unresolved_thread_count=0
   if [ "${#unresolved_bot_logins[@]}" -gt 0 ]; then
-    # Wrap with set +e so a transient GraphQL API failure does not crash the script
-    # (all platform reviews have already succeeded; we degrade gracefully on thread-check failure).
-    # Do NOT use 2>&1 — stderr (WARN messages) must remain on stderr so that only the
-    # integer count appears on stdout for clean capture into unresolved_thread_count.
+    # Do NOT use 2>&1 — stderr (WARN/ERROR messages) must remain on stderr so that only
+    # the integer count appears on stdout for clean capture into unresolved_thread_count.
     # Bot logins are passed as individual positional args to avoid glob expansion.
+    # Retry up to THREAD_AUDIT_MAX_RETRIES times on transient GraphQL failures (exit 3)
+    # before escalating. Never degrade to treating the audit as clean on failure.
+    thread_audit_max_retries="$(thread_audit_max_retries_value)"
+    thread_audit_attempt=0
     thread_check_output=""
     thread_check_status=0
-    set +e
-    thread_check_output="$(check_unresolved_threads "$pr_number" "$(repo_slug)" "${unresolved_bot_logins[@]}")"
-    thread_check_status=$?
-    set -e
+    while true; do
+      thread_audit_attempt=$((thread_audit_attempt + 1))
+      set +e
+      thread_check_output="$(check_unresolved_threads "$pr_number" "$(repo_slug)" "${unresolved_bot_logins[@]}")"
+      thread_check_status=$?
+      set -e
+      if [ "$thread_check_status" -eq 3 ] && [ "$thread_audit_attempt" -le "$thread_audit_max_retries" ]; then
+        echo "WARN: check_unresolved_threads GraphQL failure (aggregate gate, attempt $thread_audit_attempt/$thread_audit_max_retries) — retrying" >&2
+        sleep 5
+        continue
+      fi
+      break
+    done
     if [ "$thread_check_status" -eq 2 ]; then
-      # Exit 2 = page-cap exceeded. Fail-safe: BLOCK the PR because we could not
-      # confirm all threads were inspected (threads past page 10 may be unresolved).
-      # This is different from a transient API failure (exit 3) where degrading is
-      # acceptable.
-      echo "WARN: check_unresolved_threads exceeded page cap — blocking PR as fail-safe" >&2
-      aggregate_result="needs_fixes"
+      # Exit 2 = page-cap exceeded. Escalate: the audit was incomplete so we cannot
+      # confirm threads past page 10 are resolved. This is not a fixable finding —
+      # sending it through the fixer loop is pointless. Hard-stop for human inspection.
+      echo "WARN: check_unresolved_threads exceeded page cap — escalating for manual inspection" >&2
+      aggregate_result="escalate"
       aggregate_reason="unresolved_thread_check_incomplete"
-      unresolved_thread_count=0
+      unresolved_thread_count=-1
     elif [ "$thread_check_status" -ne 0 ]; then
-      # Exit 3 (or any other non-zero) = transient GraphQL API failure. Degrade:
-      # skip the thread gate and trust the 0 unresolved default. All platform reviews
-      # have already succeeded at this point so the PR state is otherwise clean.
-      echo "WARN: check_unresolved_threads failed (exit $thread_check_status) — skipping thread gate, treating as 0 unresolved" >&2
-      unresolved_thread_count=0
+      # Exit 3 after all retries (or any other non-zero) = GraphQL audit failure.
+      # Escalate: we cannot confirm threads are resolved, so RESULT=clean must not be
+      # emitted. Never degrade gracefully — a silent bypass of the thread audit can
+      # allow PRs with unresolved review threads to be labeled ready-for-human-review.
+      echo "ERROR: check_unresolved_threads failed (exit $thread_check_status, $thread_audit_attempt attempts / $thread_audit_max_retries retries) — escalating (thread audit required)" >&2
+      aggregate_result="escalate"
+      aggregate_reason="review_thread_audit_failed"
+      unresolved_thread_count=-1
     else
       unresolved_thread_count="$thread_check_output"
     fi

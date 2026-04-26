@@ -23,6 +23,8 @@
 #   PR_BASE=<base-branch>
 #   PR_LABELS=<label1,label2,...>
 #   PR_READY_LABEL=true|false
+#   PR_IS_DRAFT=true|false
+#   PR_HAS_NEEDS_FIXES=true|false
 #   PR_HAS_CHANGELOG=true|false
 #   PR_CREATED_AT=<ISO-8601>
 #   PR_ORDER=<1-based index in merge order>
@@ -75,13 +77,13 @@ fetch_pr_meta() {
 
   local json
   json="$(gh pr view "$pr_num" \
-    --json number,title,headRefName,baseRefName,labels,createdAt \
+    --json number,title,headRefName,baseRefName,labels,createdAt,isDraft \
     2>/dev/null)" || {
     echo "FETCH_ERROR=could not fetch PR #${pr_num}" >&2
     return 1
   }
 
-  local number title branch base created_at labels_csv ready_label
+  local number title branch base created_at labels_csv ready_label is_draft has_needs_fixes
 
   number="$(printf '%s' "$json" | jq -r '.number')"
   title="$(printf '%s' "$json" | jq -r '.title')"
@@ -89,10 +91,16 @@ fetch_pr_meta() {
   base="$(printf '%s' "$json" | jq -r '.baseRefName')"
   created_at="$(printf '%s' "$json" | jq -r '.createdAt')"
   labels_csv="$(printf '%s' "$json" | jq -r '[.labels[].name] | join(",")')"
+  is_draft="$(printf '%s' "$json" | jq -r '.isDraft')"
   if printf '%s' "$json" | jq -r '.labels[].name' | grep -q '^ready-for-human-review$'; then
     ready_label="true"
   else
     ready_label="false"
+  fi
+  if printf '%s' "$json" | jq -r '.labels[].name' | grep -q '^needs-fixes$'; then
+    has_needs_fixes="true"
+  else
+    has_needs_fixes="false"
   fi
 
   # Check whether the PR diff touches CHANGELOG.md
@@ -101,14 +109,16 @@ fetch_pr_meta() {
     has_changelog="true"
   fi
 
-  print_kv PR_NUMBER       "$number"
-  print_kv_escaped PR_TITLE "$title"
-  print_kv PR_BRANCH       "$branch"
-  print_kv PR_BASE         "$base"
-  print_kv PR_LABELS       "$labels_csv"
-  print_kv PR_READY_LABEL  "$ready_label"
-  print_kv PR_HAS_CHANGELOG "$has_changelog"
-  print_kv PR_CREATED_AT   "$created_at"
+  print_kv PR_NUMBER         "$number"
+  print_kv_escaped PR_TITLE  "$title"
+  print_kv PR_BRANCH         "$branch"
+  print_kv PR_BASE           "$base"
+  print_kv PR_LABELS         "$labels_csv"
+  print_kv PR_READY_LABEL    "$ready_label"
+  print_kv PR_IS_DRAFT       "$is_draft"
+  print_kv PR_HAS_NEEDS_FIXES "$has_needs_fixes"
+  print_kv PR_HAS_CHANGELOG  "$has_changelog"
+  print_kv PR_CREATED_AT     "$created_at"
 }
 
 # ---------------------------------------------------------------------------
@@ -193,13 +203,27 @@ cmd_discover() {
       continue
     fi
 
-    local base has_changelog
+    local base has_changelog is_draft has_needs_fixes
     base="$(printf '%s\n' "$meta" | awk -F'=' '$1=="PR_BASE"{print $2}')"
     has_changelog="$(printf '%s\n' "$meta" | awk -F'=' '$1=="PR_HAS_CHANGELOG"{print $2}')"
+    is_draft="$(printf '%s\n' "$meta" | awk -F'=' '$1=="PR_IS_DRAFT"{print $2}')"
+    has_needs_fixes="$(printf '%s\n' "$meta" | awk -F'=' '$1=="PR_HAS_NEEDS_FIXES"{print $2}')"
 
     # Filter: only target develop (explicit mode may include any PR numbers)
     if [ "$base" != "$TARGET_BASE" ]; then
       echo "WARNING: PR #${pr_num} targets '${base}', not '${TARGET_BASE}' — skipping" >&2
+      continue
+    fi
+
+    # Filter: skip draft PRs (not ready for merge regardless of label)
+    if [ "$is_draft" = "true" ]; then
+      echo "WARNING: PR #${pr_num} is a draft — skipping" >&2
+      continue
+    fi
+
+    # Filter: skip PRs labeled needs-fixes (review cycle not complete)
+    if [ "$has_needs_fixes" = "true" ]; then
+      echo "WARNING: PR #${pr_num} is labeled needs-fixes — skipping" >&2
       continue
     fi
 
@@ -285,18 +309,21 @@ cmd_merge() {
 
   # Revalidate the PR immediately before merging. A PR may have been
   # retargeted, closed, or labeled needs-fixes since discovery.
-  local pr_json branch base state
-  pr_json="$(gh pr view "$pr_num" --json headRefName,baseRefName,state,labels 2>/dev/null)" || \
+  local pr_json branch base state is_draft
+  pr_json="$(gh pr view "$pr_num" --json headRefName,baseRefName,state,labels,isDraft 2>/dev/null)" || \
     merge_die "Could not fetch metadata for PR #${pr_num}"
 
   branch="$(printf '%s' "$pr_json" | jq -r '.headRefName')"
   base="$(printf '%s' "$pr_json" | jq -r '.baseRefName')"
   state="$(printf '%s' "$pr_json" | jq -r '.state')"
+  is_draft="$(printf '%s' "$pr_json" | jq -r '.isDraft')"
 
   [ "$base" = "$TARGET_BASE" ] || \
     merge_die "PR #${pr_num} targets '${base}', not '${TARGET_BASE}'"
   [ "$state" = "OPEN" ] || \
     merge_die "PR #${pr_num} is not open (state: ${state})"
+  [ "$is_draft" = "false" ] || \
+    merge_die "PR #${pr_num} is a draft"
 
   if printf '%s' "$pr_json" | jq -e '.labels[].name | select(. == "needs-fixes")' >/dev/null 2>&1; then
     merge_die "PR #${pr_num} is labeled needs-fixes"

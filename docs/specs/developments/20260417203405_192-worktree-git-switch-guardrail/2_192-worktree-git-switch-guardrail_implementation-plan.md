@@ -23,11 +23,11 @@
 
 > This project's "shared libraries" are the workflow protocol documents and agent system prompt files. Changes are doc-only with no code.
 
-- [ ] **`docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`** — Step 3 "Worktree Isolation" section: add an explicit, clearly marked "Critical: Worktree Git Discipline" block immediately inside the existing Step 3 worktree content (after the `cd <worktree-path>` instruction, before the "Important — stage protocol compatibility" note). The block must enumerate `git switch`, `git checkout`, `git checkout -b`, `git reset`, and `git restore` as prohibited commands when issued against the main repo root; provide `git -C <worktree-path>` and `cd <worktree-path> &&` as the required alternatives; and state the rule applies when `BATCH_CONTEXT=true`. (AC 1)
+- [ ] **`docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`** — Step 3 "Worktree Isolation" section: add an explicit, clearly marked "Critical: Worktree Git Discipline" block immediately inside the existing Step 3 worktree content (after the `cd <worktree-path>` instruction, before the "Important — stage protocol compatibility" note). The block must enumerate `git switch`, `git checkout`, `git checkout -b`, `git reset`, and `git restore` as prohibited commands when issued against the main repo root; provide `git -C <worktree-path>` and `cd <worktree-path> &&` as the required alternatives; and state the rule applies when `BATCH_CONTEXT=true`. (AC 1)
 
-- [ ] **`docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md`** — Step 3 "Worktree Isolation" section: add an optional pre-tool-use hook guidance note (clearly marked "Optional — platform-specific") describing the warning text, check logic (command's working directory vs. main repo root), and non-blocking nature of the hook. Place this note after the Critical block above. (AC 5 — optional, does not block the PR)
+- [ ] **`docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`** — Step 3 "Worktree Isolation" section: add an optional pre-tool-use hook guidance note (clearly marked "Optional — platform-specific") describing the warning text, check logic (command's working directory vs. main repo root), and non-blocking nature of the hook. Place this note after the Critical block above. (AC 5 — optional, does not block the PR)
 
-- [ ] **`docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`** — Step 5.2 "Post-Agent Main Working Tree Verification": replace the current check (which only detects uncommitted modifications) with an expanded check that handles all four postcondition states from the spec:
+- [ ] **`docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`** — Step 5.2 "Post-Agent Main Working Tree Verification": replace the current check (which only detects uncommitted modifications) with an expanded check that handles all four postcondition states from the spec:
   - **Wrong branch + clean**: auto-correct by running `git -C <main-repo-root> switch <integration-branch>` (or `git checkout`), log the correction as a guardrail violation in the batch retrospective notes, and proceed normally. (AC 2, BR-2, BR-3, BR-6)
   - **Wrong branch + dirty**: halt and escalate — do not auto-correct. Log the full `git status --porcelain` output and the item ID of the preceding agent. (AC 3, BR-3)
   - **Correct branch + clean**: proceed normally. (AC 2 implicit — already handled today but must be explicitly documented as a case)
@@ -65,8 +65,8 @@ None — this feature involves only protocol and agent-prompt document edits. No
 
 ## Documentation Updates
 
-- [ ] `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` — updated as part of implementation (this is the primary deliverable)
-- [ ] `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — updated as part of implementation (this is the primary deliverable)
+- [ ] `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — updated as part of implementation (this is the primary deliverable)
+- [ ] `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — updated as part of implementation (this is the primary deliverable)
 - [ ] `.claude/agents/item-orchestrator.md` — updated as part of implementation
 - [ ] `.cursor/agents/item-orchestrator.md` — updated as part of implementation
 - [ ] `CHANGELOG.md` — add entry under `[Unreleased]` for the guardrail additions
@@ -150,9 +150,9 @@ Read-only inspection of the main repo branch is always permitted:
 ## Implementation Order
 
 1. Read the current text of Protocol 91 Step 3 (Worktree Isolation section) and Protocol 90 Step 5.2 in full — understand exact insertion points before editing.
-2. Edit `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` — add the "Critical: Worktree Git Discipline" block in Step 3 at the insertion point identified in step 1 (after the `cd <worktree-path>` instruction, before the "Important — stage protocol compatibility" note).
-3. Edit `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` — add the optional pre-tool-use hook guidance note immediately after the Critical block (clearly marked "Optional — platform-specific").
-4. Edit `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — replace the current Step 5.2 bash block and its "If any modifications are detected" prose with the expanded four-case logic from the Code Samples section above.
+2. Edit `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — add the "Critical: Worktree Git Discipline" block in Step 3 at the insertion point identified in step 1 (after the `cd <worktree-path>` instruction, before the "Important — stage protocol compatibility" note).
+3. Edit `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — add the optional pre-tool-use hook guidance note immediately after the Critical block (clearly marked "Optional — platform-specific").
+4. Edit `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — replace the current Step 5.2 bash block and its "If any modifications are detected" prose with the expanded four-case logic from the Code Samples section above.
 5. Edit `.claude/agents/item-orchestrator.md` — add the "Worktree git discipline" reminder after the existing bullet list.
 6. Edit `.cursor/agents/item-orchestrator.md` — apply the identical reminder text (keep both files in sync).
 7. Update `CHANGELOG.md` — add entry under `[Unreleased]` describing the guardrail additions.

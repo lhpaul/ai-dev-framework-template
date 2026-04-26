@@ -6,7 +6,7 @@ description: >
   Usage: /batch-merge [#PR1 #PR2 ...] or /batch-merge --prs 101,102,103
 ---
 
-Follow `docs/ai/development-workflow/protocols/94-batch-merge-protocol.md` exactly.
+Follow `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md` exactly.
 
 **Auto-discovery** (no arguments): discovers all PRs labeled `ready-for-human-review` targeting `develop`.
 

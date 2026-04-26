@@ -7,6 +7,8 @@ tools: Read, Grep, Glob, Write, Edit, Bash
 
 Follow the spec generation protocol exactly as defined in:
 
-`docs/ai/development-workflow/protocols/01-generate-spec-protocol.md`
+`docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md`
 
 That document is the single source of truth for this stage. Do not skip the alignment conversation. Once ambiguity is resolved, continue through reviewer gate, PR creation, and PR readiness unless the protocol requires human input.
+
+For tracker-backed items, follow protocol 01's Brief Objective List, Coverage Matrix, and Deferral Note requirements before opening the draft PR.

@@ -40,7 +40,7 @@
 
 ### Protocols / Agent Docs
 
-- [ ] **`docs/ai/development-workflow/protocols/94-batch-merge-protocol.md`** — New agent protocol that orchestrates the full batch-merge flow:
+- [ ] **`docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md`** — New agent protocol that orchestrates the full batch-merge flow:
   - **Step 1: Discovery & candidate list** — invoke `batch-merge.sh` in discovery mode (or accept explicit PR numbers from the human), display the candidate summary table (PR number, title, branch, labels, readiness status); if the script reports no auto-discovered candidates, exit immediately with an informational message and no side effects. *Maps to: AC 1, AC 13*
   - **Step 2: Readiness gate** — for each candidate PR, check for `ready-for-human-review` label. Any PR missing the label triggers a warning; the agent asks the human to confirm include or skip. Record each decision. *Maps to: AC 3, AC 14*
   - **Step 3: Human confirmation** — display the final merge plan (ordered list of PRs that will be merged, any skipped PRs) and require explicit human approval before proceeding. *Maps to: AC 2*
@@ -57,7 +57,7 @@
   - **Step 5: Final summary** — display a structured summary table listing every candidate PR with its outcome code (`merged_clean`, `merged_auto`, `merged_human`, `skipped_not_ready`, `skipped_conflict`, `failed`, `not_attempted`). Include details of any auto-resolved conflicts. *Maps to: AC 12*
   - **Orchestrator-invoked mode**: a note that when called from the orchestrator (protocol 90), the same flow applies — the orchestrator passes the PR list, and the protocol still requires human confirmation at Step 3 and human resolution at Step 4. *Maps to: AC 14*
 
-- [ ] **`docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`** — Update the portfolio orchestrator protocol so that when a parallel-safe batch reaches the human-merge stage, it can hand the eligible PR list to `94-batch-merge-protocol.md` instead of stopping at "wait for human merge". Document that the orchestrator prepares the batch, presents the plan, and still requires explicit human approval before any merge starts. *Maps to: Use Case 2, AC 14*
+- [ ] **`docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`** — Update the portfolio orchestrator protocol so that when a parallel-safe batch reaches the human-merge stage, it can hand the eligible PR list to `94-batch-merge-protocol.md` instead of stopping at "wait for human merge". Document that the orchestrator prepares the batch, presents the plan, and still requires explicit human approval before any merge starts. *Maps to: Use Case 2, AC 14*
 
 ### Agent Entry Points
 
@@ -71,7 +71,7 @@
 
 - [ ] **`AGENTS.md`** — Add `batch-merge` row to the **Workflow Commands** table (between "Run reviewer loop (PR)" and "Advance One Item" or at the end of the workflow commands section). The row should list: `/batch-merge` for Claude Code, `/batch-merge` for Cursor, `batch-merge` skill for Codex.
 
-- [ ] **`docs/ai/development-workflow/README.md`** — Add `batch-merge` to the workflow command tables and add a reference to `94-batch-merge-protocol.md` in the protocol/command reference sections.
+- [ ] **`docs/workflow/development-workflow/README.md`** — Add `batch-merge` to the workflow command tables and add a reference to `94-batch-merge-protocol.md` in the protocol/command reference sections.
 
 - [ ] **`scripts/development-workflow/README.md`** — Add `batch-merge.sh` to the script listing with a brief description.
 
@@ -117,8 +117,8 @@ No database seed data required. Testing requires:
 ## Documentation Updates
 
 - [ ] `AGENTS.md` — Add `batch-merge` to the Workflow Commands table
-- [ ] `docs/ai/development-workflow/README.md` — Add `batch-merge` to the workflow command tables and reference `94-batch-merge-protocol.md`
-- [ ] `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — Add the batch-merge handoff step for merge-ready batches
+- [ ] `docs/workflow/development-workflow/README.md` — Add `batch-merge` to the workflow command tables and reference `94-batch-merge-protocol.md`
+- [ ] `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — Add the batch-merge handoff step for merge-ready batches
 - [ ] `scripts/development-workflow/README.md` — Add `batch-merge.sh` to the script listing
 
 ---
@@ -139,7 +139,7 @@ No database seed data required. Testing requires:
 
 1. **Create `scripts/development-workflow/batch-merge.sh`** — implement PR discovery (auto + explicit), metadata collection, merge ordering logic, single-PR merge execution (with conflict detection), and structured output. Source `workflow-lib.sh`. Make executable.
 
-2. **Create `docs/ai/development-workflow/protocols/94-batch-merge-protocol.md`** — write the full agent protocol covering: discovery/candidate list, readiness gate, human confirmation, sequential merge loop with conflict classification (CHANGELOG auto-resolution, doc file auto-resolution, non-trivial escalation), abort handling, post-merge cleanup invocation, and final summary output.
+2. **Create `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md`** — write the full agent protocol covering: discovery/candidate list, readiness gate, human confirmation, sequential merge loop with conflict classification (CHANGELOG auto-resolution, doc file auto-resolution, non-trivial escalation), abort handling, post-merge cleanup invocation, and final summary output.
 
 3. **Create `.claude/commands/batch-merge.md`** — Claude Code command pointing to the protocol with appropriate `allowed-tools` and description.
 
@@ -147,11 +147,11 @@ No database seed data required. Testing requires:
 
 5. **Create `.codex/skills/batch-merge/SKILL.md`** — Codex skill equivalent.
 
-6. **Update `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`** — add the batch-merge handoff step for merge-ready parallel batches so Use Case 2 is implemented, not just mentioned.
+6. **Update `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`** — add the batch-merge handoff step for merge-ready parallel batches so Use Case 2 is implemented, not just mentioned.
 
 7. **Update `AGENTS.md`** — add batch-merge row to the Workflow Commands table.
 
-8. **Update `docs/ai/development-workflow/README.md`** — add the new command and reference to `94-batch-merge-protocol.md`.
+8. **Update `docs/workflow/development-workflow/README.md`** — add the new command and reference to `94-batch-merge-protocol.md`.
 
 9. **Update `scripts/development-workflow/README.md`** — add `batch-merge.sh` to the script listing.
 

@@ -16,7 +16,7 @@ Before running this smoke test:
 - [ ] Bash 3.2+ is available
 - [ ] `scripts/development-workflow/workflow-batch-plan.sh` has been updated per the
   implementation plan
-- [ ] `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` has been
+- [ ] `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` has been
   updated per the implementation plan
 - [ ] A temporary fixture directory is available (see Test Data below)
 
@@ -31,7 +31,7 @@ no database, and no issue tracker queries are required.
 |---|---|
 | Fixture base dir | `.tmp/smoke-199/` (gitignored) |
 | Script under test | `scripts/development-workflow/workflow-batch-plan.sh` |
-| Protocol under test | `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
+| Protocol under test | `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
 
 Create the fixture base directory before running:
 
@@ -81,7 +81,7 @@ WORKFLOW_SKIP_FETCH=1 ./scripts/development-workflow/workflow-batch-plan.sh \
 ```bash
 mkdir -p .tmp/smoke-199/20200101000003_ac3-protocol-md
 cat > .tmp/smoke-199/20200101000003_ac3-protocol-md/1_ac3_specs.md <<'EOF'
-# Test spec referencing docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md
+# Test spec referencing docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md
 EOF
 WORKFLOW_SKIP_FETCH=1 ./scripts/development-workflow/workflow-batch-plan.sh \
   .tmp/smoke-199/20200101000003_ac3-protocol-md 2>/dev/null || true
@@ -90,7 +90,7 @@ WORKFLOW_SKIP_FETCH=1 ./scripts/development-workflow/workflow-batch-plan.sh \
 **Expected result**:
 - Output contains `TOOL_FIX=yes`
 - `TOOL_FIX_FILES=` contains
-  `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
+  `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
 
 ### Step 4: AC4 — `batch-merge.sh` reference → `TOOL_FIX=yes`
 
@@ -185,7 +185,7 @@ WORKFLOW_SKIP_FETCH=1 ./scripts/development-workflow/workflow-batch-plan.sh \
 
 ### Step 10: Protocol 90 Step 3 content verification (ACs 8–12, 14)
 
-Open `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` and verify
+Open `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` and verify
 Step 3 contains a "Same-batch tool-fix ordering hazard" subsection with all required content:
 
 - [ ] (AC 8) Orchestrator treats `TOOL_FIX=no` from script but tool-file reference in tracker

@@ -8,7 +8,7 @@ description: Batch-orchestrate the repository's staged AI development workflow. 
 Recommended model tier: `economy`
 
 1. Read `AGENTS.md` for repository-wide rules, branch overrides, and terminal-condition expectations.
-2. Read `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`.
+2. Read `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`.
 3. Prefer the helper scripts in `scripts/development-workflow/` for state discovery, batch planning, next-action classification, resume behavior, CI polling, and automated review polling before using ad hoc shell commands.
 4. Treat the protocol as canonical. Use `workflow-item-orchestrator` for each selected item when your runner supports skill-to-skill handoff; otherwise continue in the current session by following `91-orchestrate-work-protocol.md` item by item.
 5. Keep batching and prioritization decisions explicit, especially when work must be serialized because the runner cannot execute multiple item orchestrators concurrently.

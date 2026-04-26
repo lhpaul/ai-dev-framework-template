@@ -19,13 +19,13 @@ Use it for every pre-PR review gate and as the normalization layer for PR review
 |---|---|---|
 | `blocking` | Incorrect behavior, spec/plan deviation, broken workflow contract, security issue, missing critical validation or tests | Fix before PR is ready |
 | `important` | Edge-case gap, maintainability issue, unclear design choice, incomplete workflow update | Fix by default unless a human decision is required |
-| `suggestion` | Improvement that is optional and low-risk | Report or fix at discretion |
+| `suggestion` | Improvement that is optional and low-risk | Fix by default; report if scope-expanding or requires a product decision |
 
 ### Fix vs. Report
 
 Fix directly when:
 - The correct change is clear and low-risk
-- The issue is `blocking` or `important`
+- The issue is `blocking`, `important`, or `suggestion`
 - The change is mechanical: links, wording, formatting, naming, checklist completion, or deterministic script/doc updates
 
 Report instead of fixing when:
@@ -57,6 +57,7 @@ Check:
 - Required spec template sections are present and no placeholders are unintentionally left behind
 - Use cases are explicit: actor, trigger, steps, outcome
 - Acceptance criteria are specific and testable
+- When a tracker issue is linked, brief objectives are fully covered via a visible matrix: each objective maps to AC(s) or explicit out-of-scope deferral with rationale
 - Business rules are unambiguous and non-contradictory
 - Scope boundaries and out-of-scope items are explicit
 - Status or enum changes include display labels and transitions
@@ -87,6 +88,14 @@ Check:
 - Every use case and acceptance criterion from the spec (or from the work item brief for Refactor items) is addressed
 - Steps are specific enough to execute without guessing
 - Ordering is feasible and dependencies are explicit
+- When pattern-based completeness applies, enumerated counts/paths are validated against the plan's Verification Log commands and outputs
+- Parser-risk completeness (when protocol `02-generate-implementation-plan-protocol.md` Step 3 parser-risk signals apply):
+  - Edge-case enumeration is present and concrete
+  - A unit test file is named with at least one automated test mapped per enumerated case
+  - When suppressions are part of the proposed feature, suppression semantics explicitly define:
+    - Recognized directives
+    - Allowed placement
+    - Interpretation of multiple suppressions on one line
 - Documentation updates are listed or intentionally declared unnecessary
 - Seed data, generated artifacts, and follow-up tasks are called out when applicable
 - The proposed approach matches existing architecture and repo patterns
@@ -96,11 +105,13 @@ Typical `blocking` issues:
 - Plan steps do not cover required acceptance criteria
 - The plan requires guessing at implementation details
 - The plan introduces unsafe or contradictory architecture decisions
+- A CHANGELOG literal in the Implementation Order uses conventional-commit format (`fix(scope): message`) instead of the project's `**Bold Title** (#N):` format
 
 Typical `important` issues:
 - Vague wording like "update as needed"
 - Missing documentation/test updates
 - Incomplete dependency or rollout notes
+- Verification steps in Implementation Order steps use complex shell commands that are hard to verify by reading: flag any multi-flag grep one-liner with exclusion scopes or self-referencing globs, hardcoded file counts that go stale, or broad exclusion patterns that may silently under-count. Suggest replacing with a human-readable "run and confirm output" assertion instead.
 
 ---
 
@@ -127,6 +138,9 @@ Additional checks for **shell scripts** (`*.sh`):
 - User-supplied input (PR numbers, branch names) is validated before interpolation into file paths or commands
 - `|| true` does not silently swallow failures from external commands (e.g., `gh`, `git`) that the caller needs to know about
 
+Additional checks for **database migrations** (when a migration adds or changes triggers, functions, or backfills):
+- **Trigger/backfill arithmetic parity**: If both a trigger and a backfill compute the same derived value, they must use the **same formula**, including guards such as `GREATEST`, `LEAST`, `COALESCE`, and null handling. A trigger that differs from its backfill is a latent production bug.
+
 Typical `blocking` issues:
 - Incorrect behavior
 - Security flaw
@@ -146,13 +160,13 @@ Typical `important` issues:
 
 - Prefer Claude Code's native review capability for the pre-PR review gate.
 - Use the checklist in this file as the review rubric.
-- If a repo compatibility protocol is explicitly requested, use the corresponding wrapper protocol under `docs/ai/development-workflow/protocols/`.
+- If a repo compatibility protocol is explicitly requested, use the corresponding wrapper protocol under `docs/workflow/development-workflow/protocols/`.
 
 ### Codex
 
 - Prefer Codex native review/code-review capability for the pre-PR review gate.
 - Use the checklist in this file as the review rubric.
-- If a repo compatibility protocol is explicitly requested, use the corresponding wrapper protocol under `docs/ai/development-workflow/protocols/`.
+- If a repo compatibility protocol is explicitly requested, use the corresponding wrapper protocol under `docs/workflow/development-workflow/protocols/`.
 
 ### Cursor
 
@@ -164,7 +178,7 @@ Typical `important` issues:
 - Use the CodeRabbit CLI as an optional pre-push review tool for local changes.
 - In Claude Code: `/coderabbit:review`. Standalone: `cr` or `cr --agent`.
 - CodeRabbit CLI findings complement the pre-PR review gate but do not replace it.
-- See [`docs/ai/development-workflow/integrations/coderabbit.md`](docs/ai/development-workflow/integrations/coderabbit.md) for setup and usage modes.
+- See [`docs/workflow/development-workflow/integrations/coderabbit.md`](docs/workflow/development-workflow/integrations/coderabbit.md) for setup and usage modes.
 
 ### Automated PR Reviewers
 

@@ -65,8 +65,8 @@ The spec template and all generated spec documents currently include a verbatim 
 
 ## Business Rules
 
-- The spec template (`docs/ai/development-workflow/templates/spec-template.md`) must not contain any section addressed to the author or agent that a reader of the finished spec would gain nothing from.
-- The authoring guidance ("this stage is product-focused: write user-facing behavior, avoid implementation details") must be present in `docs/ai/development-workflow/protocols/01-generate-spec-protocol.md` so agents generating specs can reference it.
+- The spec template (`docs/workflow/development-workflow/templates/spec-template.md`) must not contain any section addressed to the author or agent that a reader of the finished spec would gain nothing from.
+- The authoring guidance ("this stage is product-focused: write user-facing behavior, avoid implementation details") must be present in `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md` so agents generating specs can reference it.
 - The `REVIEW.md` spec checklist must enforce implementation-detail cleanliness on substance, not on the presence of a named boilerplate section.
 - Existing merged spec files that still contain the "Guiding principle" section must be updated to remove it, keeping the remaining content intact.
 
@@ -74,8 +74,8 @@ The spec template and all generated spec documents currently include a verbatim 
 
 ## Acceptance Criteria
 
-- [ ] `docs/ai/development-workflow/templates/spec-template.md` no longer contains the "Guiding principle (important)" section.
-- [ ] `docs/ai/development-workflow/protocols/01-generate-spec-protocol.md` contains the "product-focused" authoring guidance (verbatim or equivalent) so that spec authors and agents generating specs can reference it.
+- [ ] `docs/workflow/development-workflow/templates/spec-template.md` no longer contains the "Guiding principle (important)" section.
+- [ ] `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md` contains the "product-focused" authoring guidance (verbatim or equivalent) so that spec authors and agents generating specs can reference it.
 - [ ] `REVIEW.md` spec checklist does not require the "Guiding principle" section to be present; instead it checks that the spec does not contain implementation details (table names, endpoints, file paths, class names, migration design).
 - [ ] All existing spec files that contain the "Guiding principle" section have it removed:
   - `docs/specs/developments/20260413201328_retrospective-protocol/1_retrospective-protocol_specs.md`

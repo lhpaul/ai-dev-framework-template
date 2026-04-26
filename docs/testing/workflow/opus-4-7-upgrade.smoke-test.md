@@ -20,7 +20,7 @@ Before running this smoke test:
 
 | Item | Value |
 |---|---|
-| Files to check | `.claude/agents/tech-lead.md`, `docs/ai/development-workflow/agent-model-config.md` |
+| Files to check | `.claude/agents/tech-lead.md`, `docs/workflow/development-workflow/agent-model-config.md` |
 | Old Opus model IDs | `claude-opus-4-6`, `claude-opus-4-5-20251101` |
 | New Opus model ID | `claude-opus-4-7` |
 
@@ -33,8 +33,8 @@ Before running this smoke test:
 Run from the repo root:
 
 ```bash
-grep -r "claude-opus-4-6" .claude/ .cursor/ .codex/ docs/ai/
-grep -r "claude-opus-4-5" .claude/ .cursor/ .codex/ docs/ai/
+grep -r "claude-opus-4-6" .claude/ .cursor/ .codex/ docs/workflow/
+grep -r "claude-opus-4-5" .claude/ .cursor/ .codex/ docs/workflow/
 ```
 
 **Expected result**: Both commands return no output (zero matches).
@@ -50,7 +50,7 @@ head -5 .claude/agents/tech-lead.md
 ### Step 3: Verify agent-model-config examples
 
 ```bash
-grep "claude-opus" docs/ai/development-workflow/agent-model-config.md
+grep "claude-opus" docs/workflow/development-workflow/agent-model-config.md
 ```
 
 **Expected result**: All `claude-opus` references in the file use `claude-opus-4-7`. No `claude-opus-4-6` or `claude-opus-4-5` present.
@@ -66,7 +66,7 @@ grep -A 3 "\[Unreleased\]" CHANGELOG.md | head -20
 ### Step 5: Verify Sonnet and Haiku references are untouched
 
 ```bash
-grep -r "claude-sonnet\|claude-haiku" .claude/agents/ docs/ai/development-workflow/agent-model-config.md
+grep -r "claude-sonnet\|claude-haiku" .claude/agents/ docs/workflow/development-workflow/agent-model-config.md
 ```
 
 **Expected result**: Sonnet and Haiku lines are present and unchanged (no accidental version bumps).
@@ -75,10 +75,10 @@ grep -r "claude-sonnet\|claude-haiku" .claude/agents/ docs/ai/development-workfl
 
 ## Assertions Checklist
 
-- [ ] `grep -r "claude-opus-4-6" .claude/ .cursor/ .codex/ docs/ai/` returns no matches
-- [ ] `grep -r "claude-opus-4-5" .claude/ .cursor/ .codex/ docs/ai/` returns no matches
+- [ ] `grep -r "claude-opus-4-6" .claude/ .cursor/ .codex/ docs/workflow/` returns no matches
+- [ ] `grep -r "claude-opus-4-5" .claude/ .cursor/ .codex/ docs/workflow/` returns no matches
 - [ ] `.claude/agents/tech-lead.md` front-matter has `model: claude-opus-4-7`
-- [ ] `docs/ai/development-workflow/agent-model-config.md` examples use `claude-opus-4-7`
+- [ ] `docs/workflow/development-workflow/agent-model-config.md` examples use `claude-opus-4-7`
 - [ ] CHANGELOG `[Unreleased]` section has a `Changed` entry for this upgrade
 - [ ] Sonnet and Haiku references are unchanged
 

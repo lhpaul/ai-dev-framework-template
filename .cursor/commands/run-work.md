@@ -6,12 +6,12 @@ description: Batch-orchestrate and supervise multiple developments. Reads curren
 
 Follow the batch orchestration protocol exactly as defined in:
 
-`docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
+`docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
 
 Key responsibilities:
 
 - Read current state from the issue tracker (if configured) and `docs/specs/developments/`
-- When using an issue tracker, read the current brief per `docs/ai/development-workflow/integrations/issue-tracker.md`
+- When using an issue tracker, read the current brief per `docs/workflow/development-workflow/integrations/issue-tracker.md`
 - Respect dependencies declared in specs
 - Prioritize: due within 2 weeks → priority level → creation date
 - Flag conflicts to the human rather than choosing silently

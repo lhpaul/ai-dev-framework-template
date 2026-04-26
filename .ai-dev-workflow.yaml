@@ -1,11 +1,12 @@
+# <!-- TEMPLATE-OWNED-START -->
 # AI Development Workflow Configuration
 #
 # This file declares which workflow integrations this repository uses.
 # Keep it declarative and repo-safe: select providers here, but do not store
 # secrets, tokens, hostnames, or other environment-specific credentials.
 #
-# See docs/ai/development-workflow/README.md and
-# docs/ai/development-workflow/integrations/ for integration-specific setup.
+# See docs/workflow/development-workflow/README.md and
+# docs/workflow/development-workflow/integrations/ for integration-specific setup.
 #
 # Important:
 # - review.platforms is consumed by scripts/development-workflow/pr-review-loop.sh
@@ -17,6 +18,7 @@
 # Behavior for automated PR review:
 # - If this file is absent, or review.platforms is omitted or empty, the review
 #   loop reports skipped (not configured).
+# <!-- TEMPLATE-OWNED-END -->
 
 schema_version: 1
 
@@ -42,16 +44,32 @@ review:
   #               implementation-plan/* -> workflow-plan-reviewer
   #               feature/*/refactor/*/fix/*/hotfix/* -> workflow-code-reviewer
   #
+  # Runner-context constraint:
+  #   'codex' as a direct CLI reviewer is NOT reliably reachable from automated
+  #   subagent runners (Claude Code subagents, Cursor subagents, or any headless
+  #   environment). It is typically only reachable when Codex is the top-level
+  #   runner itself. Protocol 91 Step 7a will classify 'codex' as unreachable in
+  #   these contexts and emit a warning comment on the PR, then proceed with only
+  #   'claude' under the default 'warn' policy. This is expected behaviour — not
+  #   a misconfiguration.
+  #
+  #   A future improvement (tracked in the template backlog) will add a
+  #   GitHub-integration-based Codex reviewer path that works from any runner by
+  #   posting a review trigger comment and polling for the Codex bot response.
+  #
+  #   To suppress the recurring warning in the meantime, remove 'codex' from this
+  #   list or override it locally via .tmp/template-config.json (see below).
+  #
   # Local override: developers who do not have access to all tools listed here
   # can override this list locally by creating .tmp/template-config.json in the
   # repository root (this path is gitignored). Format:
   #   { "overrides": { "review": { "internal_reviewers": ["claude"] } } }
   # The overrides key takes precedence over this file for the local environment.
-  # See docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md
+  # See docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
   # Step 7a for the full multi-reviewer gate procedure.
   internal_reviewers:
     - claude
-    - codex
+    - codex  # not reachable from automated subagent runners (Claude Code or Cursor); skipped with a warning
 
   # Optional: policy when a listed internal reviewer is unreachable from the current runner.
   # Protocol 91 Step 7a enforces this policy at runtime.
@@ -76,3 +94,14 @@ vcs:
 browser_automation:
   # Supported examples: cursor_ide_browser_mcp, playwright_mcp, playwright_cli, none
   provider: playwright_cli
+
+template:
+  # Optional: upstream template repository reference (owner/repo format for GitHub).
+  # When set, the retrospective protocol (Step 3b) cross-references each finding
+  # against the specified template repository's issue tracker. Leave empty or omit to skip.
+  repository: ""
+
+  # Optional: the template version last applied by the sync-template skill.
+  # Written automatically by sync-template after a successful sync.
+  # Used by the retrospective cross-reference step to identify "already fixed upstream" findings.
+  last_synced_version: ""

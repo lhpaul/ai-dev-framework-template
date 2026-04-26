@@ -6,7 +6,7 @@ Use `REVIEW.md` as the primary review contract.
 
 For compatibility with the repo workflow, also follow:
 
-`docs/ai/development-workflow/protocols/02-review-implementation-plan-protocol.md`
+`docs/workflow/development-workflow/protocols/02-review-implementation-plan-protocol.md`
 
 If invoked as part of a reviewer loop, apply fixes, commit, and push until the protocol reaches approval or a real human decision is required.
 

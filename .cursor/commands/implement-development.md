@@ -4,7 +4,7 @@ description: In Development stage. Implements a feature via Full Pipeline (with 
 
 Follow the implementation protocol exactly as defined in:
 
-`docs/ai/development-workflow/protocols/03-implement-development-protocol.md`
+`docs/workflow/development-workflow/protocols/03-implement-development-protocol.md`
 
 ### Which path?
 

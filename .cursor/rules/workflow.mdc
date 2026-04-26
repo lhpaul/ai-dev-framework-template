@@ -8,7 +8,7 @@ alwaysApply: false
 
 This project follows a staged AI-assisted development workflow. The canonical reference is:
 
-`docs/ai/development-workflow/README.md`
+`docs/workflow/development-workflow/README.md`
 
 Repository-specific workflow providers live in `.ai-dev-workflow.yaml`. Today, `review.platforms` is consumed by `pr-review-loop.sh` (Step 7) and `review.internal_reviewers` is consumed by the Step 7a internal review gate protocol; other sections are advisory until more tooling adopts them.
 
@@ -16,18 +16,18 @@ Repository-specific workflow providers live in `.ai-dev-workflow.yaml`. Today, `
 
 | Stage | Protocol |
 |---|---|
-| Write spec | `docs/ai/development-workflow/protocols/01-generate-spec-protocol.md` |
-| Write plan | `docs/ai/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
-| Implement | `docs/ai/development-workflow/protocols/03-implement-development-protocol.md` |
-| Review gate | `REVIEW.md` and the compatibility wrappers under `docs/ai/development-workflow/protocols/` |
-| Batch orchestrate | `docs/ai/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
-| Orchestrate one item | `docs/ai/development-workflow/protocols/91-orchestrate-work-protocol.md` |
+| Write spec | `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md` |
+| Write plan | `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
+| Implement | `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` |
+| Review gate | `REVIEW.md` and the compatibility wrappers under `docs/workflow/development-workflow/protocols/` |
+| Batch orchestrate | `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
+| Orchestrate one item | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` |
 
 ### Key rules
 
 - Always read the spec and plan before implementing (Refactor items have no spec — read the plan and work item brief instead)
 - Continue through the review gate, PR readiness, and CI unless the protocol surfaces a real human decision
-- Always update CHANGELOG under `[Unreleased]` before opening a PR (except spec/plan-only PRs; for fixes to unreleased work, update the existing entry instead of adding a new one; in parallel batches, each PR adds its own CHANGELOG entry as normal; merge conflicts are resolved at merge time)
+- Always update CHANGELOG before opening a PR (except spec/plan-only PRs; for fixes to unreleased work, update the existing entry instead of adding a new one; in parallel batches, each PR adds its own CHANGELOG entry as normal; merge conflicts are resolved at merge time); **hotfix exception**: `hotfix/*` PRs write a new versioned section (e.g., `[1.0.1] - YYYY-MM-DD`) as the **first `##` section** in `CHANGELOG.md` (above all existing headers, including prior hotfix versions and `[Unreleased]`) — hotfixes patch released code and are released immediately on merge
 - No `git push --force`, `reset --hard`, or rebase on shared branches without explicit human approval
 - Humans merge PRs — agents open them
 
