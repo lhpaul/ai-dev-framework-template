@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Sync-template migration notes** (`sync-manifest.yaml`, sync-template skill and commands): `sync-manifest.yaml` gains a `migration_notes` section for versioned manual migration steps. The sync-template skill and command variants now read this section and present a required pre-sync checklist whenever the downstream project's `last_synced_version` predates a breaking structural change. First entry: `docs/ai/ → docs/workflow/` rename (v0.23.0). Fully backwards-compatible — silently skipped when no applicable notes exist.
 
+### Fixed
+
+- **Bot login format mismatch in GraphQL thread audit** (`pr-review-loop.sh`): `bot_login_for_platform()` passed `[bot]`-suffixed bot logins to `check_unresolved_threads`, but the GitHub GraphQL API returns `author.login` without the suffix for bot-authored comments. The string comparison always failed, causing the unresolved thread gate to report zero unresolved threads even when unresolved bot threads existed. Fixed by removing the `[bot]` suffix from `bot_login_for_platform()` return values to match the GraphQL API contract. Updated documentation and smoke test to reflect that GraphQL returns bare bot login strings.
+
 ## [0.23.0] - 2026-04-25
 
 ### Added
