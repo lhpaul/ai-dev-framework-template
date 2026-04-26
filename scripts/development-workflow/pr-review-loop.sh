@@ -1548,10 +1548,10 @@ check_unresolved_threads() {
   # Arguments:
   #   $1    pr_number  - PR number (integer)
   #   $2    repo       - "owner/repo" slug
-  #   $3... bot_logins - one or more bot login strings (e.g. "coderabbitai[bot]")
+  #   $3... bot_logins - one or more bot login strings (e.g. "coderabbitai", "devin-ai-integration")
   #
   # Bot logins are passed as individual positional arguments (not space-separated)
-  # to prevent Bash glob expansion of bracket characters in "[bot]" strings.
+  # to ensure safe iteration in the comparison loop without word splitting.
   #
   # Re-enable errexit within this function. When called from a command substitution
   # with set +e active in the parent (as in the thread gate), the subshell inherits
@@ -1562,8 +1562,7 @@ check_unresolved_threads() {
   local pr_number="$1"
   local repo="$2"
   shift 2
-  # Remaining positional args are bot login strings; store in an array to avoid
-  # glob expansion when iterating (bracket characters in "[bot]" are safe in arrays).
+  # Remaining positional args are bot login strings; store in an array for safe iteration.
   local -a bot_logins=("$@")
 
   local owner repo_name
@@ -1626,7 +1625,7 @@ check_unresolved_threads() {
       body="$(printf '%s\n' "$thread_json" | jq -r '.comments.nodes[0].body // ""')"
 
       # Only count threads authored by configured bot logins.
-      # Iterate via array to prevent glob expansion of bracket chars in "[bot]" strings.
+      # Bot logins from the GraphQL API do not include the [bot] suffix.
       local is_bot=0
       local bot_login
       for bot_login in "${bot_logins[@]}"; do
