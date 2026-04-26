@@ -248,7 +248,22 @@ rm -rf /tmp/template-sync-*
 
 ## Step 5 — Generate git instructions
 
-Print ready-to-use git instructions (do not execute them — let the user run them after reviewing the changes):
+Before printing the git instructions, record the last-synced template version:
+
+1. Read `.ai-dev-workflow.yaml` from the project root.
+2. Use `yq` to safely update the template section. If the `template:` key does not exist, create it with both required fields (see schema below); if it exists, update only `last_synced_version`. Insert new sections after the `browser_automation:` block.
+   - Schema for new `template:` section:
+     ```yaml
+     template:
+       repository: ""
+       last_synced_version: "v{TEMPLATE_VERSION}"
+     ```
+   - Command to update existing section: `yq eval '.template.last_synced_version = "v{TEMPLATE_VERSION}"' -i .ai-dev-workflow.yaml`
+   - Command to create new section (if missing): `yq eval '.template.repository = "" | .template.last_synced_version = "v{TEMPLATE_VERSION}"' -i .ai-dev-workflow.yaml` (yq will create the `template:` key if absent; key order in YAML is cosmetic, so exact positioning after `browser_automation:` is not critical)
+   - Error handling: If `.ai-dev-workflow.yaml` does not exist or is malformed YAML, abort with error: "Error: cannot modify .ai-dev-workflow.yaml — file does not exist or is malformed. Please fix the file manually before retrying."
+3. Print: `Recorded last-synced template version: v{TEMPLATE_VERSION}` (only after successful write)
+
+Then print ready-to-use git instructions (do not execute them — let the user run them after reviewing the changes):
 
 ```bash
 # 1. Create a sync branch
@@ -265,6 +280,8 @@ git add REVIEW.md docs/workflow/ .claude/agents/ .claude/commands/ .claude/skill
   docs/best-practices/3-testing.md
 # If sync-manifest.yaml was updated, stage it as well:
 git add sync-manifest.yaml
+# Stage the updated last_synced_version field:
+git add .ai-dev-workflow.yaml
 git commit -m "chore(template): sync framework updates from template v{TEMPLATE_VERSION}"
 
 # 4. Push and open PR
