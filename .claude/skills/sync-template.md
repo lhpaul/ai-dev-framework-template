@@ -251,8 +251,17 @@ rm -rf /tmp/template-sync-*
 Before printing the git instructions, record the last-synced template version:
 
 1. Read `.ai-dev-workflow.yaml` from the project root.
-2. Set (or update) `template.last_synced_version` to `v{TEMPLATE_VERSION}` under the `template:` key. If the `template:` key does not exist yet, append the section after the `browser_automation:` block.
-3. Print: `Recorded last-synced template version: v{TEMPLATE_VERSION}`
+2. Use `yq` to safely update the template section. If the `template:` key does not exist, create it with both required fields (see schema below); if it exists, update only `last_synced_version`. Insert new sections after the `browser_automation:` block.
+   - Schema for new `template:` section:
+     ```yaml
+     template:
+       repository: ""
+       last_synced_version: "v{TEMPLATE_VERSION}"
+     ```
+   - Command to update existing section: `yq eval '.template.last_synced_version = "v{TEMPLATE_VERSION}"' -i .ai-dev-workflow.yaml`
+   - Command to create new section (if missing): Use a YAML library or insert the schema block above after verifying the file is valid YAML and not malformed.
+   - Error handling: If `.ai-dev-workflow.yaml` does not exist or is malformed YAML, abort with error: "Error: cannot modify .ai-dev-workflow.yaml — file does not exist or is malformed. Please fix the file manually before retrying."
+3. Print: `Recorded last-synced template version: v{TEMPLATE_VERSION}` (only after successful write)
 
 Then print ready-to-use git instructions (do not execute them — let the user run them after reviewing the changes):
 
