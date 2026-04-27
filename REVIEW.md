@@ -68,6 +68,7 @@ Typical `blocking` issues:
 - Missing or ambiguous acceptance criteria
 - Contradictory business rules
 - Spec drift that would force engineering to guess
+- `CHANGELOG.md` is modified in this PR — `spec/*` branches are exempt from CHANGELOG entries; remove any CHANGELOG modification before merging
 
 Typical `important` issues:
 - Missing edge cases
@@ -106,6 +107,7 @@ Typical `blocking` issues:
 - The plan requires guessing at implementation details
 - The plan introduces unsafe or contradictory architecture decisions
 - A CHANGELOG literal in the Implementation Order uses conventional-commit format (`fix(scope): message`) instead of the project's `**Bold Title** (#N):` format
+- `CHANGELOG.md` is modified in this PR — `implementation-plan/*` branches are exempt from CHANGELOG entries; remove any CHANGELOG modification before merging
 
 Typical `important` issues:
 - Vague wording like "update as needed"

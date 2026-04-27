@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Shell variable interpolation in GraphQL mutation** (`workflow-lib.sh`): `update_tracker_status_best_effort` was interpolating `${project_id}`, `${item_id}`, `${field_id}`, and `${option_id}` directly into the query string. Switched to `-f` parameterized variables with a typed mutation signature (`$projectId: ID!`, `$itemId: ID!`, `$fieldId: ID!`, `$optionId: String!`), eliminating the injection risk and aligning with the safe pattern used elsewhere in the codebase.
 
+- **Plan-writing and spec-writing agents adding CHANGELOG entries to exempt PRs** (#340): `implementation-plan/*` and `spec/*` branches are exempt from CHANGELOG updates per the project changelog policy, but agents occasionally added entries anyway, triggering an unnecessary internal-review fix cycle. Added explicit `Do NOT update CHANGELOG` steps to `02-generate-implementation-plan-protocol.md` and `01-generate-spec-protocol.md`, and added a blocking finding to the Spec and Plan Review checklists in `REVIEW.md` so the exemption is caught at review time if missed at authoring time.
+
 ## [0.23.0] - 2026-04-25
 
 ### Added
