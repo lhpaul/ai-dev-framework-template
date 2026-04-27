@@ -4,6 +4,20 @@
 
 ---
 
+## Brief Coverage (issue #324)
+
+Brief objectives extracted from the issue description, mapped to spec coverage:
+
+| Brief objective | Spec coverage |
+|---|---|
+| Inspect spec/plan documents for each item to identify which files will be modified | Use Case 1 steps 2–3; Use Case 2 steps 1–2; BR-3; AC-3 |
+| Cross-check for file overlaps between items in the same proposed parallel batch | Use Case 1 steps 3–4; BR-2; AC-1, AC-2 |
+| Serialize (or flag to human) any batch pairs with overlapping file sets | Use Case 1 steps 5–6 (auto-serialize); Use Case 2 steps 3–4 (flag unknown); Use Case 3 (human override); BR-4, BR-5, BR-6, BR-7; AC-1, AC-3, AC-5 |
+
+**Deferral notes**: No objectives deferred to Out of Scope.
+
+---
+
 ## Overview
 
 When the Portfolio Orchestrator groups multiple implementation items into a parallel batch, two or more of those items can modify the same source files, producing merge conflicts at integration time. Today the orchestrator relies on human judgment to identify safe batches — the protocol says "implementations that clearly touch different areas of the codebase" are safe, but this determination is manual and imprecise.
@@ -42,8 +56,9 @@ This feature adds an automated file-level conflict-detection step to the batch-p
 - Human can override the serialization decision and force parallel dispatch by explicit instruction (see Use Case 3)
 
 **Considerations**:
-- If an item has no implementation plan yet (for example, it is still in the spec or plan stage), the detector cannot extract a file set; the item is treated as non-conflicting and dispatched normally
-- If an item's plan document does not include an explicit file list, the detector cannot determine the overlap; the item is treated as having an unknown file set (see Business Rule 3)
+- Spec-stage and plan-stage items are out of scope for conflict detection entirely (see BR-1); the detector does not evaluate them
+- If an implementation-branch item has no implementation plan document yet, the detector cannot extract a file set; the item is treated as having an unknown file set and a warning is included in the batch summary (see BR-3 and Use Case 2)
+- If an item's plan document does not include an explicit file list, the detector cannot determine the overlap; the item is also treated as having an unknown file set (see Business Rule 3)
 
 ---
 
@@ -111,7 +126,7 @@ This feature adds an automated file-level conflict-detection step to the batch-p
 - [ ] Given two implementation items that both declare the same file in their implementation plans, when the orchestrator builds a parallel batch containing both, then only the higher-priority item is dispatched in the current batch; the other is moved to the next sub-batch and the batch summary lists the overlapping file path and the serialization decision.
 - [ ] Given two implementation items whose declared file sets have no overlap, when the orchestrator builds a parallel batch containing both, then both items are dispatched together and the batch summary contains no conflict-detection warning for this pair.
 - [ ] Given an implementation item whose implementation plan does not include an explicit file list, when the orchestrator builds a parallel batch containing this item, then the item is dispatched normally and the batch summary notes that file-level conflict detection was not possible for this item (unknown file set).
-- [ ] Given an implementation item that has no implementation plan document yet (still in spec or plan stage), when the orchestrator evaluates it for conflict detection, then the item is treated as non-conflicting and no serialization is applied.
+- [ ] Given an implementation-branch item (for example, a `feature/` or `fix/` item) that has no implementation plan document yet, when the orchestrator evaluates it for conflict detection, then the item is treated as having an unknown file set: it is dispatched in the batch and the batch summary includes a warning noting that conflict detection was not possible for this item.
 - [ ] Given that the orchestrator has serialized an item due to a detected file overlap, when the human explicitly overrides the decision, then the previously-serialized item is dispatched in parallel and the batch summary records the override with a warning.
 - [ ] Conflict detection does not apply to spec-stage or plan-stage items; those items are always dispatched without file-level conflict checks.
 - [ ] The conflict-detection check runs after the existing tool-fix ordering check (protocol 90 Step 3); items already serialized by the tool-fix rule are excluded from conflict-detection input.
