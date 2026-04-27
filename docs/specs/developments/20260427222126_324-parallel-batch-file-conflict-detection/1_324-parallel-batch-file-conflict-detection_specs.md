@@ -62,7 +62,7 @@ This feature adds an automated file-level conflict-detection step to the batch-p
 
 ---
 
-### Use Case 2: Flagging overlap when both items have unknown file sets
+### Use Case 2: Flagging items with unknown file sets
 
 **Actor**: Portfolio Orchestrator
 **Preconditions**:
