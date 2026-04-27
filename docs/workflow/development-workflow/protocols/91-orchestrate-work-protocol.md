@@ -782,11 +782,27 @@ Interpret the result as follows:
 
 | Result | Action |
 |---|---|
-| `clean` | Continue to Step 7b (implementation PRs) then Step 8 |
+| `clean` | Re-issue the GraphQL `reviewThreads` query (Step 8c) **before** proceeding — see "Re-query reviewThreads after each push" below |
 | `skipped` | Continue to Step 7b (implementation PRs) then Step 8 |
 | `needs_fixes` and `cycle < max_cycles` | Increment `cycle`, dispatch the matching fixer agent, wait for a push, then run Step 7 again |
 | `needs_fixes` and `cycle >= max_cycles` | Escalate to human |
 | `escalate` | Escalate to human |
+
+### Re-query reviewThreads after each push (mandatory)
+
+**After every push that addresses reviewer feedback — including the push that causes `pr-review-loop.sh` to return `clean` — you MUST re-issue the GraphQL `reviewThreads` query (Step 8c) before proceeding to Step 7b or Step 8.**
+
+Do not rely on thread state observed before the push. Bot reviewers (CodeRabbit, Devin, or any configured platform) may open new review threads within seconds of a push landing. Thread state cached from before the push will not include these new threads.
+
+The required sequence after each fixer push is:
+
+1. Push the fix commit.
+2. Run `pr-review-loop.sh` (wait for bot response and poll for `clean` / `needs_fixes`).
+3. **Re-issue the GraphQL `reviewThreads` query** (as defined in Step 8c) to get the current thread state for the latest push.
+4. If new unresolved threads are found: treat this as `needs_fixes` — handle them (dispatch a fixer or resolve via reply), then repeat from step 1.
+5. Only when the re-issued query returns no unresolved bot-authored threads: proceed to Step 7b (implementation PRs) then Step 8.
+
+**This check is not optional and cannot be skipped, even when the review loop script reported `clean`.** The script checks review state (blocking inline comments and `CHANGES_REQUESTED` reviews), not the resolved/unresolved state of `reviewThreads`. New threads created by a push may appear after the script's poll window closes. The GraphQL query is the only authoritative source for thread resolution state.
 
 ### Blocking vs. suggestion classification
 
