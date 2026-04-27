@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Commit SHA verification before marking reviewer findings resolved** (`91-orchestrate-work-protocol.md`, `93-automated-reviewer-loop-protocol.md`): Added a mandatory commit SHA verification step requiring agents to confirm a cited commit exists in `git log` before recording it as `resolved_commit` in the PR feedback ledger and before posting fix commit comments. If the SHA is absent, the agent must commit staged changes first and use the real SHA from `git log`. Prevents fabricated SHA references (as observed in PR #321) from propagating into the audit trail and causing PRs to be labeled `ready-for-human-review` with uncommitted fixes.
+
 - **Shell variable interpolation in GraphQL mutation** (`workflow-lib.sh`): `update_tracker_status_best_effort` was interpolating `${project_id}`, `${item_id}`, `${field_id}`, and `${option_id}` directly into the query string. Switched to `-f` parameterized variables with a typed mutation signature (`$projectId: ID!`, `$itemId: ID!`, `$fieldId: ID!`, `$optionId: String!`), eliminating the injection risk and aligning with the safe pattern used elsewhere in the codebase.
 
 ## [0.23.0] - 2026-04-25

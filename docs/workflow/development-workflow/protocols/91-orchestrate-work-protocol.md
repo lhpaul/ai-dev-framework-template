@@ -684,6 +684,29 @@ Maintain a **PR feedback ledger** alongside the cycle counter. Each entry tracks
 - After each fixer push + re-review: any open entry whose key no longer appears in the new output is marked `resolved` with the fixer's commit SHA.
 - When the loop terminates: any still-open entry is marked `unresolved`.
 
+#### Commit SHA verification (mandatory before marking resolved)
+
+Before recording a `resolved_commit` SHA in any ledger entry and before posting the fix commit comment, the agent **must** verify that the cited commit actually exists in the repository:
+
+```bash
+git log --oneline | grep "^<short_sha>"
+# or equivalently:
+git rev-parse --verify <short_sha>^ 2>/dev/null && echo "exists" || echo "not found"
+```
+
+If the SHA is not found in `git log`, the agent must **not** record it as the `resolved_commit` and must **not** claim the finding is resolved. Instead, the agent must commit any staged or unstaged changes first, obtain the real commit SHA from `git log`, and then record that SHA:
+
+```bash
+# If changes exist but were never committed:
+git add <changed-files>
+git commit -m "<commit message>"
+REAL_SHA=$(git log --oneline -1 | awk '{print $1}')
+```
+
+**Rationale**: An agent may edit files in a worktree and mentally track a planned commit SHA without ever running `git commit`. Recording a non-existent SHA in the ledger produces an audit trail that cannot be verified, misleads human reviewers who inspect the commit history, and can cause the PR to be labeled `ready-for-human-review` with uncommitted fixes. The verification step is the only reliable guard against this class of error.
+
+**Escalation if commit fails**: If `git commit` fails (e.g., due to a pre-commit hook or empty diff), the agent must investigate and resolve the failure before marking any finding resolved. Do not silently skip the commit and record a fabricated SHA.
+
 #### Fix commit comment
 
 Post via `gh pr comment` immediately after updating the ledger following a fixer push:

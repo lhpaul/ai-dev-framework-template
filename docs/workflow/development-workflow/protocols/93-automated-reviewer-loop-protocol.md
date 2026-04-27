@@ -73,6 +73,31 @@ Do not assume the latest bot comment is the only active issue. A fixer may addre
 
 This prevents premature dismissal of findings and ensures the PR feedback tracking ledger accurately reflects substantive code changes.
 
+#### Commit SHA verification (mandatory before marking resolved)
+
+Before citing any commit SHA in a fix comment or marking a finding resolved in the PR feedback ledger, the agent **must** verify the commit actually exists in the repository:
+
+```bash
+git log --oneline | grep "^<short_sha>"
+# or equivalently:
+git rev-parse --verify <short_sha>^ 2>/dev/null && echo "exists" || echo "not found"
+```
+
+If the SHA is **not found**, the agent must **not** record it as the resolved commit and must **not** claim the finding is resolved. Instead:
+
+1. Run `git status` to check for uncommitted changes.
+2. If changes are present but not committed, commit them:
+   ```bash
+   git add <changed-files>
+   git commit -m "<commit message>"
+   REAL_SHA=$(git log --oneline -1 | awk '{print $1}')
+   ```
+3. Use the real SHA returned by `git log` — never a remembered or planned SHA.
+
+**Rationale**: An agent may edit files and internally track a planned commit SHA without ever running `git commit`. Citing a SHA that does not exist in `git log` produces a false audit trail, misleads human reviewers, and can result in the PR being labeled `ready-for-human-review` with uncommitted fixes that will be silently lost on branch cleanup.
+
+**Escalation**: If `git commit` fails (e.g., pre-commit hook rejection or empty diff), investigate and resolve the failure before marking any finding resolved. Do not fabricate a SHA or skip the commit step.
+
 #### Stale review after timeout
 
 Also handle the case where a platform posted blocking findings after a previous run timed out and the agent moved on: if those findings are still unresolved per the rules above, dispatch a fixer, wait for the push, then run the scripts.
