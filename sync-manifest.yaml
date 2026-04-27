@@ -147,3 +147,27 @@ migration_notes:
       - "Check whether the old directory exists: ls docs/ai/ 2>/dev/null && echo 'exists' || echo 'already renamed'"
       - "If it exists, rename it: git mv docs/ai docs/workflow"
       - "Commit the rename before applying template file updates: git add -A && git commit -m 'refactor: rename docs/ai to docs/workflow (template migration to v0.23.0)'"
+
+# rename_detections: directories previously used for always-sync content that were renamed
+# in the template. The sync-template skill checks each entry during Step 2: if old_path
+# exists in the project while new_path is in the always_sync list, the skill records a
+# rename cleanup candidate.
+#
+# In Step 3, candidates are presented under a "Rename cleanup" section so the maintainer
+# can approve: (1) deletion of the stale old_path directory, and (2) an offer to scan
+# project-specific files for cross-references to old_path and update them to new_path.
+# The skill MUST NOT delete old_path or modify any cross-references without explicit
+# maintainer approval for each action.
+#
+# Fields:
+#   old_path      - the stale directory path that should be removed after the rename
+#   new_path      - the replacement path (must be in categories.always_sync)
+#   introduced_in - template version when the rename was introduced
+#   description   - short human-readable explanation shown in the Step 3 summary
+rename_detections:
+  - old_path: docs/ai/
+    new_path: docs/workflow/
+    introduced_in: "0.23.0"
+    description: >
+      docs/ai/ was renamed to docs/workflow/ in template v0.23.0. The stale docs/ai/
+      directory still exists in the project alongside the new docs/workflow/ tree.

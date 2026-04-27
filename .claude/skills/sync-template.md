@@ -149,6 +149,23 @@ For each file in these paths:
 - **Exists in both, content identical** → classify as ⏭ **No change** (list but don't highlight)
 - **Exists in project, not in template** → **ignore** (never delete project-only files)
 
+### Rename cleanup detection
+
+**If `SYNC_MANIFEST` is loaded and contains a `rename_detections` list**: after completing the always-sync comparison above, check each entry:
+
+1. Verify that `entry.new_path` is present in `categories.always_sync`. If it is not, skip this entry.
+2. Check whether `entry.old_path` exists as a non-empty directory in the project:
+   ```bash
+   [ -d "<old_path>" ] && find "<old_path>" -mindepth 1 -maxdepth 1 | wc -l
+   ```
+3. If `old_path` exists and is non-empty: record it as a **rename cleanup candidate** with:
+   - `old_path`, `new_path`, `introduced_in`, and `description` from the manifest entry
+   - A list of project-specific files that contain references to `old_path` (scan the files in `categories.project_specific` using `grep -rl "<old_path>"`; collect matching file paths for the cross-reference update offer)
+
+Rename cleanup candidates are displayed in Step 3 and applied in Step 4 only after explicit maintainer approval. The "never delete project-only files" rule in the always-sync section does **not** apply here: `old_path` is a **former always-sync directory** whose content was superseded by `new_path`, not a project-owned directory.
+
+**If `SYNC_MANIFEST=absent`**: skip rename cleanup detection entirely (no candidates to detect without manifest data).
+
 ### Special handling (show full diff, user decides per file)
 
 **If `SYNC_MANIFEST` is loaded**: read `categories.special_handling` from the manifest.
@@ -244,7 +261,17 @@ Manifest: loaded from sync-manifest.yaml  (or: "not found — using embedded fal
   AGENTS.md — template has [brief description]; project keeps its own content; suggest adding: …
   README.md — no template additions suggested
   …
+
+### 🗂️ Rename cleanup (you decide)
+  docs/ai/ — was the previous location of always-sync content now in docs/workflow/ (renamed in v0.23.0).
+  Stale directory still present. Proposed actions (each requires separate approval):
+    1. Delete docs/ai/  (git rm -r docs/ai/)
+    2. Update cross-references in project-specific files:
+         AGENTS.md  — 3 reference(s) to docs/ai/  →  docs/workflow/
+         README.md  — 1 reference(s) to docs/ai/  →  docs/workflow/
 ```
+
+If no rename cleanup candidates were detected, omit the "Rename cleanup" section entirely from the summary.
 
 After applying changes, show a final disposition summary with separate counts (AC-5 / UX Rule 4):
 
@@ -269,7 +296,7 @@ Then ask:
 - Copy/overwrite all ✅ (Add) and 📝 (Update) files **from the always-sync Step 3 section only** when the user confirms that batch. Phrases such as "apply all", "apply everything", or "yes to all" mean **always-sync files only** — they **never** authorize applying **special-handling** paths (`.github/workflows/deploy.yml`, `e2e-regression.yml`, `e2e/`, `.claude/settings.json`, etc.) or **optional additive updates**; those require the user to name each approved path (or `none`).
 - **Placeholder guard for workflow YAML** (`.github/workflows/deploy.yml`, `.github/workflows/e2e-regression.yml`): Before overwriting the project copy with the template, compare line counts. If the **project** file has **more lines** than the template and the template has **fewer than 70%** of the project's line count, treat this as likely "real implementation → template placeholder" and **refuse** unless the user sends a **second** explicit confirmation naming that exact file.
 - For ⚠️ files: apply only those the user explicitly approved (including any optional additive updates to project-specific files — merge or add only, never remove project-specific content)
-- Do **not** delete any file
+- Do **not** delete any file from the always-sync, special-handling, or project-specific categories without explicit approval
 - Do **not** overwrite project-specific files; for those paths only additive/merge changes are allowed, and only with explicit approval
 
 ### Post-apply path verification (cross-reference integrity check)
@@ -287,6 +314,35 @@ For each file that was added or updated in this step:
    > "⚠️  Cross-reference path not found after sync: `<path>` (in `<file>`). The path prefix was updated but the filename may have changed. Please verify the correct path and update the reference manually before committing."
 
 Collect all broken paths and report them together before asking the user to confirm or fix them. Only proceed to Step 5 once either (a) all paths resolve, or (b) the user has explicitly acknowledged each broken path and confirmed they will fix it manually after the commit.
+
+### Rename cleanup actions (only when maintainer approves each action individually)
+
+For each rename cleanup candidate from Step 3, apply only the actions the maintainer explicitly approved:
+
+**Action 1 — Delete the stale old directory** (only if the maintainer approved "delete `<old_path>`"):
+
+```bash
+git rm -r <old_path>
+```
+
+Do not use `rm -rf` — use `git rm -r` so the removal is tracked by git. After running the command, verify the directory no longer exists.
+
+**Action 2 — Update cross-references in project-specific files** (only if the maintainer approved "update cross-references"):
+
+For each project-specific file that contained references to `old_path` (identified during Step 2 rename detection):
+- Replace every occurrence of `old_path` with `new_path` in that file (exact string substitution, preserving surrounding context)
+- Show a brief diff of each change before writing
+- Apply only after the maintainer does not object
+
+After applying cross-reference updates, run a quick grep to confirm no remaining references exist:
+
+```bash
+grep -r "<old_path>" <project_specific_file_list>
+```
+
+If any references remain, list them and ask the maintainer whether to update them or leave them intentionally.
+
+**Bulk phrases do not cover rename cleanup**: "apply all", "apply everything", or "yes to all" never authorize rename cleanup actions. Each rename cleanup action (delete directory, update cross-references) requires the maintainer to name it explicitly.
 
 If the template source was a remote clone, clean it up now:
 ```bash
