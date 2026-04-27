@@ -47,19 +47,23 @@ create_cmd() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --title)
-        title="${2:-}"
+        [ $# -lt 2 ] && { echo "Missing value for --title" >&2; usage >&2; exit 2; }
+        title="$2"
         shift 2
         ;;
       --body)
-        body="${2:-}"
+        [ $# -lt 2 ] && { echo "Missing value for --body" >&2; usage >&2; exit 2; }
+        body="$2"
         shift 2
         ;;
       --body-file)
-        body_file="${2:-}"
+        [ $# -lt 2 ] && { echo "Missing value for --body-file" >&2; usage >&2; exit 2; }
+        body_file="$2"
         shift 2
         ;;
       --label)
-        labels+=("${2:-}")
+        [ $# -lt 2 ] && { echo "Missing value for --label" >&2; usage >&2; exit 2; }
+        labels+=("$2")
         shift 2
         ;;
       -h|--help)

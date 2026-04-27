@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.2] - 2026-04-27
+
+### Fixed
+
+- **`shift 2` without guarding `$2` in `add-backlog-item.sh`**: Option parsing for `--title`, `--body`, `--body-file`, and `--label` called `shift 2` even when no value argument followed, which aborts the script under `set -e`. Fixed by validating `$# -lt 2` before each shift and emitting a clear error message.
+
+- **`local IFS=','` leaking across function scope in `batch-merge.sh`**: Setting `local IFS=','` inside the explicit-PR parsing block left IFS altered for all subsequent code in the same function. Replaced with `IFS=',' read -r -a _pr_tokens <<< "$explicit_prs"` (IFS scoped to the read command only) and declared the array with `local -a` to prevent it from escaping the function.
+
+- **Branch name used as unescaped grep regex in `post-merge-cleanup.sh`**: The worktree lookup used `grep -B2 "branch refs/heads/$TO_DELETE$"`, interpreting the branch name as a regex pattern. Branch names containing `.`, `+`, or other metacharacters could produce false matches. Switched to `grep -B2 -F "branch refs/heads/$TO_DELETE"` (fixed-string match).
+
 ## [0.23.1] - 2026-04-26
 
 ### Fixed

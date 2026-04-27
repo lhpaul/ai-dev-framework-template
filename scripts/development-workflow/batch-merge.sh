@@ -158,8 +158,9 @@ cmd_discover() {
 
   if [ -n "$explicit_prs" ]; then
     # Parse comma-separated list; strip leading '#' and validate numeric.
-    local IFS=','
-    for raw in $explicit_prs; do
+    local -a _pr_tokens
+    IFS=',' read -r -a _pr_tokens <<< "$explicit_prs"
+    for raw in "${_pr_tokens[@]}"; do
       local pr_id="${raw#\#}"
       # Reject non-numeric tokens to prevent path traversal via cache file names.
       case "$pr_id" in
