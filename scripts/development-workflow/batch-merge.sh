@@ -42,9 +42,9 @@
 # Delete-branch output:
 #   DELETE_PR_NUMBER=<n>
 #   DELETE_RESULT=deleted|skipped|not_found
-#   DELETE_BRANCH=<branch-name>
-#   DELETE_PR_STATE=<state>              (only when DELETE_RESULT=skipped)
-#   ERROR_MESSAGE=<text>                 (only when DELETE_RESULT=skipped due to non-MERGED state)
+#   DELETE_BRANCH=<branch-name>          (absent when metadata fetch fails before branch is known)
+#   DELETE_PR_STATE=<state>              (only when DELETE_RESULT=skipped due to non-MERGED state)
+#   ERROR_MESSAGE=<text>                 (when DELETE_RESULT=skipped; covers non-MERGED state and push failures)
 #
 # Exit codes:
 #   0  — operation succeeded (clean merge, discovery complete, or branch deleted/not_found)
@@ -426,10 +426,21 @@ cmd_delete_branch() {
 
   print_kv DELETE_PR_NUMBER "$pr_num"
 
+  # delete_die: emit structured failure output before exiting so the caller
+  # always receives DELETE_PR_NUMBER + DELETE_RESULT + ERROR_MESSAGE, not a
+  # partial tuple that violates the output contract.  Mirrors merge_die in
+  # cmd_merge for the same reason.
+  delete_die() {
+    print_kv DELETE_RESULT "skipped"
+    print_kv_escaped ERROR_MESSAGE "$*"
+    echo "ERROR: $*" >&2
+    exit 2
+  }
+
   # Fetch the current PR state and branch name.
   local pr_json branch state
   pr_json="$(gh pr view "$pr_num" --json headRefName,state 2>/dev/null)" || \
-    die "Could not fetch metadata for PR #${pr_num}"
+    delete_die "Could not fetch metadata for PR #${pr_num}"
 
   branch="$(printf '%s' "$pr_json" | jq -r '.headRefName')"
   state="$(printf '%s' "$pr_json" | jq -r '.state')"
@@ -448,13 +459,25 @@ cmd_delete_branch() {
     return 0
   fi
 
-  # Delete the remote branch (ignore errors if the branch is already gone —
-  # e.g., the repo has auto-delete-on-merge enabled).
-  if git push origin --delete "$branch" 2>/dev/null; then
+  # Delete the remote branch.  Distinguish "branch already gone" (expected
+  # when auto-delete-on-merge is enabled or a prior run already deleted it)
+  # from genuine errors (network failure, auth, permission denied) — the latter
+  # must be surfaced to the caller rather than silently reported as not_found.
+  local push_err push_exit
+  push_err="$(git push origin --delete "$branch" 2>&1)" && {
     print_kv DELETE_RESULT "deleted"
-  else
-    # Branch may have already been deleted (auto-delete or prior run).
+    return 0
+  }
+  push_exit=$?
+
+  if printf '%s' "$push_err" | grep -qi 'remote ref does not exist'; then
+    # Branch was already gone — expected after auto-delete or a prior run.
     print_kv DELETE_RESULT "not_found"
+  else
+    # Genuine push failure (network, auth, permissions, etc.) — report it.
+    print_kv DELETE_RESULT "skipped"
+    print_kv_escaped ERROR_MESSAGE "Failed to delete remote branch '${branch}' (exit ${push_exit}): ${push_err}"
+    echo "ERROR: failed to delete remote branch '${branch}': ${push_err}" >&2
   fi
 }
 

@@ -207,10 +207,13 @@ After a clean or resolved merge, in order:
 
    - `DELETE_RESULT=deleted` → branch was deleted successfully.
    - `DELETE_RESULT=not_found` → branch was already gone (auto-delete or prior run). No action needed.
-   - `DELETE_RESULT=skipped` → PR is not in `MERGED` state. The `ERROR_MESSAGE` field
-     contains details. Do **not** delete the branch manually. Investigate why GitHub
-     has not yet recognised the merge (e.g., push failed silently, network error)
-     before retrying.
+   - `DELETE_RESULT=skipped` → branch was NOT deleted. The `ERROR_MESSAGE` field contains
+     the reason, which falls into one of two sub-cases:
+     - *PR not in MERGED state*: Do **not** delete the branch manually. Investigate why
+       GitHub has not yet recognised the merge (e.g., push failed silently, network error)
+       before retrying.
+     - *Push failure* (network/auth/permissions): Retry after resolving the underlying
+       issue. The branch still exists on the remote.
 
 4. **Remove any worktree using the merged branch** (before running cleanup).
 
