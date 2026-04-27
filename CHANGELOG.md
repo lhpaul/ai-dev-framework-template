@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Shell variable interpolation in GraphQL mutation** (`workflow-lib.sh`): `update_tracker_status_best_effort` was interpolating `${project_id}`, `${item_id}`, `${field_id}`, and `${option_id}` directly into the query string. Switched to `-f` parameterized variables with a typed mutation signature (`$projectId: ID!`, `$itemId: ID!`, `$fieldId: ID!`, `$optionId: String!`), eliminating the injection risk and aligning with the safe pattern used elsewhere in the codebase.
 
+- **`.worktrees/` not gitignored** (`.gitignore`): Some item-orchestrator agents choose `.worktrees/<slug>/` as the worktree base path instead of `.claude/worktrees/<slug>/`. Both are valid isolation paths, but only the `.claude/worktrees/` prefix was gitignored, causing `.worktrees/` directories to appear as untracked noise in `git status` after parallel batch runs. Added `.worktrees/` to `.gitignore` alongside the existing `.claude/worktrees/` entry.
+
 ## [0.23.0] - 2026-04-25
 
 ### Added
