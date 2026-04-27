@@ -783,6 +783,19 @@ Soft suggestions may be reported in summaries, but they do not change the loop r
 | `implementation-plan/*` | `implementation-plan-reviewer` |
 | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `code-reviewer` |
 
+**Fixer agent batching rule (mandatory):**
+
+When dispatching a fixer agent, include the following explicit instruction:
+
+> **Critical batching rule**: Do NOT address findings one-by-one with a separate push after each fix. Reviewer bots (e.g. Devin) start a new review cycle within 5–8 minutes of each push. If you push before all addressable fixes are done, the reviewer will start re-reviewing stale state while you are still working — creating a "one cycle behind" loop that can spin for dozens of cycles.
+>
+> Required sequence for every fixer dispatch:
+> 1. **Read ALL blocking findings first** — before touching any file, collect the complete list of open blocking findings from the current review cycle.
+> 2. **Apply ALL addressable fixes** — implement every fix you can address in this dispatch, across all files.
+> 3. **One commit, then push** — bundle every fix into a single commit and push once. Do not push after each individual fix.
+>
+> Findings that cannot be addressed in this dispatch (e.g. require a human decision, are out of scope, or are genuinely contradictory) should be noted and left for human review. Do not skip a push just because one finding is unresolvable — push the rest.
+
 ### Loop parameters
 
 | Parameter | Value | Description |

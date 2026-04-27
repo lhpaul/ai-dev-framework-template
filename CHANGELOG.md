@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Devin review cycles outracing fix commits** (#372): fixer agents were addressing findings one-by-one and pushing after each individual fix, causing reviewer bots (e.g. Devin) to start re-reviewing stale state mid-fix and triggering unnecessary extra review cycles. Protocols `91-orchestrate-work-protocol.md` (Step 7) and `93-automated-reviewer-loop-protocol.md` now include an explicit mandatory batching rule: fixer agents must read all blocking findings first, apply all addressable fixes, and push exactly once per dispatch cycle rather than once per finding.
+
 ### Added
 
 - **Sync-template migration notes** (`sync-manifest.yaml`, sync-template skill and commands): `sync-manifest.yaml` gains a `migration_notes` section for versioned manual migration steps. The sync-template skill and command variants now read this section and present a required pre-sync checklist whenever the downstream project's `last_synced_version` predates a breaking structural change. First entry: `docs/ai/ → docs/workflow/` rename (v0.23.0). Fully backwards-compatible — silently skipped when no applicable notes exist.

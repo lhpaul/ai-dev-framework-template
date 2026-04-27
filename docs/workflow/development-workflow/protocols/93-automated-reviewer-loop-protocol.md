@@ -79,6 +79,20 @@ Also handle the case where a platform posted blocking findings after a previous 
 
 If unresolved findings exist: dispatch a fixer agent, wait for the push, then proceed to the scripts. Do not re-trigger the reviewer loop against stale findings — fix first.
 
+### Fixer agent batching rule (mandatory)
+
+Reviewer bots (e.g. Devin) start a new review cycle within 5–8 minutes of each push. Pushing after each individual fix means the reviewer starts re-reviewing stale state before all fixes are done, creating a "one cycle behind" pattern that can spin for 12+ review cycles on a single PR.
+
+**Required sequence for every fixer dispatch:**
+
+1. **Read ALL blocking findings first** — before editing any file, collect the complete list of open blocking findings from the current review cycle. Do not start fixing until you have the full picture.
+2. **Apply ALL addressable fixes** — implement every fix you can address in this dispatch, across all files and findings.
+3. **One commit, then push** — bundle every fix into a single commit and push exactly once per dispatch. Do not push after each individual fix.
+
+Findings that cannot be addressed in this dispatch (e.g. require a human decision, are out of scope, or are genuinely contradictory) should be noted. Do not withhold the push for unresolvable findings — push all the fixes you can, then document what remains.
+
+**When delegating to a fixer subagent**, include this rule explicitly in the subagent instruction so it knows not to push incrementally.
+
 ### Shell script fix verification (fixer agents)
 
 When findings target `*.sh` workflow scripts (especially under `scripts/development-workflow/`), the fixer must **verify locally before pushing**:
