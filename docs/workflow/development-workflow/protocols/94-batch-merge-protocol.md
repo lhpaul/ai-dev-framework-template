@@ -188,13 +188,32 @@ After a clean or resolved merge, in order:
 
    - If the state is not `MERGED` after up to 30 seconds (poll every 5 s): report `failed` for this PR, do not delete the remote branch or run cleanup, and continue with the next PR.
 
-3. **Delete the remote branch** (if it still exists):
+   > **Failure mode — CLOSED instead of MERGED**: If the remote feature branch is
+   > deleted *before* the `git push origin develop` completes (or before GitHub
+   > processes the push), GitHub closes the PR instead of recording it as merged.
+   > The commits land in `develop` but `gh pr view N --json state` returns `CLOSED`,
+   > not `MERGED`, permanently losing merge attribution. This is why branch deletion
+   > (Step 3 below) is always performed *after* MERGED confirmation, and the
+   > `delete-branch` subcommand enforces this guard automatically.
+
+3. **Delete the remote branch** using the guarded helper (which re-checks MERGED
+   state immediately before deletion to prevent the CLOSED-not-MERGED failure mode):
 
    ```bash
-   gh pr view <number> --json headRefName --jq '.headRefName'
-   # If the remote branch still exists:
-   git push origin --delete <branch> 2>/dev/null || true
+   ./scripts/development-workflow/batch-merge.sh delete-branch --pr <number>
    ```
+
+   Parse the output:
+
+   - `DELETE_RESULT=deleted` → branch was deleted successfully.
+   - `DELETE_RESULT=not_found` → branch was already gone (auto-delete or prior run). No action needed.
+   - `DELETE_RESULT=skipped` → branch was NOT deleted. The `ERROR_MESSAGE` field contains
+     the reason, which falls into one of two sub-cases:
+     - *PR not in MERGED state*: Do **not** delete the branch manually. Investigate why
+       GitHub has not yet recognised the merge (e.g., push failed silently, network error)
+       before retrying.
+     - *Push failure* (network/auth/permissions): Retry after resolving the underlying
+       issue. The branch still exists on the remote.
 
 4. **Remove any worktree using the merged branch** (before running cleanup).
 

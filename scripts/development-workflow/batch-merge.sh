@@ -15,6 +15,9 @@
 #   # --- Per-PR merge mode ---
 #   ./scripts/development-workflow/batch-merge.sh merge --pr 101
 #
+#   # --- Safe branch deletion (MERGED-state guard) ---
+#   ./scripts/development-workflow/batch-merge.sh delete-branch --pr 101
+#
 # Discovery output (one block per candidate PR):
 #   DISCOVERY_RESULT=found|none
 #   PR_NUMBER=<n>
@@ -36,8 +39,15 @@
 #   CONFLICTED_FILES=<file1,file2,...>   (only when MERGE_RESULT=conflict)
 #   ERROR_MESSAGE=<text>                  (only when MERGE_RESULT=failed)
 #
+# Delete-branch output:
+#   DELETE_PR_NUMBER=<n>
+#   DELETE_RESULT=deleted|skipped|not_found
+#   DELETE_BRANCH=<branch-name>          (absent when metadata fetch fails before branch is known)
+#   DELETE_PR_STATE=<state>              (only when DELETE_RESULT=skipped due to non-MERGED state)
+#   ERROR_MESSAGE=<text>                 (when DELETE_RESULT=skipped; covers non-MERGED state and push failures)
+#
 # Exit codes:
-#   0  — operation succeeded (clean merge or discovery complete)
+#   0  — operation succeeded (clean merge, discovery complete, branch deleted/not_found, or branch deletion safely skipped — e.g. PR not yet MERGED)
 #   1  — conflict detected (caller must classify and resolve)
 #   2  — fatal error (invalid usage, git failure, etc.)
 #
@@ -61,6 +71,7 @@ usage() {
 Usage:
   batch-merge.sh discover [--prs <num1,num2,...>]
   batch-merge.sh merge --pr <number>
+  batch-merge.sh delete-branch --pr <number>
 EOF
   exit 2
 }
@@ -380,6 +391,99 @@ cmd_merge() {
 }
 
 # ---------------------------------------------------------------------------
+# Command: delete-branch
+# ---------------------------------------------------------------------------
+#
+# Safely deletes the remote branch for a PR — but ONLY after confirming that
+# GitHub has recorded the PR as MERGED.  Deleting the branch before the merge
+# push is reflected by GitHub causes the PR to transition to CLOSED (not
+# MERGED), losing the merge attribution.  This guard prevents that failure mode.
+
+cmd_delete_branch() {
+  local pr_num=""
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --pr)
+        [ $# -ge 2 ] && [ -n "${2:-}" ] || die "--pr requires a PR number value"
+        pr_num="$2"
+        shift 2
+        ;;
+      *)
+        die "Unknown option: $1"
+        ;;
+    esac
+  done
+
+  [ -z "$pr_num" ] && usage
+
+  # Validate numeric.
+  case "$pr_num" in
+    ''|*[!0-9]*) die "Invalid PR number '${pr_num}' — must be a positive integer" ;;
+  esac
+
+  require_gh
+
+  print_kv DELETE_PR_NUMBER "$pr_num"
+
+  # delete_die: emit structured failure output before exiting so the caller
+  # always receives DELETE_PR_NUMBER + DELETE_RESULT + ERROR_MESSAGE, not a
+  # partial tuple that violates the output contract.  Mirrors merge_die in
+  # cmd_merge for the same reason.
+  delete_die() {
+    print_kv DELETE_RESULT "skipped"
+    print_kv_escaped ERROR_MESSAGE "$*"
+    echo "ERROR: $*" >&2
+    exit 2
+  }
+
+  # Fetch the current PR state and branch name.
+  local pr_json branch state
+  pr_json="$(gh pr view "$pr_num" --json headRefName,state 2>/dev/null)" || \
+    delete_die "Could not fetch metadata for PR #${pr_num}"
+
+  branch="$(printf '%s' "$pr_json" | jq -r '.headRefName')"
+  state="$(printf '%s' "$pr_json" | jq -r '.state')"
+
+  print_kv DELETE_BRANCH "$branch"
+
+  # Guard: only delete the remote branch when GitHub confirms MERGED state.
+  # If the PR is CLOSED (not MERGED) it means the merge push has not been
+  # reflected yet (or failed) — deleting now would permanently lose merge
+  # attribution on the PR.
+  if [ "$state" != "MERGED" ]; then
+    echo "WARNING: PR #${pr_num} is in state '${state}' (not MERGED) — skipping branch deletion to prevent data loss." >&2
+    print_kv DELETE_RESULT   "skipped"
+    print_kv DELETE_PR_STATE "$state"
+    print_kv_escaped ERROR_MESSAGE "PR #${pr_num} is in state '${state}' (not MERGED) — branch '${branch}' was NOT deleted. Verify the merge push completed and GitHub has updated the PR state before retrying."
+    return 0
+  fi
+
+  # Delete the remote branch.  Distinguish "branch already gone" (expected
+  # when auto-delete-on-merge is enabled or a prior run already deleted it)
+  # from genuine errors (network failure, auth, permission denied) — the latter
+  # must be surfaced to the caller rather than silently reported as not_found.
+  local push_err push_exit
+  push_err="$(git push origin --delete "$branch" 2>&1)" && {
+    print_kv DELETE_RESULT "deleted"
+    return 0
+  }
+  push_exit=$?
+
+  if printf '%s' "$push_err" | grep -qi 'remote ref does not exist'; then
+    # Branch was already gone — expected after auto-delete or a prior run.
+    print_kv DELETE_RESULT "not_found"
+  else
+    # Genuine push failure (network, auth, permissions, etc.) — report it and
+    # exit 2 to signal a fatal error per the script's exit-code contract.
+    print_kv DELETE_RESULT "skipped"
+    print_kv_escaped ERROR_MESSAGE "Failed to delete remote branch '${branch}' (exit ${push_exit}): ${push_err}"
+    echo "ERROR: failed to delete remote branch '${branch}': ${push_err}" >&2
+    exit 2
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -391,7 +495,8 @@ COMMAND="$1"
 shift
 
 case "$COMMAND" in
-  discover) cmd_discover "$@" ;;
-  merge)    cmd_merge    "$@" ;;
+  discover)       cmd_discover       "$@" ;;
+  merge)          cmd_merge          "$@" ;;
+  delete-branch)  cmd_delete_branch  "$@" ;;
   *) die "Unknown command: ${COMMAND}" ;;
 esac
