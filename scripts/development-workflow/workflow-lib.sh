@@ -303,7 +303,7 @@ get_tracker_status_for_issue() {
   local owner project_number item_json current_status
 
   owner="${GITHUB_PROJECT_OWNER:-$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || true)}"
-  project_number="${GITHUB_PROJECT_NUMBER:-$(grep -A5 'issue_tracker:' .ai-dev-workflow.yaml 2>/dev/null | awk '/project_number:/ {print $2; exit}')}"
+  project_number="${GITHUB_PROJECT_NUMBER:-$(grep -A10 'issue_tracker:' .ai-dev-workflow.yaml 2>/dev/null | awk '/project_number:/ {print $2; exit}')}"
   if [ -z "$owner" ] || [ -z "$project_number" ]; then
     printf ''
     return 0
@@ -344,7 +344,7 @@ update_tracker_status_best_effort() {
   local target_order current_order
 
   owner="${GITHUB_PROJECT_OWNER:-$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || true)}"
-  project_number="${GITHUB_PROJECT_NUMBER:-$(grep -A5 'issue_tracker:' .ai-dev-workflow.yaml 2>/dev/null | awk '/project_number:/ {print $2; exit}')}"
+  project_number="${GITHUB_PROJECT_NUMBER:-$(grep -A10 'issue_tracker:' .ai-dev-workflow.yaml 2>/dev/null | awk '/project_number:/ {print $2; exit}')}"
   if [ -z "$owner" ] || [ -z "$project_number" ]; then
     echo "Warning: GITHUB_PROJECT_OWNER or GITHUB_PROJECT_NUMBER not set and no project_number in .ai-dev-workflow.yaml; skipping tracker status update."
     return 0
