@@ -114,11 +114,11 @@ None — the files being changed (`02-generate-implementation-plan-protocol.md` 
    ```markdown
    Additional checks for **features with concurrent event sources** (when the PR introduces or modifies code where multiple execution contexts — listeners, timers, callbacks, async queues — can access shared mutable state):
    - **Shared mutable state guards**: shared state is protected from concurrent reads/writes by a consistent access pattern (e.g., serialized queue, ownership transfer, copy-on-update)
-   - **Re-entrancy**: the handler correctly tracks or rejects concurrent in-flight operations when a second event can arrive before the first completes
+   - **Re-entrancy / in-flight tracking**: the handler correctly tracks or rejects concurrent in-flight operations when a second event can arrive before the first completes
    - **Event deduplication**: duplicate logical events (e.g., reconnect triggers, repeated callbacks) are deduplicated or idempotent
    - **Listener and resource cleanup**: all registered listeners, timers, and handles are removed at teardown; in-flight operations are drained or discarded safely
-   - **Race at initialization**: events that arrive before initialization completes are handled correctly (queued, dropped, or deferred with correct sequencing)
-   - **Race at teardown**: events that arrive after teardown begins are discarded or drained without causing errors or accessing freed state
+   - **Race conditions at initialization**: events that arrive before initialization completes are handled correctly (queued, dropped, or deferred with correct sequencing)
+   - **Race conditions at teardown**: events that arrive after teardown begins are discarded or drained without causing errors or accessing freed state
    - **Error propagation across async boundaries**: errors from async callbacks are surfaced to the caller; unhandled rejections or uncaught exceptions in callbacks do not silently swallow failures
    ```
 
@@ -142,16 +142,17 @@ None — the files being changed (`02-generate-implementation-plan-protocol.md` 
 
    Fix any reported violations (trailing spaces, broken relative links, missing trailing newline) before committing.
 
-5. **Commit and push**
-
-   ```bash
-   git add docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md REVIEW.md
-   git commit -m "docs: add async/concurrency safety checklist to plan protocol and REVIEW.md (#348)"
-   git push -u origin implementation-plan/348-async-concurrency-safety-checklist
-   ```
-
-6. **Update `CHANGELOG.md` under `[Unreleased]`**
+5. **Update `CHANGELOG.md` under `[Unreleased]`**
 
    ```markdown
-   - **Add async/concurrency safety checklist to plan protocol and review contract** (#348): adds a conditional async/concurrency safety checklist to `02-generate-implementation-plan-protocol.md` (triggered when a plan has concurrent event sources) and a matching conditional additional-checks block to `REVIEW.md` (triggered when a PR introduces or modifies concurrent event source code). Covers shared mutable state guards, re-entrancy, event deduplication, listener cleanup, initialization/teardown races, and error propagation across async boundaries.
+   - **Add async/concurrency safety checklist to plan protocol and review contract** (#348): adds a conditional async/concurrency safety checklist to `02-generate-implementation-plan-protocol.md` (triggered when a plan has concurrent event sources) and a matching conditional additional-checks block to `REVIEW.md` (triggered when a PR introduces or modifies concurrent event source code). Covers shared mutable state guards, re-entrancy / in-flight tracking, event deduplication, listener cleanup, initialization/teardown race conditions, and error propagation across async boundaries.
+   ```
+
+6. **Commit all changes**
+
+   Stage and commit `02-generate-implementation-plan-protocol.md`, `REVIEW.md`, and `CHANGELOG.md` together:
+
+   ```bash
+   git add docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md REVIEW.md CHANGELOG.md
+   git commit -m "docs: add async/concurrency safety checklist to plan protocol and REVIEW.md (#348)"
    ```
