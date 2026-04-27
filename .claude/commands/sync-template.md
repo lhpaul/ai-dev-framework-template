@@ -5,7 +5,7 @@ description: >
   shows a categorized diff for review, applies approved changes, and generates
   ready-to-use git instructions (branch + commit + PR). Run from the project root.
   Usage: /sync-template [--local=/path/to/template] [--ref=<branch|tag>]
-allowed-tools: Read, Write, Edit, Glob, Grep, Bash(git rev-parse:*), Bash(git status:*), Bash(git branch:*), Bash(git clone:*), Bash(git diff:*), Bash(git add:*), Bash(git commit:*), Bash(git checkout:*), Bash(git push:*), Bash(cat:*), Bash(cp:*), Bash(find:*), Bash(ls:*), Bash(mkdir:*), Bash(rm:*), Bash(date:*), Bash(jq:*), Bash(diff:*), Bash(chmod:*)
+allowed-tools: Read, Write, Edit, Glob, Grep, Bash(git rev-parse:*), Bash(git status:*), Bash(git branch:*), Bash(git clone:*), Bash(git diff:*), Bash(git add:*), Bash(git commit:*), Bash(git checkout:*), Bash(git push:*), Bash(git rm:*), Bash(cat:*), Bash(cp:*), Bash(find:*), Bash(ls:*), Bash(mkdir:*), Bash(rm:*), Bash(date:*), Bash(jq:*), Bash(diff:*), Bash(chmod:*), Bash(grep:*)
 ---
 
 Follow this workflow exactly when invoked. Do not skip steps or reorder them.
