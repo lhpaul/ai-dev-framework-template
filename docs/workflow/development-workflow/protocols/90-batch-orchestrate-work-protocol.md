@@ -318,12 +318,12 @@ Before building the worktree per-item pre-flight (Step 3.5), run two portfolio-w
 Scan the full worktree list for orphaned entries — worktrees whose branch is either merged, closed, or no longer needed by the current batch. These lock the `.git` index against concurrent operations and prevent clean worktree creation for items in the new batch.
 
 ```bash
-# List all registered worktrees and their branches
-# (Resolve REPO_ROOT to an absolute path so it matches git worktree list's absolute output)
+# List all registered worktrees and their branches, excluding the main worktree
+# (Resolve REPO_ROOT to an absolute path; use exact awk comparison to avoid
+# prefix-match false exclusions for nested worktrees under the repo root)
 REPO_ROOT=$(cd "$(git rev-parse --git-common-dir)/.." && pwd)
 git worktree list --porcelain \
-  | awk '/^worktree / { wt=$2 } /^branch / { b=$2; sub("^refs/heads/","",b); print wt "\t" b }' \
-  | grep -v "^${REPO_ROOT}"
+  | awk -v root="$REPO_ROOT" '/^worktree / { wt=$2 } /^branch / { b=$2; sub("^refs/heads/","",b); if (wt != root) print wt "\t" b }'
 ```
 
 For each worktree found, check whether its branch has already been merged to the integration branch (i.e., the PR is merged and the branch is no longer active):
