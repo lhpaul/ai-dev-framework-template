@@ -390,10 +390,10 @@ update_tracker_status_best_effort() {
 
   echo "Updating tracker status for issue #${issue_number} to '${status_label}'..."
   gh api graphql \
-    -F projectId="$project_id" \
-    -F itemId="$item_id" \
-    -F fieldId="$field_id" \
-    -F optionId="$option_id" \
+    -f projectId="$project_id" \
+    -f itemId="$item_id" \
+    -f fieldId="$field_id" \
+    -f optionId="$option_id" \
     -f query='
       mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
         updateProjectV2ItemFieldValue(input: {
