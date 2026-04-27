@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Team-prefixed issue identifiers not detected in `post-merge-cleanup.sh`** (#341): The script's regex only matched pure numeric IDs (e.g. `fix/42-slug`), causing it to log "No issue number detected" and skip tracker updates for branches using Linear-style team-prefixed identifiers (e.g. `implementation-plan/lh-97-buscar-propiedades-vista-tabla`, `fix/rad-42-something`). Extended the regex to also match `<team>-<number>` patterns (2–6 alpha chars, case-insensitive). `gh issue` commands continue to use the numeric part (`#97`) for GitHub-backed repos; the full identifier (e.g. `lh-97`) is passed to the tracker update helper for Linear-aware downstream projects.
+
 - **Shell variable interpolation in GraphQL mutation** (`workflow-lib.sh`): `update_tracker_status_best_effort` was interpolating `${project_id}`, `${item_id}`, `${field_id}`, and `${option_id}` directly into the query string. Switched to `-f` parameterized variables with a typed mutation signature (`$projectId: ID!`, `$itemId: ID!`, `$fieldId: ID!`, `$optionId: String!`), eliminating the injection risk and aligning with the safe pattern used elsewhere in the codebase.
 
 ## [0.23.0] - 2026-04-25
