@@ -4,6 +4,33 @@
 
 ---
 
+## Brief Coverage (issue #309)
+
+Brief objectives extracted from the issue description, mapped to spec coverage:
+
+| Brief objective | Spec coverage |
+|---|---|
+| Post a review-trigger comment on the PR addressed to the Codex GitHub bot | Use Case 1 (steps 2–3), BR-2, AC-2 |
+| Poll for the Codex bot's response comment on the PR | Use Case 1 (steps 4–6), BR-3, BR-9, AC-2 |
+| Interpret the bot's verdict (APPROVE / CHANGES_REQUESTED) as the reviewer decision | BR-4, AC-3, AC-4 |
+| Works from ANY runner — not just Codex CLI contexts (Claude Code, Cursor, headless CI) | BR-1, AC-1 |
+| Document the new reviewer path in the Step 7a reviewer dispatch mechanism | AC-8 |
+| Document the new reviewer value in the workflow configuration manifest | AC-9 |
+| Update agent guidance files for all supported runner contexts | AC-10 |
+| Relevant Codex skills if the trigger mechanism differs for Codex-native runs | Out of Scope — see Deferral Note below |
+
+**Deferral notes**:
+
+- "Relevant Codex skills if the trigger mechanism differs for Codex-native runs":
+  The `codex-github` reviewer path uses only `gh` CLI access, which is identical
+  across all runner contexts by design. There is no per-runner variation in the
+  trigger mechanism, so no separate Codex skill path is required. The existing
+  `codex` (CLI) reviewer path and its Codex skills remain unchanged. No new Codex
+  skill is needed for `codex-github`. Human confirmation not requested — the
+  rationale is self-evident from the feature goal (runner-agnostic operation).
+
+---
+
 ## Overview
 
 The Step 7a internal review gate dispatches `codex` as an internal reviewer by
@@ -298,18 +325,16 @@ subagent, Codex runner, or direct human shell)
 - [ ] The Step 7a summary comment lists `codex-github` in the effective reviewer
       set when it produces a verdict, or in the skipped/timed-out list when it
       does not, using the existing summary comment format.
-- [ ] Protocol 91 Step 7a reachability classification table is updated to include
-      a `codex-github` row showing it as reachable from all runner contexts.
-- [ ] Protocol 91 Step 7a reviewer dispatch map is updated to include a
-      `codex-github` entry for each branch prefix (`spec/*`,
-      `implementation-plan/*`, `feature/*`, `refactor/*`, `fix/*`, `hotfix/*`),
-      documenting the trigger comment + polling mechanism.
-- [ ] `.ai-dev-workflow.yaml` is updated to document the `codex-github` reviewer
-      value and its configuration requirements (trigger phrase, timeout) in the
-      `internal_reviewers` comment block.
-- [ ] The `.claude/agents/item-orchestrator.md` and
-      `.cursor/agents/item-orchestrator.md` agent files are updated to reflect
-      the new `codex-github` dispatch path in Step 7a.
+- [ ] The workflow documentation reflects `codex-github` as a reachable reviewer
+      from all supported runner contexts for every PR branch type (spec, plan,
+      implementation).
+- [ ] The workflow configuration manifest documents `codex-github` as a supported
+      reviewer value with its configuration requirements (trigger phrase and
+      timeout) so that operators can enable it by listing it in
+      `review.internal_reviewers`.
+- [ ] Agent guidance for all supported runner contexts (Claude Code, Cursor)
+      reflects the `codex-github` dispatch path so that runners dispatched from
+      any of those contexts know how to execute the GitHub bot review.
 
 ---
 
