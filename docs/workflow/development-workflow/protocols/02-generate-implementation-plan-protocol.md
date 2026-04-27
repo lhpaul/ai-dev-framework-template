@@ -192,12 +192,13 @@ If no blocking human decision remains:
 
    > **Worktree note**: When running inside a git worktree (e.g., when dispatched by the Portfolio Orchestrator), `node_modules/` does not exist inside the worktree directory. The `$(git rev-parse --git-common-dir)/..` expression resolves to the main repo root in both the main tree and any worktree.
 
-6. Commit: `docs: add implementation plan for [feature-name]`
-7. Push: `git push -u origin implementation-plan/[branch-slug]`
-8. Open a **draft** PR targeting `develop` with:
+6. **Do NOT update CHANGELOG**: `implementation-plan/*` branches are exempt from CHANGELOG entries. The changelog policy only applies to `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches. Do not create or modify `CHANGELOG.md` in this PR.
+7. Commit: `docs: add implementation plan for [feature-name]`
+8. Push: `git push -u origin implementation-plan/[branch-slug]`
+9. Open a **draft** PR targeting `develop` with:
    - Title: `docs(plan): [feature-name]`
    - Body: summary of the approach, complexity estimate, key risks, link to plan and runbook
-9. Return the branch + PR details to the **Work Item Runner**
+10. Return the branch + PR details to the **Work Item Runner**
 
 ---
 
