@@ -23,8 +23,8 @@ Before running this smoke test:
 | Item | Value |
 |---|---|
 | Test PR | A PR where CodeRabbit has posted at least one inline thread of any severity |
-| Bot login (CodeRabbit) | `coderabbitai[bot]` |
-| Bot login (Devin) | `devin-ai-integration[bot]` |
+| Bot login (CodeRabbit) | `coderabbitai` |
+| Bot login (Devin) | `devin-ai-integration` |
 | `.ai-dev-workflow.yaml` platforms | `devin` and `coderabbit` (repo default) |
 
 ---
@@ -48,7 +48,7 @@ Before running this smoke test:
    > implementation in `pr-review-loop.sh` or repeat the query with cursor-based
    > pagination.
 
-3. Confirm at least one thread is `isResolved: false` and authored by `coderabbitai[bot]`.
+3. Confirm at least one thread is `isResolved: false` and authored by `coderabbitai` or `devin-ai-integration`.
 
 ### Step 2: Run `pr-review-loop.sh` with an existing unresolved thread (AC1)
 
@@ -137,7 +137,7 @@ Before running this smoke test:
    gh api graphql \
      -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login}body}}}}}}}' \
      -f owner="<owner>" -f repo="<repo>" -F pr=<pr_number> \
-     --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | select(.comments.nodes[0].author.login | IN("coderabbitai[bot]","devin-ai-integration[bot]","greptile-apps[bot]")) | select(.comments.nodes[0].body | contains("✅ Addressed") | not)] | length'
+     --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | select(.comments.nodes[0].author.login | IN("coderabbitai","devin-ai-integration","greptile-apps")) | select(.comments.nodes[0].body | contains("✅ Addressed") | not)] | length'
    ```
 
    > **Note**: This query returns only the first 100 review threads; it is a
