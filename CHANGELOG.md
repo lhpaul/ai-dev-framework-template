@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Sync-template leaves stale renamed directory in place** (`sync-manifest.yaml`, `.claude/commands/sync-template.md`, `.claude/skills/sync-template.md`, `.cursor/commands/sync-template.md`): When the template renames an always-sync directory (e.g., `docs/ai/` → `docs/workflow/`), the "never delete project-only files" rule previously prevented removal of the old directory, leaving both trees in place with stale cross-references. Added a `rename_detections` section to `sync-manifest.yaml` and updated all sync-template skill/command variants to detect stale old directories during Step 2 and present a "Rename cleanup" section in Step 3 — offering to delete the old directory and update cross-references in project-specific files. Each action requires separate maintainer approval; neither is applied silently. Bulk approval phrases ("apply all", "yes to all") do not cover rename cleanup actions.
+
 - **Shell variable interpolation in GraphQL mutation** (`workflow-lib.sh`): `update_tracker_status_best_effort` was interpolating `${project_id}`, `${item_id}`, `${field_id}`, and `${option_id}` directly into the query string. Switched to `-f` parameterized variables with a typed mutation signature (`$projectId: ID!`, `$itemId: ID!`, `$fieldId: ID!`, `$optionId: String!`), eliminating the injection risk and aligning with the safe pattern used elsewhere in the codebase.
 
 ## [0.23.0] - 2026-04-25
