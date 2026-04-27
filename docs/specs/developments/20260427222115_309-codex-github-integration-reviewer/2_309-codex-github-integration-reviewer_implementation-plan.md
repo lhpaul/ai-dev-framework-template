@@ -22,10 +22,10 @@
 | Check | Command / query | Result |
 |---|---|---|
 | Repo revision | `git rev-parse --short HEAD` | `0039ddb` |
-| Protocol 91 Step 7a reachability table location | `grep -n "Reachability classification table" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | Line 542: `#### Reachability classification table` |
-| Protocol 91 Step 7a reviewer dispatch map location | `grep -n "Reviewer dispatch map" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | Line 599: `### Reviewer dispatch map` |
-| Existing workflow scripts | `ls scripts/development-workflow/*.sh` | 11 files; no `codex-github-reviewer.sh` yet |
-| Existing smoke test runbooks in `docs/testing/workflow/` | `ls docs/testing/workflow/*.smoke-test.md \| wc -l` | 21 runbooks; no `309-codex-github-integration-reviewer.smoke-test.md` yet |
+| Protocol 91 Step 7a reachability table location | `grep -n "Reachability classification table" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | Line 541: `#### Reachability classification table` |
+| Protocol 91 Step 7a reviewer dispatch map location | `grep -n "Reviewer dispatch map" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | Line 598: `### Reviewer dispatch map` |
+| Existing workflow scripts | `ls scripts/development-workflow/*.sh` | 12 files; no `codex-github-reviewer.sh` yet |
+| Existing smoke test runbooks in `docs/testing/workflow/` | `ls docs/testing/workflow/*.smoke-test.md \| wc -l` | 27 runbooks; no `309-codex-github-integration-reviewer.smoke-test.md` yet |
 | Agent guidance files requiring update | `ls .claude/agents/item-orchestrator.md .cursor/agents/item-orchestrator.md` | Both present |
 | `.ai-dev-workflow.yaml` internal_reviewers comment block | `grep -n "codex-github" .ai-dev-workflow.yaml` | No match — `codex-github` not yet documented |
 
