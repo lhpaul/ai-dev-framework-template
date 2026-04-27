@@ -29,13 +29,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Re-query `reviewThreads` after each push before Step 8c** (`91-orchestrate-work-protocol.md`, `93-automated-reviewer-loop-protocol.md`): Agents were checking reviewer thread state once (before the final push) and then labeling PRs `ready-for-human-review` without re-querying. New bot-created threads from the push were missed, causing PRs to be labeled with unresolved comments. Added a mandatory "Re-query reviewThreads after each push" section to both Protocol 91 Step 7 and Protocol 93, requiring a fresh GraphQL `reviewThreads` query after every fixer push before proceeding to Step 7b/Step 8 or reporting readiness. Closes #330.
+
+- **Shell variable interpolation in GraphQL mutation** (`workflow-lib.sh`): `update_tracker_status_best_effort` was interpolating `${project_id}`, `${item_id}`, `${field_id}`, and `${option_id}` directly into the query string. Switched to `-f` parameterized variables with a typed mutation signature (`$projectId: ID!`, `$itemId: ID!`, `$fieldId: ID!`, `$optionId: String!`), eliminating the injection risk and aligning with the safe pattern used elsewhere in the codebase.
+
 ### Added
 
 - **Sync-template migration notes** (`sync-manifest.yaml`, sync-template skill and commands): `sync-manifest.yaml` gains a `migration_notes` section for versioned manual migration steps. The sync-template skill and command variants now read this section and present a required pre-sync checklist whenever the downstream project's `last_synced_version` predates a breaking structural change. First entry: `docs/ai/ → docs/workflow/` rename (v0.23.0). Fully backwards-compatible — silently skipped when no applicable notes exist.
-
-### Fixed
-
-- **Shell variable interpolation in GraphQL mutation** (`workflow-lib.sh`): `update_tracker_status_best_effort` was interpolating `${project_id}`, `${item_id}`, `${field_id}`, and `${option_id}` directly into the query string. Switched to `-f` parameterized variables with a typed mutation signature (`$projectId: ID!`, `$itemId: ID!`, `$fieldId: ID!`, `$optionId: String!`), eliminating the injection risk and aligning with the safe pattern used elsewhere in the codebase.
 
 ## [0.23.0] - 2026-04-25
 
