@@ -47,7 +47,7 @@
 #   ERROR_MESSAGE=<text>                 (when DELETE_RESULT=skipped; covers non-MERGED state and push failures)
 #
 # Exit codes:
-#   0  — operation succeeded (clean merge, discovery complete, or branch deleted/not_found)
+#   0  — operation succeeded (clean merge, discovery complete, branch deleted/not_found, or branch deletion safely skipped — e.g. PR not yet MERGED)
 #   1  — conflict detected (caller must classify and resolve)
 #   2  — fatal error (invalid usage, git failure, etc.)
 #
