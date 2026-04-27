@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`local IFS=','` leaking across function scope in `batch-merge.sh`**: Setting `local IFS=','` inside the explicit-PR parsing block left IFS altered for all subsequent code in the same function. Replaced with `IFS=',' read -r -a _pr_tokens <<< "$explicit_prs"` (IFS scoped to the read command only) and declared the array with `local -a` to prevent it from escaping the function.
 
-- **Branch name used as unescaped grep regex in `post-merge-cleanup.sh`**: The worktree lookup used `grep -B2 "branch refs/heads/$TO_DELETE$"`, interpreting the branch name as a regex pattern. Branch names containing `.`, `+`, or other metacharacters could produce false matches. Switched to `grep -B2 -F "branch refs/heads/$TO_DELETE"` (fixed-string match).
+- **Branch name used as unescaped grep regex in `post-merge-cleanup.sh`**: The worktree lookup used `grep -B2 "branch refs/heads/$TO_DELETE$"`, interpreting the branch name as a regex pattern. Branch names containing `.`, `+`, or other metacharacters could produce false matches, and `grep -F` without a line-boundary check would additionally match branch names that are a prefix of another checked-out branch. Replaced the grep pipeline with an `awk` exact-string comparison (`$0 == branch`) against the structured porcelain output, eliminating both the regex-injection risk and the prefix-match false positive.
 
 ## [0.23.1] - 2026-04-26
 

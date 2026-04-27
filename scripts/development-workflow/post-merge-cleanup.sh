@@ -68,9 +68,13 @@ git pull --ff-only
 echo "Deleting local branch '$TO_DELETE'..."
 # Check whether a worktree is still using this branch; if so, remove it first.
 # git branch -D fails with "error: cannot delete branch 'X' used by worktree" in that case.
-# The grep pipeline exits 1 when no worktree uses the branch; the '|| true' prevents set -e from
-# aborting the script in the common case where no worktree holds the branch.
-WORKTREE_PATH=$(git worktree list --porcelain | grep -B2 -F "branch refs/heads/$TO_DELETE" | grep "^worktree " | sed 's/^worktree //' || true)
+# awk is used instead of grep to parse the structured porcelain output with an exact
+# string match — grep -F would match branch names that are prefixes of other branches,
+# and grep with a regex anchor would misinterpret metacharacters in branch names.
+WORKTREE_PATH=$(git worktree list --porcelain | awk -v branch="branch refs/heads/$TO_DELETE" '
+  /^worktree / { wt = substr($0, 10) }
+  $0 == branch  { print wt }
+' || true)
 if [ -n "$WORKTREE_PATH" ]; then
   echo "Worktree '$WORKTREE_PATH' is still using branch '$TO_DELETE'. Removing worktree first..."
   # Proactive unlock: agent processes often leave worktrees locked; unlock is idempotent when not locked.
