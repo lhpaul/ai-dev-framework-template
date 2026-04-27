@@ -474,10 +474,12 @@ cmd_delete_branch() {
     # Branch was already gone — expected after auto-delete or a prior run.
     print_kv DELETE_RESULT "not_found"
   else
-    # Genuine push failure (network, auth, permissions, etc.) — report it.
+    # Genuine push failure (network, auth, permissions, etc.) — report it and
+    # exit 2 to signal a fatal error per the script's exit-code contract.
     print_kv DELETE_RESULT "skipped"
     print_kv_escaped ERROR_MESSAGE "Failed to delete remote branch '${branch}' (exit ${push_exit}): ${push_err}"
     echo "ERROR: failed to delete remote branch '${branch}': ${push_err}" >&2
+    exit 2
   fi
 }
 
