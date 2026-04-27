@@ -389,16 +389,21 @@ update_tracker_status_best_effort() {
   fi
 
   echo "Updating tracker status for issue #${issue_number} to '${status_label}'..."
-  gh api graphql -f query="
-    mutation {
-      updateProjectV2ItemFieldValue(input: {
-        projectId: \"${project_id}\"
-        itemId: \"${item_id}\"
-        fieldId: \"${field_id}\"
-        value: { singleSelectOptionId: \"${option_id}\" }
-      }) {
-        projectV2Item { id }
+  gh api graphql \
+    -f projectId="$project_id" \
+    -f itemId="$item_id" \
+    -f fieldId="$field_id" \
+    -f optionId="$option_id" \
+    -f query='
+      mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+        updateProjectV2ItemFieldValue(input: {
+          projectId: $projectId
+          itemId: $itemId
+          fieldId: $fieldId
+          value: { singleSelectOptionId: $optionId }
+        }) {
+          projectV2Item { id }
+        }
       }
-    }
-  " 2>/dev/null || echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker status not updated."
+    ' 2>/dev/null || echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker status not updated."
 }
