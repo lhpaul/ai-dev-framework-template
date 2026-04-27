@@ -1,6 +1,6 @@
 # Async/Concurrency Safety Checklist — Spec
 
-**Depends on**: <!-- none -->
+**Depends on**: none
 
 ---
 
