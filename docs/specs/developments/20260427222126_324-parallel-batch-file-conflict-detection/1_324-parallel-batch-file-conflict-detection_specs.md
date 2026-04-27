@@ -2,8 +2,6 @@
 
 **Issue**: [#324](https://github.com/lhpaul/ai-dev-framework-template/issues/324)
 
-**Depends on**: <!-- none -->
-
 ---
 
 ## Overview
