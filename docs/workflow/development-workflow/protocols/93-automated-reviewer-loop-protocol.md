@@ -106,7 +106,7 @@ The sequence after each fixer push is:
 2. Wait for configured bot reviewers to process the push (as part of the `pr-review-loop.sh` poll cycle).
 3. **Re-issue the GraphQL `reviewThreads` query** (Protocol 91 Step 8c) to get the current thread state.
 4. If new unresolved threads are found: handle them before proceeding (dispatch a fixer or resolve via reply, then repeat from step 1).
-5. Only when the re-issued query returns no unresolved threads from configured bot reviewers: proceed to Step 8c.
+5. Only when the re-issued query returns no unresolved threads from configured bot reviewers: proceed to Step 7b (implementation PRs) then Step 8, then Step 8c.
 
 **This check is not optional and cannot be skipped, even when the review loop script reported `clean`.** The script checks review state (blocking inline comments and `CHANGES_REQUESTED` reviews), not the resolved/unresolved state of `reviewThreads`. New threads created by a push may appear after the script's poll window closes. The GraphQL query is the only authoritative source for thread resolution state.
 
