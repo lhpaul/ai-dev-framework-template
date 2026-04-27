@@ -29,15 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- **`GITHUB_PROJECT_NUMBER` missing fallback causes silent tracker skips** (`workflow-lib.sh`, `.ai-dev-workflow.yaml`): `update_tracker_status_best_effort` and `get_tracker_status_for_issue` set `project_number` from `GITHUB_PROJECT_NUMBER` with no fallback, so tracker updates silently skipped on every run in normal shell sessions where the env var is not set. Fixed by reading `project_number` from the `issue_tracker.project_number` field in `.ai-dev-workflow.yaml` when the env var is absent (using `grep -A10` against the absolute path from `workflow_config_file()` to safely clear the comment lines before the field and avoid a CWD dependency). Added a `project_number: 1` field to `.ai-dev-workflow.yaml` with documentation comment.
-
 ### Added
 
 - **Sync-template migration notes** (`sync-manifest.yaml`, sync-template skill and commands): `sync-manifest.yaml` gains a `migration_notes` section for versioned manual migration steps. The sync-template skill and command variants now read this section and present a required pre-sync checklist whenever the downstream project's `last_synced_version` predates a breaking structural change. First entry: `docs/ai/ → docs/workflow/` rename (v0.23.0). Fully backwards-compatible — silently skipped when no applicable notes exist.
 
 ### Fixed
+
+- **`GITHUB_PROJECT_NUMBER` missing fallback causes silent tracker skips** (`workflow-lib.sh`, `.ai-dev-workflow.yaml`): `update_tracker_status_best_effort` and `get_tracker_status_for_issue` set `project_number` from `GITHUB_PROJECT_NUMBER` with no fallback, so tracker updates silently skipped on every run in normal shell sessions where the env var is not set. Fixed by reading `project_number` from the `issue_tracker.project_number` field in `.ai-dev-workflow.yaml` when the env var is absent (via a new `workflow_config_field` awk-based YAML section/field parser and `workflow_issue_tracker_project_number` named wrapper in `workflow-lib.sh`). Also removed the now-redundant `GITHUB_PROJECT_NUMBER` guard in `workflow-batch-plan.sh` that prevented the terminal-status skip from activating when project number was configured only via YAML. Added a `project_number: 1` field to `.ai-dev-workflow.yaml` with documentation comment.
 
 - **Project board status update skipped after issue close in `post-merge-cleanup.sh`** (#361): `gh project item-list` only returns items whose linked issue is still open, so the "Merged" tracker status update was silently skipped whenever the issue was closed first. Fixed by moving `update_tracker_status_best_effort` to run before `gh issue close`, ensuring the project item is still visible during the lookup.
 - **Batch-merge remote branch deleted before MERGED confirmation** (`batch-merge.sh`, protocol 94): Deleting the feature branch before `git push origin develop` is reflected by GitHub causes the PR to transition to `CLOSED` instead of `MERGED`, permanently losing merge attribution even though the commits land in `develop`. Added a new `delete-branch` subcommand to `batch-merge.sh` that re-checks `gh pr view <N> --json state` immediately before deletion and emits a warning (skipping deletion) if the state is not `MERGED`. Updated protocol 94 Step 4.2 to use this guarded command and to document the failure mode.

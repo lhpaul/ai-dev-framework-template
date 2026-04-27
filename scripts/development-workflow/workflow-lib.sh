@@ -212,6 +212,47 @@ workflow_config_provider() {
   ' "$config_file"
 }
 
+workflow_config_field() {
+  local section="$1"
+  local field="$2"
+  local config_file="${3:-$(workflow_config_file)}"
+
+  [ -f "$config_file" ] || return 0
+
+  awk -v section="$section" -v field="$field" '
+    function trim(value) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      gsub(/^["'"'"']|["'"'"']$/, "", value)
+      return value
+    }
+
+    $0 ~ ("^" section ":[[:space:]]*$") {
+      in_section = 1
+      next
+    }
+
+    in_section && /^[^[:space:]#].*:[[:space:]]*/ {
+      exit
+    }
+
+    in_section {
+      # Match "  <field>: <value>" — two-space indent, exact field name, optional comment
+      pattern = "^[[:space:]][[:space:]]" field ":[[:space:]]*"
+      if ($0 ~ pattern) {
+        line = $0
+        sub(/^[[:space:]]*[^[:space:]]*:[[:space:]]*/, "", line)
+        sub(/[[:space:]]+#.*$/, "", line)
+        print trim(line)
+        exit
+      }
+    }
+  ' "$config_file"
+}
+
+workflow_issue_tracker_project_number() {
+  workflow_config_field issue_tracker project_number
+}
+
 workflow_issue_tracker_provider_raw() {
   workflow_config_provider issue_tracker
 }
@@ -289,12 +330,13 @@ __workflow_tracker_cache_json=""
 # Queries GitHub Projects for the current Status of the given issue.
 # Prints the status string (e.g. "Merged", "Released", "In Development").
 # Prints an empty string when:
-#   - GITHUB_PROJECT_NUMBER is unset (GitHub Projects not configured)
+#   - project_number is unset in both GITHUB_PROJECT_NUMBER and .ai-dev-workflow.yaml
 #   - The issue is not found in the project
 #   - Any API call fails
 # Returns 0 in all cases (non-blocking).
 # Uses GITHUB_PROJECT_OWNER/GITHUB_PROJECT_NUMBER when set; owner falls back
-# to the repository owner if omitted.
+# to the repository owner if omitted; project_number falls back to the
+# issue_tracker.project_number field in .ai-dev-workflow.yaml if omitted.
 #
 # The full project item list is fetched once per owner+project pair and cached
 # in script-level variables to avoid a full-board scan on every call.
@@ -303,7 +345,7 @@ get_tracker_status_for_issue() {
   local owner project_number item_json current_status
 
   owner="${GITHUB_PROJECT_OWNER:-$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || true)}"
-  project_number="${GITHUB_PROJECT_NUMBER:-$(grep -A10 'issue_tracker:' "$(workflow_config_file)" 2>/dev/null | awk '/project_number:/ {print $2; exit}')}"
+  project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
   if [ -z "$owner" ] || [ -z "$project_number" ]; then
     printf ''
     return 0
@@ -335,7 +377,8 @@ get_tracker_status_for_issue() {
 # - Returns 0 in all warning/failure cases to avoid blocking caller flows.
 # - Respects status progression ordering and never rolls status backward.
 # - Uses GITHUB_PROJECT_OWNER/GITHUB_PROJECT_NUMBER when set; owner falls back
-#   to the repository owner if omitted.
+#   to the repository owner if omitted; project_number falls back to the
+#   issue_tracker.project_number field in .ai-dev-workflow.yaml if omitted.
 update_tracker_status_best_effort() {
   local issue_number="$1"
   local status_label="$2"
@@ -344,7 +387,7 @@ update_tracker_status_best_effort() {
   local target_order current_order
 
   owner="${GITHUB_PROJECT_OWNER:-$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || true)}"
-  project_number="${GITHUB_PROJECT_NUMBER:-$(grep -A10 'issue_tracker:' "$(workflow_config_file)" 2>/dev/null | awk '/project_number:/ {print $2; exit}')}"
+  project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
   if [ -z "$owner" ] || [ -z "$project_number" ]; then
     echo "Warning: GITHUB_PROJECT_OWNER or GITHUB_PROJECT_NUMBER not set and no project_number in .ai-dev-workflow.yaml; skipping tracker status update."
     return 0
