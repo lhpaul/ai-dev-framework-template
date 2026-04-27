@@ -259,7 +259,7 @@ Step 1.1 — Confirm the reviewer loop summary comment exists:
 ```bash
 # Must return at least one match. If empty: Step 7 has not run to completion — do not apply ready-for-regression.
 gh pr view <pr_number> --json comments --jq '.comments[].body' \
-  | grep -c "Automated Reviewer Loop Summary\|No blocking PR feedback"
+  | grep -c "Automated Reviewer Loop Summary\|Reviewer Loop Summary\|No blocking PR feedback"
 ```
 
 Pass condition: output is `1` or higher. If `0`: re-run `./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>` and wait for it to complete before proceeding.

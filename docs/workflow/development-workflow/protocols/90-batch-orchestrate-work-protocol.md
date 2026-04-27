@@ -579,7 +579,7 @@ Verify all of the following. If any check fails, the PR is **not ready** — tre
 | `ready-for-regression` label | Present on `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PRs; not required for `spec/*`, `implementation-plan/*` |
 | No `needs-fixes` label | Absent |
 | All automated-reviewer `reviewThreads` resolved | GraphQL `reviewThreads.nodes[].isResolved=true` (or `✅ Addressed` in body) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured) |
-| Automated reviewer loop summary comment | At least one PR comment containing "Automated Reviewer Loop Summary" or "No blocking PR feedback" (skip this check only when Step 7 was `skipped` because no review platforms are configured) |
+| Automated reviewer loop summary comment | At least one PR comment containing "Automated Reviewer Loop Summary", "Reviewer Loop Summary", or "No blocking PR feedback" (skip this check only when Step 7 was `skipped` because no review platforms are configured) |
 | CI checks | All required status checks are green (`state: SUCCESS` or `conclusion: success`) |
 
 If a check fails:
@@ -620,7 +620,7 @@ gh pr view <pr_number> --json isDraft,labels,comments \
     isDraft: .isDraft,
     hasRegressionLabel: ([.labels[].name] | any(. == "ready-for-regression")),
     hasReadyLabel: ([.labels[].name] | any(. == "ready-for-human-review")),
-    hasReviewSummary: ([.comments[].body] | any(test("Automated Reviewer Loop Summary|No blocking PR feedback")))
+    hasReviewSummary: ([.comments[].body] | any(test("Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback")))
   }'
 ```
 
@@ -721,7 +721,7 @@ For each PR in the batch, inspect the "Automated Reviewer Loop Summary" comment 
 ```bash
 # Check whether a PR's reviewer loop summary indicates CodeRabbit skipped with no_review
 gh pr view <pr_number> --json comments \
-  --jq '[.comments[].body | select(test("Automated Reviewer Loop Summary"))] | last // ""' \
+  --jq '[.comments[].body | select(test("Automated Reviewer Loop Summary|Reviewer Loop Summary"))] | last // ""' \
   | grep -qiE "REASON=no_review|skipped \(no_review\)"
 ```
 

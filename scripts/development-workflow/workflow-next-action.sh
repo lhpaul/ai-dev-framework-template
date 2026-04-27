@@ -94,7 +94,7 @@ if [ -n "$pr_number" ]; then
       # PRs with ready-for-regression but no ready-for-human-review are an "incomplete
       # run (post-regression)" — distinct from the pre-label orphaned case.
       is_draft="$(printf '%s\n' "$pr_json" | jq -r '.isDraft')"
-      has_review_summary="$(printf '%s\n' "$pr_json" | jq -r '[.comments[].body] | any(test("Automated Reviewer Loop Summary|No blocking PR feedback")) | tostring')"
+      has_review_summary="$(printf '%s\n' "$pr_json" | jq -r '[.comments[].body] | any(test("Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback")) | tostring')"
       if [ "$is_draft" = "false" ] && [ "$has_review_summary" = "false" ]; then
         case ",$labels," in
           *,ready-for-regression,*) ;;  # Not orphaned — incomplete run (post-regression, pre-Step-7)
@@ -138,7 +138,7 @@ if [ -n "$branch_name" ]; then
         # PRs with ready-for-regression but no ready-for-human-review are an "incomplete
         # run (post-regression)" — distinct from the pre-label orphaned case.
         is_draft="$(printf '%s\n' "$pr_json" | jq -r '.isDraft')"
-        has_review_summary="$(printf '%s\n' "$pr_json" | jq -r '[.comments[].body] | any(test("Automated Reviewer Loop Summary|No blocking PR feedback")) | tostring')"
+        has_review_summary="$(printf '%s\n' "$pr_json" | jq -r '[.comments[].body] | any(test("Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback")) | tostring')"
         if [ "$is_draft" = "false" ] && [ "$has_review_summary" = "false" ]; then
           case ",$labels," in
             *,ready-for-regression,*) ;;  # Not orphaned — incomplete run (post-regression, pre-Step-7)
