@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Shell variable interpolation in GraphQL mutation** (`workflow-lib.sh`): `update_tracker_status_best_effort` was interpolating `${project_id}`, `${item_id}`, `${field_id}`, and `${option_id}` directly into the query string. Switched to `-f` parameterized variables with a typed mutation signature (`$projectId: ID!`, `$itemId: ID!`, `$fieldId: ID!`, `$optionId: String!`), eliminating the injection risk and aligning with the safe pattern used elsewhere in the codebase.
 
+- **Pre-label two-phase gate bypassed in practice** (`docs/workflow/development-workflow/protocols/03-implement-development-protocol.md`): Protocol 03 Step 9's two-phase gate was written as prose, allowing agents to skip it accidentally. Replaced the narrative description with an explicit hard-stop checklist: each phase now lists numbered steps with a specific shell command to run and a pass condition to verify before proceeding. Step 1.1 checks for the reviewer loop summary comment (`gh pr view --json comments`), Step 1.2 runs the GraphQL thread-resolution audit, Step 1.3 applies `ready-for-regression`, Step 2.1 runs `pr-ci-loop.sh` and requires `RESULT=green`, and Step 2.2 applies `ready-for-human-review`. Skipping any step is now explicitly labelled a protocol violation.
+
 ## [0.23.0] - 2026-04-25
 
 ### Added

@@ -248,20 +248,70 @@ After the draft PR exists, the **Work Item Runner** owns the rest of the lifecyc
 
 **Pre-label ordering gate (hard sequential gate — do not skip)**:
 
-Before applying any readiness label, the Work Item Runner (or this protocol when invoked standalone) **must** satisfy the following two-phase sequence. Each phase must be fully satisfied before proceeding to the next. Do not collapse both phases or apply both labels simultaneously.
+Before applying any readiness label, execute and verify **every item** in this two-phase checklist. Do not collapse phases or apply labels simultaneously. Each item requires a specific command to run and a pass condition to confirm — skipping any item is a protocol violation.
 
-**Phase 1 — before applying `ready-for-regression` (Step 7b)**:
+**Phase 1 checklist — run ALL of these before applying `ready-for-regression`**:
 
-1. **Reviewer loop summary comment is present**: At least one PR comment containing `"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"` must exist on the PR. This is the only reliable signal that Step 7 ran to completion. Do not apply `ready-for-regression` before this comment exists. (Skip this check only when no review platforms are configured and Step 7 result was `skipped`.)
-2. **All automated-reviewer threads are resolved**: Every review thread authored by a configured bot (e.g., `coderabbitai[bot]`, `devin[bot]`) must have `isResolved: true`. Unresolved bot threads block labeling.
-3. **Apply `ready-for-regression`** (Step 7b). This label triggers label-gated e2e/regression CI checks.
+Step 1.1 — Confirm the reviewer loop summary comment exists:
 
-**Phase 2 — before applying `ready-for-human-review` (Step 8a), after CI settles**:
+```bash
+# Must return at least one match. If empty: Step 7 has not run to completion — do not apply ready-for-regression.
+gh pr view <pr_number> --json comments --jq '.comments[].body' \
+  | grep -c "Automated Reviewer Loop Summary\|No blocking PR feedback"
+```
 
-4. **All CI checks are green**: Every required status check in `statusCheckRollup` must have passed or been skipped — no check may be in `PENDING`, `null`, `IN_PROGRESS`, `FAILURE`, or `ERROR` state. Do not apply `ready-for-human-review` while any check is still pending or failed. (See `91-orchestrate-work-protocol.md` Step 8 and `pr-ci-loop.sh` for the authoritative CI polling logic.)
-5. **Apply `ready-for-human-review`** (Step 8a).
+Pass condition: output is `1` or higher. If `0`: re-run `./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>` and wait for it to complete before proceeding.
 
-This two-phase sequence aligns with `91-orchestrate-work-protocol.md` Steps 7b → 8 → 8a → 8c. When invoked through the Work Item Runner, those steps enforce this gate automatically. When invoked standalone, run this gate explicitly before calling `gh pr edit --add-label`.
+Skip this check only when no review platforms are configured and the reviewer loop result was `skipped`.
+
+Step 1.2 — Confirm all automated-reviewer threads are resolved:
+
+```bash
+# Must return empty output. Any line of output means unresolved bot threads exist — do not apply ready-for-regression.
+gh api graphql -f query='
+  query($owner:String!, $repo:String!, $number:Int!) {
+    repository(owner:$owner, name:$repo) {
+      pullRequest(number:$number) {
+        reviewThreads(first: 100) {
+          nodes { isResolved comments(first: 1) { nodes { author { login } body } } }
+        }
+      }
+    }
+  }' -f owner=<owner> -f repo=<repo> -F number=<pr_number> \
+  | jq '.data.repository.pullRequest.reviewThreads.nodes[]
+        | select(.isResolved == false)
+        | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps"] | index($a) != null)
+        | select((.comments.nodes[0].body // "") | test("✅ Addressed") | not)'
+```
+
+Pass condition: empty output. If non-empty: resolve or address each reported thread before proceeding.
+
+Step 1.3 — Apply `ready-for-regression`:
+
+```bash
+# Only after Steps 1.1 and 1.2 pass:
+gh pr edit <pr_number> --add-label "ready-for-regression"
+```
+
+**Phase 2 checklist — run ALL of these before applying `ready-for-human-review`**:
+
+Step 2.1 — Wait for CI to settle (run the CI loop script):
+
+```bash
+# Must emit RESULT=green. RESULT=red or RESULT=timeout means do not apply ready-for-human-review.
+./scripts/development-workflow/pr-ci-loop.sh <pr_number>
+```
+
+Pass condition: script exits with `RESULT=green`. If `RESULT=red`: fix the failing checks, push, and re-run from Phase 1. If `RESULT=timeout`: escalate to human.
+
+Step 2.2 — Apply `ready-for-human-review`:
+
+```bash
+# Only after Step 2.1 passes:
+gh pr edit <pr_number> --add-label "ready-for-human-review"
+```
+
+This two-phase sequence aligns with `91-orchestrate-work-protocol.md` Steps 7b → 8 → 8a → 8c. When invoked through the Work Item Runner, those steps enforce this gate automatically. When invoked standalone, execute each numbered step above explicitly and verify its pass condition before proceeding to the next.
 
 If this protocol is invoked **standalone** rather than through the Work Item Runner, hand off manually by following `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` from the newly opened draft PR.
 
