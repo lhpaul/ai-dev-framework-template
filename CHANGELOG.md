@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Batch-merge orchestrator must not wrap merge calls in a single shell loop** (`94-batch-merge-protocol.md`, `batch-merge.sh`): Added an explicit sequencing rule to protocol Step 4.1 requiring that `batch-merge.sh merge --pr N` be called for exactly one PR at a time with `MERGE_RESULT` fully resolved before advancing to the next PR. Batching multiple calls in a non-interactive loop left the working tree in a conflicted state when any PR produced `MERGE_RESULT=conflict`, causing all subsequent merge attempts to fail. Added a pre-merge guard to `batch-merge.sh` that checks for unresolved conflict markers via `git status --porcelain` and exits non-zero with a clear diagnostic message before attempting `git checkout develop`.
+
 ### Added
 
 - **Sync-template migration notes** (`sync-manifest.yaml`, sync-template skill and commands): `sync-manifest.yaml` gains a `migration_notes` section for versioned manual migration steps. The sync-template skill and command variants now read this section and present a required pre-sync checklist whenever the downstream project's `last_synced_version` predates a breaking structural change. First entry: `docs/ai/ → docs/workflow/` rename (v0.23.0). Fully backwards-compatible — silently skipped when no applicable notes exist.

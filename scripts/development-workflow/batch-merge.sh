@@ -330,6 +330,16 @@ cmd_merge() {
     merge_die "PR #${pr_num} is labeled needs-fixes"
   fi
 
+  # Guard: refuse to proceed if the working tree has unresolved conflict markers.
+  # This prevents a previous merge's conflict state from contaminating this PR's
+  # merge (e.g., when the caller accidentally batches multiple merge calls in a
+  # single shell loop instead of handling each MERGE_RESULT individually).
+  local conflict_state
+  conflict_state="$(git status --porcelain 2>/dev/null | grep -E '^(UU|AA|DD|AU|UA|DU|UD)' || true)"
+  if [ -n "$conflict_state" ]; then
+    merge_die "Working tree has unresolved conflicts from a previous merge — resolve or abort the in-progress merge before calling merge --pr again. Conflicting paths: $(printf '%s' "$conflict_state" | awk '{print $2}' | tr '\n' ' ')"
+  fi
+
   # Ensure local develop is current
   git checkout "$TARGET_BASE" >/dev/null 2>&1 || \
     merge_die "Could not check out '${TARGET_BASE}' — ensure the working tree is clean and the branch exists locally"
