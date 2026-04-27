@@ -636,7 +636,7 @@ For each PR in the batch, inspect the "Automated Reviewer Loop Summary" comment 
 ```bash
 # Check whether a PR's reviewer loop summary indicates CodeRabbit skipped with no_review
 gh pr view <pr_number> --json comments \
-  --jq '[.comments[].body | select(test("Automated Reviewer Loop Summary"))] | last // ""' \
+  --jq '[.comments[].body | select(test("Automated Reviewer Loop Summary|Reviewer Loop Summary"))] | last // ""' \
   | grep -qiE "REASON=no_review|skipped \(no_review\)"
 ```
 

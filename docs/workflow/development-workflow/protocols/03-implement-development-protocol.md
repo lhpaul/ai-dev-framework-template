@@ -252,7 +252,7 @@ Before applying any readiness label, the Work Item Runner (or this protocol when
 
 **Phase 1 — before applying `ready-for-regression` (Step 7b)**:
 
-1. **Reviewer loop summary comment is present**: At least one PR comment containing `"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"` must exist on the PR. This is the only reliable signal that Step 7 ran to completion. Do not apply `ready-for-regression` before this comment exists. (Skip this check only when no review platforms are configured and Step 7 result was `skipped`.)
+1. **Reviewer loop summary comment is present**: At least one PR comment containing `"Automated Reviewer Loop Summary"`, `"Reviewer Loop Summary"`, or `"No blocking PR feedback"` must exist on the PR. This is the only reliable signal that Step 7 ran to completion. Do not apply `ready-for-regression` before this comment exists. (Skip this check only when no review platforms are configured and Step 7 result was `skipped`.)
 2. **All automated-reviewer threads are resolved**: Every review thread authored by a configured bot (e.g., `coderabbitai[bot]`, `devin[bot]`) must have `isResolved: true`. Unresolved bot threads block labeling.
 3. **Apply `ready-for-regression`** (Step 7b). This label triggers label-gated e2e/regression CI checks.
 
