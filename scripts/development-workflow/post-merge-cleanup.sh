@@ -114,22 +114,67 @@ git branch -D "$TO_DELETE"
 # --- Update tracker status and close associated GitHub issue (if any) ---
 
 # Unified issue-number extraction: covers all branch prefixes in a single pass.
-# Sets ISSUE_NUMBER and BRANCH_TYPE; both remain empty if the branch name does
-# not match any known prefix/number pattern.
+# Sets ISSUE_NUMBER, ISSUE_IDENTIFIER, ISSUE_ID_TYPE, and BRANCH_TYPE.
+# ISSUE_IDENTIFIER holds the full extracted identifier (e.g. "42", "lh-97").
+# ISSUE_NUMBER holds the numeric part only (used for `gh issue` commands on GitHub).
+# ISSUE_ID_TYPE is "numeric" or "team-prefixed".
+# All four remain empty if the branch name does not match any known prefix/pattern.
+#
+# Supported identifier formats:
+#   Numeric:      fix/42-slug, feature/123-slug, spec/7-slug, implementation-plan/99-slug
+#   Team-prefixed: fix/lh-97-slug, feature/rad-42-slug, implementation-plan/PROJ-101-slug
+#                  (pattern: 2–6 alpha chars, dash, digits; case-insensitive)
 ISSUE_NUMBER=""
+ISSUE_IDENTIFIER=""
+ISSUE_ID_TYPE=""
 BRANCH_TYPE=""
+
 if [[ "$TO_DELETE" =~ ^(fix|feature|hotfix|refactor)/([0-9]+)($|-) ]]; then
   ISSUE_NUMBER="${BASH_REMATCH[2]}"
+  ISSUE_IDENTIFIER="$ISSUE_NUMBER"
+  ISSUE_ID_TYPE="numeric"
+  BRANCH_TYPE="implementation"
+elif [[ "$TO_DELETE" =~ ^(fix|feature|hotfix|refactor)/([a-zA-Z]{2,6}-([0-9]+))($|-) ]]; then
+  ISSUE_IDENTIFIER="${BASH_REMATCH[2]}"
+  ISSUE_NUMBER="${BASH_REMATCH[3]}"
+  ISSUE_ID_TYPE="team-prefixed"
   BRANCH_TYPE="implementation"
 elif [[ "$TO_DELETE" =~ ^(spec)/([0-9]+)($|-) ]]; then
   ISSUE_NUMBER="${BASH_REMATCH[2]}"
+  ISSUE_IDENTIFIER="$ISSUE_NUMBER"
+  ISSUE_ID_TYPE="numeric"
+  BRANCH_TYPE="spec"
+elif [[ "$TO_DELETE" =~ ^(spec)/([a-zA-Z]{2,6}-([0-9]+))($|-) ]]; then
+  ISSUE_IDENTIFIER="${BASH_REMATCH[2]}"
+  ISSUE_NUMBER="${BASH_REMATCH[3]}"
+  ISSUE_ID_TYPE="team-prefixed"
   BRANCH_TYPE="spec"
 elif [[ "$TO_DELETE" =~ ^(implementation-plan)/([0-9]+)($|-) ]]; then
   ISSUE_NUMBER="${BASH_REMATCH[2]}"
+  ISSUE_IDENTIFIER="$ISSUE_NUMBER"
+  ISSUE_ID_TYPE="numeric"
+  BRANCH_TYPE="plan"
+elif [[ "$TO_DELETE" =~ ^(implementation-plan)/([a-zA-Z]{2,6}-([0-9]+))($|-) ]]; then
+  ISSUE_IDENTIFIER="${BASH_REMATCH[2]}"
+  ISSUE_NUMBER="${BASH_REMATCH[3]}"
+  ISSUE_ID_TYPE="team-prefixed"
   BRANCH_TYPE="plan"
 fi
 
-if [ -n "$ISSUE_NUMBER" ]; then
+if [ -n "$ISSUE_IDENTIFIER" ]; then
+  # For team-prefixed identifiers, log the extraction result.
+  # All `gh issue` and `update_tracker_status_best_effort` calls use ISSUE_NUMBER
+  # (the numeric part) because:
+  #   - `gh issue view/close` require a numeric GitHub issue number.
+  #   - `update_tracker_status_best_effort` uses `--argjson` to match
+  #     `.content.number` (an integer) in the GitHub Projects item list.
+  # The full team-prefixed identifier is captured in ISSUE_IDENTIFIER for
+  # informational logging; future tracker helpers with native team-prefix support
+  # should use ISSUE_IDENTIFIER rather than ISSUE_NUMBER.
+  if [ "$ISSUE_ID_TYPE" = "team-prefixed" ]; then
+    echo "Detected team-prefixed issue identifier '$ISSUE_IDENTIFIER' in branch '$TO_DELETE' (numeric part: #$ISSUE_NUMBER)."
+  fi
+
   if [ "$BRANCH_TYPE" = "implementation" ]; then
     # Close the issue when an implementation branch (feature/fix/hotfix/refactor) is merged.
     if ISSUE_STATE=$(gh issue view "$ISSUE_NUMBER" --json state --jq '.state' 2>/dev/null); then
