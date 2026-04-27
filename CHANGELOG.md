@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`GITHUB_PROJECT_NUMBER` missing fallback causes silent tracker skips** (`workflow-lib.sh`, `.ai-dev-workflow.yaml`): `update_tracker_status_best_effort` and `get_tracker_status_for_issue` set `project_number` from `GITHUB_PROJECT_NUMBER` with no fallback, so tracker updates silently skipped on every run in normal shell sessions where the env var is not set. Fixed by reading `project_number` from the `issue_tracker.project_number` field in `.ai-dev-workflow.yaml` when the env var is absent. Added a `project_number: 1` field to `.ai-dev-workflow.yaml` with documentation comment.
+
 ### Added
 
 - **Sync-template migration notes** (`sync-manifest.yaml`, sync-template skill and commands): `sync-manifest.yaml` gains a `migration_notes` section for versioned manual migration steps. The sync-template skill and command variants now read this section and present a required pre-sync checklist whenever the downstream project's `last_synced_version` predates a breaking structural change. First entry: `docs/ai/ → docs/workflow/` rename (v0.23.0). Fully backwards-compatible — silently skipped when no applicable notes exist.
