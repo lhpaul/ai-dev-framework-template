@@ -29,15 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- **Batch-merge remote branch deleted before MERGED confirmation** (`batch-merge.sh`, protocol 94): Deleting the feature branch before `git push origin develop` is reflected by GitHub causes the PR to transition to `CLOSED` instead of `MERGED`, permanently losing merge attribution even though the commits land in `develop`. Added a new `delete-branch` subcommand to `batch-merge.sh` that re-checks `gh pr view <N> --json state` immediately before deletion and emits a warning (skipping deletion) if the state is not `MERGED`. Updated protocol 94 Step 4.2 to use this guarded command and to document the failure mode.
-
 ### Added
 
 - **Sync-template migration notes** (`sync-manifest.yaml`, sync-template skill and commands): `sync-manifest.yaml` gains a `migration_notes` section for versioned manual migration steps. The sync-template skill and command variants now read this section and present a required pre-sync checklist whenever the downstream project's `last_synced_version` predates a breaking structural change. First entry: `docs/ai/ → docs/workflow/` rename (v0.23.0). Fully backwards-compatible — silently skipped when no applicable notes exist.
 
 ### Fixed
+
+- **Batch-merge remote branch deleted before MERGED confirmation** (`batch-merge.sh`, protocol 94): Deleting the feature branch before `git push origin develop` is reflected by GitHub causes the PR to transition to `CLOSED` instead of `MERGED`, permanently losing merge attribution even though the commits land in `develop`. Added a new `delete-branch` subcommand to `batch-merge.sh` that re-checks `gh pr view <N> --json state` immediately before deletion and emits a warning (skipping deletion) if the state is not `MERGED`. Updated protocol 94 Step 4.2 to use this guarded command and to document the failure mode.
 
 - **Pre-dispatch stale-worktree and unsynced-base-branch check** (`90-batch-orchestrate-work-protocol.md`): Added Step 3.3 "Pre-Dispatch Environment Validation" to the Portfolio Orchestrator protocol. The new step runs two portfolio-wide checks before any Work Item Runner is dispatched: (1) detect orphaned/locked worktrees from prior runs whose branches are merged, closed, or no longer active — report them with suggested `git worktree remove --force` cleanup commands and block dispatch until resolved; (2) verify the integration branch is not ahead of `origin` — if it is, warn the human and block dispatch until the pending commits are pushed or the risk is explicitly acknowledged. Both checks run in parallel and are reported together to minimize human interruptions.
 - **Commit SHA verification before marking reviewer findings resolved** (`91-orchestrate-work-protocol.md`, `93-automated-reviewer-loop-protocol.md`): Added a mandatory commit SHA verification step requiring agents to confirm a cited commit exists in `git log` before recording it as `resolved_commit` in the PR feedback ledger and before posting fix commit comments. If the SHA is absent, the agent must commit staged changes first and use the real SHA from `git log`. Prevents fabricated SHA references (as observed in PR #321) from propagating into the audit trail and causing PRs to be labeled `ready-for-human-review` with uncommitted fixes.
