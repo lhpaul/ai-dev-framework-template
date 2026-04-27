@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Worktree isolation: agents still switching branches in main working tree** (`03-implement-development-protocol.md`, `91-orchestrate-work-protocol.md`, `93-automated-reviewer-loop-protocol.md`): Protocol 91's "Critical: Worktree Git Discipline" block now includes an explicit pre-operation checklist — agents must confirm they are inside the worktree path (not the main repo root) and must skip base-branch checkout steps before any state-changing git command. All four branching steps in Protocol 03 (Full Pipeline, Refactor, Fast Track, Hotfix) gain a "Worktree context" note instructing agents to skip `git checkout <base> && git checkout -b` when the worktree was already created on the correct branch. Protocol 93 adds a "Worktree discipline for fixer agents" section that carries the same pre-operation checklist to reviewer-loop fixer dispatch in batch contexts.
+
 - **Shell variable interpolation in GraphQL mutation** (`workflow-lib.sh`): `update_tracker_status_best_effort` was interpolating `${project_id}`, `${item_id}`, `${field_id}`, and `${option_id}` directly into the query string. Switched to `-f` parameterized variables with a typed mutation signature (`$projectId: ID!`, `$itemId: ID!`, `$fieldId: ID!`, `$optionId: String!`), eliminating the injection risk and aligning with the safe pattern used elsewhere in the codebase.
 
 ## [0.23.0] - 2026-04-25

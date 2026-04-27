@@ -207,6 +207,16 @@ Use the pre-dispatch branch check from Step 2 (`git branch --list`, `git branch 
 
 **Critical: Worktree Git Discipline** (`BATCH_CONTEXT=true` only)
 
+**Pre-operation checklist — verify before every git state-changing command**
+
+Before issuing any `git switch`, `git checkout`, `git checkout -b`, `git reset`, or `git restore` command, confirm both conditions below. If either check fails, do not run the command — correct the path or use the `-C` flag instead.
+
+1. **Confirm you are operating inside the worktree, not the main repository root.**
+   Run `pwd` and compare the output against `<worktree-path>`. If they differ, you are in the wrong directory. `cd <worktree-path>` or use `git -C <worktree-path>` before continuing.
+
+2. **Confirm the command targets the current worktree branch, not a base branch.**
+   Running `git checkout develop` (or any other base branch) inside the worktree will fail because `develop` is already checked out in the main working tree — git prevents the same branch from being checked out in two locations simultaneously. If a stage protocol's branching step says `git checkout develop && git checkout -b <branch>`, skip it entirely: the worktree was already created on the correct branch.
+
 When operating inside a worktree, **never** run the following commands against the main repo root:
 
 - `git switch <branch>`
