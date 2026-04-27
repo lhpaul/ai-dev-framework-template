@@ -691,7 +691,7 @@ Before recording a `resolved_commit` SHA in any ledger entry and before posting 
 ```bash
 git log --oneline | grep "^<short_sha>"
 # or equivalently:
-git rev-parse --verify <short_sha>^ 2>/dev/null && echo "exists" || echo "not found"
+git rev-parse --verify <short_sha> 2>/dev/null && echo "exists" || echo "not found"
 ```
 
 If the SHA is not found in `git log`, the agent must **not** record it as the `resolved_commit` and must **not** claim the finding is resolved. Instead, the agent must commit any staged or unstaged changes first, obtain the real commit SHA from `git log`, and then record that SHA:

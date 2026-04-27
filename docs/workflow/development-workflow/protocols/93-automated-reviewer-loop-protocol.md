@@ -80,7 +80,7 @@ Before citing any commit SHA in a fix comment or marking a finding resolved in t
 ```bash
 git log --oneline | grep "^<short_sha>"
 # or equivalently:
-git rev-parse --verify <short_sha>^ 2>/dev/null && echo "exists" || echo "not found"
+git rev-parse --verify <short_sha> 2>/dev/null && echo "exists" || echo "not found"
 ```
 
 If the SHA is **not found**, the agent must **not** record it as the resolved commit and must **not** claim the finding is resolved. Instead:
