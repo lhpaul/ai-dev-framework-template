@@ -156,7 +156,7 @@ For each file in these paths:
 1. Verify that `entry.new_path` is present in `categories.always_sync`. If it is not, skip this entry.
 2. Check whether `entry.old_path` exists as a non-empty directory in the project:
    ```bash
-   [ -d "<old_path>" ] && find "<old_path>" -maxdepth 1 | wc -l
+   [ -d "<old_path>" ] && find "<old_path>" -mindepth 1 -maxdepth 1 | wc -l
    ```
 3. If `old_path` exists and is non-empty: record it as a **rename cleanup candidate** with:
    - `old_path`, `new_path`, `introduced_in`, and `description` from the manifest entry
