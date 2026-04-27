@@ -35,10 +35,13 @@ or
 Save the user's answer to `.tmp/template-config.json` before continuing (create the `.tmp` directory if needed; it is gitignored).
 
 **Remote fetch** (when a URL source is used):
+
 ```bash
-git clone --depth=1 --branch=<ref> <url> /tmp/template-sync-$(date +%s)
+TEMPLATE_TEMP_DIR="/tmp/template-sync-$(date +%s)"
+git clone --depth=1 --branch=<ref> <url> "$TEMPLATE_TEMP_DIR"
 ```
-Remember the temp path — you must clean it up at the end of this skill.
+
+Store the exact path in `TEMPLATE_TEMP_DIR` — you must clean up this specific directory at the end (never use a wildcard).
 If `--ref` is not specified for a remote source, use the default branch (`main`).
 
 Once the template source is resolved, read its `CHANGELOG.md` and extract the latest version number (first `[X.Y.Z]` entry after `[Unreleased]` if present, otherwise the first versioned entry). Store it as `TEMPLATE_VERSION`.
