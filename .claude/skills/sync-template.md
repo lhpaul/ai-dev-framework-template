@@ -269,6 +269,22 @@ Then ask:
 - Do **not** delete any file
 - Do **not** overwrite project-specific files; for those paths only additive/merge changes are allowed, and only with explicit approval
 
+### Post-apply path verification (cross-reference integrity check)
+
+After applying any file that contains cross-references to workflow doc paths (e.g., `.claude/commands/*.md`, `.cursor/commands/*.md`, `.claude/skills/*.md`, `.cursor/agents/*.md`, `.claude/agents/*.md`), verify that every resulting path resolves to an actual file in the project. This catches cases where a path-prefix rename (e.g., `docs/ai/` → `docs/workflow/`) is applied correctly but protocol numbers that shifted between the old and new directory trees are not.
+
+For each file that was added or updated in this step:
+
+1. Extract all relative file paths referenced in the file (look for patterns like `docs/workflow/...`, `docs/specs/...`, or any `*.md` path under `docs/`).
+2. For each extracted path, verify the file exists:
+   ```bash
+   ls <path>   # or: test -f <path> && echo "OK" || echo "MISSING: <path>"
+   ```
+3. If any path does not resolve, **do not commit**. Instead, surface it as a manual review item:
+   > "⚠️  Cross-reference path not found after sync: `<path>` (in `<file>`). The path prefix was updated but the filename may have changed. Please verify the correct path and update the reference manually before committing."
+
+Collect all broken paths and report them together before asking the user to confirm or fix them. Only proceed to Step 5 once either (a) all paths resolve, or (b) the user has explicitly acknowledged each broken path and confirmed they will fix it manually after the commit.
+
 If the template source was a remote clone, clean it up now:
 ```bash
 rm -rf /tmp/template-sync-*

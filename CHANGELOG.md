@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Sync-template: post-apply path verification** (`.claude/skills/sync-template.md`, `.claude/commands/sync-template.md`, `.cursor/commands/sync-template.md`): After applying any file that contains cross-references to workflow doc paths, the sync-template skill now instructs the agent to verify that every resulting path resolves to an actual file in the project. This catches cases where a path-prefix rename (e.g., `docs/ai/` → `docs/workflow/`) is applied correctly but protocol numbers that shifted between the old and new directory trees are not — the root cause of the broken references in PR #188.
+
 - **Shell variable interpolation in GraphQL mutation** (`workflow-lib.sh`): `update_tracker_status_best_effort` was interpolating `${project_id}`, `${item_id}`, `${field_id}`, and `${option_id}` directly into the query string. Switched to `-f` parameterized variables with a typed mutation signature (`$projectId: ID!`, `$itemId: ID!`, `$fieldId: ID!`, `$optionId: String!`), eliminating the injection risk and aligning with the safe pattern used elsewhere in the codebase.
 
 ## [0.23.0] - 2026-04-25
