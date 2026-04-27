@@ -319,9 +319,11 @@ Scan the full worktree list for orphaned entries — worktrees whose branch is e
 
 ```bash
 # List all registered worktrees and their branches
+# (This step runs from the main repo root; REPO_ROOT resolves correctly in all contexts)
+REPO_ROOT=$(git rev-parse --git-common-dir)/..
 git worktree list --porcelain \
   | awk '/^worktree / { wt=$2 } /^branch / { b=$2; sub("^refs/heads/","",b); print wt "\t" b }' \
-  | grep -v "^$(git rev-parse --show-toplevel)"
+  | grep -v "^${REPO_ROOT}"
 ```
 
 For each worktree found, check whether its branch has already been merged to the integration branch (i.e., the PR is merged and the branch is no longer active):
