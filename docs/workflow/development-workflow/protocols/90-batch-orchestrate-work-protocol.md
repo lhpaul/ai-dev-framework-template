@@ -309,6 +309,91 @@ Do **not** dispatch multiple Work Item Runners to operate in the same working di
 
 ---
 
+## Step 3.3: Pre-Dispatch Environment Validation (Parallel Batches Only)
+
+Before building the worktree per-item pre-flight (Step 3.5), run two portfolio-wide environment checks. Both checks must pass before any Work Item Runner is dispatched.
+
+### Check 1: Stale orphaned worktrees
+
+Scan the full worktree list for orphaned entries — worktrees whose branch is either merged, closed, or no longer needed by the current batch. These lock the `.git` index against concurrent operations and prevent clean worktree creation for items in the new batch.
+
+```bash
+# List all registered worktrees and their branches, excluding the main worktree
+# (Resolve REPO_ROOT to an absolute path; use exact awk comparison to avoid
+# prefix-match false exclusions for nested worktrees under the repo root)
+REPO_ROOT=$(cd "$(git rev-parse --git-common-dir)/.." && pwd)
+git worktree list --porcelain \
+  | awk -v root="$REPO_ROOT" '/^worktree / { wt=$2 } /^branch / { b=$2; sub("^refs/heads/","",b); if (wt != root) print wt "\t" b }'
+```
+
+For each worktree found, check whether its branch has already been merged to the integration branch (i.e., the PR is merged and the branch is no longer active):
+
+```bash
+# For each candidate worktree branch <branch>:
+# A branch is "stale" if its PR was merged and no matching open PR exists any more
+gh pr list --state merged --head <branch> --json number,mergedAt --jq '.[0] | .number'
+# Non-empty output → merged; the worktree is stale and safe to remove
+```
+
+**Stale detection criteria** (a worktree is stale when **any** of the following is true):
+
+- Its branch has a merged PR (`gh pr list --state merged --head <branch>` returns a result)
+- Its branch has a closed PR with no open successor (`gh pr list --state all --head <branch>` shows only closed PRs)
+- Its branch no longer exists on the remote and is not part of the current batch (`git ls-remote --exit-code origin <branch>` returns non-zero)
+
+**Action when stale worktrees are found:**
+
+1. List every stale worktree with its path and branch name.
+2. Report them to the human with suggested cleanup commands:
+
+   ```bash
+   git worktree remove --force <worktree-path>   # use --force only when the worktree is locked
+   ```
+
+3. **Do not auto-remove** worktrees without human confirmation — a locked worktree may contain in-progress work that the human has not discarded yet.
+4. If the human confirms cleanup, remove each stale worktree and then continue.
+5. If the human cannot confirm at this time, **hold the batch dispatch** and report the blocking condition. Do not attempt to create new worktrees until the stale ones are resolved, as locked worktrees can interfere with subsequent `git worktree add` calls.
+
+**Worktrees that belong to the current batch**: Do not flag an active worktree as stale if its branch is one of the branches about to be dispatched. Those are handled by the per-item Step 3.5 check.
+
+### Check 2: Unsynced integration branch
+
+Before dispatching any Work Item Runner, verify that the local integration branch is not ahead of `origin`. New feature/fix branches are cut from the local integration branch; if the local branch has commits that are not yet on `origin`, those commits will appear in every new implementation PR's diff, causing incorrect diffs and confusing reviewers.
+
+```bash
+INTEGRATION_BRANCH="develop"   # or read from .ai-dev-workflow.yaml if a config key exists
+
+# Fetch latest remote state (idempotent, safe to run at the start of every batch)
+git fetch origin
+
+# Count commits that are local-only (ahead of origin)
+AHEAD=$(git rev-list --count "origin/${INTEGRATION_BRANCH}..${INTEGRATION_BRANCH}" 2>/dev/null || echo "0")
+echo "Integration branch '${INTEGRATION_BRANCH}' is ${AHEAD} commits ahead of origin."
+```
+
+**Action when the integration branch is ahead of origin:**
+
+1. Report to the human: the local `<integration-branch>` is `N` commits ahead of `origin/<integration-branch>`.
+2. Ask the human to push the pending commits before batch dispatch:
+
+   ```bash
+   git push origin <integration-branch>
+   ```
+
+3. **Block batch dispatch** until either:
+   - The human pushes the pending commits (re-run the check after push; `AHEAD` must be `0`)
+   - The human explicitly acknowledges the risk and instructs the orchestrator to proceed anyway (log this override in retrospective notes)
+
+**Safe condition**: `AHEAD=0` — the integration branch is in sync with `origin`. Proceed to Step 3.5.
+
+### Check ordering and gating
+
+Run Check 1 and Check 2 in parallel. Both must pass (or be explicitly acknowledged by the human) before proceeding to the per-item Step 3.5 checks and batch dispatch.
+
+If either check identifies a blocking condition, report **both** results together so the human can resolve all issues in a single interaction rather than being interrupted twice.
+
+---
+
 ## Step 3.5: Pre-Flight Worktree Check (Parallel Batches Only)
 
 Before dispatching a parallel batch, validate that each item can be isolated.

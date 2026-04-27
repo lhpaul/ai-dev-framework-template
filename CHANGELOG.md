@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Pre-dispatch stale-worktree and unsynced-base-branch check** (`90-batch-orchestrate-work-protocol.md`): Added Step 3.3 "Pre-Dispatch Environment Validation" to the Portfolio Orchestrator protocol. The new step runs two portfolio-wide checks before any Work Item Runner is dispatched: (1) detect orphaned/locked worktrees from prior runs whose branches are merged, closed, or no longer active — report them with suggested `git worktree remove --force` cleanup commands and block dispatch until resolved; (2) verify the integration branch is not ahead of `origin` — if it is, warn the human and block dispatch until the pending commits are pushed or the risk is explicitly acknowledged. Both checks run in parallel and are reported together to minimize human interruptions.
+
 - **Shell variable interpolation in GraphQL mutation** (`workflow-lib.sh`): `update_tracker_status_best_effort` was interpolating `${project_id}`, `${item_id}`, `${field_id}`, and `${option_id}` directly into the query string. Switched to `-f` parameterized variables with a typed mutation signature (`$projectId: ID!`, `$itemId: ID!`, `$fieldId: ID!`, `$optionId: String!`), eliminating the injection risk and aligning with the safe pattern used elsewhere in the codebase.
 
 ## [0.23.0] - 2026-04-25
