@@ -22,7 +22,7 @@ Brief objectives extracted from the issue description, mapped to spec coverage:
 
 When the Portfolio Orchestrator groups multiple implementation items into a parallel batch, two or more of those items can modify the same source files, producing merge conflicts at integration time. Today the orchestrator relies on human judgment to identify safe batches — the protocol says "implementations that clearly touch different areas of the codebase" are safe, but this determination is manual and imprecise.
 
-This feature adds an automated file-level conflict-detection step to the batch-planning stage. Before the orchestrator dispatches a parallel batch, it inspects the spec and plan documents for each candidate item, extracts the set of files that each item expects to modify, cross-checks for overlaps between items in the same proposed batch, and either serializes conflicting pairs automatically or surfaces the overlap to the human for a final decision.
+This feature adds an automated file-level conflict-detection step to the batch-planning stage. Before the orchestrator dispatches a parallel batch, it inspects the implementation plan document for each candidate item, extracts the set of files that each item expects to modify, cross-checks for overlaps between items in the same proposed batch, and either serializes conflicting pairs automatically or surfaces the overlap to the human for a final decision.
 
 ---
 
@@ -114,7 +114,7 @@ This feature adds an automated file-level conflict-detection step to the batch-p
 - **BR-2** — A conflict exists between two items when their declared file sets share at least one common file path. Paths are compared as normalized, repo-root-relative strings (forward slashes, no leading slash).
 - **BR-3** — An item's file set is "unknown" when: (a) no implementation plan document exists for that item, or (b) the implementation plan document exists but contains no extractable explicit file list. Unknown-set items are not automatically serialized but are flagged in the batch summary.
 - **BR-4** — When a conflict is detected, the lower-priority item (per the priority ordering defined in the batch-planning protocol) is moved to the next serial sub-batch. The higher-priority item remains in the current batch.
-- **BR-5** — When two conflicting items have equal priority, the item with the later creation date is serialized (the older item stays in the current batch).
+- **BR-5** — When two conflicting items have equal priority, the item with the later creation date is serialized (the older item stays in the current batch). If both items also share the same creation date, the item whose branch name comes later in lexicographic order is serialized.
 - **BR-6** — The orchestrator must never autonomously dispatch an override. Only an explicit human instruction enables parallel dispatch when a conflict has been detected.
 - **BR-7** — When a conflict is detected and an item is serialized, the batch summary must list: the conflicting item pair, the overlapping file path(s), and the resulting batch assignment for each item.
 - **BR-8** — Conflict detection is additive to the existing tool-fix ordering hazard check (protocol 90 Step 3). Both checks must pass before a batch is dispatched. If an item is already serialized by the tool-fix rule, it is excluded from the conflict-detection input set for the current batch.
