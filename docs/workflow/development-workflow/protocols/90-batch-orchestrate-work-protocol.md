@@ -695,6 +695,19 @@ fi
 
 If the main working tree is clean and on the correct branch (Case 3), proceed normally with Step 5.1 (PR verification) and then with the next Work Item Runner dispatch if any remain in the batch.
 
+**Recurrence tracking (post-PR #345):**
+
+PR #345 (merged into `develop`) added a worktree pre-op checklist to `91-orchestrate-work-protocol.md` to prevent agents from running git state-changing commands in the main working tree instead of their isolated worktree. Step 5.2 violations after that merge should be increasingly rare.
+
+When Step 5.2 fires (Case 1 — wrong branch + clean):
+
+1. Record the violation in the batch's retrospective notes, including the item ID, the branch the main tree was on, and the batch date.
+2. **After every 5 batches** following the merge of PR #345, tally the number of Step 5.2 Case 1 violations across those batches. If the count exceeds **1 violation per 5 batches**, escalate to the human with the following message:
+
+   > `ESCALATION: Step 5.2 (branch-leak guardrail) has fired more than once in the last 5 batches after the PR #345 worktree pre-op checklist fix was merged. Current count: N. This indicates that protocol text alone is insufficient to prevent the violation. Recommend implementing a runtime enforcement mechanism (e.g., a pre-commit hook or CWD guard in the worktree setup script) to catch branch-switching commands issued from the main working tree at execution time rather than at post-agent inspection time.`
+
+3. Do **not** suppress or defer this escalation — it is a signal that the protocol-text-only fix needs to be reinforced with a runtime mechanism.
+
 ### Retrospective notes during supervision
 
 As you supervise the batch, **proactively save issues, human corrections, and anomalies to memory** (e.g., a `project_batchN_retro_notes.md` memory file) as they happen — do not wait until the retrospective to reconstruct what went wrong. Record:
@@ -703,6 +716,7 @@ As you supervise the batch, **proactively save issues, human corrections, and an
 - What went wrong (wrong base branch, missing label, incomplete review loop, etc.)
 - What the root cause was (agent skipped a step, protocol gap, timeout, etc.)
 - Whether the human had to intervene and how
+- **Step 5.2 tally**: if Step 5.2 fired (Case 1 — wrong branch + clean) for any item, record it explicitly so the recurrence counter above can be maintained across batches.
 
 These notes feed directly into the post-merge retrospective and provide context that GitHub data alone cannot capture.
 
