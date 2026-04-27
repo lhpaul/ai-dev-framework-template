@@ -20,7 +20,7 @@ The motivation is a concrete downstream case where shared mutable state accessed
 
 **Preconditions**:
 - The feature spec is approved.
-- The feature involves at least one of: real-time data listeners (e.g., database change streams), network socket callbacks, timers or scheduled callbacks, or any other pattern where multiple execution contexts can concurrently read or write shared state.
+- The feature involves two or more concurrent event sources (e.g., real-time data listeners, network socket callbacks, timers or scheduled callbacks) that can concurrently read or write shared mutable state.
 
 **Steps**:
 1. The tech lead reads the implementation plan protocol.
