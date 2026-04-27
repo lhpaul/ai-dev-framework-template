@@ -176,6 +176,10 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
   fi
 
   if [ "$BRANCH_TYPE" = "implementation" ]; then
+    # Update the tracker status BEFORE closing the issue so that
+    # gh project item-list can still find the item (it only returns items
+    # whose linked issue is open; once closed the lookup silently fails).
+    update_tracker_status_best_effort "$ISSUE_NUMBER" "Merged"
     # Close the issue when an implementation branch (feature/fix/hotfix/refactor) is merged.
     if ISSUE_STATE=$(gh issue view "$ISSUE_NUMBER" --json state --jq '.state' 2>/dev/null); then
       if [ "$ISSUE_STATE" = "OPEN" ]; then
@@ -199,7 +203,6 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
     else
       echo "Warning: could not query issue #$ISSUE_NUMBER (gh command failed). Skipping issue close."
     fi
-    update_tracker_status_best_effort "$ISSUE_NUMBER" "Merged"
   elif [ "$BRANCH_TYPE" = "spec" ]; then
     # spec/* branches reference the issue but must not close it — the issue stays
     # open for the next workflow stage (writing the implementation plan).
