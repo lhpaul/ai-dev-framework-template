@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Wildcard `rm -rf` in sync-template cleanup** (`.claude/skills/sync-template.md`, `.cursor/commands/sync-template.md`): The cleanup step used `rm -rf /tmp/template-sync-*`, which could delete temp directories from other concurrent sync runs or leftover artifacts. Updated both files to use `rm -rf "$TEMPLATE_TEMP_DIR"` (the exact path recorded in Step 0), consistent with the already-fixed `.claude/commands/sync-template.md`.
+
 - **Shell variable interpolation in GraphQL mutation** (`workflow-lib.sh`): `update_tracker_status_best_effort` was interpolating `${project_id}`, `${item_id}`, `${field_id}`, and `${option_id}` directly into the query string. Switched to `-f` parameterized variables with a typed mutation signature (`$projectId: ID!`, `$itemId: ID!`, `$fieldId: ID!`, `$optionId: String!`), eliminating the injection risk and aligning with the safe pattern used elsewhere in the codebase.
 
 ## [0.23.0] - 2026-04-25

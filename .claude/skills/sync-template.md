@@ -269,9 +269,10 @@ Then ask:
 - Do **not** delete any file
 - Do **not** overwrite project-specific files; for those paths only additive/merge changes are allowed, and only with explicit approval
 
-If the template source was a remote clone, clean it up now:
+If the template source was a remote clone, clean up the exact temp directory recorded in Step 0:
+
 ```bash
-rm -rf /tmp/template-sync-*
+rm -rf "$TEMPLATE_TEMP_DIR"   # use the exact path, not a wildcard
 ```
 
 ---
