@@ -28,7 +28,6 @@ review:
   # Supported today by pr-review-loop.sh: greptile, devin, coderabbit
   platforms:
     - devin
-    - coderabbit
 
   # Ordered list of internal AI reviewers to run sequentially on draft PRs
   # (Step 7a in 91-orchestrate-work-protocol.md) before converting to non-draft.
