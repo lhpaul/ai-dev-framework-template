@@ -319,8 +319,8 @@ Scan the full worktree list for orphaned entries — worktrees whose branch is e
 
 ```bash
 # List all registered worktrees and their branches
-# (This step runs from the main repo root; REPO_ROOT resolves correctly in all contexts)
-REPO_ROOT=$(git rev-parse --git-common-dir)/..
+# (Resolve REPO_ROOT to an absolute path so it matches git worktree list's absolute output)
+REPO_ROOT=$(cd "$(git rev-parse --git-common-dir)/.." && pwd)
 git worktree list --porcelain \
   | awk '/^worktree / { wt=$2 } /^branch / { b=$2; sub("^refs/heads/","",b); print wt "\t" b }' \
   | grep -v "^${REPO_ROOT}"
