@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Batch-merge remote branch deleted before MERGED confirmation** (`batch-merge.sh`, protocol 94): Deleting the feature branch before `git push origin develop` is reflected by GitHub causes the PR to transition to `CLOSED` instead of `MERGED`, permanently losing merge attribution even though the commits land in `develop`. Added a new `delete-branch` subcommand to `batch-merge.sh` that re-checks `gh pr view <N> --json state` immediately before deletion and emits a warning (skipping deletion) if the state is not `MERGED`. Updated protocol 94 Step 4.2 to use this guarded command and to document the failure mode.
+
 ### Added
 
 - **Sync-template migration notes** (`sync-manifest.yaml`, sync-template skill and commands): `sync-manifest.yaml` gains a `migration_notes` section for versioned manual migration steps. The sync-template skill and command variants now read this section and present a required pre-sync checklist whenever the downstream project's `last_synced_version` predates a breaking structural change. First entry: `docs/ai/ → docs/workflow/` rename (v0.23.0). Fully backwards-compatible — silently skipped when no applicable notes exist.
