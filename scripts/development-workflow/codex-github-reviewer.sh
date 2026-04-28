@@ -90,6 +90,7 @@ fi
 CURRENT_SHA=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefOid --jq '.headRefOid' | cut -c1-12)
 if [ -z "$CURRENT_SHA" ]; then
   echo "ERROR: could not resolve PR #$PR_NUMBER HEAD SHA" >&2
+  echo "VERDICT: TIMED_OUT — could not resolve PR HEAD SHA (treated as unavailable)"
   exit 2
 fi
 
@@ -210,7 +211,7 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
     #    avoid incorrectly approving a response that is a rejection in an
     #    unexpected format (per spec risk mitigation for BR-4).
 
-    if echo "$BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking|must[[:space:]]+fix|action[[:space:]]+required|required:[[:space:]]|❌)"; then
+    if echo "$BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)"; then
       echo "VERDICT: NEEDS_REVISION"
       echo "---BEGIN BOT RESPONSE---"
       echo "$BOT_RESPONSE"
