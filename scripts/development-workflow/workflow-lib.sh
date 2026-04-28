@@ -360,14 +360,29 @@ get_tracker_status_for_issue() {
     __workflow_tracker_cache_project="$project_number"
   fi
 
+  # Use Python3 to parse the JSON to handle issue bodies that contain literal
+  # control characters (U+0000–U+001F), which cause jq parse errors (#375).
+  # strict=False allows Python3's json decoder to accept unescaped control chars.
   item_json=$(printf '%s' "$__workflow_tracker_cache_json" \
-    | jq -c --argjson num "$issue_number" '.items[] | select(.content.number == $num)' 2>/dev/null || true)
+    | python3 -c "
+import json, sys
+num = int(\"$issue_number\")
+data = json.loads(sys.stdin.read(), strict=False)
+for item in data.get('items', []):
+    if item.get('content', {}).get('number') == num:
+        print(json.dumps(item))
+        break
+" 2>/dev/null || true)
   if [ -z "$item_json" ]; then
     printf ''
     return 0
   fi
 
-  current_status=$(printf '%s' "$item_json" | jq -r '.status // empty' 2>/dev/null || true)
+  current_status=$(printf '%s' "$item_json" | python3 -c "
+import json, sys
+item = json.loads(sys.stdin.read(), strict=False)
+print(item.get('status') or '', end='')
+" 2>/dev/null || true)
   printf '%s' "${current_status:-}"
 }
 
@@ -407,15 +422,34 @@ update_tracker_status_best_effort() {
     return 0
   fi
 
+  # Use Python3 to parse the JSON to handle issue bodies that contain literal
+  # control characters (U+0000–U+001F), which cause jq parse errors (#375).
+  # strict=False allows Python3's json decoder to accept unescaped control chars.
   item_json=$(gh project item-list "$project_number" --owner "$owner" --limit 10000 --format json 2>/dev/null \
-    | jq -c --argjson num "$issue_number" '.items[] | select(.content.number == $num)' || true)
-  item_id=$(printf '%s' "$item_json" | jq -r '.id // empty' || true)
+    | python3 -c "
+import json, sys
+num = int(\"$issue_number\")
+data = json.loads(sys.stdin.read(), strict=False)
+for item in data.get('items', []):
+    if item.get('content', {}).get('number') == num:
+        print(json.dumps(item))
+        break
+" || true)
+  item_id=$(printf '%s' "$item_json" | python3 -c "
+import json, sys
+item = json.loads(sys.stdin.read(), strict=False)
+print(item.get('id') or '', end='')
+" 2>/dev/null || true)
   if [ -z "$item_id" ]; then
     echo "Warning: issue #${issue_number} not found in project #${project_number}; skipping tracker status update."
     return 0
   fi
 
-  current_status=$(printf '%s' "$item_json" | jq -r '.status // empty' || true)
+  current_status=$(printf '%s' "$item_json" | python3 -c "
+import json, sys
+item = json.loads(sys.stdin.read(), strict=False)
+print(item.get('status') or '', end='')
+" 2>/dev/null || true)
   if [ -n "$required_current_status" ] && [ "$current_status" != "$required_current_status" ]; then
     echo "Issue #${issue_number} current status '${current_status:-unknown}' does not match required source status '${required_current_status}'; skipping update."
     return 0
