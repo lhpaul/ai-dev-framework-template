@@ -136,6 +136,30 @@ If none of these signals apply, skip this entire block.
 
 For acceptance intent and terminology, reference `docs/specs/developments/20260420120000_201-tech-lead-parser-regex-plan-requirements/1_201-tech-lead-parser-regex-plan-requirements_specs.md`.
 
+### Concurrent-event-source plans: async and concurrency safety
+
+Treat this block as conditional guidance. Apply it only when the plan introduces or modifies code with two or more concurrent event sources (e.g., real-time data listeners, network socket callbacks, timers or scheduled callbacks) that share mutable state.
+
+**Classification (concurrent-event-source):** classify a plan as concurrent-event-source when the Layer-by-Layer changes involve any of the following:
+
+- Two or more event listeners, socket callbacks, timers, or async queues that can execute concurrently
+- Shared mutable state (variables, collections, counters, caches) that multiple execution contexts can read or write
+- Initialization or teardown sequences that race with incoming events
+
+If none of these signals apply, skip this entire block.
+
+**Mandatory when concurrent-event-source — Checklist:** include a dedicated concurrency safety section in the plan. For each item below, document the design decision when the item applies, or note "not applicable" with a brief rationale:
+
+- **Shared mutable state guards**: how is shared state protected from concurrent reads/writes? (e.g., access serialized through a single async queue, ownership transferred on each event, copy-on-update)
+- **Re-entrancy / in-flight tracking**: can a second event arrive before the handler for the first event finishes? If yes, how is in-flight state tracked and new arrivals handled?
+- **Event deduplication**: can the same logical event fire more than once (e.g., reconnect triggers, duplicate callbacks)? If yes, how is deduplication handled?
+- **Listener and resource cleanup**: how are all registered listeners, timers, and handles removed when the feature is torn down or the component unmounts? What happens to in-flight operations at teardown?
+- **Race conditions at initialization**: can events arrive before initialization completes? If yes, what happens to those events?
+- **Race conditions at teardown**: can events arrive after teardown begins? If yes, how are they discarded or drained safely?
+- **Error propagation across async boundaries**: how are errors from async callbacks surfaced? Are unhandled rejections or uncaught exceptions in callbacks visible to the caller or swallowed silently?
+
+**Conditional — new concurrent patterns:** if the feature introduces concurrent event handling patterns not previously used in this codebase, note this explicitly and identify any architectural decisions that differ from existing patterns.
+
 ### Examples
 
 ```markdown

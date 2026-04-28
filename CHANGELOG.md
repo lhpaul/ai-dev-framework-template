@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Add async/concurrency safety checklist to plan protocol and review contract** (#348): adds a conditional async/concurrency safety checklist to `02-generate-implementation-plan-protocol.md` (triggered when a plan has concurrent event sources) and a matching conditional additional-checks block to `REVIEW.md` (triggered when a PR introduces or modifies concurrent event source code). Covers shared mutable state guards, re-entrancy / in-flight tracking, event deduplication, listener cleanup, initialization/teardown race conditions, and error propagation across async boundaries.
+
 - **Sync-template migration notes** (`sync-manifest.yaml`, sync-template skill and commands): `sync-manifest.yaml` gains a `migration_notes` section for versioned manual migration steps. The sync-template skill and command variants now read this section and present a required pre-sync checklist whenever the downstream project's `last_synced_version` predates a breaking structural change. First entry: `docs/ai/ → docs/workflow/` rename (v0.23.0). Fully backwards-compatible — silently skipped when no applicable notes exist.
 
 ### Fixed
