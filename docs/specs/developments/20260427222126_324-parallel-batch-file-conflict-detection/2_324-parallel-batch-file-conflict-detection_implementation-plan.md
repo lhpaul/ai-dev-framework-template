@@ -255,7 +255,7 @@ change modifies only workflow tooling internals and the orchestration protocol.
 # extract_file_set <development-folder-path>
 #
 # Extracts the declared file set from a development folder's implementation plan.
-# Looks for a heading matching /files (to be? )?modified/i and extracts paths from
+# Looks for a heading matching /files\s+(to\s+(be\s+)?)?modified/i and extracts paths from
 # the subsequent fenced code block or bullet list.
 #
 # Emits:
@@ -275,8 +275,8 @@ extract_file_set() {
   paths="$(python3 - "$plan_file" <<'PYEOF'
 import sys, re
 text = open(sys.argv[1]).read()
-# Find heading matching "files (to be?) modified" (case-insensitive)
-heading_re = re.compile(r'#+\s+files\s+(to\s+be?\s+)?modified', re.IGNORECASE)
+# Find heading matching "files (to (be )?)?modified" (case-insensitive)
+heading_re = re.compile(r'#+\s+files\s+(to\s+(be\s+)?)?modified', re.IGNORECASE)
 paths = []
 lines = text.splitlines()
 i = 0
@@ -289,14 +289,14 @@ while i < len(lines):
             while i < len(lines) and not lines[i].startswith('```'):
                 p = lines[i].strip()
                 if p:
-                    paths.append(p.lstrip('/').replace('\\\\', '/'))
+                    paths.append(p.lstrip('/').replace('\\', '/'))
                 i += 1
         else:
             # Bullet list
             while i < len(lines) and (lines[i].startswith('- ') or lines[i].startswith('* ')):
                 p = lines[i][2:].strip()
                 if p:
-                    paths.append(p.lstrip('/').replace('\\\\', '/'))
+                    paths.append(p.lstrip('/').replace('\\', '/'))
                 i += 1
     else:
         i += 1
@@ -320,7 +320,7 @@ PYEOF
 
 2. Add `extract_file_set` helper function to `workflow-batch-plan.sh`. Place it after
    `classify_tool_fix` and before `cd_workflow_repo_root`. Implement format detection for:
-   - Fenced code block under a heading matching `/files\s+(to\s+be?\s+)?modified/i`
+   - Fenced code block under a heading matching `/files\s+(to\s+(be\s+)?)?modified/i`
    - Bullet list under the same heading
    Use the Python one-liner approach from the Code Samples section (or an equivalent pure
    Bash/awk implementation if Python is unavailable). All edge cases in the parser-risk
