@@ -83,14 +83,14 @@ done
 # silently causing 'sleep' to fail under set -e with code 1 (NEEDS_REVISION).
 
 case "$POLL_INTERVAL" in
-  ''|*[!0-9]*)
-    echo "ERROR: --poll-interval value '$POLL_INTERVAL' is not a positive integer" >&2
+  ''|0|*[!0-9]*)
+    echo "ERROR: --poll-interval value '$POLL_INTERVAL' is not a positive integer (must be >= 1)" >&2
     exit 2
     ;;
 esac
 case "$MAX_WAIT" in
-  ''|*[!0-9]*)
-    echo "ERROR: --max-wait value '$MAX_WAIT' is not a positive integer" >&2
+  ''|0|*[!0-9]*)
+    echo "ERROR: --max-wait value '$MAX_WAIT' is not a positive integer (must be >= 1)" >&2
     exit 2
     ;;
 esac
@@ -229,32 +229,43 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
     echo "INFO: bot response detected"
 
     # ── Verdict parsing ───────────────────────────────────────────────────────
-    # Three-path classification (per spec BR-4 and implementation plan risk table):
+    # Three-path classification (per spec BR-4 and implementation plan risk table).
+    # Approval signals are checked FIRST to avoid false NEEDS_REVISION when the
+    # bot says "No blocking issues. Approved." (the bare word 'blocking' would
+    # match the blocking-marker check if it ran first).
     #
-    # 1. Blocking markers present → NEEDS_REVISION (exit 1)
+    # 1. Explicit approval signals present → APPROVED (exit 0)   [checked first]
+    #    Approval signals: "approved", "lgtm", "looks good"
+    #
+    # 2. Blocking markers present → NEEDS_REVISION (exit 1)      [checked second]
     #    Blocking markers (case-insensitive): "changes requested", "blocking",
     #    "must fix", "required:", "action required", "❌"
     #
-    # 2. Explicit approval signals present (no blocking markers) → APPROVED (exit 0)
+    # 2. Explicit approval signals present → APPROVED (exit 0)
     #    Approval signals: "approved", "lgtm", "looks good"
+    #    Approval is checked BEFORE blocking markers so that responses like
+    #    "No blocking issues found. Approved." are not falsely rejected by the
+    #    bare word 'blocking'. When both an approval signal and a blocking marker
+    #    appear, the approval signal takes precedence — the bot most likely said
+    #    "no blocking issues" (negated context), not "blocking: fix X".
     #
     # 3. Neither found (unrecognized response format) → NEEDS_REVISION (exit 1)
     #    Safe-fail: default to NEEDS_REVISION when the format is unrecognized to
     #    avoid incorrectly approving a response that is a rejection in an
     #    unexpected format (per spec risk mitigation for BR-4).
 
-    if echo "$BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)"; then
-      echo "VERDICT: NEEDS_REVISION"
-      echo "---BEGIN BOT RESPONSE---"
-      echo "$BOT_RESPONSE"
-      echo "---END BOT RESPONSE---"
-      exit 1
-    elif echo "$BOT_RESPONSE" | grep -qiE "(approved|lgtm|looks[[:space:]]+good)"; then
+    if echo "$BOT_RESPONSE" | grep -qiE "(approved|lgtm|looks[[:space:]]+good)"; then
       echo "VERDICT: APPROVED"
       echo "---BEGIN BOT RESPONSE---"
       echo "$BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
       exit 0
+    elif echo "$BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)"; then
+      echo "VERDICT: NEEDS_REVISION"
+      echo "---BEGIN BOT RESPONSE---"
+      echo "$BOT_RESPONSE"
+      echo "---END BOT RESPONSE---"
+      exit 1
     else
       echo "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)"
       echo "---BEGIN BOT RESPONSE---"
