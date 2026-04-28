@@ -25,14 +25,14 @@
 #   2 — TIMED_OUT  (no bot response within max-wait; treat as unavailable under
 #                   configured internal_reviewers_unavailable_policy)
 #
-# Verdict parsing (three-path, approval checked first):
-#   1. Explicit approval signals present → APPROVED (exit 0)
+# Verdict parsing (three-path, blocking markers checked first per safe-fail):
+#   1. Blocking markers present → NEEDS_REVISION (exit 1)
+#      Markers (case-insensitive): "changes requested", "blocking issues/finding",
+#      "blocking:", "must fix", "action required", "required:", "❌"
+#      Note: bare "blocking" is excluded to avoid false positives on
+#      "no blocking issues found" — use specific phrases instead.
+#   2. Approval signals present → APPROVED (exit 0)
 #      Signals (case-insensitive): "approved", "lgtm", "looks good"
-#      Checked FIRST to avoid false NEEDS_REVISION from negated blocking context
-#      (e.g. "No blocking issues. Approved.").
-#   2. Blocking markers present → NEEDS_REVISION (exit 1)
-#      Markers (case-insensitive): "changes requested", "blocking",
-#      "must fix", "required:", "action required", "❌"
 #   3. Neither found (unrecognized format) → safe-fails to NEEDS_REVISION (exit 1)
 #
 # Idempotency (BR-10):
@@ -242,34 +242,38 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
 
     # ── Verdict parsing ───────────────────────────────────────────────────────
     # Three-path classification (per spec BR-4 and implementation plan risk table).
-    # Approval signals are checked FIRST to avoid false NEEDS_REVISION when the
-    # bot says "No blocking issues. Approved." (the bare word 'blocking' would
-    # match the blocking-marker check if it ran first).
+    # Blocking markers are checked FIRST (safe-fail: a false NEEDS_REVISION that
+    # triggers an unnecessary fix cycle is safer than a false APPROVED that
+    # silently ignores blocking findings). The bare word "blocking" is excluded
+    # from the marker list because it matches negated context ("no blocking
+    # issues") — use more specific phrases ("blocking issues", "blocking finding",
+    # "blocking:") instead.
     #
-    # 1. Explicit approval signals present → APPROVED (exit 0)   [checked first]
+    # 1. Blocking markers present → NEEDS_REVISION (exit 1)      [checked first]
+    #    Blocking markers (case-insensitive): "changes requested",
+    #    "blocking issues", "blocking finding", "blocking:", "must fix",
+    #    "action required", "required:", "❌"
+    #
+    # 2. Explicit approval signals present → APPROVED (exit 0)   [checked second]
     #    Approval signals: "approved", "lgtm", "looks good"
-    #
-    # 2. Blocking markers present → NEEDS_REVISION (exit 1)      [checked second]
-    #    Blocking markers (case-insensitive): "changes requested", "blocking",
-    #    "must fix", "required:", "action required", "❌"
     #
     # 3. Neither found (unrecognized response format) → NEEDS_REVISION (exit 1)
     #    Safe-fail: default to NEEDS_REVISION when the format is unrecognized to
     #    avoid incorrectly approving a response that is a rejection in an
     #    unexpected format (per spec risk mitigation for BR-4).
 
-    if echo "$BOT_RESPONSE" | grep -qiE "(approved|lgtm|looks[[:space:]]+good)"; then
-      echo "VERDICT: APPROVED"
-      echo "---BEGIN BOT RESPONSE---"
-      echo "$BOT_RESPONSE"
-      echo "---END BOT RESPONSE---"
-      exit 0
-    elif echo "$BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)"; then
+    if echo "$BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking[[:space:]]+issues?|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)"; then
       echo "VERDICT: NEEDS_REVISION"
       echo "---BEGIN BOT RESPONSE---"
       echo "$BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
       exit 1
+    elif echo "$BOT_RESPONSE" | grep -qiE "(approved|lgtm|looks[[:space:]]+good)"; then
+      echo "VERDICT: APPROVED"
+      echo "---BEGIN BOT RESPONSE---"
+      echo "$BOT_RESPONSE"
+      echo "---END BOT RESPONSE---"
+      exit 0
     else
       echo "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)"
       echo "---BEGIN BOT RESPONSE---"
