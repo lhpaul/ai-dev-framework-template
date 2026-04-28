@@ -76,10 +76,9 @@ Under `set -e`, any command that exits non-zero causes the script to abort — *
 | Expression | `set -e` behavior |
 |---|---|
 | `cmd` (bare) | Abort on non-zero |
-| `if cmd; then` | Safe — exit code is tested, not propagated |
-| `cmd \|\| true` | Safe — `true` always exits 0 |
-| `cmd && other` | Safe — `set -e` does not abort inside `&&` chains |
-| `cmd; ret=$?; if [ $ret -ne 0 ]` | Safe — runs cmd, then captures exit code into `$ret` |
+| `if cmd; then` | Safe — exit code is tested by `if`, never propagated |
+| `cmd \|\| true` | Safe — `true` always exits 0, so the `\|\|` chain exits 0 |
+| `cmd && other` | Safe — `set -e` does not abort on the left side of `&&` |
 | `result=$(cmd)` | **Abort on non-zero** — same as bare command |
 
 Capture exit codes explicitly when the command can legitimately fail:
