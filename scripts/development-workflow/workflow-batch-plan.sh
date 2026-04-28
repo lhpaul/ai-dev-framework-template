@@ -186,6 +186,12 @@ PYEOF
 #   <item-id>:<comma-separated file set>
 # where file set may be "unknown".
 #
+# CONSTRAINT: item-ids must not contain colons.  In practice, Protocol 90 passes
+# development folder slugs (e.g. "324-parallel-batch-file-conflict-detection") or
+# branch names (e.g. "feature/324-foo").  Neither format includes colons.
+# The colon is the separator between item-id and file-set; a colon in the item-id
+# would cause silently wrong parsing.
+#
 # Items whose file set is "unknown" are not automatically serialized but are
 # flagged via CONFLICT_UNKNOWN output lines.
 #
@@ -199,18 +205,7 @@ PYEOF
 #   CONFLICT_UNKNOWN=<item-id>
 #
 # Priority tie-breaking (BR-4 / BR-5):
-#   1. Item priority level: Urgent > High > Normal > Low
-#      (encoded in item-id as [U|H|N|L]:<creation-ts>:<branch>)
-#   2. Earlier creation timestamp (from branch name slug, e.g. 20260427...)
-#   3. Lexicographically earlier branch name
-#
-# Input format: each argument is "<item-id>:<file-set>" where item-id encodes
-# optional priority and timestamp via the convention:
-#   "<priority>:<creation-ts>:<branch>" or simply "<branch>" (treated as Normal)
-#
-# In practice, Protocol 90 passes item IDs that are development folder slugs
-# or branch names.  The priority tiebreaker falls through to branch-name
-# lexicographic order when priority and timestamp cannot be determined.
+#   1. Lexicographically earlier branch name stays (earlier = higher priority)
 #
 # Implementation note: uses parallel indexed arrays (item_ids / item_file_sets)
 # instead of associative arrays to remain compatible with bash 3.x (macOS default).
