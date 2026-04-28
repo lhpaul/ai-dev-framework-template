@@ -77,6 +77,24 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# ── Validate numeric options ──────────────────────────────────────────────────
+# POLL_INTERVAL and MAX_WAIT are used in 'sleep' and arithmetic. Validate them
+# here so a non-numeric value exits with code 2 (TIMED_OUT) instead of
+# silently causing 'sleep' to fail under set -e with code 1 (NEEDS_REVISION).
+
+case "$POLL_INTERVAL" in
+  ''|*[!0-9]*)
+    echo "ERROR: --poll-interval value '$POLL_INTERVAL' is not a positive integer" >&2
+    exit 2
+    ;;
+esac
+case "$MAX_WAIT" in
+  ''|*[!0-9]*)
+    echo "ERROR: --max-wait value '$MAX_WAIT' is not a positive integer" >&2
+    exit 2
+    ;;
+esac
+
 # ── Pre-flight: verify gh CLI authentication ──────────────────────────────────
 
 if ! gh auth status >/dev/null 2>&1; then
