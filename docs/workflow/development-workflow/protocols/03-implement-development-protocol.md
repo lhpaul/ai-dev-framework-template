@@ -49,14 +49,16 @@ result=$(echo "$json" | jq --argjson count "$COUNT" '.items | .[:$count]')
 
 ### 2. `pipefail` + SIGPIPE
 
-When using `set -o pipefail` (or `set -eo pipefail`), commands like `head`, `grep -m`, and others that close a pipe early will cause the writing process to receive SIGPIPE (exit code 141). Under `pipefail`, this looks like an error even when the behavior is intentional.
+When using `set -o pipefail` (or `set -eo pipefail`), commands like `head`, `grep -m`, and others that close a pipe early will cause the writing process to receive SIGPIPE (exit code 141). Under `pipefail`, the parent shell observes the 141 exit code from the child process and (combined with `set -e`) exits the script. This looks like an error even when the behavior is intentional.
+
+**Note**: `trap ... PIPE` does **not** fire for pipeline SIGPIPE. SIGPIPE is delivered to the *child subprocess* writing to the closed pipe, not to the parent shell. The parent shell only observes the 141 exit code via `waitpid`. To catch this at the script level, use `trap ... EXIT` — it fires when `set -e` causes the shell to exit due to the pipefail-detected 141 status.
 
 Guard against SIGPIPE false-positives on pipelines that may close early:
 
 ```bash
-# Option A — trap SIGPIPE at script level (apply when the full script uses set -o pipefail):
-set -o pipefail
-trap 'case $? in 141) exit 0 ;; *) exit $? ;; esac' PIPE
+# Option A — trap EXIT at script level (apply when the full script uses set -o pipefail):
+set -eo pipefail
+trap 'case $? in 141) exit 0 ;; *) exit $? ;; esac' EXIT
 
 # Option B — suppress SIGPIPE for a single pipeline:
 some_command | head -1 || true
