@@ -143,7 +143,7 @@ if [ -n "$CHANGED_SH" ]; then
 fi
 ```
 
-Fix all ShellCheck warnings before committing. Do not commit `.sh` files with ShellCheck violations — they will fail the CI `shellcheck.yml` check and trigger unnecessary review-loop churn.
+Fix all ShellCheck warnings before committing. Do not commit `.sh` files with ShellCheck violations — they will fail the CI `shellcheck.yml` check and trigger unnecessary review-loop churn. Workflow scripts must also be bash 3.2 compatible (macOS ships bash 3.2 by default); do not use `local -A`, `declare -A`, or other bash 4+-only syntax — ShellCheck does not warn on this by default when the shebang is `#!/usr/bin/env bash`.
 
 ```bash
 # Build — must succeed
@@ -428,7 +428,7 @@ git checkout -b refactor/[branch-slug]
    fi
    ```
 
-   Fix all ShellCheck warnings before committing.
+   Fix all ShellCheck warnings before committing. Workflow scripts must also be bash 3.2 compatible (macOS ships bash 3.2 by default); do not use `local -A`, `declare -A`, or other bash 4+-only syntax — ShellCheck does not warn on this by default when the shebang is `#!/usr/bin/env bash`.
 
 6. Update CHANGELOG under `[Unreleased]` with a `Changed` entry (skip if this refactor adjusts unreleased work that already has an entry — update the existing entry instead, or leave it unchanged if it already describes the correct behavior).
 
@@ -561,7 +561,7 @@ if [ -n "$CHANGED_SH" ]; then
 fi
 ```
 
-Fix all ShellCheck warnings before committing. Do not commit `.sh` files with ShellCheck violations — they will fail the CI `shellcheck.yml` check and trigger unnecessary review-loop churn.
+Fix all ShellCheck warnings before committing. Do not commit `.sh` files with ShellCheck violations — they will fail the CI `shellcheck.yml` check and trigger unnecessary review-loop churn. Workflow scripts must also be bash 3.2 compatible (macOS ships bash 3.2 by default); do not use `local -A`, `declare -A`, or other bash 4+-only syntax — ShellCheck does not warn on this by default when the shebang is `#!/usr/bin/env bash`.
 
 ### Step 6: Update CHANGELOG
 
@@ -687,7 +687,7 @@ if [ -n "$CHANGED_SH" ]; then
 fi
 ```
 
-Fix all ShellCheck warnings before committing. Do not commit `.sh` files with ShellCheck violations — they will fail the CI `shellcheck.yml` check and trigger unnecessary review-loop churn.
+Fix all ShellCheck warnings before committing. Do not commit `.sh` files with ShellCheck violations — they will fail the CI `shellcheck.yml` check and trigger unnecessary review-loop churn. Workflow scripts must also be bash 3.2 compatible (macOS ships bash 3.2 by default); do not use `local -A`, `declare -A`, or other bash 4+-only syntax — ShellCheck does not warn on this by default when the shebang is `#!/usr/bin/env bash`.
 
 ### Step 6: Update CHANGELOG
 
