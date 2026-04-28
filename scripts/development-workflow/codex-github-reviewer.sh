@@ -105,20 +105,17 @@ echo "INFO: Poll interval: ${POLL_INTERVAL}s, Max wait: ${MAX_WAIT}s"
 # avoid falsely matching bot review comments or human comments that happen to
 # reference the commit SHA.
 
-# Escape both strings for jq regex use (escape regex metacharacters)
-ESCAPED_SHA=$(printf '%s' "$CURRENT_SHA" | sed 's/[[\\.^$()|?*+{}]/\\&/g')
-ESCAPED_TRIGGER=$(printf '%s' "$TRIGGER_PHRASE" | sed 's/[[\\.^$()|?*+{}]/\\&/g')
-
-# Capture the idempotency check to a temp file to avoid:
-# - SIGPIPE under pipefail when piping to head (head closes the pipe early when
-#   the response is larger than the truncation limit, causing gh api to exit
-#   with SIGPIPE which pipefail propagates as a non-zero exit code)
-# - Silent failure swallowing (|| true on a pipeline hides real API errors)
+# Capture the idempotency check to a temp file to avoid SIGPIPE under pipefail.
+# Use 'jq --arg' for safe variable binding — avoids jq injection if the trigger
+# phrase or SHA contain jq-special characters (double quote, backslash).
+# Note: `]` must appear first in the bracket expression to be treated as literal.
 IDEM_STDERR=$(mktemp)
 IDEM_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
-  --jq ".[] | select((.body | test(\"$ESCAPED_SHA\")) and (.body | test(\"$ESCAPED_TRIGGER\"))) | {id: .id, created_at: .created_at, body: .body}" \
-  2>"$IDEM_STDERR" > "$IDEM_TMPFILE"; then
+  2>"$IDEM_STDERR" \
+  | jq -r --arg sha "$CURRENT_SHA" --arg trigger "$TRIGGER_PHRASE" \
+    '.[] | select((.body | test($sha)) and (.body | test($trigger; "i"))) | {id: .id, created_at: .created_at, body: .body}' \
+  > "$IDEM_TMPFILE"; then
   TRIGGER_COMMENT_INFO=$(head -c 2000 "$IDEM_TMPFILE")
 else
   IDEM_ERR=$(cat "$IDEM_STDERR")
@@ -171,11 +168,15 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
   # piping directly to 'head -c N' causes gh api to receive SIGPIPE when head
   # closes its stdin early (when response > N bytes), which pipefail propagates
   # as a non-zero exit code — falsely triggering the API failure counter.
+  # Use 'jq --arg' for safe variable binding — avoids jq injection if BOT_LOGIN
+  # contains jq-special characters (e.g., double quote, backslash).
   POLL_STDERR=$(mktemp)
   POLL_TMPFILE=$(mktemp)
   if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
-    --jq ".[] | select(.user.login == \"$BOT_LOGIN\") | select(.created_at > \"$TRIGGER_TIME\") | .body" \
-    2>"$POLL_STDERR" > "$POLL_TMPFILE"; then
+    2>"$POLL_STDERR" \
+    | jq -r --arg bot "$BOT_LOGIN" --arg trigger_time "$TRIGGER_TIME" \
+        '.[] | select(.user.login == $bot) | select(.created_at > $trigger_time) | .body' \
+    > "$POLL_TMPFILE"; then
     # Truncate after successful API call — no SIGPIPE risk here
     BOT_RESPONSE=$(head -c 10000 "$POLL_TMPFILE")
     rm -f "$POLL_STDERR" "$POLL_TMPFILE"
