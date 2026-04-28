@@ -20,9 +20,9 @@ When an agent produces a PR that is technically complete and reviewer-loop clean
 **Steps**:
 1. After all automated reviewer loops and CI checks pass (Step 8 of the orchestration protocol), the agent scans the PR diff for infrastructure dependency signals.
 2. The agent identifies one or more setup requirements from the diff.
-3. The agent applies the `needs-setup` label to the PR alongside `ready-for-human-review`.
-4. The agent populates a standardized "Pre-merge Setup" section in the PR body listing each requirement with a plain-language description, the type of requirement (e.g., environment variable, secret, DNS record), and where it must be set (e.g., GitHub Actions secrets, Railway environment, DNS provider).
-5. The PR is labeled `ready-for-human-review`.
+3. The agent populates a standardized "Pre-merge Setup" section in the PR body listing each requirement with a plain-language description, the type of requirement (e.g., environment variable, secret, DNS record), and where it must be set (e.g., GitHub Actions secrets, Railway environment, DNS provider).
+4. The agent applies the `needs-setup` label to the PR (the section is already in place, satisfying BR-1).
+5. The agent applies `ready-for-human-review` (the setup signal is already in place).
 
 **Postconditions**: The PR has both `needs-setup` and `ready-for-human-review` labels. The PR body contains a "Pre-merge Setup" section that enumerates each setup requirement in a structured format.
 
