@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Add `codex-github` integration reviewer path for Step 7a** (#309): adds a runner-agnostic internal reviewer that posts a trigger comment to a PR and polls for the Codex GitHub App bot response; works from Claude Code, Cursor, headless CI, and Codex runner contexts. New `scripts/development-workflow/codex-github-reviewer.sh` implements the trigger/poll/parse/timeout loop. `codex-github` is classified as universally reachable in Protocol 91's reachability table (requires only `gh` CLI). `.ai-dev-workflow.yaml`, `.claude/agents/item-orchestrator.md`, and `.cursor/agents/item-orchestrator.md` updated to document the new reviewer path.
+
 - **Sync-template migration notes** (`sync-manifest.yaml`, sync-template skill and commands): `sync-manifest.yaml` gains a `migration_notes` section for versioned manual migration steps. The sync-template skill and command variants now read this section and present a required pre-sync checklist whenever the downstream project's `last_synced_version` predates a breaking structural change. First entry: `docs/ai/ → docs/workflow/` rename (v0.23.0). Fully backwards-compatible — silently skipped when no applicable notes exist.
 
 ### Fixed

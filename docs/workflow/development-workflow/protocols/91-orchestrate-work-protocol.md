@@ -526,6 +526,8 @@ Example `.tmp/template-config.json` override format:
 }
 ```
 
+Supported reviewer values: `claude`, `codex`, `codex-github`. The `codex-github` reviewer requires the Codex GitHub App to be installed on the repository; see `scripts/development-workflow/codex-github-reviewer.sh` for setup details and configurable options (`--trigger-phrase`, `--bot-login`, `--poll-interval`, `--max-wait`).
+
 If neither file defines `internal_reviewers`, fall back to running the stage-appropriate reviewer once (default behavior: `claude`).
 
 When `.tmp/template-config.json` supplies an override, log the following before running the availability check:
@@ -540,12 +542,14 @@ Before dispatching any reviewer, classify each entry in the resolved list as `re
 
 #### Reachability classification table
 
-| Runner context | `claude` reachable? | `codex` reachable? |
-|---|---|---|
-| Claude Code (direct human session) | Yes | No |
-| Claude Code subagent (dispatched by orchestrator) | Yes | No |
-| Codex runner / Codex skill | Yes | Yes |
-| Direct human (shell / CI with both CLIs available) | Yes | Yes |
+| Runner context | `claude` reachable? | `codex` reachable? | `codex-github` reachable? |
+|---|---|---|---|
+| Claude Code (direct human session) | Yes | No | Yes |
+| Claude Code subagent (dispatched by orchestrator) | Yes | No | Yes |
+| Codex runner / Codex skill | Yes | Yes | Yes |
+| Direct human (shell / CI with `gh`) | Yes | Yes | Yes |
+
+`codex-github` is classified as universally reachable because it interacts with the Codex GitHub App via `gh` CLI only — no Codex CLI runtime is required. It is reachable from any runner context where `gh` is authenticated.
 
 #### Policy resolution
 
@@ -607,6 +611,18 @@ For each reviewer in the resolved list, dispatch the stage-appropriate agent:
 | `codex` | `spec/*` | `workflow-spec-reviewer` Codex skill against `REVIEW.md` |
 | `codex` | `implementation-plan/*` | `workflow-plan-reviewer` Codex skill against `REVIEW.md` |
 | `codex` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `workflow-code-reviewer` Codex skill against `REVIEW.md` |
+| `codex-github` | `spec/*` | `scripts/development-workflow/codex-github-reviewer.sh <pr> <owner> <repo>` |
+| `codex-github` | `implementation-plan/*` | `scripts/development-workflow/codex-github-reviewer.sh <pr> <owner> <repo>` |
+| `codex-github` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `scripts/development-workflow/codex-github-reviewer.sh <pr> <owner> <repo>` |
+
+**`codex-github` dispatch notes:**
+
+- **Exit code semantics**: exit 0 = `APPROVED`, exit 1 = `NEEDS REVISION` (blocking findings present), exit 2 = `TIMED_OUT` (no bot response within max wait time).
+- **TIMED_OUT policy**: treat `TIMED_OUT` identically to `skipped (unavailable)` — apply the configured `internal_reviewers_unavailable_policy` (`warn` by default). Post a warning comment identifying the trigger comment that was posted and suggesting the operator verify Codex GitHub App installation.
+- **NEEDS REVISION — finding extraction**: on exit code 1, the script writes the bot response body to stdout between `---BEGIN BOT RESPONSE---` and `---END BOT RESPONSE---` markers. The runner must capture and pass this output to the fixer agent as context.
+- **Re-trigger on each fix cycle (BR-6)**: after fixes are pushed, a new trigger comment must be posted for the new commit SHA. The script handles this automatically — it checks the current HEAD SHA before posting and skips duplicate triggers for the same SHA.
+- **Idempotency guard (BR-10)**: the script checks existing PR comments for a trigger comment containing the current commit SHA before posting. If a matching trigger is found, posting is skipped and polling proceeds from the existing trigger timestamp. This prevents duplicate reviews when Step 7a is retried on the same commit.
+- **Prerequisite**: the Codex GitHub App must be installed on the repository and configured to respond to the trigger phrase (default: `@codex review`). If the app is not installed, the script times out and the runner applies the unavailability policy.
 
 ### Multi-reviewer execution rules
 
