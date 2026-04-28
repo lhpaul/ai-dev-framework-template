@@ -25,12 +25,15 @@
 #   2 — TIMED_OUT  (no bot response within max-wait; treat as unavailable under
 #                   configured internal_reviewers_unavailable_policy)
 #
-# Verdict parsing:
-#   The script looks for blocking markers in the bot response body. If any
-#   blocking marker is found, the result is NEEDS_REVISION. Otherwise APPROVED.
-#   Blocking markers (case-insensitive): "changes requested", "blocking",
-#   "must fix", "required:", "action required", "❌".
-#   On unrecognized format, the script safe-fails to NEEDS_REVISION.
+# Verdict parsing (three-path, approval checked first):
+#   1. Explicit approval signals present → APPROVED (exit 0)
+#      Signals (case-insensitive): "approved", "lgtm", "looks good"
+#      Checked FIRST to avoid false NEEDS_REVISION from negated blocking context
+#      (e.g. "No blocking issues. Approved.").
+#   2. Blocking markers present → NEEDS_REVISION (exit 1)
+#      Markers (case-insensitive): "changes requested", "blocking",
+#      "must fix", "required:", "action required", "❌"
+#   3. Neither found (unrecognized format) → safe-fails to NEEDS_REVISION (exit 1)
 #
 # Idempotency (BR-10):
 #   Before posting a trigger comment, the script queries existing PR comments
@@ -51,6 +54,15 @@ PR_NUMBER="$1"
 OWNER="$2"
 REPO="$3"
 shift 3
+
+# Validate PR_NUMBER is a positive integer before any interpolation into
+# gh commands or API URLs (REVIEW.md: validate user-supplied input).
+case "$PR_NUMBER" in
+  ''|0|*[!0-9]*)
+    echo "ERROR: PR number '$PR_NUMBER' is not a valid positive integer" >&2
+    exit 2
+    ;;
+esac
 
 # Defaults (overridable by flags or env vars)
 TRIGGER_PHRASE="${CODEX_GITHUB_TRIGGER_PHRASE:-@codex review}"
@@ -240,14 +252,6 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
     # 2. Blocking markers present → NEEDS_REVISION (exit 1)      [checked second]
     #    Blocking markers (case-insensitive): "changes requested", "blocking",
     #    "must fix", "required:", "action required", "❌"
-    #
-    # 2. Explicit approval signals present → APPROVED (exit 0)
-    #    Approval signals: "approved", "lgtm", "looks good"
-    #    Approval is checked BEFORE blocking markers so that responses like
-    #    "No blocking issues found. Approved." are not falsely rejected by the
-    #    bare word 'blocking'. When both an approval signal and a blocking marker
-    #    appear, the approval signal takes precedence — the bot most likely said
-    #    "no blocking issues" (negated context), not "blocking: fix X".
     #
     # 3. Neither found (unrecognized response format) → NEEDS_REVISION (exit 1)
     #    Safe-fail: default to NEEDS_REVISION when the format is unrecognized to
