@@ -100,6 +100,9 @@ Check:
 - Concurrent-event-source completeness (when protocol `02-generate-implementation-plan-protocol.md` Step 3 concurrent-event-source signals apply):
   - The plan includes a dedicated concurrency safety section
   - Each of the seven checklist items is addressed or noted as not applicable with a brief rationale: shared mutable state guards, re-entrancy / in-flight tracking, event deduplication, listener and resource cleanup, race conditions at initialization, race conditions at teardown, and error propagation across async boundaries
+- Cross-cutting checklist completeness (when protocol `02-generate-implementation-plan-protocol.md` Step 3 cross-cutting checklist signals apply):
+  - The plan's "Files to modify" section explicitly enumerates all applicable targets: the developer implementation protocol, all agent/skill guidance files for tech-lead and developer roles, `REVIEW.md`, and any Codex skill files that invoke the affected stage
+  - The enumeration is not limited to the primary protocol file — no required target is missing
 - Documentation updates are listed or intentionally declared unnecessary
 - Seed data, generated artifacts, and follow-up tasks are called out when applicable
 - The proposed approach matches existing architecture and repo patterns
