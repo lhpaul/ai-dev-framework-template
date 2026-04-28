@@ -204,8 +204,14 @@ PYEOF
 # For each item with an unknown file set, emits:
 #   CONFLICT_UNKNOWN=<item-id>
 #
-# Priority tie-breaking (BR-4 / BR-5):
-#   1. Lexicographically earlier branch name stays (earlier = higher priority)
+# Serialization tiebreaker implemented here (BR-5 tier 3):
+#   Lexicographically earlier item-id stays (earlier = higher priority).
+#
+# BR-4/BR-5 tiers 1-2 (priority level and creation date) are the responsibility
+# of the Protocol 90 orchestrator, which has access to tracker data.  The
+# orchestrator must apply tiers 1-2 before calling this helper and may override
+# SERIALIZE decisions when tracker data indicates a higher-priority item was
+# incorrectly serialized by the lexicographic tiebreaker.
 #
 # Implementation note: uses parallel indexed arrays (item_ids / item_file_sets)
 # instead of associative arrays to remain compatible with bash 3.x (macOS default).

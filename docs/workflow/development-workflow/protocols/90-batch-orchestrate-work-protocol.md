@@ -305,11 +305,16 @@ sets share at least one common path. Paths are compared as normalized, repo-root
 
 **Serialization rule** (BR-4 / BR-5): When a conflict is detected, the lower-priority item is
 moved to the next serial sub-batch. The higher-priority item remains in the current batch.
-Priority is determined by:
+Priority is determined by the orchestrator using the following ordered tiebreakers:
 
-1. Item priority level: Urgent > High > Normal > Low
+1. Item priority level: Urgent > High > Normal > Low (orchestrator applies from tracker data)
 2. Creation date: the older item (earlier creation date) stays in the current batch
+   (orchestrator applies from tracker data or development folder timestamp prefix)
 3. Branch name lexicographic order: the lexicographically earlier branch name stays
+   (this tiebreaker is what `workflow-batch-plan.sh`'s `detect_file_conflicts` helper
+   implements; the orchestrator must apply tiers 1 and 2 before delegating to the helper,
+   or override the helper's `SERIALIZE` output when tracker data indicates a higher-priority
+   item was incorrectly serialized)
 
 The batch summary must list the conflicting item pair, the overlapping file path(s), and the
 resulting batch assignment for each item (BR-7).
