@@ -24,7 +24,7 @@
 | Repo revision | `git rev-parse --short HEAD` | `8375405` |
 | Conditional guidance blocks in `02-generate-implementation-plan-protocol.md` | `grep -n "### " docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` | Lines 109 "parser-risk plans", 139 "cross-cutting checklist plans", 171 "concurrent-event-source plans", 195 "Examples" |
 | Plan Review Checklist conditional blocks in `REVIEW.md` | `grep -n "Parser-risk\|concurrent-event-source\|Cross-cutting" REVIEW.md` | Lines 93, 100, 103 — three existing conditional blocks in Plan Review |
-| Code Review conditional blocks in `REVIEW.md` | `grep -n "concurrent event sources\|Additional checks" REVIEW.md` | Lines 152, 143 — two existing "Additional checks" blocks in Code Review |
+| Code Review conditional blocks in `REVIEW.md` | `grep -n "concurrent event sources\|Additional checks" REVIEW.md` | Lines 143, 149, 152 — three existing "Additional checks" blocks in Code Review (shell scripts, database migrations, concurrent event sources) |
 | Files referenced by spec BR-5 | manual cross-check against spec | `02-generate-implementation-plan-protocol.md`, `REVIEW.md`, `CHANGELOG.md` — exactly 3 files |
 
 ---
@@ -125,4 +125,4 @@ None — the files modified by this feature (`02-generate-implementation-plan-pr
 
 6. **Verify scope compliance (BR-5)** — run `git diff --name-only` and confirm only `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md`, `REVIEW.md`, and `CHANGELOG.md` appear in the diff.
 
-7. **Commit and push**: `git add` the three files, commit with message `docs: add React Hooks Safety checklist to plan protocol and REVIEW.md (#384)`, push to `implementation-plan/384-react-hooks-safety-checklist`.
+7. **Commit and push**: `git add` the three files, commit with message `docs: add React Hooks Safety checklist to plan protocol and REVIEW.md (#384)`, push to `feature/384-react-hooks-safety-checklist`.
