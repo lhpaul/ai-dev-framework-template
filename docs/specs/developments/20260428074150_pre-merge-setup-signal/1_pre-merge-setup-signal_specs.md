@@ -117,12 +117,12 @@ When an agent produces a PR that is technically complete and reviewer-loop clean
 ## Business Rules
 
 - BR-1: The `needs-setup` label must always be accompanied by a "Pre-merge Setup" section in the PR body. Applying the label without the section is an incomplete signal.
-- BR-2: The "Pre-merge Setup" section must never appear in the PR body unless `needs-setup` is also applied (no orphaned sections).
+- BR-2: Agents must not add or retain the "Pre-merge Setup" section in the PR body without also applying the `needs-setup` label. After the human removes `needs-setup`, the section may remain as a historical record — this is not an orphaned section but an intentional audit trail.
 - BR-3: The `needs-setup` label is a signal only — it must not prevent CI from passing, block automated review tools from completing, or prevent `ready-for-human-review` from being applied. It co-exists with `ready-for-human-review`.
 - BR-4: The detection scan runs after all automated reviewer loops and CI checks pass (at the Step 8a / Step 8c stage of the orchestration protocol), not before.
 - BR-5: When no infrastructure dependency signals are detected, the `needs-setup` label must not be applied and the "Pre-merge Setup" section must not be included.
 - BR-6: On each fixer push, the agent must rescan the diff and update the setup signal state (add, update, or remove) to reflect the current diff — not cached prior state.
-- BR-7: The "Pre-merge Setup" section remains in the PR body as a historical record after the `needs-setup` label is removed by the human. Agents do not remove the section on subsequent pushes unless the diff no longer contains any infrastructure dependencies.
+- BR-7: When the `needs-setup` label is removed by the human (Use Case 3), the "Pre-merge Setup" section remains in the PR body as a historical record — the human's removal signals that setup has been acknowledged, and the section preserves the audit trail. When the agent rescans and finds no infrastructure dependencies (Use Case 4), the agent removes both the label and the section — there is no record to preserve because the code change itself eliminated the dependency.
 - BR-8: Each requirement listed in the "Pre-merge Setup" section must identify: the requirement name, the type (e.g., environment variable, GitHub Actions secret, DNS record), a plain-language description of the expected value, and the location where it must be set.
 - BR-9: The detection heuristics are a best-effort scan. False negatives (missed dependencies) are acceptable and do not represent a defect in this feature. The human is the final authority on whether all setup is complete.
 - BR-10: The `needs-setup` label must be a distinct label from `needs-fixes`. They may co-exist on the same PR if both conditions apply, but they have different semantics: `needs-fixes` signals reviewer-requested code changes; `needs-setup` signals out-of-band human configuration steps.
@@ -149,7 +149,7 @@ When an agent produces a PR that is technically complete and reviewer-loop clean
 - [ ] AC-2: The "Pre-merge Setup" section lists each detected requirement with: requirement name, type, plain-language description of the expected value, and the location where it must be set.
 - [ ] AC-3: When a PR's diff contains no infrastructure dependency signals, the agent does not apply `needs-setup` and does not add a "Pre-merge Setup" section to the PR body.
 - [ ] AC-4: The `needs-setup` label is applied alongside (not instead of) `ready-for-human-review` — the PR is still declared ready for human review.
-- [ ] AC-5: After a fixer push, the agent rescans the diff; if infrastructure dependency signals are no longer present, it removes the `needs-setup` label but leaves the "Pre-merge Setup" section in the PR body as a historical record.
+- [ ] AC-5: After a fixer push, the agent rescans the diff; if infrastructure dependency signals are no longer present, it removes both the `needs-setup` label and the "Pre-merge Setup" section from the PR body.
 - [ ] AC-6: After a fixer push, the agent rescans the diff; if new infrastructure dependency signals are introduced, the "Pre-merge Setup" section is updated and `needs-setup` remains applied.
 - [ ] AC-7: The orchestration protocol (Step 8a label readiness checklist) documents the `needs-setup` label as a valid co-label with `ready-for-human-review` and does not treat its presence as an error.
 - [ ] AC-8: The `needs-setup` label is defined in the PR readiness signal protocol (`92-pr-readiness-signal-protocol.md`) with its semantics, valid combinations, and who removes it.
