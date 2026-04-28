@@ -108,13 +108,29 @@ echo "INFO: Poll interval: ${POLL_INTERVAL}s, Max wait: ${MAX_WAIT}s"
 ESCAPED_SHA=$(printf '%s' "$CURRENT_SHA" | sed 's/[[\\.^$()|?*+{}]/\\&/g')
 ESCAPED_TRIGGER=$(printf '%s' "$TRIGGER_PHRASE" | sed 's/[[\\.^$()|?*+{}]/\\&/g')
 
-TRIGGER_COMMENT_INFO=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
+# Capture the idempotency check to a temp file to avoid:
+# - SIGPIPE under pipefail when piping to head (head closes the pipe early when
+#   the response is larger than the truncation limit, causing gh api to exit
+#   with SIGPIPE which pipefail propagates as a non-zero exit code)
+# - Silent failure swallowing (|| true on a pipeline hides real API errors)
+IDEM_STDERR=$(mktemp)
+IDEM_TMPFILE=$(mktemp)
+if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
   --jq ".[] | select((.body | test(\"$ESCAPED_SHA\")) and (.body | test(\"$ESCAPED_TRIGGER\"))) | {id: .id, created_at: .created_at, body: .body}" \
-  2>/dev/null | head -c 2000 || true)
+  2>"$IDEM_STDERR" > "$IDEM_TMPFILE"; then
+  TRIGGER_COMMENT_INFO=$(head -c 2000 "$IDEM_TMPFILE")
+else
+  IDEM_ERR=$(cat "$IDEM_STDERR")
+  echo "WARNING: gh api failed in idempotency check (will proceed with trigger post as fallback): $IDEM_ERR" >&2
+  TRIGGER_COMMENT_INFO=""
+fi
+rm -f "$IDEM_STDERR" "$IDEM_TMPFILE"
 
 TRIGGER_TIME=""
 if [ -n "$TRIGGER_COMMENT_INFO" ]; then
-  TRIGGER_TIME=$(echo "$TRIGGER_COMMENT_INFO" | grep -o '"created_at":"[^"]*"' | head -1 | sed 's/"created_at":"//;s/"//')
+  # jq outputs pretty-printed JSON with a space after the colon: "created_at": "..."
+  # Use ' *' to match zero or more spaces to handle both compact and pretty-print output.
+  TRIGGER_TIME=$(echo "$TRIGGER_COMMENT_INFO" | grep -o '"created_at": *"[^"]*"' | head -1 | sed 's/"created_at": *"//;s/"//')
   if [ -n "$TRIGGER_TIME" ]; then
     echo "INFO: trigger comment already posted for commit $CURRENT_SHA (at $TRIGGER_TIME) — skipping duplicate post"
   fi
@@ -150,13 +166,22 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
 
   # Query comments authored by the bot that appeared after the trigger comment timestamp.
   # The bot login may include "[bot]" suffix — use exact string match on user.login.
-  # Capture stderr separately to distinguish API failures from empty results.
+  # Write the full output to a temp file first to avoid SIGPIPE under pipefail:
+  # piping directly to 'head -c N' causes gh api to receive SIGPIPE when head
+  # closes its stdin early (when response > N bytes), which pipefail propagates
+  # as a non-zero exit code — falsely triggering the API failure counter.
   POLL_STDERR=$(mktemp)
-  BOT_RESPONSE=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
+  POLL_TMPFILE=$(mktemp)
+  if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
     --jq ".[] | select(.user.login == \"$BOT_LOGIN\") | select(.created_at > \"$TRIGGER_TIME\") | .body" \
-    2>"$POLL_STDERR" | head -c 10000) || {
+    2>"$POLL_STDERR" > "$POLL_TMPFILE"; then
+    # Truncate after successful API call — no SIGPIPE risk here
+    BOT_RESPONSE=$(head -c 10000 "$POLL_TMPFILE")
+    rm -f "$POLL_STDERR" "$POLL_TMPFILE"
+    CONSECUTIVE_API_FAILURES=0
+  else
     POLL_ERR=$(cat "$POLL_STDERR")
-    rm -f "$POLL_STDERR"
+    rm -f "$POLL_STDERR" "$POLL_TMPFILE"
     CONSECUTIVE_API_FAILURES=$((CONSECUTIVE_API_FAILURES + 1))
     echo "WARNING: gh api failed during polling (attempt $CONSECUTIVE_API_FAILURES): $POLL_ERR" >&2
     if [ "$CONSECUTIVE_API_FAILURES" -ge "$MAX_CONSECUTIVE_FAILURES" ]; then
@@ -165,9 +190,7 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
       exit 2
     fi
     continue
-  }
-  rm -f "$POLL_STDERR"
-  CONSECUTIVE_API_FAILURES=0
+  fi
 
   if [ -n "$BOT_RESPONSE" ]; then
     echo "INFO: bot response detected"
