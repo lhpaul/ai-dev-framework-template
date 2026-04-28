@@ -99,9 +99,9 @@ When dispatching a subagent for this item, include a short "Tracker Work Item Su
 | Spec branch pushed, no PR yet | Branch exists on local / remote / worktree | Run the spec review gate via `REVIEW.md` / `01-review-spec-protocol.md`, open the PR, then finish PR readiness |
 | Spec Ready | Spec PR is merged | Set tracker status to **Writing Plan**, then run `02-generate-implementation-plan-protocol.md` |
 | Plan written locally, spec PR not yet merged | Plan branch exists locally or in worktree; spec PR is still open (not merged) | **Ordering gate**: do NOT open the plan PR. Stop after the spec PR is `ready-for-human-review` and report: "spec PR is ready; plan is written and staged locally, but plan PR will not be opened until spec PR is confirmed merged." Resume in next run after spec PR merge. |
-| Writing Plan | Tracker **Writing Plan** — plan PR not yet human-ready — spec PR already merged | Continue plan branch/PR work until tracker moves to **Plan in Review** |
+| Writing Plan | Tracker **Writing Plan** — plan PR not yet human-ready — spec PR already merged (Full Pipeline only; Refactor items are exempt — no spec PR exists) | Continue plan branch/PR work until tracker moves to **Plan in Review** |
 | Plan in Review | Tracker **Plan in Review** — plan PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
-| Plan branch pushed, no PR yet | Branch exists on local / remote / worktree; spec PR already merged | Run the plan review gate via `REVIEW.md` / `02-review-implementation-plan-protocol.md`, open the PR, then finish PR readiness |
+| Plan branch pushed, no PR yet | Branch exists on local / remote / worktree; spec PR already merged (Full Pipeline only; Refactor items are exempt — no spec PR exists) | Run the plan review gate via `REVIEW.md` / `02-review-implementation-plan-protocol.md`, open the PR, then finish PR readiness |
 | Plan Ready | Plan PR is merged | Set tracker status to **In Development**, then run `03-implement-development-protocol.md` |
 | In Development | Tracker **In Development** — feature/fix PR not yet human-ready | Continue implementation branch/PR work (Step 7a, 7, 8) until tracker moves to **Development in Review** |
 | Development in Review | Tracker **Development in Review** — feature/fix PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
@@ -173,7 +173,7 @@ gh pr view <spec_pr_number> --json state --jq '.state'
 # If output is OPEN or CLOSED (without MERGED): do not open the plan PR
 ```
 
-If the spec PR is still `OPEN`, apply the ordering gate above and stop.
+If the spec PR is still `OPEN`, apply the ordering gate above and stop. If the spec PR is `CLOSED` (rejected without merge), do **not** open the plan PR and do **not** apply the ordering gate — escalate to the human, because the spec was rejected and the plan cannot proceed without a merged spec.
 
 **Exception — Refactor items (no spec):** Items following the Refactor path (`02-generate-implementation-plan-protocol.md` without a preceding spec step) are exempt from this gate. There is no spec PR to wait for.
 
