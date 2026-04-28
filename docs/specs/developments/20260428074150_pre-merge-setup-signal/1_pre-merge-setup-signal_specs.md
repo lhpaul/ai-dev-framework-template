@@ -1,6 +1,6 @@
 # Pre-merge Setup Signal — Spec
 
-**Depends on**: <!-- none -->
+**Depends on**: none
 
 ---
 
@@ -164,7 +164,7 @@ When an agent produces a PR that is technically complete and reviewer-loop clean
 - Machine-readable structured output of setup requirements (e.g., JSON schema or YAML block) — plain-language prose in the PR body section is sufficient for this iteration.
 - Integration with secret managers or environment dashboards to verify whether a required value has been set.
 - Notification or alert to the human when `needs-setup` is applied (beyond the standard GitHub label notification mechanism).
-- Detection of DNS record requirements from arbitrary docs or runbooks (initial detection scope is limited to the heuristics listed in the Business Rules / detection section).
+- Detection of infrastructure dependencies from arbitrary docs or runbooks using natural language parsing — the initial detection scope is limited to structured heuristics (e.g., new env var entries, new secret references in workflow files) defined in the implementation plan.
 - Retroactively rescanning merged PRs or PRs that already have `ready-for-human-review`.
 - Enforcement of setup completion before merge (a "merge gate") — this is a conscious deferral.
 - UI changes to any dashboard or admin panel.
