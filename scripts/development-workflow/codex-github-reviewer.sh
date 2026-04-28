@@ -140,6 +140,8 @@ fi
 echo "INFO: polling for response from '$BOT_LOGIN' (trigger time: $TRIGGER_TIME)..."
 
 ELAPSED=0
+CONSECUTIVE_API_FAILURES=0
+MAX_CONSECUTIVE_FAILURES=3
 while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
   sleep "$POLL_INTERVAL"
   ELAPSED=$((ELAPSED + POLL_INTERVAL))
@@ -148,28 +150,42 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
 
   # Query comments authored by the bot that appeared after the trigger comment timestamp.
   # The bot login may include "[bot]" suffix — use exact string match on user.login.
+  # Capture stderr separately to distinguish API failures from empty results.
+  POLL_STDERR=$(mktemp)
   BOT_RESPONSE=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
     --jq ".[] | select(.user.login == \"$BOT_LOGIN\") | select(.created_at > \"$TRIGGER_TIME\") | .body" \
-    2>/dev/null | head -c 10000 || true)
+    2>"$POLL_STDERR" | head -c 10000) || {
+    POLL_ERR=$(cat "$POLL_STDERR")
+    rm -f "$POLL_STDERR"
+    CONSECUTIVE_API_FAILURES=$((CONSECUTIVE_API_FAILURES + 1))
+    echo "WARNING: gh api failed during polling (attempt $CONSECUTIVE_API_FAILURES): $POLL_ERR" >&2
+    if [ "$CONSECUTIVE_API_FAILURES" -ge "$MAX_CONSECUTIVE_FAILURES" ]; then
+      echo "VERDICT: TIMED_OUT — gh api failed $CONSECUTIVE_API_FAILURES consecutive times. Last error: $POLL_ERR"
+      echo "INFO: remediation — check gh CLI authentication, API rate limits, and network connectivity."
+      exit 2
+    fi
+    continue
+  }
+  rm -f "$POLL_STDERR"
+  CONSECUTIVE_API_FAILURES=0
 
   if [ -n "$BOT_RESPONSE" ]; then
     echo "INFO: bot response detected"
 
     # ── Verdict parsing ───────────────────────────────────────────────────────
-    # Safe-fail: default to NEEDS_REVISION when the response format is unrecognized.
-    # APPROVED only when none of the blocking markers are present.
+    # Three-path classification (per spec BR-4 and implementation plan risk table):
     #
-    # Blocking markers (case-insensitive):
-    #   - "changes requested"
-    #   - "blocking"
-    #   - "must fix"
-    #   - "required:"
-    #   - "action required"
-    #   - the ❌ emoji (literal or Unicode escape)
+    # 1. Blocking markers present → NEEDS_REVISION (exit 1)
+    #    Blocking markers (case-insensitive): "changes requested", "blocking",
+    #    "must fix", "required:", "action required", "❌"
     #
-    # Approval signals:
-    #   - "approved" or "lgtm" or "looks good" present AND no blocking markers
-    #   - no blocking markers at all (conservative: treat silence as approval)
+    # 2. Explicit approval signals present (no blocking markers) → APPROVED (exit 0)
+    #    Approval signals: "approved", "lgtm", "looks good"
+    #
+    # 3. Neither found (unrecognized response format) → NEEDS_REVISION (exit 1)
+    #    Safe-fail: default to NEEDS_REVISION when the format is unrecognized to
+    #    avoid incorrectly approving a response that is a rejection in an
+    #    unexpected format (per spec risk mitigation for BR-4).
 
     if echo "$BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking|must[[:space:]]+fix|action[[:space:]]+required|required:[[:space:]]|❌)"; then
       echo "VERDICT: NEEDS_REVISION"
@@ -177,12 +193,18 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
       echo "$BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
       exit 1
-    else
+    elif echo "$BOT_RESPONSE" | grep -qiE "(approved|lgtm|looks[[:space:]]+good)"; then
       echo "VERDICT: APPROVED"
       echo "---BEGIN BOT RESPONSE---"
       echo "$BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
       exit 0
+    else
+      echo "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)"
+      echo "---BEGIN BOT RESPONSE---"
+      echo "$BOT_RESPONSE"
+      echo "---END BOT RESPONSE---"
+      exit 1
     fi
   fi
 done
