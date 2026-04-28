@@ -111,15 +111,15 @@ TRIGGER_TIME=$(echo "$RESPONSE" | jq -r '.createdAt')
 
 ### 5. Subshell exit codes — the `local` trap
 
-In bash, a bare assignment `OUTPUT=$(cmd)` correctly exposes `$?` as the exit code of `cmd` — the assignment itself does not mask it. However, when the assignment is combined with a variable declaration keyword (`local`, `export`, or `declare`), the keyword's own exit code (always 0) overwrites the substitution's exit code, silently swallowing failures.
+In bash, a bare assignment `OUTPUT=$(cmd)` exposes `$?` as the exit code of `cmd` — the assignment itself does not mask it. However, when the assignment is combined with a variable declaration keyword (`local`, `export`, or `declare`), the keyword's own exit code (always 0) overwrites the substitution's exit code, silently swallowing failures.
+
+Under `set -e`, bare `OUTPUT=$(cmd)` still aborts on non-zero (same as a bare command). To safely capture output and check success, use `if ! OUTPUT=$(cmd); then` or `OUTPUT=$(cmd) || INNER_EXIT=$?`.
 
 ```bash
-# Safe — bare assignment: $? correctly reflects inner_command's exit code:
-OUTPUT=$(inner_command)
-INNER_EXIT=$?
-if [ "$INNER_EXIT" -ne 0 ]; then
-  echo "inner_command failed with exit $INNER_EXIT"
-  exit "$INNER_EXIT"
+# Correct — check failure inline (works under set -e):
+if ! OUTPUT=$(inner_command); then
+  echo "inner_command failed"
+  exit 1
 fi
 
 # Dangerous inside functions — local masks the exit code (local itself exits 0):
