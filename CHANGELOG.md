@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Sync-template migration notes** (`sync-manifest.yaml`, sync-template skill and commands): `sync-manifest.yaml` gains a `migration_notes` section for versioned manual migration steps. The sync-template skill and command variants now read this section and present a required pre-sync checklist whenever the downstream project's `last_synced_version` predates a breaking structural change. First entry: `docs/ai/ → docs/workflow/` rename (v0.23.0). Fully backwards-compatible — silently skipped when no applicable notes exist.
 
+### Changed
+
+- **Bash 3.2 compatibility rule added to developer agent and Protocol 03** (`.claude/agents/developer.md`, `.cursor/agents/developer.md`, `03-implement-development-protocol.md`): workflow scripts must be bash 3.2 compatible (macOS ships bash 3.2 by default); `local -A` / `declare -A` and other bash 4+-only syntax are prohibited. ShellCheck does not warn on this by default with a `#!/usr/bin/env bash` shebang. Added to developer agent key rules and to all four ShellCheck blocks in Protocol 03 (one per implementation path).
+
 ### Fixed
 
 - **`GITHUB_PROJECT_NUMBER` missing fallback causes silent tracker skips** (`workflow-lib.sh`, `.ai-dev-workflow.yaml`): `update_tracker_status_best_effort` and `get_tracker_status_for_issue` set `project_number` from `GITHUB_PROJECT_NUMBER` with no fallback, so tracker updates silently skipped on every run in normal shell sessions where the env var is not set. Fixed by reading `project_number` from the `issue_tracker.project_number` field in `.ai-dev-workflow.yaml` when the env var is absent (via a new `workflow_config_field` awk-based YAML section/field parser and `workflow_issue_tracker_project_number` named wrapper in `workflow-lib.sh`). Also removed the now-redundant `GITHUB_PROJECT_NUMBER` guard in `workflow-batch-plan.sh` that prevented the terminal-status skip from activating when project number was configured only via YAML. Added a `project_number: 1` field to `.ai-dev-workflow.yaml` with documentation comment.
