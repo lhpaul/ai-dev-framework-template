@@ -703,9 +703,11 @@ This pattern also applies to PRs where an agent timed out mid-CI-loop: detect vi
 After a Work Item Runner completes, the shell's CWD may be inside an isolated worktree directory (`.claude/worktrees/<id>/`). Using `git rev-parse --show-toplevel` from that context returns the *worktree* path rather than the main repo root, causing every `git -C` command below to run against the wrong tree and producing false results (wrong branch, phantom dirty files, or a spurious Case 1 auto-correct). Use `git rev-parse --git-common-dir` instead — it always resolves to the `.git` directory of the *main* repo regardless of the current working directory:
 
 ```bash
-# Always safe — returns main repo root even when CWD is inside a worktree
-MAIN_REPO_ROOT="$(git rev-parse --git-common-dir)/.."
+# Always safe — returns an absolute main repo root path even when CWD is inside a worktree
+MAIN_REPO_ROOT="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"
 ```
+
+The `cd ... && pwd` wrapper is required to canonicalize the path to an absolute string: without it, `git rev-parse --git-common-dir` returns `.git` (a relative path) when run from the main repo root, and the resulting `MAIN_REPO_ROOT=".git/.."` resolves relative to wherever the shell's CWD is at the time — defeating the fix if the stored value is used after CWD has changed.
 
 Store `MAIN_REPO_ROOT` before dispatching any Work Item Runner (while CWD is definitely at the main repo root) and reuse it in the check below. If the value was not stored ahead of time, derive it immediately after the runner returns using the `--git-common-dir` form above — **never** use `git rev-parse --show-toplevel` for this purpose inside the Step 5.2 block.
 
@@ -713,7 +715,7 @@ After each Work Item Runner returns in a **parallel batch**, immediately check t
 
 ```bash
 INTEGRATION_BRANCH="develop"  # or read from .ai-dev-workflow.yaml integration_branch field
-# MAIN_REPO_ROOT must be derived via --git-common-dir (see CWD safety note above)
+# MAIN_REPO_ROOT must be an absolute path derived via --git-common-dir (see CWD safety note above)
 MAIN_BRANCH=$(git -C "$MAIN_REPO_ROOT" rev-parse --abbrev-ref HEAD)
 MAIN_STATUS=$(git -C "$MAIN_REPO_ROOT" status --porcelain)
 
