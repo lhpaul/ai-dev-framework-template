@@ -82,7 +82,7 @@
 1. PR diff contains a new env var entry — `needs-setup` label applied and `## Pre-merge Setup` section populated (maps to AC-1, AC-2, AC-4)
 2. PR diff contains no infrastructure signals — `needs-setup` absent, no section in body (maps to AC-3)
 3. After a fixer push removes the env var from the diff — `needs-setup` removed and section cleared (maps to AC-5)
-4. Protocol 92 explicitly lists `needs-setup` with semantics and valid combinations (maps to AC-7, AC-8)
+4. Protocol 91 Step 8a documents `needs-setup` as a valid co-label with `ready-for-human-review` and does not treat its presence as an error (maps to AC-7); Protocol 92 explicitly lists `needs-setup` with semantics and valid combinations (maps to AC-8)
 5. Smoke test runbook covers all verification assertions (maps to AC-9)
 
 **Smoke test runbook**: `docs/testing/workflow/367-pre-merge-setup-signal.smoke-test.md`
@@ -145,7 +145,8 @@ Not applicable. All changes are prose additions to existing markdown protocol fi
    - TC-1: Verify `needs-setup` label is applied and `## Pre-merge Setup` section appears in the PR body when the diff contains a new env var reference (maps to AC-1, AC-2, AC-4).
    - TC-2: Verify `needs-setup` is absent and no section appears when the diff contains no infrastructure signals (maps to AC-3).
    - TC-3: Verify after a fixer push that removes the env var: `needs-setup` is removed and the section is cleared from the PR body (maps to AC-5).
-   - TC-4: Verify protocol 92 contains the `needs-setup` label definition, semantics, and valid combinations (maps to AC-7, AC-8).
+   - TC-4a: Verify protocol 91 Step 8a documents the infrastructure dependency scan, explicitly identifies `needs-setup` as a valid co-label with `ready-for-human-review`, and does not treat its presence as an error condition (maps to AC-7).
+   - TC-4b: Verify protocol 92 contains the `needs-setup` label definition, semantics, and valid combinations (maps to AC-8).
 
 6. **Run markdownlint-cli2** on the two updated protocol files and the new smoke test runbook before committing:
 

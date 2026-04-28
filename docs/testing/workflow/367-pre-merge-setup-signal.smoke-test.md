@@ -129,9 +129,24 @@ Using the same PR from TC-1 (or a similar setup), push a fix commit that removes
 
 ---
 
-### Step 5 (TC-4): Protocol 92 documents `needs-setup` with correct semantics
+### Step 5a (TC-4a): Protocol 91 Step 8a documents `needs-setup` as a valid co-label
 
-**Maps to**: AC-7, AC-8
+**Maps to**: AC-7
+
+1. Open `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`.
+2. Locate the Step 8a section (Label Readiness Checklist).
+3. Confirm there is an "Infrastructure Dependency Scan (pre-readiness)" sub-step or equivalent prose block within Step 8a that describes the diff-scan process.
+4. Confirm the Step 8a section explicitly states that `needs-setup` is a valid co-label with `ready-for-human-review` and must not be treated as an error condition that blocks readiness.
+5. Confirm the checklist script (Check 1–4 or equivalent) does not attempt to remove the `needs-setup` label — the plan notes it is a deliberate signal, not a stale label.
+6. Confirm the Step 8c verification table contains a note that `needs-setup` may co-exist with `ready-for-human-review` without constituting a verification failure.
+
+**Expected result**: Protocol 91 Step 8a clearly documents the infrastructure dependency scan step and explicitly identifies `needs-setup` as a valid co-label that does not block `ready-for-human-review`.
+
+---
+
+### Step 5b (TC-4b): Protocol 92 documents `needs-setup` with correct semantics
+
+**Maps to**: AC-8
 
 1. Open `docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
 2. Confirm the Labels table contains a `needs-setup` row with a clear description of the label's meaning.
