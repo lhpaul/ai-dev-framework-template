@@ -86,10 +86,17 @@ if ! gh auth status >/dev/null 2>&1; then
 fi
 
 # ── Resolve current HEAD commit SHA ──────────────────────────────────────────
+# Guard the assignment with 'if !' to prevent set -e from exiting with code 1
+# (NEEDS_REVISION) before the empty-check guard below can emit the VERDICT line.
 
-CURRENT_SHA=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefOid --jq '.headRefOid' | cut -c1-12)
-if [ -z "$CURRENT_SHA" ]; then
+if ! CURRENT_SHA=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefOid --jq '.headRefOid' 2>&1 | head -c 100); then
   echo "ERROR: could not resolve PR #$PR_NUMBER HEAD SHA" >&2
+  echo "VERDICT: TIMED_OUT — could not resolve PR HEAD SHA (treated as unavailable)"
+  exit 2
+fi
+CURRENT_SHA=$(printf '%s' "$CURRENT_SHA" | cut -c1-12)
+if [ -z "$CURRENT_SHA" ]; then
+  echo "ERROR: could not resolve PR #$PR_NUMBER HEAD SHA (empty result)" >&2
   echo "VERDICT: TIMED_OUT — could not resolve PR HEAD SHA (treated as unavailable)"
   exit 2
 fi
@@ -114,7 +121,7 @@ IDEM_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
   2>"$IDEM_STDERR" \
   | jq -r --arg sha "$CURRENT_SHA" --arg trigger "$TRIGGER_PHRASE" \
-    '.[] | select((.body | test($sha)) and (.body | test($trigger; "i"))) | {id: .id, created_at: .created_at, body: .body}' \
+    '.[] | select((.body | test($sha)) and (.body | ascii_downcase | contains($trigger | ascii_downcase))) | {id: .id, created_at: .created_at, body: .body}' \
   > "$IDEM_TMPFILE"; then
   TRIGGER_COMMENT_INFO=$(head -c 2000 "$IDEM_TMPFILE")
 else
@@ -142,10 +149,16 @@ if [ -z "$TRIGGER_TIME" ]; then
   # timestamp. Using 'date -u' here would risk clock skew between the local
   # machine and GitHub's API server, causing bot responses to be silently
   # filtered out during polling (created_at > TRIGGER_TIME would be false).
-  TRIGGER_TIME=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
+  # Guard with 'if !' to emit TIMED_OUT (exit 2) on failure instead of letting
+  # set -e exit with code 1 (NEEDS_REVISION) without a VERDICT line.
+  if ! TRIGGER_TIME=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
     --method POST \
     --raw-field body="$TRIGGER_PHRASE (review triggered by workflow runner, commit: $CURRENT_SHA)" \
-    --jq '.created_at')
+    --jq '.created_at'); then
+    echo "ERROR: failed to post trigger comment to PR #$PR_NUMBER" >&2
+    echo "VERDICT: TIMED_OUT — failed to post trigger comment (treated as unavailable)"
+    exit 2
+  fi
   echo "INFO: trigger comment posted at $TRIGGER_TIME (server-assigned timestamp)"
 fi
 
