@@ -79,7 +79,7 @@ Under `set -e`, any command that exits non-zero causes the script to abort — *
 | `if cmd; then` | Safe — exit code is tested, not propagated |
 | `cmd \|\| true` | Safe — `true` always exits 0 |
 | `cmd && other` | Safe — `set -e` does not abort inside `&&` chains |
-| `ret=$(cmd); if [ $ret -ne 0 ]` | Safe — captures exit code explicitly |
+| `cmd; ret=$?; if [ $ret -ne 0 ]` | Safe — runs cmd, then captures exit code into `$ret` |
 | `result=$(cmd)` | **Abort on non-zero** — same as bare command |
 
 Capture exit codes explicitly when the command can legitimately fail:
@@ -110,16 +110,12 @@ RESPONSE=$(gh pr comment "$PR_NUMBER" --body "$TRIGGER_BODY")
 TRIGGER_TIME=$(echo "$RESPONSE" | jq -r '.createdAt')
 ```
 
-### 5. Subshell exit codes
+### 5. Subshell exit codes — the `local` trap
 
-Commands run inside `$()` substitutions inherit `set -e` behavior in the outer shell but their exit code is **only visible immediately after the substitution**. In compound expressions, the exit code from inside a `$()` can be silently swallowed.
+In bash, a bare assignment `OUTPUT=$(cmd)` correctly exposes `$?` as the exit code of `cmd` — the assignment itself does not mask it. However, when the assignment is combined with a variable declaration keyword (`local`, `export`, or `declare`), the keyword's own exit code (always 0) overwrites the substitution's exit code, silently swallowing failures.
 
 ```bash
-# Dangerous — if the inner command fails, the outer assignment succeeds (exit 0):
-OUTPUT=$(inner_command)
-# $? is the exit code of the assignment (always 0), not of inner_command
-
-# Safe — check $? immediately after the substitution on its own line:
+# Safe — bare assignment: $? correctly reflects inner_command's exit code:
 OUTPUT=$(inner_command)
 INNER_EXIT=$?
 if [ "$INNER_EXIT" -ne 0 ]; then
@@ -127,9 +123,25 @@ if [ "$INNER_EXIT" -ne 0 ]; then
   exit "$INNER_EXIT"
 fi
 
-# Also safe — use || to handle failure inline:
-OUTPUT=$(inner_command) || { echo "inner_command failed"; exit 1; }
+# Dangerous inside functions — local masks the exit code (local itself exits 0):
+my_func() {
+  local OUTPUT=$(inner_command)  # $? is 0 even if inner_command failed!
+  echo "Exit was: $?"  # Always prints "Exit was: 0"
+}
+
+# Safe inside functions — declare then assign on separate lines:
+my_func() {
+  local OUTPUT
+  OUTPUT=$(inner_command)
+  INNER_EXIT=$?
+  if [ "$INNER_EXIT" -ne 0 ]; then
+    echo "inner_command failed with exit $INNER_EXIT"
+    return "$INNER_EXIT"
+  fi
+}
 ```
+
+The same masking behavior applies to `export VAR=$(cmd)` and `declare VAR=$(cmd)`. Always separate declaration from assignment when the exit code matters.
 
 ### 6. `gh` CLI / API error handling
 
