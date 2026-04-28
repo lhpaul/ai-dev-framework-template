@@ -211,39 +211,49 @@ PYEOF
 # In practice, Protocol 90 passes item IDs that are development folder slugs
 # or branch names.  The priority tiebreaker falls through to branch-name
 # lexicographic order when priority and timestamp cannot be determined.
+#
+# Implementation note: uses parallel indexed arrays (item_ids / item_file_sets)
+# instead of associative arrays to remain compatible with bash 3.x (macOS default).
 detect_file_conflicts() {
   local -a item_ids=()
-  local -A file_sets=()
+  local -a item_file_sets=()
 
   for arg in "$@"; do
     local item_id="${arg%%:*}"
     local file_set="${arg#*:}"
     item_ids+=("$item_id")
-    file_sets["$item_id"]="$file_set"
+    item_file_sets+=("$file_set")
   done
+
+  local total="${#item_ids[@]}"
 
   # Emit CONFLICT_UNKNOWN for unknown-set items
-  for item_id in "${item_ids[@]}"; do
-    if [ "${file_sets[$item_id]}" = "unknown" ]; then
-      print_kv CONFLICT_UNKNOWN "$item_id"
+  local idx
+  for ((idx = 0; idx < total; idx++)); do
+    if [ "${item_file_sets[$idx]}" = "unknown" ]; then
+      print_kv CONFLICT_UNKNOWN "${item_ids[$idx]}"
     fi
   done
 
-  # Pairwise conflict detection for items with known file sets
-  local -a known_items=()
-  for item_id in "${item_ids[@]}"; do
-    if [ "${file_sets[$item_id]}" != "unknown" ]; then
-      known_items+=("$item_id")
+  # Pairwise conflict detection for items with known file sets.
+  # Build index lists for known-set items.
+  local -a known_indices=()
+  for ((idx = 0; idx < total; idx++)); do
+    if [ "${item_file_sets[$idx]}" != "unknown" ]; then
+      known_indices+=("$idx")
     fi
   done
 
-  local n="${#known_items[@]}"
+  local n="${#known_indices[@]}"
+  local i j
   for ((i = 0; i < n; i++)); do
     for ((j = i + 1; j < n; j++)); do
-      local id_a="${known_items[$i]}"
-      local id_b="${known_items[$j]}"
-      local set_a="${file_sets[$id_a]}"
-      local set_b="${file_sets[$id_b]}"
+      local ix_a="${known_indices[$i]}"
+      local ix_b="${known_indices[$j]}"
+      local id_a="${item_ids[$ix_a]}"
+      local id_b="${item_ids[$ix_b]}"
+      local set_a="${item_file_sets[$ix_a]}"
+      local set_b="${item_file_sets[$ix_b]}"
 
       # Compute intersection
       local overlap
@@ -259,8 +269,8 @@ PYEOF
       if [ -n "$overlap" ]; then
         # Determine which item to serialize (lower priority).
         # Compare by lexicographic branch name as tiebreaker (BR-5).
-        # Items are already in natural order from iteration; use branch name
-        # comparison for deterministic ordering.
+        # The lexicographically smaller (earlier) branch name has higher priority
+        # and stays in the current batch; the larger (later) name is serialized.
         local serialize_id higher_id
         if [[ "$id_a" > "$id_b" ]]; then
           serialize_id="$id_a"
