@@ -136,6 +136,38 @@ If none of these signals apply, skip this entire block.
 
 For acceptance intent and terminology, reference `docs/specs/developments/20260420120000_201-tech-lead-parser-regex-plan-requirements/1_201-tech-lead-parser-regex-plan-requirements_specs.md`.
 
+### Cross-cutting checklist plans: safety, quality, or compliance categories
+
+Treat this block as mandatory guidance whenever the plan **introduces or modifies a cross-cutting checklist** — defined as a safety, quality, or compliance category that applies across multiple independent feature implementations (e.g., a new async/concurrency safety checklist, a security review category, or a compliance verification gate added to the review or planning workflow).
+
+**Classification (cross-cutting checklist):** classify a plan as cross-cutting checklist when the Layer-by-Layer changes include:
+
+- Adding or renaming a checklist category in `REVIEW.md`, `02-generate-implementation-plan-protocol.md`, or any review/planning document
+- Updating acceptance criteria that every feature plan or implementation must satisfy (e.g., "all plans must include a concurrency safety section")
+- Introducing a new conditional guidance block in a planning or implementation protocol that applies based on a feature classification signal
+
+If none of these signals apply, skip this entire block.
+
+**Mandatory when cross-cutting checklist — Full file enumeration:** the plan's "Files to modify" section **must explicitly list every file** that needs updating. Do not list only the primary protocol file. At minimum, verify and include:
+
+- `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` — tech-lead planning protocol
+- `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` — developer implementation protocol
+- `.claude/agents/developer.md` — Claude Code developer agent
+- `.cursor/agents/developer.md` — Cursor developer agent
+- `.claude/agents/tech-lead.md` — Claude Code tech-lead agent (if the change affects planning behavior)
+- `.cursor/agents/tech-lead.md` — Cursor tech-lead agent (if the change affects planning behavior)
+- `REVIEW.md` — human and automated reviewer checklist
+- Any Codex skill files in `.codex/skills/` that invoke the affected stage (check `.codex/skills/workflow-plan-writer/SKILL.md`, `.codex/skills/workflow-implementer/SKILL.md`, and related skills)
+
+Run a live search before writing the enumeration to avoid omissions:
+
+```bash
+# Find all agent/skill files that reference the affected protocol
+grep -rl "02-generate-implementation-plan-protocol\|03-implement-development-protocol" .claude/agents/ .cursor/agents/ .codex/skills/
+```
+
+The tech-lead must explicitly include all applicable targets in the plan's "Files to modify" section rather than delegating discovery to the implementation agent.
+
 ### Concurrent-event-source plans: async and concurrency safety
 
 Treat this block as conditional guidance. Apply it only when the plan introduces or modifies code with two or more concurrent event sources (e.g., real-time data listeners, network socket callbacks, timers or scheduled callbacks) that share mutable state.
