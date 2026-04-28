@@ -1,7 +1,7 @@
 # React Hooks Safety Checklist — Implementation Plan
 
 **Spec**: [React Hooks Safety Checklist Spec](1_react-hooks-safety-checklist_specs.md)
-**Smoke test runbook**: [docs/testing/workflow/384-react-hooks-safety-checklist.smoke-test.md](../../../../docs/testing/workflow/384-react-hooks-safety-checklist.smoke-test.md)
+**Smoke test runbook**: [docs/testing/workflow/384-react-hooks-safety-checklist.smoke-test.md](../../../testing/workflow/384-react-hooks-safety-checklist.smoke-test.md)
 
 ---
 
@@ -36,6 +36,24 @@
 - [ ] `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` — add "React Hooks Safety Checklist" conditional guidance block in Step 3, after the "Concurrent-event-source plans" block and before the "Examples" heading (AC-1, AC-2, AC-3, BR-1 through BR-4)
 - [ ] `REVIEW.md` — add conditional React Hooks Safety block in "Plan Review Checklist" section (AC-4, BR-1, BR-3); add conditional React Hooks Safety block in "Code Review Checklist" section under "Additional checks" (AC-5, BR-1); both blocks formatted consistently with existing conditional patterns (AC-6)
 - [ ] `CHANGELOG.md` — add entry under `[Unreleased]` in the `### Added` section
+
+**Cross-cutting checklist file enumeration (per `02-generate-implementation-plan-protocol.md` Step 3):**
+
+This plan introduces a cross-cutting checklist. The following files were evaluated per the mandatory enumeration rule:
+
+| File | Action |
+|---|---|
+| `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` | Modified — adds the React Hooks Safety conditional guidance block |
+| `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` | Not modified — spec BR-5 explicitly restricts scope to 3 files; the developer protocol requires no update because the implementation step is editing documentation only |
+| `.claude/agents/developer.md` | Not modified — per BR-5; the agent delegates to the protocol document directly; the new checklist content lives in `02-generate-implementation-plan-protocol.md` |
+| `.cursor/agents/developer.md` | Not modified — same rationale as `.claude/agents/developer.md` |
+| `.claude/agents/tech-lead.md` | Not modified — per BR-5; the tech-lead agent delegates to `02-generate-implementation-plan-protocol.md` directly |
+| `.cursor/agents/tech-lead.md` | Not modified — same rationale as `.claude/agents/tech-lead.md` |
+| `REVIEW.md` | Modified — adds conditional review blocks in Plan Review and Code Review sections |
+| `.codex/skills/workflow-plan-writer/SKILL.md` | Not modified — per BR-5; the skill references the plan protocol document; the new guidance is self-contained there |
+| `.codex/skills/workflow-implementer/SKILL.md` | Not modified — per BR-5; same rationale |
+
+Spec BR-5 explicitly states: "Only three documents are modified: `02-generate-implementation-plan-protocol.md`, `REVIEW.md`, and `CHANGELOG.md`. No other workflow documents, agent files, or scripts are changed in this feature." The above evaluation confirms that the other files were checked and none require update — all agents/skills that invoke the plan-writing or implementation stages already reference the protocol file where the new content will live.
 
 ---
 
