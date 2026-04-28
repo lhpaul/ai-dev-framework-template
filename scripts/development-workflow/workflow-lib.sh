@@ -429,16 +429,42 @@ update_tracker_status_best_effort() {
   # strict=False allows Python3's json decoder to accept unescaped control chars.
   # issue_number is passed via sys.argv[1] (not interpolated into source code) to
   # avoid shell-variable-into-Python-source injection.
-  item_json=$(gh project item-list "$project_number" --owner "$owner" --limit 10000 --format json 2>/dev/null \
-    | python3 -c "
+  #
+  # Defensive handling (#401):
+  # - Items where 'content' is null/missing are skipped (logged to stderr) to
+  #   avoid AttributeError when calling .get('number') on None.
+  # - Items where 'content.number' is 0, null, or missing are skipped so they
+  #   are never incorrectly compared against the target issue number.
+  # - A one-retry fallback re-fetches the project item list when no match is
+  #   found on the first pass, in case the item was added mid-session.
+  _fetch_project_items_json() {
+    gh project item-list "$1" --owner "$2" --limit 10000 --format json 2>/dev/null || true
+  }
+  _find_item_in_json() {
+    python3 -c "
 import json, sys
 num = int(sys.argv[1])
 data = json.loads(sys.stdin.read(), strict=False)
 for item in data.get('items', []):
-    if item.get('content', {}).get('number') == num:
+    content = item.get('content') or {}
+    if not isinstance(content, dict):
+        print('DEBUG: skipping item id=%s — content is not a dict (got %s)' % (item.get('id','?'), type(content).__name__), file=sys.stderr)
+        continue
+    item_num = content.get('number')
+    if not item_num:
+        print('DEBUG: skipping item id=%s — content.number is null/zero/missing' % item.get('id','?'), file=sys.stderr)
+        continue
+    if item_num == num:
         print(json.dumps(item))
         break
-" "$issue_number" || true)
+" "$1" || true
+  }
+  item_json=$(_fetch_project_items_json "$project_number" "$owner" | _find_item_in_json "$issue_number")
+  if [ -z "$item_json" ]; then
+    # Retry once: item may have been added to the project mid-session.
+    echo "DEBUG: first pass found no match for issue #${issue_number}; re-fetching project item list (retry)." >&2
+    item_json=$(_fetch_project_items_json "$project_number" "$owner" | _find_item_in_json "$issue_number")
+  fi
   item_id=$(printf '%s' "$item_json" | python3 -c "
 import json, sys
 item = json.loads(sys.stdin.read(), strict=False)
