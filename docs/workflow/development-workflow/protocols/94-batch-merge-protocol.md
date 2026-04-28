@@ -144,6 +144,14 @@ Process PRs one at a time in the approved order.
 
 ### 4.1 Per-PR merge attempt
 
+> **Critical sequencing rule**: Call `batch-merge.sh merge --pr N` for **exactly one PR at a
+> time**, inspect `MERGE_RESULT`, and fully resolve the outcome (merge success, conflict
+> resolution, or abort) **before** advancing to the next PR. Never wrap multiple merge
+> calls in a single non-interactive shell loop (e.g., `for pr in …; do … merge --pr $pr; done`)
+> — if one PR leaves the working tree in a conflicted state, subsequent calls will fail with
+> "Could not check out 'develop' — working tree is not clean" and all remaining PRs will be
+> lost. The sequential discipline is mandatory even when all PRs are expected to be conflict-free.
+
 For each PR in the approved order:
 
 **a. Announce the merge attempt:**
