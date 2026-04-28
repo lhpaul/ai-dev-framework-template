@@ -85,6 +85,11 @@ review:
 issue_tracker:
   # Supported examples: linear, github_projects, github_issues, jira, clickup, notion, none
   provider: github_projects
+  # GitHub Projects project number (the integer in the project URL, e.g. /users/<owner>/projects/1).
+  # Used by workflow-lib.sh as a fallback when GITHUB_PROJECT_NUMBER env var is not set.
+  # Required for tracker status updates (update_tracker_status_best_effort) and status reads
+  # (get_tracker_status_for_issue) to function without setting an environment variable.
+  project_number: 1
 
 vcs:
   # Supported examples: github, gitlab, bitbucket, other

@@ -193,17 +193,18 @@ for development_path in "${development_paths[@]}"; do
   slug="$(basename "$development_path" | sed 's/^[0-9]\{14\}_//')"
 
   # Skip development folders whose tracker status is terminal (Released, Merged,
-  # Cancelled).  When GitHub Projects is configured (GITHUB_PROJECT_NUMBER set),
-  # query the tracker for each candidate and skip stale folders early — before
-  # running the more expensive workflow-next-action.sh call.
-  if [ -n "${GITHUB_PROJECT_NUMBER:-}" ]; then
-    issue_number="$(extract_github_issue_number "$development_path")"
-    if [ -n "$issue_number" ]; then
-      tracker_status="$(get_tracker_status_for_issue "$issue_number")"
-      if is_terminal_tracker_status "$tracker_status"; then
-        echo "Skipping $development_path: tracker status is terminal ('$tracker_status') for issue #$issue_number" >&2
-        continue
-      fi
+  # Cancelled).  When GitHub Projects is configured (GITHUB_PROJECT_NUMBER env var
+  # or issue_tracker.project_number in .ai-dev-workflow.yaml), query the tracker
+  # for each candidate and skip stale folders early — before running the more
+  # expensive workflow-next-action.sh call.
+  # get_tracker_status_for_issue returns empty string gracefully when no project
+  # is configured, so we can call it unconditionally.
+  issue_number="$(extract_github_issue_number "$development_path")"
+  if [ -n "$issue_number" ]; then
+    tracker_status="$(get_tracker_status_for_issue "$issue_number")"
+    if is_terminal_tracker_status "$tracker_status"; then
+      echo "Skipping $development_path: tracker status is terminal ('$tracker_status') for issue #$issue_number" >&2
+      continue
     fi
   fi
 
