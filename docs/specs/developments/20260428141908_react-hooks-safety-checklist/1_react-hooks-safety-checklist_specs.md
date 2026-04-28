@@ -1,6 +1,6 @@
 # React Hooks Safety Checklist — Spec
 
-**Depends on**: <!-- No dependencies -->
+**Depends on**: None
 
 ---
 
