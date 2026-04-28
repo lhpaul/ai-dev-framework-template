@@ -244,10 +244,11 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
     # Three-path classification (per spec BR-4 and implementation plan risk table).
     # Blocking markers are checked FIRST (safe-fail: a false NEEDS_REVISION that
     # triggers an unnecessary fix cycle is safer than a false APPROVED that
-    # silently ignores blocking findings). The bare word "blocking" is excluded
-    # from the marker list because it matches negated context ("no blocking
-    # issues") — use more specific phrases ("blocking issues", "blocking finding",
-    # "blocking:") instead.
+    # silently ignores blocking findings). Note: even specific phrases like
+    # "blocking issues" can still match within negated context ("No blocking
+    # issues found"). This is an accepted safe-fail trade-off — the result is
+    # an unnecessary fix cycle, not a missed rejection. The bare word "blocking"
+    # is excluded because it is too broad; the phrases below are more targeted.
     #
     # 1. Blocking markers present → NEEDS_REVISION (exit 1)      [checked first]
     #    Blocking markers (case-insensitive): "changes requested",
