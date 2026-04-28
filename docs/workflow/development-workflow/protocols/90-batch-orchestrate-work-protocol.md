@@ -698,18 +698,32 @@ This pattern also applies to PRs where an agent timed out mid-CI-loop: detect vi
 
 **Timing**: Run this check immediately after each Work Item Runner returns — **before** Step 5.1 (PR verification), before dispatching the next Work Item Runner, and before any orchestrator action that assumes the integration branch context (e.g., invoking batch-merge, pushing to `develop`). A leaked branch state in the main working tree can silently corrupt subsequent operations if not caught here.
 
+**CWD safety: always derive `MAIN_REPO_ROOT` using `--git-common-dir`**
+
+After a Work Item Runner completes, the shell's CWD may be inside an isolated worktree directory (`.claude/worktrees/<id>/`). Using `git rev-parse --show-toplevel` from that context returns the *worktree* path rather than the main repo root, causing every `git -C` command below to run against the wrong tree and producing false results (wrong branch, phantom dirty files, or a spurious Case 1 auto-correct). Use `git rev-parse --git-common-dir` instead — it always resolves to the `.git` directory of the *main* repo regardless of the current working directory:
+
+```bash
+# Always safe — returns an absolute main repo root path even when CWD is inside a worktree
+MAIN_REPO_ROOT="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"
+```
+
+The `cd ... && pwd` wrapper is required to canonicalize the path to an absolute string: without it, `git rev-parse --git-common-dir` returns `.git` (a relative path) when run from the main repo root, and the resulting `MAIN_REPO_ROOT=".git/.."` resolves relative to wherever the shell's CWD is at the time — defeating the fix if the stored value is used after CWD has changed.
+
+Store `MAIN_REPO_ROOT` before dispatching any Work Item Runner (while CWD is definitely at the main repo root) and reuse it in the check below. If the value was not stored ahead of time, derive it immediately after the runner returns using the `--git-common-dir` form above — **never** use `git rev-parse --show-toplevel` for this purpose inside the Step 5.2 block.
+
 After each Work Item Runner returns in a **parallel batch**, immediately check the main working tree's branch and cleanliness. Handle all four postcondition states:
 
 ```bash
 INTEGRATION_BRANCH="develop"  # or read from .ai-dev-workflow.yaml integration_branch field
-MAIN_BRANCH=$(git -C <main-repo-root> rev-parse --abbrev-ref HEAD)
-MAIN_STATUS=$(git -C <main-repo-root> status --porcelain)
+# MAIN_REPO_ROOT must be an absolute path derived via --git-common-dir (see CWD safety note above)
+MAIN_BRANCH=$(git -C "$MAIN_REPO_ROOT" rev-parse --abbrev-ref HEAD)
+MAIN_STATUS=$(git -C "$MAIN_REPO_ROOT" status --porcelain)
 
 if [ "$MAIN_BRANCH" != "$INTEGRATION_BRANCH" ] && [ -z "$MAIN_STATUS" ]; then
   # Case 1: Wrong branch + clean — auto-correct
   echo "GUARDRAIL: main working tree was on '$MAIN_BRANCH' after agent for item <item-id> returned. Expected '$INTEGRATION_BRANCH'. Auto-correcting."
   echo "Record as guardrail violation in retrospective notes: item <item-id> left main tree on wrong branch."
-  git -C <main-repo-root> switch "$INTEGRATION_BRANCH"
+  git -C "$MAIN_REPO_ROOT" switch "$INTEGRATION_BRANCH"
   # Proceed normally after correction
 
 elif [ "$MAIN_BRANCH" != "$INTEGRATION_BRANCH" ] && [ -n "$MAIN_STATUS" ]; then
