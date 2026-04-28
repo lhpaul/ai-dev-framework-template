@@ -15,4 +15,6 @@ Before finalizing Step 3, classify parser-risk using the deterministic signals i
 
 Before finalizing Step 3, also classify concurrent-event-source using the deterministic signals in protocol 02 (two or more concurrent event listeners/socket callbacks/timers/async queues, shared mutable state across execution contexts, or initialization/teardown sequences that race with incoming events). When concurrent-event-source applies, include the mandatory concurrency safety checklist section with design decisions for each of the seven items.
 
+Before finalizing Step 3, also check whether the plan introduces or modifies a cross-cutting checklist (a safety, quality, or compliance category that applies across multiple feature implementations). When cross-cutting checklist applies, enumerate ALL files that need updating — including the developer protocol, all agent/skill guidance files for tech-lead and developer roles, `REVIEW.md`, and any Codex skill files that invoke the affected stage. Run the live search defined in protocol 02's "Cross-cutting checklist plans" block before writing the enumeration. Do not list only the primary protocol file.
+
 When the spec language implies pattern-based completeness, follow protocol 02's live-search vs spec-frozen enumeration rules and include a reproducible Verification Log.
