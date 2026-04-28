@@ -174,6 +174,20 @@ REPO="${3:?Usage: $0 <pr_number> <owner> <repo>}"
 
 The `${VAR:?message}` form causes the script to exit with an informative error if the variable is unset or empty. Use it for all required positional parameters.
 
+### 8. Bash/shell behavior claims in protocol documentation
+
+When your change **adds or modifies protocol documentation that makes a claim about bash/shell runtime behavior** (exit codes, trap semantics, `set -e` behavior, `local` scoping, SIGPIPE handling, subshell exit propagation, or similar), verify each claim before committing. Protocol documentation teaches behavior to future agents — unverified paraphrases compound errors across the entire codebase.
+
+**Applies to**: any new prose, table row, or code example in a `.md` file that asserts how bash/shell behaves at runtime.
+**Does not apply to**: regular implementation code (which has tests) or code comments that describe intent.
+
+For each new or modified bash behavior claim, do one of the following before committing:
+
+1. **Test it in a scratch shell snippet** — run a minimal script that demonstrates the claim and confirm the output matches what the documentation states.
+2. **Cite a specific authoritative reference** — bash man page section, POSIX specification, or a directly verified example from a known-good source.
+
+Do not commit bash behavior claims sourced from memory alone or paraphrased from other documentation without independent verification.
+
 ---
 
 ## Path 1: Full Pipeline
