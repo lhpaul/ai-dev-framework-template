@@ -4,6 +4,28 @@
 
 ---
 
+## Brief Coverage (issue #384)
+
+Brief objectives extracted from the issue description, mapped to spec coverage:
+
+| Brief objective | Spec coverage |
+|---|---|
+| Add a React Hooks Safety conditional section to `02-generate-implementation-plan-protocol.md` | AC-1, BR-2 |
+| Checklist item 1 — `useEffect` dependency arrays | AC-2, BR-4 |
+| Checklist item 2 — Cleanup in async effects | AC-2, BR-4 |
+| Checklist item 3 — Input component stability | AC-2, BR-4 |
+| Checklist item 4 — Async form submit ordering | AC-2, BR-4 |
+| Checklist item 5 — Exclusion parameters in validators | AC-2, BR-4 |
+| Checklist item 6 — Design token imports | AC-2, BR-4 |
+| Each item states the failure mode it prevents in plain language | AC-3 |
+| Optionally add a corresponding React Hooks section to `REVIEW.md` code review checklist | AC-4 (Plan Review), AC-5 (Code Review) |
+
+**Deferral notes**:
+
+- "Optionally add to REVIEW.md": The issue describes this as optional. This spec promotes it to a required deliverable (AC-4 and AC-5) because the checklist is only useful to reviewers if it appears in `REVIEW.md`; without it, reviewers have no normative reference to check against. No human confirmation requested — the rationale is self-evident from the issue's stated impact goal.
+
+---
+
 ## Overview
 
 This feature adds a **React Hooks Safety** conditional section to the implementation plan protocol template (`docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md`) and a corresponding reviewer checklist to `REVIEW.md`. The additions are conditional: they activate only when a plan describes React or React Native components that use state, effects, or async operations. The goal is to prevent a known class of React anti-patterns from reaching external review, reducing fix-commit ratio and reviewer thread volume on React / React Native features.
