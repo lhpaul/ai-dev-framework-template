@@ -128,14 +128,12 @@ my_func() {
   echo "Exit was: $?"  # Always prints "Exit was: 0"
 }
 
-# Safe inside functions — declare then assign on separate lines:
+# Safe inside functions — declare then assign, using if ! to handle failure:
 my_func() {
   local OUTPUT
-  OUTPUT=$(inner_command)
-  INNER_EXIT=$?
-  if [ "$INNER_EXIT" -ne 0 ]; then
-    echo "inner_command failed with exit $INNER_EXIT"
-    return "$INNER_EXIT"
+  if ! OUTPUT=$(inner_command); then
+    echo "inner_command failed"
+    return 1
   fi
 }
 ```
