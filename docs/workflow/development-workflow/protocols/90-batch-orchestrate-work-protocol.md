@@ -287,6 +287,49 @@ detected. When a human instructs override, the orchestrator logs the override an
 batch summary with a warning: "Human override: tool-fix ordering hazard acknowledged for item
 #N. Dispatching in parallel."
 
+### Same-batch file-level conflict detection
+
+**Scope** (BR-1): Conflict detection applies only to implementation items — branches with prefix
+`feature/`, `fix/`, `refactor/`, or `hotfix/`. Spec and plan items are never subject to
+file-level conflict serialization.
+
+**Detection source**: `workflow-batch-plan.sh` emits `FILE_SET=<comma-separated paths>` or
+`FILE_SET=unknown` for each implementation item (i.e., items where `NEXT_ACTION=implement` or
+`NEXT_ACTION=resolve-development-pr`). The `FILE_SET` value is derived from the explicit file
+list in the item's implementation plan document (`2_*_implementation-plan.md`). Items without a
+plan document, or whose plan contains no extractable file list, receive `FILE_SET=unknown`.
+
+**Conflict definition** (BR-2): A conflict exists between two items when their declared file
+sets share at least one common path. Paths are compared as normalized, repo-root-relative strings
+(forward slashes, no leading slash).
+
+**Serialization rule** (BR-4 / BR-5): When a conflict is detected, the lower-priority item is
+moved to the next serial sub-batch. The higher-priority item remains in the current batch.
+Priority is determined by:
+
+1. Item priority level: Urgent > High > Normal > Low
+2. Creation date: the older item (earlier creation date) stays in the current batch
+3. Branch name lexicographic order: the lexicographically earlier branch name stays
+
+The batch summary must list the conflicting item pair, the overlapping file path(s), and the
+resulting batch assignment for each item (BR-7).
+
+**Unknown-set handling** (BR-3): Items with `FILE_SET=unknown` are not automatically serialized
+but are flagged in the batch summary with a warning noting that file-level conflict detection was
+not possible for that item (no plan document, or plan contains no extractable file list). The
+batch proceeds as-is with the unknown-set items included.
+
+**Human override** (BR-6): The orchestrator must **never** autonomously dispatch an override.
+Only an explicit human instruction enables parallel dispatch when a conflict has been detected.
+When a human instructs override, the orchestrator logs the override and annotates the batch
+summary with a warning.
+
+**Ordering relative to tool-fix check** (BR-8): Conflict detection runs **after** the tool-fix
+ordering check (above). Items already serialized by the tool-fix rule are excluded from the
+conflict-detection input set for the current batch. The orchestrator (or the calling code) must
+pre-filter tool-fix-serialized items before passing the remaining batch to the
+`detect_file_conflicts` helper.
+
 **Codex fallback**:
 
 If the runner cannot execute multiple Work Item Runners concurrently, preserve the same batching decision but process that batch sequentially. Report the fallback explicitly in the summary.

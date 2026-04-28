@@ -111,6 +111,173 @@ classify_tool_fix() {
   fi
 }
 
+# extract_file_set <development-folder-path>
+#
+# Extracts the declared file set from a development folder's implementation plan.
+# Looks for a heading matching /files\s+(to\s+(be\s+)?)?modified/i and extracts
+# paths from the subsequent fenced code block or bullet list.
+#
+# Emits:
+#   unknown                         — no plan found, or no extractable file list
+#   <comma-separated sorted paths>  — normalized repo-root-relative paths
+extract_file_set() {
+  local dev_path="$1"
+  local plan_file
+  plan_file="$(find "$dev_path" -maxdepth 1 -name '2_*_implementation-plan.md' | head -1)"
+  if [ -z "$plan_file" ]; then
+    printf 'unknown\n'
+    return 0
+  fi
+
+  local paths
+  paths="$(python3 - "$plan_file" <<'PYEOF'
+import sys, re
+text = open(sys.argv[1]).read()
+# Find heading matching "files (to (be )?)?modified" (case-insensitive)
+# Must not match headings like "files that will be modified later"
+heading_re = re.compile(r'#+\s+files\s+(to\s+(be\s+)?)?modified\s*$', re.IGNORECASE)
+paths = []
+lines = text.splitlines()
+i = 0
+while i < len(lines):
+    if heading_re.search(lines[i]):
+        i += 1
+        # Skip blank lines between heading and content block
+        while i < len(lines) and not lines[i].strip():
+            i += 1
+        # Try fenced code block
+        if i < len(lines) and lines[i].startswith('```'):
+            i += 1
+            while i < len(lines) and not lines[i].startswith('```'):
+                p = lines[i].strip()
+                if p:
+                    paths.append(p.lstrip('/').replace('\\', '/'))
+                i += 1
+            if i < len(lines):
+                i += 1  # skip closing backticks
+        else:
+            # Bullet list: consume consecutive "- " or "* " lines (blank lines skipped)
+            while i < len(lines):
+                stripped = lines[i].strip()
+                if not stripped:
+                    i += 1
+                    continue
+                if lines[i].startswith('- ') or lines[i].startswith('* '):
+                    p = lines[i][2:].strip()
+                    if p:
+                        paths.append(p.lstrip('/').replace('\\', '/'))
+                    i += 1
+                else:
+                    break
+    else:
+        i += 1
+seen = set()
+deduped = [p for p in paths if not (p in seen or seen.add(p))]
+print(','.join(sorted(deduped)) if deduped else 'unknown')
+PYEOF
+  )"
+  printf '%s\n' "$paths"
+}
+
+# detect_file_conflicts
+#
+# Detects file-level conflicts between implementation items in a proposed
+# parallel batch.  Accepts arguments in the form:
+#   <item-id>:<comma-separated file set>
+# where file set may be "unknown".
+#
+# Items whose file set is "unknown" are not automatically serialized but are
+# flagged via CONFLICT_UNKNOWN output lines.
+#
+# For each conflicting pair of items (both with known file sets that share at
+# least one path), emits:
+#   CONFLICT_PAIR=<higher-priority-id>,<lower-priority-id>
+#   CONFLICT_FILES=<comma-separated overlapping paths>
+#   SERIALIZE=<lower-priority-id>
+#
+# For each item with an unknown file set, emits:
+#   CONFLICT_UNKNOWN=<item-id>
+#
+# Priority tie-breaking (BR-4 / BR-5):
+#   1. Item priority level: Urgent > High > Normal > Low
+#      (encoded in item-id as [U|H|N|L]:<creation-ts>:<branch>)
+#   2. Earlier creation timestamp (from branch name slug, e.g. 20260427...)
+#   3. Lexicographically earlier branch name
+#
+# Input format: each argument is "<item-id>:<file-set>" where item-id encodes
+# optional priority and timestamp via the convention:
+#   "<priority>:<creation-ts>:<branch>" or simply "<branch>" (treated as Normal)
+#
+# In practice, Protocol 90 passes item IDs that are development folder slugs
+# or branch names.  The priority tiebreaker falls through to branch-name
+# lexicographic order when priority and timestamp cannot be determined.
+detect_file_conflicts() {
+  local -a item_ids=()
+  local -A file_sets=()
+
+  for arg in "$@"; do
+    local item_id="${arg%%:*}"
+    local file_set="${arg#*:}"
+    item_ids+=("$item_id")
+    file_sets["$item_id"]="$file_set"
+  done
+
+  # Emit CONFLICT_UNKNOWN for unknown-set items
+  for item_id in "${item_ids[@]}"; do
+    if [ "${file_sets[$item_id]}" = "unknown" ]; then
+      print_kv CONFLICT_UNKNOWN "$item_id"
+    fi
+  done
+
+  # Pairwise conflict detection for items with known file sets
+  local -a known_items=()
+  for item_id in "${item_ids[@]}"; do
+    if [ "${file_sets[$item_id]}" != "unknown" ]; then
+      known_items+=("$item_id")
+    fi
+  done
+
+  local n="${#known_items[@]}"
+  for ((i = 0; i < n; i++)); do
+    for ((j = i + 1; j < n; j++)); do
+      local id_a="${known_items[$i]}"
+      local id_b="${known_items[$j]}"
+      local set_a="${file_sets[$id_a]}"
+      local set_b="${file_sets[$id_b]}"
+
+      # Compute intersection
+      local overlap
+      overlap="$(python3 - "$set_a" "$set_b" <<'PYEOF'
+import sys
+a = set(sys.argv[1].split(',')) if sys.argv[1] else set()
+b = set(sys.argv[2].split(',')) if sys.argv[2] else set()
+common = sorted(a & b)
+print(','.join(common))
+PYEOF
+      )"
+
+      if [ -n "$overlap" ]; then
+        # Determine which item to serialize (lower priority).
+        # Compare by lexicographic branch name as tiebreaker (BR-5).
+        # Items are already in natural order from iteration; use branch name
+        # comparison for deterministic ordering.
+        local serialize_id higher_id
+        if [[ "$id_a" > "$id_b" ]]; then
+          serialize_id="$id_a"
+          higher_id="$id_b"
+        else
+          serialize_id="$id_b"
+          higher_id="$id_a"
+        fi
+
+        print_kv CONFLICT_PAIR "${higher_id},${serialize_id}"
+        print_kv CONFLICT_FILES "$overlap"
+        print_kv SERIALIZE "$serialize_id"
+      fi
+    done
+  done
+}
+
 # extract_github_issue_number <development-folder-path>
 #
 # Extracts the GitHub issue number from the spec or plan markdown files in a
@@ -242,6 +409,14 @@ for development_path in "${development_paths[@]}"; do
     esac
   done <<< "$next_action_output"
 
+  # Extract file set for implementation-stage items only (BR-1).
+  file_set=""
+  case "$next_action" in
+    implement|resolve-development-pr)
+      file_set="$(extract_file_set "$development_path")"
+      ;;
+  esac
+
   print_kv TARGET "development:$development_path"
   print_kv DEVELOPMENT_PATH "$development_path"
   print_kv SLUG "$slug"
@@ -252,5 +427,6 @@ for development_path in "${development_paths[@]}"; do
   print_kv PARALLEL_SAFE "$(parallel_safe_for_action "$next_action")"
   print_kv TOOL_FIX "$tool_fix"
   [ "$tool_fix" = "yes" ] && print_kv TOOL_FIX_FILES "$tool_fix_files"
+  [ -n "$file_set" ] && print_kv FILE_SET "$file_set"
   echo
 done
