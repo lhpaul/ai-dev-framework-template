@@ -28,6 +28,154 @@ When your change creates or materially modifies `.github/workflows/*.yml`, compl
 
 ---
 
+## Shell Script Quality Checklist
+
+When your change **creates or significantly modifies a `.sh` file**, complete this checklist before opening the development PR. These are the most common bash scripting anti-patterns that cause rework in the automated reviewer loop.
+
+### 1. jq variable injection
+
+Always use `--arg name value` for string values and `--argjson name value` for JSON values. Never expand shell variables directly inside jq filter strings.
+
+```bash
+# Wrong — shell variable injected into filter string (injection risk, quoting fragile):
+result=$(echo "$json" | jq ".items[] | select(.name == \"$NAME\")")
+
+# Correct — use --arg for string values:
+result=$(echo "$json" | jq --arg name "$NAME" '.items[] | select(.name == $name)')
+
+# Correct — use --argjson for JSON values (numbers, booleans, objects, arrays):
+result=$(echo "$json" | jq --argjson count "$COUNT" '.items | .[:$count]')
+```
+
+### 2. `pipefail` + SIGPIPE
+
+When using `set -o pipefail` (or `set -eo pipefail`), commands like `head`, `grep -m`, and others that close a pipe early will cause the writing process to receive SIGPIPE (exit code 141). Under `pipefail`, the parent shell observes the 141 exit code from the child process and (combined with `set -e`) exits the script. This looks like an error even when the behavior is intentional.
+
+**Note**: `trap ... PIPE` does **not** fire for pipeline SIGPIPE. SIGPIPE is delivered to the *child subprocess* writing to the closed pipe, not to the parent shell. The parent shell only observes the 141 exit code via `waitpid`. To catch this at the script level, use `trap ... EXIT` — it fires when `set -e` causes the shell to exit due to the pipefail-detected 141 status.
+
+Guard against SIGPIPE false-positives on pipelines that may close early:
+
+```bash
+# Option A — trap EXIT at script level (apply when the full script uses set -o pipefail):
+set -eo pipefail
+trap 'case $? in 141) exit 0 ;; *) exit $? ;; esac' EXIT
+
+# Option B — suppress SIGPIPE for a single pipeline:
+some_command | head -1 || true
+
+# Option C — use process substitution to avoid the pipe entirely:
+while IFS= read -r line; do
+  process "$line"
+done < <(some_command)
+```
+
+Choose the option that matches your script's error-handling strategy. Option A is preferred for scripts where most SIGPIPE exits should be treated as clean exits.
+
+### 3. Exit code semantics under `set -e`
+
+Under `set -e`, any command that exits non-zero causes the script to abort — **including commands inside compound expressions**. The rules for compound expressions are counter-intuitive:
+
+| Expression | `set -e` behavior |
+|---|---|
+| `cmd` (bare) | Abort on non-zero |
+| `if cmd; then` | Safe — exit code is tested by `if`, never propagated |
+| `cmd \|\| true` | Safe — `true` always exits 0, so the `\|\|` chain exits 0 |
+| `cmd && other` | Safe — `set -e` does not abort on the left side of `&&` |
+| `result=$(cmd)` | **Abort on non-zero** — same as bare command |
+
+Capture exit codes explicitly when the command can legitimately fail:
+
+```bash
+# Wrong under set -e — aborts if gh pr view exits non-zero (e.g., PR not found):
+PR_STATE=$(gh pr view "$PR_NUMBER" --json state --jq '.state')
+
+# Correct — capture exit code separately:
+PR_STATE=$(gh pr view "$PR_NUMBER" --json state --jq '.state' 2>/dev/null) || true
+# or, when you need to distinguish success from failure:
+if ! PR_STATE=$(gh pr view "$PR_NUMBER" --json state --jq '.state' 2>/dev/null); then
+  echo "PR $PR_NUMBER not found — skipping"
+  PR_STATE=""
+fi
+```
+
+### 4. Timestamp sourcing
+
+When ordering or comparing events (e.g., determining which comment came first, whether a review happened after the last push), always use **server-returned timestamps from API responses**, not local `date` output. Local clocks can be skewed relative to the server by seconds or minutes.
+
+```bash
+# Wrong — local clock may not match server time:
+TRIGGER_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+# Correct — capture the timestamp from the API response:
+RESPONSE=$(gh pr comment "$PR_NUMBER" --body "$TRIGGER_BODY")
+TRIGGER_TIME=$(echo "$RESPONSE" | jq -r '.createdAt')
+```
+
+### 5. Subshell exit codes — the `local` trap
+
+In bash, a bare assignment `OUTPUT=$(cmd)` exposes `$?` as the exit code of `cmd` — the assignment itself does not mask it. However, when the assignment is combined with a variable declaration keyword (`local`, `export`, or `declare`), the keyword's own exit code (always 0) overwrites the substitution's exit code, silently swallowing failures.
+
+Under `set -e`, bare `OUTPUT=$(cmd)` still aborts on non-zero (same as a bare command). To safely capture output and check success, use `if ! OUTPUT=$(cmd); then` or `OUTPUT=$(cmd) || INNER_EXIT=$?`.
+
+```bash
+# Correct — check failure inline (works under set -e):
+if ! OUTPUT=$(inner_command); then
+  echo "inner_command failed"
+  exit 1
+fi
+
+# Dangerous inside functions — local masks the exit code (local itself exits 0):
+my_func() {
+  local OUTPUT=$(inner_command)  # $? is 0 even if inner_command failed!
+  echo "Exit was: $?"  # Always prints "Exit was: 0"
+}
+
+# Safe inside functions — declare then assign, using if ! to handle failure:
+my_func() {
+  local OUTPUT
+  if ! OUTPUT=$(inner_command); then
+    echo "inner_command failed"
+    return 1
+  fi
+}
+```
+
+The same masking behavior applies to `export VAR=$(cmd)` and `declare VAR=$(cmd)`. Always separate declaration from assignment when the exit code matters.
+
+### 6. `gh` CLI / API error handling
+
+`gh` commands exit non-zero when the API request fails, the resource is not found, or the user lacks permissions. Always guard `gh` calls that may legitimately fail:
+
+```bash
+# Wrong — no error handling; gh api exits non-zero on HTTP 4xx/5xx:
+RESULT=$(gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER" --jq '.state')
+
+# Correct — handle failure and empty output explicitly:
+if ! RESULT=$(gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER" --jq '.state' 2>/dev/null); then
+  echo "Failed to fetch PR $PR_NUMBER — skipping"
+  RESULT=""
+fi
+[ -z "$RESULT" ] && { echo "Empty state returned for PR $PR_NUMBER"; exit 1; }
+```
+
+### 7. Input validation at script entry
+
+Validate all positional parameters before any network or filesystem operation. A missing argument causes confusing errors deep in the script rather than a clear message at startup.
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Always validate at the top, before any gh / API calls:
+PR_NUMBER="${1:?Usage: $0 <pr_number> <owner> <repo>}"
+OWNER="${2:?Usage: $0 <pr_number> <owner> <repo>}"
+REPO="${3:?Usage: $0 <pr_number> <owner> <repo>}"
+```
+
+The `${VAR:?message}` form causes the script to exit with an informative error if the variable is unset or empty. Use it for all required positional parameters.
+
+---
+
 ## Path 1: Full Pipeline
 
 ### Step 1: Non-Negotiable Prep
