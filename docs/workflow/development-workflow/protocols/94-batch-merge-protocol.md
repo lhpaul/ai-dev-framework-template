@@ -223,19 +223,13 @@ After a clean or resolved merge, in order:
      - *Push failure* (network/auth/permissions): Retry after resolving the underlying
        issue. The branch still exists on the remote.
 
-4. **Remove any worktree using the merged branch** (before running cleanup).
+4. **Run `post-merge-cleanup` for the merged branch.**
 
-   Git refuses to delete a branch that is checked out in a worktree. Check and remove it first:
-
-   ```bash
-   BRANCH="$(gh pr view <number> --json headRefName --jq '.headRefName')"
-   WORKTREE_PATH=$(git worktree list --porcelain | awk -v branch="branch refs/heads/$BRANCH" '/^worktree / { sub(/^worktree /, ""); wt=$0 } $0 == branch { print wt; exit }' || true)
-   if [ -n "$WORKTREE_PATH" ]; then
-     git worktree remove "$WORKTREE_PATH" --force
-   fi
-   ```
-
-5. **Run `post-merge-cleanup` for the merged branch.**
+   > **Note on worktree cleanup**: Do **not** attempt to remove worktrees manually before
+   > calling `post-merge-cleanup.sh`. The script already handles worktree detection and
+   > removal internally — it checks for any worktree using the merged branch and removes it
+   > (with locked-worktree handling) before deleting the local branch. Any manual worktree
+   > removal step here is redundant and risks breaking the cleanup sequence.
 
    `post-merge-cleanup.sh` requires a local branch to exist. Because `batch-merge.sh` merges via `origin/<branch>` without creating a local tracking branch, create a temporary local branch first:
 
@@ -251,7 +245,7 @@ After a clean or resolved merge, in order:
 
    If cleanup fails: report the failure but **do not halt remaining merges**. The human can re-run cleanup manually.
 
-6. Report the per-PR outcome immediately (see outcome codes in Step 5).
+5. Report the per-PR outcome immediately (see outcome codes in Step 5).
 
 ### 4.3 Conflict classification
 
