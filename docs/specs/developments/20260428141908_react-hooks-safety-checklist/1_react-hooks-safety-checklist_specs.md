@@ -98,7 +98,7 @@ This feature adds a **React Hooks Safety** conditional section to the implementa
 - **BR-2: Mandatory when activated.** When the activation condition is met, the React Hooks Safety section is required in the written plan. A plan that meets the activation condition but omits the section is treated as incomplete.
 - **BR-3: Individual item opt-out requires rationale.** A checklist item may be marked "not applicable" only with a brief explanation of why the concern does not apply to the specific plan. Silent omission of an individual item is not acceptable.
 - **BR-4: Checklist scope.** The checklist covers exactly six concerns derived from the observed failure modes in issue #384: (1) `useEffect` dependency arrays, (2) cleanup in async effects, (3) input component stability, (4) async form submit ordering, (5) exclusion parameters in validators, and (6) design token imports. No other concerns are added in this iteration.
-- **BR-5: Template change scope.** Only two documents are modified: `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` and `REVIEW.md`. No other workflow documents, agent files, or scripts are changed in this feature.
+- **BR-5: Template change scope.** Only three documents are modified: `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md`, `REVIEW.md`, and `CHANGELOG.md`. No other workflow documents, agent files, or scripts are changed in this feature.
 - **BR-6: No retroactive plan updates.** This feature does not require updating any previously written implementation plans. The new checklist applies to plans written or updated after this feature is merged.
 
 ---
@@ -121,7 +121,7 @@ This feature has no end-user UI. The "UX" here refers to the developer-agent exp
 - [ ] `REVIEW.md`'s Plan Review Checklist section contains a conditional block listing the React Hooks Safety items that a plan reviewer must verify when the activation condition is met.
 - [ ] `REVIEW.md`'s Code Review Checklist section contains a conditional block listing the React Hooks Safety items that a code reviewer must verify when the activation condition is met.
 - [ ] Both `REVIEW.md` additions are formatted consistently with the existing conditional checklist patterns already present in that document.
-- [ ] No files other than `02-generate-implementation-plan-protocol.md` and `REVIEW.md` are modified by this feature's implementation PR.
+- [ ] No files other than `02-generate-implementation-plan-protocol.md`, `REVIEW.md`, and `CHANGELOG.md` are modified by this feature's implementation PR.
 - [ ] The CHANGELOG is updated in the implementation PR with an entry under `[Unreleased]` following the project's "Bold Title (#N)" format.
 
 ---
