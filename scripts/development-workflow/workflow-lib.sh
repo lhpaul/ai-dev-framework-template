@@ -365,13 +365,23 @@ get_tracker_status_for_issue() {
   # strict=False allows Python3's json decoder to accept unescaped control chars.
   # issue_number is passed via sys.argv[1] (not interpolated into source code) to
   # avoid shell-variable-into-Python-source injection.
+  #
+  # Defensive handling (#401): use (item.get('content') or {}) so that items
+  # where 'content' is explicitly JSON null do not raise AttributeError when
+  # .get('number') is called. Also skip items where content.number is 0/null/missing.
   item_json=$(printf '%s' "$__workflow_tracker_cache_json" \
     | python3 -c "
 import json, sys
 num = int(sys.argv[1])
 data = json.loads(sys.stdin.read(), strict=False)
 for item in data.get('items', []):
-    if item.get('content', {}).get('number') == num:
+    content = item.get('content') or {}
+    if not isinstance(content, dict):
+        continue
+    item_num = content.get('number')
+    if not item_num:
+        continue
+    if item_num == num:
         print(json.dumps(item))
         break
 " "$issue_number" 2>/dev/null || true)
