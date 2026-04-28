@@ -97,6 +97,9 @@ Check:
     - Recognized directives
     - Allowed placement
     - Interpretation of multiple suppressions on one line
+- Concurrent-event-source completeness (when protocol `02-generate-implementation-plan-protocol.md` Step 3 concurrent-event-source signals apply):
+  - The plan includes a dedicated concurrency safety section
+  - Each of the seven checklist items is addressed or noted as not applicable with a brief rationale: shared mutable state guards, re-entrancy / in-flight tracking, event deduplication, listener and resource cleanup, race conditions at initialization, race conditions at teardown, and error propagation across async boundaries
 - Documentation updates are listed or intentionally declared unnecessary
 - Seed data, generated artifacts, and follow-up tasks are called out when applicable
 - The proposed approach matches existing architecture and repo patterns
