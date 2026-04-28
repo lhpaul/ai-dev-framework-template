@@ -202,6 +202,7 @@ markdown plan documents to extract file paths.
 | Heading variant: `Files modified` | `### Files modified` | matched |
 | Heading variant: mixed case | `### FILES TO BE MODIFIED` | matched (case-insensitive) |
 | Empty fenced block | `` `\n` `` under heading | yields no paths → `unknown` |
+| Blank lines between heading and content | heading followed by one or more blank lines then fenced block or bullet list | blank lines skipped; content extracted normally |
 | Blank lines inside fenced block | paths interspersed with blank lines | blank lines skipped; paths extracted |
 | Duplicate paths in list | same path listed twice | deduplicated in output |
 | Path with backslashes | `docs\foo\bar.sh` | normalized to `docs/foo/bar.sh` |
@@ -283,6 +284,9 @@ i = 0
 while i < len(lines):
     if heading_re.search(lines[i]):
         i += 1
+        # Skip blank lines between heading and content block
+        while i < len(lines) and not lines[i].strip():
+            i += 1
         # Try fenced code block
         if i < len(lines) and lines[i].startswith('```'):
             i += 1

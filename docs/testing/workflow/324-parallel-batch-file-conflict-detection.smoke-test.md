@@ -72,14 +72,14 @@ WORKFLOW_SKIP_FETCH=1 ./scripts/development-workflow/workflow-batch-plan.sh \
 
 ---
 
-### Step 2: AC-3 — `extract_file_set` with bullet-list format
+### Step 2: AC-1 — `extract_file_set` with bullet-list format
 
 Create a fixture using bullet-list format:
 
 ```bash
-mkdir -p .tmp/smoke-324/20200101000002_ac3-bullet-list
-cat > .tmp/smoke-324/20200101000002_ac3-bullet-list/2_ac3_implementation-plan.md <<'EOF'
-# AC3 Plan
+mkdir -p .tmp/smoke-324/20200101000002_ac1-bullet-list
+cat > .tmp/smoke-324/20200101000002_ac1-bullet-list/2_ac1_implementation-plan.md <<'EOF'
+# AC1 Plan
 
 ### Files modified
 
@@ -87,7 +87,7 @@ cat > .tmp/smoke-324/20200101000002_ac3-bullet-list/2_ac3_implementation-plan.md
 - docs/project/2-repo-architecture.md
 EOF
 WORKFLOW_SKIP_FETCH=1 ./scripts/development-workflow/workflow-batch-plan.sh \
-  .tmp/smoke-324/20200101000002_ac3-bullet-list 2>/dev/null || true
+  .tmp/smoke-324/20200101000002_ac1-bullet-list 2>/dev/null || true
 ```
 
 **Expected result**:
