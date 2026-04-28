@@ -363,16 +363,18 @@ get_tracker_status_for_issue() {
   # Use Python3 to parse the JSON to handle issue bodies that contain literal
   # control characters (U+0000–U+001F), which cause jq parse errors (#375).
   # strict=False allows Python3's json decoder to accept unescaped control chars.
+  # issue_number is passed via sys.argv[1] (not interpolated into source code) to
+  # avoid shell-variable-into-Python-source injection.
   item_json=$(printf '%s' "$__workflow_tracker_cache_json" \
     | python3 -c "
 import json, sys
-num = int(\"$issue_number\")
+num = int(sys.argv[1])
 data = json.loads(sys.stdin.read(), strict=False)
 for item in data.get('items', []):
     if item.get('content', {}).get('number') == num:
         print(json.dumps(item))
         break
-" 2>/dev/null || true)
+" "$issue_number" 2>/dev/null || true)
   if [ -z "$item_json" ]; then
     printf ''
     return 0
@@ -425,16 +427,18 @@ update_tracker_status_best_effort() {
   # Use Python3 to parse the JSON to handle issue bodies that contain literal
   # control characters (U+0000–U+001F), which cause jq parse errors (#375).
   # strict=False allows Python3's json decoder to accept unescaped control chars.
+  # issue_number is passed via sys.argv[1] (not interpolated into source code) to
+  # avoid shell-variable-into-Python-source injection.
   item_json=$(gh project item-list "$project_number" --owner "$owner" --limit 10000 --format json 2>/dev/null \
     | python3 -c "
 import json, sys
-num = int(\"$issue_number\")
+num = int(sys.argv[1])
 data = json.loads(sys.stdin.read(), strict=False)
 for item in data.get('items', []):
     if item.get('content', {}).get('number') == num:
         print(json.dumps(item))
         break
-" || true)
+" "$issue_number" || true)
   item_id=$(printf '%s' "$item_json" | python3 -c "
 import json, sys
 item = json.loads(sys.stdin.read(), strict=False)
