@@ -161,7 +161,7 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
     #   - "approved" or "lgtm" or "looks good" present AND no blocking markers
     #   - no blocking markers at all (conservative: treat silence as approval)
 
-    if echo "$BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|must[[:space:]]+fix|action[[:space:]]+required|required:[[:space:]]|❌)"; then
+    if echo "$BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking|must[[:space:]]+fix|action[[:space:]]+required|required:[[:space:]]|❌)"; then
       echo "VERDICT: NEEDS_REVISION"
       echo "---BEGIN BOT RESPONSE---"
       echo "$BOT_RESPONSE"
