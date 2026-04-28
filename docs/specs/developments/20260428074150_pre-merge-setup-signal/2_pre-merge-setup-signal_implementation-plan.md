@@ -25,8 +25,8 @@
 | `needs-setup` in protocol 91 | `grep -n "needs-setup" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | No matches — label not yet defined or referenced |
 | `needs-setup` in protocol 92 | `grep -n "needs-setup" docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md` | No matches — label not yet defined or referenced |
 | `Pre-merge Setup` section referenced anywhere | `grep -rn "Pre-merge Setup" docs/workflow/` | No matches — section pattern is new |
-| Existing smoke test runbooks in `docs/testing/workflow/` | `ls docs/testing/workflow/*.smoke-test.md \| wc -l` | 27 runbooks; no `367-pre-merge-setup-signal.smoke-test.md` yet |
-| Step 8a location in protocol 91 | `grep -n "Step 8a" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | Line 838 — "Step 8a: Label Readiness Checklist (Hard Gate)" |
+| Existing smoke test runbooks in `docs/testing/workflow/` | `ls docs/testing/workflow/*.smoke-test.md \| wc -l` | 28 runbooks; no `367-pre-merge-setup-signal.smoke-test.md` yet |
+| Step 8a location in protocol 91 | `grep -n "^## Step 8a" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | Line 948 — "Step 8a: Label Readiness Checklist (Hard Gate)" |
 | Labels section in protocol 92 | `grep -n "^## Labels" docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md` | Line 9 — "## Labels" table |
 
 ---
