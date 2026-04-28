@@ -139,7 +139,7 @@ When an agent produces a PR that is technically complete and reviewer-loop clean
 **Valid label combinations**:
 - `ready-for-human-review` only — no setup requirements detected; standard ready state
 - `ready-for-human-review` + `needs-setup` — PR is technically ready but has unmet setup requirements; human must perform setup and then remove `needs-setup` before or after merge
-- `needs-fixes` + `needs-setup` — PR has both code changes requested by reviewers and setup requirements; both must be addressed before the PR can reach `ready-for-human-review`
+- `needs-fixes` + `needs-setup` — PR has both code changes requested by reviewers and setup requirements; `needs-fixes` must be addressed before the PR can reach `ready-for-human-review`, at which point `needs-setup` persists alongside it (see combination above)
 
 ---
 
