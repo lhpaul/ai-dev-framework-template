@@ -55,11 +55,26 @@ OWNER="$2"
 REPO="$3"
 shift 3
 
-# Validate PR_NUMBER is a positive integer before any interpolation into
-# gh commands or API URLs (REVIEW.md: validate user-supplied input).
+# Validate positional arguments before interpolation into gh commands and API
+# URLs (REVIEW.md: validate user-supplied input before interpolation).
 case "$PR_NUMBER" in
   ''|0|*[!0-9]*)
     echo "ERROR: PR number '$PR_NUMBER' is not a valid positive integer" >&2
+    exit 2
+    ;;
+esac
+# GitHub owner and repo names consist of alphanumerics, hyphens, underscores,
+# and dots. Reject empty values or values with other characters (including '/'
+# which could redirect API paths).
+case "$OWNER" in
+  ''|*[!A-Za-z0-9._-]*)
+    echo "ERROR: owner '$OWNER' contains invalid characters (expected alphanumerics, hyphens, underscores, dots)" >&2
+    exit 2
+    ;;
+esac
+case "$REPO" in
+  ''|*[!A-Za-z0-9._-]*)
+    echo "ERROR: repo '$REPO' contains invalid characters (expected alphanumerics, hyphens, underscores, dots)" >&2
     exit 2
     ;;
 esac
