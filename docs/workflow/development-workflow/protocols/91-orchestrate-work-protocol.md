@@ -98,9 +98,10 @@ When dispatching a subagent for this item, include a short "Tracker Work Item Su
 | Spec in Review | Tracker **Spec in Review** — spec PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
 | Spec branch pushed, no PR yet | Branch exists on local / remote / worktree | Run the spec review gate via `REVIEW.md` / `01-review-spec-protocol.md`, open the PR, then finish PR readiness |
 | Spec Ready | Spec PR is merged | Set tracker status to **Writing Plan**, then run `02-generate-implementation-plan-protocol.md` |
-| Writing Plan | Tracker **Writing Plan** — plan PR not yet human-ready | Continue plan branch/PR work until tracker moves to **Plan in Review** |
+| Plan written locally, spec PR not yet merged | Plan branch exists locally or in worktree; spec PR is still open (not merged) | **Ordering gate**: do NOT open the plan PR. Stop after the spec PR is `ready-for-human-review` and report: "spec PR is ready; plan is written and staged locally, but plan PR will not be opened until spec PR is confirmed merged." Resume in next run after spec PR merge. |
+| Writing Plan | Tracker **Writing Plan** — plan PR not yet human-ready — spec PR already merged (Full Pipeline only; Refactor items are exempt — no spec PR exists) | Continue plan branch/PR work until tracker moves to **Plan in Review** |
 | Plan in Review | Tracker **Plan in Review** — plan PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
-| Plan branch pushed, no PR yet | Branch exists on local / remote / worktree | Run the plan review gate via `REVIEW.md` / `02-review-implementation-plan-protocol.md`, open the PR, then finish PR readiness |
+| Plan branch pushed, no PR yet | Branch exists on local / remote / worktree; spec PR already merged (Full Pipeline only; Refactor items are exempt — no spec PR exists) | Run the plan review gate via `REVIEW.md` / `02-review-implementation-plan-protocol.md`, open the PR, then finish PR readiness |
 | Plan Ready | Plan PR is merged | Set tracker status to **In Development**, then run `03-implement-development-protocol.md` |
 | In Development | Tracker **In Development** — feature/fix PR not yet human-ready | Continue implementation branch/PR work (Step 7a, 7, 8) until tracker moves to **Development in Review** |
 | Development in Review | Tracker **Development in Review** — feature/fix PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
@@ -144,6 +145,37 @@ git worktree list | grep "<branch-prefix>/<slug>"
 | Implement (Refactor) | `refactor/[slug]` |
 
 If any check returns a match: **do not re-dispatch**. Resume from the existing branch or PR with `workflow-next-action.sh`.
+
+### Spec-Plan ordering gate
+
+**The plan PR must never be opened before the spec PR has been merged to the integration branch.**
+
+This gate applies whenever the spec and plan are written in the same agent run (i.e., the Work Item Runner advances from spec to plan writing without a human merge in between). The root cause is that reviewers check for the spec file on the target branch — if the spec is only on an unmerged spec branch, the plan PR fails review with "spec file not present on branch."
+
+**Rule: when spec writing and plan writing happen in the same run:**
+
+1. Write the plan content locally on the plan branch (the plan may be written proactively, but it must not be pushed or a PR opened yet).
+2. Open the spec PR and advance it to `ready-for-human-review` following the full PR readiness chain (Step 7a, Step 7, Step 8).
+3. Stop and report to the orchestrator with the following structured message:
+
+   > Spec PR #N is `ready-for-human-review`. Plan is written and staged locally on branch `implementation-plan/<slug>`, but the plan PR will not be opened until the spec PR is confirmed merged to `develop`. On the next dispatch (after spec merge is confirmed), push the plan branch and open the plan PR.
+
+4. On the next dispatch (after spec merge is confirmed via `gh pr view <spec_pr> --json state` returning `MERGED`), push the plan branch and open the plan PR. The plan content was written in the prior run; do not regenerate it.
+
+**Verification before opening a plan PR:**
+
+Before calling `gh pr create` for any `implementation-plan/*` branch, confirm the spec PR is merged:
+
+```bash
+# Check whether the spec PR is merged (substitute the actual PR number)
+gh pr view <spec_pr_number> --json state --jq '.state'
+# Expected output: MERGED
+# If output is OPEN or CLOSED (without MERGED): do not open the plan PR
+```
+
+If the spec PR is still `OPEN`, apply the ordering gate above and stop. If the spec PR is `CLOSED` (rejected without merge), do **not** open the plan PR and do **not** apply the ordering gate — escalate to the human, because the spec was rejected and the plan cannot proceed without a merged spec.
+
+**Exception — Refactor items (no spec):** Items following the Refactor path (`02-generate-implementation-plan-protocol.md` without a preceding spec step) are exempt from this gate. There is no spec PR to wait for.
 
 ### Dependency check
 
