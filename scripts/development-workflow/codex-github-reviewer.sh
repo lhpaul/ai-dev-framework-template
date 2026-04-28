@@ -120,8 +120,8 @@ IDEM_STDERR=$(mktemp)
 IDEM_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
   2>"$IDEM_STDERR" \
-  | jq -r --arg sha "$CURRENT_SHA" --arg trigger "$TRIGGER_PHRASE" \
-    '.[] | select((.body | test($sha)) and (.body | ascii_downcase | contains($trigger | ascii_downcase))) | {id: .id, created_at: .created_at, body: .body}' \
+  | jq -r --arg sha "$CURRENT_SHA" --arg trigger "$TRIGGER_PHRASE" --arg bot "$BOT_LOGIN" \
+    '.[] | select(.user.login != $bot) | select((.body | test($sha)) and (.body | ascii_downcase | contains($trigger | ascii_downcase))) | {id: .id, created_at: .created_at, body: .body}' \
   > "$IDEM_TMPFILE"; then
   TRIGGER_COMMENT_INFO=$(head -c 2000 "$IDEM_TMPFILE")
 else
