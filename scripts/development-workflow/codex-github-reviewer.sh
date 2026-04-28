@@ -89,7 +89,7 @@ fi
 # Guard the assignment with 'if !' to prevent set -e from exiting with code 1
 # (NEEDS_REVISION) before the empty-check guard below can emit the VERDICT line.
 
-if ! CURRENT_SHA=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefOid --jq '.headRefOid' 2>&1 | head -c 100); then
+if ! CURRENT_SHA=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefOid --jq '.headRefOid' | head -c 100); then
   echo "ERROR: could not resolve PR #$PR_NUMBER HEAD SHA" >&2
   echo "VERDICT: TIMED_OUT — could not resolve PR HEAD SHA (treated as unavailable)"
   exit 2
