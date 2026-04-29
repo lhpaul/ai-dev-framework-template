@@ -107,6 +107,18 @@ is_devin_status_stale() {
 
   # Check for blocking inline comments from Devin on the current HEAD.
   # Emit each comment body as a compact JSON object (one per line) to survive multi-line bodies.
+  # Capture output first so API failures return 1 (not stale / conservative) rather than
+  # silently feeding an empty string to the while loop and returning 0 (stale).
+  local raw_comments=""
+  raw_comments="$(
+    gh api "repos/$repo_slug/pulls/$pr_num/comments" --paginate 2>/dev/null \
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+          .[]
+          | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null)
+          | {body: (.body // "")} | @json
+        '
+  )" || return 1  # API or jq failure — treat as not stale (conservative)
+
   while IFS= read -r comment_json; do
     [ -z "${comment_json:-}" ] && continue
     body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
@@ -115,16 +127,26 @@ is_devin_status_stale() {
     if printf '%s\n' "$body" | grep -q "^✅"; then continue; fi
     inline_count=$((inline_count + 1))
     blocking_count=$((blocking_count + 1))
-  done <<< "$(
-    gh api "repos/$repo_slug/pulls/$pr_num/comments" --paginate 2>/dev/null \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
-          .[]
-          | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null)
-          | {body: (.body // "")} | @json
-        ' 2>/dev/null || true
-  )"
+  done <<< "$raw_comments"
 
   # Check for blocking review-level findings from Devin on the current HEAD.
+  # Use "review without body" fallback (matching pr-review-loop.sh) so that
+  # CHANGES_REQUESTED reviews with null bodies are never silently skipped.
+  local raw_reviews=""
+  raw_reviews="$(
+    gh api "repos/$repo_slug/pulls/$pr_num/reviews" --paginate 2>/dev/null \
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+          .[]
+          | select(
+              .user.login == $bot and
+              .submitted_at > $since and
+              (.state == "CHANGES_REQUESTED" or .state == "COMMENTED")
+            )
+          | {body: (.body // "review without body"), state: .state}
+          | @json
+        '
+  )" || return 1  # API or jq failure — treat as not stale (conservative)
+
   while IFS= read -r review_json; do
     [ -z "${review_json:-}" ] && continue
     body="$(printf '%s\n' "$review_json" | jq -r '.body // ""')"
@@ -144,19 +166,7 @@ is_devin_status_stale() {
       fi
     fi
     blocking_count=$((blocking_count + 1))
-  done <<< "$(
-    gh api "repos/$repo_slug/pulls/$pr_num/reviews" --paginate 2>/dev/null \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
-          .[]
-          | select(
-              .user.login == $bot and
-              .submitted_at > $since and
-              (.state == "CHANGES_REQUESTED" or .state == "COMMENTED")
-            )
-          | {body: (.body // ""), state: .state}
-          | @json
-        ' 2>/dev/null || true
-  )"
+  done <<< "$raw_reviews"
 
   if [ "$blocking_count" -gt 0 ]; then
     return 1  # still has findings — not stale
