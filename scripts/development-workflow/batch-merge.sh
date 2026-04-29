@@ -41,8 +41,9 @@
 #
 # Note: cmd_merge pushes the merge commit to origin/<base> and calls
 # `gh pr merge --merge` so GitHub records the PR as MERGED (not CLOSED).
-# Protocol 94 Step 4.2's separate push is idempotent (no-op for same commits)
-# and the subsequent `gh pr view --json state` check will return MERGED.
+# If `gh pr merge` fails and the PR is not yet MERGED, a warning is emitted
+# to stderr; Protocol 94 Step 4.2's `gh pr view --json state` poll is the
+# safety net that detects and reports any remaining non-MERGED state.
 #
 # Delete-branch output:
 #   DELETE_PR_NUMBER=<n>
@@ -386,9 +387,17 @@ cmd_merge() {
 
     # Tell GitHub to record this PR as MERGED.  `gh pr merge --merge` detects
     # that the commits are already on the base branch and marks the PR merged
-    # without creating a duplicate commit.  The `|| true` guard prevents the
-    # script from failing if the PR is already in MERGED state (idempotent).
-    gh pr merge "$pr_num" --merge 2>/dev/null || true
+    # without creating a duplicate commit.
+    # If the call fails (e.g. already-MERGED idempotent case, API error, or
+    # auth issue), check the actual PR state.  Only warn when the PR is still
+    # not MERGED — the caller's Step 4.2 MERGED-state poll is the safety net.
+    if ! gh pr merge "$pr_num" --merge 2>/dev/null; then
+      local post_state
+      post_state="$(gh pr view "$pr_num" --json state --jq '.state' 2>/dev/null)" || post_state=""
+      if [ "$post_state" != "MERGED" ]; then
+        echo "WARNING: gh pr merge failed for PR #${pr_num} and PR is in state '${post_state:-unknown}' — caller should verify MERGED state via 'gh pr view ${pr_num} --json state'" >&2
+      fi
+    fi
 
     print_kv MERGE_RESULT "clean"
     return 0
