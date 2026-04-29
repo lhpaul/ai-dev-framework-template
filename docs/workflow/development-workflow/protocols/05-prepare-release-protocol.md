@@ -180,6 +180,8 @@ When the production PR is ready (or clearly escalated):
 2. Then merge the `develop` backport PR
 3. Run Step 9 post-merge cleanup only after both PRs are merged
 
+> **Use regular merge commits — not squash or rebase.** Squash-merging release PRs breaks the gitflow history chain: `main` won't share commit ancestors with `develop`, causing future comparisons to show accumulated historical divergence instead of just new changes. Regular merge commits preserve the relationship so `git log main..develop` accurately reflects pending work.
+
 If Step 7 escalated or CI timed out, report status and blockers before merge.
 
 ---
