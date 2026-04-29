@@ -120,9 +120,17 @@ browser_automation:
   provider: playwright_cli
 
 template:
+  # Set to true when this repository IS a framework template (i.e., it ships workflow
+  # tooling to be consumed by downstream projects). When true, Protocol 02 Step 0
+  # (Template-Fit Check) is mandatory before writing any implementation plan.
+  # Leave false or omit for downstream consumer repositories.
+  is_template: true
+
   # Optional: upstream template repository reference (owner/repo format for GitHub).
   # When set, the retrospective protocol (Step 3b) cross-references each finding
   # against the specified template repository's issue tracker. Leave empty or omit to skip.
+  # Note: this is set by DOWNSTREAM repos pointing back to their template origin —
+  # the template repo itself leaves this empty.
   repository: ""
 
   # Optional: the template version last applied by the sync-template skill.
