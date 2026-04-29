@@ -617,20 +617,28 @@ gh api graphql -f query='
   }' -F owner=<owner> -F repo=<repo> -F number=<pr_number>
 ```
 
-Verify all of the following. If any check fails, the PR is **not ready** — treat it the same as `needs-fixes` and return the item to active supervision:
+Verify all of the following. If any check fails, apply the remediation action in the table below — **do not redispatch the agent for label-only gaps**:
 
-| Check | Pass condition |
-|---|---|
-| Base branch | `develop` for `feature/*`, `fix/*`, `refactor/*`, `spec/*`, `implementation-plan/*`; `main` for `hotfix/*` |
-| PR is non-draft | `isDraft: false` |
-| `ready-for-human-review` label | Present |
-| `ready-for-regression` label | Present on `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PRs; not required for `spec/*`, `implementation-plan/*` |
-| No `needs-fixes` label | Absent |
-| All automated-reviewer `reviewThreads` resolved | GraphQL `reviewThreads.nodes[].isResolved=true` (or `✅ Addressed` in body) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured) |
-| Automated reviewer loop summary comment | At least one PR comment containing "Automated Reviewer Loop Summary", "Reviewer Loop Summary", or "No blocking PR feedback" (skip this check only when Step 7 was `skipped` because no review platforms are configured) |
-| CI checks | All required status checks are green (`state: SUCCESS` or `conclusion: success`) |
+| Check | Pass condition | Remediation if failing |
+|---|---|---|
+| Base branch | `develop` for `feature/*`, `fix/*`, `refactor/*`, `spec/*`, `implementation-plan/*`; `main` for `hotfix/*` | Redispatch agent to rebase onto the correct base |
+| PR is non-draft | `isDraft: false` | Run `gh pr ready <pr_number>` directly; log as protocol deviation |
+| `ready-for-human-review` label | Present | Apply directly: `gh pr edit <pr_number> --add-label "ready-for-human-review"` (after all other checks pass) |
+| `ready-for-regression` label | Present on `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PRs; not required for `spec/*`, `implementation-plan/*` | **Apply directly** (primary enforcement point): `gh pr edit <pr_number> --add-label "ready-for-regression"`. Log as protocol deviation: `PROTOCOL_DEVIATION: ready-for-regression was missing on PR #<N> — applied by orchestrator Step 5.1`. **Do not redispatch the agent for this gap alone.** |
+| No `needs-fixes` label | Absent | Remove: `gh pr edit <pr_number> --remove-label "needs-fixes"` (only after CI and reviews are confirmed clean) |
+| All automated-reviewer `reviewThreads` resolved | GraphQL `reviewThreads.nodes[].isResolved=true` (or `✅ Addressed` in body) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured) | Redispatch agent to address unresolved threads |
+| Automated reviewer loop summary comment | At least one PR comment containing "Automated Reviewer Loop Summary", "Reviewer Loop Summary", or "No blocking PR feedback" (skip this check only when Step 7 was `skipped` because no review platforms are configured) | Redispatch agent to run Step 7 to completion |
+| CI checks | All required status checks are green (`state: SUCCESS` or `conclusion: success`) | Redispatch agent to fix failing checks |
 
-If a check fails:
+**`ready-for-regression` direct-apply rule**: This label is the primary enforcement point for the regression CI gate. If the agent applied `ready-for-human-review` but omitted `ready-for-regression`, the orchestrator:
+
+1. Applies the label directly: `gh pr edit <pr_number> --add-label "ready-for-regression"`
+2. Logs the deviation: `PROTOCOL_DEVIATION: ready-for-regression was missing on PR #<N> — applied by orchestrator Step 5.1`
+3. **Re-polls CI** — the label triggers the `e2e-regression.yml` workflow. The CI check row in this verification table was evaluated _before_ the label was applied, so the e2e check was not yet in `statusCheckRollup`. After applying the label, wait for CI to settle using `pr-ci-loop.sh <pr_number>` before re-running this verification. Do not mark the PR ready until the re-polled CI check is green.
+
+Do not redispatch the agent for a missing label alone — the label is applied directly here. Redispatching is only required when there are substantive gaps (wrong base branch, unresolved review threads, missing reviewer loop summary, failing CI).
+
+If a check requires agent redispatch:
 
 1. Log the specific failure in your retrospective notes (see "Retrospective notes during supervision" below).
 2. Remove `ready-for-human-review` if it is present: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.

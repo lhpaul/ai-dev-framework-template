@@ -995,18 +995,20 @@ Interpret the result as follows:
 
 **Before applying `ready-for-human-review`**, verify all required readiness conditions are met. This is a hard gate — do not skip or defer.
 
+> **Critical**: For implementation PRs (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`), you **must** confirm that `ready-for-regression` was applied in Step 7b **before** reaching this checklist. If it was not, apply it now (see Check 2 below) — do not proceed to `ready-for-human-review` without it. The orchestrator's Step 5.1 will catch and correct a missing `ready-for-regression` label, but the agent is the primary responsible party and must not rely on the orchestrator as a fallback.
+
 ### Label derivation rule
 
 Required labels are determined by the **branch prefix**, not by the content of the PR (e.g., whether it changes code vs. documentation). An agent must never infer labels from what was changed inside the PR.
 
-| Branch prefix | Requires `ready-for-regression` |
-|---|---|
-| `feature/*` | Yes |
-| `fix/*` | Yes |
-| `refactor/*` | Yes |
-| `hotfix/*` | Yes |
-| `spec/*` | No |
-| `implementation-plan/*` | No |
+| Branch prefix | Requires `ready-for-regression` | When to apply |
+|---|---|---|
+| `feature/*` | Yes | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
+| `fix/*` | Yes | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
+| `refactor/*` | Yes | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
+| `hotfix/*` | Yes | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
+| `spec/*` | No | — |
+| `implementation-plan/*` | No | — |
 
 Any branch that does not match a recognized prefix is treated as non-implementation (i.e., `ready-for-regression` is NOT required), but this should be treated as a configuration anomaly and reported to the human.
 
@@ -1038,11 +1040,22 @@ if [ "$DRAFT" = "true" ]; then
 fi
 
 # Check 2: ready-for-regression label applied (implementation PRs only)
+# IMPORTANT: This label MUST have been applied in Step 7b before Step 8 ran.
+# If it is missing here, apply it now, log the deviation, and RE-RUN Step 8
+# (pr-ci-loop.sh) before continuing — the label triggers e2e/regression CI and
+# that workflow MUST be waited upon. Do NOT skip directly to Check 3/4.
 if [ "$IS_IMPLEMENTATION_PR" = "true" ]; then
   HAS_REGRESSION_LABEL=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c "^ready-for-regression$" || true)
   if [ "$HAS_REGRESSION_LABEL" -eq 0 ]; then
-    echo "ERROR: Implementation PR is missing 'ready-for-regression' label. Run Step 7b first."
-    exit 1
+    echo "WARNING: Implementation PR is missing 'ready-for-regression' label — Step 7b was not completed before Step 8."
+    echo "Applying 'ready-for-regression' label now and logging as protocol deviation."
+    gh pr edit "$PR_NUMBER" --add-label "ready-for-regression"
+    echo "PROTOCOL_DEVIATION: ready-for-regression was missing on PR #${PR_NUMBER} at Step 8a — applied by agent. Step 7b must be run before Step 8 in future cycles."
+    echo "Re-running Step 8 CI loop to wait for the e2e/regression workflow triggered by the label..."
+    # EXIT this checklist script and re-run Step 8 before returning here.
+    # The caller (orchestrator or agent) MUST run pr-ci-loop.sh again and only
+    # re-enter Step 8a once CI is green.
+    exit 2  # Exit code 2 = "label applied, re-run Step 8 required"
   fi
 fi
 
@@ -1067,13 +1080,13 @@ echo "✅ Label readiness checklist passed. PR is ready for human review."
 
 **Interpretation**:
 
-- **All checks pass**: Continue to Step 8b (update tracker status) and then Step 8c (independent PR verification); only report the PR as ready after Step 8c also passes
+- **All checks pass (exit 0)**: Continue to Step 8b (update tracker status) and then Step 8c (independent PR verification); only report the PR as ready after Step 8c also passes
 - **Any check fails**: Stop and fix the condition. Do not apply `ready-for-human-review` until all checks pass
-  - If `PR is still a draft`: Human error; run `gh pr ready <pr_number>` manually
-  - If `missing ready-for-regression` on implementation PR: Re-run Step 7b, then re-check
+  - If `PR is still a draft` (exit 1): Human error; run `gh pr ready <pr_number>` manually
+  - If `missing ready-for-regression` on implementation PR (exit 2): The label has been applied by Check 2. **Do not continue to Check 3/4.** Re-run `pr-ci-loop.sh` (Step 8) first to wait for the e2e/regression workflow triggered by the label. Only re-enter Step 8a after CI is green again. This ensures the e2e/regression check completes before the PR is marked ready.
   - If `needs-fixes` is present (Check 3): The label is stale at this point (CI is green and reviews are clean), so it is automatically removed before proceeding to apply `ready-for-human-review`
 
-This checklist ensures the label sequence is always complete before the PR is declared ready for human review.
+This checklist ensures the label sequence is always complete and all CI checks (including e2e/regression) have passed before the PR is declared ready for human review.
 
 ---
 
