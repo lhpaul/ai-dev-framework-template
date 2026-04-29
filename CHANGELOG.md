@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`batch-merge.sh merge` left PRs in `OPEN` state after push**: After a successful local `git merge`, `cmd_merge()` now pushes the merge commit to `origin/develop` and calls `gh pr merge --merge` to record the PR as MERGED on GitHub. Previously, the script returned after the local merge without pushing, so GitHub never received the merge event and PRs remained `OPEN` (requiring manual cleanup). Protocol 94 Step 4.2 is updated to reflect that the push and merge-mark are now handled inside the script.
+
 ## [0.23.2] - 2026-04-27
 
 ### Fixed

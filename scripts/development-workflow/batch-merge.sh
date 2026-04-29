@@ -39,6 +39,11 @@
 #   CONFLICTED_FILES=<file1,file2,...>   (only when MERGE_RESULT=conflict)
 #   ERROR_MESSAGE=<text>                  (only when MERGE_RESULT=failed)
 #
+# Note: cmd_merge pushes the merge commit to origin/<base> and calls
+# `gh pr merge --merge` so GitHub records the PR as MERGED (not CLOSED).
+# Protocol 94 Step 4.2's separate push is idempotent (no-op for same commits)
+# and the subsequent `gh pr view --json state` check will return MERGED.
+#
 # Delete-branch output:
 #   DELETE_PR_NUMBER=<n>
 #   DELETE_RESULT=deleted|skipped|not_found
@@ -375,6 +380,16 @@ cmd_merge() {
   # so set -e does not fire on a failed merge).
   local merge_output
   if merge_output="$(git merge --no-ff --no-edit -m "Merge PR #${pr_num} (${branch})" "$merge_ref" 2>&1)"; then
+    # Push the merge commit so GitHub can process the merge event.
+    git push origin "$TARGET_BASE" >/dev/null 2>&1 || \
+      merge_die "Merge succeeded locally but push to origin/${TARGET_BASE} failed"
+
+    # Tell GitHub to record this PR as MERGED.  `gh pr merge --merge` detects
+    # that the commits are already on the base branch and marks the PR merged
+    # without creating a duplicate commit.  The `|| true` guard prevents the
+    # script from failing if the PR is already in MERGED state (idempotent).
+    gh pr merge "$pr_num" --merge 2>/dev/null || true
+
     print_kv MERGE_RESULT "clean"
     return 0
   fi
