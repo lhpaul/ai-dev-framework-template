@@ -180,11 +180,15 @@ Parse the output:
 
 After a clean or resolved merge, in order:
 
-1. **Push `develop` to origin:**
+1. **Push `develop` to origin and mark the PR as merged on GitHub:**
 
-   ```bash
-   git push origin develop
-   ```
+   As of the fix for issue #412, `batch-merge.sh merge` now performs the push and the
+   `gh pr merge` call internally before returning `MERGE_RESULT=clean`. You do **not**
+   need to run a separate `git push origin develop` step — the script already did it.
+
+   If you are running a resolved-conflict merge (Step 4.3) and need to commit the
+   resolution before continuing, run `git push origin develop` after staging and
+   committing the resolved files. The script does not handle the post-conflict push.
 
 2. **Verify GitHub recognizes the PR as merged** (not just closed):
 
@@ -195,14 +199,15 @@ After a clean or resolved merge, in order:
    Expected output: `MERGED`.
 
    - If the state is not `MERGED` after up to 30 seconds (poll every 5 s): report `failed` for this PR, do not delete the remote branch or run cleanup, and continue with the next PR.
+   - If the script emitted a `WARNING: gh pr merge failed` line to stderr, that is a signal that this MERGED-state check is especially important — the push succeeded but the GitHub merge-mark may have failed.
 
-   > **Failure mode — CLOSED instead of MERGED**: If the remote feature branch is
-   > deleted *before* the `git push origin develop` completes (or before GitHub
-   > processes the push), GitHub closes the PR instead of recording it as merged.
-   > The commits land in `develop` but `gh pr view N --json state` returns `CLOSED`,
-   > not `MERGED`, permanently losing merge attribution. This is why branch deletion
-   > (Step 3 below) is always performed *after* MERGED confirmation, and the
-   > `delete-branch` subcommand enforces this guard automatically.
+   > **Failure mode — CLOSED instead of MERGED (historical context)**: Before issue
+   > #412 was fixed, `batch-merge.sh` did a local `git merge` but neither pushed nor
+   > called `gh pr merge`, so GitHub left PRs in `OPEN` state. The fix adds `git push`
+   > and `gh pr merge --merge` inside `cmd_merge()` immediately after a successful
+   > local merge. When `gh pr merge` fails for a non-idempotent reason, a warning is
+   > emitted to stderr and this MERGED-state poll acts as the safety net. The
+   > `delete-branch` subcommand also enforces the MERGED-state guard before deletion.
 
 3. **Delete the remote branch** using the guarded helper (which re-checks MERGED
    state immediately before deletion to prevent the CLOSED-not-MERGED failure mode):

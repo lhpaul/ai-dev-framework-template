@@ -39,6 +39,12 @@
 #   CONFLICTED_FILES=<file1,file2,...>   (only when MERGE_RESULT=conflict)
 #   ERROR_MESSAGE=<text>                  (only when MERGE_RESULT=failed)
 #
+# Note: cmd_merge pushes the merge commit to origin/<base> and calls
+# `gh pr merge --merge` so GitHub records the PR as MERGED (not CLOSED).
+# If `gh pr merge` fails and the PR is not yet MERGED, a warning is emitted
+# to stderr; Protocol 94 Step 4.2's `gh pr view --json state` poll is the
+# safety net that detects and reports any remaining non-MERGED state.
+#
 # Delete-branch output:
 #   DELETE_PR_NUMBER=<n>
 #   DELETE_RESULT=deleted|skipped|not_found
@@ -375,6 +381,24 @@ cmd_merge() {
   # so set -e does not fire on a failed merge).
   local merge_output
   if merge_output="$(git merge --no-ff --no-edit -m "Merge PR #${pr_num} (${branch})" "$merge_ref" 2>&1)"; then
+    # Push the merge commit so GitHub can process the merge event.
+    git push origin "$TARGET_BASE" >/dev/null 2>&1 || \
+      merge_die "Merge succeeded locally but push to origin/${TARGET_BASE} failed"
+
+    # Tell GitHub to record this PR as MERGED.  `gh pr merge --merge` detects
+    # that the commits are already on the base branch and marks the PR merged
+    # without creating a duplicate commit.
+    # If the call fails (e.g. already-MERGED idempotent case, API error, or
+    # auth issue), check the actual PR state.  Only warn when the PR is still
+    # not MERGED — the caller's Step 4.2 MERGED-state poll is the safety net.
+    if ! gh pr merge "$pr_num" --merge 2>/dev/null; then
+      local post_state
+      post_state="$(gh pr view "$pr_num" --json state --jq '.state' 2>/dev/null)" || post_state=""
+      if [ "$post_state" != "MERGED" ]; then
+        echo "WARNING: gh pr merge failed for PR #${pr_num} and PR is in state '${post_state:-unknown}' — caller should verify MERGED state via 'gh pr view ${pr_num} --json state'" >&2
+      fi
+    fi
+
     print_kv MERGE_RESULT "clean"
     return 0
   fi
