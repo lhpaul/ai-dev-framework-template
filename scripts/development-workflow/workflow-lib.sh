@@ -212,6 +212,47 @@ workflow_config_provider() {
   ' "$config_file"
 }
 
+workflow_config_field() {
+  local section="$1"
+  local field="$2"
+  local config_file="${3:-$(workflow_config_file)}"
+
+  [ -f "$config_file" ] || return 0
+
+  awk -v section="$section" -v field="$field" '
+    function trim(value) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      gsub(/^["'"'"']|["'"'"']$/, "", value)
+      return value
+    }
+
+    $0 ~ ("^" section ":[[:space:]]*$") {
+      in_section = 1
+      next
+    }
+
+    in_section && /^[^[:space:]#].*:[[:space:]]*/ {
+      exit
+    }
+
+    in_section {
+      # Match "  <field>: <value>" — two-space indent, exact field name, optional comment
+      pattern = "^[[:space:]][[:space:]]" field ":[[:space:]]*"
+      if ($0 ~ pattern) {
+        line = $0
+        sub(/^[[:space:]]*[^[:space:]]*:[[:space:]]*/, "", line)
+        sub(/[[:space:]]+#.*$/, "", line)
+        print trim(line)
+        exit
+      }
+    }
+  ' "$config_file"
+}
+
+workflow_issue_tracker_project_number() {
+  workflow_config_field issue_tracker project_number
+}
+
 workflow_issue_tracker_provider_raw() {
   workflow_config_provider issue_tracker
 }
@@ -289,12 +330,13 @@ __workflow_tracker_cache_json=""
 # Queries GitHub Projects for the current Status of the given issue.
 # Prints the status string (e.g. "Merged", "Released", "In Development").
 # Prints an empty string when:
-#   - GITHUB_PROJECT_NUMBER is unset (GitHub Projects not configured)
+#   - project_number is unset in both GITHUB_PROJECT_NUMBER and .ai-dev-workflow.yaml
 #   - The issue is not found in the project
 #   - Any API call fails
 # Returns 0 in all cases (non-blocking).
 # Uses GITHUB_PROJECT_OWNER/GITHUB_PROJECT_NUMBER when set; owner falls back
-# to the repository owner if omitted.
+# to the repository owner if omitted; project_number falls back to the
+# issue_tracker.project_number field in .ai-dev-workflow.yaml if omitted.
 #
 # The full project item list is fetched once per owner+project pair and cached
 # in script-level variables to avoid a full-board scan on every call.
@@ -303,7 +345,7 @@ get_tracker_status_for_issue() {
   local owner project_number item_json current_status
 
   owner="${GITHUB_PROJECT_OWNER:-$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || true)}"
-  project_number="${GITHUB_PROJECT_NUMBER:-}"
+  project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
   if [ -z "$owner" ] || [ -z "$project_number" ]; then
     printf ''
     return 0
@@ -318,14 +360,31 @@ get_tracker_status_for_issue() {
     __workflow_tracker_cache_project="$project_number"
   fi
 
+  # Use Python3 to parse the JSON to handle issue bodies that contain literal
+  # control characters (U+0000–U+001F), which cause jq parse errors (#375).
+  # strict=False allows Python3's json decoder to accept unescaped control chars.
+  # issue_number is passed via sys.argv[1] (not interpolated into source code) to
+  # avoid shell-variable-into-Python-source injection.
   item_json=$(printf '%s' "$__workflow_tracker_cache_json" \
-    | jq -c --argjson num "$issue_number" '.items[] | select(.content.number == $num)' 2>/dev/null || true)
+    | python3 -c "
+import json, sys
+num = int(sys.argv[1])
+data = json.loads(sys.stdin.read(), strict=False)
+for item in data.get('items', []):
+    if item.get('content', {}).get('number') == num:
+        print(json.dumps(item))
+        break
+" "$issue_number" 2>/dev/null || true)
   if [ -z "$item_json" ]; then
     printf ''
     return 0
   fi
 
-  current_status=$(printf '%s' "$item_json" | jq -r '.status // empty' 2>/dev/null || true)
+  current_status=$(printf '%s' "$item_json" | python3 -c "
+import json, sys
+item = json.loads(sys.stdin.read(), strict=False)
+print(item.get('status') or '', end='')
+" 2>/dev/null || true)
   printf '%s' "${current_status:-}"
 }
 
@@ -335,7 +394,8 @@ get_tracker_status_for_issue() {
 # - Returns 0 in all warning/failure cases to avoid blocking caller flows.
 # - Respects status progression ordering and never rolls status backward.
 # - Uses GITHUB_PROJECT_OWNER/GITHUB_PROJECT_NUMBER when set; owner falls back
-#   to the repository owner if omitted.
+#   to the repository owner if omitted; project_number falls back to the
+#   issue_tracker.project_number field in .ai-dev-workflow.yaml if omitted.
 update_tracker_status_best_effort() {
   local issue_number="$1"
   local status_label="$2"
@@ -344,9 +404,9 @@ update_tracker_status_best_effort() {
   local target_order current_order
 
   owner="${GITHUB_PROJECT_OWNER:-$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || true)}"
-  project_number="${GITHUB_PROJECT_NUMBER:-}"
+  project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
   if [ -z "$owner" ] || [ -z "$project_number" ]; then
-    echo "Warning: GITHUB_PROJECT_OWNER or GITHUB_PROJECT_NUMBER not set; skipping tracker status update."
+    echo "Warning: GITHUB_PROJECT_OWNER or GITHUB_PROJECT_NUMBER not set and no project_number in .ai-dev-workflow.yaml; skipping tracker status update."
     return 0
   fi
 
@@ -364,15 +424,36 @@ update_tracker_status_best_effort() {
     return 0
   fi
 
+  # Use Python3 to parse the JSON to handle issue bodies that contain literal
+  # control characters (U+0000–U+001F), which cause jq parse errors (#375).
+  # strict=False allows Python3's json decoder to accept unescaped control chars.
+  # issue_number is passed via sys.argv[1] (not interpolated into source code) to
+  # avoid shell-variable-into-Python-source injection.
   item_json=$(gh project item-list "$project_number" --owner "$owner" --limit 10000 --format json 2>/dev/null \
-    | jq -c --argjson num "$issue_number" '.items[] | select(.content.number == $num)' || true)
-  item_id=$(printf '%s' "$item_json" | jq -r '.id // empty' || true)
+    | python3 -c "
+import json, sys
+num = int(sys.argv[1])
+data = json.loads(sys.stdin.read(), strict=False)
+for item in data.get('items', []):
+    if item.get('content', {}).get('number') == num:
+        print(json.dumps(item))
+        break
+" "$issue_number" || true)
+  item_id=$(printf '%s' "$item_json" | python3 -c "
+import json, sys
+item = json.loads(sys.stdin.read(), strict=False)
+print(item.get('id') or '', end='')
+" 2>/dev/null || true)
   if [ -z "$item_id" ]; then
     echo "Warning: issue #${issue_number} not found in project #${project_number}; skipping tracker status update."
     return 0
   fi
 
-  current_status=$(printf '%s' "$item_json" | jq -r '.status // empty' || true)
+  current_status=$(printf '%s' "$item_json" | python3 -c "
+import json, sys
+item = json.loads(sys.stdin.read(), strict=False)
+print(item.get('status') or '', end='')
+" 2>/dev/null || true)
   if [ -n "$required_current_status" ] && [ "$current_status" != "$required_current_status" ]; then
     echo "Issue #${issue_number} current status '${current_status:-unknown}' does not match required source status '${required_current_status}'; skipping update."
     return 0
@@ -389,16 +470,21 @@ update_tracker_status_best_effort() {
   fi
 
   echo "Updating tracker status for issue #${issue_number} to '${status_label}'..."
-  gh api graphql -f query="
-    mutation {
-      updateProjectV2ItemFieldValue(input: {
-        projectId: \"${project_id}\"
-        itemId: \"${item_id}\"
-        fieldId: \"${field_id}\"
-        value: { singleSelectOptionId: \"${option_id}\" }
-      }) {
-        projectV2Item { id }
+  gh api graphql \
+    -f projectId="$project_id" \
+    -f itemId="$item_id" \
+    -f fieldId="$field_id" \
+    -f optionId="$option_id" \
+    -f query='
+      mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+        updateProjectV2ItemFieldValue(input: {
+          projectId: $projectId
+          itemId: $itemId
+          fieldId: $fieldId
+          value: { singleSelectOptionId: $optionId }
+        }) {
+          projectV2Item { id }
+        }
       }
-    }
-  " 2>/dev/null || echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker status not updated."
+    ' 2>/dev/null || echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker status not updated."
 }

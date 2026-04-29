@@ -26,6 +26,8 @@ That document is the single source of truth for this supporting role. Key respon
   the literal resolved `<worktree-path>` value in every stage-agent handoff so each
   dispatched agent can validate its own paths independently.
 
+**`codex-github` internal reviewer dispatch**: When `codex-github` is listed in `review.internal_reviewers`, invoke `scripts/development-workflow/codex-github-reviewer.sh <pr_number> <owner> <repo>` instead of dispatching a CLI-based reviewer agent. This script is universally reachable from all runner contexts (Claude Code, Cursor, Codex, headless CI) because it uses only `gh` CLI — no Codex CLI runtime is needed. Exit code semantics: `0` = APPROVED, `1` = NEEDS_REVISION (blocking findings in stdout), `2` = TIMED_OUT (treat as unavailable under `internal_reviewers_unavailable_policy`). Prerequisite: Codex GitHub App must be installed on the repository and configured to respond to the trigger phrase (default: `@codex review`).
+
 **Permission-denial protocol (subagent runs only)**: If the `Edit` or `Write` tool is denied for **any path** — including `.claude/agents/**`, `.cursor/agents/**`, or any other file — the subagent MUST immediately stop all further work and return:
 
 ```

@@ -76,6 +76,18 @@
 - **Unit test mapping**: Name a unit test file and map at least one automated unit test per enumerated edge case.
 - **Suppression semantics (if applicable)**: Name recognized suppression directives, allowed placement, and behavior when multiple suppressions appear on one line.
 
+### Concurrent-event-source addendum (include only when Step 3 classifier applies)
+
+For each item below, document the design decision when the item applies, or note "not applicable" with a brief rationale:
+
+- **Shared mutable state guards**: how is shared state protected from concurrent reads/writes?
+- **Re-entrancy / in-flight tracking**: can a second event arrive before the handler for the first finishes? If yes, how is in-flight state tracked?
+- **Event deduplication**: can the same logical event fire more than once? If yes, how is deduplication handled?
+- **Listener and resource cleanup**: how are all listeners, timers, and handles removed at teardown? What happens to in-flight operations?
+- **Race conditions at initialization**: can events arrive before initialization completes? If yes, what happens to those events?
+- **Race conditions at teardown**: can events arrive after teardown begins? If yes, how are they discarded or drained safely?
+- **Error propagation across async boundaries**: how are errors from async callbacks surfaced? Are unhandled rejections visible to the caller or swallowed silently?
+
 ---
 
 ## Seed Data

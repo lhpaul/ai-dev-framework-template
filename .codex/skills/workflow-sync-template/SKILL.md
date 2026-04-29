@@ -13,6 +13,7 @@ Recommended model tier: `economy`
 4. Apply the same manifest-driven procedure as the Claude Code and Cursor sync-template artefacts:
    - Check for `sync-manifest.yaml` at the template root after resolving the template source.
    - If found, use `categories.always_sync`, `categories.special_handling`, and `categories.project_specific` from the manifest.
+   - If found and `rename_detections` is present, apply the rename cleanup detection defined in the protocol's "Rename cleanup detection" section (Step 2) and display the "Rename cleanup" section in Step 3 when candidates are found.
    - If absent, fall back to the embedded file list in the protocol and display the warning message.
    - For mixed-content files (`mixed_content: true`, `annotation_scheme: html_comments`), apply the extraction logic defined in the protocol's "Mixed-content extraction logic" section.
 5. Present the structured sync summary (always-sync counts, new/modified/up-to-date breakdown) before asking for confirmation.

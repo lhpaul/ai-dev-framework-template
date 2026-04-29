@@ -287,6 +287,54 @@ detected. When a human instructs override, the orchestrator logs the override an
 batch summary with a warning: "Human override: tool-fix ordering hazard acknowledged for item
 #N. Dispatching in parallel."
 
+### Same-batch file-level conflict detection
+
+**Scope** (BR-1): Conflict detection applies only to implementation items — branches with prefix
+`feature/`, `fix/`, `refactor/`, or `hotfix/`. Spec and plan items are never subject to
+file-level conflict serialization.
+
+**Detection source**: `workflow-batch-plan.sh` emits `FILE_SET=<comma-separated paths>` or
+`FILE_SET=unknown` for each implementation item (i.e., items where `NEXT_ACTION=implement` or
+`NEXT_ACTION=resolve-development-pr`). The `FILE_SET` value is derived from the explicit file
+list in the item's implementation plan document (`2_*_implementation-plan.md`). Items without a
+plan document, or whose plan contains no extractable file list, receive `FILE_SET=unknown`.
+
+**Conflict definition** (BR-2): A conflict exists between two items when their declared file
+sets share at least one common path. Paths are compared as normalized, repo-root-relative strings
+(forward slashes, no leading slash).
+
+**Serialization rule** (BR-4 / BR-5): When a conflict is detected, the lower-priority item is
+moved to the next serial sub-batch. The higher-priority item remains in the current batch.
+Priority is determined by the orchestrator using the following ordered tiebreakers:
+
+1. Item priority level: Urgent > High > Normal > Low (orchestrator applies from tracker data)
+2. Creation date: the older item (earlier creation date) stays in the current batch
+   (orchestrator applies from tracker data or development folder timestamp prefix)
+3. Branch name lexicographic order: the lexicographically earlier branch name stays
+   (this tiebreaker is what `workflow-batch-plan.sh`'s `detect_file_conflicts` helper
+   implements; the orchestrator must apply tiers 1 and 2 before delegating to the helper,
+   or override the helper's `SERIALIZE` output when tracker data indicates a higher-priority
+   item was incorrectly serialized)
+
+The batch summary must list the conflicting item pair, the overlapping file path(s), and the
+resulting batch assignment for each item (BR-7).
+
+**Unknown-set handling** (BR-3): Items with `FILE_SET=unknown` are not automatically serialized
+but are flagged in the batch summary with a warning noting that file-level conflict detection was
+not possible for that item (no plan document, or plan contains no extractable file list). The
+batch proceeds as-is with the unknown-set items included.
+
+**Human override** (BR-6): The orchestrator must **never** autonomously dispatch an override.
+Only an explicit human instruction enables parallel dispatch when a conflict has been detected.
+When a human instructs override, the orchestrator logs the override and annotates the batch
+summary with a warning.
+
+**Ordering relative to tool-fix check** (BR-8): Conflict detection runs **after** the tool-fix
+ordering check (above). Items already serialized by the tool-fix rule are excluded from the
+conflict-detection input set for the current batch. The orchestrator (or the calling code) must
+pre-filter tool-fix-serialized items before passing the remaining batch to the
+`detect_file_conflicts` helper.
+
 **Codex fallback**:
 
 If the runner cannot execute multiple Work Item Runners concurrently, preserve the same batching decision but process that batch sequentially. Report the fallback explicitly in the summary.
@@ -306,6 +354,134 @@ For each item in the batch, prepare a short handoff:
 **When batching items for parallel dispatch**: Each item in a parallel batch **must** run in its own isolated worktree (or checked-out copy) to prevent branch contamination, PR cross-pollution, and shared-state conflicts between concurrent agents.
 
 Do **not** dispatch multiple Work Item Runners to operate in the same working directory.
+
+---
+
+## Step 3.3: Pre-Dispatch Environment Validation (Parallel Batches Only)
+
+Before building the worktree per-item pre-flight (Step 3.5), run two portfolio-wide environment checks. Both checks must pass before any Work Item Runner is dispatched.
+
+### Check 1: Stale orphaned worktrees
+
+Scan the full worktree list for orphaned entries — worktrees whose branch is either merged, closed, or no longer needed by the current batch. These lock the `.git` index against concurrent operations and prevent clean worktree creation for items in the new batch.
+
+```bash
+# List all registered worktrees and their branches, excluding the main worktree
+# (Resolve REPO_ROOT to an absolute path; use exact awk comparison to avoid
+# prefix-match false exclusions for nested worktrees under the repo root)
+REPO_ROOT=$(cd "$(git rev-parse --git-common-dir)/.." && pwd)
+git worktree list --porcelain \
+  | awk -v root="$REPO_ROOT" '/^worktree / { wt=$2 } /^branch / { b=$2; sub("^refs/heads/","",b); if (wt != root) print wt "\t" b }'
+```
+
+For each worktree found, check whether its branch has already been merged to the integration branch (i.e., the PR is merged and the branch is no longer active):
+
+```bash
+# For each candidate worktree branch <branch>:
+# A branch is "stale" if its PR was merged and no matching open PR exists any more
+gh pr list --state merged --head <branch> --json number,mergedAt --jq '.[0] | .number'
+# Non-empty output → merged; the worktree is stale and safe to remove
+```
+
+**Stale detection criteria** (a worktree is stale when **any** of the following is true):
+
+- Its branch has a merged PR (`gh pr list --state merged --head <branch>` returns a result)
+- Its branch has a closed PR with no open successor (`gh pr list --state all --head <branch>` shows only closed PRs)
+- Its branch no longer exists on the remote and is not part of the current batch (`git ls-remote --exit-code origin <branch>` returns non-zero)
+
+**Action when stale worktrees are found:**
+
+1. List every stale worktree with its path and branch name.
+2. Report them to the human with suggested cleanup commands:
+
+   ```bash
+   git worktree remove --force <worktree-path>   # use --force only when the worktree is locked
+   ```
+
+3. **Do not auto-remove** worktrees without human confirmation — a locked worktree may contain in-progress work that the human has not discarded yet.
+4. If the human confirms cleanup, remove each stale worktree and then continue.
+5. If the human cannot confirm at this time, **hold the batch dispatch** and report the blocking condition. Do not attempt to create new worktrees until the stale ones are resolved, as locked worktrees can interfere with subsequent `git worktree add` calls.
+
+**Worktrees that belong to the current batch**: Do not flag an active worktree as stale if its branch is one of the branches about to be dispatched. Those are handled by the per-item Step 3.5 check.
+
+### Check 2: Unsynced or diverged integration branch
+
+Before dispatching any Work Item Runner, verify that the local integration branch is in sync with `origin`. New feature/fix branches are cut from the local integration branch; if the local branch has commits that are not yet on `origin`, those commits will appear in every new implementation PR's diff, causing incorrect diffs and confusing reviewers. Conversely, if `origin` has commits that are not on the local branch, new branches will be cut from a stale base.
+
+```bash
+INTEGRATION_BRANCH="develop"   # or read from .ai-dev-workflow.yaml if a config key exists
+
+# Fetch latest remote state (idempotent, safe to run at the start of every batch)
+git fetch origin
+
+# Count commits in each direction
+AHEAD=$(git rev-list --count "origin/${INTEGRATION_BRANCH}..${INTEGRATION_BRANCH}" 2>/dev/null || echo "0")
+BEHIND=$(git rev-list --count "${INTEGRATION_BRANCH}..origin/${INTEGRATION_BRANCH}" 2>/dev/null || echo "0")
+
+echo "Integration branch '${INTEGRATION_BRANCH}': ${AHEAD} commit(s) ahead of origin, ${BEHIND} commit(s) behind origin."
+```
+
+**Four divergence states and required actions:**
+
+**State 1 — In sync** (`AHEAD=0, BEHIND=0`): Safe to proceed. Continue to Step 3.5.
+
+**State 2 — Local ahead only** (`AHEAD>0, BEHIND=0`): The local integration branch has commits not yet pushed to `origin`. New branches cut from this state will carry those unpushed commits into every PR diff.
+
+1. Report to the human: the local `<integration-branch>` is `N` commits ahead of `origin/<integration-branch>`.
+2. Show the top commits on the local side:
+   ```bash
+   git log --oneline "origin/${INTEGRATION_BRANCH}..${INTEGRATION_BRANCH}"
+   ```
+3. Ask the human to push the pending commits before batch dispatch:
+   ```bash
+   git push origin <integration-branch>
+   ```
+4. **Block batch dispatch** until either:
+   - The human pushes the pending commits (re-run the check after push; `AHEAD` must be `0`)
+   - The human explicitly acknowledges the risk and instructs the orchestrator to proceed anyway (log this override in retrospective notes)
+
+**State 3 — Local behind only** (`AHEAD=0, BEHIND>0`): `origin` has commits the local branch does not have. A fast-forward pull is safe.
+
+1. Report to the human: the local `<integration-branch>` is `N` commits behind `origin/<integration-branch>`. A fast-forward pull is available.
+2. Show the top commits on the remote side:
+   ```bash
+   git log --oneline "${INTEGRATION_BRANCH}..origin/${INTEGRATION_BRANCH}"
+   ```
+3. Suggest the safe resolution:
+   ```bash
+   git pull origin <integration-branch>   # fast-forward safe (no local diverging commits)
+   ```
+4. **Block batch dispatch** until either:
+   - The human pulls the pending commits (re-run the check after pull; `BEHIND` must be `0`)
+   - The human explicitly acknowledges the risk and instructs the orchestrator to proceed anyway (log this override in retrospective notes)
+
+**State 4 — True divergence** (`AHEAD>0, BEHIND>0`): Both the local branch and `origin` have commits the other does not. This is the most dangerous state — new branches cut from local will carry diverging commits into PRs, and a simple pull or push would create a merge commit on a shared branch.
+
+1. Report to the human: the local `<integration-branch>` has `N` commit(s) not on `origin` and `M` commit(s) from `origin` not applied locally (true divergence).
+2. Show the top commits on each side:
+   ```bash
+   # Local-only commits (what local has that origin does not)
+   git log --oneline "origin/${INTEGRATION_BRANCH}..${INTEGRATION_BRANCH}"
+   # Origin-only commits (what origin has that local does not)
+   git log --oneline "${INTEGRATION_BRANCH}..origin/${INTEGRATION_BRANCH}"
+   ```
+3. Present the resolution options to the human — **do not choose automatically**:
+
+   | Option | Command | When to use |
+   |---|---|---|
+   | Rebase local onto origin | `git rebase origin/<integration-branch>` | Local commits are unpublished or belong to you; you want a linear history |
+   | Merge origin into local | `git merge origin/<integration-branch>` | You want to preserve both histories with a merge commit |
+   | Reset local to origin | `git reset --hard origin/<integration-branch>` | Local commits are safe to discard (e.g., already merged via another path); **destructive** |
+
+4. **Block batch dispatch** until the human selects and applies one of the above options and the check re-runs with `AHEAD=0, BEHIND=0` (or `AHEAD>0, BEHIND=0` if the human chose rebase/merge and still needs to push). Require explicit human choice — do not auto-apply any resolution.
+
+**Safe condition**: `AHEAD=0, BEHIND=0` — the integration branch is fully in sync with `origin`. Proceed to Step 3.5.
+
+### Check ordering and gating
+
+Run Check 1 and Check 2 in parallel. Both must pass (or be explicitly acknowledged by the human) before proceeding to the per-item Step 3.5 checks and batch dispatch.
+
+If either check identifies a blocking condition, report **both** results together so the human can resolve all issues in a single interaction rather than being interrupted twice.
 
 ---
 
@@ -484,20 +660,28 @@ gh api graphql -f query='
   }' -F owner=<owner> -F repo=<repo> -F number=<pr_number>
 ```
 
-Verify all of the following. If any check fails, the PR is **not ready** — treat it the same as `needs-fixes` and return the item to active supervision:
+Verify all of the following. If any check fails, apply the remediation action in the table below — **do not redispatch the agent for label-only gaps**:
 
-| Check | Pass condition |
-|---|---|
-| Base branch | `develop` for `feature/*`, `fix/*`, `refactor/*`, `spec/*`, `implementation-plan/*`; `main` for `hotfix/*` |
-| PR is non-draft | `isDraft: false` |
-| `ready-for-human-review` label | Present |
-| `ready-for-regression` label | Present on `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PRs; not required for `spec/*`, `implementation-plan/*` |
-| No `needs-fixes` label | Absent |
-| All automated-reviewer `reviewThreads` resolved | GraphQL `reviewThreads.nodes[].isResolved=true` (or `✅ Addressed` in body) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured) |
-| Automated reviewer loop summary comment | At least one PR comment containing "Automated Reviewer Loop Summary" or "No blocking PR feedback" (skip this check only when Step 7 was `skipped` because no review platforms are configured) |
-| CI checks | All required status checks are green (`state: SUCCESS` or `conclusion: success`) |
+| Check | Pass condition | Remediation if failing |
+|---|---|---|
+| Base branch | `develop` for `feature/*`, `fix/*`, `refactor/*`, `spec/*`, `implementation-plan/*`; `main` for `hotfix/*` | Redispatch agent to rebase onto the correct base |
+| PR is non-draft | `isDraft: false` | Run `gh pr ready <pr_number>` directly; log as protocol deviation |
+| `ready-for-human-review` label | Present | Apply directly: `gh pr edit <pr_number> --add-label "ready-for-human-review"` (after all other checks pass) |
+| `ready-for-regression` label | Present on `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PRs; not required for `spec/*`, `implementation-plan/*` | **Apply directly** (primary enforcement point): `gh pr edit <pr_number> --add-label "ready-for-regression"`. Log as protocol deviation: `PROTOCOL_DEVIATION: ready-for-regression was missing on PR #<N> — applied by orchestrator Step 5.1`. **Do not redispatch the agent for this gap alone.** |
+| No `needs-fixes` label | Absent | Remove: `gh pr edit <pr_number> --remove-label "needs-fixes"` (only after CI and reviews are confirmed clean) |
+| All automated-reviewer `reviewThreads` resolved | GraphQL `reviewThreads.nodes[].isResolved=true` (or `✅ Addressed` in body) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured) | Redispatch agent to address unresolved threads |
+| Automated reviewer loop summary comment | At least one PR comment containing "Automated Reviewer Loop Summary", "Reviewer Loop Summary", or "No blocking PR feedback" (skip this check only when Step 7 was `skipped` because no review platforms are configured) | Redispatch agent to run Step 7 to completion |
+| CI checks | All required status checks are green (`state: SUCCESS` or `conclusion: success`) | Redispatch agent to fix failing checks |
 
-If a check fails:
+**`ready-for-regression` direct-apply rule**: This label is the primary enforcement point for the regression CI gate. If the agent applied `ready-for-human-review` but omitted `ready-for-regression`, the orchestrator:
+
+1. Applies the label directly: `gh pr edit <pr_number> --add-label "ready-for-regression"`
+2. Logs the deviation: `PROTOCOL_DEVIATION: ready-for-regression was missing on PR #<N> — applied by orchestrator Step 5.1`
+3. **Re-polls CI** — the label triggers the `e2e-regression.yml` workflow. The CI check row in this verification table was evaluated _before_ the label was applied, so the e2e check was not yet in `statusCheckRollup`. After applying the label, wait for CI to settle using `pr-ci-loop.sh <pr_number>` before re-running this verification. Do not mark the PR ready until the re-polled CI check is green.
+
+Do not redispatch the agent for a missing label alone — the label is applied directly here. Redispatching is only required when there are substantive gaps (wrong base branch, unresolved review threads, missing reviewer loop summary, failing CI).
+
+If a check requires agent redispatch:
 
 1. Log the specific failure in your retrospective notes (see "Retrospective notes during supervision" below).
 2. Remove `ready-for-human-review` if it is present: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.
@@ -535,7 +719,7 @@ gh pr view <pr_number> --json isDraft,labels,comments \
     isDraft: .isDraft,
     hasRegressionLabel: ([.labels[].name] | any(. == "ready-for-regression")),
     hasReadyLabel: ([.labels[].name] | any(. == "ready-for-human-review")),
-    hasReviewSummary: ([.comments[].body] | any(test("Automated Reviewer Loop Summary|No blocking PR feedback")))
+    hasReviewSummary: ([.comments[].body] | any(test("Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback")))
   }'
 ```
 
@@ -565,18 +749,32 @@ This pattern also applies to PRs where an agent timed out mid-CI-loop: detect vi
 
 **Timing**: Run this check immediately after each Work Item Runner returns — **before** Step 5.1 (PR verification), before dispatching the next Work Item Runner, and before any orchestrator action that assumes the integration branch context (e.g., invoking batch-merge, pushing to `develop`). A leaked branch state in the main working tree can silently corrupt subsequent operations if not caught here.
 
+**CWD safety: always derive `MAIN_REPO_ROOT` using `--git-common-dir`**
+
+After a Work Item Runner completes, the shell's CWD may be inside an isolated worktree directory (`.claude/worktrees/<id>/`). Using `git rev-parse --show-toplevel` from that context returns the *worktree* path rather than the main repo root, causing every `git -C` command below to run against the wrong tree and producing false results (wrong branch, phantom dirty files, or a spurious Case 1 auto-correct). Use `git rev-parse --git-common-dir` instead — it always resolves to the `.git` directory of the *main* repo regardless of the current working directory:
+
+```bash
+# Always safe — returns an absolute main repo root path even when CWD is inside a worktree
+MAIN_REPO_ROOT="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"
+```
+
+The `cd ... && pwd` wrapper is required to canonicalize the path to an absolute string: without it, `git rev-parse --git-common-dir` returns `.git` (a relative path) when run from the main repo root, and the resulting `MAIN_REPO_ROOT=".git/.."` resolves relative to wherever the shell's CWD is at the time — defeating the fix if the stored value is used after CWD has changed.
+
+Store `MAIN_REPO_ROOT` before dispatching any Work Item Runner (while CWD is definitely at the main repo root) and reuse it in the check below. If the value was not stored ahead of time, derive it immediately after the runner returns using the `--git-common-dir` form above — **never** use `git rev-parse --show-toplevel` for this purpose inside the Step 5.2 block.
+
 After each Work Item Runner returns in a **parallel batch**, immediately check the main working tree's branch and cleanliness. Handle all four postcondition states:
 
 ```bash
 INTEGRATION_BRANCH="develop"  # or read from .ai-dev-workflow.yaml integration_branch field
-MAIN_BRANCH=$(git -C <main-repo-root> rev-parse --abbrev-ref HEAD)
-MAIN_STATUS=$(git -C <main-repo-root> status --porcelain)
+# MAIN_REPO_ROOT must be an absolute path derived via --git-common-dir (see CWD safety note above)
+MAIN_BRANCH=$(git -C "$MAIN_REPO_ROOT" rev-parse --abbrev-ref HEAD)
+MAIN_STATUS=$(git -C "$MAIN_REPO_ROOT" status --porcelain)
 
 if [ "$MAIN_BRANCH" != "$INTEGRATION_BRANCH" ] && [ -z "$MAIN_STATUS" ]; then
   # Case 1: Wrong branch + clean — auto-correct
   echo "GUARDRAIL: main working tree was on '$MAIN_BRANCH' after agent for item <item-id> returned. Expected '$INTEGRATION_BRANCH'. Auto-correcting."
   echo "Record as guardrail violation in retrospective notes: item <item-id> left main tree on wrong branch."
-  git -C <main-repo-root> switch "$INTEGRATION_BRANCH"
+  git -C "$MAIN_REPO_ROOT" switch "$INTEGRATION_BRANCH"
   # Proceed normally after correction
 
 elif [ "$MAIN_BRANCH" != "$INTEGRATION_BRANCH" ] && [ -n "$MAIN_STATUS" ]; then
@@ -610,6 +808,19 @@ fi
 
 If the main working tree is clean and on the correct branch (Case 3), proceed normally with Step 5.1 (PR verification) and then with the next Work Item Runner dispatch if any remain in the batch.
 
+**Recurrence tracking (post-PR #345):**
+
+PR #345 (merged into `develop`) added a worktree pre-op checklist to `91-orchestrate-work-protocol.md` to prevent agents from running git state-changing commands in the main working tree instead of their isolated worktree. PR #411 followed up by adding a runtime CWD guard script (`scripts/development-workflow/worktree-cwd-guard.sh`) that catches branch-switching commands issued from the wrong directory at execution time rather than only at post-agent inspection. Step 5.2 violations should be rare when both mitigations are active.
+
+When Step 5.2 fires (Case 1 — wrong branch + clean):
+
+1. Record the violation in the batch's retrospective notes, including the item ID, the branch the main tree was on, and the batch date.
+2. **After every 5 batches** following the merge of PR #411, tally the number of Step 5.2 Case 1 violations across those batches. If the count exceeds **1 violation per 5 batches**, escalate to the human with the following message:
+
+   > `ESCALATION: Step 5.2 (branch-leak guardrail) has fired more than once in the last 5 batches after the PR #411 runtime CWD guard was merged. Current count: N. Investigate whether the worktree-cwd-guard.sh script was sourced and initialised correctly in the affected batch items (see Protocol 91 Step 3 "Runtime CWD guard" block). If the guard was active, the violation may indicate a new failure mode not yet covered by the guard — escalate for human analysis and a follow-up fix.`
+
+3. Do **not** suppress or defer this escalation — it is a signal that the runtime guard needs to be reviewed or extended to cover the new failure mode.
+
 ### Retrospective notes during supervision
 
 As you supervise the batch, **proactively save issues, human corrections, and anomalies to memory** (e.g., a `project_batchN_retro_notes.md` memory file) as they happen — do not wait until the retrospective to reconstruct what went wrong. Record:
@@ -618,6 +829,7 @@ As you supervise the batch, **proactively save issues, human corrections, and an
 - What went wrong (wrong base branch, missing label, incomplete review loop, etc.)
 - What the root cause was (agent skipped a step, protocol gap, timeout, etc.)
 - Whether the human had to intervene and how
+- **Step 5.2 tally**: if Step 5.2 fired (Case 1 — wrong branch + clean) for any item, record it explicitly so the recurrence counter above can be maintained across batches.
 
 These notes feed directly into the post-merge retrospective and provide context that GitHub data alone cannot capture.
 
@@ -636,7 +848,7 @@ For each PR in the batch, inspect the "Automated Reviewer Loop Summary" comment 
 ```bash
 # Check whether a PR's reviewer loop summary indicates CodeRabbit skipped with no_review
 gh pr view <pr_number> --json comments \
-  --jq '[.comments[].body | select(test("Automated Reviewer Loop Summary"))] | last // ""' \
+  --jq '[.comments[].body | select(test("Automated Reviewer Loop Summary|Reviewer Loop Summary"))] | last // ""' \
   | grep -qiE "REASON=no_review|skipped \(no_review\)"
 ```
 
@@ -735,6 +947,9 @@ The orchestrator prepares and validates the batch but **does not merge autonomou
 
 ## Step 6: Notify Humans
 
+> **STOP — retrospective timing rule (read before writing the summary):**
+> Do **NOT** include a retrospective offer anywhere in the batch summary below. PRs that are `ready-for-human-review` still need human review and merge — the batch is not complete yet. Offer the retrospective only **after** the human signals that the PRs have been merged (e.g., via `/batch-merge`, `/post-merge-cleanup`, or an explicit "they're merged" message). Including the retrospective offer in this summary is a guardrail violation.
+
 After all currently eligible items have reached a terminal condition, provide a consolidated summary:
 
 ```markdown
@@ -754,13 +969,27 @@ After all currently eligible items have reached a terminal condition, provide a 
 ### Blocked / Escalated
 - [Item F]: blocked by [Item G]
 - [Item H]: reviewer loop escalated after max cycles
+
+<!-- DO NOT add a retrospective offer here — see Step 6 timing rule above -->
 ```
+
+❌ **Do NOT append this to the summary:**
+> "Would you like to run a retrospective on this batch's work?"
+
+This offer belongs only after the human confirms PRs have been merged.
+Adding it here is a protocol violation even when it feels like a natural closing.
 
 Call out any sequential fallback caused by runner limitations so humans can distinguish a workflow constraint from a product dependency.
 
-Do **not** suggest a retrospective at this point. The batch is not fully complete yet — PRs that are `ready-for-human-review` still need human review and merge before the work is done.
+**Retrospective timing**: Do **not** suggest a retrospective at this point. The batch is not fully complete yet — PRs that are `ready-for-human-review` still need human review and merge before the work is done.
 
-Instead, suggest the retrospective **after the human confirms the PRs have been merged** (e.g., after running `/batch-merge`, `/post-merge-cleanup`, or an explicit "they're merged" signal). At that point, offer:
+---
+
+## Step 6.5: Post-Merge Follow-up
+
+**Trigger**: Run this step only after the human confirms that the batch PRs have been merged — for example, via `/batch-merge`, `/post-merge-cleanup`, or an explicit "they're merged" message. Do **not** run this step as part of the Step 6 summary.
+
+After merge is confirmed, offer the retrospective:
 
 > Would you like to run a retrospective on this batch's work?
 

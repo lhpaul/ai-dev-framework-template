@@ -23,6 +23,77 @@ Before starting, read:
 
 ---
 
+## Step 0: Template-Fit Check (Template Repositories Only)
+
+**Applies to**: Repositories where `.ai-dev-workflow.yaml` sets `template.is_template: true`.
+
+**When to run**: At the very start of this protocol — before writing any plan content,
+before the alignment conversation, and before inspecting the codebase for implementation
+details.
+
+**Purpose**: Catch framework-specific features early, before a full plan-writing cycle
+is wasted on work that will be immediately discarded.
+
+### Detection
+
+Read `.ai-dev-workflow.yaml`. If `template.is_template` is `true`, this repository is
+a framework template and this step is **mandatory**. If `template.is_template` is
+absent, `false`, or empty, skip this step entirely.
+
+Note: `template.repository` is a different field — it points to the **upstream**
+template that this repository was derived from (set by downstream consumer projects,
+not by the template itself). Do not use `template.repository` as the detection signal.
+
+### Evaluation criteria
+
+A spec (or work item brief) is **too framework-specific** for a generic template when
+it satisfies one or more of the following:
+
+- It references a specific language, runtime, or framework (e.g., React, Rails, Django,
+  Go, Vue, Angular, Spring Boot, Laravel) that is **not** part of the template's own
+  toolchain (i.e., not used by the template repository itself for its own workflow
+  tooling).
+- Its acceptance criteria, implementation steps, or examples are only meaningful to
+  downstream projects built on a particular technology stack.
+- Its primary value is providing a library-specific pattern, component, or integration
+  that only applies to consumers using one particular framework.
+
+A spec is **generic enough** if:
+
+- It improves the workflow tooling, documentation, protocols, or scripts that the
+  template itself ships.
+- It adds or improves something every downstream project would benefit from, regardless
+  of their tech stack.
+- Its acceptance criteria are expressed in framework-agnostic terms.
+
+### Action
+
+**If the spec passes the fit check** (generic enough): continue to Step 1 normally.
+No output or comment is required.
+
+**If the spec fails the fit check** (too framework-specific): surface the following
+warning to the human and **halt before writing any plan content**:
+
+> ⚠️ **Template-fit check failed**: This spec appears to be framework-specific
+> ([detected framework/technology]). Implementation plans in this template repository
+> should be generic and applicable to all downstream consumers regardless of their
+> tech stack. Writing a framework-specific plan wastes a full review cycle and the
+> work will likely be discarded.
+>
+> **Please confirm one of the following before proceeding:**
+>
+> 1. The spec is actually generic — explain why the framework reference does not make
+>    this template-specific, and I will proceed.
+> 2. The scope should be narrowed — describe how to make the spec generic, and I will
+>    write a plan for the narrowed scope.
+> 3. This item should be cancelled — close the issue as out-of-scope for the template.
+
+Do **not** proceed to Step 1 until the human has responded and confirmed one of the
+above options. Do **not** write any plan content, create any branch, or open any PR
+while this check is pending.
+
+---
+
 ## Step 1: Mandatory Alignment Conversation
 
 Before writing the plan, discuss the technical approach with the human. Work through the following items:
@@ -136,6 +207,62 @@ If none of these signals apply, skip this entire block.
 
 For acceptance intent and terminology, reference `docs/specs/developments/20260420120000_201-tech-lead-parser-regex-plan-requirements/1_201-tech-lead-parser-regex-plan-requirements_specs.md`.
 
+### Cross-cutting checklist plans: safety, quality, or compliance categories
+
+Treat this block as mandatory guidance whenever the plan **introduces or modifies a cross-cutting checklist** — defined as a safety, quality, or compliance category that applies across multiple independent feature implementations (e.g., a new async/concurrency safety checklist, a security review category, or a compliance verification gate added to the review or planning workflow).
+
+**Classification (cross-cutting checklist):** classify a plan as cross-cutting checklist when the Layer-by-Layer changes include:
+
+- Adding or renaming a checklist category in `REVIEW.md`, `02-generate-implementation-plan-protocol.md`, or any review/planning document
+- Updating acceptance criteria that every feature plan or implementation must satisfy (e.g., "all plans must include a concurrency safety section")
+- Introducing a new conditional guidance block in a planning or implementation protocol that applies based on a feature classification signal
+
+If none of these signals apply, skip this entire block.
+
+**Mandatory when cross-cutting checklist — Full file enumeration:** the plan's "Files to modify" section **must explicitly list every file** that needs updating. Do not list only the primary protocol file. At minimum, verify and include:
+
+- `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` — tech-lead planning protocol
+- `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` — developer implementation protocol
+- `.claude/agents/developer.md` — Claude Code developer agent
+- `.cursor/agents/developer.md` — Cursor developer agent
+- `.claude/agents/tech-lead.md` — Claude Code tech-lead agent (if the change affects planning behavior)
+- `.cursor/agents/tech-lead.md` — Cursor tech-lead agent (if the change affects planning behavior)
+- `REVIEW.md` — human and automated reviewer checklist
+- Any Codex skill files in `.codex/skills/` that invoke the affected stage (check `.codex/skills/workflow-plan-writer/SKILL.md`, `.codex/skills/workflow-implementer/SKILL.md`, and related skills)
+
+Run a live search before writing the enumeration to avoid omissions:
+
+```bash
+# Find all agent/skill files that reference the affected protocol
+grep -rl "02-generate-implementation-plan-protocol\|03-implement-development-protocol" .claude/agents/ .cursor/agents/ .codex/skills/
+```
+
+The tech-lead must explicitly include all applicable targets in the plan's "Files to modify" section rather than delegating discovery to the implementation agent.
+
+### Concurrent-event-source plans: async and concurrency safety
+
+Treat this block as conditional guidance. Apply it only when the plan introduces or modifies code with two or more concurrent event sources (e.g., real-time data listeners, network socket callbacks, timers or scheduled callbacks) that share mutable state.
+
+**Classification (concurrent-event-source):** classify a plan as concurrent-event-source when the Layer-by-Layer changes involve any of the following:
+
+- Two or more event listeners, socket callbacks, timers, or async queues that can execute concurrently
+- Shared mutable state (variables, collections, counters, caches) that multiple execution contexts can read or write
+- Initialization or teardown sequences that race with incoming events
+
+If none of these signals apply, skip this entire block.
+
+**Mandatory when concurrent-event-source — Checklist:** include a dedicated concurrency safety section in the plan. For each item below, document the design decision when the item applies, or note "not applicable" with a brief rationale:
+
+- **Shared mutable state guards**: how is shared state protected from concurrent reads/writes? (e.g., access serialized through a single async queue, ownership transferred on each event, copy-on-update)
+- **Re-entrancy / in-flight tracking**: can a second event arrive before the handler for the first event finishes? If yes, how is in-flight state tracked and new arrivals handled?
+- **Event deduplication**: can the same logical event fire more than once (e.g., reconnect triggers, duplicate callbacks)? If yes, how is deduplication handled?
+- **Listener and resource cleanup**: how are all registered listeners, timers, and handles removed when the feature is torn down or the component unmounts? What happens to in-flight operations at teardown?
+- **Race conditions at initialization**: can events arrive before initialization completes? If yes, what happens to those events?
+- **Race conditions at teardown**: can events arrive after teardown begins? If yes, how are they discarded or drained safely?
+- **Error propagation across async boundaries**: how are errors from async callbacks surfaced? Are unhandled rejections or uncaught exceptions in callbacks visible to the caller or swallowed silently?
+
+**Conditional — new concurrent patterns:** if the feature introduces concurrent event handling patterns not previously used in this codebase, note this explicitly and identify any architectural decisions that differ from existing patterns.
+
 ### Examples
 
 ```markdown
@@ -192,12 +319,13 @@ If no blocking human decision remains:
 
    > **Worktree note**: When running inside a git worktree (e.g., when dispatched by the Portfolio Orchestrator), `node_modules/` does not exist inside the worktree directory. The `$(git rev-parse --git-common-dir)/..` expression resolves to the main repo root in both the main tree and any worktree.
 
-6. Commit: `docs: add implementation plan for [feature-name]`
-7. Push: `git push -u origin implementation-plan/[branch-slug]`
-8. Open a **draft** PR targeting `develop` with:
+6. **Do NOT update CHANGELOG**: `implementation-plan/*` branches are exempt from CHANGELOG entries. The changelog policy only applies to `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches. Do not create or modify `CHANGELOG.md` in this PR.
+7. Commit: `docs: add implementation plan for [feature-name]`
+8. Push: `git push -u origin implementation-plan/[branch-slug]`
+9. Open a **draft** PR targeting `develop` with:
    - Title: `docs(plan): [feature-name]`
    - Body: summary of the approach, complexity estimate, key risks, link to plan and runbook
-9. Return the branch + PR details to the **Work Item Runner**
+10. Return the branch + PR details to the **Work Item Runner**
 
 ---
 

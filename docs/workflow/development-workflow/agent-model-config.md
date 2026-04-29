@@ -137,7 +137,7 @@ gh pr view <pr_number> --json isDraft,labels,comments,statusCheckRollup
 | PR is non-draft | The internal review gate (Step 7a) and `gh pr ready` completed |
 | `ready-for-regression` present | Step 7b applied the label |
 | `ready-for-human-review` present **but** no reviewer loop summary comment | **Incomplete** — the label was applied before Step 7 completed; the PR is not actually ready (**skip this check only when Step 7 was `skipped` because no review platforms are configured**) |
-| No comment containing `"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"` | Step 7 (external automated reviewers) did not finish (**skip this check only when no review platforms are configured**) |
+| No comment containing `"Automated Reviewer Loop Summary"`, `"Reviewer Loop Summary"`, or `"No blocking PR feedback"` | Step 7 (external automated reviewers) did not finish (**skip this check only when no review platforms are configured**) |
 | CI checks absent or in PENDING/FAILURE state | Step 8 (CI loop) did not finish |
 | `needs-fixes` label present | A prior run detected issues but the fix loop did not complete |
 

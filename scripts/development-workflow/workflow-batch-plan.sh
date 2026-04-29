@@ -111,6 +111,184 @@ classify_tool_fix() {
   fi
 }
 
+# extract_file_set <development-folder-path>
+#
+# Extracts the declared file set from a development folder's implementation plan.
+# Looks for a heading matching /files\s+(to\s+(be\s+)?)?modified/i and extracts
+# paths from the subsequent fenced code block or bullet list.
+#
+# Emits:
+#   unknown                         — no plan found, or no extractable file list
+#   <comma-separated sorted paths>  — normalized repo-root-relative paths
+extract_file_set() {
+  local dev_path="$1"
+  local plan_file
+  plan_file="$(find "$dev_path" -maxdepth 1 -name '2_*_implementation-plan.md' | head -1)"
+  if [ -z "$plan_file" ]; then
+    printf 'unknown\n'
+    return 0
+  fi
+
+  local paths
+  paths="$(python3 - "$plan_file" <<'PYEOF'
+import sys, re
+text = open(sys.argv[1]).read()
+# Find heading matching "files (to (be )?)?modified" (case-insensitive)
+# Must not match headings like "files that will be modified later"
+heading_re = re.compile(r'#+\s+files\s+(to\s+(be\s+)?)?modified\s*$', re.IGNORECASE)
+paths = []
+lines = text.splitlines()
+i = 0
+while i < len(lines):
+    if heading_re.search(lines[i]):
+        i += 1
+        # Skip blank lines between heading and content block
+        while i < len(lines) and not lines[i].strip():
+            i += 1
+        # Try fenced code block
+        if i < len(lines) and lines[i].startswith('```'):
+            i += 1
+            while i < len(lines) and not lines[i].startswith('```'):
+                p = lines[i].strip()
+                if p:
+                    paths.append(p.lstrip('/').replace('\\', '/'))
+                i += 1
+            if i < len(lines):
+                i += 1  # skip closing backticks
+        else:
+            # Bullet list: consume consecutive "- " or "* " lines (blank lines skipped)
+            while i < len(lines):
+                stripped = lines[i].strip()
+                if not stripped:
+                    i += 1
+                    continue
+                if lines[i].startswith('- ') or lines[i].startswith('* '):
+                    p = lines[i][2:].strip()
+                    if p:
+                        paths.append(p.lstrip('/').replace('\\', '/'))
+                    i += 1
+                else:
+                    break
+    else:
+        i += 1
+seen = set()
+deduped = [p for p in paths if not (p in seen or seen.add(p))]
+print(','.join(sorted(deduped)) if deduped else 'unknown')
+PYEOF
+  )"
+  printf '%s\n' "$paths"
+}
+
+# detect_file_conflicts
+#
+# Detects file-level conflicts between implementation items in a proposed
+# parallel batch.  Accepts arguments in the form:
+#   <item-id>:<comma-separated file set>
+# where file set may be "unknown".
+#
+# CONSTRAINT: item-ids must not contain colons.  In practice, Protocol 90 passes
+# development folder slugs (e.g. "324-parallel-batch-file-conflict-detection") or
+# branch names (e.g. "feature/324-foo").  Neither format includes colons.
+# The colon is the separator between item-id and file-set; a colon in the item-id
+# would cause silently wrong parsing.
+#
+# Items whose file set is "unknown" are not automatically serialized but are
+# flagged via CONFLICT_UNKNOWN output lines.
+#
+# For each conflicting pair of items (both with known file sets that share at
+# least one path), emits:
+#   CONFLICT_PAIR=<higher-priority-id>,<lower-priority-id>
+#   CONFLICT_FILES=<comma-separated overlapping paths>
+#   SERIALIZE=<lower-priority-id>
+#
+# For each item with an unknown file set, emits:
+#   CONFLICT_UNKNOWN=<item-id>
+#
+# Serialization tiebreaker implemented here (BR-5 tier 3):
+#   Lexicographically earlier item-id stays (earlier = higher priority).
+#
+# BR-4/BR-5 tiers 1-2 (priority level and creation date) are the responsibility
+# of the Protocol 90 orchestrator, which has access to tracker data.  The
+# orchestrator must apply tiers 1-2 before calling this helper and may override
+# SERIALIZE decisions when tracker data indicates a higher-priority item was
+# incorrectly serialized by the lexicographic tiebreaker.
+#
+# Implementation note: uses parallel indexed arrays (item_ids / item_file_sets)
+# instead of associative arrays to remain compatible with bash 3.x (macOS default).
+detect_file_conflicts() {
+  local -a item_ids=()
+  local -a item_file_sets=()
+
+  for arg in "$@"; do
+    local item_id="${arg%%:*}"
+    local file_set="${arg#*:}"
+    item_ids+=("$item_id")
+    item_file_sets+=("$file_set")
+  done
+
+  local total="${#item_ids[@]}"
+
+  # Emit CONFLICT_UNKNOWN for unknown-set items
+  local idx
+  for ((idx = 0; idx < total; idx++)); do
+    if [ "${item_file_sets[$idx]}" = "unknown" ]; then
+      print_kv CONFLICT_UNKNOWN "${item_ids[$idx]}"
+    fi
+  done
+
+  # Pairwise conflict detection for items with known file sets.
+  # Build index lists for known-set items.
+  local -a known_indices=()
+  for ((idx = 0; idx < total; idx++)); do
+    if [ "${item_file_sets[$idx]}" != "unknown" ]; then
+      known_indices+=("$idx")
+    fi
+  done
+
+  local n="${#known_indices[@]}"
+  local i j
+  for ((i = 0; i < n; i++)); do
+    for ((j = i + 1; j < n; j++)); do
+      local ix_a="${known_indices[$i]}"
+      local ix_b="${known_indices[$j]}"
+      local id_a="${item_ids[$ix_a]}"
+      local id_b="${item_ids[$ix_b]}"
+      local set_a="${item_file_sets[$ix_a]}"
+      local set_b="${item_file_sets[$ix_b]}"
+
+      # Compute intersection
+      local overlap
+      overlap="$(python3 - "$set_a" "$set_b" <<'PYEOF'
+import sys
+a = set(sys.argv[1].split(',')) if sys.argv[1] else set()
+b = set(sys.argv[2].split(',')) if sys.argv[2] else set()
+common = sorted(a & b)
+print(','.join(common))
+PYEOF
+      )"
+
+      if [ -n "$overlap" ]; then
+        # Determine which item to serialize (lower priority).
+        # Compare by lexicographic branch name as tiebreaker (BR-5).
+        # The lexicographically smaller (earlier) branch name has higher priority
+        # and stays in the current batch; the larger (later) name is serialized.
+        local serialize_id higher_id
+        if [[ "$id_a" > "$id_b" ]]; then
+          serialize_id="$id_a"
+          higher_id="$id_b"
+        else
+          serialize_id="$id_b"
+          higher_id="$id_a"
+        fi
+
+        print_kv CONFLICT_PAIR "${higher_id},${serialize_id}"
+        print_kv CONFLICT_FILES "$overlap"
+        print_kv SERIALIZE "$serialize_id"
+      fi
+    done
+  done
+}
+
 # extract_github_issue_number <development-folder-path>
 #
 # Extracts the GitHub issue number from the spec or plan markdown files in a
@@ -193,18 +371,42 @@ for development_path in "${development_paths[@]}"; do
   slug="$(basename "$development_path" | sed 's/^[0-9]\{14\}_//')"
 
   # Skip development folders whose tracker status is terminal (Released, Merged,
-  # Cancelled).  When GitHub Projects is configured (GITHUB_PROJECT_NUMBER set),
-  # query the tracker for each candidate and skip stale folders early — before
-  # running the more expensive workflow-next-action.sh call.
-  if [ -n "${GITHUB_PROJECT_NUMBER:-}" ]; then
-    issue_number="$(extract_github_issue_number "$development_path")"
-    if [ -n "$issue_number" ]; then
-      tracker_status="$(get_tracker_status_for_issue "$issue_number")"
-      if is_terminal_tracker_status "$tracker_status"; then
-        echo "Skipping $development_path: tracker status is terminal ('$tracker_status') for issue #$issue_number" >&2
-        continue
-      fi
+  # Cancelled).  When GitHub Projects is configured (GITHUB_PROJECT_NUMBER env var
+  # or issue_tracker.project_number in .ai-dev-workflow.yaml), query the tracker
+  # for each candidate and skip stale folders early — before running the more
+  # expensive workflow-next-action.sh call.
+  # get_tracker_status_for_issue returns empty string gracefully when no project
+  # is configured, so we can call it unconditionally.
+  issue_number="$(extract_github_issue_number "$development_path")"
+  if [ -z "$issue_number" ]; then
+    # No issue number found — cannot cross-check tracker.  Treat as Done/skip to
+    # avoid false Plan Ready noise from folders with spec+plan but no linked issue.
+    # These are typically legacy or manually-created folders without a numeric
+    # issue-number prefix in the slug and no "**Issue**: #NNN" reference in docs.
+    echo "Skipping $development_path: no issue number found (no tracker cross-check possible; treating as done)" >&2
+    tool_fix_output="$(classify_tool_fix "$development_path")"
+    tool_fix="$(printf '%s\n' "$tool_fix_output" | head -1)"
+    tool_fix_files=""
+    if [ "$tool_fix" = "yes" ]; then
+      tool_fix_files="$(printf '%s\n' "$tool_fix_output" | sed -n '2p')"
     fi
+    print_kv TARGET "development:$development_path"
+    print_kv DEVELOPMENT_PATH "$development_path"
+    print_kv SLUG "$slug"
+    print_kv STATUS "Done"
+    print_kv NEXT_ACTION "skip"
+    print_kv SKIP_REASON "no issue number found"
+    print_kv BATCH_HINT "manual-review"
+    print_kv PARALLEL_SAFE "no"
+    print_kv TOOL_FIX "$tool_fix"
+    [ "$tool_fix" = "yes" ] && print_kv TOOL_FIX_FILES "$tool_fix_files"
+    echo
+    continue
+  fi
+  tracker_status="$(get_tracker_status_for_issue "$issue_number")"
+  if is_terminal_tracker_status "$tracker_status"; then
+    echo "Skipping $development_path: tracker status is terminal ('$tracker_status') for issue #$issue_number" >&2
+    continue
   fi
 
   # Classify tool-fix BEFORE workflow-next-action.sh so TOOL_FIX is always
@@ -241,6 +443,14 @@ for development_path in "${development_paths[@]}"; do
     esac
   done <<< "$next_action_output"
 
+  # Extract file set for implementation-stage items only (BR-1).
+  file_set=""
+  case "$next_action" in
+    implement|resolve-development-pr)
+      file_set="$(extract_file_set "$development_path")"
+      ;;
+  esac
+
   print_kv TARGET "development:$development_path"
   print_kv DEVELOPMENT_PATH "$development_path"
   print_kv SLUG "$slug"
@@ -251,5 +461,6 @@ for development_path in "${development_paths[@]}"; do
   print_kv PARALLEL_SAFE "$(parallel_safe_for_action "$next_action")"
   print_kv TOOL_FIX "$tool_fix"
   [ "$tool_fix" = "yes" ] && print_kv TOOL_FIX_FILES "$tool_fix_files"
+  [ -n "$file_set" ] && print_kv FILE_SET "$file_set"
   echo
 done

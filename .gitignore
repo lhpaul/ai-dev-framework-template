@@ -12,6 +12,9 @@ Thumbs.db
 .claude/worktrees/
 .claude/scheduled_tasks.lock
 
+# Agent worktrees (parallel batch isolation)
+.worktrees/
+
 # Node
 node_modules/
 

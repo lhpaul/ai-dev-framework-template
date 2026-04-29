@@ -73,11 +73,60 @@ Do not assume the latest bot comment is the only active issue. A fixer may addre
 
 This prevents premature dismissal of findings and ensures the PR feedback tracking ledger accurately reflects substantive code changes.
 
+#### Commit SHA verification (mandatory before marking resolved)
+
+Before citing any commit SHA in a fix comment or marking a finding resolved in the PR feedback ledger, the agent **must** verify the commit actually exists in the repository:
+
+```bash
+git log --oneline | grep "^<short_sha>"
+# or equivalently:
+git rev-parse --verify <short_sha> 2>/dev/null && echo "exists" || echo "not found"
+```
+
+If the SHA is **not found**, the agent must **not** record it as the resolved commit and must **not** claim the finding is resolved. Instead:
+
+1. Run `git status` to check for uncommitted changes.
+2. If changes are present but not committed, commit them:
+   ```bash
+   git add <changed-files>
+   git commit -m "<commit message>"
+   REAL_SHA=$(git log --oneline -1 | awk '{print $1}')
+   ```
+3. Use the real SHA returned by `git log` — never a remembered or planned SHA.
+
+**Rationale**: An agent may edit files and internally track a planned commit SHA without ever running `git commit`. Citing a SHA that does not exist in `git log` produces a false audit trail, misleads human reviewers, and can result in the PR being labeled `ready-for-human-review` with uncommitted fixes that will be silently lost on branch cleanup.
+
+**Escalation**: If `git commit` fails (e.g., pre-commit hook rejection or empty diff), investigate and resolve the failure before marking any finding resolved. Do not fabricate a SHA or skip the commit step.
+
 #### Stale review after timeout
 
 Also handle the case where a platform posted blocking findings after a previous run timed out and the agent moved on: if those findings are still unresolved per the rules above, dispatch a fixer, wait for the push, then run the scripts.
 
 If unresolved findings exist: dispatch a fixer agent, wait for the push, then proceed to the scripts. Do not re-trigger the reviewer loop against stale findings — fix first.
+
+### Worktree discipline for fixer agents (`BATCH_CONTEXT=true`)
+
+When this protocol runs inside a worktree (the item was dispatched as part of a parallel batch, `BATCH_CONTEXT=true`), all fixer agents dispatched during the reviewer loop **must** stay inside the worktree. The same rules from Protocol 91 Step 3 "Critical: Worktree Git Discipline" apply here:
+
+- **Before any git state-changing command** (`git switch`, `git checkout`, `git commit`, `git push`, `git reset`, `git restore`): confirm the working directory is inside the worktree path, not the main repo root. Run `pwd` and compare against `<worktree-path>`.
+- **Never run `git checkout develop` or any base-branch switch** from inside the worktree — the base branch is already checked out in the main working tree and cannot be checked out in the worktree simultaneously.
+- When delegating a fixer subagent, pass the resolved `<worktree-path>` in the handoff and instruct the fixer to validate all `Write`/`Edit` tool call paths start with `<worktree-path>/`.
+
+Violations leave the main repo on a feature branch, breaking all subsequent agents and the human operator. The Portfolio Orchestrator's Step 5.2 check catches leaks after the fact, but prevention here avoids the need for correction.
+
+### Fixer agent batching rule (mandatory)
+
+Reviewer bots (e.g. Devin) start a new review cycle within 5–8 minutes of each push. Pushing after each individual fix means the reviewer starts re-reviewing stale state before all fixes are done, creating a "one cycle behind" pattern that can spin for 12+ review cycles on a single PR.
+
+**Required sequence for every fixer dispatch:**
+
+1. **Read ALL blocking findings first** — before editing any file, collect the complete list of open blocking findings from the current review cycle. Do not start fixing until you have the full picture.
+2. **Apply ALL addressable fixes** — implement every fix you can address in this dispatch, across all files and findings.
+3. **One commit, then push** — bundle every fix into a single commit and push exactly once per dispatch. Do not push after each individual fix.
+
+Findings that cannot be addressed in this dispatch (e.g. require a human decision, are out of scope, or are genuinely contradictory) should be noted. Do not withhold the push for unresolvable findings — push all the fixes you can, then document what remains.
+
+**When delegating to a fixer subagent**, include this rule explicitly in the subagent instruction so it knows not to push incrementally.
 
 ### Shell script fix verification (fixer agents)
 
@@ -93,6 +142,22 @@ If verification fails, iterate without pushing. When a prior attempt introduced 
 Execute **Step 7a: Internal Review Gate**, **Step 7: Automated Reviewer Loop**, **Step 8: CI Loop**, **Step 8a: Label Readiness Checklist**, **Step 8b: Update Tracker Status**, and **Step 8c: Post-Label Independent Verification** exactly as defined in `91-orchestrate-work-protocol.md` (scripts, result interpretation, sequential platform policy, fixer mapping, parameters, and labels). Do not duplicate that logic here — follow 91.
 
 For each PR: run Step 7a first. Step 7a runs **all** configured internal reviewers sequentially (per the `review.internal_reviewers` list in `.ai-dev-workflow.yaml`, with `.tmp/template-config.json` local overrides taking precedence). All internal reviewers must APPROVE before proceeding. Once Step 7a produces `APPROVED` from all internal reviewers, run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then run Step 7 to completion, then Step 7b (regression label, implementation PRs only), then Step 8. Dispatch fixers and re-run as specified in 91 until the PR is clean and ready for human review or escalated. After Step 8 returns `green`, run Step 8a (label readiness checklist — this is a **hard gate** that verifies non-draft status, `ready-for-regression` label on implementation PRs, and applies `ready-for-human-review`). Once Step 8a passes, run Step 8b to update tracker status, then run Step 8c (post-label independent verification — this is a **hard gate** that independently verifies actual PR state via `gh pr view` before reporting ready). Only after Step 8c passes should the PR be reported as ready for human review.
+
+### Re-query reviewThreads after each push (mandatory)
+
+**After every push that addresses reviewer feedback — including the final push before Step 8c — you MUST re-issue the GraphQL `reviewThreads` query (as defined in Protocol 91 Step 8c) before proceeding to check readiness.**
+
+Do not rely on thread state observed before the push. A bot reviewer (CodeRabbit, Devin, or any configured platform) may open new review threads within seconds of a push landing. These new threads will not be visible in any cached or pre-push snapshot.
+
+The sequence after each fixer push is:
+
+1. Push the fix commit.
+2. Wait for configured bot reviewers to process the push (as part of the `pr-review-loop.sh` poll cycle).
+3. **Re-issue the GraphQL `reviewThreads` query** (Protocol 91 Step 8c) to get the current thread state.
+4. If new unresolved threads are found: handle them before proceeding (dispatch a fixer or resolve via reply, then repeat from step 1).
+5. Only when the re-issued query returns no unresolved threads from configured bot reviewers: proceed to Step 7b (implementation PRs) then Step 8, then Step 8c.
+
+**This check is not optional and cannot be skipped, even when the review loop script reported `clean`.** The script checks review state (blocking inline comments and `CHANGES_REQUESTED` reviews), not the resolved/unresolved state of `reviewThreads`. New threads created by a push may appear after the script's poll window closes. The GraphQL query is the only authoritative source for thread resolution state.
 
 ### Stuck-loop detection and escalation
 

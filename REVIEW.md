@@ -68,6 +68,7 @@ Typical `blocking` issues:
 - Missing or ambiguous acceptance criteria
 - Contradictory business rules
 - Spec drift that would force engineering to guess
+- `CHANGELOG.md` is modified in this PR — `spec/*` branches are exempt from CHANGELOG entries; remove any CHANGELOG modification before merging
 
 Typical `important` issues:
 - Missing edge cases
@@ -96,22 +97,36 @@ Check:
     - Recognized directives
     - Allowed placement
     - Interpretation of multiple suppressions on one line
+- Concurrent-event-source completeness (when protocol `02-generate-implementation-plan-protocol.md` Step 3 concurrent-event-source signals apply):
+  - The plan includes a dedicated concurrency safety section
+  - Each of the seven checklist items is addressed or noted as not applicable with a brief rationale: shared mutable state guards, re-entrancy / in-flight tracking, event deduplication, listener and resource cleanup, race conditions at initialization, race conditions at teardown, and error propagation across async boundaries
+- Cross-cutting checklist completeness (when protocol `02-generate-implementation-plan-protocol.md` Step 3 cross-cutting checklist signals apply):
+  - The plan's "Files to modify" section explicitly enumerates all applicable targets: the developer implementation protocol, all agent/skill guidance files for tech-lead and developer roles, `REVIEW.md`, and any Codex skill files that invoke the affected stage
+  - The enumeration is not limited to the primary protocol file — no required target is missing
 - Documentation updates are listed or intentionally declared unnecessary
 - Seed data, generated artifacts, and follow-up tasks are called out when applicable
 - The proposed approach matches existing architecture and repo patterns
 - Testing and smoke-test coverage map back to acceptance criteria
+- Technical accuracy (applies to all plans that reference framework/runtime behavior, guards, config, or helpers):
+  - For each code sample, step-by-step instruction, or behavioral claim that references framework or runtime behavior (guards, middleware, config inheritance, scope, API contracts), identify the actual source file or authoritative reference that confirms the claim
+  - Verify each such claim against the real source files — not just against other parts of the plan document
+  - Flag any claim that cannot be verified from the codebase as "unverified — implementer must confirm before proceeding"
+  - Cross-reference consistency: line numbers, counts, and symbolic references (e.g., smoke test counts, Verification Log output counts, log line references) must be consistent across the plan document; flag any number or reference that cannot be confirmed against the codebase or a prior plan step
 
 Typical `blocking` issues:
 - Plan steps do not cover required acceptance criteria
 - The plan requires guessing at implementation details
 - The plan introduces unsafe or contradictory architecture decisions
 - A CHANGELOG literal in the Implementation Order uses conventional-commit format (`fix(scope): message`) instead of the project's `**Bold Title** (#N):` format
+- `CHANGELOG.md` is modified in this PR — `implementation-plan/*` branches are exempt from CHANGELOG entries; remove any CHANGELOG modification before merging
+- A behavioral claim about framework/runtime behavior (guard logic, config inheritance, scope, API contract) cannot be verified against the codebase and is not flagged as "unverified"
 
 Typical `important` issues:
 - Vague wording like "update as needed"
 - Missing documentation/test updates
 - Incomplete dependency or rollout notes
 - Verification steps in Implementation Order steps use complex shell commands that are hard to verify by reading: flag any multi-flag grep one-liner with exclusion scopes or self-referencing globs, hardcoded file counts that go stale, or broad exclusion patterns that may silently under-count. Suggest replacing with a human-readable "run and confirm output" assertion instead.
+- Numeric cross-references (line numbers, counts) in the plan that cannot be confirmed against source files or Verification Log output
 
 ---
 
@@ -140,6 +155,15 @@ Additional checks for **shell scripts** (`*.sh`):
 
 Additional checks for **database migrations** (when a migration adds or changes triggers, functions, or backfills):
 - **Trigger/backfill arithmetic parity**: If both a trigger and a backfill compute the same derived value, they must use the **same formula**, including guards such as `GREATEST`, `LEAST`, `COALESCE`, and null handling. A trigger that differs from its backfill is a latent production bug.
+
+Additional checks for **features with concurrent event sources** (when the PR introduces or modifies code where multiple execution contexts — listeners, timers, callbacks, async queues — can access shared mutable state):
+- **Shared mutable state guards**: shared state is protected from concurrent reads/writes by a consistent access pattern (e.g., serialized queue, ownership transfer, copy-on-update)
+- **Re-entrancy / in-flight tracking**: the handler correctly tracks or rejects concurrent in-flight operations when a second event can arrive before the first completes
+- **Event deduplication**: duplicate logical events (e.g., reconnect triggers, repeated callbacks) are deduplicated or idempotent
+- **Listener and resource cleanup**: all registered listeners, timers, and handles are removed at teardown; in-flight operations are drained or discarded safely
+- **Race conditions at initialization**: events that arrive before initialization completes are handled correctly (queued, dropped, or deferred with correct sequencing)
+- **Race conditions at teardown**: events that arrive after teardown begins are discarded or drained without causing errors or accessing freed state
+- **Error propagation across async boundaries**: errors from async callbacks are surfaced to the caller; unhandled rejections or uncaught exceptions in callbacks do not silently swallow failures
 
 Typical `blocking` issues:
 - Incorrect behavior

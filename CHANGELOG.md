@@ -29,9 +29,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-04-29
+
 ### Added
 
-- **Sync-template migration notes** (`sync-manifest.yaml`, sync-template skill and commands): `sync-manifest.yaml` gains a `migration_notes` section for versioned manual migration steps. The sync-template skill and command variants now read this section and present a required pre-sync checklist whenever the downstream project's `last_synced_version` predates a breaking structural change. First entry: `docs/ai/ → docs/workflow/` rename (v0.23.0). Fully backwards-compatible — silently skipped when no applicable notes exist.
+- **`codex-github` integration reviewer path** (#309): runner-agnostic internal reviewer that posts a trigger comment to a PR and polls for the Codex GitHub App bot response. Works from Claude Code, Cursor, headless CI, and Codex runner contexts.
+- **Parallel batch file-level conflict detection** (#324): batch orchestrator extracts declared file sets from implementation plans and automatically serializes items with overlapping files before dispatch.
+- **Async/concurrency safety checklist** (#348): conditional checklist in plan protocol and review contract for concurrent event sources — covers shared mutable state, re-entrancy, event deduplication, listener cleanup, and race conditions.
+- **Template-fit check in plan protocol** (#413): Step 0 gate verifies specs are sufficiently generic for template repositories before writing plan content. Prevents wasted cycles on framework-specific specs.
+- **Sync-template migration notes**: versioned manual migration steps in `sync-manifest.yaml` with pre-sync checklist presentation when downstream `last_synced_version` predates a breaking change.
+
+### Changed
+
+- **Bash 3.2 compatibility rule**: workflow scripts must avoid bash 4+-only syntax (`local -A`, `declare -A`, etc.) since macOS ships bash 3.2. Added to developer agent rules and Protocol 03 ShellCheck blocks.
+
+### Fixed
+
+#### Review verification gates
+
+- **GraphQL `reviewThreads` verification before `ready-for-human-review`** (#425): mandatory gate runs the query inline and blocks with exit code 4 if unresolved bot-authored threads exist.
+- **`ready-for-regression` verification before `ready-for-human-review`** (#424): hard blocking gate with exit code 3 prevents skipping Step 7b under token pressure.
+- **Re-query `reviewThreads` after each push** (#330): mandatory fresh query after every fixer push before proceeding to Step 7b/8.
+- **Commit SHA verification before marking findings resolved**: agents must confirm cited commits exist in `git log` before recording `resolved_commit`.
+
+#### Worktree isolation
+
+- **Runtime CWD guard** (#411): new `worktree-cwd-guard.sh` provides wrapper functions that assert CWD is inside the worktree before executing state-changing git commands.
+- **CWD safety for Step 5.2** (#383): `MAIN_REPO_ROOT` derived via `git-common-dir` instead of `--show-toplevel` to prevent false results when CWD drifts.
+- **Worktree discipline pre-operation checklist**: explicit confirmation required before state-changing git commands in Protocol 91, 93, and all four Protocol 03 branching paths.
+
+#### Batch merge and PR state
+
+- **`batch-merge.sh` now pushes and calls `gh pr merge`** (#412): PRs no longer left in `OPEN` state after batch push.
+- **Branch deletion waits for MERGED confirmation**: new `delete-branch` subcommand re-checks PR state before deletion.
+- **Pre-merge conflict marker guard**: exits non-zero with diagnostic if unresolved markers present.
+- **Sequential merge calls required** (protocol 94): explicit sequencing rule prevents conflicted working tree cascade.
+
+#### Shell script robustness
+
+- **Shell script quality checklist** (#388): covers jq variable injection, SIGPIPE handling, exit code semantics, `local` trap, `gh` error handling, and input validation.
+- **`jq` control character handling** (#375): replaced `jq` pipelines with Python3 `json.load()` for tracker API responses.
+- **GraphQL mutation parameterization**: switched to `-f` typed variables, eliminating shell interpolation injection risk.
+
+#### Tracker and project board
+
+- **Project board update before issue close** (#361): ensures project item is visible during lookup.
+- **`GITHUB_PROJECT_NUMBER` fallback to YAML config**: reads `issue_tracker.project_number` from `.ai-dev-workflow.yaml` when env var absent.
+- **Team-prefixed issue identifiers** (#341): extended regex to match Linear-style `<team>-<number>` patterns.
+
+#### Sync-template
+
+- **Post-apply path verification**: verifies cross-references resolve to actual files after applying synced content.
+- **Rename detection and cleanup**: detects stale old directories after template renames and offers cleanup actions.
+- **Wildcard `rm -rf` fix**: scoped cleanup to `$TEMPLATE_TEMP_DIR` instead of `/tmp/template-sync-*`.
+
+#### Protocol enforcement
+
+- **`ready-for-regression` enforcement at Step 5.1** (#422): orchestrator is primary enforcement point, applies label directly and re-runs CI loop.
+- **Pre-dispatch environment validation** (#423): Step 3.3 checks for stale worktrees and integration-branch divergence before dispatch.
+- **Spec-plan ordering gate** (#373): plan PR cannot open until spec PR is merged.
+- **Trivial-fix skip rule** (#402): skips Step 7a re-run for cosmetic fixes under 10 lines.
+- **Retrospective timing guardrail** (#410, #419): structural separation prevents retrospective offer before PRs merge.
+- **Step 5.2 recurrence tracking** (#362): tallies violations across batches with escalation threshold.
+
+#### Other fixes
+
+- **Stale Devin error status bypass** (#404): `pr-ci-loop.sh` detects stale commit-status errors with no remaining findings.
+- **Stale development folders without issue numbers** (#399): emits `skip` instead of false Plan Ready status.
+- **Plan reviewer technical accuracy checklist** (#403): requires verification of behavioral claims against source files.
+- **`hasReviewSummary` check false negatives**: extended patterns to match both full and abbreviated comment titles.
+- **CHANGELOG exemption for spec/plan PRs** (#340): explicit steps and blocking review finding.
+- **Cross-cutting checklist file enumeration** (#389): plans must list all affected agent/skill files.
+- **Fixer batching rule** (#372): all fixes applied and pushed once per dispatch cycle.
+- **`.worktrees/` gitignored**: both worktree path conventions now excluded.
 
 ## [0.23.0] - 2026-04-25
 
@@ -79,7 +149,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Require all review threads resolved before ready-for-human-review** (#167): `pr-review-loop.sh` now enumerates all review threads on a PR via the GitHub GraphQL API (cursor-based pagination, up to 10 pages), filters to threads authored by configured bot logins (`coderabbitai[bot]`, `devin-ai-integration[bot]`, `greptile-apps[bot]`), and exits `needs_fixes` with `UNRESOLVED_THREAD_COUNT=N` when any thread is unresolved — regardless of severity (Critical, Major, Minor, Nitpick, Trivial). A thread is considered resolved when `isResolved=true` or the first comment body contains `✅ Addressed`. The check runs as the final gate in the aggregate exit block after all platforms return `clean` or `skipped`. Bot logins are derived at runtime from `review.platforms` in `.ai-dev-workflow.yaml`. Protocol 91 Step 8c is updated with a `reviewThreads` GraphQL verification row as a hard gate; the Step 7 Automated Reviewer Loop Summary template is extended with a "Reply-only resolutions" subsection listing threads resolved via reply + `resolveReviewThread` mutation with their rationale. Protocol 90 Step 5.1 post-dispatch PR verification checklist includes the same `reviewThreads` check.
 - **Pre-label orphaned PR detection in Step 5.1** (#269): Protocol 90 "Stale / Incomplete PR Detection" now covers the case where an agent times out before any post-review labels are applied, leaving a non-draft PR with no `ready-for-regression`, no `ready-for-human-review`, and no reviewer loop summary comment. A classification table formalises all detection states and identifies this pattern as a pre-label orphaned run requiring redispatch from Step 7a. `workflow-next-action.sh` now emits `ORPHANED_PR=true` for non-draft, labelless PRs without a reviewer loop summary comment so orchestrators can detect and log the pattern without changing the existing `NEXT_ACTION=resolve-pr-readiness` output.
-- **Pre-label ordering gate in developer protocol** (#270): `03-implement-development-protocol.md` Step 9 now documents an explicit hard sequential two-phase gate that agents must pass before applying readiness labels — Phase 1 requires the reviewer loop summary comment to be present and all automated-reviewer threads to be resolved before applying `ready-for-regression`; Phase 2 requires all CI checks to reach a terminal state with no failures before applying `ready-for-human-review`.
+- **Pre-label ordering gate in developer protocol** (#270, #346): `03-implement-development-protocol.md` Step 9 now documents an explicit hard sequential two-phase gate that agents must pass before applying readiness labels — Phase 1 requires the reviewer loop summary comment to be present and all automated-reviewer threads to be resolved before applying `ready-for-regression`; Phase 2 requires all CI checks to reach a terminal state with no failures before applying `ready-for-human-review`. The gate was originally written as prose, which allowed agents to skip it accidentally (#346); Phase 1 and Phase 2 are now each expressed as a numbered checklist of executable steps: Step 1.1 runs `gh pr view --json comments` to confirm the summary comment exists, Step 1.2 runs the GraphQL thread-resolution audit and requires empty output, Step 1.3 applies `ready-for-regression`, Step 2.1 runs `pr-ci-loop.sh` and requires `RESULT=green`, and Step 2.2 applies `ready-for-human-review`. Skipping any step is explicitly labelled a protocol violation.
 - **Orchestrator parallel impl batch merges must use batch-merge.sh** (#273): Protocol 90 Step 5.5 now includes an explicit batch-merge routing rule clarifying that parallel implementation batches must always be merged via `batch-merge.sh discover --prs <list>` + Protocol 94 (which provides CHANGELOG auto-resolution and active-worktree awareness); direct `gh pr merge` calls are only acceptable for single-PR or non-implementation (spec/plan) merges. A summary table and reference to the Batch 4 incident are included.
 - **Devin `COMMENTED` review with inline findings treated as blocking** (#274): `pr-review-loop.sh` now treats a `COMMENTED` review from `devin-ai-integration[bot]` as blocking when it is accompanied by unresolved inline PR review comments, not only when the review body starts with `**Devin Review**`. Previously, a Devin review that submitted findings exclusively as inline comments (without a matching summary body) was silently treated as non-blocking, allowing PRs with real bugs to be incorrectly labeled `ready-for-human-review`. Protocol docs (`91-orchestrate-work-protocol.md`, `93-automated-reviewer-loop-protocol.md`) updated to document the full blocking classification rules.
 - **CodeRabbit retry loop skips SUCCESS status before retry wait** (`pr-review-loop.sh`): script now checks for an existing CodeRabbit SUCCESS commit status on the current HEAD before entering the rate-limit retry sleep; if SUCCESS is already present (and thread gate passes), the loop exits immediately via `coderabbit_status_success_fallback` rather than waiting indefinitely.
@@ -506,7 +576,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.23.2...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.23.2...v0.24.0
 [0.23.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.23.1...v0.23.2
 [0.23.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.23.0...v0.23.1
 [0.23.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.22.0...v0.23.0

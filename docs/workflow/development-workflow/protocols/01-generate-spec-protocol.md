@@ -188,13 +188,14 @@ If no blocking human decision remains:
 2. Create branch: `git checkout -b spec/[branch-slug]` from `develop`
 3. Create the development folder: `docs/specs/developments/[YYYYMMDDHHMMSS]_[feature-slug]/`
 4. Write the spec file: `1_[feature-slug]_specs.md`
-5. Commit: `docs: add spec for [feature-name]`
-6. Push: `git push -u origin spec/[branch-slug]`
-7. Open a **draft** PR targeting `develop` with:
+5. **Do NOT update CHANGELOG**: `spec/*` branches are exempt from CHANGELOG entries. The changelog policy only applies to `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches. Do not create or modify `CHANGELOG.md` in this PR.
+6. Commit: `docs: add spec for [feature-name]`
+7. Push: `git push -u origin spec/[branch-slug]`
+8. Open a **draft** PR targeting `develop` with:
    - Title: `docs(spec): [feature-name]`
    - Body: summary of the feature, link to the spec file, list of open questions (if any)
    - When a tracker brief exists: Coverage Matrix summary (each brief objective mapped to AC reference(s) or Out-of-Scope entry) and Deferral Notes for each objective intentionally moved to Out of Scope
-8. Return the branch + PR details to the **Work Item Runner**
+9. Return the branch + PR details to the **Work Item Runner**
 
 ---
 

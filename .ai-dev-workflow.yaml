@@ -34,14 +34,22 @@ review:
   # All listed reviewers must APPROVE before `gh pr ready` is called.
   #
   # Supported values:
-  #   claude  — dispatches the stage-appropriate reviewer agent:
-  #               spec/*               -> spec-reviewer
-  #               implementation-plan/* -> implementation-plan-reviewer
-  #               feature/*/refactor/*/fix/*/hotfix/* -> code-reviewer
-  #   codex   — dispatches the stage-appropriate Codex review skill:
-  #               spec/*               -> workflow-spec-reviewer
-  #               implementation-plan/* -> workflow-plan-reviewer
-  #               feature/*/refactor/*/fix/*/hotfix/* -> workflow-code-reviewer
+  #   claude        — dispatches the stage-appropriate reviewer agent:
+  #                     spec/*               -> spec-reviewer
+  #                     implementation-plan/* -> implementation-plan-reviewer
+  #                     feature/*/refactor/*/fix/*/hotfix/* -> code-reviewer
+  #   codex         — dispatches the stage-appropriate Codex review skill:
+  #                     spec/*               -> workflow-spec-reviewer
+  #                     implementation-plan/* -> workflow-plan-reviewer
+  #                     feature/*/refactor/*/fix/*/hotfix/* -> workflow-code-reviewer
+  #   codex-github  — posts a review-trigger comment to the PR and polls for the
+  #                   Codex GitHub App bot response. Universally reachable from all
+  #                   runner contexts (Claude Code, Cursor, Codex, headless CI) because
+  #                   it requires only `gh` CLI access — no Codex CLI runtime needed.
+  #                   Prerequisite: the Codex GitHub App must be installed on this
+  #                   repository and configured to respond to the trigger phrase.
+  #                   See scripts/development-workflow/codex-github-reviewer.sh for
+  #                   implementation details.
   #
   # Runner-context constraint:
   #   'codex' as a direct CLI reviewer is NOT reliably reachable from automated
@@ -52,12 +60,11 @@ review:
   #   'claude' under the default 'warn' policy. This is expected behaviour — not
   #   a misconfiguration.
   #
-  #   A future improvement (tracked in the template backlog) will add a
-  #   GitHub-integration-based Codex reviewer path that works from any runner by
-  #   posting a review trigger comment and polling for the Codex bot response.
-  #
-  #   To suppress the recurring warning in the meantime, remove 'codex' from this
-  #   list or override it locally via .tmp/template-config.json (see below).
+  #   To eliminate recurring 'codex unreachable' warnings from automated runners,
+  #   replace 'codex' with 'codex-github'. The codex-github path provides equivalent
+  #   Codex review coverage from any runner context. Running both 'codex' and
+  #   'codex-github' is supported (Use Case 5 in the spec) but doubles review time
+  #   and is typically unnecessary.
   #
   # Local override: developers who do not have access to all tools listed here
   # can override this list locally by creating .tmp/template-config.json in the
@@ -69,6 +76,19 @@ review:
   internal_reviewers:
     - claude
     - codex  # not reachable from automated subagent runners (Claude Code or Cursor); skipped with a warning
+  # To enable the Codex GitHub App reviewer path (universally reachable from all
+  # runner contexts), add 'codex-github' to the list above. Requires the Codex
+  # GitHub App to be installed on the repository.
+  #
+  # Configurable codex-github options (set via env vars or script flags; these are
+  # advisory comments — the helper script is the enforcement point):
+  #   CODEX_GITHUB_TRIGGER_PHRASE  — trigger phrase sent to the bot (default: "@codex review")
+  #   CODEX_GITHUB_BOT_LOGIN       — GitHub login of the Codex bot account
+  #                                  (default: "codex-ai[bot]"; verify from GitHub App settings)
+  #
+  # Additional options available as script flags to codex-github-reviewer.sh:
+  #   --poll-interval <seconds>    — polling interval while waiting for bot response (default: 30)
+  #   --max-wait      <seconds>    — maximum total wait time for bot response (default: 300)
 
   # Optional: policy when a listed internal reviewer is unreachable from the current runner.
   # Protocol 91 Step 7a enforces this policy at runtime.
@@ -85,6 +105,11 @@ review:
 issue_tracker:
   # Supported examples: linear, github_projects, github_issues, jira, clickup, notion, none
   provider: github_projects
+  # GitHub Projects project number (the integer in the project URL, e.g. /users/<owner>/projects/1).
+  # Used by workflow-lib.sh as a fallback when GITHUB_PROJECT_NUMBER env var is not set.
+  # Required for tracker status updates (update_tracker_status_best_effort) and status reads
+  # (get_tracker_status_for_issue) to function without setting an environment variable.
+  project_number: 1
 
 vcs:
   # Supported examples: github, gitlab, bitbucket, other
@@ -95,9 +120,17 @@ browser_automation:
   provider: playwright_cli
 
 template:
+  # Set to true when this repository IS a framework template (i.e., it ships workflow
+  # tooling to be consumed by downstream projects). When true, Protocol 02 Step 0
+  # (Template-Fit Check) is mandatory before writing any implementation plan.
+  # Leave false or omit for downstream consumer repositories.
+  is_template: true
+
   # Optional: upstream template repository reference (owner/repo format for GitHub).
   # When set, the retrospective protocol (Step 3b) cross-references each finding
   # against the specified template repository's issue tracker. Leave empty or omit to skip.
+  # Note: this is set by DOWNSTREAM repos pointing back to their template origin —
+  # the template repo itself leaves this empty.
   repository: ""
 
   # Optional: the template version last applied by the sync-template skill.
