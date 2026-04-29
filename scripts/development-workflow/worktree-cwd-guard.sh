@@ -65,15 +65,28 @@ _wcg_assert_cwd_is_worktree() {
   real_worktree="$(cd "$__wcg_worktree_path" 2>/dev/null && pwd -P || printf '%s' "$__wcg_worktree_path")"
   real_main="$(cd "$__wcg_main_repo_root" 2>/dev/null && pwd -P || printf '%s' "$__wcg_main_repo_root")"
 
-  # Check whether CWD equals the main repo root.
-  if [ "$real_cwd" = "$real_main" ]; then
-    printf 'GUARDRAIL WARNING: %s was called from the main repository root (%s).\n' "$label" "$real_main" >&2
-    printf 'This is a protocol-91 worktree isolation violation. Use one of:\n' >&2
-    printf '  cd %s && git %s ...\n' "$real_worktree" "${label#git }" >&2
-    printf '  git -C %s %s ...\n' "$real_worktree" "${label#git }" >&2
-    printf 'Command aborted to protect the main working tree.\n' >&2
-    return 1
-  fi
+  # If CWD is inside the worktree subtree, it is always safe — return early.
+  # Must be checked before the main-repo check to handle the case where the
+  # worktree lives under the main repo tree (e.g. .claude/worktrees/<id>/).
+  case "$real_cwd" in
+    "$real_worktree"/*|"$real_worktree")
+      return 0
+      ;;
+  esac
+
+  # If CWD is inside the main repo tree (root or any subdirectory), it is a
+  # violation: git commands would operate on the main working tree rather than
+  # the isolated worktree.
+  case "$real_cwd" in
+    "$real_main"/*|"$real_main")
+      printf 'GUARDRAIL WARNING: %s was called from inside the main repository tree (%s).\n' "$label" "$real_cwd" >&2
+      printf 'This is a protocol-91 worktree isolation violation. Use one of:\n' >&2
+      printf '  cd %s && git %s ...\n' "$real_worktree" "${label#git }" >&2
+      printf '  git -C %s %s ...\n' "$real_worktree" "${label#git }" >&2
+      printf 'Command aborted to protect the main working tree.\n' >&2
+      return 1
+      ;;
+  esac
 
   return 0
 }
