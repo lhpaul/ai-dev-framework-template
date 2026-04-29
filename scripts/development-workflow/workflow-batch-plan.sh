@@ -378,12 +378,35 @@ for development_path in "${development_paths[@]}"; do
   # get_tracker_status_for_issue returns empty string gracefully when no project
   # is configured, so we can call it unconditionally.
   issue_number="$(extract_github_issue_number "$development_path")"
-  if [ -n "$issue_number" ]; then
-    tracker_status="$(get_tracker_status_for_issue "$issue_number")"
-    if is_terminal_tracker_status "$tracker_status"; then
-      echo "Skipping $development_path: tracker status is terminal ('$tracker_status') for issue #$issue_number" >&2
-      continue
+  if [ -z "$issue_number" ]; then
+    # No issue number found — cannot cross-check tracker.  Treat as Done/skip to
+    # avoid false Plan Ready noise from folders with spec+plan but no linked issue.
+    # These are typically legacy or manually-created folders without a numeric
+    # issue-number prefix in the slug and no "**Issue**: #NNN" reference in docs.
+    echo "Skipping $development_path: no issue number found (no tracker cross-check possible; treating as done)" >&2
+    tool_fix_output="$(classify_tool_fix "$development_path")"
+    tool_fix="$(printf '%s\n' "$tool_fix_output" | head -1)"
+    tool_fix_files=""
+    if [ "$tool_fix" = "yes" ]; then
+      tool_fix_files="$(printf '%s\n' "$tool_fix_output" | sed -n '2p')"
     fi
+    print_kv TARGET "development:$development_path"
+    print_kv DEVELOPMENT_PATH "$development_path"
+    print_kv SLUG "$slug"
+    print_kv STATUS "Done"
+    print_kv NEXT_ACTION "skip"
+    print_kv SKIP_REASON "no issue number found"
+    print_kv BATCH_HINT "manual-review"
+    print_kv PARALLEL_SAFE "no"
+    print_kv TOOL_FIX "$tool_fix"
+    [ "$tool_fix" = "yes" ] && print_kv TOOL_FIX_FILES "$tool_fix_files"
+    echo
+    continue
+  fi
+  tracker_status="$(get_tracker_status_for_issue "$issue_number")"
+  if is_terminal_tracker_status "$tracker_status"; then
+    echo "Skipping $development_path: tracker status is terminal ('$tracker_status') for issue #$issue_number" >&2
+    continue
   fi
 
   # Classify tool-fix BEFORE workflow-next-action.sh so TOOL_FIX is always
