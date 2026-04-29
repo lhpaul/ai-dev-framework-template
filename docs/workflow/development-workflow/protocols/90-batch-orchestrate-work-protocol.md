@@ -404,9 +404,9 @@ gh pr list --state merged --head <branch> --json number,mergedAt --jq '.[0] | .n
 
 **Worktrees that belong to the current batch**: Do not flag an active worktree as stale if its branch is one of the branches about to be dispatched. Those are handled by the per-item Step 3.5 check.
 
-### Check 2: Unsynced integration branch
+### Check 2: Unsynced or diverged integration branch
 
-Before dispatching any Work Item Runner, verify that the local integration branch is not ahead of `origin`. New feature/fix branches are cut from the local integration branch; if the local branch has commits that are not yet on `origin`, those commits will appear in every new implementation PR's diff, causing incorrect diffs and confusing reviewers.
+Before dispatching any Work Item Runner, verify that the local integration branch is in sync with `origin`. New feature/fix branches are cut from the local integration branch; if the local branch has commits that are not yet on `origin`, those commits will appear in every new implementation PR's diff, causing incorrect diffs and confusing reviewers. Conversely, if `origin` has commits that are not on the local branch, new branches will be cut from a stale base.
 
 ```bash
 INTEGRATION_BRANCH="develop"   # or read from .ai-dev-workflow.yaml if a config key exists
@@ -414,25 +414,68 @@ INTEGRATION_BRANCH="develop"   # or read from .ai-dev-workflow.yaml if a config 
 # Fetch latest remote state (idempotent, safe to run at the start of every batch)
 git fetch origin
 
-# Count commits that are local-only (ahead of origin)
+# Count commits in each direction
 AHEAD=$(git rev-list --count "origin/${INTEGRATION_BRANCH}..${INTEGRATION_BRANCH}" 2>/dev/null || echo "0")
-echo "Integration branch '${INTEGRATION_BRANCH}' is ${AHEAD} commits ahead of origin."
+BEHIND=$(git rev-list --count "${INTEGRATION_BRANCH}..origin/${INTEGRATION_BRANCH}" 2>/dev/null || echo "0")
+
+echo "Integration branch '${INTEGRATION_BRANCH}': ${AHEAD} commit(s) ahead of origin, ${BEHIND} commit(s) behind origin."
 ```
 
-**Action when the integration branch is ahead of origin:**
+**Four divergence states and required actions:**
+
+**State 1 — In sync** (`AHEAD=0, BEHIND=0`): Safe to proceed. Continue to Step 3.5.
+
+**State 2 — Local ahead only** (`AHEAD>0, BEHIND=0`): The local integration branch has commits not yet pushed to `origin`. New branches cut from this state will carry those unpushed commits into every PR diff.
 
 1. Report to the human: the local `<integration-branch>` is `N` commits ahead of `origin/<integration-branch>`.
-2. Ask the human to push the pending commits before batch dispatch:
-
+2. Show the top commits on the local side:
+   ```bash
+   git log --oneline "origin/${INTEGRATION_BRANCH}..${INTEGRATION_BRANCH}"
+   ```
+3. Ask the human to push the pending commits before batch dispatch:
    ```bash
    git push origin <integration-branch>
    ```
-
-3. **Block batch dispatch** until either:
+4. **Block batch dispatch** until either:
    - The human pushes the pending commits (re-run the check after push; `AHEAD` must be `0`)
    - The human explicitly acknowledges the risk and instructs the orchestrator to proceed anyway (log this override in retrospective notes)
 
-**Safe condition**: `AHEAD=0` — the integration branch is in sync with `origin`. Proceed to Step 3.5.
+**State 3 — Local behind only** (`AHEAD=0, BEHIND>0`): `origin` has commits the local branch does not have. A fast-forward pull is safe.
+
+1. Report to the human: the local `<integration-branch>` is `N` commits behind `origin/<integration-branch>`. A fast-forward pull is available.
+2. Show the top commits on the remote side:
+   ```bash
+   git log --oneline "${INTEGRATION_BRANCH}..origin/${INTEGRATION_BRANCH}"
+   ```
+3. Suggest the safe resolution:
+   ```bash
+   git pull origin <integration-branch>   # fast-forward safe (no local diverging commits)
+   ```
+4. **Block batch dispatch** until either:
+   - The human pulls the pending commits (re-run the check after pull; `BEHIND` must be `0`)
+   - The human explicitly acknowledges the risk and instructs the orchestrator to proceed anyway (log this override in retrospective notes)
+
+**State 4 — True divergence** (`AHEAD>0, BEHIND>0`): Both the local branch and `origin` have commits the other does not. This is the most dangerous state — new branches cut from local will carry diverging commits into PRs, and a simple pull or push would create a merge commit on a shared branch.
+
+1. Report to the human: the local `<integration-branch>` has `N` commit(s) not on `origin` and `M` commit(s) from `origin` not applied locally (true divergence).
+2. Show the top commits on each side:
+   ```bash
+   # Local-only commits (what local has that origin does not)
+   git log --oneline "origin/${INTEGRATION_BRANCH}..${INTEGRATION_BRANCH}"
+   # Origin-only commits (what origin has that local does not)
+   git log --oneline "${INTEGRATION_BRANCH}..origin/${INTEGRATION_BRANCH}"
+   ```
+3. Present the resolution options to the human — **do not choose automatically**:
+
+   | Option | Command | When to use |
+   |---|---|---|
+   | Rebase local onto origin | `git rebase origin/<integration-branch>` | Local commits are unpublished or belong to you; you want a linear history |
+   | Merge origin into local | `git merge origin/<integration-branch>` | You want to preserve both histories with a merge commit |
+   | Reset local to origin | `git reset --hard origin/<integration-branch>` | Local commits are safe to discard (e.g., already merged via another path); **destructive** |
+
+4. **Block batch dispatch** until the human selects and applies one of the above options and the check re-runs with `AHEAD=0, BEHIND=0` (or `AHEAD>0, BEHIND=0` if the human chose rebase/merge and still needs to push). Require explicit human choice — do not auto-apply any resolution.
+
+**Safe condition**: `AHEAD=0, BEHIND=0` — the integration branch is fully in sync with `origin`. Proceed to Step 3.5.
 
 ### Check ordering and gating
 
