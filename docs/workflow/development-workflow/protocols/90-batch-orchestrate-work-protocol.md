@@ -630,7 +630,13 @@ Verify all of the following. If any check fails, apply the remediation action in
 | Automated reviewer loop summary comment | At least one PR comment containing "Automated Reviewer Loop Summary", "Reviewer Loop Summary", or "No blocking PR feedback" (skip this check only when Step 7 was `skipped` because no review platforms are configured) | Redispatch agent to run Step 7 to completion |
 | CI checks | All required status checks are green (`state: SUCCESS` or `conclusion: success`) | Redispatch agent to fix failing checks |
 
-**`ready-for-regression` direct-apply rule**: This label is the primary enforcement point for the regression CI gate. If the agent applied `ready-for-human-review` but omitted `ready-for-regression`, the orchestrator adds the label directly without redispatching the agent, then logs the deviation. Redispatching is only required when there are substantive gaps (wrong base branch, unresolved review threads, missing reviewer loop summary, failing CI) — not for a missing label alone.
+**`ready-for-regression` direct-apply rule**: This label is the primary enforcement point for the regression CI gate. If the agent applied `ready-for-human-review` but omitted `ready-for-regression`, the orchestrator:
+
+1. Applies the label directly: `gh pr edit <pr_number> --add-label "ready-for-regression"`
+2. Logs the deviation: `PROTOCOL_DEVIATION: ready-for-regression was missing on PR #<N> — applied by orchestrator Step 5.1`
+3. **Re-polls CI** — the label triggers the `e2e-regression.yml` workflow. The CI check row in this verification table was evaluated _before_ the label was applied, so the e2e check was not yet in `statusCheckRollup`. After applying the label, wait for CI to settle using `pr-ci-loop.sh <pr_number>` before re-running this verification. Do not mark the PR ready until the re-polled CI check is green.
+
+Do not redispatch the agent for a missing label alone — the label is applied directly here. Redispatching is only required when there are substantive gaps (wrong base branch, unresolved review threads, missing reviewer loop summary, failing CI).
 
 If a check requires agent redispatch:
 
