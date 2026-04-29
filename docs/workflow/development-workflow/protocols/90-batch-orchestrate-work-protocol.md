@@ -922,11 +922,23 @@ After all currently eligible items have reached a terminal condition, provide a 
 <!-- DO NOT add a retrospective offer here — see Step 6 timing rule above -->
 ```
 
+❌ **Do NOT append this to the summary:**
+> "Would you like to run a retrospective on this batch's work?"
+
+This offer belongs only after the human confirms PRs have been merged.
+Adding it here is a protocol violation even when it feels like a natural closing.
+
 Call out any sequential fallback caused by runner limitations so humans can distinguish a workflow constraint from a product dependency.
 
 **Retrospective timing**: Do **not** suggest a retrospective at this point. The batch is not fully complete yet — PRs that are `ready-for-human-review` still need human review and merge before the work is done.
 
-Instead, suggest the retrospective **after the human confirms the PRs have been merged** (e.g., after running `/batch-merge`, `/post-merge-cleanup`, or an explicit "they're merged" signal). At that point, offer:
+---
+
+## Step 6.5: Post-Merge Follow-up
+
+**Trigger**: Run this step only after the human confirms that the batch PRs have been merged — for example, via `/batch-merge`, `/post-merge-cleanup`, or an explicit "they're merged" message. Do **not** run this step as part of the Step 6 summary.
+
+After merge is confirmed, offer the retrospective:
 
 > Would you like to run a retrospective on this batch's work?
 

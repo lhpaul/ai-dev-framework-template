@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Premature retrospective offer at end of batch summary** (`90-batch-orchestrate-work-protocol.md`, #419): the Step 6 batch summary prohibition against offering a retrospective ("don't do X") was overridden at the natural closing moment of Step 6. Fixed by (A) adding a hard negative example block directly inside the Step 6 summary template with an explicit `❌ Do NOT append this` callout, and (B) moving the retrospective offer into a new structural **Step 6.5: Post-Merge Follow-up** block that is explicitly triggered only after the human confirms PRs have been merged — making it structurally impossible to conflate with the summary step.
+
 ### Added
 
 - **Add `codex-github` integration reviewer path for Step 7a** (#309): adds a runner-agnostic internal reviewer that posts a trigger comment to a PR and polls for the Codex GitHub App bot response; works from Claude Code, Cursor, headless CI, and Codex runner contexts. New `scripts/development-workflow/codex-github-reviewer.sh` implements the trigger/poll/parse/timeout loop. `codex-github` is classified as universally reachable in Protocol 91's reachability table (requires only `gh` CLI). `.ai-dev-workflow.yaml`, `.claude/agents/item-orchestrator.md`, and `.cursor/agents/item-orchestrator.md` updated to document the new reviewer path.
