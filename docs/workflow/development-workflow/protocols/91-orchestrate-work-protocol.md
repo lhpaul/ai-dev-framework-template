@@ -237,6 +237,24 @@ cd <worktree-path>
 
 Use the pre-dispatch branch check from Step 2 (`git branch --list`, `git branch -r --list`) to determine which case applies. Case B and C are common when resuming "In Development" items, PRs with `needs-fixes`, or any item with prior work.
 
+**Runtime CWD guard — activate immediately after entering the worktree**
+
+After `cd <worktree-path>`, source and initialise the CWD guard. This provides runtime enforcement that catches branch-switching commands issued from the wrong directory **at execution time** rather than only at the post-agent Step 5.2 inspection:
+
+```bash
+# Derive main repo root reliably (never use --show-toplevel inside a worktree)
+MAIN_REPO_ROOT="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"
+WORKTREE_PATH="$(pwd -P)"
+
+# Source the guard (path is relative to the worktree, which mirrors the main repo structure)
+source "$MAIN_REPO_ROOT/scripts/development-workflow/worktree-cwd-guard.sh"
+worktree_cwd_guard_init "$WORKTREE_PATH" "$MAIN_REPO_ROOT"
+```
+
+Once initialised, replace bare `git switch`, `git checkout`, `git reset`, and `git restore` calls with the guarded wrappers exported by the script: `git_switch`, `git_checkout`, `git_reset`, and `git_restore`. If a stage protocol's step calls `git checkout develop && git checkout -b <branch>`, skip it entirely (the worktree was already created on the correct branch) — but if you must call it, use the guarded wrapper so any accidental main-repo targeting is caught immediately.
+
+The guard is **non-blocking**: it emits a `GUARDRAIL WARNING` and returns exit code 1 on a CWD violation, but does not abort the outer shell. Check the return value or `set -e` in the enclosing script to convert warnings into hard failures where appropriate.
+
 **Critical: Worktree Git Discipline** (`BATCH_CONTEXT=true` only)
 
 **Pre-operation checklist — verify before every git state-changing command**

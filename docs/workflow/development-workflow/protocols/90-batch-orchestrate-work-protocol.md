@@ -759,16 +759,16 @@ If the main working tree is clean and on the correct branch (Case 3), proceed no
 
 **Recurrence tracking (post-PR #345):**
 
-PR #345 (merged into `develop`) added a worktree pre-op checklist to `91-orchestrate-work-protocol.md` to prevent agents from running git state-changing commands in the main working tree instead of their isolated worktree. Step 5.2 violations after that merge should be increasingly rare.
+PR #345 (merged into `develop`) added a worktree pre-op checklist to `91-orchestrate-work-protocol.md` to prevent agents from running git state-changing commands in the main working tree instead of their isolated worktree. PR #411 followed up by adding a runtime CWD guard script (`scripts/development-workflow/worktree-cwd-guard.sh`) that catches branch-switching commands issued from the wrong directory at execution time rather than only at post-agent inspection. Step 5.2 violations should be rare when both mitigations are active.
 
 When Step 5.2 fires (Case 1 — wrong branch + clean):
 
 1. Record the violation in the batch's retrospective notes, including the item ID, the branch the main tree was on, and the batch date.
-2. **After every 5 batches** following the merge of PR #345, tally the number of Step 5.2 Case 1 violations across those batches. If the count exceeds **1 violation per 5 batches**, escalate to the human with the following message:
+2. **After every 5 batches** following the merge of PR #411, tally the number of Step 5.2 Case 1 violations across those batches. If the count exceeds **1 violation per 5 batches**, escalate to the human with the following message:
 
-   > `ESCALATION: Step 5.2 (branch-leak guardrail) has fired more than once in the last 5 batches after the PR #345 worktree pre-op checklist fix was merged. Current count: N. This indicates that protocol text alone is insufficient to prevent the violation. Recommend implementing a runtime enforcement mechanism (e.g., a pre-commit hook or CWD guard in the worktree setup script) to catch branch-switching commands issued from the main working tree at execution time rather than at post-agent inspection time.`
+   > `ESCALATION: Step 5.2 (branch-leak guardrail) has fired more than once in the last 5 batches after the PR #411 runtime CWD guard was merged. Current count: N. Investigate whether the worktree-cwd-guard.sh script was sourced and initialised correctly in the affected batch items (see Protocol 91 Step 3 "Runtime CWD guard" block). If the guard was active, the violation may indicate a new failure mode not yet covered by the guard — escalate for human analysis and a follow-up fix.`
 
-3. Do **not** suppress or defer this escalation — it is a signal that the protocol-text-only fix needs to be reinforced with a runtime mechanism.
+3. Do **not** suppress or defer this escalation — it is a signal that the runtime guard needs to be reviewed or extended to cover the new failure mode.
 
 ### Retrospective notes during supervision
 
