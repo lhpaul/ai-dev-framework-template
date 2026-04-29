@@ -25,9 +25,7 @@ Before starting, read:
 
 ## Step 0: Template-Fit Check (Template Repositories Only)
 
-**Applies to**: Repositories where `.ai-dev-workflow.yaml` contains a non-empty
-`template.repository` value, or any repository explicitly described as a framework
-template in its documentation (e.g., `AGENTS.md`, `README.md`).
+**Applies to**: Repositories where `.ai-dev-workflow.yaml` sets `template.is_template: true`.
 
 **When to run**: At the very start of this protocol — before writing any plan content,
 before the alignment conversation, and before inspecting the codebase for implementation
@@ -38,9 +36,13 @@ is wasted on work that will be immediately discarded.
 
 ### Detection
 
-Read `.ai-dev-workflow.yaml`. If `template.repository` is a non-empty string, this
-repository is a framework template and this step is **mandatory**. If
-`template.repository` is absent or empty, skip this step.
+Read `.ai-dev-workflow.yaml`. If `template.is_template` is `true`, this repository is
+a framework template and this step is **mandatory**. If `template.is_template` is
+absent, `false`, or empty, skip this step entirely.
+
+Note: `template.repository` is a different field — it points to the **upstream**
+template that this repository was derived from (set by downstream consumer projects,
+not by the template itself). Do not use `template.repository` as the detection signal.
 
 ### Evaluation criteria
 
