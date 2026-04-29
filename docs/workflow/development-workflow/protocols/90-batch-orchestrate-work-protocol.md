@@ -896,6 +896,9 @@ The orchestrator prepares and validates the batch but **does not merge autonomou
 
 ## Step 6: Notify Humans
 
+> **STOP — retrospective timing rule (read before writing the summary):**
+> Do **NOT** include a retrospective offer anywhere in the batch summary below. PRs that are `ready-for-human-review` still need human review and merge — the batch is not complete yet. Offer the retrospective only **after** the human signals that the PRs have been merged (e.g., via `/batch-merge`, `/post-merge-cleanup`, or an explicit "they're merged" message). Including the retrospective offer in this summary is a guardrail violation.
+
 After all currently eligible items have reached a terminal condition, provide a consolidated summary:
 
 ```markdown
@@ -915,11 +918,13 @@ After all currently eligible items have reached a terminal condition, provide a 
 ### Blocked / Escalated
 - [Item F]: blocked by [Item G]
 - [Item H]: reviewer loop escalated after max cycles
+
+<!-- DO NOT add a retrospective offer here — see Step 6 timing rule above -->
 ```
 
 Call out any sequential fallback caused by runner limitations so humans can distinguish a workflow constraint from a product dependency.
 
-Do **not** suggest a retrospective at this point. The batch is not fully complete yet — PRs that are `ready-for-human-review` still need human review and merge before the work is done.
+**Retrospective timing**: Do **not** suggest a retrospective at this point. The batch is not fully complete yet — PRs that are `ready-for-human-review` still need human review and merge before the work is done.
 
 Instead, suggest the retrospective **after the human confirms the PRs have been merged** (e.g., after running `/batch-merge`, `/post-merge-cleanup`, or an explicit "they're merged" signal). At that point, offer:
 
