@@ -107,6 +107,11 @@ Check:
 - Seed data, generated artifacts, and follow-up tasks are called out when applicable
 - The proposed approach matches existing architecture and repo patterns
 - Testing and smoke-test coverage map back to acceptance criteria
+- Technical accuracy (applies to all plans that reference framework/runtime behavior, guards, config, or helpers):
+  - For each code sample, step-by-step instruction, or behavioral claim that references framework or runtime behavior (guards, middleware, config inheritance, scope, API contracts), identify the actual source file or authoritative reference that confirms the claim
+  - Verify each such claim against the real source files — not just against other parts of the plan document
+  - Flag any claim that cannot be verified from the codebase as "unverified — implementer must confirm before proceeding"
+  - Cross-reference consistency: line numbers, counts, and symbolic references (e.g., smoke test counts, Verification Log output counts, log line references) must be consistent across the plan document; flag any number or reference that cannot be confirmed against the codebase or a prior plan step
 
 Typical `blocking` issues:
 - Plan steps do not cover required acceptance criteria
@@ -114,12 +119,14 @@ Typical `blocking` issues:
 - The plan introduces unsafe or contradictory architecture decisions
 - A CHANGELOG literal in the Implementation Order uses conventional-commit format (`fix(scope): message`) instead of the project's `**Bold Title** (#N):` format
 - `CHANGELOG.md` is modified in this PR — `implementation-plan/*` branches are exempt from CHANGELOG entries; remove any CHANGELOG modification before merging
+- A behavioral claim about framework/runtime behavior (guard logic, config inheritance, scope, API contract) cannot be verified against the codebase and is not flagged as "unverified"
 
 Typical `important` issues:
 - Vague wording like "update as needed"
 - Missing documentation/test updates
 - Incomplete dependency or rollout notes
 - Verification steps in Implementation Order steps use complex shell commands that are hard to verify by reading: flag any multi-flag grep one-liner with exclusion scopes or self-referencing globs, hardcoded file counts that go stale, or broad exclusion patterns that may silently under-count. Suggest replacing with a human-readable "run and confirm output" assertion instead.
+- Numeric cross-references (line numbers, counts) in the plan that cannot be confirmed against source files or Verification Log output
 
 ---
 
