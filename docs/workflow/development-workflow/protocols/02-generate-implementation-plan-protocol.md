@@ -23,6 +23,75 @@ Before starting, read:
 
 ---
 
+## Step 0: Template-Fit Check (Template Repositories Only)
+
+**Applies to**: Repositories where `.ai-dev-workflow.yaml` contains a non-empty
+`template.repository` value, or any repository explicitly described as a framework
+template in its documentation (e.g., `AGENTS.md`, `README.md`).
+
+**When to run**: At the very start of this protocol — before writing any plan content,
+before the alignment conversation, and before inspecting the codebase for implementation
+details.
+
+**Purpose**: Catch framework-specific features early, before a full plan-writing cycle
+is wasted on work that will be immediately discarded.
+
+### Detection
+
+Read `.ai-dev-workflow.yaml`. If `template.repository` is a non-empty string, this
+repository is a framework template and this step is **mandatory**. If
+`template.repository` is absent or empty, skip this step.
+
+### Evaluation criteria
+
+A spec (or work item brief) is **too framework-specific** for a generic template when
+it satisfies one or more of the following:
+
+- It references a specific language, runtime, or framework (e.g., React, Rails, Django,
+  Go, Vue, Angular, Spring Boot, Laravel) that is **not** part of the template's own
+  toolchain (i.e., not used by the template repository itself for its own workflow
+  tooling).
+- Its acceptance criteria, implementation steps, or examples are only meaningful to
+  downstream projects built on a particular technology stack.
+- Its primary value is providing a library-specific pattern, component, or integration
+  that only applies to consumers using one particular framework.
+
+A spec is **generic enough** if:
+
+- It improves the workflow tooling, documentation, protocols, or scripts that the
+  template itself ships.
+- It adds or improves something every downstream project would benefit from, regardless
+  of their tech stack.
+- Its acceptance criteria are expressed in framework-agnostic terms.
+
+### Action
+
+**If the spec passes the fit check** (generic enough): continue to Step 1 normally.
+No output or comment is required.
+
+**If the spec fails the fit check** (too framework-specific): surface the following
+warning to the human and **halt before writing any plan content**:
+
+> ⚠️ **Template-fit check failed**: This spec appears to be framework-specific
+> ([detected framework/technology]). Implementation plans in this template repository
+> should be generic and applicable to all downstream consumers regardless of their
+> tech stack. Writing a framework-specific plan wastes a full review cycle and the
+> work will likely be discarded.
+>
+> **Please confirm one of the following before proceeding:**
+>
+> 1. The spec is actually generic — explain why the framework reference does not make
+>    this template-specific, and I will proceed.
+> 2. The scope should be narrowed — describe how to make the spec generic, and I will
+>    write a plan for the narrowed scope.
+> 3. This item should be cancelled — close the issue as out-of-scope for the template.
+
+Do **not** proceed to Step 1 until the human has responded and confirmed one of the
+above options. Do **not** write any plan content, create any branch, or open any PR
+while this check is pending.
+
+---
+
 ## Step 1: Mandatory Alignment Conversation
 
 Before writing the plan, discuss the technical approach with the human. Work through the following items:
