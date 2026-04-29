@@ -1088,7 +1088,7 @@ if [ "$IS_IMPLEMENTATION_PR" = "true" ]; then
   if [ "$REGRESSION_PRESENT" -eq 0 ]; then
     echo "ERROR: Cannot proceed to Check 4 — ready-for-regression label is NOT present."
     echo "You MUST apply ready-for-regression (Step 7b) and re-run pr-ci-loop.sh (Step 8) before continuing."
-    exit 1
+    exit 3  # Exit code 3 = "ready-for-regression missing at pre-Check-4 gate"
   fi
   echo "✅ ready-for-regression verified present. Proceeding to Check 4."
 fi
@@ -1111,7 +1111,7 @@ echo "✅ Label readiness checklist passed. PR is ready for human review."
 - **Any check fails**: Stop and fix the condition. Do not apply `ready-for-human-review` until all checks pass
   - If `PR is still a draft` (exit 1): Human error; run `gh pr ready <pr_number>` manually
   - If `missing ready-for-regression` on implementation PR (exit 2 from Check 2): The label has been applied by Check 2. **Do not continue to Check 3/4.** Re-run `pr-ci-loop.sh` (Step 8) first to wait for the e2e/regression workflow triggered by the label. Only re-enter Step 8a after CI is green again. This ensures the e2e/regression check completes before the PR is marked ready.
-  - If `ready-for-regression not verified` on implementation PR (exit 1 from pre-Check-4 gate): Step 7b was not completed. Apply the label via Step 7b, run Step 8 (CI loop), and re-enter Step 8a from the beginning. This gate is a hard block — `ready-for-human-review` cannot be applied until `ready-for-regression` is verified present.
+  - If `ready-for-regression not verified` on implementation PR (exit 3 from pre-Check-4 gate): Step 7b was not completed. Apply the label via Step 7b, run Step 8 (CI loop), and re-enter Step 8a from the beginning. This gate is a hard block — `ready-for-human-review` cannot be applied until `ready-for-regression` is verified present.
   - If `needs-fixes` is present (Check 3): The label is stale at this point (CI is green and reviews are clean), so it is automatically removed before proceeding to apply `ready-for-human-review`
 
 This checklist ensures the label sequence is always complete and all CI checks (including e2e/regression) have passed before the PR is declared ready for human review.
