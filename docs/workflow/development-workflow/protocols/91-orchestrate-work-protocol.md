@@ -967,6 +967,17 @@ The `gh pr edit --add-label` command is idempotent — applying a label that alr
 
 Skip this step entirely for spec and plan PRs.
 
+### Step 7b completion confirmation
+
+After applying the label, **verify it was applied successfully** before proceeding to Step 8:
+
+```bash
+# Verify ready-for-regression label is present (implementation PRs only):
+gh pr view <pr_number> --json labels --jq '.labels[].name' | grep -q "^ready-for-regression$" && echo "✅ Step 7b complete: ready-for-regression label verified"
+```
+
+If the verification fails (label not present), do not proceed to Step 8. Re-run the `gh pr edit --add-label` command and verify again. This confirmation is required — Step 8a will block on a missing label and force a CI loop re-run, wasting cycles.
+
 See [`integrations/e2e-regression.md`](../integrations/e2e-regression.md) for the full integration guide, including downstream customization.
 
 ---
@@ -1066,6 +1077,22 @@ if [ "$HAS_NEEDS_FIXES" -gt 0 ]; then
   gh pr edit "$PR_NUMBER" --remove-label "needs-fixes"
 fi
 
+# ⛔ STOP — Mandatory pre-Check-4 verification (implementation PRs only)
+# Do NOT proceed to Check 4 until you have explicitly verified ready-for-regression is present.
+# This verification is REQUIRED even if you believe Step 7b was completed — agents under token
+# pressure have skipped Step 7b in past batches, causing PRs to be labeled ready-for-human-review
+# without the regression label and bypassing e2e/regression CI.
+if [ "$IS_IMPLEMENTATION_PR" = "true" ]; then
+  echo "⛔ STOP: Verifying ready-for-regression label before applying ready-for-human-review..."
+  REGRESSION_PRESENT=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c "^ready-for-regression$" || true)
+  if [ "$REGRESSION_PRESENT" -eq 0 ]; then
+    echo "ERROR: Cannot proceed to Check 4 — ready-for-regression label is NOT present."
+    echo "You MUST apply ready-for-regression (Step 7b) and re-run pr-ci-loop.sh (Step 8) before continuing."
+    exit 3  # Exit code 3 = "ready-for-regression missing at pre-Check-4 gate"
+  fi
+  echo "✅ ready-for-regression verified present. Proceeding to Check 4."
+fi
+
 # Check 4: ready-for-human-review label NOT yet applied (we are about to apply it)
 HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c "^ready-for-human-review$" || true)
 if [ "$HAS_HUMAN_REVIEW_LABEL" -gt 0 ]; then
@@ -1083,7 +1110,8 @@ echo "✅ Label readiness checklist passed. PR is ready for human review."
 - **All checks pass (exit 0)**: Continue to Step 8b (update tracker status) and then Step 8c (independent PR verification); only report the PR as ready after Step 8c also passes
 - **Any check fails**: Stop and fix the condition. Do not apply `ready-for-human-review` until all checks pass
   - If `PR is still a draft` (exit 1): Human error; run `gh pr ready <pr_number>` manually
-  - If `missing ready-for-regression` on implementation PR (exit 2): The label has been applied by Check 2. **Do not continue to Check 3/4.** Re-run `pr-ci-loop.sh` (Step 8) first to wait for the e2e/regression workflow triggered by the label. Only re-enter Step 8a after CI is green again. This ensures the e2e/regression check completes before the PR is marked ready.
+  - If `missing ready-for-regression` on implementation PR (exit 2 from Check 2): The label has been applied by Check 2. **Do not continue to Check 3/4.** Re-run `pr-ci-loop.sh` (Step 8) first to wait for the e2e/regression workflow triggered by the label. Only re-enter Step 8a after CI is green again. This ensures the e2e/regression check completes before the PR is marked ready.
+  - If `ready-for-regression not verified` on implementation PR (exit 3 from pre-Check-4 gate): Step 7b was not completed. Apply the label via Step 7b, run Step 8 (CI loop), and re-enter Step 8a from the beginning. This gate is a hard block — `ready-for-human-review` cannot be applied until `ready-for-regression` is verified present.
   - If `needs-fixes` is present (Check 3): The label is stale at this point (CI is green and reviews are clean), so it is automatically removed before proceeding to apply `ready-for-human-review`
 
 This checklist ensures the label sequence is always complete and all CI checks (including e2e/regression) have passed before the PR is declared ready for human review.
