@@ -10,6 +10,18 @@ Different issue trackers support provider-specific fields beyond the basic ident
 
 ---
 
+## Brief Coverage
+
+| Brief Objective | Spec Trace |
+|---|---|
+| Schema change in `.ai-dev-workflow.yaml` to add `custom_fields` map | AC-1, AC-6, Use Case 1 |
+| Update `workflow-lib.sh` to read and expose custom fields | AC-2, Use Case 3 |
+| Update Linear integration docs with supported custom fields | AC-3 |
+| Update scripts that create issues to use project field when present | AC-5, Use Case 1 |
+| Integration docs define which fields are supported per tracker | AC-3, AC-4, Business Rules |
+
+---
+
 ## Use Cases
 
 ### Use Case 1: Configure a Linear project for issue creation
