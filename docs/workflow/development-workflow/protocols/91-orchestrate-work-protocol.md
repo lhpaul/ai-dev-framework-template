@@ -1006,6 +1006,18 @@ Interpret the result as follows:
 
 **Before applying `ready-for-human-review`**, verify all required readiness conditions are met. This is a hard gate — do not skip or defer.
 
+### Exit code contract
+
+| Exit Code | Meaning | Action |
+|---|---|---|
+| 0 | PR is ready (non-draft, regression label present, no unresolved threads) | Apply `ready-for-human-review` |
+| 1 | PR is still in draft | Run `gh pr ready` first |
+| 2 | `ready-for-regression` label applied this run | Re-run Step 8 (pr-ci-loop.sh) before returning here |
+| 3 | `ready-for-regression` label missing at pre-Check-4 gate | Apply label, re-run Step 8 |
+| 4 | Unresolved review threads at pre-Check-4 gate | Resolve threads, push fixes, re-run checklist |
+
+When adding a new gate to this checklist, allocate the next unused exit code and update this table. Exit codes must not collide.
+
 > **Critical**: For implementation PRs (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`), you **must** confirm that `ready-for-regression` was applied in Step 7b **before** reaching this checklist. If it was not, apply it now (see Check 2 below) — do not proceed to `ready-for-human-review` without it. The orchestrator's Step 5.1 will catch and correct a missing `ready-for-regression` label, but the agent is the primary responsible party and must not rely on the orchestrator as a fallback.
 
 ### Label derivation rule
