@@ -57,12 +57,12 @@ create_cmd() {
         shift 2
         ;;
       --body-file)
-        [ $# -lt 2 ] && { echo "Missing value for --body-file" >&2; usage >&2; exit 2; }
+        [ $# -lt 2 ] || [ -z "${2:-}" ] && { echo "Missing value for --body-file" >&2; usage >&2; exit 2; }
         body_file="$2"
         shift 2
         ;;
       --label)
-        [ $# -lt 2 ] && { echo "Missing value for --label" >&2; usage >&2; exit 2; }
+        [ $# -lt 2 ] || [ -z "${2:-}" ] && { echo "Missing value for --label" >&2; usage >&2; exit 2; }
         labels+=("$2")
         shift 2
         ;;

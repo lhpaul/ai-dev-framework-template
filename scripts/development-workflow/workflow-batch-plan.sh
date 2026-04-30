@@ -378,11 +378,11 @@ for development_path in "${development_paths[@]}"; do
   # get_tracker_status_for_issue returns empty string gracefully when no project
   # is configured, so we can call it unconditionally.
   issue_number="$(extract_github_issue_number "$development_path")"
-  if [ -z "$issue_number" ]; then
-    # No issue number found — cannot cross-check tracker.  Treat as Done/skip to
-    # avoid false Plan Ready noise from folders with spec+plan but no linked issue.
-    # These are typically legacy or manually-created folders without a numeric
-    # issue-number prefix in the slug and no "**Issue**: #NNN" reference in docs.
+  _project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
+  if [ -n "$_project_number" ] && [ -z "$issue_number" ]; then
+    # GitHub Projects is configured but no issue number found — cannot cross-check
+    # tracker.  Treat as Done/skip to avoid false Plan Ready noise from folders
+    # with spec+plan but no linked issue.
     echo "Skipping $development_path: no issue number found (no tracker cross-check possible; treating as done)" >&2
     tool_fix_output="$(classify_tool_fix "$development_path")"
     tool_fix="$(printf '%s\n' "$tool_fix_output" | head -1)"
