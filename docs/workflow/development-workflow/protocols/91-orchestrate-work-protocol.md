@@ -1010,7 +1010,7 @@ Interpret the result as follows:
 
 | Exit Code | Meaning | Action |
 |---|---|---|
-| 0 | PR is ready (non-draft, regression label present, no unresolved threads) | Apply `ready-for-human-review` |
+| 0 | PR is ready (non-draft, regression label verified for implementation PRs, no unresolved threads) | Apply `ready-for-human-review` |
 | 1 | PR is still in draft | Run `gh pr ready` first |
 | 2 | `ready-for-regression` label applied this run | Re-run Step 8 (pr-ci-loop.sh) before returning here |
 | 3 | `ready-for-regression` label missing at pre-Check-4 gate | Apply label, re-run Step 8 |
