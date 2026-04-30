@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-04-30
+
+### Fixed
+
+- **GitHub Actions SHA pinning**: pin `actions/checkout` and `actions/setup-node` to commit SHAs instead of version tags in `deploy.yml`, `e2e-regression.yml`, and `shellcheck.yml` for supply chain security
+- **`add-backlog-item.sh` empty value validation**: `--body-file` and `--label` options now reject empty strings in addition to missing arguments
+- **`workflow-batch-plan.sh` issue-number skip logic**: gate the "no issue number" skip on GitHub Projects being configured — repos using Linear (no `GITHUB_PROJECT_NUMBER`) no longer incorrectly skip all folders without numeric prefixes in their slugs
+
 ## [0.24.0] - 2026-04-29
 
 ### Added
