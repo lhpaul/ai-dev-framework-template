@@ -5,8 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
 ## [0.24.1] - 2026-04-30
 
 ### Fixed
@@ -14,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **GitHub Actions SHA pinning**: pin `actions/checkout` and `actions/setup-node` to commit SHAs instead of version tags in `deploy.yml`, `e2e-regression.yml`, and `shellcheck.yml` for supply chain security
 - **`add-backlog-item.sh` empty value validation**: `--body-file` and `--label` options now reject empty strings in addition to missing arguments
 - **`workflow-batch-plan.sh` issue-number skip logic**: gate the "no issue number" skip on GitHub Projects being configured — repos using Linear (no `GITHUB_PROJECT_NUMBER`) no longer incorrectly skip all folders without numeric prefixes in their slugs
+
+## [Unreleased]
 
 ## [0.24.0] - 2026-04-29
 
@@ -584,7 +584,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.24.1...HEAD
+[0.24.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.23.2...v0.24.0
 [0.23.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.23.1...v0.23.2
 [0.23.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.23.0...v0.23.1
