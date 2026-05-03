@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Default internal reviewer switched from `codex` to `codex-github`**: replaced the `codex` CLI reviewer (unreachable from Claude Code and Cursor subagent runners, causing a warning on every automated PR) with `codex-github` (Codex GitHub App — universally reachable via `gh` CLI from any runner context) in the default `.ai-dev-workflow.yaml` `internal_reviewers` list. Requires the Codex GitHub App to be installed on the repository.
 - **Exit code contract table in Protocol 91 Step 8a** (#433): added a prominent table documenting exit codes 0–4 at the top of the Label Readiness Checklist to prevent future exit code collisions
 
 ## [0.24.0] - 2026-04-29
