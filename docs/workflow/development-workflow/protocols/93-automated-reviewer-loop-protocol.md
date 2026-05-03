@@ -205,6 +205,36 @@ grep -n "<old-term>" <file>  # verify no stale references remain
 
 After committing, apply the re-read verification described in [Verification: Re-read to confirm each fix](#verification-re-read-to-confirm-each-fix) above before marking the finding as resolved.
 
+### All-occurrences rule for literal value fixes (mandatory)
+
+When a reviewer flags a specific literal value — a numeric constant, hex value, identifier string, repeated phrase, or any other repeated literal — the fixer agent **must** fix every occurrence of that value across all affected files in the PR, not only the specific line flagged by the reviewer. Fixing one occurrence while leaving identical values elsewhere forces multiple unnecessary review passes and is a protocol violation.
+
+**Required sequence before committing any literal-value fix:**
+
+1. **Search the entire document** for all occurrences of the old value:
+
+   ```bash
+   grep -n "<old_value>" <file>
+   ```
+
+2. **Search all other files affected by the PR** for the same value:
+
+   ```bash
+   # For each file changed in this PR:
+   git diff --name-only HEAD~1 HEAD | xargs grep -ln "<old_value>"
+   ```
+
+3. **Fix every occurrence** in the same commit — do not leave any behind.
+
+4. **Verify with grep** on all affected files to confirm no occurrences remain before pushing:
+
+   ```bash
+   grep -rn "<old_value>" <all-affected-files>
+   # Expected: no output (zero occurrences)
+   ```
+
+This rule applies to any value type: version numbers, timeout values, port numbers, hex color codes, string constants, label names, section headers, or any other repeated literal. If a reviewer flags one instance, treat it as a signal to fix all instances — the reviewer will check all occurrences on the next cycle and finding any remaining instance resets the review loop.
+
 ### PR feedback tracking and comments
 
 Follow the "PR feedback tracking and comments" subsection of Step 7 in `91-orchestrate-work-protocol.md`:
