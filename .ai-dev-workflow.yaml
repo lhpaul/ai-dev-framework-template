@@ -75,10 +75,10 @@ review:
   # Step 7a for the full multi-reviewer gate procedure.
   internal_reviewers:
     - claude
-    - codex  # not reachable from automated subagent runners (Claude Code or Cursor); skipped with a warning
-  # To enable the Codex GitHub App reviewer path (universally reachable from all
-  # runner contexts), add 'codex-github' to the list above. Requires the Codex
-  # GitHub App to be installed on the repository.
+    - codex-github  # Codex GitHub App — universally reachable from all runner contexts (Claude Code, Cursor, Codex, headless CI); requires the Codex GitHub App to be installed on this repository
+  # To use the Codex CLI reviewer path instead (only reachable when Codex is the
+  # top-level runner, not from Claude Code or Cursor subagents), replace 'codex-github'
+  # with 'codex'. See runner-context constraint above for details.
   #
   # Configurable codex-github options (set via env vars or script flags; these are
   # advisory comments — the helper script is the enforcement point):
