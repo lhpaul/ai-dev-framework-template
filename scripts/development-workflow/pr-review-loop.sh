@@ -83,6 +83,13 @@ Platform selection (in priority order):
   1. --platform flag(s) passed on the command line
   2. review.platforms list in .ai-dev-workflow.yaml at the repo root
 
+Branch-type-aware default timeout:
+  On spec/* and implementation-plan/* branches, Devin has no trigger condition and
+  exits immediately with REASON=no_check_run. To avoid wasting the full 20-minute
+  default wait budget on these branches, the script automatically reduces --max-wait
+  to 60 seconds when the branch matches spec/* or implementation-plan/* and the
+  caller did not pass --max-wait explicitly. Pass --max-wait explicitly to override.
+
 Outputs stable key=value lines including:
   RESULT=clean|needs_fixes|escalate|skipped
   PLATFORM_<n>_NAME / PLATFORM_<n>_RESULT
@@ -1685,6 +1692,7 @@ pr_number=""
 branch_name=""
 poll_interval=120
 max_wait=1200
+max_wait_explicit=0
 declare -a platforms=()
 
 while [ "$#" -gt 0 ]; do
@@ -1703,6 +1711,7 @@ while [ "$#" -gt 0 ]; do
       ;;
     --max-wait)
       max_wait="$2"
+      max_wait_explicit=1
       shift 2
       ;;
     -h|--help)
@@ -1746,6 +1755,18 @@ if [ "${#platforms[@]}" -gt 0 ]; then
   if [ -z "$branch_name" ]; then
     branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"
   fi
+fi
+
+# Branch-type-aware timeout: spec/* and implementation-plan/* branches produce
+# REASON=no_check_run immediately when Devin has no trigger condition (non-implementation
+# branches). Waiting the full 1200-second default wastes orchestrator budget.
+# Apply a short 60-second default when the caller did not pass --max-wait explicitly.
+if [ "$max_wait_explicit" -eq 0 ]; then
+  case "$branch_name" in
+    spec/*|implementation-plan/*)
+      max_wait=60
+      ;;
+  esac
 fi
 
 aggregate_result="skipped"
