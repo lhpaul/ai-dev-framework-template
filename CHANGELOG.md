@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Add `custom_fields` support for issue tracker config** (#453): Adds a `custom_fields` flat map under `issue_tracker` in `.ai-dev-workflow.yaml` and a `workflow_issue_tracker_custom_field` helper function in `workflow-lib.sh` to read individual custom field values. Updates Linear and GitHub Projects integration docs to document recognised fields.
+
 ### Fixed
 
 - **Fixer agents must fix all occurrences of flagged literal values** (#426): added mandatory all-occurrences rule to Protocol 93 fix-cycle guidance — when a reviewer flags a literal value (numeric constant, hex value, identifier, repeated string), fixer agents must `grep -n` the old value across all affected files and fix every occurrence in the same commit before pushing.

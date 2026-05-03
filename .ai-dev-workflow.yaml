@@ -110,6 +110,18 @@ issue_tracker:
   # Required for tracker status updates (update_tracker_status_best_effort) and status reads
   # (get_tracker_status_for_issue) to function without setting an environment variable.
   project_number: 1
+  # custom_fields: flat key-value map of provider-specific fields.
+  # Each integration doc defines which keys are recognised and their effect.
+  # Unrecognised keys are silently ignored by scripts that do not consume them.
+  # Read individual values with: workflow_issue_tracker_custom_field <key>
+  # (defined in scripts/development-workflow/workflow-lib.sh)
+  #
+  # Example (Linear):
+  #   custom_fields:
+  #     project: my-linear-project-id
+  #
+  # custom_fields:
+  #   project: ""
 
 vcs:
   # Supported examples: github, gitlab, bitbucket, other

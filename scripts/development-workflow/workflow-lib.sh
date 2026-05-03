@@ -253,6 +253,62 @@ workflow_issue_tracker_project_number() {
   workflow_config_field issue_tracker project_number
 }
 
+# workflow_issue_tracker_custom_field <key> [config_file]
+#
+# Reads issue_tracker.custom_fields.<key> from .ai-dev-workflow.yaml.
+# Prints the value, or empty string when:
+#   - The config file is absent
+#   - The custom_fields subsection is absent
+#   - The key is absent within custom_fields
+# Returns 0 in all cases (non-blocking).
+workflow_issue_tracker_custom_field() {
+  local key="$1"
+  local config_file="${2:-$(workflow_config_file)}"
+
+  [ -f "$config_file" ] || return 0
+
+  awk -v key="$key" '
+    function trim(value) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      gsub(/^["'"'"']|["'"'"']$/, "", value)
+      return value
+    }
+
+    /^issue_tracker:[[:space:]]*(#.*)?$/ {
+      in_section = 1
+      in_custom = 0
+      next
+    }
+
+    in_section && /^[^[:space:]#]/ {
+      in_section = 0
+      in_custom = 0
+    }
+
+    in_section && /^[[:space:]][[:space:]]custom_fields:[[:space:]]*(#.*)?$/ {
+      in_custom = 1
+      next
+    }
+
+    in_section && in_custom && /^[[:space:]][[:space:]][A-Za-z0-9_-]/ {
+      if ($0 !~ /^[[:space:]][[:space:]][[:space:]][[:space:]]/) {
+        in_custom = 0
+      }
+    }
+
+    in_section && in_custom && /^[[:space:]][[:space:]][[:space:]][[:space:]]/ {
+      pattern = "^[[:space:]][[:space:]][[:space:]][[:space:]]" key ":[[:space:]]*"
+      if ($0 ~ pattern) {
+        line = $0
+        sub(/^[[:space:]]*[^[:space:]]*:[[:space:]]*/, "", line)
+        sub(/[[:space:]]+#.*$/, "", line)
+        print trim(line)
+        exit
+      }
+    }
+  ' "$config_file"
+}
+
 workflow_issue_tracker_provider_raw() {
   workflow_config_provider issue_tracker
 }
