@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Fixer agents must fix all occurrences of flagged literal values** (#426): added mandatory all-occurrences rule to Protocol 93 fix-cycle guidance — when a reviewer flags a literal value (numeric constant, hex value, identifier, repeated string), fixer agents must `grep -n` the old value across all affected files and fix every occurrence in the same commit before pushing.
+- **Mandatory "Automated Reviewer Loop Summary" comment after `pr-review-loop.sh`** (#461): Protocol 91 Step 7 now uses explicit mandatory language ("You MUST post a PR comment...") for the summary comment after every non-skipped exit result (`clean`, `needs_fixes`/escalate, `max_cycles`). The result table is updated to call out the requirement per exit path. Previously, the language was passive and agents omitted the comment when the loop exited cleanly, causing the Step 8c `hasReviewSummary` hard gate to block `ready-for-human-review`.
 
 ### Changed
 

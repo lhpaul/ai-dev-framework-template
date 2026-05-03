@@ -846,9 +846,13 @@ gh api "repos/{owner}/{repo}/pulls/<pr_number>/comments/<comment_id>/replies" \
 
 This is **mandatory** — do not skip this step. Unresolved inline comments cause confusion when humans review the PR on GitHub, even if the underlying issue was already fixed. When delegating to a fixer subagent, include explicit instructions to reply to each addressed comment.
 
-#### Final summary comment
+#### Final summary comment (MANDATORY)
 
-Post via `gh pr comment` when the loop reaches a terminal condition (`clean`, `escalate`, or `max_cycles`):
+**You MUST post a PR comment containing "Automated Reviewer Loop Summary" immediately after `pr-review-loop.sh` exits — regardless of the exit result (`clean`, `needs_fixes` when escalating, or `max_cycles`).** This comment is the only reliable signal that Step 7 ran to completion. The orchestrator's Step 8c verification check (`hasReviewSummary`) searches for this comment and will block `ready-for-human-review` if it is absent.
+
+**Do not skip this comment under any circumstance.** Omitting it — even when the loop exits cleanly on the first cycle with no findings — is a protocol violation that causes the Step 8c hard gate to fail and requires re-running Step 7.
+
+Post via `gh pr comment`:
 
 ````markdown
 ### Automated Reviewer Loop Summary
@@ -873,8 +877,8 @@ Post via `gh pr comment` when the loop reaches a terminal condition (`clean`, `e
 
 When M=0 (all resolutions were code fixes), omit the "Reply-only resolutions" subsection entirely.
 
-- If no findings were ever raised (clean on first run): post a simpler comment — "No blocking PR feedback was raised by any configured reviewer tool."
-- If result is `skipped` (no platforms configured): do **not** post a summary comment.
+- If no findings were ever raised (clean on first run): post the summary comment with `**Result:** clean` and `**Resolved:** 0 / 0 findings`, or use the shorter form — "No blocking PR feedback was raised by any configured reviewer tool." Either form satisfies the Step 8c check as long as the comment body contains `"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"`.
+- If result is `skipped` (no platforms configured): do **not** post a summary comment (Step 8c skips this check when Step 7 was skipped).
 
 Prefer the helper script (it reads `.ai-dev-workflow.yaml` for the platform list automatically):
 
@@ -886,11 +890,11 @@ Interpret the result as follows:
 
 | Result | Action |
 |---|---|
-| `clean` | Re-issue the GraphQL `reviewThreads` query (Step 8c) **before** proceeding — see "Re-query reviewThreads after each push" below |
-| `skipped` | Continue to Step 7b (implementation PRs) then Step 8 |
+| `clean` | **You MUST post the "Automated Reviewer Loop Summary" comment** (see above), then re-issue the GraphQL `reviewThreads` query (Step 8c) before proceeding — see "Re-query reviewThreads after each push" below |
+| `skipped` | Continue to Step 7b (implementation PRs) then Step 8 (no summary comment posted — Step 8c skips the check) |
 | `needs_fixes` and `cycle < max_cycles` | Increment `cycle`, dispatch the matching fixer agent, wait for a push, then run Step 7 again |
-| `needs_fixes` and `cycle >= max_cycles` | Escalate to human |
-| `escalate` | Escalate to human |
+| `needs_fixes` and `cycle >= max_cycles` | **You MUST post the "Automated Reviewer Loop Summary" comment** (with `max cycles reached` result), then escalate to human |
+| `escalate` | **You MUST post the "Automated Reviewer Loop Summary" comment** (with the escalation reason), then escalate to human |
 
 ### Re-query reviewThreads after each push (mandatory)
 
