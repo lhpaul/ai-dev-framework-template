@@ -305,6 +305,20 @@ Use explicit issue numbers to avoid accidental broad transitions. Items not incl
 
 ---
 
+## Custom Fields
+
+The `issue_tracker.custom_fields` flat map in `.ai-dev-workflow.yaml` is available for provider-specific configuration extensions. For the `github_projects` provider, **no `custom_fields` keys are currently recognised by workflow scripts**.
+
+Key points:
+
+- The `project_number` field is a standard top-level `issue_tracker` field — it is not a custom field and must remain under `issue_tracker` directly, not under `custom_fields`.
+- Any keys placed under `custom_fields` are silently ignored by all current GitHub Projects scripts.
+- Future provider-specific fields (e.g., additional project metadata) may be added here as the integration evolves.
+
+Read the `workflow_issue_tracker_custom_field` helper documentation in `scripts/development-workflow/workflow-lib.sh` for the parsing API available to future consumers.
+
+---
+
 ## Without GitHub Projects
 
 If you don't use GitHub Projects, the **Portfolio Orchestrator** asks the human:

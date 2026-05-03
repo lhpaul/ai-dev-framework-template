@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Add `custom_fields` support for issue tracker config** (#453): Adds a `custom_fields` flat map under `issue_tracker` in `.ai-dev-workflow.yaml` and a `workflow_issue_tracker_custom_field` helper function in `workflow-lib.sh` to read individual custom field values. Updates Linear and GitHub Projects integration docs to document recognised fields.
+
 ### Changed
 
 - **Exit code contract table in Protocol 91 Step 8a** (#433): added a prominent table documenting exit codes 0–4 at the top of the Label Readiness Checklist to prevent future exit code collisions
