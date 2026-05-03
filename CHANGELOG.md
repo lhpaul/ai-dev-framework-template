@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fixer agents must fix all occurrences of flagged literal values** (#426): added mandatory all-occurrences rule to Protocol 93 fix-cycle guidance — when a reviewer flags a literal value (numeric constant, hex value, identifier, repeated string), fixer agents must `grep -n` the old value across all affected files and fix every occurrence in the same commit before pushing.
+
 ### Changed
 
 - **Exit code contract table in Protocol 91 Step 8a** (#433): added a prominent table documenting exit codes 0–4 at the top of the Label Readiness Checklist to prevent future exit code collisions
