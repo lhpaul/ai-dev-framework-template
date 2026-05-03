@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Exit code contract table in Protocol 91 Step 8a** (#433): added a prominent table documenting exit codes 0–4 at the top of the Label Readiness Checklist to prevent future exit code collisions
 
+### Fixed
+
+- **Cross-section consistency check in tech-lead plan protocol** (#427): added mandatory self-check step in `02-generate-implementation-plan-protocol.md` requiring the tech-lead to verify all function names, constants, and decision indices are defined consistently across plan sections before committing; added matching blocking checklist entry in `REVIEW.md` plan review
+
 ## [0.24.0] - 2026-04-29
 
 ### Added
