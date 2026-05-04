@@ -5,7 +5,7 @@ description: Write a feature spec for the AI development workflow. Use when a ne
 
 # Workflow Spec Writer
 
-Recommended model tier: `balanced`
+Recommended model tier: `premium`
 
 1. Read `AGENTS.md` for repository-wide rules and branch overrides.
 2. Read `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md`.
