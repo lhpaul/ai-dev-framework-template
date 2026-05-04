@@ -45,7 +45,7 @@ This feature adds two complementary protocol enhancements: a required metrics bl
 ### Use Case 2: Run a Meta-Retrospective to Verify Improvement Effectiveness
 
 **Actor**: Retrospective Analyst (running on-demand by the human, or triggered by the Portfolio Orchestrator after a configured cadence)
-**Preconditions**: At least three prior retrospective entries exist in the metrics log with at least one logged action item per entry.
+**Preconditions**: At least one prior retrospective entry exists in the metrics log. (When fewer than the default analysis window — 5 entries — are available, the meta-retrospective runs with all available entries and explicitly notes the limited data; it does not require a minimum of 3 entries to proceed.)
 
 **Steps**:
 1. The analyst reads the N most recent entries from the metrics log (default window: last 5 entries, configurable by the human).
