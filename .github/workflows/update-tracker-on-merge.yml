@@ -111,7 +111,7 @@ jobs:
                 user(login: $owner) {
                   projectV2(number: $number) {
                     id
-                    fields(first: 20) {
+                    fields(first: 50) {
                       nodes {
                         ... on ProjectV2SingleSelectField {
                           id
@@ -133,7 +133,7 @@ jobs:
                   organization(login: $owner) {
                     projectV2(number: $number) {
                       id
-                      fields(first: 20) {
+                      fields(first: 50) {
                         nodes {
                           ... on ProjectV2SingleSelectField {
                             id
