@@ -36,6 +36,8 @@
 # Merge output:
 #   MERGE_PR_NUMBER=<n>
 #   MERGE_RESULT=clean|conflict|failed
+#   CHANGELOG_DEDUPED=true|false          (only when MERGE_RESULT=clean; true when
+#                                          duplicate ### headers were auto-consolidated)
 #   CONFLICTED_FILES=<file1,file2,...>   (only when MERGE_RESULT=conflict)
 #   ERROR_MESSAGE=<text>                  (only when MERGE_RESULT=failed)
 #
@@ -285,6 +287,142 @@ cmd_discover() {
 }
 
 # ---------------------------------------------------------------------------
+# CHANGELOG deduplication helper
+# ---------------------------------------------------------------------------
+#
+# consolidate_changelog_duplicates FILE
+#
+# Rewrites FILE in-place so that each ### sub-header (Added, Changed, etc.)
+# appears at most once within any ## section.  When duplicates are detected,
+# their bullet lists are merged under the first occurrence of that header,
+# preserving the original section order.  Sections without duplicates pass
+# through verbatim to guarantee idempotency on already-clean input.
+#
+# Returns 0 always (idempotent on already-clean input).
+
+consolidate_changelog_duplicates() {
+  local file="$1"
+  [ -f "$file" ] || return 0
+
+  # Run the deduplication via Python3 to avoid awk quoting complexity with
+  # multi-line state.  Python3 is available on macOS (system) and all common
+  # Linux distributions.
+  #
+  # Strategy: parse each ## section, collect ### sub-sections in order.
+  # When a duplicate ### header is found, append its bullets to the first
+  # occurrence and drop the duplicate header.  The original section order is
+  # preserved (no reordering) — only sections with actual duplicates are
+  # reconstructed; clean sections pass through verbatim.
+  python3 - "$file" <<'PYEOF'
+import sys, re, os
+
+filepath = sys.argv[1]
+with open(filepath, "r") as fh:
+    lines = fh.readlines()
+
+result = []
+i = 0
+while i < len(lines):
+    line = lines[i]
+    # Detect ## section boundary
+    if re.match(r'^## ', line):
+        # Collect the full ## section (up to next ## or EOF)
+        section_lines = [line]
+        i += 1
+        while i < len(lines) and not re.match(r'^## ', lines[i]):
+            section_lines.append(lines[i])
+            i += 1
+
+        # Check whether this section has duplicate ### headers; pass through
+        # verbatim if clean (idempotency guarantee for already-clean input).
+        seen_check = {}
+        has_dup = False
+        for sl in section_lines[1:]:
+            if re.match(r'^### ', sl):
+                hdr = sl[4:].strip()
+                if hdr in seen_check:
+                    has_dup = True
+                    break
+                seen_check[hdr] = True
+        if not has_dup:
+            result.extend(section_lines)
+            continue
+
+        # Duplicates found — reconstruct this section merging duplicate bodies.
+        # Each entry: (header_text, [body lines], original_header_line)
+        subsections = []   # in first-appearance order
+        seen_idx = {}      # header_text -> index in subsections
+        preamble = []      # lines before the first ### in this ## block
+
+        j = 1  # skip the ## header line itself
+        while j < len(section_lines):
+            sl = section_lines[j]
+            if re.match(r'^### ', sl):
+                hdr = sl[4:].strip()
+                body = []
+                j += 1
+                while (j < len(section_lines) and
+                       not re.match(r'^### ', section_lines[j]) and
+                       not re.match(r'^## ', section_lines[j])):
+                    body.append(section_lines[j])
+                    j += 1
+                if hdr in seen_idx:
+                    # Merge into the first occurrence: append bullets, strip
+                    # surrounding blank lines so output is clean.
+                    idx = seen_idx[hdr]
+                    existing = subsections[idx][1]
+                    while existing and existing[-1].strip() == "":
+                        existing.pop()
+                    stripped = list(body)
+                    while stripped and stripped[0].strip() == "":
+                        stripped.pop(0)
+                    while stripped and stripped[-1].strip() == "":
+                        stripped.pop()
+                    if stripped:
+                        existing.extend(stripped)
+                    subsections[idx] = (hdr, existing, subsections[idx][2])
+                else:
+                    seen_idx[hdr] = len(subsections)
+                    subsections.append((hdr, body, sl))
+            else:
+                if not subsections:
+                    preamble.append(sl)
+                elif (sl.strip() == "" and
+                      j + 1 < len(section_lines) and
+                      re.match(r'^### ', section_lines[j + 1])):
+                    # Blank line immediately before an upcoming ###: drop it;
+                    # a consistent blank separator is added during output.
+                    pass
+                else:
+                    if subsections:
+                        subsections[-1][1].append(sl)
+                    else:
+                        preamble.append(sl)
+                j += 1
+
+        # Reconstruct: ## header, preamble, then sub-sections in original order
+        result.append(section_lines[0])
+        result.extend(preamble)
+        for k, (hdr, body, orig_hdr_line) in enumerate(subsections):
+            result.append(orig_hdr_line)
+            while body and body[-1].strip() == "":
+                body.pop()
+            result.extend(body)
+            # Blank line after each sub-section (separator before next ### or ##)
+            result.append("\n")
+    else:
+        result.append(line)
+        i += 1
+
+# Write atomically via a temp file
+tmp = filepath + ".dedup.tmp"
+with open(tmp, "w") as fh:
+    fh.writelines(result)
+os.replace(tmp, filepath)
+PYEOF
+}
+
+# ---------------------------------------------------------------------------
 # Command: merge
 # ---------------------------------------------------------------------------
 
@@ -381,6 +519,41 @@ cmd_merge() {
   # so set -e does not fire on a failed merge).
   local merge_output
   if merge_output="$(git merge --no-ff --no-edit -m "Merge PR #${pr_num} (${branch})" "$merge_ref" 2>&1)"; then
+    # Post-merge CHANGELOG deduplication guard.
+    # A clean git merge can still produce structural CHANGELOG violations when the
+    # incoming PR placed its entries under a category header (e.g. ### Fixed) that
+    # already exists earlier in the [Unreleased] block on develop.  Git has no
+    # conflict to report — both sides simply have a ### Fixed section — but the
+    # result is two ### Fixed blocks in the same ## [Unreleased] section, which
+    # violates Keep a Changelog conventions and fails the duplicate-header lint.
+    #
+    # Strategy: run check-changelog-duplicate-headers.sh immediately after the
+    # merge commit; if duplicates are detected, consolidate them in-place and
+    # amend the merge commit before pushing so the remote branch stays clean.
+    local changelog_deduped="false"
+    local lint_script="$SCRIPT_DIR/../lint/check-changelog-duplicate-headers.sh"
+    if [ -f "CHANGELOG.md" ] && [ -f "$lint_script" ]; then
+      if ! bash "$lint_script" CHANGELOG.md >/dev/null 2>&1; then
+        echo "INFO: CHANGELOG duplicate section headers detected after clean merge of PR #${pr_num} — auto-consolidating..." >&2
+        consolidate_changelog_duplicates CHANGELOG.md
+        # Verify the fix resolved all duplicates before amending.
+        if bash "$lint_script" CHANGELOG.md >/dev/null 2>&1; then
+          git add CHANGELOG.md
+          # Only amend when CHANGELOG.md actually changed (idempotency guard).
+          if ! git diff --cached --quiet; then
+            git commit --amend --no-edit >/dev/null 2>&1 || \
+              merge_die "CHANGELOG deduplication succeeded but amending the merge commit failed"
+            changelog_deduped="true"
+            echo "INFO: CHANGELOG duplicate headers consolidated and merge commit amended." >&2
+          fi
+        else
+          # Consolidation could not fully resolve all duplicates — warn but
+          # do not block the merge; the lint will catch it in CI.
+          echo "WARNING: CHANGELOG deduplication after PR #${pr_num} merge left residual duplicates — manual fix may be required." >&2
+        fi
+      fi
+    fi
+
     # Push the merge commit so GitHub can process the merge event.
     git push origin "$TARGET_BASE" >/dev/null 2>&1 || \
       merge_die "Merge succeeded locally but push to origin/${TARGET_BASE} failed"
@@ -400,6 +573,7 @@ cmd_merge() {
     fi
 
     print_kv MERGE_RESULT "clean"
+    print_kv CHANGELOG_DEDUPED "$changelog_deduped"
     return 0
   fi
 

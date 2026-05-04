@@ -1,7 +1,7 @@
 # Protocol: Batch Merge
 
 **Agent role**: Developer (or Portfolio Orchestrator when invoked from Protocol 90)
-**Purpose**: Merge all ready PRs in a parallel batch into `develop` sequentially, auto-resolving trivial CHANGELOG and documentation conflicts, pausing for human input on non-trivial ones, and running `post-merge-cleanup` for each successfully merged PR.
+**Purpose**: Merge all ready PRs in a parallel batch into `develop` sequentially, auto-resolving trivial CHANGELOG and documentation conflicts (including duplicate section headers introduced by clean merges), pausing for human input on non-trivial ones, and running `post-merge-cleanup` for each successfully merged PR.
 
 **Shell helper**: `scripts/development-workflow/batch-merge.sh`
 
@@ -166,13 +166,20 @@ For each PR in the approved order:
 
 Parse the output:
 
-- `MERGE_RESULT=clean` → merge succeeded with no conflicts. Proceed to **4.2 Post-merge steps**.
+- `MERGE_RESULT=clean` → merge succeeded with no conflicts. Check `CHANGELOG_DEDUPED` (see below), then proceed to **4.2 Post-merge steps**.
 - `MERGE_RESULT=conflict` → conflicts detected. Proceed to **4.3 Conflict classification**.
 - `MERGE_RESULT=failed` → unexpected failure. Report:
 
   > Failed to merge PR #N: *ERROR_MESSAGE*. Skipping.
 
   Record outcome as `failed`. Continue with the next PR.
+
+**`CHANGELOG_DEDUPED` field (clean merges only)**: When `MERGE_RESULT=clean`, the script also emits `CHANGELOG_DEDUPED=true|false` to indicate whether the post-merge CHANGELOG deduplication guard ran and made changes.
+
+- `CHANGELOG_DEDUPED=false` → no duplicate section headers were found (normal case).
+- `CHANGELOG_DEDUPED=true` → the merge introduced duplicate `### Category` headers within `[Unreleased]` (e.g., two `### Fixed` sections). The script auto-consolidated them and amended the merge commit before pushing. Include a note in the Step 5 summary under the merged PR's outcome (use outcome code `merged_clean` with a parenthetical `(CHANGELOG deduped)` suffix).
+
+This guard prevents the scenario where a clean git merge silently produces a structurally invalid CHANGELOG (no conflict markers, but two `### Fixed` blocks in the same `## [Unreleased]` section). If a `WARNING` about residual duplicates appears in the script's stderr output, the automatic consolidation did not fully resolve all duplicates — a manual fix to `CHANGELOG.md` on `develop` is required before the next batch merge.
 
 **Abort-at-any-time gate**: Before starting each PR, check whether the human has signaled an abort (e.g., by typing "abort" at any prompt). If yes, mark all remaining PRs as `not_attempted` and jump to Step 5.
 
