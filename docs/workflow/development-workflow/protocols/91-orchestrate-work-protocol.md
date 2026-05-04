@@ -1256,6 +1256,12 @@ Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asyn
    ```
 
 2. **Re-query review threads**:
+
+   Before running the query, resolve the Codex bot login. Use the value of `CODEX_GITHUB_BOT_LOGIN` if set; otherwise default to `"codex-ai[bot]"` (the default used by `codex-github-reviewer.sh`):
+   ```bash
+   CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-codex-ai[bot]}"
+   ```
+
    ```bash
    UNRESOLVED_RECHECK=$(gh api graphql -f query='
      query($owner:String!, $repo:String!, $number:Int!) {
@@ -1267,9 +1273,10 @@ Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asyn
          }
        }
      }' -f owner="<owner>" -f repo="<repo>" -F number="$PR_NUMBER" \
-     --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
+     --jq --arg codex_bot "$CODEX_BOT_LOGIN" \
+     '[.data.repository.pullRequest.reviewThreads.nodes[]
            | select(.isResolved == false)
-           | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps","codex-ai"] | index($a) != null)
+           | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps",$codex_bot] | index($a) != null)
            | select((.comments.nodes[0].body // "") | test("✅ Addressed") | not)] | length')
    ```
 
