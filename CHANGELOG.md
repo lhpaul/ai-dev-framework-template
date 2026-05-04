@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Default internal reviewer switched from `codex` to `codex-github`**: replaced the `codex` CLI reviewer (unreachable from Claude Code and Cursor subagent runners, causing a warning on every automated PR) with `codex-github` (Codex GitHub App — universally reachable via `gh` CLI from any runner context) in the default `.ai-dev-workflow.yaml` `internal_reviewers` list. Requires the Codex GitHub App to be installed on the repository.
 - **Exit code contract table in Protocol 91 Step 8a** (#433): added a prominent table documenting exit codes 0–4 at the top of the Label Readiness Checklist to prevent future exit code collisions
+- **`product-manager` agent upgraded to `premium` model tier** (#456): spec writing is the highest-leverage task in the pipeline — a weak spec cascades into worse plans and worse implementations. Updated `agent-model-config.md` rationale and model IDs in `.claude/agents/product-manager.md` (to `claude-opus-4-7`) and `.cursor/agents/product-manager.md` (to `claude-opus-4-7`).
 
 ## [0.24.0] - 2026-04-29
 
