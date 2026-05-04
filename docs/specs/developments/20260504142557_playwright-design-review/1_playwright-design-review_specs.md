@@ -1,14 +1,10 @@
 # Playwright-Based Design Review — Spec
 
-**Depends on**: <!-- No dependencies -->
-
 ---
 
 ## Overview
 
-This feature adds a `design-reviewer` agent to the AI development workflow that uses browser automation to validate the visual and behavioral quality of frontend changes beyond what static code review can detect. When a pull request includes frontend files (HTML, CSS, JavaScript, or frontend framework components), the design reviewer launches a real browser, renders the affected pages or components, and reports on rendering correctness, accessibility compliance, and runtime errors. This gives teams automated confidence that UI changes look and behave as intended before human review.
-
-**Language**: Describe outcomes in product and user terms. Do not use API field names, database column names, JSON keys, or code symbols in this document — use plain-language labels and map technical identifiers only in the implementation plan.
+This feature adds a design reviewer to the AI development workflow that uses browser automation to validate the visual and behavioral quality of frontend changes beyond what static code review can detect. When a pull request includes frontend files (HTML, CSS, JavaScript, or frontend framework components), the design reviewer launches a real browser, renders the affected pages or components, and reports on rendering correctness, accessibility compliance, and runtime errors. This gives teams automated confidence that UI changes look and behave as intended before human review.
 
 ---
 
