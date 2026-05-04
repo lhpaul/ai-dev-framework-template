@@ -104,7 +104,7 @@ This feature adds a design reviewer to the AI development workflow that uses bro
 ## Business Rules
 
 - BR-1: The design-reviewer agent MUST be invoked during the Step 7a internal review gate only for implementation PRs (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`) that contain frontend file changes. It MUST NOT be invoked for spec or plan PRs.
-- BR-2: Frontend file detection is determined by file extension and path. At minimum, the following are considered frontend files: `.html`, `.css`, `.scss`, `.sass`, `.less`, `.js`, `.jsx`, `.ts`, `.tsx`, `.vue`, `.svelte`. The list must be documented and extensible.
+- BR-2: Frontend file detection is determined by file extension and path. At minimum, the following are considered frontend files: `.html`, `.css`, `.scss`, `.sass`, `.less`, `.jsx`, `.tsx`, `.vue`, `.svelte`. Plain `.js` and `.ts` files are considered frontend only when located under frontend-specific directory prefixes (`src/`, `app/`, `pages/`, `components/`, `public/`, `static/`, `assets/`); `.js`/`.ts` files at the repo root or under `scripts/` are excluded. The detection rules must be documented and extensible.
 - BR-3: The design-reviewer agent MUST NOT block the PR if browser automation is unavailable. Unavailability results in a graceful skip with a notice comment, not a hard failure.
 - BR-4: The design-reviewer agent MUST NOT block the PR if the development server or preview URL cannot be reached. Unreachable preview results in a skip with an error notice, not a hard failure.
 - BR-5: When the design review runs successfully and finds blocking issues (console errors or critical or serious accessibility violations), the result is treated as "needs revision" and the PR must not advance to `ready-for-human-review` until the issues are resolved or explicitly accepted.
@@ -113,6 +113,7 @@ This feature adds a design reviewer to the AI development workflow that uses bro
 - BR-8: The design-reviewer agent uses the repository's configured `browser_automation.provider` from `.ai-dev-workflow.yaml`. For this repository the provider is `playwright_cli`. The agent must not hard-code a provider.
 - BR-9: When the design-reviewer agent is invoked (i.e., frontend changes are detected and the agent runs), it MUST post a PR comment explicitly stating the verdict (approved / needs-revision / skipped) so the Work Item Runner can parse the result programmatically. This rule applies to the invoked paths only (Use Cases 1 and 3). When the agent is never invoked because no frontend changes are present (Use Case 2), no comment is posted and this rule does not apply.
 - BR-10: If the design review was skipped (either no frontend changes or provider unavailable), the Work Item Runner MUST continue the normal Step 7a flow without treating the skip as a failure.
+- BR-11: The preview URL for navigation is resolved in this order: (1) the `PREVIEW_URL` environment variable, treated as the base URL (file-relative paths are appended); (2) a local development server started by the agent (the server address becomes the base URL); (3) if neither is available, the agent skips preview navigation and falls back to a report noting that no live preview was accessible. The resolution order must be documented and the implementation must not hard-code a URL.
 
 ---
 
