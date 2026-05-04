@@ -94,7 +94,7 @@ The current internal code review gate (Step 7a of Protocol 91) performs a single
 - Pass 1 must approve before Pass 2 is dispatched. Pass 2 is never run in parallel with Pass 1 or before Pass 1 approves.
 - Both passes must approve at the same commit SHA before the PR is converted from draft to non-draft.
 - If a fix applied during Pass 2 is non-trivial (does not meet the trivial-fix conditions in Protocol 91), Pass 1 must re-approve the new commit before Pass 2 can proceed.
-- If a fix applied during Pass 2 is trivial (meets all three trivial-fix conditions), Pass 1 re-run is skipped and Pass 2 re-runs directly.
+- If a fix applied during Pass 2 is trivial (meets all three trivial-fix conditions), Pass 1 re-run is skipped and Pass 2 re-runs directly. In this case, Pass 1's most recent approval is carried forward; the "same-SHA" requirement applies only to the initial draft-to-non-draft conversion and to non-trivial fix commits.
 - The existing `max_internal_review_cycles` limit governs the combined number of full review restarts (both passes together), not each pass independently. Restarting means re-running from Pass 1.
 - The Step 7a summary comment must distinguish findings from Pass 1 and Pass 2, showing each pass's verdict separately.
 - The two-pass rule is independent of which internal reviewers are configured (e.g., `claude`, `codex`, `codex-github`). Each configured reviewer runs both passes in sequence.
