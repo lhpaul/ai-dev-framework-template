@@ -37,7 +37,7 @@ If you prefer different names (`small/medium/large`, `fast/standard/pro`, etc.),
 | `code-reviewer` | `balanced` | Code review against known standards and a completed spec. A balanced model is capable here. |
 | `project-setup` | `balanced` | Structured onboarding conversation with clear protocol guidance. A balanced model is sufficient. |
 | `smoke-tester` | `balanced` | Executes the smoke test runbook using browser automation. A balanced model is sufficient for following step-by-step testing instructions. |
-| `retrospective` | `economy` | **Retrospective Analyst**. Reads PR metadata and git history, synthesizes findings into a categorized list; mechanical analysis that should stay fast and cheap. |
+| `retrospective` | `balanced` | **Retrospective Analyst**. Reads PR metadata and git history, synthesizes findings across multiple PRs, and identifies workflow patterns; the synthesis and pattern-recognition work requires a capable model — economy tier produces shallow, low-signal retrospectives. |
 
 ### Runner Notes
 
