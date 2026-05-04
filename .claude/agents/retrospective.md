@@ -1,6 +1,6 @@
 ---
 name: retrospective
-model: claude-haiku-4-5-20251001
+model: claude-sonnet-4-6
 description: Retrospective analysis agent. Analyzes completed work (a batch or individual item) to identify process improvement opportunities, presents them to the human, and executes the chosen action for each. Use after a batch or item run to surface workflow improvements, or invoke on-demand with a PR number, branch, or date as scope hint.
 tools: Read, Grep, Glob, Write, Edit, Bash
 ---
