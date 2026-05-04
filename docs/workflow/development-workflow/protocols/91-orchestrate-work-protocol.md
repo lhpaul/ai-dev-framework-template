@@ -1039,6 +1039,69 @@ Required labels are determined by the **branch prefix**, not by the content of t
 
 Any branch that does not match a recognized prefix is treated as non-implementation (i.e., `ready-for-regression` is NOT required), but this should be treated as a configuration anomaly and reported to the human.
 
+### Infrastructure Dependency Scan (pre-readiness)
+
+Before running the readiness checklist below, perform a best-effort scan of the PR diff to detect infrastructure dependencies that require human setup before the feature can be safely enabled. This scan runs on **every pass through Step 8a** — including after fixer pushes — so the label and PR body section always reflect the current diff (BR-6).
+
+**Timing**: Run after CI is green and all automated reviewer loops are clean (Step 7 complete), but before applying `ready-for-human-review`. The scan result does **not** block readiness — `needs-setup` co-exists with `ready-for-human-review` (BR-3, BR-4).
+
+**Scan procedure**:
+
+1. Read the PR diff:
+
+   ```bash
+   gh pr diff <pr_number>
+   ```
+
+2. Scan the diff for infrastructure dependency signals on **added lines** (lines starting with `+`). The following heuristics are best-effort and intentionally incomplete (BR-9 — false negatives are acceptable):
+
+   - **New environment variable references**: added lines matching patterns like `process.env.NEW_VAR`, `os.environ["NEW_VAR"]`, `$NEW_VAR` in shell scripts, or new entries added to `.env.example`, `.env.template`, or similar env-template files.
+   - **New GitHub Actions secret references**: added lines in `.github/workflows/**` files that reference `${{ secrets.NEW_SECRET }}`.
+   - **New config key additions to environment-specific config files**: added keys in files named `*.env`, `.env.*`, `config/production.*`, or similar deployment-configuration files.
+   - **Explicit setup TODO comments added in the diff**: added comments containing phrases like `# TODO: set`, `# Set this to`, `# Required: configure`, or similar that indicate a value must be externally provided.
+
+3. **If one or more signals are found**:
+
+   a. Read the current PR body:
+
+   ```bash
+   CURRENT_BODY=$(gh pr view <pr_number> --json body --jq '.body')
+   ```
+
+   b. Construct a `## Pre-merge Setup` section listing each detected requirement with (BR-8):
+      - Requirement name
+      - Type (e.g., environment variable, GitHub Actions secret, DNS record, service account token)
+      - Plain-language description of the expected value
+      - Where to set it (e.g., GitHub Actions secrets, Railway environment, DNS provider)
+
+   c. Append the section to the existing PR body and update:
+
+   ```bash
+   gh pr edit <pr_number> --body "<updated-body-with-pre-merge-setup-section>"
+   ```
+
+   d. Apply the `needs-setup` label (BR-1 — the label must always accompany the section):
+
+   ```bash
+   gh pr edit <pr_number> --add-label "needs-setup"
+   ```
+
+   **Note**: The `needs-setup` GitHub label must exist in the repository's label settings before this step can succeed. Suggested color: `#fbca04` (yellow). If the label does not exist, create it in the repository's **Issues → Labels** settings first.
+
+4. **If no signals are found**:
+
+   Ensure `needs-setup` is not present and no `## Pre-merge Setup` section exists in the PR body. If either is present from a prior scan (e.g., a previous commit introduced an env var that has since been removed), remove them:
+
+   ```bash
+   # Remove label if present (idempotent — no error if already absent)
+   gh pr edit <pr_number> --remove-label "needs-setup" 2>/dev/null || true
+
+   # Remove the ## Pre-merge Setup section from the PR body if present
+   # (Read body, strip the section and all content until the next ## heading or EOF, write back)
+   ```
+
+5. After the scan: proceed to the readiness checklist below. The presence of `needs-setup` is a valid co-label with `ready-for-human-review` and does **not** block this checklist or prevent `ready-for-human-review` from being applied (BR-3). The checklist script does not check for or remove `needs-setup` — it is a deliberate signal, not a stale label.
+
 Run this checklist for **every PR**:
 
 ```bash
@@ -1240,6 +1303,7 @@ Verify all of the following. If any check fails, **do not report ready** — tre
 | `ready-for-human-review` label | Present in `labels[].name` |
 | `ready-for-regression` label | Present in `labels[].name` for `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`; absent/ignored for `spec/*`, `implementation-plan/*` |
 | No `needs-fixes` label | `needs-fixes` absent from `labels[].name` |
+| `needs-setup` label (if present) | **Valid co-label** — `needs-setup` may be present alongside `ready-for-human-review` when the diff contains infrastructure dependency signals. Its presence does **not** constitute a verification failure and does not block this check. Do not remove it. |
 | All automated-reviewer `reviewThreads` resolved | GraphQL query above returns empty output — `isResolved: true` (or first comment body contains `✅ Addressed`) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured) |
 | Automated reviewer loop summary | At least one comment whose body contains `"Automated Reviewer Loop Summary"`, `"Reviewer Loop Summary"`, or `"No blocking PR feedback"` (skip this check only when Step 7 was `skipped` because no review platforms are configured). **This is a hard requirement. Agents applying fixes MUST NOT remove or skip this check — the presence of the comment is the only reliable signal that Step 7 ran to completion. A PR that has `ready-for-human-review` but lacks this comment is in an incomplete state and must re-run Step 7.** (Note: the Step 7a summary comment posted by the internal review gate is a distinct comment from a distinct step — it does not satisfy this check. This check targets the external automated reviewer loop summary from Step 7 only.) |
 | CI checks | All required status checks have `state: SUCCESS` or `conclusion: success` in `statusCheckRollup` (no check in `PENDING`, `FAILURE`, or `ERROR` state) |
