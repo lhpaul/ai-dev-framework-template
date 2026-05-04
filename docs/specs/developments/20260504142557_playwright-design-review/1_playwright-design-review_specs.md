@@ -30,8 +30,8 @@ This feature adds a design reviewer to the AI development workflow that uses bro
    c. Runs an automated accessibility check (WCAG compliance check) on the rendered output.
 7. The agent compiles the findings into a structured review comment and posts it to the PR.
 8. The runner reads the findings:
-   - If blocking issues are found (console errors, critical accessibility violations), the runner treats the result as "needs revision."
-   - If no blocking issues are found (screenshots captured, no console errors, no critical accessibility violations), the runner treats the result as "approved" and continues.
+   - If blocking issues are found (console errors, critical or serious accessibility violations), the runner treats the result as "needs revision."
+   - If no blocking issues are found (screenshots captured, no console errors, no critical or serious accessibility violations), the runner treats the result as "approved" and continues.
 
 **Postconditions**: A structured design review comment is present on the PR. If the review revealed blocking issues, those issues must be addressed before the PR can advance to human review.
 
@@ -107,11 +107,11 @@ This feature adds a design reviewer to the AI development workflow that uses bro
 - BR-2: Frontend file detection is determined by file extension and path. At minimum, the following are considered frontend files: `.html`, `.css`, `.scss`, `.sass`, `.less`, `.js`, `.jsx`, `.ts`, `.tsx`, `.vue`, `.svelte`. The list must be documented and extensible.
 - BR-3: The design-reviewer agent MUST NOT block the PR if browser automation is unavailable. Unavailability results in a graceful skip with a notice comment, not a hard failure.
 - BR-4: The design-reviewer agent MUST NOT block the PR if the development server or preview URL cannot be reached. Unreachable preview results in a skip with an error notice, not a hard failure.
-- BR-5: When the design review runs successfully and finds blocking issues (console errors or critical accessibility violations), the result is treated as "needs revision" and the PR must not advance to `ready-for-human-review` until the issues are resolved or explicitly accepted.
+- BR-5: When the design review runs successfully and finds blocking issues (console errors or critical or serious accessibility violations), the result is treated as "needs revision" and the PR must not advance to `ready-for-human-review` until the issues are resolved or explicitly accepted.
 - BR-6: The accessibility check must cover WCAG 2.1 Level AA as the baseline. Violations at the "critical" and "serious" levels are treated as blocking; "moderate" and "minor" violations are reported but non-blocking.
 - BR-7: Screenshots captured during a design review must be attached to or linked from the PR review comment. The comment must be human-readable and structured (not raw JSON).
 - BR-8: The design-reviewer agent uses the repository's configured `browser_automation.provider` from `.ai-dev-workflow.yaml`. For this repository the provider is `playwright_cli`. The agent must not hard-code a provider.
-- BR-9: The design-reviewer result (approved / needs-revision / skipped) must be explicitly stated in the PR comment so the Work Item Runner can parse the verdict programmatically.
+- BR-9: When the design-reviewer agent is invoked (i.e., frontend changes are detected and the agent runs), it MUST post a PR comment explicitly stating the verdict (approved / needs-revision / skipped) so the Work Item Runner can parse the result programmatically. This rule applies to the invoked paths only (Use Cases 1 and 3). When the agent is never invoked because no frontend changes are present (Use Case 2), no comment is posted and this rule does not apply.
 - BR-10: If the design review was skipped (either no frontend changes or provider unavailable), the Work Item Runner MUST continue the normal Step 7a flow without treating the skip as a failure.
 
 ---
@@ -149,6 +149,7 @@ This feature has no user-facing UI of its own. Its "UX" is the structured PR com
 - [ ] AC-9: When the configured browser automation provider is unavailable, the design-reviewer agent posts a skip notice on the PR (not an error) and the PR is not blocked.
 - [ ] AC-10: The design-reviewer agent works with the `playwright_cli` provider configured in this repository's `.ai-dev-workflow.yaml`.
 - [ ] AC-11: Protocol 91 Step 7a documentation is updated to describe when the design-reviewer agent is invoked and how its verdict is interpreted.
+- [ ] AC-12: When the development server or preview URL cannot be reached, the design-reviewer agent posts a skip notice on the PR (not an error) and the PR is not blocked.
 
 ---
 
@@ -177,6 +178,7 @@ This feature has no user-facing UI of its own. Its "UX" is the structured PR com
 | Agent runs axe-core accessibility checks | AC-5 |
 | Agent reports findings as a structured PR review comment | AC-6 |
 | Protocol 91 Step 7a invokes design-reviewer for PRs with frontend changes | AC-2, AC-11 |
-| Agent gracefully skips when no frontend changes detected | AC-8, AC-9 |
+| Agent gracefully skips when no frontend changes detected | AC-8 |
 | Agent gracefully skips when Playwright is unavailable | AC-9 |
+| Agent gracefully skips when preview URL or dev server is unreachable | AC-12 |
 | This repo's `browser_automation.provider: playwright_cli` is used | AC-10 |
