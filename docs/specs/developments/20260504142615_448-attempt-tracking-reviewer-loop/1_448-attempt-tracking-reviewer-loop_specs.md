@@ -15,7 +15,7 @@ When the automated reviewer loop retries a fixer agent dispatch after a failed a
 | Brief Objective | Spec Trace |
 |---|---|
 | Track attempt number and pass it to fixer agent on each retry | AC-1, AC-2, Use Case 1 |
-| Include summary of what prior attempts tried and why they failed | AC-3, AC-4, Use Case 2 |
+| Include summary of what prior attempts tried and why they failed | AC-5, AC-6, Use Case 3 |
 | First attempt has no prior context overhead | AC-5, Business Rules |
 | No change to the external reviewer step (pr-review-loop.sh) | Out of Scope |
 
