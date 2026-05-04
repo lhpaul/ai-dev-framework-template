@@ -123,7 +123,7 @@ The design-reviewer agent files are prose-driven workflow documents, not executa
 
 3. **Update `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — Step 7a**: Locate the `## Step 7a: Internal Review Gate (Draft PR)` heading. Immediately after the heading and the introductory sentence ("Run this step immediately after opening a draft PR..."), insert a new `### Design Review Gate (implementation PRs only)` sub-section before the `### Determining which reviewers to run` sub-section. The inserted prose must cover all points from the Layer-by-Layer Changes section above: branch-type gate, frontend-file detection command and extension list, the three execution paths with their skip semantics, preview URL resolution order, and the `browser_automation.provider` read requirement.
 
-4. **Write the smoke test runbook** at `docs/testing/workflow/450-playwright-design-review.smoke-test.md`. Cover all twelve acceptance criteria with at least one testable step each.
+4. **Write the smoke test runbook** at `docs/testing/workflow/450-playwright-design-review.smoke-test.md`. Cover all twelve acceptance criteria with at least one testable step each. <!-- markdown-heuristic-disable COUNT001 -->
 
 5. **Cross-section consistency self-check**: Verify that the extension list and directory-prefix list in the `.claude/agents/design-reviewer.md` body exactly match the list in the Protocol 91 Step 7a sub-section. Verify that the verdict strings (`Approved`, `Needs Revision`, `Skipped`) and the PR comment header format (`## Design Review Summary`, `**Verdict**: ...`) are identical in both places. Fix any discrepancies before committing.
 

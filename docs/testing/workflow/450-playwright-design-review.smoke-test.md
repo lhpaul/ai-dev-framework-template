@@ -12,7 +12,7 @@
 Before running this smoke test:
 
 - [ ] Implementation PR is merged and the repository is on the latest `develop` commit
-- [ ] `playwright_cli` is installed and accessible in the test environment (for AC-3, AC-4, AC-5 steps)
+- [ ] `playwright_cli` is installed and accessible in the test environment (required for browser-based checks: AC-3, AC-4, AC-5)
 - [ ] A test implementation PR is available that includes at least one frontend file (e.g., a `.html` or `.css` change) targeting `develop`
 - [ ] A test implementation PR is available that includes only non-frontend files (e.g., a Markdown-only change) targeting `develop`
 - [ ] GitHub CLI (`gh`) is authenticated for the repository
