@@ -1,7 +1,7 @@
 # External Feedback Pipeline: GitHub Discussions Staging and Triage Protocol — Implementation Plan
 
 **Spec**: [1\_459-external-feedback-pipeline\_specs.md](1_459-external-feedback-pipeline_specs.md)
-**Smoke test runbook**: [../../testing/workflow/459-external-feedback-pipeline.smoke-test.md](../../../testing/workflow/459-external-feedback-pipeline.smoke-test.md)
+**Smoke test runbook**: [../../../testing/workflow/459-external-feedback-pipeline.smoke-test.md](../../../testing/workflow/459-external-feedback-pipeline.smoke-test.md)
 
 ---
 
@@ -242,9 +242,9 @@
 
    Verification: confirm the addition renders correctly and the link resolves.
 
-5. **Write the smoke test runbook**
+5. **Review and update the smoke test runbook**
 
-   Create `docs/testing/workflow/459-external-feedback-pipeline.smoke-test.md` covering AC-1 through AC-6 (see Testing Strategy scenarios above).
+   The runbook skeleton at `docs/testing/workflow/459-external-feedback-pipeline.smoke-test.md` was created during the Plan Ready stage. After implementation, update it to reflect any deviations from the plan (e.g., updated commands, actual Discussion category ID, actual label color) and confirm it covers AC-1 through AC-6 (see Testing Strategy scenarios above).
 
 6. **Pre-commit lint check**
 
