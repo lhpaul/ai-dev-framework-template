@@ -83,6 +83,17 @@ Platform selection (in priority order):
   1. --platform flag(s) passed on the command line
   2. review.platforms list in .ai-dev-workflow.yaml at the repo root
 
+Branch-type-aware default timeout:
+  On spec/* and implementation-plan/* branches, Devin has no trigger condition and
+  exits immediately with REASON=no_check_run. To avoid wasting the full 20-minute
+  default wait budget on these branches, the script automatically reduces --max-wait
+  to 60 s and --poll-interval to 30 s when the branch matches spec/* or
+  implementation-plan/* and the caller did not pass the respective flag explicitly.
+  poll_interval is also reduced so it stays below max_wait — the per-loop timeout
+  check requires elapsed >= max_wait, which can only fire after at least one
+  poll_interval has elapsed. Pass --max-wait and/or --poll-interval explicitly to
+  override either value.
+
 Outputs stable key=value lines including:
   RESULT=clean|needs_fixes|escalate|skipped
   PLATFORM_<n>_NAME / PLATFORM_<n>_RESULT
@@ -1684,7 +1695,9 @@ fi
 pr_number=""
 branch_name=""
 poll_interval=120
+poll_interval_explicit=0
 max_wait=1200
+max_wait_explicit=0
 declare -a platforms=()
 
 while [ "$#" -gt 0 ]; do
@@ -1699,10 +1712,12 @@ while [ "$#" -gt 0 ]; do
       ;;
     --poll-interval)
       poll_interval="$2"
+      poll_interval_explicit=1
       shift 2
       ;;
     --max-wait)
       max_wait="$2"
+      max_wait_explicit=1
       shift 2
       ;;
     -h|--help)
@@ -1746,6 +1761,23 @@ if [ "${#platforms[@]}" -gt 0 ]; then
   if [ -z "$branch_name" ]; then
     branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"
   fi
+fi
+
+# Branch-type-aware timeout: spec/* and implementation-plan/* branches produce
+# REASON=no_check_run immediately when Devin has no trigger condition (non-implementation
+# branches). Waiting the full 1200-second default wastes orchestrator budget.
+# Apply a short max_wait=60 / poll_interval=30 default when the caller did not pass
+# --max-wait / --poll-interval explicitly. poll_interval must be less than max_wait
+# so the per-loop timeout check can fire within the budget.
+if [ "$max_wait_explicit" -eq 0 ]; then
+  case "$branch_name" in
+    spec/*|implementation-plan/*)
+      max_wait=60
+      if [ "$poll_interval_explicit" -eq 0 ]; then
+        poll_interval=30
+      fi
+      ;;
+  esac
 fi
 
 aggregate_result="skipped"
