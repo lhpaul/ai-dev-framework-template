@@ -1,7 +1,5 @@
 # Split Code Review into Spec-Compliance and Code-Quality Passes — Spec
 
-**Depends on**: <!-- no dependencies -->
-
 ---
 
 ## Overview
