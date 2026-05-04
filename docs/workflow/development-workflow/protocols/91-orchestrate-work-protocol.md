@@ -1062,25 +1062,33 @@ Before running the readiness checklist below, perform a best-effort scan of the 
 
 3. **If one or more signals are found**:
 
-   a. Read the current PR body:
-
-   ```bash
-   CURRENT_BODY=$(gh pr view <pr_number> --json body --jq '.body')
-   ```
-
-   b. Construct a `## Pre-merge Setup` section listing each detected requirement with (BR-8):
+   a. Construct a `## Pre-merge Setup` section listing each detected requirement with (BR-8):
       - Requirement name
       - Type (e.g., environment variable, GitHub Actions secret, DNS record, service account token)
       - Plain-language description of the expected value
       - Where to set it (e.g., GitHub Actions secrets, Railway environment, DNS provider)
 
-   c. Append the section to the existing PR body and update:
+   b. Replace any existing `## Pre-merge Setup` section in the PR body with the newly constructed one, then update the PR body. This step runs on every pass through Step 8a (including after fixer pushes), so the section must always reflect the current diff — never accumulate stale or duplicate sections:
 
    ```bash
-   gh pr edit <pr_number> --body "<updated-body-with-pre-merge-setup-section>"
+   # Remove any existing ## Pre-merge Setup block (from header to next ## heading or EOF),
+   # then append the updated block at the end of the cleaned body.
+   CURRENT_BODY=$(gh pr view <pr_number> --json body --jq '.body')
+   CLEANED_BODY=$(echo "$CURRENT_BODY" | python3 -c "
+   import sys, re
+   body = sys.stdin.read()
+   # Remove existing ## Pre-merge Setup section (from the heading to next ## heading or end of string)
+   body = re.sub(r'\n## Pre-merge Setup\n.*?(?=\n## |\Z)', '', body, flags=re.DOTALL)
+   print(body.rstrip())
+   ")
+   UPDATED_BODY="${CLEANED_BODY}
+
+   ## Pre-merge Setup
+   <requirements list>"
+   gh pr edit <pr_number> --body "$UPDATED_BODY"
    ```
 
-   d. Apply the `needs-setup` label (BR-1 — the label must always accompany the section):
+   c. Apply the `needs-setup` label (BR-1 — the label must always accompany the section):
 
    ```bash
    gh pr edit <pr_number> --add-label "needs-setup"
@@ -1093,11 +1101,22 @@ Before running the readiness checklist below, perform a best-effort scan of the 
    Ensure `needs-setup` is not present and no `## Pre-merge Setup` section exists in the PR body. If either is present from a prior scan (e.g., a previous commit introduced an env var that has since been removed), remove them:
 
    ```bash
-   # Remove label if present (idempotent — no error if already absent)
-   gh pr edit <pr_number> --remove-label "needs-setup" 2>/dev/null || true
+   # Remove label only if it is currently present (avoids silencing real API/auth errors)
+   HAS_SETUP_LABEL=$(gh pr view <pr_number> --json labels --jq '.labels[].name' | grep -c "^needs-setup$" || true)
+   if [ "$HAS_SETUP_LABEL" -gt 0 ]; then
+     gh pr edit <pr_number> --remove-label "needs-setup"
+   fi
 
    # Remove the ## Pre-merge Setup section from the PR body if present
    # (Read body, strip the section and all content until the next ## heading or EOF, write back)
+   CURRENT_BODY=$(gh pr view <pr_number> --json body --jq '.body')
+   CLEANED_BODY=$(echo "$CURRENT_BODY" | python3 -c "
+   import sys, re
+   body = sys.stdin.read()
+   body = re.sub(r'\n## Pre-merge Setup\n.*?(?=\n## |\Z)', '', body, flags=re.DOTALL)
+   print(body.rstrip())
+   ")
+   gh pr edit <pr_number> --body "$CLEANED_BODY"
    ```
 
 5. After the scan: proceed to the readiness checklist below. The presence of `needs-setup` is a valid co-label with `ready-for-human-review` and does **not** block this checklist or prevent `ready-for-human-review` from being applied (BR-3). The checklist script does not check for or remove `needs-setup` — it is a deliberate signal, not a stale label.
