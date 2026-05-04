@@ -1236,6 +1236,59 @@ fi
 echo "✅ Label readiness checklist passed. PR is ready for human review."
 ```
 
+### 8a.1: Async Bot Thread Re-check (Mandatory for async review platforms)
+
+**When to run this substep:**
+- After the label readiness checklist passes (all checks = exit 0)
+- Before proceeding to Step 8b
+- Only when configured review platforms include `codex-github` or any other known async-posting review bot
+
+**Why this substep exists:**
+Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asynchronously. A thread can arrive **after** the Step 8a pre-Check-4 GraphQL verification (line 1202–1225) but **before** or **during** the Step 8c post-label verification. Without an explicit re-check, these late-arriving threads slip through as unresolved and cause the orchestrator's Step 5.1 to redispatch the agent.
+
+**Procedure:**
+
+1. **Wait for async bot threads**:
+   ```bash
+   # Sleep to allow async bots time to post new threads after the agent's pre-Check-4 query
+   echo "Waiting 10 seconds for async-posting review bots (e.g., codex-github) to post any new threads..."
+   sleep 10
+   ```
+
+2. **Re-query review threads**:
+   ```bash
+   UNRESOLVED_RECHECK=$(gh api graphql -f query='
+     query($owner:String!, $repo:String!, $number:Int!) {
+       repository(owner:$owner, name:$repo) {
+         pullRequest(number:$number) {
+           reviewThreads(first: 100) {
+             nodes { isResolved comments(first: 1) { nodes { author { login } body } } }
+           }
+         }
+       }
+     }' -f owner="<owner>" -f repo="<repo>" -F number="$PR_NUMBER" \
+     --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
+           | select(.isResolved == false)
+           | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps","codex-ai"] | index($a) != null)
+           | select((.comments.nodes[0].body // "") | test("✅ Addressed") | not)] | length')
+   ```
+
+3. **Handle late-arriving threads**:
+   - If `$UNRESOLVED_RECHECK -gt 0`: New unresolved threads were discovered. Remove `ready-for-human-review`, add `needs-fixes`, and return to Step 7a to address them:
+     ```bash
+     if [ "$UNRESOLVED_RECHECK" -gt 0 ]; then
+       echo "⚠️ LATE-ARRIVING THREADS: Re-check detected $UNRESOLVED_RECHECK new unresolved thread(s) from async bots."
+       echo "Removing ready-for-human-review label and returning to Step 7a."
+       gh pr edit "$PR_NUMBER" --remove-label "ready-for-human-review"
+       gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
+       echo "Return to Step 7a to address the newly-discovered threads."
+       exit 5  # Exit code 5 = "late-arriving async bot threads detected"
+     fi
+     ```
+   - If `$UNRESOLVED_RECHECK -eq 0`: No new threads found. Continue to Step 8b.
+
+**Note**: This re-check is especially important when using `codex-github` as a configured internal reviewer. The Codex GitHub App bot response is inherently asynchronous — the re-check adds a safety net to catch race conditions without requiring orchestrator intervention.
+
 **Interpretation**:
 
 - **All checks pass (exit 0)**: Continue to Step 8b (update tracker status) and then Step 8c (independent PR verification); only report the PR as ready after Step 8c also passes
@@ -1244,6 +1297,7 @@ echo "✅ Label readiness checklist passed. PR is ready for human review."
   - If `missing ready-for-regression` on implementation PR (exit 2 from Check 2): The label has been applied by Check 2. **Do not continue to Check 3/4.** Re-run `pr-ci-loop.sh` (Step 8) first to wait for the e2e/regression workflow triggered by the label. Only re-enter Step 8a after CI is green again. This ensures the e2e/regression check completes before the PR is marked ready.
   - If `ready-for-regression not verified` on implementation PR (exit 3 from pre-Check-4 gate): Step 7b was not completed. Apply the label via Step 7b, run Step 8 (CI loop), and re-enter Step 8a from the beginning. This gate is a hard block — `ready-for-human-review` cannot be applied until `ready-for-regression` is verified present.
   - If `unresolved review threads found` (exit 4 from GraphQL pre-Check-4 gate): The GraphQL query returned unresolved bot-authored review threads. Address the findings, push fixes, and re-enter Step 8a from the beginning. This gate is a hard block — `ready-for-human-review` cannot be applied until the GraphQL query confirms all threads are resolved. **Do not rely on self-tracked thread state** — the GraphQL query is the authoritative check.
+  - If `late-arriving async bot threads detected` (exit 5 from Step 8a.1 re-check): Late-arriving threads from async bots (e.g., `codex-github`) were discovered after the pre-Check-4 gate. Remove `ready-for-human-review`, add `needs-fixes`, and return to Step 7a. This indicates a race condition where the bot posted its thread after the initial verification but before the label was applied.
   - If `needs-fixes` is present (Check 3): The label is stale at this point (CI is green and reviews are clean), so it is automatically removed before proceeding to apply `ready-for-human-review`
 
 This checklist ensures the label sequence is always complete and all CI checks (including e2e/regression) have passed before the PR is declared ready for human review.
