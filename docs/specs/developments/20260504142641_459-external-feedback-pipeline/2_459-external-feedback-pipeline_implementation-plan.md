@@ -144,11 +144,13 @@
             }
           }
         }' -f owner=OWNER -f repo=REPO
-      # Then query discussions by category ID:
+      # Then query discussions by category ID using cursor-based pagination:
+      # Repeat this query, advancing $after to pageInfo.endCursor, until pageInfo.hasNextPage is false.
       gh api graphql -f query='
-        query($owner:String!, $repo:String!, $categoryId:ID!) {
+        query($owner:String!, $repo:String!, $categoryId:ID!, $after:String) {
           repository(owner:$owner, name:$repo) {
-            discussions(first:50, categoryId:$categoryId, states:OPEN) {
+            discussions(first:50, after:$after, categoryId:$categoryId, states:OPEN) {
+              pageInfo { hasNextPage endCursor }
               nodes {
                 number title bodyText author { login }
                 upvoteCount
@@ -157,6 +159,7 @@
             }
           }
         }' -f owner=OWNER -f repo=REPO -f categoryId=CATEGORY_ID
+      # On each iteration pass -f after=END_CURSOR. Stop when hasNextPage is false.
       ```
    2. For each Discussion, evaluate the signal threshold:
       - Signal threshold met: `upvoteCount >= 3` OR `comments.totalCount >= 2` from distinct users (other than the original poster)
@@ -167,9 +170,12 @@
       - If a prior-run closing comment is found, skip this Discussion
    4. For each unprocessed Discussion that meets the threshold, check for duplicates against existing issues:
       - Tokenize the Discussion title and body: extract significant keywords (words with ≥ 4 characters, excluding stopwords: "the", "a", "is", "in", "to", "of", "and", "or", "for", "that", "this", "with", "from", "are", "not", "you", "your", "but", "was", "have", "will")
-      - Search open and closed issues for keyword overlap:
+      - Search open and closed issues for keyword overlap using keyword-scoped search
+        (avoids a fixed-cap truncation that would silently miss issues beyond an arbitrary limit):
         ```bash
-        gh issue list --state all --limit 200 --json number,title,body \
+        # Run one search per significant keyword extracted from the Discussion title/body.
+        # Merge results and deduplicate by issue number before checking for overlap.
+        gh issue list --state all --search "KEYWORD" --json number,title,body \
           | jq '.[] | {number, title, body}'
         ```
       - A Discussion is a potential duplicate when: ≥ 3 significant keywords match between the Discussion (title + body) and an existing issue (title + body), OR when the affected file paths or protocol names are identical
