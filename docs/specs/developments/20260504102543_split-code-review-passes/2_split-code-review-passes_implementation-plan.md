@@ -57,7 +57,7 @@
 **Key scenarios to test**:
 
 1. **Pass sequence enforced (implementation PR)** — maps to AC 1: given an implementation PR with a configured internal reviewer, confirm that Pass 1 (Spec Compliance) runs first and Pass 2 (Code Quality) is not dispatched until Pass 1 approves.
-2. **Non-draft conversion requires both passes (AC 2)** — confirm that `gh pr ready` is not called until both Pass 1 and Pass 2 have approved at the same commit SHA.
+2. **Non-draft conversion requires both passes (AC 2)** — confirm that `gh pr ready` is not called until both passes have approved; when both passes run without a trivial-fix skip, both must approve at the same commit SHA; when Pass 1 is skipped under the trivial-fix path, only Pass 2 must approve at the current SHA.
 3. **Summary comment labels findings by pass (AC 3)** — verify the Step 7a summary comment contains distinct "Pass 1" and "Pass 2" sections with individual verdicts.
 4. **Spec/plan PRs unaffected (AC 4)** — run a `spec/*` or `implementation-plan/*` PR through Step 7a and confirm a single-pass review runs with no change to existing behaviour.
 5. **Non-trivial fix re-triggers Pass 1 (AC 5)** — after a non-trivial fix during the Pass 2 cycle, confirm Pass 1 re-runs before Pass 2 continues.
@@ -168,9 +168,9 @@ All passes approved at commit `abc1234`.
    - Pass 1 (Spec Compliance) dispatches all configured reviewers; each reviewer evaluates only spec-compliance criteria from `REVIEW.md §Pass 1`.
    - Pass 2 (Code Quality) dispatches all configured reviewers; each reviewer evaluates only code-quality criteria from `REVIEW.md §Pass 2`.
    - Pass 2 is never dispatched until all Pass 1 runs for the current commit are `APPROVED`.
-   - Both passes must approve at the same commit SHA before `gh pr ready` is called.
+   - When both passes complete without any trivial-fix skip, both must approve at the same commit SHA before `gh pr ready` is called. When Pass 1 is skipped under the trivial-fix path (see below), only Pass 2 must approve at the current commit SHA — Pass 1's earlier approval (at a prior SHA) remains valid for that cycle.
    - If a fix applied during Pass 2 is **non-trivial** (does not meet all three trivial-fix conditions): increment `internal_review_cycle` and restart from Pass 1.
-   - If a fix applied during Pass 2 is **trivial** (all three trivial-fix conditions met): skip Pass 1 re-run, post the skip note, restart Pass 2 only.
+   - If a fix applied during Pass 2 is **trivial** (all three trivial-fix conditions met): skip Pass 1 re-run, post the skip note, restart Pass 2 only. In this case the same-SHA requirement does not apply to Pass 1 — only Pass 2 must approve at the current commit SHA before `gh pr ready` is called.
    - The `max_internal_review_cycles` counter counts full restart cycles (Pass 1 restart), not individual pass runs.
    - When multiple internal reviewers are configured, all reviewers' Pass 1 results must approve before any reviewer's Pass 2 is dispatched.
 
