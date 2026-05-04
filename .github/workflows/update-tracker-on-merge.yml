@@ -10,6 +10,12 @@
 #   spec/42-user-auth         → issue 42
 #   implementation-plan/7-x  → issue 7
 #
+# Tracker-prefixed branch names (e.g. Linear-style IDs) are also supported:
+#   fix/ENG-456-long-slug     → issue 456 (numeric part extracted)
+#   feature/PROJ-123-title    → issue 123
+# Branches that do not start with a numeric or tracker-prefixed segment are
+# skipped with a warning.
+#
 # Required repository secrets / variables:
 #   GITHUB_PROJECT_NUMBER  — the integer project number (e.g. 1)
 #   GITHUB_PROJECT_OWNER   — the GitHub user or org owning the project
@@ -65,13 +71,33 @@ jobs:
             exit 0
           fi
 
-          # Extract issue number: first numeric segment after the prefix slash
-          # e.g. fix/463-some-slug → 463, spec/42-user-auth → 42
-          SUFFIX="${BRANCH#*/}"            # strip prefix (e.g. "463-some-slug")
-          ISSUE_NUMBER="${SUFFIX%%-*}"     # strip everything after first dash
+          # Extract issue number from the first segment after the prefix slash.
+          #
+          # Supported formats:
+          #   fix/463-some-slug        → ISSUE_NUMBER=463  (plain numeric)
+          #   fix/ENG-456-long-slug    → ISSUE_NUMBER=456  (tracker-prefix, e.g. Linear)
+          #   feature/PROJ-123-title   → ISSUE_NUMBER=123
+          #
+          # Branches that match neither format are skipped with a warning.
+          SUFFIX="${BRANCH#*/}"            # strip type prefix  → "463-some-slug"
+          FIRST="${SUFFIX%%-*}"            # first dash-delimited token → "463" or "ENG"
 
-          if ! [[ "$ISSUE_NUMBER" =~ ^[0-9]+$ ]]; then
-            echo "Could not extract a numeric issue number from branch '$BRANCH' (got '$ISSUE_NUMBER') — skipping."
+          if [[ "$FIRST" =~ ^[0-9]+$ ]]; then
+            # Plain numeric issue number (most common case)
+            ISSUE_NUMBER="$FIRST"
+          elif [[ "$FIRST" =~ ^[A-Z][A-Z0-9]*$ ]]; then
+            # Possible tracker prefix (e.g. "ENG", "PROJ") — look for the numeric part
+            # that immediately follows: ENG-456-long-slug → after stripping "ENG-", get "456"
+            AFTER_PREFIX="${SUFFIX#"${FIRST}-"}"        # "456-long-slug"
+            ISSUE_NUMBER="${AFTER_PREFIX%%-*}"           # "456"
+            if ! [[ "$ISSUE_NUMBER" =~ ^[0-9]+$ ]]; then
+              echo "Could not extract a numeric issue number from tracker-prefixed branch '$BRANCH' (got '$ISSUE_NUMBER') — skipping."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Tracker-prefixed branch detected: prefix='${FIRST}', issue_number='${ISSUE_NUMBER}'"
+          else
+            echo "Could not extract a numeric issue number from branch '$BRANCH' (got '$FIRST') — skipping."
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
