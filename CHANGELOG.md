@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Add pre-merge setup signal for PRs requiring human configuration** (#367): Adds a `needs-setup` label and a standardised `## Pre-merge Setup` PR body section so agents surface infrastructure dependencies (env vars, secrets, DNS records) at PR readiness time rather than requiring the human to read the diff. Protocol 91 Step 8a now includes a diff-scan heuristic step; protocol 92 defines the label semantics and valid co-label combinations.
 - **Add `custom_fields` support for issue tracker config** (#453): Adds a `custom_fields` flat map under `issue_tracker` in `.ai-dev-workflow.yaml` and a `workflow_issue_tracker_custom_field` helper function in `workflow-lib.sh` to read individual custom field values. Updates Linear and GitHub Projects integration docs to document recognised fields.
 
 ### Fixed
