@@ -1031,15 +1031,16 @@ run_pr_agent_review() {
   local existing_state=""
   existing_state="$(
     gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-      | jq -r --arg bot "$bot_login" --arg sha "$head_sha" '
-          [.[]
-           | select(
-               .user.login == $bot and
-               .commit_id == $sha and
-               (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "COMMENTED") and
-               ((.body // "") | test("PR Reviewer Guide"; "i"))
-             )
-          ]
+      | jq -rs --arg bot "$bot_login" --arg sha "$head_sha" '
+          add // []
+          | [.[]
+             | select(
+                 .user.login == $bot and
+                 .commit_id == $sha and
+                 (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "COMMENTED") and
+                 ((.body // "") | test("PR Reviewer Guide"; "i"))
+               )
+            ]
           | sort_by(.submitted_at)
           | last
           | .state // ""
@@ -1096,15 +1097,16 @@ run_pr_agent_review() {
   while :; do
     review_count="$(
       gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-        | jq --arg bot "$bot_login" --arg sha "$head_sha" '
-            [.[]
-             | select(
-                 .user.login == $bot and
-                 .commit_id == $sha and
-                 (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "COMMENTED") and
-                 ((.body // "") | test("PR Reviewer Guide"; "i"))
-               )
-            ] | length
+        | jq -s --arg bot "$bot_login" --arg sha "$head_sha" '
+            add // []
+            | [.[]
+               | select(
+                   .user.login == $bot and
+                   .commit_id == $sha and
+                   (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "COMMENTED") and
+                   ((.body // "") | test("PR Reviewer Guide"; "i"))
+                 )
+              ] | length
           '
     )"
     review_count="${review_count:-0}"
@@ -1138,15 +1140,16 @@ run_pr_agent_review() {
 
   review_state="$(
     gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-      | jq -r --arg bot "$bot_login" --arg sha "$head_sha" '
-            [.[]
-             | select(
-                 .user.login == $bot and
-                 .commit_id == $sha and
-                 (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "COMMENTED") and
-                 ((.body // "") | test("PR Reviewer Guide"; "i"))
-               )
-            ]
+      | jq -rs --arg bot "$bot_login" --arg sha "$head_sha" '
+            add // []
+            | [.[]
+               | select(
+                   .user.login == $bot and
+                   .commit_id == $sha and
+                   (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "COMMENTED") and
+                   ((.body // "") | test("PR Reviewer Guide"; "i"))
+                 )
+              ]
             | sort_by(.submitted_at)
             | last
             | .state // ""
