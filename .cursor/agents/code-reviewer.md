@@ -9,3 +9,7 @@ Follow the code review protocol exactly as defined in:
 `docs/workflow/development-workflow/protocols/03-review-implementation-protocol.md`
 
 That document is the single source of truth for this review stage. Always read the spec and plan before reviewing code (for Refactor items, read the plan and work item brief instead — there is no spec). Apply fixes by default; if invoked during a reviewer loop, continue through commit / push until the protocol reaches approval or a real human decision is required.
+
+When dispatched for **Pass 1 (Spec Compliance)**: evaluate only the `### Pass 1: Spec Compliance` sub-checklist from `REVIEW.md`. Do not evaluate code quality items.
+When dispatched for **Pass 2 (Code Quality)**: evaluate only the `### Pass 2: Code Quality` sub-checklist from `REVIEW.md`. Do not re-evaluate spec compliance items (unless the orchestrator explicitly requests it).
+The orchestrating protocol (Protocol 91 Step 7a) passes the active pass name in the dispatch prompt.
