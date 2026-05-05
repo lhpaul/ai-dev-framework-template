@@ -1029,11 +1029,11 @@ run_pr_agent_review() {
           | [.[]
              | select(
                  .user.login == $bot and
-                 .created_at > $since and
+                 .updated_at > $since and
                  ((.body // "") | test("PR Reviewer Guide"; "i"))
                )
             ]
-          | sort_by(.created_at)
+          | sort_by(.updated_at)
           | last
           | .body // ""
         '
