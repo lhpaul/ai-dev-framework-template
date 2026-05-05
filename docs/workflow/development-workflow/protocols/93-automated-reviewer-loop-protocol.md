@@ -100,9 +100,7 @@ If the SHA is **not found**, the agent must **not** record it as the resolved co
 
 #### Stale review after timeout
 
-Also handle the case where a platform posted blocking findings after a previous run timed out and the agent moved on: if those findings are still unresolved per the rules above, dispatch a fixer, wait for the push, then run the scripts.
-
-If unresolved findings exist: apply the inline fix rule below first; fall back to dispatching a fixer agent only when the rule does not apply. Then proceed to the scripts.
+Also handle the case where a platform posted blocking findings after a previous run timed out and the agent moved on: if those findings are still unresolved per the rules above, address them before re-running the scripts. Apply the **Inline fix rule below first** when all findings are mechanical (single file, fully described, ≤ 5 lines); fall back to dispatching a fixer sub-agent only when the inline rule does not apply. In either case, wait for the push to land before running the scripts again — do not re-trigger the reviewer loop against stale findings.
 
 ### Inline fix rule (attempt before sub-agent dispatch)
 
