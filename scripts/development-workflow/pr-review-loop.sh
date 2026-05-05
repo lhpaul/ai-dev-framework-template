@@ -440,6 +440,9 @@ run_codex_github_review() {
   local max_wait="$4"
   local platform="codex-github"
   local bot_login="${CODEX_GITHUB_BOT_LOGIN:-codex-ai[bot]}"
+  # GraphQL author.login returns the login WITHOUT the "[bot]" suffix that the
+  # REST API uses. Strip it here so check_unresolved_threads comparisons work.
+  local graphql_bot_login="${bot_login%\[bot\]}"
   local repo
   local reviewer_script
   local script_exit=0
@@ -453,7 +456,7 @@ run_codex_github_review() {
 
   # Phase 1: Check for existing unresolved review threads from the codex bot
   set +e
-  thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" "$bot_login")"
+  thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" "$graphql_bot_login")"
   thread_check_status=$?
   set -e
   if [ "$thread_check_status" -eq 0 ]; then
@@ -503,7 +506,7 @@ run_codex_github_review() {
     1)
       unresolved_count=0
       set +e
-      thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" "$bot_login")"
+      thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" "$graphql_bot_login")"
       thread_check_status=$?
       set -e
       if [ "$thread_check_status" -eq 0 ]; then

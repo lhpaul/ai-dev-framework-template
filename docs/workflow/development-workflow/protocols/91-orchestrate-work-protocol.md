@@ -1187,6 +1187,8 @@ fi
 # NOTE: Skip this check ONLY when Step 7 was 'skipped' because no review platforms are configured.
 echo "⛔ STOP: Verifying all review threads are resolved via GraphQL before applying ready-for-human-review..."
 CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-codex-ai[bot]}"
+# GraphQL author.login omits the "[bot]" suffix present in REST API logins; strip it.
+CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
 JQ_FILTER="[.data.repository.pullRequest.reviewThreads.nodes[]
         | select(.isResolved == false)
         | select(.comments.nodes[0].author.login as \$a | [\"coderabbitai\",\"devin-ai-integration\",\"greptile-apps\",\"$CODEX_BOT_LOGIN\"] | index(\$a) != null)
@@ -1245,9 +1247,11 @@ Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asyn
 
 2. **Re-query review threads**:
 
-   Before running the query, resolve the Codex bot login. Use the value of `CODEX_GITHUB_BOT_LOGIN` if set; otherwise default to `"codex-ai[bot]"` (the default used by `codex-github-reviewer.sh`):
+   Before running the query, resolve the Codex bot login. Use the value of `CODEX_GITHUB_BOT_LOGIN` if set; otherwise default to `"codex-ai[bot]"` (the default used by `codex-github-reviewer.sh`). Strip the `[bot]` suffix because GraphQL `author.login` values omit it:
    ```bash
    CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-codex-ai[bot]}"
+   # GraphQL author.login omits the "[bot]" suffix present in REST API logins; strip it.
+   CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
    ```
 
    ```bash
