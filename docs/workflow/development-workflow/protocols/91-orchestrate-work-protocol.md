@@ -1037,9 +1037,9 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
 **When ALL criteria are met — apply the fixes directly** in the current session using Edit/Bash tools:
 
 1. Apply every blocking finding in one pass (follow the batching rule: all in one commit).
-2. Reply to each finding's review thread with the fix description and commit SHA.
-3. Resolve each addressed thread via the GraphQL `resolveReviewThread` mutation.
-4. Commit with a descriptive message (e.g., `fix: address [platform] findings inline ([brief description])`).
+2. Commit with a descriptive message (e.g., `fix: address [platform] findings inline ([brief description])`).
+3. Reply to each finding's review thread with the fix description and commit SHA.
+4. Resolve each addressed thread via the GraphQL `resolveReviewThread` mutation.
 5. Push the commit.
 6. Run `pr-review-loop.sh` again from the top of Step 7.
 
