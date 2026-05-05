@@ -69,8 +69,8 @@ For other provider values: attempt reachability using the equivalent CLI check f
 
 Resolve the preview base URL in this order:
 
-1. **`PREVIEW_URL` environment variable** — if set and non-empty, use it as the base URL.
-2. **Start a local development server** — if `PREVIEW_URL` is not set, attempt to start a dev server using any `package.json` `dev`, `start`, or `serve` script found in the repository root. Record the local address (e.g., `http://localhost:3000`) as the base URL.
+1. **`PREVIEW_URL` environment variable** — if set and non-empty, verify it is reachable (e.g., `curl -sf --max-time 5 "$PREVIEW_URL" > /dev/null`). If reachable, use it as the base URL. If set but unreachable, log a warning and fall through to step 2.
+2. **Start a local development server** — if `PREVIEW_URL` is not set or was unreachable, attempt to start a dev server using any `package.json` `dev`, `start`, or `serve` script found in the repository root. Record the local address (e.g., `http://localhost:3000`) as the base URL.
 3. **No preview available** — if neither (1) nor (2) yields a reachable base URL, skip preview navigation and note in the PR comment that no live preview was accessible. The agent may still report on static file analysis if applicable.
 
 Log each resolution attempt step.
