@@ -19,7 +19,7 @@ fallback_models = ["deepseek/deepseek-chat"]
 # fallback_models = ["moonshot/kimi-k2.6"]
 
 [github_action_config]
-auto_review = "true"    # Post formal PR review (APPROVED / CHANGES_REQUESTED) on each push.
+auto_review = "true"    # Post a PR Reviewer Guide comment on each push.
 auto_describe = "false" # Skip auto-updating the PR description body.
 auto_improve = "false"  # Skip inline code suggestion comments (reduces noise).
 # Explicitly list the activity types that should trigger auto_review.

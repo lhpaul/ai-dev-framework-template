@@ -40,9 +40,9 @@ The workflow file is already committed at `.github/workflows/pr-agent.yml`. It t
 
 ### 3. Verify the Integration
 
-Open or push to any PR and confirm that `github-actions[bot]` posts a review with a **PR Reviewer Guide** section. The review state will be:
-- `APPROVED` — no issues found
-- `CHANGES_REQUESTED` — blocking issues found
+Open or push to any PR and confirm that `github-actions[bot]` posts an issue comment with a **PR Reviewer Guide** section. The comment body will contain one of two stable markers:
+- `No major issues detected` — clean (`RESULT=clean`)
+- `Recommended focus areas for review` — blocking findings (`RESULT=needs_fixes`)
 
 ---
 
@@ -96,26 +96,28 @@ This is handled by the `issue_comment` trigger in the workflow.
 
 ### Step 7.2 — Detect review completion
 
-PR-Agent signals completion by posting a formal GitHub PR review (not just a comment). The helper polls for a review from `github-actions[bot]` with:
-- State: `APPROVED` or `CHANGES_REQUESTED`
+PR-Agent signals completion by posting a plain issue comment (not a formal GitHub PR review). The helper polls the issue comments API for a comment from `github-actions[bot]` with:
 - Body containing `PR Reviewer Guide` (PR-Agent's stable output marker)
+- `updated_at` timestamp after the HEAD commit's push time (so stale comments from a prior HEAD are ignored)
 
 | Result | Action |
 |---|---|
-| Review with `APPROVED` state | Review complete — clean |
-| Review with `CHANGES_REQUESTED` state | Review complete — blocking |
-| No review yet and `elapsed < max_wait` | GHA still running — wait `poll_interval` and poll again |
-| `elapsed >= max_wait` and no review posted | Treat as `skipped` (GHA may not have run, e.g., fork PR with no secrets access) |
+| Comment with `No major issues detected` | Review complete — clean |
+| Comment with `Recommended focus areas for review` | Review complete — blocking |
+| Comment with neither marker | Ambiguous — escalate for human review |
+| No matching comment and `elapsed < max_wait` | GHA still running — wait `poll_interval` and poll again |
+| `elapsed >= max_wait` and no comment posted | Treat as `skipped` (GHA may not have run, e.g., fork PR with no secrets access) |
 
-Unlike Devin, there are no check runs to monitor — the review itself is the completion signal.
+Unlike Devin, there are no check runs to monitor — the comment itself is the completion signal.
 
 ### Step 7.3 — Classify findings
 
-PR-Agent's blocking classification is simple:
-- `CHANGES_REQUESTED` → blocking (`RESULT=needs_fixes`)
-- `APPROVED` → clean (`RESULT=clean`)
+PR-Agent's blocking classification is based on stable body-content markers in its `PR Reviewer Guide` comment:
+- `No major issues detected` → clean (`RESULT=clean`)
+- `Recommended focus areas for review` → blocking (`RESULT=needs_fixes`)
+- Neither marker present → ambiguous (`RESULT=escalate`, requires human review)
 
-There is no inline-comment severity ladder (unlike CodeRabbit's 🔴/🟠 markers). The entire review is either blocking or not based on the review state set by PR-Agent.
+There is no inline-comment severity ladder (unlike CodeRabbit's 🔴/🟠 markers). The entire review is either blocking or not based on the body markers in the PR-Agent comment.
 
 ### Fork PR handling
 
