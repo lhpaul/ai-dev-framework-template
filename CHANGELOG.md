@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Apply mechanical reviewer findings inline before dispatching a fixer sub-agent** (#495): Protocols 91 (Step 7) and 93 now include an inline fix rule — when all blocking findings are mechanical (single file, fully described, ≤ 5 lines), the orchestrator applies them directly using Edit/Bash tools without spawning a sub-agent, eliminating the 10–20 minute startup overhead for one-line changes.
+
 ## [0.24.1] - 2026-04-30
 
 ### Fixed

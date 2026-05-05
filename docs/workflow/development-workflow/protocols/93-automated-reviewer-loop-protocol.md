@@ -102,7 +102,28 @@ If the SHA is **not found**, the agent must **not** record it as the resolved co
 
 Also handle the case where a platform posted blocking findings after a previous run timed out and the agent moved on: if those findings are still unresolved per the rules above, dispatch a fixer, wait for the push, then run the scripts.
 
-If unresolved findings exist: dispatch a fixer agent, wait for the push, then proceed to the scripts. Do not re-trigger the reviewer loop against stale findings — fix first.
+If unresolved findings exist: apply the inline fix rule below first; fall back to dispatching a fixer agent only when the rule does not apply. Then proceed to the scripts.
+
+### Inline fix rule (attempt before sub-agent dispatch)
+
+Before dispatching a fixer sub-agent, check whether ALL blocking findings are **mechanical** — meeting every one of these criteria:
+
+1. **Single file**: the finding body identifies exactly one file path.
+2. **Fully described**: the change is completely and unambiguously specified in the finding (e.g., "replace `grep '^\s*'` with `grep '^[[:space:]]*'`", "add `--limit 100` to the `gh issue list` call", "remove the `states:OPEN` argument").
+3. **Small scope**: the total estimated change across all blocking findings is ≤ 5 lines.
+
+**When ALL criteria are met — apply the fixes directly** in the current session using Edit/Bash tools:
+
+1. Apply every blocking finding in one pass (follow the batching rule: all in one commit).
+2. Reply to each finding's review thread with the fix description and commit SHA.
+3. Resolve each addressed thread via the GraphQL `resolveReviewThread` mutation.
+4. Commit with a descriptive message (e.g., `fix: address [platform] findings inline ([brief description])`).
+5. Push the commit.
+6. Re-run the reviewer loop script from the top.
+
+**Do not dispatch a sub-agent for mechanical findings.** Sub-agent startup overhead (context loading, planning) typically costs 10–20 minutes for changes that take 30 seconds to apply directly.
+
+**When ANY criterion fails** — fall through to the sub-agent dispatch path. The inline path is a fast lane, not a mandatory gate. When in doubt about whether a finding is fully described or single-file, dispatch the sub-agent.
 
 ### Worktree discipline for fixer agents (`BATCH_CONTEXT=true`)
 

@@ -1026,6 +1026,27 @@ When an automated review platform returns inline comments, classify them before 
 
 Soft suggestions may be reported in summaries, but they do not change the loop result to `needs_fixes`. Any blocking finding does.
 
+### Inline fix rule (attempt before sub-agent dispatch)
+
+Before dispatching a fixer sub-agent, check whether ALL blocking findings are **mechanical** — meeting every one of these criteria:
+
+1. **Single file**: the finding body identifies exactly one file path.
+2. **Fully described**: the change is completely and unambiguously specified in the finding (e.g., "replace `grep '^\s*'` with `grep '^[[:space:]]*'`", "add `--limit 100` to the `gh issue list` call", "remove the `states:OPEN` argument").
+3. **Small scope**: the total estimated change across all blocking findings is ≤ 5 lines.
+
+**When ALL criteria are met — apply the fixes directly** in the current session using Edit/Bash tools:
+
+1. Apply every blocking finding in one pass (follow the batching rule: all in one commit).
+2. Reply to each finding's review thread with the fix description and commit SHA.
+3. Resolve each addressed thread via the GraphQL `resolveReviewThread` mutation.
+4. Commit with a descriptive message (e.g., `fix: address [platform] findings inline ([brief description])`).
+5. Push the commit.
+6. Run `pr-review-loop.sh` again from the top of Step 7.
+
+**Do not dispatch a sub-agent for mechanical findings.** Sub-agent startup overhead (context loading, planning) typically costs 10–20 minutes for changes that take 30 seconds to apply directly.
+
+**When ANY criterion fails** — fall through to the sub-agent dispatch path below. The inline path is a fast lane, not a mandatory gate. When in doubt about whether a finding is fully described or single-file, dispatch the sub-agent.
+
 **Fixing agent by PR branch type:**
 
 | PR branch prefix | Compatibility fixer to dispatch when direct fixes are needed |
