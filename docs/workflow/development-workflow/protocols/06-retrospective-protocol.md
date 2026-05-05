@@ -218,6 +218,27 @@ Assign each opportunity exactly one category:
 | `code-quality` | Code Quality | Recurring reviewer findings that suggest a systemic pattern rather than a one-off issue |
 | `tooling` | Tooling | External tool integration issue (e.g., CodeRabbit misconfiguration, `gh` CLI usage gap) |
 
+### 3d. Populate Metrics Block
+
+After completing Steps 3a–3c (backlog query, template cross-reference, and categorization), fill in the required metrics block for this retrospective.
+
+**Required fields**:
+
+| Field | Definition | Source |
+|---|---|---|
+| **Batch identifier** | The PR numbers or batch date used as the scope in Step 1 (e.g., "PRs #301–#315" or "2026-04-24") | Step 1 scope resolution |
+| **Human interventions count** | Number of moments where the human had to correct the agent's direction mid-run (not counting routine choices like approving a retrospective output) | Step 2c conversation context, or PR event history |
+| **Step 5.2 violations count** | Number of instances where the automated reviewer found a Step 5.2 (PR-readiness) violation during the batch | PR comments and review cycles |
+| **Automated-reviewer retry loops count** | Number of additional `pr-review-loop.sh` iterations beyond the first pass (i.e., how many re-runs were needed after findings were addressed) | PR comment timestamps and review rounds |
+| **Escalations count** | Number of items that escalated past the automated reviewer retry limit (source: PR labels or conversation notes indicating escalation) | PR labels, conversation notes |
+| **Prior action item recurrence assessment** | For each open action item from prior retrospectives whose targeted failure mode was observable in this batch, record whether it "recurred" or "did not recur". If no prior action items are relevant to this batch, record "none applicable". | Comparison with prior retrospective output |
+
+**Rules**:
+
+- **"Unavailable" is a valid value**: if a field cannot be reliably determined from available GitHub data or conversation context, record `unavailable` — not blank and not a guess (BR-7).
+- **Zero is a valid value**: a batch that produced zero human interventions is a meaningful data point (BR-1).
+- This metrics block is part of the retrospective output presented in Step 4 alongside improvement opportunities.
+
 ### Severity signals
 
 Assign each opportunity a severity level:
@@ -277,6 +298,19 @@ Present the categorized findings to the human in a structured format:
 
 #### 2. [Short title] — [Display label] | [Severity display label]
 ...
+
+---
+
+### Metrics Block
+
+| Field | Value |
+|---|---|
+| Batch identifier | [PR numbers or batch date] |
+| Human interventions count | [count or `unavailable`] |
+| Step 5.2 violations count | [count or `unavailable`] |
+| Automated-reviewer retry loops count | [count or `unavailable`] |
+| Escalations count | [count or `unavailable`] |
+| Prior action item recurrence assessment | [per-item assessment or "none applicable"] |
 ```
 
 Then ask the human to choose an action for each opportunity:
@@ -406,7 +440,18 @@ Acknowledge and move on.
 
 ## Step 6: Close
 
-After all opportunities have been acted on (or skipped), provide a confirmation summary:
+After all opportunities have been acted on (or skipped):
+
+1. **Append the finalized metrics block to `docs/workflow/retro-metrics.md`**. If the file does not exist, create it with the column headers before appending. Add one new table row using the values from the metrics block presented in Step 4 (after any human corrections):
+
+   ```markdown
+   | [Batch identifier] | [Human interventions count] | [Step 5.2 violations count] | [Automated-reviewer retry loops count] | [Escalations count] | [Prior action item recurrence assessment] |
+   ```
+
+   Column order must match the headers in `docs/workflow/retro-metrics.md`:
+   `Batch Identifier | Human Interventions Count | Step 5.2 Violations Count | Automated-Reviewer Retry Loops Count | Escalations Count | Prior Action Item Recurrence Assessment`
+
+2. **Provide a confirmation summary**:
 
 ```markdown
 ## Retrospective Complete
@@ -415,6 +460,16 @@ After all opportunities have been acted on (or skipped), provide a confirmation 
 |---|-------|----------|----------|--------------|
 | 1 | [title] | [label] | [severity] | Fixed in commit `abc1234` / Issue #42 / Skipped |
 | 2 | ... | ... | ... | ... |
+
+**Metrics block appended to `docs/workflow/retro-metrics.md`.**
 ```
 
 The retrospective is now closed.
+
+---
+
+## See Also
+
+For periodic verification of whether prior improvement action items are working, run the meta-retrospective protocol: `docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md`. Recommended cadence: every 5 batches. Can be triggered at any time.
+
+Note: metrics blocks written before feature #458 (structured retro metrics) was deployed will naturally be absent from the log. The meta-retrospective gracefully handles a log with fewer entries than its analysis window by analyzing whatever is available.
