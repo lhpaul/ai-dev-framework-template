@@ -1038,9 +1038,9 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
 
 1. Apply every blocking finding in one pass (follow the batching rule: all in one commit).
 2. Commit with a descriptive message (e.g., `fix: address [platform] findings inline ([brief description])`).
-3. Reply to each finding's review thread with the fix description and commit SHA.
-4. Resolve each addressed thread via the GraphQL `resolveReviewThread` mutation.
-5. Push the commit.
+3. Push the commit. *(Push before resolving threads — if push fails, threads must not be falsely marked resolved.)*
+4. Reply to each finding's review thread with the fix description and commit SHA.
+5. Resolve each addressed thread via the GraphQL `resolveReviewThread` mutation.
 6. Run `pr-review-loop.sh` again from the top of Step 7.
 
 **Do not dispatch a sub-agent for mechanical findings.** Sub-agent startup overhead (context loading, planning) typically costs 10–20 minutes for changes that take 30 seconds to apply directly.
