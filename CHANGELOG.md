@@ -5,12 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Fixed
-
-- **Apply mechanical reviewer findings inline before dispatching a fixer sub-agent** (#495): Protocols 91 (Step 7) and 93 now include an inline fix rule — when all blocking findings are mechanical (single file, fully described, ≤ 5 lines), the orchestrator applies them directly using Edit/Bash tools without spawning a sub-agent, eliminating the 10–20 minute startup overhead for one-line changes.
-
 ## [0.24.1] - 2026-04-30
 
 ### Fixed
@@ -32,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Apply mechanical reviewer findings inline before dispatching a fixer sub-agent** (#495): Protocols 91 (Step 7) and 93 now include an inline fix rule — when all blocking findings are mechanical (single file, fully described, ≤ 5 lines), the orchestrator applies them directly using Edit/Bash tools without spawning a sub-agent, eliminating the 10–20 minute startup overhead for one-line changes.
 - **Automate GitHub Projects tracker status update on PR merge** (#463): adds `.github/workflows/update-tracker-on-merge.yml` — a GitHub Actions workflow triggered when a `spec/*`, `implementation-plan/*`, `feature/*`, `fix/*`, `refactor/*`, or `hotfix/*` PR is merged to `develop`. The workflow extracts the issue number from the branch name and updates the GitHub Projects v2 Status field to `Spec Ready`, `Plan Ready`, or `Merged` accordingly; implementation branches also close the linked issue. Eliminates stale statuses that persisted until the next orchestrator run. Requires `GITHUB_PROJECT_NUMBER` and `GITHUB_PROJECT_OWNER` repository variables. Updates `docs/workflow/development-workflow/integrations/github-projects.md` with setup instructions.
 - **Branch-type-aware timeout in `pr-review-loop.sh`** (#462): on `spec/*` and `implementation-plan/*` branches, Devin has no trigger condition and exits immediately with `REASON=no_check_run`. The script now automatically reduces `--max-wait` from 1200 s to 60 s and `--poll-interval` from 120 s to 30 s for these branch types when the caller does not pass the respective flag explicitly, preventing 20-minute wait-budget waste on non-implementation PRs.
 - **Fixer agents must fix all occurrences of flagged literal values** (#426): added mandatory all-occurrences rule to Protocol 93 fix-cycle guidance — when a reviewer flags a literal value (numeric constant, hex value, identifier, repeated string), fixer agents must `grep -n` the old value across all affected files and fix every occurrence in the same commit before pushing.
