@@ -274,7 +274,7 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
   # ensures we detect findings immediately instead of waiting for a timeout.
   if [ -z "$BOT_RESPONSE" ]; then
     REVIEW_TMPFILE=$(mktemp)
-    if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" \
+    if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
       2>/dev/null \
       | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" \
           '.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at > $trigger_time) | .body' \
