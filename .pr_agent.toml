@@ -34,4 +34,7 @@ num_code_suggestions = 0
 # clean PRs via review state rather than needing to parse the review body.
 # Without this, PR-Agent defaults to COMMENTED for all outcomes, which the loop
 # cannot distinguish from a review with moderate findings.
-approve_pr_after_review = true
+# Note: PR-Agent does not support APPROVED/CHANGES_REQUESTED review states via config.
+# It posts all review output as plain PR comments. Use body content markers instead:
+#   "No major issues detected"          → clean
+#   "Recommended focus areas for review" → has issues
