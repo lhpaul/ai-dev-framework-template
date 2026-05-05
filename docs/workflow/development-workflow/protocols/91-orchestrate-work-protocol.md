@@ -1187,6 +1187,10 @@ fi
 # NOTE: Skip this check ONLY when Step 7 was 'skipped' because no review platforms are configured.
 echo "⛔ STOP: Verifying all review threads are resolved via GraphQL before applying ready-for-human-review..."
 CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-codex-ai[bot]}"
+JQ_FILTER="[.data.repository.pullRequest.reviewThreads.nodes[]
+        | select(.isResolved == false)
+        | select(.comments.nodes[0].author.login as \$a | [\"coderabbitai\",\"devin-ai-integration\",\"greptile-apps\",\"$CODEX_BOT_LOGIN\"] | index(\$a) != null)
+        | select((.comments.nodes[0].body // \"\") | test(\"✅ Addressed\") | not)] | length"
 UNRESOLVED_COUNT=$(gh api graphql -f query='
   query($owner:String!, $repo:String!, $number:Int!) {
     repository(owner:$owner, name:$repo) {
@@ -1197,11 +1201,7 @@ UNRESOLVED_COUNT=$(gh api graphql -f query='
       }
     }
   }' -f owner="<owner>" -f repo="<repo>" -F number="$PR_NUMBER" \
-  --jq --arg codex_bot "$CODEX_BOT_LOGIN" \
-  '[.data.repository.pullRequest.reviewThreads.nodes[]
-        | select(.isResolved == false)
-        | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps",$codex_bot] | index($a) != null)
-        | select((.comments.nodes[0].body // "") | test("✅ Addressed") | not)] | length')
+  --jq "$JQ_FILTER")
 
 if [ "$UNRESOLVED_COUNT" -gt 0 ]; then
   echo "ERROR: Cannot proceed to Check 4 — $UNRESOLVED_COUNT unresolved review thread(s) found."
@@ -1251,6 +1251,10 @@ Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asyn
    ```
 
    ```bash
+   JQ_FILTER="[.data.repository.pullRequest.reviewThreads.nodes[]
+         | select(.isResolved == false)
+         | select(.comments.nodes[0].author.login as \$a | [\"coderabbitai\",\"devin-ai-integration\",\"greptile-apps\",\"$CODEX_BOT_LOGIN\"] | index(\$a) != null)
+         | select((.comments.nodes[0].body // \"\") | test(\"✅ Addressed\") | not)] | length"
    UNRESOLVED_RECHECK=$(gh api graphql -f query='
      query($owner:String!, $repo:String!, $number:Int!) {
        repository(owner:$owner, name:$repo) {
@@ -1261,11 +1265,7 @@ Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asyn
          }
        }
      }' -f owner="<owner>" -f repo="<repo>" -F number="$PR_NUMBER" \
-     --jq --arg codex_bot "$CODEX_BOT_LOGIN" \
-     '[.data.repository.pullRequest.reviewThreads.nodes[]
-           | select(.isResolved == false)
-           | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps",$codex_bot] | index($a) != null)
-           | select((.comments.nodes[0].body // "") | test("✅ Addressed") | not)] | length')
+     --jq "$JQ_FILTER")
    ```
 
 3. **Handle late-arriving threads**:
