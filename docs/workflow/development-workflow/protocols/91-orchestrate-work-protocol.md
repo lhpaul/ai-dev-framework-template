@@ -660,11 +660,20 @@ For each reviewer in the resolved list, dispatch the stage-appropriate agent:
 | `codex` | `implementation-plan/*` | `workflow-plan-reviewer` Codex skill against `REVIEW.md` |
 | `codex` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `workflow-code-reviewer` Codex skill against `REVIEW.md` |
 
+### Branch-type detection
+
+Before running any reviewers, classify the PR branch to determine which execution path applies:
+
+- **Implementation PR**: branch matches `feature/*`, `fix/*`, `refactor/*`, or `hotfix/*`. These PRs follow the **two-pass** review procedure below.
+- **Non-implementation PR**: branch matches `spec/*` or `implementation-plan/*`. These PRs follow the existing **single-pass** review procedure and are not affected by this section's two-pass rules.
+
 ### Multi-reviewer execution rules
 
 Run all configured internal reviewers **sequentially** in the order listed. Each reviewer runs against `REVIEW.md`, applies deterministic fixes directly, and commits + pushes if needed.
 
-Initialize `internal_review_cycle = 0` at the start of Step 7a. Increment each time the full reviewer list is restarted. Escalate to human when `internal_review_cycle` reaches `max_internal_review_cycles` (default: 5).
+Initialize `internal_review_cycle = 0` at the start of Step 7a. Increment each time the full Pass 1 → Pass 2 cycle is restarted (for implementation PRs) or the full reviewer list is restarted (for non-implementation PRs). Escalate to human when `internal_review_cycle` reaches `max_internal_review_cycles` (default: 5).
+
+#### Non-implementation PRs (spec/*, implementation-plan/*): single-pass
 
 | Outcome | Action |
 |---|---|
@@ -675,26 +684,73 @@ Initialize `internal_review_cycle = 0` at the start of Step 7a. Increment each t
 
 All internal reviewers must APPROVE before `gh pr ready` is called. If any reviewer finds issues, fix them and re-run ALL internal reviewers.
 
+#### Implementation PRs (feature/*, fix/*, refactor/*, hotfix/*): two-pass
+
+Implementation PRs run two sequential passes before `gh pr ready` is called. Pass 2 is never dispatched until all reviewers have approved Pass 1 for the current commit.
+
+**Pass 1 (Spec Compliance)**: each reviewer evaluates only the `### Pass 1: Spec Compliance` sub-checklist from `REVIEW.md`. The orchestrator passes the active pass name (`Pass 1: Spec Compliance`) in the dispatch prompt so the reviewer scopes its findings accordingly.
+
+**Pass 2 (Code Quality)**: each reviewer evaluates only the `### Pass 2: Code Quality` sub-checklist from `REVIEW.md`. The orchestrator passes the active pass name (`Pass 2: Code Quality`) in the dispatch prompt. Pass 2 is dispatched only after all reviewers have approved Pass 1.
+
+**Multi-reviewer ordering within each pass**: when multiple internal reviewers are configured, all reviewers complete Pass 1 before any reviewer's Pass 2 is dispatched.
+
+**Same-commit SHA requirement**: when both passes run without a trivial-fix skip, both passes must approve at the same commit SHA before `gh pr ready` is called. When Pass 1 is skipped under the trivial-fix path (see below), only Pass 2 must approve at the current commit SHA — Pass 1's earlier approval (at a prior SHA) remains valid for that cycle.
+
+| Outcome | Action |
+|---|---|
+| All reviewers `APPROVED` on Pass 1 | Proceed to Pass 2 for all reviewers |
+| Any reviewer returns `NEEDS REVISION` on Pass 1 (fixable) and `internal_review_cycle < max_internal_review_cycles` | Fixes already applied; increment `internal_review_cycle`; restart from Pass 1 for all reviewers |
+| Any reviewer returns `NEEDS REVISION` on Pass 1 (fixable) and `internal_review_cycle >= max_internal_review_cycles` | Post the Step 7a summary comment with verdict `escalated — max cycles reached`, then escalate to human |
+| Any reviewer returns `NEEDS REVISION` on Pass 1 (product/design decision) | Post the Step 7a summary comment with verdict `escalated — human decision required`, then stop and escalate to human |
+| All reviewers `APPROVED` on Pass 2 | Post the Step 7a summary comment (see below), then run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then continue to Step 7 (external automated reviewers) |
+| Any reviewer returns `NEEDS REVISION` on Pass 2 (fixable) — fix is **non-trivial** — and `internal_review_cycle < max_internal_review_cycles` | Fixes already applied; increment `internal_review_cycle`; restart from **Pass 1** for all reviewers |
+| Any reviewer returns `NEEDS REVISION` on Pass 2 (fixable) — fix is **trivial** (all three trivial-fix conditions met) — and `internal_review_cycle < max_internal_review_cycles` | Skip Pass 1 re-run; post a skip note (see Trivial-fix skip rule); restart from **Pass 2** only. The same-SHA requirement does not apply to Pass 1 for this cycle — only Pass 2 must approve at the current commit SHA before `gh pr ready` is called |
+| Any reviewer returns `NEEDS REVISION` on Pass 2 (fixable) and `internal_review_cycle >= max_internal_review_cycles` | Post the Step 7a summary comment with verdict `escalated — max cycles reached`, then escalate to human |
+| Any reviewer returns `NEEDS REVISION` on Pass 2 (product/design decision) | Post the Step 7a summary comment with verdict `escalated — human decision required`, then stop and escalate to human |
+
+Both passes must complete with all reviewers `APPROVED` before `gh pr ready` is called. The `internal_review_cycle` counter tracks full Pass 1 → Pass 2 restart cycles, not individual pass runs.
+
 #### Step 7a summary comment (mandatory)
 
 A Step 7a summary comment **must always be posted to the PR** when the gate exits — whether all reviewers ran, some were skipped, or the gate hard-failed (BR-7). Post via `gh pr comment` immediately before `gh pr ready` (in the success path) or immediately before stopping (in the hard-fail or escalation paths).
 
 Required fields:
 
+- **PR type**: implementation (two-pass) or non-implementation (single-pass)
 - **Effective reviewer set**: which reviewers actually ran (excluding skipped/unreachable ones)
 - **Skipped reviewers**: each reviewer skipped, with reason (e.g., `unreachable`, `override-excluded`)
 - **Final verdict**: `APPROVED`, `hard-fail`, or `escalated — <reason>`
 
-Example format:
+Example format for a **non-implementation PR** (single-pass):
 
 ```markdown
 ### Step 7a Internal Review Gate Summary
 
+**PR type**: Non-implementation (single-pass)
 **Effective reviewer set**: claude
 **Skipped reviewers**: codex (unreachable from Claude Code subagent)
 **Verdict**: APPROVED
 
 All reachable internal reviewers approved. Note: codex was unreachable from the current runner — reviewer coverage was reduced from 2 to 1. Human reviewers may re-run Step 7a from a Codex-capable runner if full coverage is required.
+```
+
+Example format for an **implementation PR** (two-pass):
+
+```markdown
+### Step 7a Internal Review Gate Summary
+
+**PR type**: Implementation (two-pass)
+**Effective reviewer set**: claude
+**Skipped reviewers**: codex (unreachable from Claude Code subagent)
+
+**Pass 1 (Spec Compliance)**
+- claude: APPROVED (0 findings)
+
+**Pass 2 (Code Quality)**
+- claude: APPROVED after 1 fix cycle (1 finding resolved)
+
+**Verdict**: APPROVED
+All passes approved at commit `abc1234`.
 ```
 
 In the hard-fail case (zero reachable reviewers or `fail-if-any-unavailable` policy triggered), the hard-fail comment posted in the Runtime-availability check section above **already satisfies BR-7** — do not post a second summary comment.
@@ -705,7 +761,7 @@ In the hard-fail case (zero reachable reviewers or `fail-if-any-unavailable` pol
 
 | Parameter | Default | Description |
 |---|---|---|
-| `max_internal_review_cycles` | 5 | Max times the full internal reviewer list is restarted before escalating |
+| `max_internal_review_cycles` | 5 | Max times the full two-pass cycle (Pass 1 → Pass 2) is restarted before escalating (for implementation PRs); for non-implementation PRs, counts full single-pass restarts as before |
 
 Step 7a runs **before** Step 7 (external reviewers). Only proceed to Step 7 once all internal reviewers in Step 7a produce `APPROVED`. After any fixer push triggered by Step 7 (external reviewers), re-run Step 7a (all internal reviewers) to ensure the stage-specific internal review gate is still clean — **unless the push qualifies as a trivial fix** (see "Trivial-fix skip rule" below).
 
