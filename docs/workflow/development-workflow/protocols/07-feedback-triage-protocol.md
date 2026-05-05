@@ -112,7 +112,7 @@ below, advancing `$after` to `pageInfo.endCursor`, until `pageInfo.hasNextPage` 
 gh api graphql -f query='
   query($owner:String!, $repo:String!, $categoryId:ID!, $after:String) {
     repository(owner:$owner, name:$repo) {
-      discussions(first:50, after:$after, categoryId:$categoryId, states:OPEN) {
+      discussions(first:50, after:$after, categoryId:$categoryId) {
         pageInfo { hasNextPage endCursor }
         nodes {
           number title bodyText author { login }
@@ -170,7 +170,8 @@ significant keyword and merge results, deduplicating by issue number:
 ```bash
 # Run for each significant keyword extracted from the Discussion title/body.
 # Merge and deduplicate by issue number before checking overlap.
-gh issue list --state all --search "KEYWORD" --json number,title,body \
+# --limit 500 avoids the default 30-item cap for repositories with many issues.
+gh issue list --state all --search "KEYWORD" --limit 500 --json number,title,body \
   | jq '.[] | {number, title, body}'
 ```
 
