@@ -128,6 +128,69 @@ Findings that cannot be addressed in this dispatch (e.g. require a human decisio
 
 **When delegating to a fixer subagent**, include this rule explicitly in the subagent instruction so it knows not to push incrementally.
 
+### Attempt-context injection rule
+
+This rule mirrors the Attempt-context injection rule in Protocol 91 Step 7. It governs
+what the orchestrator prepends to the fixer agent's prompt on each dispatch when running
+the standalone reviewer loop path.
+
+**First dispatch (cycle = 1)**
+
+No attempt-context prefix is added. The fixer receives only the standard
+blocking-findings list and the batching rule above.
+
+**Retry dispatches (cycle ≥ 2)**
+
+Before dispatching the fixer, the orchestrator prepends an attempt-context header
+to the fixer's prompt using the following format:
+
+> Attempt N/M: prior attempt(s) tried [per-attempt summaries]. The following findings
+> remain open: [standard blocking-findings list]. Try a different approach for each
+> remaining finding.
+
+Where:
+
+- `N` = the current `cycle` value (matches the loop's `cycle` counter exactly)
+- `M` = `max_cycles` (the loop escalation limit — default: 10)
+- `[per-attempt summaries]` = one entry per prior dispatch, each one-to-two plain-language
+  sentences describing what that attempt changed and which findings it addressed or left
+  open. Derive each entry from the PR feedback ledger and the fixer's commit message /
+  response for that cycle.
+- `[standard blocking-findings list]` = the same findings list passed in any dispatch —
+  the attempt-context prefix does not replace it
+
+**Accumulating summaries across retries**
+
+For cycle N, include summaries for all N-1 prior attempts, not only the most recent.
+Each entry should be keyed to its cycle number for clarity:
+
+> Attempt 1: rewrote the `foo()` function signature in `bar.sh`; MD009 trailing-space
+> finding on line 42 remained open.
+> Attempt 2: removed trailing space on line 42; `relative-links` finding on `baz.md`
+> remained open.
+
+**Fallback when no prior-attempt summary is available**
+
+If no summary was recorded for a prior attempt (e.g., the fixer did not respond or
+the attempt had no ledger entries), use the minimal fallback:
+
+> Attempt N/M: prior attempt did not fully resolve all findings. Try a different approach.
+
+**Reappearance notation**
+
+When a finding that was marked `resolved` in a prior cycle reappears in the current
+ledger (same `(platform, path, body_snippet)` key, status reverted to `open`), the
+per-attempt summary for the cycle in which it was "resolved" must note the reappearance:
+
+> Attempt 2: removed trailing space on line 42 (fix did not hold — finding reappeared
+> in cycle 3).
+
+**In-session state only**
+
+Attempt summaries live in the orchestrator's in-session state for the duration of the
+PR's review loop. They are not persisted to disk or to any external tracker. They are
+discarded when the orchestration session ends.
+
 ### Shell script fix verification (fixer agents)
 
 When findings target `*.sh` workflow scripts (especially under `scripts/development-workflow/`), the fixer must **verify locally before pushing**:
@@ -204,6 +267,36 @@ grep -n "<old-term>" <file>  # verify no stale references remain
 ```
 
 After committing, apply the re-read verification described in [Verification: Re-read to confirm each fix](#verification-re-read-to-confirm-each-fix) above before marking the finding as resolved.
+
+### All-occurrences rule for literal value fixes (mandatory)
+
+When a reviewer flags a specific literal value — a numeric constant, hex value, identifier string, repeated phrase, or any other repeated literal — the fixer agent **must** fix every occurrence of that value across all affected files in the PR, not only the specific line flagged by the reviewer. Fixing one occurrence while leaving identical values elsewhere forces multiple unnecessary review passes and is a protocol violation.
+
+**Required sequence before committing any literal-value fix:**
+
+1. **Search the entire document** for all occurrences of the old value:
+
+   ```bash
+   grep -n "<old_value>" <file>
+   ```
+
+2. **Search all other files affected by the PR** for the same value:
+
+   ```bash
+   # For each file changed in this PR:
+   git diff --name-only HEAD~1 HEAD | xargs grep -ln "<old_value>"
+   ```
+
+3. **Fix every occurrence** in the same commit — do not leave any behind.
+
+4. **Verify with grep** on all affected files to confirm no occurrences remain before pushing:
+
+   ```bash
+   grep -rn "<old_value>" <all-affected-files>
+   # Expected: no output (zero occurrences)
+   ```
+
+This rule applies to any value type: version numbers, timeout values, port numbers, hex color codes, string constants, label names, section headers, or any other repeated literal. If a reviewer flags one instance, treat it as a signal to fix all instances — the reviewer will check all occurrences on the next cycle and finding any remaining instance resets the review loop.
 
 ### PR feedback tracking and comments
 

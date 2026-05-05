@@ -112,6 +112,7 @@ Check:
   - Verify each such claim against the real source files — not just against other parts of the plan document
   - Flag any claim that cannot be verified from the codebase as "unverified — implementer must confirm before proceeding"
   - Cross-reference consistency: line numbers, counts, and symbolic references (e.g., smoke test counts, Verification Log output counts, log line references) must be consistent across the plan document; flag any number or reference that cannot be confirmed against the codebase or a prior plan step
+- Cross-section consistency: all references to the same function, constant, or architecture decision are consistent across all sections of the plan (e.g., a function described in the Architecture section must have the same signature in the Implementation Order steps; a constant must carry the same value everywhere it appears; a decision index must map to the same decision in every reference)
 
 Typical `blocking` issues:
 - Plan steps do not cover required acceptance criteria
@@ -120,6 +121,7 @@ Typical `blocking` issues:
 - A CHANGELOG literal in the Implementation Order uses conventional-commit format (`fix(scope): message`) instead of the project's `**Bold Title** (#N):` format
 - `CHANGELOG.md` is modified in this PR — `implementation-plan/*` branches are exempt from CHANGELOG entries; remove any CHANGELOG modification before merging
 - A behavioral claim about framework/runtime behavior (guard logic, config inheritance, scope, API contract) cannot be verified against the codebase and is not flagged as "unverified"
+- Cross-section inconsistency: the same function, constant, or architecture decision is defined or described differently in two or more sections of the plan (e.g., incompatible function signatures, conflicting constant values, contradictory decision rationales)
 
 Typical `important` issues:
 - Vague wording like "update as needed"
@@ -132,19 +134,32 @@ Typical `important` issues:
 
 ## Code Review Checklist
 
+For implementation PRs (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`), this checklist is divided into two sequential passes (Pass 1 then Pass 2). Spec and plan PRs use a single-pass review and are not affected by this split.
+
 Read before reviewing:
 - The corresponding spec (Full Pipeline only — Refactor items have no spec; use the work item brief instead)
 - The implementation plan
 - Relevant best-practice docs
 - The changed code
 
+### Pass 1: Spec Compliance
+
 Check:
-- Implementation matches the approved spec and plan (or the plan and work item brief for Refactor items), or any deviations are documented
+- Implementation matches the approved spec and plan (or the plan and work item brief for Refactor items), or any deviations are documented. All acceptance criteria addressed, no out-of-scope behaviour, no missing or extra behaviours.
+- CHANGELOG and workflow-specific artifacts are updated when required (spec/plan-only PRs are exempt; fixes to unreleased work update existing entries rather than adding new ones; in parallel batches, each PR adds its own CHANGELOG entry as normal; merge conflicts are resolved by batch-merge auto-resolution per protocol 94 Step 4.3)
+
+Typical `blocking` issues:
+- Implementation diverges from the approved spec or plan in a way that changes observable behaviour
+- Missing acceptance criteria coverage
+- CHANGELOG entry absent when required, or present when exempt (spec/plan PRs)
+
+### Pass 2: Code Quality
+
+Check:
 - Project and stack conventions are followed
 - Logic and edge cases are correct
 - Security boundaries and validation are respected
 - Tests cover the changed business behavior
-- CHANGELOG and workflow-specific artifacts are updated when required (spec/plan-only PRs are exempt; fixes to unreleased work update existing entries rather than adding new ones; in parallel batches, each PR adds its own CHANGELOG entry as normal; merge conflicts are resolved by batch-merge auto-resolution per protocol 94 Step 4.3)
 - New patterns are justified and consistent with the codebase
 
 Additional checks for **shell scripts** (`*.sh`):

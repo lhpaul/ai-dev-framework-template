@@ -1,0 +1,265 @@
+# Updates the GitHub Projects tracker status when a workflow PR is merged.
+#
+# Branch-to-status mapping:
+#   spec/*                                  → Spec Ready
+#   implementation-plan/*                   → Plan Ready
+#   feature/*, fix/*, refactor/*, hotfix/*  → Merged (and close the issue)
+#
+# The issue number is extracted from the branch name prefix, e.g.:
+#   fix/463-some-slug         → issue 463
+#   spec/42-user-auth         → issue 42
+#   implementation-plan/7-x  → issue 7
+#
+# Tracker-prefixed branch names (e.g. Linear-style IDs) are also supported:
+#   fix/ENG-456-long-slug     → issue 456 (numeric part extracted)
+#   feature/PROJ-123-title    → issue 123
+# Branches that do not start with a numeric or tracker-prefixed segment are
+# skipped with a warning.
+#
+# Required repository secrets / variables:
+#   GH_PROJECT_TOKEN       — PAT with `project` scope (GITHUB_TOKEN cannot
+#                            update Projects v2 fields; a PAT is required)
+#   GITHUB_PROJECT_NUMBER  — the integer project number (e.g. 1)
+#   GITHUB_PROJECT_OWNER   — the GitHub user or org owning the project
+#                            (falls back to github.repository_owner when unset)
+name: Update tracker status on PR merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - develop
+
+# Least-privilege permissions: only what this workflow needs.
+# - pull-requests: read  — read PR metadata (head.ref, merged flag)
+# - issues: write        — close the GitHub issue for impl branches
+# Note: Projects v2 mutations require GH_PROJECT_TOKEN (PAT) — not GITHUB_TOKEN.
+permissions:
+  pull-requests: read
+  issues: write
+
+jobs:
+  update-tracker:
+    # Only run when the PR was actually merged (not just closed/declined)
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Detect branch type and extract issue number
+        id: detect
+        env:
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          echo "Branch: $BRANCH"
+
+          # Determine branch type and target status
+          if [[ "$BRANCH" == spec/* ]]; then
+            BRANCH_TYPE="spec"
+            TARGET_STATUS="Spec Ready"
+          elif [[ "$BRANCH" == implementation-plan/* ]]; then
+            BRANCH_TYPE="implementation-plan"
+            TARGET_STATUS="Plan Ready"
+          elif [[ "$BRANCH" == feature/* || "$BRANCH" == fix/* || "$BRANCH" == refactor/* || "$BRANCH" == hotfix/* ]]; then
+            BRANCH_TYPE="impl"
+            TARGET_STATUS="Merged"
+          else
+            echo "Branch '$BRANCH' does not match a tracked prefix — skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Extract issue number from the first segment after the prefix slash.
+          #
+          # Supported formats:
+          #   fix/463-some-slug        → ISSUE_NUMBER=463  (plain numeric)
+          #   fix/ENG-456-long-slug    → ISSUE_NUMBER=456  (tracker-prefix, e.g. Linear)
+          #   feature/PROJ-123-title   → ISSUE_NUMBER=123
+          #
+          # Branches that match neither format are skipped with a warning.
+          SUFFIX="${BRANCH#*/}"            # strip type prefix  → "463-some-slug"
+          FIRST="${SUFFIX%%-*}"            # first dash-delimited token → "463" or "ENG"
+
+          if [[ "$FIRST" =~ ^[0-9]+$ ]]; then
+            # Plain numeric issue number (most common case)
+            ISSUE_NUMBER="$FIRST"
+          elif [[ "$FIRST" =~ ^[A-Z][A-Z0-9]*$ ]]; then
+            # Possible tracker prefix (e.g. "ENG", "PROJ") — look for the numeric part
+            # that immediately follows: ENG-456-long-slug → after stripping "ENG-", get "456"
+            AFTER_PREFIX="${SUFFIX#"${FIRST}-"}"        # "456-long-slug"
+            ISSUE_NUMBER="${AFTER_PREFIX%%-*}"           # "456"
+            if ! [[ "$ISSUE_NUMBER" =~ ^[0-9]+$ ]]; then
+              echo "Could not extract a numeric issue number from tracker-prefixed branch '$BRANCH' (got '$ISSUE_NUMBER') — skipping."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Tracker-prefixed branch detected: prefix='${FIRST}', issue_number='${ISSUE_NUMBER}'"
+          else
+            echo "Could not extract a numeric issue number from branch '$BRANCH' (got '$FIRST') — skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "branch_type=$BRANCH_TYPE"     >> "$GITHUB_OUTPUT"
+          echo "target_status=$TARGET_STATUS" >> "$GITHUB_OUTPUT"
+          echo "issue_number=$ISSUE_NUMBER"   >> "$GITHUB_OUTPUT"
+          echo "skip=false"                   >> "$GITHUB_OUTPUT"
+          echo "Detected: type=$BRANCH_TYPE, issue=$ISSUE_NUMBER, status=$TARGET_STATUS"
+
+      - name: Update GitHub Projects status
+        if: steps.detect.outputs.skip == 'false'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
+        env:
+          PROJECT_NUMBER: ${{ vars.GITHUB_PROJECT_NUMBER }}
+          PROJECT_OWNER: ${{ vars.GITHUB_PROJECT_OWNER }}
+          TARGET_STATUS: ${{ steps.detect.outputs.target_status }}
+          ISSUE_NUMBER: ${{ steps.detect.outputs.issue_number }}
+        with:
+          github-token: ${{ secrets.GH_PROJECT_TOKEN }}
+          script: |
+            const projectOwner = process.env.PROJECT_OWNER || context.repo.owner;
+            const projectNumber = parseInt(process.env.PROJECT_NUMBER, 10);
+            const targetStatus = process.env.TARGET_STATUS;
+            const issueNumber = parseInt(process.env.ISSUE_NUMBER, 10);
+
+            if (!projectNumber) {
+              core.warning('GITHUB_PROJECT_NUMBER variable is not set — skipping tracker update.');
+              return;
+            }
+
+            core.info(`Updating project ${projectOwner}/#${projectNumber}: issue ${issueNumber} → "${targetStatus}"`);
+
+            // 1. Get project node ID
+            const projectResp = await github.graphql(`
+              query($owner: String!, $number: Int!) {
+                user(login: $owner) {
+                  projectV2(number: $number) {
+                    id
+                    fields(first: 50) {
+                      nodes {
+                        ... on ProjectV2SingleSelectField {
+                          id
+                          name
+                          options { id name }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `, { owner: projectOwner, number: projectNumber }).catch(() => null);
+
+            // Retry with organization if user query failed
+            let project = projectResp?.user?.projectV2;
+            if (!project) {
+              const orgResp = await github.graphql(`
+                query($owner: String!, $number: Int!) {
+                  organization(login: $owner) {
+                    projectV2(number: $number) {
+                      id
+                      fields(first: 50) {
+                        nodes {
+                          ... on ProjectV2SingleSelectField {
+                            id
+                            name
+                            options { id name }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              `, { owner: projectOwner, number: projectNumber }).catch(() => null);
+              project = orgResp?.organization?.projectV2;
+            }
+
+            if (!project) {
+              core.warning(`Could not find GitHub Project #${projectNumber} for owner "${projectOwner}" — skipping tracker update.`);
+              return;
+            }
+
+            const projectId = project.id;
+
+            // 2. Find the Status field and the target option ID
+            const statusField = project.fields.nodes.find(f => f.name === 'Status');
+            if (!statusField) {
+              core.warning('Status field not found in project — skipping tracker update.');
+              return;
+            }
+
+            const statusOption = statusField.options.find(o => o.name === targetStatus);
+            if (!statusOption) {
+              core.warning(`Status option "${targetStatus}" not found in project Status field — skipping tracker update.`);
+              return;
+            }
+
+            // 3. Find the project item ID for this issue
+            // Paginate through items to find the matching issue
+            let itemId = null;
+            let cursor = null;
+            do {
+              const itemsResp = await github.graphql(`
+                query($projectId: ID!, $cursor: String) {
+                  node(id: $projectId) {
+                    ... on ProjectV2 {
+                      items(first: 100, after: $cursor) {
+                        pageInfo { hasNextPage endCursor }
+                        nodes {
+                          id
+                          content {
+                            ... on Issue { number }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              `, { projectId, cursor });
+
+              const items = itemsResp.node.items;
+              const match = items.nodes.find(n => n.content?.number === issueNumber);
+              if (match) {
+                itemId = match.id;
+                break;
+              }
+              cursor = items.pageInfo.hasNextPage ? items.pageInfo.endCursor : null;
+            } while (cursor);
+
+            if (!itemId) {
+              core.warning(`Issue #${issueNumber} is not in project #${projectNumber} — skipping tracker update.`);
+              return;
+            }
+
+            // 4. Update the Status field
+            await github.graphql(`
+              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId
+                  itemId: $itemId
+                  fieldId: $fieldId
+                  value: { singleSelectOptionId: $optionId }
+                }) {
+                  projectV2Item { id }
+                }
+              }
+            `, {
+              projectId,
+              itemId,
+              fieldId: statusField.id,
+              optionId: statusOption.id,
+            });
+
+            core.info(`Successfully updated issue #${issueNumber} status to "${targetStatus}".`);
+
+      - name: Close issue for impl branches
+        if: >
+          steps.detect.outputs.skip == 'false' &&
+          steps.detect.outputs.branch_type == 'impl'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ steps.detect.outputs.issue_number }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          echo "Closing issue #${ISSUE_NUMBER} (implementation PR merged)..."
+          gh issue close "$ISSUE_NUMBER" --repo "$GH_REPO" \
+            --comment "Closed automatically: implementation PR merged to develop." \
+            || echo "WARNING: gh issue close failed (issue may already be closed or not exist) — continuing."

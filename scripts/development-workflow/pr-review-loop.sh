@@ -69,7 +69,7 @@ trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"' EXIT
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,pr-agent,coderabbit] [--poll-interval seconds] [--max-wait seconds]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,pr-agent,coderabbit,codex-github] [--poll-interval seconds] [--max-wait seconds]
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
 triggering a new review, each platform checks for existing blocking findings. If
@@ -82,6 +82,17 @@ REASON=lock_contention and exits 75 (EX_TEMPFAIL).
 Platform selection (in priority order):
   1. --platform flag(s) passed on the command line
   2. review.platforms list in .ai-dev-workflow.yaml at the repo root
+
+Branch-type-aware default timeout:
+  On spec/* and implementation-plan/* branches, Devin has no trigger condition and
+  exits immediately with REASON=no_check_run. To avoid wasting the full 20-minute
+  default wait budget on these branches, the script automatically reduces --max-wait
+  to 60 s and --poll-interval to 30 s when the branch matches spec/* or
+  implementation-plan/* and the caller did not pass the respective flag explicitly.
+  poll_interval is also reduced so it stays below max_wait — the per-loop timeout
+  check requires elapsed >= max_wait, which can only fire after at least one
+  poll_interval has elapsed. Pass --max-wait and/or --poll-interval explicitly to
+  override either value.
 
 Outputs stable key=value lines including:
   RESULT=clean|needs_fixes|escalate|skipped
@@ -420,6 +431,110 @@ run_greptile_review() {
   print_kv BLOCKING_COUNT 0
   print_kv SUGGESTION_COUNT "$suggestion_count"
   return 0
+}
+
+run_codex_github_review() {
+  local pr_number="$1"
+  local branch_name="$2"
+  local poll_interval="$3"
+  local max_wait="$4"
+  local platform="codex-github"
+  local bot_login="${CODEX_GITHUB_BOT_LOGIN:-codex-ai[bot]}"
+  # GraphQL author.login returns the login WITHOUT the "[bot]" suffix that the
+  # REST API uses. Strip it here so check_unresolved_threads comparisons work.
+  local graphql_bot_login="${bot_login%\[bot\]}"
+  local repo
+  local reviewer_script
+  local script_exit=0
+  local thread_check_output=""
+  local thread_check_status=0
+  local unresolved_count=0
+
+  require_gh
+  cd_workflow_repo_root
+  repo="$(repo_slug)"
+
+  # Phase 1: Check for existing unresolved review threads from the codex bot
+  set +e
+  thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" "$graphql_bot_login")"
+  thread_check_status=$?
+  set -e
+  if [ "$thread_check_status" -eq 0 ]; then
+    unresolved_count="$thread_check_output"
+  fi
+
+  if [ "$unresolved_count" -gt 0 ]; then
+    print_kv RESULT needs_fixes
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv REASON existing_findings
+    print_kv COMMENT_COUNT "$unresolved_count"
+    print_kv BLOCKING_COUNT "$unresolved_count"
+    print_kv SUGGESTION_COUNT 0
+    return 1
+  fi
+
+  # Phase 2: Trigger the codex-github review and wait for response
+  reviewer_script="$(workflow_repo_root)/scripts/development-workflow/codex-github-reviewer.sh"
+
+  local owner repo_name
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  set +e
+  "$reviewer_script" "$pr_number" "$owner" "$repo_name" \
+    --bot-login "$bot_login" \
+    --poll-interval "$poll_interval" \
+    --max-wait "$max_wait" >/dev/null 2>&1
+  script_exit=$?
+  set -e
+
+  case "$script_exit" in
+    0)
+      print_kv RESULT clean
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 0
+      ;;
+    1)
+      unresolved_count=0
+      set +e
+      thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" "$graphql_bot_login")"
+      thread_check_status=$?
+      set -e
+      if [ "$thread_check_status" -eq 0 ]; then
+        unresolved_count="$thread_check_output"
+      fi
+      [ "$unresolved_count" -eq 0 ] && unresolved_count=1
+
+      print_kv RESULT needs_fixes
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv REASON unresolved_review_threads
+      print_kv COMMENT_COUNT "$unresolved_count"
+      print_kv BLOCKING_COUNT "$unresolved_count"
+      print_kv SUGGESTION_COUNT 0
+      return 1
+      ;;
+    *)
+      print_kv RESULT escalate
+      print_kv REASON timeout
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      return 2
+      ;;
+  esac
 }
 
 run_devin_review() {
@@ -1690,11 +1805,12 @@ bot_login_for_platform() {
   # Used to filter reviewThreads by bot-authored comments only.
   # Note: pr-agent uses "github-actions" (no [bot] suffix; GraphQL strips it).
   case "$1" in
-    coderabbit) printf 'coderabbitai\n' ;;
-    devin)      printf 'devin-ai-integration\n' ;;
-    greptile)   printf 'greptile-apps\n' ;;
-    pr-agent)   printf 'github-actions\n' ;;
-    *)          printf '\n' ;;
+    coderabbit)   printf 'coderabbitai\n' ;;
+    devin)        printf 'devin-ai-integration\n' ;;
+    greptile)     printf 'greptile-apps\n' ;;
+    pr-agent)     printf 'github-actions\n' ;;
+    codex-github) printf '%s\n' "${CODEX_GITHUB_BOT_LOGIN:-codex-ai[bot]}" ;;
+    *)            printf '\n' ;;
   esac
 }
 
@@ -1829,6 +1945,9 @@ run_platform_review() {
     pr-agent)
       run_pr_agent_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
       ;;
+    codex-github)
+      run_codex_github_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      ;;
     *)
       print_kv RESULT skipped
       print_kv PLATFORM "$platform"
@@ -1852,7 +1971,9 @@ fi
 pr_number=""
 branch_name=""
 poll_interval=120
+poll_interval_explicit=0
 max_wait=1200
+max_wait_explicit=0
 declare -a platforms=()
 
 while [ "$#" -gt 0 ]; do
@@ -1867,10 +1988,12 @@ while [ "$#" -gt 0 ]; do
       ;;
     --poll-interval)
       poll_interval="$2"
+      poll_interval_explicit=1
       shift 2
       ;;
     --max-wait)
       max_wait="$2"
+      max_wait_explicit=1
       shift 2
       ;;
     -h|--help)
@@ -1914,6 +2037,23 @@ if [ "${#platforms[@]}" -gt 0 ]; then
   if [ -z "$branch_name" ]; then
     branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"
   fi
+fi
+
+# Branch-type-aware timeout: spec/* and implementation-plan/* branches produce
+# REASON=no_check_run immediately when Devin has no trigger condition (non-implementation
+# branches). Waiting the full 1200-second default wastes orchestrator budget.
+# Apply a short max_wait=60 / poll_interval=30 default when the caller did not pass
+# --max-wait / --poll-interval explicitly. poll_interval must be less than max_wait
+# so the per-loop timeout check can fire within the budget.
+if [ "$max_wait_explicit" -eq 0 ]; then
+  case "$branch_name" in
+    spec/*|implementation-plan/*)
+      max_wait=60
+      if [ "$poll_interval_explicit" -eq 0 ]; then
+        poll_interval=30
+      fi
+      ;;
+  esac
 fi
 
 aggregate_result="skipped"

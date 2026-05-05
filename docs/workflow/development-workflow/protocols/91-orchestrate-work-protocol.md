@@ -560,6 +560,64 @@ If the human agrees, follow `docs/workflow/development-workflow/protocols/06-ret
 
 Run this step immediately after opening a draft PR, and again after any push that addresses internal-review findings.
 
+### Design Review Gate (implementation PRs only)
+
+This gate applies only to PRs on `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches (BR-1). It is skipped entirely for `spec/*` and `implementation-plan/*` branches — proceed directly to "Determining which reviewers to run" for those PR types.
+
+#### Frontend-file detection
+
+Inspect the PR's changed files:
+
+```bash
+gh pr diff <pr_number> --name-only
+```
+
+A file is **frontend** if any of the following conditions hold:
+
+- Its extension is one of: `.html`, `.css`, `.scss`, `.sass`, `.less`, `.jsx`, `.tsx`, `.vue`, `.svelte` (BR-2)
+- Its extension is `.js` or `.ts` **and** its path starts with one of these directory prefixes: `src/`, `app/`, `pages/`, `components/`, `public/`, `static/`, or `assets/` (BR-2)
+
+`.js` and `.ts` files at the repository root or under `scripts/` are **not** treated as frontend.
+
+These detection rules are extensible — downstream teams that need additional extensions or paths must update this list (and keep `.claude/agents/design-reviewer.md` and `.cursor/agents/design-reviewer.md` in sync).
+
+#### Three execution paths
+
+**Path A — No frontend changes detected (Use Case 2):**
+
+Skip the design-reviewer agent entirely. No comment is posted. Proceed to "Determining which reviewers to run". This skip is not a failure (BR-10).
+
+**Path B — Frontend changes detected, provider available (Use Case 1):**
+
+Invoke the `design-reviewer` agent, passing:
+- The PR number
+- The list of changed frontend files
+- The `PREVIEW_URL` environment variable (if set) or instructions to start the development server
+
+After the agent posts its PR comment, parse the verdict from the comment header (the comment must begin with `## Design Review Summary` and the verdict must appear as `**Verdict**: <value>` — BR-9):
+
+| Verdict | Action |
+|---------|--------|
+| `Approved` | Proceed normally to "Determining which reviewers to run" |
+| `Needs Revision` | Treat as a review finding. Do not advance to `ready-for-human-review` until the issues are resolved or explicitly accepted (BR-5) |
+| `Skipped` | Development server was unreachable; log the skip and continue without blocking (BR-4) |
+
+**Path C — Frontend changes detected, provider unavailable (Use Case 3):**
+
+Invoke the `design-reviewer` agent; it will detect provider unavailability, post a skip notice, and exit with verdict `Skipped`. Parse the `Skipped` verdict and continue without blocking the PR (BR-3).
+
+#### Preview URL resolution
+
+The design-reviewer agent resolves the preview base URL in this order (BR-11):
+
+1. `PREVIEW_URL` environment variable, treated as the base URL (file-relative paths are appended).
+2. Local development server started by the agent (the server address becomes the base URL).
+3. If neither is available, the agent skips preview navigation and falls back to a report noting that no live preview was accessible.
+
+#### Browser automation provider
+
+The agent reads `browser_automation.provider` from `.ai-dev-workflow.yaml`. For this repository the provider is `playwright_cli`. The agent must not hard-code a provider value (BR-8).
+
 ### Determining which reviewers to run
 
 Read the `review.internal_reviewers` list from `.ai-dev-workflow.yaml`. If a `.tmp/template-config.json` file exists in the repository root (this path is gitignored and used for local developer overrides), read its `overrides.review.internal_reviewers` list — that value takes precedence over `.ai-dev-workflow.yaml` for the local environment. This allows developers without access to all configured review tools to run a subset (e.g., only `claude`) without changing the shared config.
@@ -576,7 +634,7 @@ Example `.tmp/template-config.json` override format:
 }
 ```
 
-Supported reviewer values: `claude`, `codex`, `codex-github`. The `codex-github` reviewer requires the Codex GitHub App to be installed on the repository; see `scripts/development-workflow/codex-github-reviewer.sh` for setup details and configurable options (`--trigger-phrase`, `--bot-login`, `--poll-interval`, `--max-wait`).
+Supported reviewer values: `claude`, `codex`.
 
 If neither file defines `internal_reviewers`, fall back to running the stage-appropriate reviewer once (default behavior: `claude`).
 
@@ -592,14 +650,12 @@ Before dispatching any reviewer, classify each entry in the resolved list as `re
 
 #### Reachability classification table
 
-| Runner context | `claude` reachable? | `codex` reachable? | `codex-github` reachable? |
-|---|---|---|---|
-| Claude Code (direct human session) | Yes | No | Yes |
-| Claude Code subagent (dispatched by orchestrator) | Yes | No | Yes |
-| Codex runner / Codex skill | Yes | Yes | Yes |
-| Direct human (shell / CI with `gh`) | Yes | Yes | Yes |
-
-`codex-github` is classified as universally reachable because it interacts with the Codex GitHub App via `gh` CLI only — no Codex CLI runtime is required. It is reachable from any runner context where `gh` is authenticated.
+| Runner context | `claude` reachable? | `codex` reachable? |
+|---|---|---|
+| Claude Code (direct human session) | Yes | No |
+| Claude Code subagent (dispatched by orchestrator) | Yes | No |
+| Codex runner / Codex skill | Yes | Yes |
+| Direct human (shell / CI with `gh`) | Yes | Yes |
 
 #### Policy resolution
 
@@ -661,24 +717,21 @@ For each reviewer in the resolved list, dispatch the stage-appropriate agent:
 | `codex` | `spec/*` | `workflow-spec-reviewer` Codex skill against `REVIEW.md` |
 | `codex` | `implementation-plan/*` | `workflow-plan-reviewer` Codex skill against `REVIEW.md` |
 | `codex` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `workflow-code-reviewer` Codex skill against `REVIEW.md` |
-| `codex-github` | `spec/*` | `scripts/development-workflow/codex-github-reviewer.sh <pr> <owner> <repo>` |
-| `codex-github` | `implementation-plan/*` | `scripts/development-workflow/codex-github-reviewer.sh <pr> <owner> <repo>` |
-| `codex-github` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `scripts/development-workflow/codex-github-reviewer.sh <pr> <owner> <repo>` |
 
-**`codex-github` dispatch notes:**
+### Branch-type detection
 
-- **Exit code semantics**: exit 0 = `APPROVED`, exit 1 = `NEEDS REVISION` (blocking findings present), exit 2 = `TIMED_OUT` (no bot response within max wait time).
-- **TIMED_OUT policy**: treat `TIMED_OUT` identically to `skipped (unavailable)` — apply the configured `internal_reviewers_unavailable_policy` (`warn` by default). Post a warning comment identifying the trigger comment that was posted and suggesting the operator verify Codex GitHub App installation.
-- **NEEDS REVISION — finding extraction**: on exit code 1, the script writes the bot response body to stdout between `---BEGIN BOT RESPONSE---` and `---END BOT RESPONSE---` markers. The runner must capture and pass this output to the fixer agent as context.
-- **Re-trigger on each fix cycle (BR-6)**: after fixes are pushed, a new trigger comment must be posted for the new commit SHA. The script handles this automatically — it checks the current HEAD SHA before posting and skips duplicate triggers for the same SHA.
-- **Idempotency guard (BR-10)**: the script checks existing PR comments for a trigger comment containing the current commit SHA before posting. If a matching trigger is found, posting is skipped and polling proceeds from the existing trigger timestamp. This prevents duplicate reviews when Step 7a is retried on the same commit.
-- **Prerequisite**: the Codex GitHub App must be installed on the repository and configured to respond to the trigger phrase (default: `@codex review`). If the app is not installed, the script times out and the runner applies the unavailability policy.
+Before running any reviewers, classify the PR branch to determine which execution path applies:
+
+- **Implementation PR**: branch matches `feature/*`, `fix/*`, `refactor/*`, or `hotfix/*`. These PRs follow the **two-pass** review procedure below.
+- **Non-implementation PR**: branch matches `spec/*` or `implementation-plan/*`. These PRs follow the existing **single-pass** review procedure and are not affected by this section's two-pass rules.
 
 ### Multi-reviewer execution rules
 
 Run all configured internal reviewers **sequentially** in the order listed. Each reviewer runs against `REVIEW.md`, applies deterministic fixes directly, and commits + pushes if needed.
 
-Initialize `internal_review_cycle = 0` at the start of Step 7a. Increment each time the full reviewer list is restarted. Escalate to human when `internal_review_cycle` reaches `max_internal_review_cycles` (default: 5).
+Initialize `internal_review_cycle = 0` at the start of Step 7a. Increment each time the full Pass 1 → Pass 2 cycle is restarted (for implementation PRs) or the full reviewer list is restarted (for non-implementation PRs). Escalate to human when `internal_review_cycle` reaches `max_internal_review_cycles` (default: 5).
+
+#### Non-implementation PRs (spec/*, implementation-plan/*): single-pass
 
 | Outcome | Action |
 |---|---|
@@ -689,26 +742,73 @@ Initialize `internal_review_cycle = 0` at the start of Step 7a. Increment each t
 
 All internal reviewers must APPROVE before `gh pr ready` is called. If any reviewer finds issues, fix them and re-run ALL internal reviewers.
 
+#### Implementation PRs (feature/*, fix/*, refactor/*, hotfix/*): two-pass
+
+Implementation PRs run two sequential passes before `gh pr ready` is called. Pass 2 is never dispatched until all reviewers have approved Pass 1 for the current commit.
+
+**Pass 1 (Spec Compliance)**: each reviewer evaluates only the `### Pass 1: Spec Compliance` sub-checklist from `REVIEW.md`. The orchestrator passes the active pass name (`Pass 1: Spec Compliance`) in the dispatch prompt so the reviewer scopes its findings accordingly.
+
+**Pass 2 (Code Quality)**: each reviewer evaluates only the `### Pass 2: Code Quality` sub-checklist from `REVIEW.md`. The orchestrator passes the active pass name (`Pass 2: Code Quality`) in the dispatch prompt. Pass 2 is dispatched only after all reviewers have approved Pass 1.
+
+**Multi-reviewer ordering within each pass**: when multiple internal reviewers are configured, all reviewers complete Pass 1 before any reviewer's Pass 2 is dispatched.
+
+**Same-commit SHA requirement**: when both passes run without a trivial-fix skip, both passes must approve at the same commit SHA before `gh pr ready` is called. When Pass 1 is skipped under the trivial-fix path (see below), only Pass 2 must approve at the current commit SHA — Pass 1's earlier approval (at a prior SHA) remains valid for that cycle.
+
+| Outcome | Action |
+|---|---|
+| All reviewers `APPROVED` on Pass 1 | Proceed to Pass 2 for all reviewers |
+| Any reviewer returns `NEEDS REVISION` on Pass 1 (fixable) and `internal_review_cycle < max_internal_review_cycles` | Fixes already applied; increment `internal_review_cycle`; restart from Pass 1 for all reviewers |
+| Any reviewer returns `NEEDS REVISION` on Pass 1 (fixable) and `internal_review_cycle >= max_internal_review_cycles` | Post the Step 7a summary comment with verdict `escalated — max cycles reached`, then escalate to human |
+| Any reviewer returns `NEEDS REVISION` on Pass 1 (product/design decision) | Post the Step 7a summary comment with verdict `escalated — human decision required`, then stop and escalate to human |
+| All reviewers `APPROVED` on Pass 2 | Post the Step 7a summary comment (see below), then run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then continue to Step 7 (external automated reviewers) |
+| Any reviewer returns `NEEDS REVISION` on Pass 2 (fixable) — fix is **non-trivial** — and `internal_review_cycle < max_internal_review_cycles` | Fixes already applied; increment `internal_review_cycle`; restart from **Pass 1** for all reviewers |
+| Any reviewer returns `NEEDS REVISION` on Pass 2 (fixable) — fix is **trivial** (all three trivial-fix conditions met) — and `internal_review_cycle < max_internal_review_cycles` | Skip Pass 1 re-run; increment `internal_review_cycle`; post a skip note (see Trivial-fix skip rule); restart from **Pass 2** only. The same-SHA requirement does not apply to Pass 1 for this cycle — only Pass 2 must approve at the current commit SHA before `gh pr ready` is called |
+| Any reviewer returns `NEEDS REVISION` on Pass 2 (fixable) and `internal_review_cycle >= max_internal_review_cycles` | Post the Step 7a summary comment with verdict `escalated — max cycles reached`, then escalate to human |
+| Any reviewer returns `NEEDS REVISION` on Pass 2 (product/design decision) | Post the Step 7a summary comment with verdict `escalated — human decision required`, then stop and escalate to human |
+
+Both passes must complete with all reviewers `APPROVED` before `gh pr ready` is called. The `internal_review_cycle` counter increments on every fix cycle — whether the fix is trivial (Pass 2 restart only) or non-trivial (full Pass 1 → Pass 2 restart). This ensures that repeated trivial-fix cycles are bounded by `max_internal_review_cycles` and cannot loop indefinitely.
+
 #### Step 7a summary comment (mandatory)
 
 A Step 7a summary comment **must always be posted to the PR** when the gate exits — whether all reviewers ran, some were skipped, or the gate hard-failed (BR-7). Post via `gh pr comment` immediately before `gh pr ready` (in the success path) or immediately before stopping (in the hard-fail or escalation paths).
 
 Required fields:
 
+- **PR type**: implementation (two-pass) or non-implementation (single-pass)
 - **Effective reviewer set**: which reviewers actually ran (excluding skipped/unreachable ones)
 - **Skipped reviewers**: each reviewer skipped, with reason (e.g., `unreachable`, `override-excluded`)
 - **Final verdict**: `APPROVED`, `hard-fail`, or `escalated — <reason>`
 
-Example format:
+Example format for a **non-implementation PR** (single-pass):
 
 ```markdown
 ### Step 7a Internal Review Gate Summary
 
+**PR type**: Non-implementation (single-pass)
 **Effective reviewer set**: claude
 **Skipped reviewers**: codex (unreachable from Claude Code subagent)
 **Verdict**: APPROVED
 
 All reachable internal reviewers approved. Note: codex was unreachable from the current runner — reviewer coverage was reduced from 2 to 1. Human reviewers may re-run Step 7a from a Codex-capable runner if full coverage is required.
+```
+
+Example format for an **implementation PR** (two-pass):
+
+```markdown
+### Step 7a Internal Review Gate Summary
+
+**PR type**: Implementation (two-pass)
+**Effective reviewer set**: claude
+**Skipped reviewers**: codex (unreachable from Claude Code subagent)
+
+**Pass 1 (Spec Compliance)**
+- claude: APPROVED (0 findings)
+
+**Pass 2 (Code Quality)**
+- claude: APPROVED after 1 fix cycle (1 finding resolved)
+
+**Verdict**: APPROVED
+All passes approved at commit `abc1234`.
 ```
 
 In the hard-fail case (zero reachable reviewers or `fail-if-any-unavailable` policy triggered), the hard-fail comment posted in the Runtime-availability check section above **already satisfies BR-7** — do not post a second summary comment.
@@ -719,13 +819,17 @@ In the hard-fail case (zero reachable reviewers or `fail-if-any-unavailable` pol
 
 | Parameter | Default | Description |
 |---|---|---|
-| `max_internal_review_cycles` | 5 | Max times the full internal reviewer list is restarted before escalating |
+| `max_internal_review_cycles` | 5 | Max fix cycles before escalating. For implementation PRs, increments on every Pass 2 fix — trivial (Pass 2 restart only) or non-trivial (full Pass 1 → Pass 2 restart). For non-implementation PRs, counts full single-pass restarts as before |
 
 Step 7a runs **before** Step 7 (external reviewers). Only proceed to Step 7 once all internal reviewers in Step 7a produce `APPROVED`. After any fixer push triggered by Step 7 (external reviewers), re-run Step 7a (all internal reviewers) to ensure the stage-specific internal review gate is still clean — **unless the push qualifies as a trivial fix** (see "Trivial-fix skip rule" below).
 
-### Trivial-fix skip rule (Step 7a re-run after Step 7 fixer pushes)
+### Trivial-fix skip rule
 
-When Step 7 dispatches a fixer agent and the agent pushes a fix commit, the orchestrator normally re-runs Step 7a in full before proceeding. This is necessary to catch cases where a fix accidentally breaks a structural invariant checked by the internal reviewers. However, many fixer pushes are purely textual: correcting a number, removing a stale reference, rewording a one-line description. Running a full reviewer pass after each such push wastes cycles and can spin the loop dozens of times for a single PR.
+The trivial-fix skip rule applies in two distinct contexts within the orchestration loop:
+
+**Context A — Pass 2 internal review (implementation PRs only)**: When a reviewer returns `NEEDS REVISION` on Pass 2 during Step 7a, the fixer applies a fix and pushes. If the fix is trivial (all three conditions below), the orchestrator skips the Pass 1 re-run and restarts from Pass 2 only. See the two-pass outcome table above.
+
+**Context B — Step 7 fixer pushes (all PR types)**: When Step 7 (external reviewers) dispatches a fixer agent and the agent pushes a fix commit, the orchestrator normally re-runs Step 7a in full before proceeding. If the fix is trivial, the orchestrator skips the full Step 7a re-run and proceeds directly to Step 7. For implementation PRs, "full Step 7a re-run" means running both Pass 1 and Pass 2 again.
 
 **Trivial-fix classification**: A fixer push qualifies as trivial if and only if **all** of the following conditions hold:
 
@@ -733,13 +837,13 @@ When Step 7 dispatches a fixer agent and the agent pushes a fix commit, the orch
 2. The diff contains **only** changes to plain text in string literals, comments, documentation prose, or inline numeric values — no logic, no control-flow, no added/removed function or variable declarations, no new imports, no structural markup changes (e.g., adding/removing table columns or list items in a protocol document).
 3. The number of lines changed (additions + deletions) is 10 or fewer across the entire commit.
 
-**When all three conditions are met**: skip the Step 7a re-run and proceed directly to Step 7 (re-run the external automated reviewers on the new push). Post a one-line PR comment noting the skip:
+**When all three conditions are met (Context B)**: skip the Step 7a re-run and proceed directly to Step 7 (re-run the external automated reviewers on the new push). Post a one-line PR comment noting the skip:
 
 > `Step 7a re-run skipped: fixer push classified as trivial (non-structural, ≤10 lines). Proceeding directly to Step 7.`
 
-**When any condition is not met**: re-run Step 7a in full as normal before proceeding to Step 7.
+**When any condition is not met (Context B)**: re-run Step 7a in full as normal before proceeding to Step 7.
 
-**Orchestrator verification**: The orchestrator must not rely solely on the fixer's self-certification. Before skipping, independently verify conditions 2 and 3 by inspecting the diff:
+**Orchestrator verification**: The orchestrator must not rely solely on the fixer's self-certification. Before skipping (in either context), independently verify conditions 2 and 3 by inspecting the diff:
 
 ```bash
 # Count changed lines and check for structural changes
@@ -747,9 +851,9 @@ git diff HEAD~1 HEAD --stat
 git diff HEAD~1 HEAD -- .
 ```
 
-If the diff includes any non-text change (e.g., new function, new import, changed conditional, structural markup change), override the fixer's self-certification and re-run Step 7a.
+If the diff includes any non-text change (e.g., new function, new import, changed conditional, structural markup change), override the fixer's self-certification and do not apply the trivial-fix skip.
 
-**This skip applies only to fixer pushes from Step 7 (external reviewers).** The initial Step 7a run (after a draft PR is opened) is always full and cannot be skipped. Step 7a re-runs triggered by the Step 7a internal review loop itself (i.e., `internal_review_cycle > 0` for findings from the internal reviewers) are also never skipped.
+**Scope of skip**: The initial Step 7a run (after a draft PR is opened) is always full and cannot be skipped. Step 7a re-runs triggered by Pass 1 findings (i.e., `internal_review_cycle > 0` for findings from Pass 1) are also never skipped.
 
 ---
 
@@ -761,7 +865,7 @@ If one or more automated code review platforms are configured (see [`integration
 
 **Important:** Run Step 7 **to completion** and use its result before running Step 8. Do not run Step 7 in the background while proceeding to Step 8. The review loop can take several minutes (poll interval × wait for bot). Only when the script exits with `clean` or `skipped` may you continue to Step 8.
 
-The helper script evaluates configured platforms sequentially. For each platform it checks for **existing** blocking findings from the bot (e.g. from a review that already ran on PR open) before posting a new trigger. If it finds any, it exits with `needs_fixes` without moving on to later platforms — so the fixer addresses them first; after a push, the next run starts again from the first configured platform.
+The helper script evaluates configured platforms sequentially. For each platform it checks for **existing** blocking findings from the bot (e.g. from a review that already ran on PR open) before posting a new trigger. If it finds any, it exits with `needs_fixes` without moving on to later platforms — so the fixer addresses them first; after a push, the next run starts again from the first configured platform. Supported platforms include `greptile`, `devin`, `coderabbit`, and `codex-github` (Codex GitHub App — async bot reviewer handled deterministically by `pr-review-loop.sh`).
 
 Initialize `cycle = 0` once per orchestration run for the PR. Increment `cycle` each time a fixer agent is dispatched. Do not reset `cycle` after a fixer push; escalate when the run reaches `max_cycles`.
 
@@ -846,9 +950,13 @@ gh api "repos/{owner}/{repo}/pulls/<pr_number>/comments/<comment_id>/replies" \
 
 This is **mandatory** — do not skip this step. Unresolved inline comments cause confusion when humans review the PR on GitHub, even if the underlying issue was already fixed. When delegating to a fixer subagent, include explicit instructions to reply to each addressed comment.
 
-#### Final summary comment
+#### Final summary comment (MANDATORY)
 
-Post via `gh pr comment` when the loop reaches a terminal condition (`clean`, `escalate`, or `max_cycles`):
+**You MUST post a PR comment containing "Automated Reviewer Loop Summary" immediately after `pr-review-loop.sh` exits — regardless of the exit result (`clean`, `needs_fixes` when escalating, or `max_cycles`).** This comment is the only reliable signal that Step 7 ran to completion. The orchestrator's Step 8c verification check (`hasReviewSummary`) searches for this comment and will block `ready-for-human-review` if it is absent.
+
+**Do not skip this comment under any circumstance.** Omitting it — even when the loop exits cleanly on the first cycle with no findings — is a protocol violation that causes the Step 8c hard gate to fail and requires re-running Step 7.
+
+Post via `gh pr comment`:
 
 ````markdown
 ### Automated Reviewer Loop Summary
@@ -873,8 +981,8 @@ Post via `gh pr comment` when the loop reaches a terminal condition (`clean`, `e
 
 When M=0 (all resolutions were code fixes), omit the "Reply-only resolutions" subsection entirely.
 
-- If no findings were ever raised (clean on first run): post a simpler comment — "No blocking PR feedback was raised by any configured reviewer tool."
-- If result is `skipped` (no platforms configured): do **not** post a summary comment.
+- If no findings were ever raised (clean on first run): post the summary comment with `**Result:** clean` and `**Resolved:** 0 / 0 findings`, or use the shorter form — "No blocking PR feedback was raised by any configured reviewer tool." Either form satisfies the Step 8c check as long as the comment body contains `"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"`.
+- If result is `skipped` (no platforms configured): do **not** post a summary comment (Step 8c skips this check when Step 7 was skipped).
 
 Prefer the helper script (it reads `.ai-dev-workflow.yaml` for the platform list automatically):
 
@@ -886,11 +994,11 @@ Interpret the result as follows:
 
 | Result | Action |
 |---|---|
-| `clean` | Re-issue the GraphQL `reviewThreads` query (Step 8c) **before** proceeding — see "Re-query reviewThreads after each push" below |
-| `skipped` | Continue to Step 7b (implementation PRs) then Step 8 |
+| `clean` | **You MUST post the "Automated Reviewer Loop Summary" comment** (see above), then re-issue the GraphQL `reviewThreads` query (Step 8c) before proceeding — see "Re-query reviewThreads after each push" below |
+| `skipped` | Continue to Step 7b (implementation PRs) then Step 8 (no summary comment posted — Step 8c skips the check) |
 | `needs_fixes` and `cycle < max_cycles` | Increment `cycle`, dispatch the matching fixer agent, wait for a push, then run Step 7 again |
-| `needs_fixes` and `cycle >= max_cycles` | Escalate to human |
-| `escalate` | Escalate to human |
+| `needs_fixes` and `cycle >= max_cycles` | **You MUST post the "Automated Reviewer Loop Summary" comment** (with `max cycles reached` result), then escalate to human |
+| `escalate` | **You MUST post the "Automated Reviewer Loop Summary" comment** (with the escalation reason), then escalate to human |
 
 ### Re-query reviewThreads after each push (mandatory)
 
@@ -938,6 +1046,69 @@ When dispatching a fixer agent, include the following explicit instruction:
 > 3. **One commit, then push** — bundle every fix into a single commit and push once. Do not push after each individual fix.
 >
 > Findings that cannot be addressed in this dispatch (e.g. require a human decision, are out of scope, or are genuinely contradictory) should be noted and left for human review. Do not skip a push just because one finding is unresolvable — push the rest.
+
+### Attempt-context injection rule (Step 7 fixer dispatch)
+
+This rule governs what the orchestrator prepends to the fixer agent's prompt on each
+dispatch. It applies to fixer agents dispatched from this step only (Step 7 external
+automated reviewers); Step 7a (internal review gate) fixer cycles are unaffected.
+
+**First dispatch (cycle = 1)**
+
+No attempt-context prefix is added. The fixer receives only the standard
+blocking-findings list and the batching rule above.
+
+**Retry dispatches (cycle ≥ 2)**
+
+Before dispatching the fixer, the orchestrator prepends an attempt-context header
+to the fixer's prompt using the following format:
+
+> Attempt N/M: prior attempt(s) tried [per-attempt summaries]. The following findings
+> remain open: [standard blocking-findings list]. Try a different approach for each
+> remaining finding.
+
+Where:
+
+- `N` = the current `cycle` value (matches the loop's `cycle` counter exactly)
+- `M` = `max_cycles` (the loop escalation limit — default: 10)
+- `[per-attempt summaries]` = one entry per prior dispatch, each one-to-two plain-language
+  sentences describing what that attempt changed and which findings it addressed or left
+  open. Derive each entry from the PR feedback ledger and the fixer's commit message /
+  response for that cycle.
+- `[standard blocking-findings list]` = the same findings list passed in any dispatch —
+  the attempt-context prefix does not replace it
+
+**Accumulating summaries across retries**
+
+For cycle N, include summaries for all N-1 prior attempts, not only the most recent.
+Each entry should be keyed to its cycle number for clarity:
+
+> Attempt 1: rewrote the `foo()` function signature in `bar.sh`; MD009 trailing-space
+> finding on line 42 remained open.
+> Attempt 2: removed trailing space on line 42; `relative-links` finding on `baz.md`
+> remained open.
+
+**Fallback when no prior-attempt summary is available**
+
+If no summary was recorded for a prior attempt (e.g., the fixer did not respond or
+the attempt had no ledger entries), use the minimal fallback:
+
+> Attempt N/M: prior attempt did not fully resolve all findings. Try a different approach.
+
+**Reappearance notation**
+
+When a finding that was marked `resolved` in a prior cycle reappears in the current
+ledger (same `(platform, path, body_snippet)` key, status reverted to `open`), the
+per-attempt summary for the cycle in which it was "resolved" must note the reappearance:
+
+> Attempt 2: removed trailing space on line 42 (fix did not hold — finding reappeared
+> in cycle 3).
+
+**In-session state only**
+
+Attempt summaries live in the orchestrator's in-session state for the duration of the
+PR's review loop. They are not persisted to disk or to any external tracker. They are
+discarded when the orchestration session ends.
 
 ### Loop parameters
 
@@ -1006,6 +1177,18 @@ Interpret the result as follows:
 
 **Before applying `ready-for-human-review`**, verify all required readiness conditions are met. This is a hard gate — do not skip or defer.
 
+### Exit code contract
+
+| Exit Code | Meaning | Action |
+|---|---|---|
+| 0 | PR is ready (non-draft, regression label verified for implementation PRs, no unresolved threads) | Apply `ready-for-human-review` |
+| 1 | PR is still in draft | Run `gh pr ready` first |
+| 2 | `ready-for-regression` label applied this run | Re-run Step 8 (pr-ci-loop.sh) before returning here |
+| 3 | `ready-for-regression` label missing at pre-Check-4 gate | Apply label, re-run Step 8 |
+| 4 | Unresolved review threads at pre-Check-4 gate | Resolve threads, push fixes, re-run checklist |
+
+When adding a new gate to this checklist, allocate the next unused exit code and update this table. Exit codes must not collide.
+
 > **Critical**: For implementation PRs (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`), you **must** confirm that `ready-for-regression` was applied in Step 7b **before** reaching this checklist. If it was not, apply it now (see Check 2 below) — do not proceed to `ready-for-human-review` without it. The orchestrator's Step 5.1 will catch and correct a missing `ready-for-regression` label, but the agent is the primary responsible party and must not rely on the orchestrator as a fallback.
 
 ### Label derivation rule
@@ -1022,6 +1205,88 @@ Required labels are determined by the **branch prefix**, not by the content of t
 | `implementation-plan/*` | No | — |
 
 Any branch that does not match a recognized prefix is treated as non-implementation (i.e., `ready-for-regression` is NOT required), but this should be treated as a configuration anomaly and reported to the human.
+
+### Infrastructure Dependency Scan (pre-readiness)
+
+Before running the readiness checklist below, perform a best-effort scan of the PR diff to detect infrastructure dependencies that require human setup before the feature can be safely enabled. This scan runs on **every pass through Step 8a** — including after fixer pushes — so the label and PR body section always reflect the current diff (BR-6).
+
+**Timing**: Run after CI is green and all automated reviewer loops are clean (Step 7 complete), but before applying `ready-for-human-review`. The scan result does **not** block readiness — `needs-setup` co-exists with `ready-for-human-review` (BR-3, BR-4).
+
+**Scan procedure**:
+
+1. Read the PR diff:
+
+   ```bash
+   gh pr diff <pr_number>
+   ```
+
+2. Scan the diff for infrastructure dependency signals on **added lines** (lines starting with `+`). The following heuristics are best-effort and intentionally incomplete (BR-9 — false negatives are acceptable):
+
+   - **New environment variable references**: added lines matching patterns like `process.env.NEW_VAR`, `os.environ["NEW_VAR"]`, `$NEW_VAR` in shell scripts, or new entries added to `.env.example`, `.env.template`, or similar env-template files.
+   - **New GitHub Actions secret references**: added lines in `.github/workflows/**` files that reference `${{ secrets.NEW_SECRET }}`.
+   - **New config key additions to environment-specific config files**: added keys in files named `*.env`, `.env.*`, `config/production.*`, or similar deployment-configuration files.
+   - **Explicit setup TODO comments added in the diff**: added comments containing phrases like `# TODO: set`, `# Set this to`, `# Required: configure`, or similar that indicate a value must be externally provided.
+
+3. **If one or more signals are found**:
+
+   a. Construct a `## Pre-merge Setup` section listing each detected requirement with (BR-8):
+      - Requirement name
+      - Type (e.g., environment variable, GitHub Actions secret, DNS record, service account token)
+      - Plain-language description of the expected value
+      - Where to set it (e.g., GitHub Actions secrets, Railway environment, DNS provider)
+
+   b. Replace any existing `## Pre-merge Setup` section in the PR body with the newly constructed one, then update the PR body. This step runs on every pass through Step 8a (including after fixer pushes), so the section must always reflect the current diff — never accumulate stale or duplicate sections:
+
+   ```bash
+   # Remove any existing ## Pre-merge Setup block (from header to next ## heading or EOF),
+   # then append the updated block at the end of the cleaned body.
+   CURRENT_BODY=$(gh pr view <pr_number> --json body --jq '.body')
+   CLEANED_BODY=$(echo "$CURRENT_BODY" | python3 -c "
+   import sys, re
+   body = sys.stdin.read()
+   # Remove existing ## Pre-merge Setup section (from the heading to next ## heading or end of string)
+   body = re.sub(r'\n## Pre-merge Setup\n.*?(?=\n## |\Z)', '', body, flags=re.DOTALL)
+   print(body.rstrip())
+   ")
+   UPDATED_BODY="${CLEANED_BODY}
+
+   ## Pre-merge Setup
+   <requirements list>"
+   gh pr edit <pr_number> --body "$UPDATED_BODY"
+   ```
+
+   c. Apply the `needs-setup` label (BR-1 — the label must always accompany the section):
+
+   ```bash
+   gh pr edit <pr_number> --add-label "needs-setup"
+   ```
+
+   **Note**: The `needs-setup` GitHub label must exist in the repository's label settings before this step can succeed. Suggested color: `#fbca04` (yellow). If the label does not exist, create it in the repository's **Issues → Labels** settings first.
+
+4. **If no signals are found**:
+
+   Ensure `needs-setup` is not present and no `## Pre-merge Setup` section exists in the PR body. If either is present from a prior scan (e.g., a previous commit introduced an env var that has since been removed), remove them:
+
+   ```bash
+   # Remove label only if it is currently present (avoids silencing real API/auth errors)
+   HAS_SETUP_LABEL=$(gh pr view <pr_number> --json labels --jq '.labels[].name' | grep -c "^needs-setup$" || true)
+   if [ "$HAS_SETUP_LABEL" -gt 0 ]; then
+     gh pr edit <pr_number> --remove-label "needs-setup"
+   fi
+
+   # Remove the ## Pre-merge Setup section from the PR body if present
+   # (Read body, strip the section and all content until the next ## heading or EOF, write back)
+   CURRENT_BODY=$(gh pr view <pr_number> --json body --jq '.body')
+   CLEANED_BODY=$(echo "$CURRENT_BODY" | python3 -c "
+   import sys, re
+   body = sys.stdin.read()
+   body = re.sub(r'\n## Pre-merge Setup\n.*?(?=\n## |\Z)', '', body, flags=re.DOTALL)
+   print(body.rstrip())
+   ")
+   gh pr edit <pr_number> --body "$CLEANED_BODY"
+   ```
+
+5. After the scan: proceed to the readiness checklist below. The presence of `needs-setup` is a valid co-label with `ready-for-human-review` and does **not** block this checklist or prevent `ready-for-human-review` from being applied (BR-3). The checklist script does not check for or remove `needs-setup` — it is a deliberate signal, not a stale label.
 
 Run this checklist for **every PR**:
 
@@ -1102,6 +1367,13 @@ fi
 #
 # NOTE: Skip this check ONLY when Step 7 was 'skipped' because no review platforms are configured.
 echo "⛔ STOP: Verifying all review threads are resolved via GraphQL before applying ready-for-human-review..."
+CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-codex-ai[bot]}"
+# GraphQL author.login omits the "[bot]" suffix present in REST API logins; strip it.
+CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
+JQ_FILTER="[.data.repository.pullRequest.reviewThreads.nodes[]
+        | select(.isResolved == false)
+        | select(.comments.nodes[0].author.login as \$a | [\"coderabbitai\",\"devin-ai-integration\",\"greptile-apps\",\"$CODEX_BOT_LOGIN\"] | index(\$a) != null)
+        | select((.comments.nodes[0].body // \"\") | test(\"✅ Addressed\") | not)] | length"
 UNRESOLVED_COUNT=$(gh api graphql -f query='
   query($owner:String!, $repo:String!, $number:Int!) {
     repository(owner:$owner, name:$repo) {
@@ -1112,10 +1384,7 @@ UNRESOLVED_COUNT=$(gh api graphql -f query='
       }
     }
   }' -f owner="<owner>" -f repo="<repo>" -F number="$PR_NUMBER" \
-  --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
-        | select(.isResolved == false)
-        | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps"] | index($a) != null)
-        | select((.comments.nodes[0].body // "") | test("✅ Addressed") | not)] | length')
+  --jq "$JQ_FILTER")
 
 if [ "$UNRESOLVED_COUNT" -gt 0 ]; then
   echo "ERROR: Cannot proceed to Check 4 — $UNRESOLVED_COUNT unresolved review thread(s) found."
@@ -1138,6 +1407,68 @@ fi
 echo "✅ Label readiness checklist passed. PR is ready for human review."
 ```
 
+### 8a.1: Async Bot Thread Re-check (Mandatory for async review platforms)
+
+**When to run this substep:**
+- After the label readiness checklist passes (all checks = exit 0)
+- Before proceeding to Step 8b
+- Only when `review.platforms` in `.ai-dev-workflow.yaml` includes `codex-github` or any other known async-posting review bot
+
+**Why this substep exists:**
+Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asynchronously. A thread can arrive **after** the Step 8a pre-Check-4 GraphQL verification (line 1202–1225) but **before** or **during** the Step 8c post-label verification. Without an explicit re-check, these late-arriving threads slip through as unresolved and cause the orchestrator's Step 5.1 to redispatch the agent.
+
+**Procedure:**
+
+1. **Wait for async bot threads**:
+   ```bash
+   # Sleep to allow async bots time to post new threads after the agent's pre-Check-4 query
+   echo "Waiting 10 seconds for async-posting review bots (e.g., codex-github) to post any new threads..."
+   sleep 10
+   ```
+
+2. **Re-query review threads**:
+
+   Before running the query, resolve the Codex bot login. Use the value of `CODEX_GITHUB_BOT_LOGIN` if set; otherwise default to `"codex-ai[bot]"` (the default used by `codex-github-reviewer.sh`). Strip the `[bot]` suffix because GraphQL `author.login` values omit it:
+   ```bash
+   CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-codex-ai[bot]}"
+   # GraphQL author.login omits the "[bot]" suffix present in REST API logins; strip it.
+   CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
+   ```
+
+   ```bash
+   JQ_FILTER="[.data.repository.pullRequest.reviewThreads.nodes[]
+         | select(.isResolved == false)
+         | select(.comments.nodes[0].author.login as \$a | [\"coderabbitai\",\"devin-ai-integration\",\"greptile-apps\",\"$CODEX_BOT_LOGIN\"] | index(\$a) != null)
+         | select((.comments.nodes[0].body // \"\") | test(\"✅ Addressed\") | not)] | length"
+   UNRESOLVED_RECHECK=$(gh api graphql -f query='
+     query($owner:String!, $repo:String!, $number:Int!) {
+       repository(owner:$owner, name:$repo) {
+         pullRequest(number:$number) {
+           reviewThreads(first: 100) {
+             nodes { isResolved comments(first: 1) { nodes { author { login } body } } }
+           }
+         }
+       }
+     }' -f owner="<owner>" -f repo="<repo>" -F number="$PR_NUMBER" \
+     --jq "$JQ_FILTER")
+   ```
+
+3. **Handle late-arriving threads**:
+   - If `$UNRESOLVED_RECHECK -gt 0`: New unresolved threads were discovered. Remove `ready-for-human-review`, add `needs-fixes`, and return to Step 7a to address them:
+     ```bash
+     if [ "$UNRESOLVED_RECHECK" -gt 0 ]; then
+       echo "⚠️ LATE-ARRIVING THREADS: Re-check detected $UNRESOLVED_RECHECK new unresolved thread(s) from async bots."
+       echo "Removing ready-for-human-review label and returning to Step 7a."
+       gh pr edit "$PR_NUMBER" --remove-label "ready-for-human-review"
+       gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
+       echo "Return to Step 7a to address the newly-discovered threads."
+       exit 5  # Exit code 5 = "late-arriving async bot threads detected"
+     fi
+     ```
+   - If `$UNRESOLVED_RECHECK -eq 0`: No new threads found. Continue to Step 8b.
+
+**Note**: This re-check is especially important when `codex-github` is a configured Step 7 review platform. The Codex GitHub App bot response is inherently asynchronous — the re-check adds a safety net to catch race conditions without requiring orchestrator intervention.
+
 **Interpretation**:
 
 - **All checks pass (exit 0)**: Continue to Step 8b (update tracker status) and then Step 8c (independent PR verification); only report the PR as ready after Step 8c also passes
@@ -1146,6 +1477,7 @@ echo "✅ Label readiness checklist passed. PR is ready for human review."
   - If `missing ready-for-regression` on implementation PR (exit 2 from Check 2): The label has been applied by Check 2. **Do not continue to Check 3/4.** Re-run `pr-ci-loop.sh` (Step 8) first to wait for the e2e/regression workflow triggered by the label. Only re-enter Step 8a after CI is green again. This ensures the e2e/regression check completes before the PR is marked ready.
   - If `ready-for-regression not verified` on implementation PR (exit 3 from pre-Check-4 gate): Step 7b was not completed. Apply the label via Step 7b, run Step 8 (CI loop), and re-enter Step 8a from the beginning. This gate is a hard block — `ready-for-human-review` cannot be applied until `ready-for-regression` is verified present.
   - If `unresolved review threads found` (exit 4 from GraphQL pre-Check-4 gate): The GraphQL query returned unresolved bot-authored review threads. Address the findings, push fixes, and re-enter Step 8a from the beginning. This gate is a hard block — `ready-for-human-review` cannot be applied until the GraphQL query confirms all threads are resolved. **Do not rely on self-tracked thread state** — the GraphQL query is the authoritative check.
+  - If `late-arriving async bot threads detected` (exit 5 from Step 8a.1 re-check): Late-arriving threads from async bots (e.g., `codex-github`) were discovered after the pre-Check-4 gate. Remove `ready-for-human-review`, add `needs-fixes`, and return to Step 7a. This indicates a race condition where the bot posted its thread after the initial verification but before the label was applied.
   - If `needs-fixes` is present (Check 3): The label is stale at this point (CI is green and reviews are clean), so it is automatically removed before proceeding to apply `ready-for-human-review`
 
 This checklist ensures the label sequence is always complete and all CI checks (including e2e/regression) have passed before the PR is declared ready for human review.
@@ -1224,6 +1556,7 @@ Verify all of the following. If any check fails, **do not report ready** — tre
 | `ready-for-human-review` label | Present in `labels[].name` |
 | `ready-for-regression` label | Present in `labels[].name` for `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`; absent/ignored for `spec/*`, `implementation-plan/*` |
 | No `needs-fixes` label | `needs-fixes` absent from `labels[].name` |
+| `needs-setup` label (if present) | **Valid co-label** — `needs-setup` may be present alongside `ready-for-human-review` when the diff contains infrastructure dependency signals. Its presence does **not** constitute a verification failure and does not block this check. Do not remove it. |
 | All automated-reviewer `reviewThreads` resolved | GraphQL query above returns empty output — `isResolved: true` (or first comment body contains `✅ Addressed`) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured) |
 | Automated reviewer loop summary | At least one comment whose body contains `"Automated Reviewer Loop Summary"`, `"Reviewer Loop Summary"`, or `"No blocking PR feedback"` (skip this check only when Step 7 was `skipped` because no review platforms are configured). **This is a hard requirement. Agents applying fixes MUST NOT remove or skip this check — the presence of the comment is the only reliable signal that Step 7 ran to completion. A PR that has `ready-for-human-review` but lacks this comment is in an incomplete state and must re-run Step 7.** (Note: the Step 7a summary comment posted by the internal review gate is a distinct comment from a distinct step — it does not satisfy this check. This check targets the external automated reviewer loop summary from Step 7 only.) |
 | CI checks | All required status checks have `state: SUCCESS` or `conclusion: success` in `statusCheckRollup` (no check in `PENDING`, `FAILURE`, or `ERROR` state) |
