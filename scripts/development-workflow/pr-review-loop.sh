@@ -1021,27 +1021,32 @@ run_pr_agent_review() {
     since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
   fi
 
-  # --- Phase 1: Check for existing blocking findings on the current HEAD ---
+  # --- Phase 1: Check the latest existing PR-Agent review on the current HEAD ---
   # PR-Agent reviews are identified by bot login + APPROVED/CHANGES_REQUESTED state +
   # body containing "PR Reviewer Guide" (PR-Agent's stable review marker).
   # COMMENTED reviews (e.g., PR description updates) are excluded — they are not blocking.
-  local existing_blocking_count=0
-  existing_blocking_count="$(
+  # Evaluate the LATEST review state rather than counting CHANGES_REQUESTED reviews: if
+  # PR-Agent first requests changes and then approves on the same HEAD (e.g. after a manual
+  # /review command), the latest APPROVED must win and the gate must not block.
+  local existing_state=""
+  existing_state="$(
     gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-      | jq --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
           [.[]
            | select(
                .user.login == $bot and
                .submitted_at > $since and
-               .state == "CHANGES_REQUESTED" and
+               (.state == "APPROVED" or .state == "CHANGES_REQUESTED") and
                ((.body // "") | test("PR Reviewer Guide"; "i"))
              )
-          ] | length
+          ]
+          | sort_by(.submitted_at)
+          | last
+          | .state // ""
         '
   )"
-  existing_blocking_count="${existing_blocking_count:-0}"
 
-  if [ "$existing_blocking_count" -gt 0 ]; then
+  if [ "$existing_state" = "CHANGES_REQUESTED" ]; then
     print_kv RESULT needs_fixes
     print_kv PLATFORM "$platform"
     print_kv PR_NUMBER "$pr_number"
@@ -1049,10 +1054,23 @@ run_pr_agent_review() {
     print_kv REVIEW_COMMENT_ID ""
     print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
     print_kv REASON existing_findings
-    print_kv COMMENT_COUNT "$existing_blocking_count"
-    print_kv BLOCKING_COUNT "$existing_blocking_count"
+    print_kv COMMENT_COUNT 1
+    print_kv BLOCKING_COUNT 1
     print_kv SUGGESTION_COUNT 0
     return 1
+  fi
+
+  if [ "$existing_state" = "APPROVED" ]; then
+    print_kv RESULT clean
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 0
   fi
 
   # --- Phase 2: Poll until PR-Agent's GHA workflow posts its review ---
@@ -1803,12 +1821,14 @@ run_coderabbit_review() {
 bot_login_for_platform() {
   # Returns the GitHub bot login for a given review platform name.
   # Used to filter reviewThreads by bot-authored comments only.
-  # Note: pr-agent uses "github-actions" (no [bot] suffix; GraphQL strips it).
+  # pr-agent is excluded (returns empty): its blocking signal comes from review state,
+  # not inline threads, so mapping it to "github-actions" would incorrectly attribute
+  # threads from any other GHA workflow to PR-Agent.
   case "$1" in
     coderabbit)   printf 'coderabbitai\n' ;;
     devin)        printf 'devin-ai-integration\n' ;;
     greptile)     printf 'greptile-apps\n' ;;
-    pr-agent)     printf 'github-actions\n' ;;
+    pr-agent)     printf '\n' ;;
     codex-github) printf '%s\n' "${CODEX_GITHUB_BOT_LOGIN:-codex-ai[bot]}" ;;
     *)            printf '\n' ;;
   esac
