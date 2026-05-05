@@ -60,7 +60,7 @@ For a moderate batch workflow (100 PRs/month, ~20K tokens each), expect **$3–1
 
 ## Model Configuration
 
-All model settings live in [`.pr_agent.toml`](./../../../../../.pr_agent.toml) at the repo root. To switch models, update the `model` and `fallback_models` keys and swap the API key secret in the workflow.
+All model settings live in [`.pr_agent.toml`](../../../../.pr_agent.toml) at the repo root. To switch models, update the `model` and `fallback_models` keys and swap the API key secret in the workflow.
 
 ---
 

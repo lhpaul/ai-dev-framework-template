@@ -990,7 +990,10 @@ run_pr_agent_review() {
   local poll_interval="$3"
   local max_wait="$4"
   local platform="pr-agent"
-  local bot_login="github-actions[bot]"
+  # Default bot login for GITHUB_TOKEN-based runs. Override with PR_AGENT_BOT_LOGIN
+  # when PR-Agent is configured with a GitHub App token (e.g. for fork PR support),
+  # as the review will appear under the App's bot account instead of github-actions[bot].
+  local bot_login="${PR_AGENT_BOT_LOGIN:-github-actions[bot]}"
   local repo
   local head_sha=""
   local since_iso=""
