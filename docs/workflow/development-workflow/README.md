@@ -206,6 +206,7 @@ The sections below keep this document usable as a master reference after the nar
 | Prepare release | `/prepare-release` | `/prepare-release` | — | `docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md` |
 | Retrospective | `/retrospective` command | `/retrospective` | `workflow-retrospective` skill | `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md` |
 | Meta-Retrospective | `/retrospective` (invoke with meta scope, or run directly) | `/retrospective` (meta scope) | `workflow-retrospective` skill | `docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md` — periodic verification of prior improvement effectiveness; recommended every 5 batches |
+| Feedback triage | — | — | — | `docs/workflow/development-workflow/protocols/07-feedback-triage-protocol.md` — periodically review GitHub Discussions in the "Feedback & Ideas" category and promote high-signal items to backlog issues |
 
 After opening release PRs, protocol `05` runs the automated reviewer loop, applies `ready-for-regression` on the **PR targeting `main`**, and runs the CI loop until checks are green (or escalation) — same persistence contract as other PR readiness work.
 

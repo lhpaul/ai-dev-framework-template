@@ -72,6 +72,7 @@ Repository-specific workflow providers are declared in [`.ai-dev-workflow.yaml`]
 | Batch Merge | `/batch-merge` | `/batch-merge` | `batch-merge` skill | Follow `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md` |
 | Retrospective | `/retrospective` | `/retrospective` | `workflow-retrospective` skill | Follow `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md` |
 | Meta-Retrospective | `/retrospective` (invoke with meta scope) | `/retrospective` (meta scope) | `workflow-retrospective` skill | Follow `docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md` — periodic verification that prior improvements are working; recommended every 5 batches |
+| Run feedback triage | — | — | — | Follow `docs/workflow/development-workflow/protocols/07-feedback-triage-protocol.md` |
 
 **Prepare release** does not stop after opening PRs: protocol `05` requires running the automated reviewer loop, applying `ready-for-regression` on the **production PR to `main`**, and completing the CI loop (including label-gated e2e/regression when configured) before handoff to merge.
 
