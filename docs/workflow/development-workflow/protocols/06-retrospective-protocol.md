@@ -267,7 +267,7 @@ If the gathered data does not surface any actionable improvement opportunities (
 
 > No actionable improvement opportunities were found for the analyzed work. The run appears to have proceeded cleanly.
 
-Then close the retrospective.
+Even when there are no improvement opportunities, still populate the metrics block (Step 3d) and present it to the human in Step 4. After the human confirms the output, proceed to Step 6 to append the metrics row to `docs/workflow/retro-metrics.md`. A clean batch is a valid and useful data point (BR-1, BR-2).
 
 ---
 

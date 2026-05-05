@@ -7,6 +7,8 @@ description: Run a retrospective analysis on completed work to identify process 
 
 Recommended model tier: `economy`
 
+**Meta-Retrospective**: If the user invokes this skill with a meta scope (e.g., "run meta-retro", "periodic verification", or similar phrasing indicating trend analysis of prior improvements), follow `docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md` instead of the regular retrospective flow below.
+
 1. Read `AGENTS.md` for repository-wide rules.
 2. Read `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md`.
 3. Resolve scope from the user's request (PR number, branch name, batch date) or default to recent PRs in the repository.
