@@ -119,7 +119,8 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
 3. Push the commit. *(Push before resolving threads — if push fails, threads must not be falsely marked resolved.)*
 4. Reply to each finding's review thread with the fix description and commit SHA.
 5. Resolve each addressed thread via the GraphQL `resolveReviewThread` mutation.
-6. Re-run the reviewer loop script from the top.
+6. **Increment `cycle`** (the same counter used in the sub-agent loop) before re-running. Inline fix retries are bounded by `max_cycles` exactly like sub-agent retries — the inline path is a faster lane, not an unbounded one. If `cycle >= max_cycles`, escalate to human instead of re-running.
+7. Re-run the reviewer loop script from the top.
 
 **Do not dispatch a sub-agent for mechanical findings.** Sub-agent startup overhead (context loading, planning) typically costs 10–20 minutes for changes that take 30 seconds to apply directly.
 
