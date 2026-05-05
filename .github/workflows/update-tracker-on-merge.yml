@@ -17,13 +17,11 @@
 # skipped with a warning.
 #
 # Required repository secrets / variables:
+#   GH_PROJECT_TOKEN       — PAT with `project` scope (GITHUB_TOKEN cannot
+#                            update Projects v2 fields; a PAT is required)
 #   GITHUB_PROJECT_NUMBER  — the integer project number (e.g. 1)
 #   GITHUB_PROJECT_OWNER   — the GitHub user or org owning the project
 #                            (falls back to github.repository_owner when unset)
-#
-# The GITHUB_TOKEN used here is the built-in Actions token; no PAT is needed
-# for updating GitHub Projects v2 fields as long as the workflow has the
-# `projects: write` permission granted below.
 name: Update tracker status on PR merge
 
 on:
@@ -35,11 +33,10 @@ on:
 # Least-privilege permissions: only what this workflow needs.
 # - pull-requests: read  — read PR metadata (head.ref, merged flag)
 # - issues: write        — close the GitHub issue for impl branches
-# - projects: write      — update the GitHub Projects v2 status field
+# Note: Projects v2 mutations require GH_PROJECT_TOKEN (PAT) — not GITHUB_TOKEN.
 permissions:
   pull-requests: read
   issues: write
-  projects: write
 
 jobs:
   update-tracker:
@@ -117,7 +114,7 @@ jobs:
           TARGET_STATUS: ${{ steps.detect.outputs.target_status }}
           ISSUE_NUMBER: ${{ steps.detect.outputs.issue_number }}
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.GH_PROJECT_TOKEN }}
           script: |
             const projectOwner = process.env.PROJECT_OWNER || context.repo.owner;
             const projectNumber = parseInt(process.env.PROJECT_NUMBER, 10);
