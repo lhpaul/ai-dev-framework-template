@@ -704,11 +704,11 @@ Implementation PRs run two sequential passes before `gh pr ready` is called. Pas
 | Any reviewer returns `NEEDS REVISION` on Pass 1 (product/design decision) | Post the Step 7a summary comment with verdict `escalated — human decision required`, then stop and escalate to human |
 | All reviewers `APPROVED` on Pass 2 | Post the Step 7a summary comment (see below), then run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then continue to Step 7 (external automated reviewers) |
 | Any reviewer returns `NEEDS REVISION` on Pass 2 (fixable) — fix is **non-trivial** — and `internal_review_cycle < max_internal_review_cycles` | Fixes already applied; increment `internal_review_cycle`; restart from **Pass 1** for all reviewers |
-| Any reviewer returns `NEEDS REVISION` on Pass 2 (fixable) — fix is **trivial** (all three trivial-fix conditions met) — and `internal_review_cycle < max_internal_review_cycles` | Skip Pass 1 re-run; post a skip note (see Trivial-fix skip rule); restart from **Pass 2** only. The same-SHA requirement does not apply to Pass 1 for this cycle — only Pass 2 must approve at the current commit SHA before `gh pr ready` is called |
+| Any reviewer returns `NEEDS REVISION` on Pass 2 (fixable) — fix is **trivial** (all three trivial-fix conditions met) — and `internal_review_cycle < max_internal_review_cycles` | Skip Pass 1 re-run; increment `internal_review_cycle`; post a skip note (see Trivial-fix skip rule); restart from **Pass 2** only. The same-SHA requirement does not apply to Pass 1 for this cycle — only Pass 2 must approve at the current commit SHA before `gh pr ready` is called |
 | Any reviewer returns `NEEDS REVISION` on Pass 2 (fixable) and `internal_review_cycle >= max_internal_review_cycles` | Post the Step 7a summary comment with verdict `escalated — max cycles reached`, then escalate to human |
 | Any reviewer returns `NEEDS REVISION` on Pass 2 (product/design decision) | Post the Step 7a summary comment with verdict `escalated — human decision required`, then stop and escalate to human |
 
-Both passes must complete with all reviewers `APPROVED` before `gh pr ready` is called. The `internal_review_cycle` counter tracks full Pass 1 → Pass 2 restart cycles, not individual pass runs.
+Both passes must complete with all reviewers `APPROVED` before `gh pr ready` is called. The `internal_review_cycle` counter increments on every fix cycle — whether the fix is trivial (Pass 2 restart only) or non-trivial (full Pass 1 → Pass 2 restart). This ensures that repeated trivial-fix cycles are bounded by `max_internal_review_cycles` and cannot loop indefinitely.
 
 #### Step 7a summary comment (mandatory)
 
@@ -761,7 +761,7 @@ In the hard-fail case (zero reachable reviewers or `fail-if-any-unavailable` pol
 
 | Parameter | Default | Description |
 |---|---|---|
-| `max_internal_review_cycles` | 5 | Max times the full two-pass cycle (Pass 1 → Pass 2) is restarted before escalating (for implementation PRs); for non-implementation PRs, counts full single-pass restarts as before |
+| `max_internal_review_cycles` | 5 | Max fix cycles before escalating. For implementation PRs, increments on every Pass 2 fix — trivial (Pass 2 restart only) or non-trivial (full Pass 1 → Pass 2 restart). For non-implementation PRs, counts full single-pass restarts as before |
 
 Step 7a runs **before** Step 7 (external reviewers). Only proceed to Step 7 once all internal reviewers in Step 7a produce `APPROVED`. After any fixer push triggered by Step 7 (external reviewers), re-run Step 7a (all internal reviewers) to ensure the stage-specific internal review gate is still clean — **unless the push qualifies as a trivial fix** (see "Trivial-fix skip rule" below).
 
