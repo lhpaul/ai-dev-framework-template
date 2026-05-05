@@ -307,7 +307,8 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
     #    "action required", "required:", "❌"
     #
     # 2. Explicit approval signals present → APPROVED (exit 0)   [checked second]
-    #    Approval signals: "approved", "lgtm", "looks good"
+    #    Approval signals: "approved", "lgtm", "looks good",
+    #    "didn't find any major", "no major issues", "keep them coming", "nice work"
     #
     # 3. Neither found (unrecognized response format) → NEEDS_REVISION (exit 1)
     #    Safe-fail: default to NEEDS_REVISION when the format is unrecognized to
