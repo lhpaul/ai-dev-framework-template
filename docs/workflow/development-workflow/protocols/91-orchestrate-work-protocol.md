@@ -929,6 +929,69 @@ When dispatching a fixer agent, include the following explicit instruction:
 >
 > Findings that cannot be addressed in this dispatch (e.g. require a human decision, are out of scope, or are genuinely contradictory) should be noted and left for human review. Do not skip a push just because one finding is unresolvable — push the rest.
 
+### Attempt-context injection rule (Step 7 fixer dispatch)
+
+This rule governs what the orchestrator prepends to the fixer agent's prompt on each
+dispatch. It applies to fixer agents dispatched from this step only (Step 7 external
+automated reviewers); Step 7a (internal review gate) fixer cycles are unaffected.
+
+**First dispatch (cycle = 1)**
+
+No attempt-context prefix is added. The fixer receives only the standard
+blocking-findings list and the batching rule above.
+
+**Retry dispatches (cycle ≥ 2)**
+
+Before dispatching the fixer, the orchestrator prepends an attempt-context header
+to the fixer's prompt using the following format:
+
+> Attempt N/M: prior attempt(s) tried [per-attempt summaries]. The following findings
+> remain open: [standard blocking-findings list]. Try a different approach for each
+> remaining finding.
+
+Where:
+
+- `N` = the current `cycle` value (matches the loop's `cycle` counter exactly)
+- `M` = `max_cycles` (the loop escalation limit — default: 10)
+- `[per-attempt summaries]` = one entry per prior dispatch, each one-to-two plain-language
+  sentences describing what that attempt changed and which findings it addressed or left
+  open. Derive each entry from the PR feedback ledger and the fixer's commit message /
+  response for that cycle.
+- `[standard blocking-findings list]` = the same findings list passed in any dispatch —
+  the attempt-context prefix does not replace it
+
+**Accumulating summaries across retries**
+
+For cycle N, include summaries for all N-1 prior attempts, not only the most recent.
+Each entry should be keyed to its cycle number for clarity:
+
+> Attempt 1: rewrote the `foo()` function signature in `bar.sh`; MD009 trailing-space
+> finding on line 42 remained open.
+> Attempt 2: removed trailing space on line 42; `relative-links` finding on `baz.md`
+> remained open.
+
+**Fallback when no prior-attempt summary is available**
+
+If no summary was recorded for a prior attempt (e.g., the fixer did not respond or
+the attempt had no ledger entries), use the minimal fallback:
+
+> Attempt N/M: prior attempt did not fully resolve all findings. Try a different approach.
+
+**Reappearance notation**
+
+When a finding that was marked `resolved` in a prior cycle reappears in the current
+ledger (same `(platform, path, body_snippet)` key, status reverted to `open`), the
+per-attempt summary for the cycle in which it was "resolved" must note the reappearance:
+
+> Attempt 2: removed trailing space on line 42 (fix did not hold — finding reappeared
+> in cycle 3).
+
+**In-session state only**
+
+Attempt summaries live in the orchestrator's in-session state for the duration of the
+PR's review loop. They are not persisted to disk or to any external tracker. They are
+discarded when the orchestration session ends.
+
 ### Loop parameters
 
 | Parameter | Value | Description |
