@@ -765,9 +765,13 @@ In the hard-fail case (zero reachable reviewers or `fail-if-any-unavailable` pol
 
 Step 7a runs **before** Step 7 (external reviewers). Only proceed to Step 7 once all internal reviewers in Step 7a produce `APPROVED`. After any fixer push triggered by Step 7 (external reviewers), re-run Step 7a (all internal reviewers) to ensure the stage-specific internal review gate is still clean — **unless the push qualifies as a trivial fix** (see "Trivial-fix skip rule" below).
 
-### Trivial-fix skip rule (Step 7a re-run after Step 7 fixer pushes)
+### Trivial-fix skip rule
 
-When Step 7 dispatches a fixer agent and the agent pushes a fix commit, the orchestrator normally re-runs Step 7a in full before proceeding. This is necessary to catch cases where a fix accidentally breaks a structural invariant checked by the internal reviewers. However, many fixer pushes are purely textual: correcting a number, removing a stale reference, rewording a one-line description. Running a full reviewer pass after each such push wastes cycles and can spin the loop dozens of times for a single PR.
+The trivial-fix skip rule applies in two distinct contexts within the orchestration loop:
+
+**Context A — Pass 2 internal review (implementation PRs only)**: When a reviewer returns `NEEDS REVISION` on Pass 2 during Step 7a, the fixer applies a fix and pushes. If the fix is trivial (all three conditions below), the orchestrator skips the Pass 1 re-run and restarts from Pass 2 only. See the two-pass outcome table above.
+
+**Context B — Step 7 fixer pushes (all PR types)**: When Step 7 (external reviewers) dispatches a fixer agent and the agent pushes a fix commit, the orchestrator normally re-runs Step 7a in full before proceeding. If the fix is trivial, the orchestrator skips the full Step 7a re-run and proceeds directly to Step 7. For implementation PRs, "full Step 7a re-run" means running both Pass 1 and Pass 2 again.
 
 **Trivial-fix classification**: A fixer push qualifies as trivial if and only if **all** of the following conditions hold:
 
@@ -775,13 +779,13 @@ When Step 7 dispatches a fixer agent and the agent pushes a fix commit, the orch
 2. The diff contains **only** changes to plain text in string literals, comments, documentation prose, or inline numeric values — no logic, no control-flow, no added/removed function or variable declarations, no new imports, no structural markup changes (e.g., adding/removing table columns or list items in a protocol document).
 3. The number of lines changed (additions + deletions) is 10 or fewer across the entire commit.
 
-**When all three conditions are met**: skip the Step 7a re-run and proceed directly to Step 7 (re-run the external automated reviewers on the new push). Post a one-line PR comment noting the skip:
+**When all three conditions are met (Context B)**: skip the Step 7a re-run and proceed directly to Step 7 (re-run the external automated reviewers on the new push). Post a one-line PR comment noting the skip:
 
 > `Step 7a re-run skipped: fixer push classified as trivial (non-structural, ≤10 lines). Proceeding directly to Step 7.`
 
-**When any condition is not met**: re-run Step 7a in full as normal before proceeding to Step 7.
+**When any condition is not met (Context B)**: re-run Step 7a in full as normal before proceeding to Step 7.
 
-**Orchestrator verification**: The orchestrator must not rely solely on the fixer's self-certification. Before skipping, independently verify conditions 2 and 3 by inspecting the diff:
+**Orchestrator verification**: The orchestrator must not rely solely on the fixer's self-certification. Before skipping (in either context), independently verify conditions 2 and 3 by inspecting the diff:
 
 ```bash
 # Count changed lines and check for structural changes
@@ -789,9 +793,9 @@ git diff HEAD~1 HEAD --stat
 git diff HEAD~1 HEAD -- .
 ```
 
-If the diff includes any non-text change (e.g., new function, new import, changed conditional, structural markup change), override the fixer's self-certification and re-run Step 7a.
+If the diff includes any non-text change (e.g., new function, new import, changed conditional, structural markup change), override the fixer's self-certification and do not apply the trivial-fix skip.
 
-**This skip applies only to fixer pushes from Step 7 (external reviewers).** The initial Step 7a run (after a draft PR is opened) is always full and cannot be skipped. Step 7a re-runs triggered by the Step 7a internal review loop itself (i.e., `internal_review_cycle > 0` for findings from the internal reviewers) are also never skipped.
+**Scope of skip**: The initial Step 7a run (after a draft PR is opened) is always full and cannot be skipped. Step 7a re-runs triggered by Pass 1 findings (i.e., `internal_review_cycle > 0` for findings from Pass 1) are also never skipped.
 
 ---
 
