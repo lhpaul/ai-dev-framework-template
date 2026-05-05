@@ -30,3 +30,8 @@ pr_actions = ["opened", "reopened", "ready_for_review", "synchronize"]
 [pr_reviewer]
 # Do not include inline code suggestions in the review summary (auto_improve is off).
 num_code_suggestions = 0
+# Post APPROVED when no significant issues are found, so the review loop can detect
+# clean PRs via review state rather than needing to parse the review body.
+# Without this, PR-Agent defaults to COMMENTED for all outcomes, which the loop
+# cannot distinguish from a review with moderate findings.
+approve_pr_after_review = true

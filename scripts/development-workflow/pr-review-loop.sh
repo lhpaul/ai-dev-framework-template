@@ -1019,12 +1019,15 @@ run_pr_agent_review() {
     return 2
   fi
   # --- Phase 1: Check the latest existing PR-Agent review on the current HEAD ---
-  # PR-Agent reviews are identified by bot login + APPROVED/CHANGES_REQUESTED state +
-  # body containing "PR Reviewer Guide" (PR-Agent's stable review marker).
-  # COMMENTED reviews (e.g., PR description updates) are excluded — they are not blocking.
-  # Filter by commit_id == head_sha (not submitted_at) so reverted/cherry-picked commits
-  # with older timestamps cannot cause stale reviews from a prior HEAD to be misclassified.
-  # Evaluate the LATEST review state: a subsequent APPROVED clears an earlier CHANGES_REQUESTED.
+  # PR-Agent reviews are identified by bot login + a review state containing the
+  # "PR Reviewer Guide" body marker. APPROVED and CHANGES_REQUESTED come from
+  # explicit threshold configuration; COMMENTED is the default when no threshold
+  # is crossed (moderate findings). All three states are detected here so that a
+  # COMMENTED review does not cause the loop to time out and silently pass.
+  # Filter by commit_id == head_sha so reverted/cherry-picked commits with older
+  # timestamps cannot cause stale reviews from a prior HEAD to be misclassified.
+  # Evaluate the LATEST review state: a subsequent APPROVED clears an earlier
+  # CHANGES_REQUESTED posted on the same HEAD (e.g. after a /review re-run).
   local existing_state=""
   existing_state="$(
     gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
@@ -1033,7 +1036,7 @@ run_pr_agent_review() {
            | select(
                .user.login == $bot and
                .commit_id == $sha and
-               (.state == "APPROVED" or .state == "CHANGES_REQUESTED") and
+               (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "COMMENTED") and
                ((.body // "") | test("PR Reviewer Guide"; "i"))
              )
           ]
@@ -1070,6 +1073,25 @@ run_pr_agent_review() {
     return 0
   fi
 
+  if [ "$existing_state" = "COMMENTED" ]; then
+    # COMMENTED is PR-Agent's default state when findings exist but no explicit
+    # threshold is crossed. We cannot reliably parse the body to distinguish
+    # "minor suggestions" from "blocking issues", so escalate for human review.
+    # Configure approve_pr_after_review = true in .pr_agent.toml to get APPROVED
+    # for clean PRs and reduce the frequency of this escalation path.
+    print_kv RESULT escalate
+    print_kv REASON pr_agent_commented_review
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 2
+  fi
+
   # --- Phase 2: Poll until PR-Agent's GHA workflow posts its review ---
   while :; do
     review_count="$(
@@ -1079,7 +1101,7 @@ run_pr_agent_review() {
              | select(
                  .user.login == $bot and
                  .commit_id == $sha and
-                 (.state == "APPROVED" or .state == "CHANGES_REQUESTED") and
+                 (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "COMMENTED") and
                  ((.body // "") | test("PR Reviewer Guide"; "i"))
                )
             ] | length
@@ -1121,7 +1143,7 @@ run_pr_agent_review() {
              | select(
                  .user.login == $bot and
                  .commit_id == $sha and
-                 (.state == "APPROVED" or .state == "CHANGES_REQUESTED") and
+                 (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "COMMENTED") and
                  ((.body // "") | test("PR Reviewer Guide"; "i"))
                )
             ]
@@ -1143,6 +1165,21 @@ run_pr_agent_review() {
     print_kv BLOCKING_COUNT 1
     print_kv SUGGESTION_COUNT 0
     return 1
+  fi
+
+  if [ "$review_state" = "COMMENTED" ]; then
+    rm -f "$blocking_lines_file"
+    print_kv RESULT escalate
+    print_kv REASON pr_agent_commented_review
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 2
   fi
 
   rm -f "$blocking_lines_file"
