@@ -27,10 +27,13 @@ The runner passes:
 
 ## Step 1: Read Browser Automation Provider
 
-Read `browser_automation.provider` from `.ai-dev-workflow.yaml`:
+Read `browser_automation.provider` from `.ai-dev-workflow.yaml`. Use a `sed` range to
+extract the entire `browser_automation:` block and then grep for `provider:` within it,
+so that comments or blank lines before `provider:` are tolerated:
 
 ```bash
-PROVIDER=$(grep -A1 'browser_automation:' .ai-dev-workflow.yaml | grep 'provider:' | awk '{print $2}')
+PROVIDER=$(sed -n '/^browser_automation:/,/^[a-z]/p' .ai-dev-workflow.yaml \
+  | grep '^\s*provider:' | head -1 | sed 's/.*provider:[[:space:]]*//')
 echo "Provider: $PROVIDER"
 ```
 
@@ -45,14 +48,21 @@ If `PROVIDER` is empty, `none`, or missing:
 For `playwright_cli`:
 
 ```bash
-which playwright 2>/dev/null || npx playwright --version 2>/dev/null | head -1
+# Capture exit code explicitly to avoid pipeline exit-code masking
+if which playwright > /dev/null 2>&1; then
+  PLAYWRIGHT_AVAILABLE=true
+elif npx playwright --version > /dev/null 2>&1; then
+  PLAYWRIGHT_AVAILABLE=true
+else
+  PLAYWRIGHT_AVAILABLE=false
+fi
 ```
 
-If the provider is not reachable (command not found, non-zero exit):
+If `PLAYWRIGHT_AVAILABLE` is `false`:
 - Post a skip notice with reason: `playwright_cli` is not installed or not reachable in the current environment.
 - Exit with verdict `Skipped`.
 
-For other provider values: attempt reachability using the equivalent CLI check for that provider. If the check fails, post a skip notice and exit with verdict `Skipped`.
+For other provider values: attempt reachability using the equivalent CLI check for that provider, capturing the exit code explicitly (not via a pipeline). If the check fails, post a skip notice and exit with verdict `Skipped`.
 
 ---
 
