@@ -996,7 +996,6 @@ run_pr_agent_review() {
   local bot_login="${PR_AGENT_BOT_LOGIN:-github-actions[bot]}"
   local repo
   local head_sha=""
-  local since_iso=""
   local elapsed=0
   local review_count=0
   local review_state=""
@@ -1019,11 +1018,6 @@ run_pr_agent_review() {
     print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
     return 2
   fi
-  since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
-  if [ -z "$since_iso" ]; then
-    since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
-  fi
-
   # --- Phase 1: Check the latest existing PR-Agent review on the current HEAD ---
   # PR-Agent reviews are identified by bot login + APPROVED/CHANGES_REQUESTED state +
   # body containing "PR Reviewer Guide" (PR-Agent's stable review marker).
