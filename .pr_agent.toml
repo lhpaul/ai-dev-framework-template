@@ -22,6 +22,10 @@ fallback_models = ["deepseek/deepseek-chat"]
 auto_review = "true"    # Post formal PR review (APPROVED / CHANGES_REQUESTED) on each push.
 auto_describe = "false" # Skip auto-updating the PR description body.
 auto_improve = "false"  # Skip inline code suggestion comments (reduces noise).
+# Explicitly list the activity types that should trigger auto_review.
+# Without this, PR-Agent's internal default excludes "synchronize" even when the
+# GHA workflow fires on it, causing push-triggered runs to be silently skipped.
+pr_actions = ["opened", "reopened", "ready_for_review", "synchronize"]
 
 [pr_reviewer]
 # Do not include inline code suggestions in the review summary (auto_improve is off).
