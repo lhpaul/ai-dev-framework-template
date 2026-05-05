@@ -1,0 +1,28 @@
+# PR-Agent configuration
+# Docs: https://pr-agent-docs.codium.ai/usage-guide/changing_a_model/
+
+[config]
+# --- Model: DeepSeek (default) ---
+# Uses LiteLLM's DeepSeek provider. Requires DEEPSEEK_API_KEY in GitHub secrets.
+# "deepseek-chat" is the stable alias for the current DeepSeek flagship model.
+# Pricing: ~$0.14–$0.44/1M input tokens (flash vs. pro), ~$0.28–$0.87/1M output tokens.
+model = "deepseek/deepseek-chat"
+fallback_models = ["deepseek/deepseek-chat"]
+# Upgrade to DeepSeek V4 Pro once confirmed in LiteLLM registry (launched April 2026):
+# model = "deepseek/deepseek-v4-pro"
+# fallback_models = ["deepseek/deepseek-chat"]
+
+# --- Alternative: Kimi K2.6 (Moonshot AI) ---
+# Requires MOONSHOT_API_KEY in GitHub secrets instead of DEEPSEEK_API_KEY.
+# Pricing: ~$0.74/1M input, ~$3.49/1M output.
+# model = "moonshot/kimi-k2.6"
+# fallback_models = ["moonshot/kimi-k2.6"]
+
+[github_action_config]
+auto_review = "true"    # Post formal PR review (APPROVED / CHANGES_REQUESTED) on each push.
+auto_describe = "false" # Skip auto-updating the PR description body.
+auto_improve = "false"  # Skip inline code suggestion comments (reduces noise).
+
+[pr_reviewer]
+# Do not include inline code suggestions in the review summary (auto_improve is off).
+num_code_suggestions = 0

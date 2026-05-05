@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **PR-Agent integration**: self-hosted automated PR review via GitHub Actions using a configurable LLM backend (DeepSeek or Kimi K2.6) — no per-seat pricing; cost is LLM API token usage only. Adds `pr-agent` platform support to `pr-review-loop.sh` with a new `run_pr_agent_review()` adapter, `.github/workflows/pr-agent.yml`, `.pr_agent.toml`, and an integration guide at `docs/workflow/development-workflow/integrations/pr-agent.md`.
+
 ## [0.24.0] - 2026-04-29
 
 ### Added

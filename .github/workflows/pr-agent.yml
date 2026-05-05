@@ -1,0 +1,29 @@
+name: PR-Agent
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+  issue_comment:
+
+jobs:
+  pr_agent_job:
+    # Prevent PR-Agent from triggering itself when it posts its review.
+    if: ${{ github.event.sender.type != 'Bot' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+      contents: read
+    name: PR-Agent review
+    steps:
+      - name: PR-Agent
+        uses: the-pr-agent/pr-agent@009ba5a116c4d3273368a6dc53a4efdb7904d519 # v0.34.3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # --- Model: DeepSeek (via LiteLLM) ---
+          # Model settings live in .pr_agent.toml; only the API key is needed here.
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          # --- Alternative: Kimi K2.6 (Moonshot AI) ---
+          # Comment out DEEPSEEK_API_KEY above, uncomment below, and update
+          # the model in .pr_agent.toml to "moonshot/kimi-k2.6".
+          # MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}

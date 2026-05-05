@@ -25,9 +25,9 @@ schema_version: 1
 review:
   # Ordered list of automated PR review platforms to run sequentially.
   # Platforms are evaluated in order; the first blocking result stops the loop.
-  # Supported today by pr-review-loop.sh: greptile, devin, coderabbit
+  # Supported today by pr-review-loop.sh: greptile, devin, coderabbit, pr-agent
   platforms:
-    - devin
+    - pr-agent
 
   # Ordered list of internal AI reviewers to run sequentially on draft PRs
   # (Step 7a in 91-orchestrate-work-protocol.md) before converting to non-draft.

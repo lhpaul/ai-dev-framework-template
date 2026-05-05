@@ -69,7 +69,7 @@ trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"' EXIT
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,coderabbit] [--poll-interval seconds] [--max-wait seconds]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,pr-agent,coderabbit] [--poll-interval seconds] [--max-wait seconds]
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
 triggering a new review, each platform checks for existing blocking findings. If
@@ -865,6 +865,169 @@ run_devin_review() {
   return 0
 }
 
+run_pr_agent_review() {
+  # PR-Agent runs as a GitHub Actions workflow triggered by pull_request events.
+  # It posts a formal GitHub PR review with state APPROVED or CHANGES_REQUESTED.
+  # Bot login is "github-actions[bot]" (default GITHUB_TOKEN identity).
+  # No trigger comment is needed — the GHA workflow fires automatically on push.
+  local pr_number="$1"
+  local branch_name="$2"
+  local poll_interval="$3"
+  local max_wait="$4"
+  local platform="pr-agent"
+  local bot_login="github-actions[bot]"
+  local repo
+  local head_sha=""
+  local since_iso=""
+  local elapsed=0
+  local review_count=0
+  local review_state=""
+  local blocking_lines_file=""
+
+  trap 'rm -f "${blocking_lines_file:-}"' RETURN
+
+  require_gh
+  cd_workflow_repo_root
+  repo="$(repo_slug)"
+
+  head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
+  if [ -z "$head_sha" ]; then
+    print_kv RESULT escalate
+    print_kv REASON "head-sha-unavailable"
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    return 2
+  fi
+  since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
+  if [ -z "$since_iso" ]; then
+    since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
+  fi
+
+  # --- Phase 1: Check for existing blocking findings on the current HEAD ---
+  # PR-Agent reviews are identified by bot login + APPROVED/CHANGES_REQUESTED state +
+  # body containing "PR Reviewer Guide" (PR-Agent's stable review marker).
+  # COMMENTED reviews (e.g., PR description updates) are excluded — they are not blocking.
+  local existing_blocking_count=0
+  existing_blocking_count="$(
+    gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+      | jq --arg bot "$bot_login" --arg since "$since_iso" '
+          [.[]
+           | select(
+               .user.login == $bot and
+               .submitted_at > $since and
+               .state == "CHANGES_REQUESTED" and
+               ((.body // "") | test("PR Reviewer Guide"; "i"))
+             )
+          ] | length
+        '
+  )"
+  existing_blocking_count="${existing_blocking_count:-0}"
+
+  if [ "$existing_blocking_count" -gt 0 ]; then
+    print_kv RESULT needs_fixes
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv REASON existing_findings
+    print_kv COMMENT_COUNT "$existing_blocking_count"
+    print_kv BLOCKING_COUNT "$existing_blocking_count"
+    print_kv SUGGESTION_COUNT 0
+    return 1
+  fi
+
+  # --- Phase 2: Poll until PR-Agent's GHA workflow posts its review ---
+  while :; do
+    review_count="$(
+      gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+        | jq --arg bot "$bot_login" --arg since "$since_iso" '
+            [.[]
+             | select(
+                 .user.login == $bot and
+                 .submitted_at > $since and
+                 (.state == "APPROVED" or .state == "CHANGES_REQUESTED") and
+                 ((.body // "") | test("PR Reviewer Guide"; "i"))
+               )
+            ] | length
+          '
+    )"
+    review_count="${review_count:-0}"
+
+    if [ "$review_count" -gt 0 ]; then
+      break
+    fi
+
+    if [ "$elapsed" -ge "$max_wait" ]; then
+      # GHA workflow did not complete within max_wait (may still be running, or was
+      # skipped for a fork PR where secrets are unavailable). Treat as skipped.
+      print_kv RESULT skipped
+      print_kv REASON no_review
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 0
+    fi
+
+    sleep "$poll_interval"
+    elapsed=$((elapsed + poll_interval))
+  done
+
+  # --- Phase 3: Collect final review state ---
+  blocking_lines_file="$(mktemp)"
+
+  review_state="$(
+    gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+            [.[]
+             | select(
+                 .user.login == $bot and
+                 .submitted_at > $since and
+                 (.state == "APPROVED" or .state == "CHANGES_REQUESTED") and
+                 ((.body // "") | test("PR Reviewer Guide"; "i"))
+               )
+            ]
+            | sort_by(.submitted_at)
+            | last
+            | .state // ""
+          '
+  )"
+
+  if [ "$review_state" = "CHANGES_REQUESTED" ]; then
+    rm -f "$blocking_lines_file"
+    print_kv RESULT needs_fixes
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 1
+    print_kv BLOCKING_COUNT 1
+    print_kv SUGGESTION_COUNT 0
+    return 1
+  fi
+
+  rm -f "$blocking_lines_file"
+  print_kv RESULT clean
+  print_kv PLATFORM "$platform"
+  print_kv PR_NUMBER "$pr_number"
+  print_kv BRANCH "$branch_name"
+  print_kv REVIEW_COMMENT_ID ""
+  print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+  print_kv COMMENT_COUNT 0
+  print_kv BLOCKING_COUNT 0
+  print_kv SUGGESTION_COUNT 0
+  return 0
+}
+
 is_coderabbit_blocking() {
   # Returns 0 (true) if the comment body contains a blocking severity marker.
   # Critical (🔴) and Major (🟠) are blocking; Minor (🟡) and Low (🟢) are not.
@@ -1525,10 +1688,12 @@ run_coderabbit_review() {
 bot_login_for_platform() {
   # Returns the GitHub bot login for a given review platform name.
   # Used to filter reviewThreads by bot-authored comments only.
+  # Note: pr-agent uses "github-actions" (no [bot] suffix; GraphQL strips it).
   case "$1" in
     coderabbit) printf 'coderabbitai\n' ;;
     devin)      printf 'devin-ai-integration\n' ;;
     greptile)   printf 'greptile-apps\n' ;;
+    pr-agent)   printf 'github-actions\n' ;;
     *)          printf '\n' ;;
   esac
 }
@@ -1660,6 +1825,9 @@ run_platform_review() {
       ;;
     coderabbit)
       run_coderabbit_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      ;;
+    pr-agent)
+      run_pr_agent_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
       ;;
     *)
       print_kv RESULT skipped
