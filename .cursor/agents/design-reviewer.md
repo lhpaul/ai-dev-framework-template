@@ -32,7 +32,7 @@ so that comments or blank lines before `provider:` are tolerated:
 
 ```bash
 PROVIDER=$(sed -n '/^browser_automation:/,/^[a-z]/p' .ai-dev-workflow.yaml \
-  | grep '^\s*provider:' | head -1 | sed 's/.*provider:[[:space:]]*//')
+  | grep '^[[:space:]]*provider:' | head -1 | sed 's/.*provider:[[:space:]]*//')
 echo "Provider: $PROVIDER"
 ```
 
