@@ -175,7 +175,7 @@ Full comment structure:
 ## Design Review Summary
 
 **Verdict**: <Approved|Needs Revision|Skipped>
-**Provider**: playwright_cli
+**Provider**: <provider-value from .ai-dev-workflow.yaml>
 **Pages reviewed**: N
 **Component-only changes (not navigated)**: M files
 
