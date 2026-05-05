@@ -1025,17 +1025,17 @@ run_pr_agent_review() {
   # PR-Agent reviews are identified by bot login + APPROVED/CHANGES_REQUESTED state +
   # body containing "PR Reviewer Guide" (PR-Agent's stable review marker).
   # COMMENTED reviews (e.g., PR description updates) are excluded — they are not blocking.
-  # Evaluate the LATEST review state rather than counting CHANGES_REQUESTED reviews: if
-  # PR-Agent first requests changes and then approves on the same HEAD (e.g. after a manual
-  # /review command), the latest APPROVED must win and the gate must not block.
+  # Filter by commit_id == head_sha (not submitted_at) so reverted/cherry-picked commits
+  # with older timestamps cannot cause stale reviews from a prior HEAD to be misclassified.
+  # Evaluate the LATEST review state: a subsequent APPROVED clears an earlier CHANGES_REQUESTED.
   local existing_state=""
   existing_state="$(
     gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -r --arg bot "$bot_login" --arg sha "$head_sha" '
           [.[]
            | select(
                .user.login == $bot and
-               .submitted_at > $since and
+               .commit_id == $sha and
                (.state == "APPROVED" or .state == "CHANGES_REQUESTED") and
                ((.body // "") | test("PR Reviewer Guide"; "i"))
              )
@@ -1077,11 +1077,11 @@ run_pr_agent_review() {
   while :; do
     review_count="$(
       gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-        | jq --arg bot "$bot_login" --arg since "$since_iso" '
+        | jq --arg bot "$bot_login" --arg sha "$head_sha" '
             [.[]
              | select(
                  .user.login == $bot and
-                 .submitted_at > $since and
+                 .commit_id == $sha and
                  (.state == "APPROVED" or .state == "CHANGES_REQUESTED") and
                  ((.body // "") | test("PR Reviewer Guide"; "i"))
                )
@@ -1119,11 +1119,11 @@ run_pr_agent_review() {
 
   review_state="$(
     gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -r --arg bot "$bot_login" --arg sha "$head_sha" '
             [.[]
              | select(
                  .user.login == $bot and
-                 .submitted_at > $since and
+                 .commit_id == $sha and
                  (.state == "APPROVED" or .state == "CHANGES_REQUESTED") and
                  ((.body // "") | test("PR Reviewer Guide"; "i"))
                )
