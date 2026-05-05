@@ -576,7 +576,7 @@ Example `.tmp/template-config.json` override format:
 }
 ```
 
-Supported reviewer values: `claude`, `codex`, `codex-github`. The `codex-github` reviewer requires the Codex GitHub App to be installed on the repository; see `scripts/development-workflow/codex-github-reviewer.sh` for setup details and configurable options (`--trigger-phrase`, `--bot-login`, `--poll-interval`, `--max-wait`).
+Supported reviewer values: `claude`, `codex`.
 
 If neither file defines `internal_reviewers`, fall back to running the stage-appropriate reviewer once (default behavior: `claude`).
 
@@ -592,14 +592,12 @@ Before dispatching any reviewer, classify each entry in the resolved list as `re
 
 #### Reachability classification table
 
-| Runner context | `claude` reachable? | `codex` reachable? | `codex-github` reachable? |
-|---|---|---|---|
-| Claude Code (direct human session) | Yes | No | Yes |
-| Claude Code subagent (dispatched by orchestrator) | Yes | No | Yes |
-| Codex runner / Codex skill | Yes | Yes | Yes |
-| Direct human (shell / CI with `gh`) | Yes | Yes | Yes |
-
-`codex-github` is classified as universally reachable because it interacts with the Codex GitHub App via `gh` CLI only — no Codex CLI runtime is required. It is reachable from any runner context where `gh` is authenticated.
+| Runner context | `claude` reachable? | `codex` reachable? |
+|---|---|---|
+| Claude Code (direct human session) | Yes | No |
+| Claude Code subagent (dispatched by orchestrator) | Yes | No |
+| Codex runner / Codex skill | Yes | Yes |
+| Direct human (shell / CI with `gh`) | Yes | Yes |
 
 #### Policy resolution
 
@@ -661,18 +659,6 @@ For each reviewer in the resolved list, dispatch the stage-appropriate agent:
 | `codex` | `spec/*` | `workflow-spec-reviewer` Codex skill against `REVIEW.md` |
 | `codex` | `implementation-plan/*` | `workflow-plan-reviewer` Codex skill against `REVIEW.md` |
 | `codex` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `workflow-code-reviewer` Codex skill against `REVIEW.md` |
-| `codex-github` | `spec/*` | `scripts/development-workflow/codex-github-reviewer.sh <pr> <owner> <repo>` |
-| `codex-github` | `implementation-plan/*` | `scripts/development-workflow/codex-github-reviewer.sh <pr> <owner> <repo>` |
-| `codex-github` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `scripts/development-workflow/codex-github-reviewer.sh <pr> <owner> <repo>` |
-
-**`codex-github` dispatch notes:**
-
-- **Exit code semantics**: exit 0 = `APPROVED`, exit 1 = `NEEDS REVISION` (blocking findings present), exit 2 = `TIMED_OUT` (no bot response within max wait time).
-- **TIMED_OUT policy**: treat `TIMED_OUT` identically to `skipped (unavailable)` — apply the configured `internal_reviewers_unavailable_policy` (`warn` by default). Post a warning comment identifying the trigger comment that was posted and suggesting the operator verify Codex GitHub App installation.
-- **NEEDS REVISION — finding extraction**: on exit code 1, the script writes the bot response body to stdout between `---BEGIN BOT RESPONSE---` and `---END BOT RESPONSE---` markers. The runner must capture and pass this output to the fixer agent as context.
-- **Re-trigger on each fix cycle (BR-6)**: after fixes are pushed, a new trigger comment must be posted for the new commit SHA. The script handles this automatically — it checks the current HEAD SHA before posting and skips duplicate triggers for the same SHA.
-- **Idempotency guard (BR-10)**: the script checks existing PR comments for a trigger comment containing the current commit SHA before posting. If a matching trigger is found, posting is skipped and polling proceeds from the existing trigger timestamp. This prevents duplicate reviews when Step 7a is retried on the same commit.
-- **Prerequisite**: the Codex GitHub App must be installed on the repository and configured to respond to the trigger phrase (default: `@codex review`). If the app is not installed, the script times out and the runner applies the unavailability policy.
 
 ### Multi-reviewer execution rules
 
@@ -761,7 +747,7 @@ If one or more automated code review platforms are configured (see [`integration
 
 **Important:** Run Step 7 **to completion** and use its result before running Step 8. Do not run Step 7 in the background while proceeding to Step 8. The review loop can take several minutes (poll interval × wait for bot). Only when the script exits with `clean` or `skipped` may you continue to Step 8.
 
-The helper script evaluates configured platforms sequentially. For each platform it checks for **existing** blocking findings from the bot (e.g. from a review that already ran on PR open) before posting a new trigger. If it finds any, it exits with `needs_fixes` without moving on to later platforms — so the fixer addresses them first; after a push, the next run starts again from the first configured platform.
+The helper script evaluates configured platforms sequentially. For each platform it checks for **existing** blocking findings from the bot (e.g. from a review that already ran on PR open) before posting a new trigger. If it finds any, it exits with `needs_fixes` without moving on to later platforms — so the fixer addresses them first; after a push, the next run starts again from the first configured platform. Supported platforms include `greptile`, `devin`, `coderabbit`, and `codex-github` (Codex GitHub App — async bot reviewer handled deterministically by `pr-review-loop.sh`).
 
 Initialize `cycle = 0` once per orchestration run for the PR. Increment `cycle` each time a fixer agent is dispatched. Do not reset `cycle` after a fixer push; escalate when the run reaches `max_cycles`.
 
@@ -1200,6 +1186,7 @@ fi
 #
 # NOTE: Skip this check ONLY when Step 7 was 'skipped' because no review platforms are configured.
 echo "⛔ STOP: Verifying all review threads are resolved via GraphQL before applying ready-for-human-review..."
+CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-codex-ai[bot]}"
 UNRESOLVED_COUNT=$(gh api graphql -f query='
   query($owner:String!, $repo:String!, $number:Int!) {
     repository(owner:$owner, name:$repo) {
@@ -1210,9 +1197,10 @@ UNRESOLVED_COUNT=$(gh api graphql -f query='
       }
     }
   }' -f owner="<owner>" -f repo="<repo>" -F number="$PR_NUMBER" \
-  --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
+  --jq --arg codex_bot "$CODEX_BOT_LOGIN" \
+  '[.data.repository.pullRequest.reviewThreads.nodes[]
         | select(.isResolved == false)
-        | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps"] | index($a) != null)
+        | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps",$codex_bot] | index($a) != null)
         | select((.comments.nodes[0].body // "") | test("✅ Addressed") | not)] | length')
 
 if [ "$UNRESOLVED_COUNT" -gt 0 ]; then
@@ -1241,7 +1229,7 @@ echo "✅ Label readiness checklist passed. PR is ready for human review."
 **When to run this substep:**
 - After the label readiness checklist passes (all checks = exit 0)
 - Before proceeding to Step 8b
-- Only when configured review platforms include `codex-github` or any other known async-posting review bot
+- Only when `review.platforms` in `.ai-dev-workflow.yaml` includes `codex-github` or any other known async-posting review bot
 
 **Why this substep exists:**
 Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asynchronously. A thread can arrive **after** the Step 8a pre-Check-4 GraphQL verification (line 1202–1225) but **before** or **during** the Step 8c post-label verification. Without an explicit re-check, these late-arriving threads slip through as unresolved and cause the orchestrator's Step 5.1 to redispatch the agent.
@@ -1294,7 +1282,7 @@ Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asyn
      ```
    - If `$UNRESOLVED_RECHECK -eq 0`: No new threads found. Continue to Step 8b.
 
-**Note**: This re-check is especially important when using `codex-github` as a configured internal reviewer. The Codex GitHub App bot response is inherently asynchronous — the re-check adds a safety net to catch race conditions without requiring orchestrator intervention.
+**Note**: This re-check is especially important when `codex-github` is a configured Step 7 review platform. The Codex GitHub App bot response is inherently asynchronous — the re-check adds a safety net to catch race conditions without requiring orchestrator intervention.
 
 **Interpretation**:
 

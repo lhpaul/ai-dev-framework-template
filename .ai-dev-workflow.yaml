@@ -25,9 +25,18 @@ schema_version: 1
 review:
   # Ordered list of automated PR review platforms to run sequentially.
   # Platforms are evaluated in order; the first blocking result stops the loop.
-  # Supported today by pr-review-loop.sh: greptile, devin, coderabbit
-  # Note: codex-github review coverage is provided via internal_reviewers (Step 7a).
-  platforms: []
+  # Supported today by pr-review-loop.sh: greptile, devin, coderabbit, codex-github
+  platforms:
+    - codex-github  # Codex GitHub App — async bot reviewer; handled by pr-review-loop.sh (Step 7)
+  #
+  # Configurable codex-github options (set via env vars; the helper script is the enforcement point):
+  #   CODEX_GITHUB_TRIGGER_PHRASE  — trigger phrase sent to the bot (default: "@codex review")
+  #   CODEX_GITHUB_BOT_LOGIN       — GitHub login of the Codex bot account
+  #                                  (default: "codex-ai[bot]"; verify from GitHub App settings)
+  #
+  # Additional options available as script flags to codex-github-reviewer.sh (passed via pr-review-loop.sh):
+  #   --poll-interval <seconds>    — polling interval while waiting for bot response (default: 30)
+  #   --max-wait      <seconds>    — maximum total wait time for bot response (default: 300)
 
   # Ordered list of internal AI reviewers to run sequentially on draft PRs
   # (Step 7a in 91-orchestrate-work-protocol.md) before converting to non-draft.
@@ -42,14 +51,6 @@ review:
   #                     spec/*               -> workflow-spec-reviewer
   #                     implementation-plan/* -> workflow-plan-reviewer
   #                     feature/*/refactor/*/fix/*/hotfix/* -> workflow-code-reviewer
-  #   codex-github  — posts a review-trigger comment to the PR and polls for the
-  #                   Codex GitHub App bot response. Universally reachable from all
-  #                   runner contexts (Claude Code, Cursor, Codex, headless CI) because
-  #                   it requires only `gh` CLI access — no Codex CLI runtime needed.
-  #                   Prerequisite: the Codex GitHub App must be installed on this
-  #                   repository and configured to respond to the trigger phrase.
-  #                   See scripts/development-workflow/codex-github-reviewer.sh for
-  #                   implementation details.
   #
   # Runner-context constraint:
   #   'codex' as a direct CLI reviewer is NOT reliably reachable from automated
@@ -60,12 +61,6 @@ review:
   #   'claude' under the default 'warn' policy. This is expected behaviour — not
   #   a misconfiguration.
   #
-  #   To eliminate recurring 'codex unreachable' warnings from automated runners,
-  #   replace 'codex' with 'codex-github'. The codex-github path provides equivalent
-  #   Codex review coverage from any runner context. Running both 'codex' and
-  #   'codex-github' is supported (Use Case 5 in the spec) but doubles review time
-  #   and is typically unnecessary.
-  #
   # Local override: developers who do not have access to all tools listed here
   # can override this list locally by creating .tmp/template-config.json in the
   # repository root (this path is gitignored). Format:
@@ -75,20 +70,6 @@ review:
   # Step 7a for the full multi-reviewer gate procedure.
   internal_reviewers:
     - claude
-    - codex-github  # Codex GitHub App — universally reachable from all runner contexts (Claude Code, Cursor, Codex, headless CI); requires the Codex GitHub App to be installed on this repository
-  # To use the Codex CLI reviewer path instead (only reachable when Codex is the
-  # top-level runner, not from Claude Code or Cursor subagents), replace 'codex-github'
-  # with 'codex'. See runner-context constraint above for details.
-  #
-  # Configurable codex-github options (set via env vars or script flags; these are
-  # advisory comments — the helper script is the enforcement point):
-  #   CODEX_GITHUB_TRIGGER_PHRASE  — trigger phrase sent to the bot (default: "@codex review")
-  #   CODEX_GITHUB_BOT_LOGIN       — GitHub login of the Codex bot account
-  #                                  (default: "codex-ai[bot]"; verify from GitHub App settings)
-  #
-  # Additional options available as script flags to codex-github-reviewer.sh:
-  #   --poll-interval <seconds>    — polling interval while waiting for bot response (default: 30)
-  #   --max-wait      <seconds>    — maximum total wait time for bot response (default: 300)
 
   # Optional: policy when a listed internal reviewer is unreachable from the current runner.
   # Protocol 91 Step 7a enforces this policy at runtime.
