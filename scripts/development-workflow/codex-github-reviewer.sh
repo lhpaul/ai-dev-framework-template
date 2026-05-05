@@ -33,7 +33,7 @@
 #      "no blocking issues found" — use specific phrases instead.
 #   2. Approval signals present → APPROVED (exit 0)
 #      Signals (case-insensitive): "approved", "lgtm", "looks good",
-#      "didn't find any major", "no major issues", "keep them coming", "nice work"
+#      "didn't find any major issues" (Codex-specific clean phrase)
 #   3. Neither found (unrecognized format) → safe-fails to NEEDS_REVISION (exit 1)
 #
 # Response source detection (two sources polled each cycle):
@@ -308,7 +308,7 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
     #
     # 2. Explicit approval signals present → APPROVED (exit 0)   [checked second]
     #    Approval signals: "approved", "lgtm", "looks good",
-    #    "didn't find any major", "no major issues", "keep them coming", "nice work"
+    #    "didn't find any major issues" (Codex-specific clean phrase)
     #
     # 3. Neither found (unrecognized response format) → NEEDS_REVISION (exit 1)
     #    Safe-fail: default to NEEDS_REVISION when the format is unrecognized to
@@ -321,7 +321,7 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
       echo "$BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
       exit 1
-    elif echo "$BOT_RESPONSE" | grep -qiE "(approved|lgtm|looks[[:space:]]+good|didn.t find[[:space:]]+any major|no major issues|keep them coming|nice work)"; then
+    elif echo "$BOT_RESPONSE" | grep -qiE "(approved|lgtm|looks[[:space:]]+good|didn.t find[[:space:]]+any major[[:space:]]+issues)"; then
       echo "VERDICT: APPROVED"
       echo "---BEGIN BOT RESPONSE---"
       echo "$BOT_RESPONSE"
