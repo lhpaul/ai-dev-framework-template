@@ -32,8 +32,18 @@
 #      Note: bare "blocking" is excluded to avoid false positives on
 #      "no blocking issues found" — use specific phrases instead.
 #   2. Approval signals present → APPROVED (exit 0)
-#      Signals (case-insensitive): "approved", "lgtm", "looks good"
+#      Signals (case-insensitive): "approved", "lgtm", "looks good",
+#      "didn't find any major", "no major issues", "keep them coming", "nice work"
 #   3. Neither found (unrecognized format) → safe-fails to NEEDS_REVISION (exit 1)
+#
+# Response source detection (two sources polled each cycle):
+#   - issues/{PR}/comments — plain PR comments; matches both BOT_LOGIN and
+#     BOT_LOGIN_PLAIN (login without [bot] suffix). Codex posts "clean" results
+#     here from the non-[bot] account (e.g. "chatgpt-codex-connector").
+#   - pulls/{PR}/reviews   — GitHub Review objects; matches both logins. Codex
+#     posts findings here from the [bot]-suffixed account. Polled as fallback
+#     when no PR comment is found; review body safe-fails to NEEDS_REVISION,
+#     which causes pr-review-loop.sh to count unresolved inline threads.
 #
 # Idempotency (BR-10):
 #   Before posting a trigger comment, the script queries existing PR comments
@@ -151,6 +161,13 @@ echo "INFO: Bot login: $BOT_LOGIN"
 echo "INFO: Trigger phrase: $TRIGGER_PHRASE"
 echo "INFO: Poll interval: ${POLL_INTERVAL}s, Max wait: ${MAX_WAIT}s"
 
+# Derive plain bot login (without [bot] suffix) for matching PR-comment responses.
+# Codex posts "clean" results as regular PR comments from the non-[bot] account
+# (e.g. "chatgpt-codex-connector"), while findings are posted as GitHub Reviews
+# from the [bot]-suffixed account (e.g. "chatgpt-codex-connector[bot]").
+BOT_LOGIN_PLAIN="${BOT_LOGIN%\[bot\]}"
+echo "INFO: Bot login (plain, for PR-comment matching): $BOT_LOGIN_PLAIN"
+
 # ── Idempotency guard (BR-10) ─────────────────────────────────────────────────
 # Check whether a trigger comment for the current commit SHA already exists.
 # We look for a comment body containing BOTH the trigger phrase AND the SHA to
@@ -165,8 +182,8 @@ IDEM_STDERR=$(mktemp)
 IDEM_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
   2>"$IDEM_STDERR" \
-  | jq -r --arg sha "$CURRENT_SHA" --arg trigger "$TRIGGER_PHRASE" --arg bot "$BOT_LOGIN" \
-    '.[] | select(.user.login != $bot) | select((.body | test($sha)) and (.body | ascii_downcase | contains($trigger | ascii_downcase))) | {id: .id, created_at: .created_at, body: .body}' \
+  | jq -r --arg sha "$CURRENT_SHA" --arg trigger "$TRIGGER_PHRASE" --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" \
+    '.[] | select(.user.login != $bot and .user.login != $bot_plain) | select((.body | test($sha)) and (.body | ascii_downcase | contains($trigger | ascii_downcase))) | {id: .id, created_at: .created_at, body: .body}' \
   > "$IDEM_TMPFILE"; then
   TRIGGER_COMMENT_INFO=$(head -c 2000 "$IDEM_TMPFILE")
 else
@@ -232,8 +249,8 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
   POLL_TMPFILE=$(mktemp)
   if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
     2>"$POLL_STDERR" \
-    | jq -r --arg bot "$BOT_LOGIN" --arg trigger_time "$TRIGGER_TIME" \
-        '.[] | select(.user.login == $bot) | select(.created_at > $trigger_time) | .body' \
+    | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" \
+        '.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time) | .body' \
     > "$POLL_TMPFILE"; then
     # Truncate after successful API call — no SIGPIPE risk here
     BOT_RESPONSE=$(head -c 10000 "$POLL_TMPFILE")
@@ -250,6 +267,25 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
       exit 2
     fi
     continue
+  fi
+
+  # Also check PR reviews — Codex posts findings as a GitHub Review object
+  # (via pulls/{PR}/reviews), not as a plain PR comment. Combining both sources
+  # ensures we detect findings immediately instead of waiting for a timeout.
+  if [ -z "$BOT_RESPONSE" ]; then
+    REVIEW_TMPFILE=$(mktemp)
+    if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" \
+      2>/dev/null \
+      | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" \
+          '.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at > $trigger_time) | .body' \
+      > "$REVIEW_TMPFILE" 2>/dev/null; then
+      REVIEW_BODY=$(head -c 5000 "$REVIEW_TMPFILE")
+      if [ -n "$REVIEW_BODY" ]; then
+        BOT_RESPONSE="$REVIEW_BODY"
+        echo "INFO: bot response detected via PR reviews endpoint"
+      fi
+    fi
+    rm -f "$REVIEW_TMPFILE"
   fi
 
   if [ -n "$BOT_RESPONSE" ]; then
@@ -284,7 +320,7 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
       echo "$BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
       exit 1
-    elif echo "$BOT_RESPONSE" | grep -qiE "(approved|lgtm|looks[[:space:]]+good)"; then
+    elif echo "$BOT_RESPONSE" | grep -qiE "(approved|lgtm|looks[[:space:]]+good|didn.t find[[:space:]]+any major|no major issues|keep them coming|nice work)"; then
       echo "VERDICT: APPROVED"
       echo "---BEGIN BOT RESPONSE---"
       echo "$BOT_RESPONSE"

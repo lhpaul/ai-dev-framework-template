@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`codex-github-reviewer.sh` response detection**: script now polls both `issues/{PR}/comments` (matching bot login with and without `[bot]` suffix) and `pulls/{PR}/reviews` (for finding-based reviews), eliminating the 5-minute timeout on clean PRs and detecting findings immediately instead of waiting for a timeout
+
 ## [0.24.1] - 2026-04-30
 
 ### Fixed
