@@ -30,3 +30,8 @@ jobs:
           # Comment out DEEPSEEK_API_KEY above, uncomment below, and update
           # the model in .pr_agent.toml to "moonshot/kimi-k2.6".
           # MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+          # --- Action filtering ---
+          # Explicitly set pr_actions here (not only in .pr_agent.toml) because
+          # PR-Agent reads this setting before the repo TOML is fully applied,
+          # causing "Skipping action: synchronize" even when the TOML includes it.
+          github_action_config.pr_actions: '["opened", "reopened", "ready_for_review", "synchronize"]'
