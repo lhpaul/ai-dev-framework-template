@@ -195,13 +195,15 @@ echo "INFO: Bot login (plain, for PR-comment matching): $BOT_LOGIN_PLAIN"
 # Capture the idempotency check to a temp file to avoid SIGPIPE under pipefail.
 # Use 'jq --arg' for safe variable binding — avoids jq injection if the trigger
 # phrase or SHA contain jq-special characters (double quote, backslash).
+# Use contains() not test() for SHA matching: contains() is a literal substring
+# check, while test() interprets its argument as a regex (unanchored substring).
 # Note: `]` must appear first in the bracket expression to be treated as literal.
 IDEM_STDERR=$(mktemp)
 IDEM_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
   2>"$IDEM_STDERR" \
   | jq -r --arg sha "$CURRENT_SHA" --arg marker "review triggered by workflow runner" --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" \
-    '.[] | select(.user.login != $bot and .user.login != $bot_plain) | select((.body | test($sha)) and (.body | ascii_downcase | contains($marker))) | {id: .id, created_at: .created_at, body: .body}' \
+    '.[] | select(.user.login != $bot and .user.login != $bot_plain) | select((.body | contains($sha)) and (.body | ascii_downcase | contains($marker))) | {id: .id, created_at: .created_at, body: .body}' \
   > "$IDEM_TMPFILE"; then
   TRIGGER_COMMENT_INFO=$(head -c 2000 "$IDEM_TMPFILE")
 else
@@ -327,33 +329,37 @@ while true; do
     # Three-path classification (per spec BR-4 and implementation plan risk table).
     # Blocking markers are checked FIRST (safe-fail: a false NEEDS_REVISION that
     # triggers an unnecessary fix cycle is safer than a false APPROVED that
-    # silently ignores blocking findings). Note: even specific phrases like
-    # "blocking issues" can still match within negated context ("No blocking
-    # issues found"). This is an accepted safe-fail trade-off — the result is
-    # an unnecessary fix cycle, not a missed rejection. The bare word "blocking"
-    # is excluded because it is too broad; the phrases below are more targeted.
+    # silently ignores blocking findings). To avoid false positives on negated
+    # phrases like "No blocking issues found", we pre-filter out lines containing
+    # a leading "no" or "not" before the blocking-marker check, then test those
+    # same phrases as explicit approval signals in the second branch.
+    # The bare word "blocking" is excluded because it is too broad; the phrases
+    # below are more targeted.
     #
     # 1. Blocking markers present → NEEDS_REVISION (exit 1)      [checked first]
     #    Blocking markers (case-insensitive): "changes requested",
     #    "blocking issues", "blocking finding", "blocking:", "must fix",
     #    "action required", "required:", "❌"
+    #    (checked on negation-filtered response to avoid "No blocking issues found")
     #
     # 2. Explicit approval signals present → APPROVED (exit 0)   [checked second]
     #    Approval signals: "approved", "lgtm", "looks good",
-    #    "didn't find any major issues" (Codex-specific clean phrase)
+    #    "didn't find any major issues", "no blocking issues" (Codex clean phrases)
     #
     # 3. Neither found (unrecognized response format) → NEEDS_REVISION (exit 1)
     #    Safe-fail: default to NEEDS_REVISION when the format is unrecognized to
     #    avoid incorrectly approving a response that is a rejection in an
     #    unexpected format (per spec risk mitigation for BR-4).
 
-    if echo "$BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking[[:space:]]+issues?|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)"; then
+    # Strip lines containing clear negation patterns before the blocking check.
+    BOT_RESPONSE_FOR_BLOCKING=$(echo "$BOT_RESPONSE" | grep -viE "(^|[[:space:]])no[[:space:]]+(blocking|major)")
+    if echo "$BOT_RESPONSE_FOR_BLOCKING" | grep -qiE "(changes[[:space:]]+requested|blocking[[:space:]]+issues?|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)"; then
       echo "VERDICT: NEEDS_REVISION"
       echo "---BEGIN BOT RESPONSE---"
       echo "$BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
       exit 1
-    elif echo "$BOT_RESPONSE" | grep -qiE "(approved|lgtm|looks[[:space:]]+good|didn.t find[[:space:]]+any major[[:space:]]+issues)"; then
+    elif echo "$BOT_RESPONSE" | grep -qiE "(approved|lgtm|looks[[:space:]]+good|didn.t find[[:space:]]+any major[[:space:]]+issues|no[[:space:]]+blocking[[:space:]]+issues?)"; then
       echo "VERDICT: APPROVED"
       echo "---BEGIN BOT RESPONSE---"
       echo "$BOT_RESPONSE"
