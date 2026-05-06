@@ -374,7 +374,7 @@ while true; do
     # re-interpretation, so special characters in TRIGGER_PHRASE are safe.
     if ! TRIGGER_TIME=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
       --method POST \
-      --raw-field body="$TRIGGER_PHRASE — retrigger ${RETRIGGER_COUNT}/${MAX_RETRIGGERS} after timeout" \
+      --raw-field body="$TRIGGER_PHRASE — retrigger ${RETRIGGER_COUNT}/${MAX_RETRIGGERS} after timeout (sha: $CURRENT_SHA)" \
       --jq '.created_at'); then
       echo "ERROR: failed to post retrigger comment to PR #$PR_NUMBER" >&2
       echo "VERDICT: TIMED_OUT — failed to post retrigger comment (treated as unavailable)"

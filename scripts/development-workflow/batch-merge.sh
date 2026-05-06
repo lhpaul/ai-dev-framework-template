@@ -314,7 +314,7 @@ consolidate_changelog_duplicates() {
   # preserved (no reordering) — only sections with actual duplicates are
   # reconstructed; clean sections pass through verbatim.
   python3 - "$file" <<'PYEOF'
-import sys, re, os
+import sys, re, os, tempfile
 
 filepath = sys.argv[1]
 with open(filepath, "r") as fh:
@@ -414,11 +414,26 @@ while i < len(lines):
         result.append(line)
         i += 1
 
-# Write atomically via a temp file
-tmp = filepath + ".dedup.tmp"
-with open(tmp, "w") as fh:
-    fh.writelines(result)
-os.replace(tmp, filepath)
+# Write atomically via a uniquely named temp file in the same directory.
+# This avoids collisions and ensures we never replace the target with a
+# partially written file if an exception occurs mid-write.
+tmp_dir = os.path.dirname(filepath) or "."
+fd = None
+tmp = None
+try:
+    fd, tmp = tempfile.mkstemp(prefix=".dedup.", suffix=".tmp", dir=tmp_dir)
+    with os.fdopen(fd, "w") as fh:
+        fd = None
+        fh.writelines(result)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, filepath)
+    tmp = None
+finally:
+    if fd is not None:
+        os.close(fd)
+    if tmp is not None and os.path.exists(tmp):
+        os.unlink(tmp)
 PYEOF
 }
 

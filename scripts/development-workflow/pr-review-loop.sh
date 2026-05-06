@@ -1029,12 +1029,15 @@ run_pr_agent_review() {
 
   _pr_agent_latest_comment() {
     gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-      | jq -rs --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -rs --arg bot "$bot_login" --arg since "$since_iso" --arg sha "$head_sha" '
           add // []
           | [.[]
              | select(
                  .user.login == $bot and
-                 .updated_at > $since and
+                 (
+                   .updated_at > $since or
+                   ((.body // "") | contains($sha))
+                 ) and
                  ((.body // "") | test("PR Reviewer Guide"; "i"))
                )
             ]
