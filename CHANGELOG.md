@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Correct hotfix CHANGELOG placement documentation**: `auto-tag-release.yml` now uses `grep -m 1 '^## \[[0-9]'` to skip `[Unreleased]` and find the newest versioned section; `AGENTS.md` and `03-implement-development-protocol.md` now correctly document that hotfix versioned sections go directly below `[Unreleased]` (above all prior versioned sections), matching Keep a Changelog ordering — not above `[Unreleased]` as previously stated in PR #295.
+- **Correct hotfix CHANGELOG placement documentation**: `auto-tag-release.yml` now uses `grep -Em 1 '^## \[[0-9]+\.[0-9]+\.[0-9]+\]'` (full semver pattern, replaces the looser `^## \[[0-9]` match) to skip `[Unreleased]` and any non-versioned headers and find the newest versioned section; `AGENTS.md` and `03-implement-development-protocol.md` now correctly document that hotfix versioned sections go directly below `[Unreleased]` (above all prior versioned sections), matching Keep a Changelog ordering — not above `[Unreleased]` as previously stated in PR #295.
 
 ## [0.25.1] - 2026-05-06
 
