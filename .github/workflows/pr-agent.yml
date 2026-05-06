@@ -30,12 +30,19 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           config.model: "deepseek/deepseek-chat"
           config.fallback_models: '["deepseek/deepseek-chat"]'
+          # config.model_weak controls ancillary tasks (PR description generation,
+          # classification, file summaries). PR-Agent's built-in default is OpenAI's
+          # gpt-5.4 / gpt-5.4-mini, which fails with `dummy_key` 401 errors when only
+          # DEEPSEEK_API_KEY is configured. Pin it to DeepSeek too so all calls go
+          # through one provider.
+          config.model_weak: "deepseek/deepseek-chat"
           # --- Alternative: Kimi K2.6 (Moonshot AI) ---
           # Comment out the DeepSeek vars above, uncomment below, and set
           # MOONSHOT_API_KEY in GitHub secrets.
           # MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
           # config.model: "moonshot/kimi-k2.6"
           # config.fallback_models: '["moonshot/kimi-k2.6"]'
+          # config.model_weak: "moonshot/kimi-k2.6"
           # --- Action and feature flags ---
           # Set as env vars (not only in .pr_agent.toml) so they take effect
           # before PR-Agent's internal action/feature checks run.
