@@ -844,19 +844,23 @@ Fix all ShellCheck warnings before committing. Do not commit `.sh` files with Sh
 To write the entry correctly:
 
 1. Determine the next patch version from the most recent released section header (e.g., if the latest is `[1.0.0]`, the hotfix version is `[1.0.1]`).
-2. Insert a new versioned section as the **first `##` section** in `CHANGELOG.md` — above all existing `##` headers, including any prior hotfix versions and `[Unreleased]`. This ensures `auto-tag-release.yml` always extracts the correct (newest) version via `grep -m 1 '^## '`. Do not insert it between `[Unreleased]` and a previous hotfix; insert it at the very top of the versioned history:
+2. Insert the new versioned section **directly below `[Unreleased]`** (above all prior versioned sections). `auto-tag-release.yml` extracts the hotfix version via `grep -m 1 '^## \[[0-9]'`, which skips `[Unreleased]` and finds the newest versioned header. The resulting structure should be:
 
 ```markdown
+## [Unreleased]
+
 ## [1.0.1] - YYYY-MM-DD
 
 ### Fixed
 
 - **Your hotfix description** (hotfix): brief user-facing summary of what was patched.
+
+## [1.0.0] - YYYY-MM-DD
 ```
 
 3. Do **not** add an entry under `[Unreleased]` for hotfix PRs.
 
-**Duplicate-section prevention (check before writing)**: Before inserting the new versioned section, confirm no section with the same version number already exists in `CHANGELOG.md`. After writing, run: `grep -c "^## \[1\.0\.1\]" CHANGELOG.md` (replace `1.0.1` with the actual version) — expected output: 1.
+**Duplicate-section prevention (check before writing)**: Before inserting the new versioned section, confirm no section with the same version number already exists in `CHANGELOG.md`. After writing, run: `grep -c "^## \[1\.0\.1\]" CHANGELOG.md` (replace `1.0.1` with the actual version) — expected output: 1. Also confirm `[Unreleased]` still appears before the new section (`grep -n "^## " CHANGELOG.md | head -3`).
 
 > **Note for backport PRs**: When the hotfix content is backported to `develop` (Step 9 below), do **not** add another CHANGELOG entry. The versioned entry already exists in `CHANGELOG.md` on `main`, and the backport merge will carry it to `develop` automatically.
 
