@@ -40,10 +40,14 @@ jobs:
             # hotfix/* — version is the first versioned section in CHANGELOG.md.
             # Per the hotfix protocol, the developer inserts ## [X.Y.Z] - YYYY-MM-DD directly
             # below [Unreleased], making it the first versioned header in the file.
-            # Pattern: '^## \[[0-9]+\.[0-9]+\.[0-9]+' — anchors on X.Y.Z numeric prefix,
-            # skipping [Unreleased] (letter-prefixed) and non-semver headers. The pattern
-            # has no trailing anchor, so it also matches X.Y.Z-prerelease headers if needed.
-            # This project uses plain X.Y.Z CHANGELOG versions only (no pre-release suffixes).
+            # Guard 1: confirm [Unreleased] is still present (protocol invariant).
+            if ! grep -q '^## \[Unreleased\]' CHANGELOG.md; then
+              echo "ERROR: CHANGELOG.md is missing the [Unreleased] section."
+              echo "       Hotfix CHANGELOG entries must be placed below [Unreleased]."
+              exit 1
+            fi
+            # Guard 2: extract the first versioned section (X.Y.Z numeric prefix,
+            # skipping [Unreleased] and non-semver headers).
             FIRST_VERSIONED=$(grep -Em 1 '^## \[[0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md || true)
             if [ -z "$FIRST_VERSIONED" ]; then
               echo "ERROR: Hotfix requires a versioned section header (## [X.Y.Z]) in CHANGELOG.md."
