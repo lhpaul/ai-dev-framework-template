@@ -254,14 +254,8 @@ RETRIGGER_COUNT=0
 CONSECUTIVE_API_FAILURES=0
 MAX_CONSECUTIVE_FAILURES=3
 # Outer retrigger loop. ELAPSED is reset to 0 at the top of each iteration.
-#
-# Design note — TRIGGER_TIME is deliberately NOT updated after a retrigger.
-# The ticket (#497) says "update TRIGGER_TIME" but we intentionally deviate:
-# keeping the ORIGINAL timestamp as the filter floor means the inner loop
-# catches BOTH delayed responses to the first trigger AND responses to any
-# retrigger, because retrigger_time > original_TRIGGER_TIME, so any response
-# has created_at > TRIGGER_TIME and is picked up. Updating TRIGGER_TIME would
-# miss delayed first-trigger responses that arrive during the second window.
+# TRIGGER_TIME is updated to the retrigger comment's timestamp after each
+# retrigger post, scoping the next inner poll to responses after that point.
 while true; do
   ELAPSED=0
   while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
@@ -376,8 +370,7 @@ while true; do
     ATTEMPT_NUM=$((RETRIGGER_COUNT + 1))
     TOTAL_ATTEMPTS=$((MAX_RETRIGGERS + 1))
     echo "INFO: no response after ${MAX_WAIT}s; re-triggering (attempt ${ATTEMPT_NUM}/${TOTAL_ATTEMPTS})..."
-    _retrigger_posted_at=""
-    if ! _retrigger_posted_at=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
+    if ! TRIGGER_TIME=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
       --method POST \
       --raw-field body="$TRIGGER_PHRASE — retrigger ${RETRIGGER_COUNT}/${MAX_RETRIGGERS} after timeout" \
       --jq '.created_at'); then
@@ -385,7 +378,7 @@ while true; do
       echo "VERDICT: TIMED_OUT — failed to post retrigger comment (treated as unavailable)"
       exit 2
     fi
-    echo "INFO: retrigger comment posted at ${_retrigger_posted_at} (polling continues from original TRIGGER_TIME=$TRIGGER_TIME)"
+    echo "INFO: retrigger comment posted at $TRIGGER_TIME (TRIGGER_TIME updated)"
     continue
   else
     break

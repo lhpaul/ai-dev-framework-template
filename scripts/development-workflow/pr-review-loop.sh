@@ -487,10 +487,13 @@ run_codex_github_review() {
   # 1 retrigger): pass half the budget per attempt so total wait stays within the
   # configured max_wait ceiling. Without this, the reviewer script's default of
   # MAX_RETRIGGERS=1 would silently double the effective timeout for every caller.
-  # Split the budget: each of the 2 attempts (initial + 1 retrigger) gets half.
-  # If half the budget is less than 30s, the bot would have no meaningful time
-  # to respond per attempt — fall back to a single full-budget attempt instead.
-  # This guarantees total_wait <= max_wait in all cases.
+  # Split the budget across 2 attempts (initial + 1 retrigger): each gets
+  # floor(max_wait/2). Integer truncation is intentionally conservative —
+  # total_wait = 2 * floor(max_wait/2) <= max_wait, so the configured budget
+  # is never exceeded. If half the budget is less than 30s the bot would have
+  # no meaningful time to respond per attempt, so fall back to a single
+  # full-budget attempt (retrigger_count=0). This affects max_wait 31-59s;
+  # callers with such small budgets get single-attempt behaviour by design.
   local per_attempt_wait retrigger_count
   per_attempt_wait=$(( max_wait / 2 ))
   if [ "$per_attempt_wait" -lt 30 ]; then
