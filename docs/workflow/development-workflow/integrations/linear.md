@@ -94,6 +94,36 @@ The `[slug]` is a short kebab-case description derived from the work item title 
 
 ---
 
+## Custom Fields
+
+The `issue_tracker.custom_fields` flat map in `.ai-dev-workflow.yaml` holds provider-specific fields that extend the standard `issue_tracker` configuration. For the Linear provider, the following key is recognised by workflow scripts:
+
+| Key | Format | Effect |
+|---|---|---|
+| `project` | Linear project ID string | When set, issue creation associates the new issue with the specified Linear project. The project ID is found in the Linear project URL (`https://linear.app/<team>/projects/<project-id>`) or via the Linear API. |
+
+When `project` is absent from `custom_fields` (or `custom_fields` itself is absent), issue creation proceeds without a project association — this is the current default behaviour and is fully backward-compatible.
+
+To set a project association, add the following to `.ai-dev-workflow.yaml` under `issue_tracker`:
+
+```yaml
+issue_tracker:
+  provider: linear
+  custom_fields:
+    project: my-linear-project-id
+```
+
+Read the value in a script using the `workflow_issue_tracker_custom_field` helper:
+
+```bash
+source scripts/development-workflow/workflow-lib.sh
+project_id=$(workflow_issue_tracker_custom_field project)
+```
+
+Unrecognised keys in `custom_fields` are silently ignored by all current scripts.
+
+---
+
 ## Workflow: Advancing Statuses
 
 The **Portfolio Orchestrator**, **Work Item Runner**, or stage agent updates the Linear work item status at each stage transition:

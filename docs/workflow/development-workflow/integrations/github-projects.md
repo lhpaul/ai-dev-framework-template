@@ -257,6 +257,68 @@ The **Portfolio Orchestrator**, **Work Item Runner**, or stage agent updates the
 
 ---
 
+## Automated Tracker Updates on PR Merge (GitHub Actions)
+
+The repository ships a GitHub Actions workflow (`.github/workflows/update-tracker-on-merge.yml`)
+that automatically updates the GitHub Projects status whenever a workflow PR is merged to `develop`.
+This eliminates the stale-status problem that occurs between orchestrator runs.
+
+### Branch-to-status mapping
+
+| Branch prefix | Status after merge | Issue closed? |
+|---|---|---|
+| `spec/*` | Spec Ready | No |
+| `implementation-plan/*` | Plan Ready | No |
+| `feature/*` | Merged | Yes |
+| `fix/*` | Merged | Yes |
+| `refactor/*` | Merged | Yes |
+| `hotfix/*` | Merged | Yes |
+
+### How it works
+
+1. Triggered on `pull_request` closed events targeting `develop` where `merged == true`
+2. Extracts the branch prefix to determine the stage type
+3. Extracts the issue number from the branch name (e.g., `fix/463-some-slug` → `463`)
+4. Queries the GitHub Projects v2 GraphQL API to find the project item for that issue
+5. Updates the `Status` field to the appropriate value
+6. For implementation branches (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`): also closes the GitHub issue
+
+### Required configuration
+
+Set the following as **repository variables** (not secrets — these are not sensitive):
+
+| Variable | Description |
+|---|---|
+| `GITHUB_PROJECT_NUMBER` | The integer project number (e.g. `1`) |
+| `GITHUB_PROJECT_OWNER` | The GitHub user or org owning the project (falls back to `github.repository_owner` when unset) |
+
+To set them via CLI:
+
+```bash
+gh variable set GITHUB_PROJECT_NUMBER --body "1"
+gh variable set GITHUB_PROJECT_OWNER --body "<your-github-username-or-org>"
+```
+
+### Security model
+
+- Uses the built-in `GITHUB_TOKEN` — no personal access token (PAT) required
+- Minimum permissions: `pull-requests: read`, `issues: write`, `projects: write`
+- All external action SHAs are pinned to exact commit hashes (no floating `@v7` tags)
+
+### Relationship to `post-merge-cleanup`
+
+The GitHub Actions workflow and the `post-merge-cleanup` CLI command perform the same tracker
+update logic. They are complementary:
+
+- **GitHub Actions workflow**: runs automatically on every PR merge, no human action needed
+- **`post-merge-cleanup` command**: run manually by a developer or orchestrator after merging;
+  also handles local branch deletion and `develop` pull
+
+If both are active, the tracker update from `post-merge-cleanup` is idempotent (same status
+written twice is harmless).
+
+---
+
 ## Post-Merge Cleanup
 
 When a PR is merged, the `post-merge-cleanup` command will:
@@ -302,6 +364,20 @@ Use explicit issue numbers to avoid accidental broad transitions. Items not incl
   gh project list --owner <OWNER>
   ```
 - **Project number** — find it via `gh project list --owner <OWNER>` or from the project URL
+
+---
+
+## Custom Fields
+
+The `issue_tracker.custom_fields` flat map in `.ai-dev-workflow.yaml` is available for provider-specific configuration extensions. For the `github_projects` provider, **no `custom_fields` keys are currently recognised by workflow scripts**.
+
+Key points:
+
+- The `project_number` field is a standard top-level `issue_tracker` field — it is not a custom field and must remain under `issue_tracker` directly, not under `custom_fields`.
+- Any keys placed under `custom_fields` are silently ignored by all current GitHub Projects scripts.
+- Future provider-specific fields (e.g., additional project metadata) may be added here as the integration evolves.
+
+Read the `workflow_issue_tracker_custom_field` helper documentation in `scripts/development-workflow/workflow-lib.sh` for the parsing API available to future consumers.
 
 ---
 

@@ -1,0 +1,50 @@
+# PR-Agent configuration
+# Docs: https://pr-agent-docs.codium.ai/usage-guide/changing_a_model/
+
+[config]
+# --- Model: DeepSeek (default) ---
+# Uses LiteLLM's DeepSeek provider. Requires DEEPSEEK_API_KEY in GitHub secrets.
+# "deepseek-chat" is the stable alias for the current DeepSeek flagship model.
+# Pricing: ~$0.14–$0.44/1M input tokens (flash vs. pro), ~$0.28–$0.87/1M output tokens.
+model = "deepseek/deepseek-chat"
+fallback_models = ["deepseek/deepseek-chat"]
+# model_weak is used for ancillary tasks (PR description generation, classification,
+# file summaries). PR-Agent's built-in default is OpenAI's gpt-5.4 / gpt-5.4-mini,
+# which causes auth failures on every PR when only DEEPSEEK_API_KEY is configured.
+# Must match the active provider. Also pinned as `config.model_weak` in
+# .github/workflows/pr-agent.yml because TOML settings are merged after PR-Agent's
+# initial fallback fires — the workflow env var is the load-bearing pin; this TOML
+# setting is defense-in-depth and serves as documentation.
+model_weak = "deepseek/deepseek-chat"
+# Upgrade to DeepSeek V4 Pro once confirmed in LiteLLM registry (launched April 2026):
+# model = "deepseek/deepseek-v4-pro"
+# fallback_models = ["deepseek/deepseek-chat"]
+# model_weak = "deepseek/deepseek-chat"
+
+# --- Alternative: Kimi K2.6 (Moonshot AI) ---
+# Requires MOONSHOT_API_KEY in GitHub secrets instead of DEEPSEEK_API_KEY.
+# Pricing: ~$0.74/1M input, ~$3.49/1M output.
+# model = "moonshot/kimi-k2.6"
+# fallback_models = ["moonshot/kimi-k2.6"]
+# model_weak = "moonshot/kimi-k2.6"
+
+[github_action_config]
+auto_review = "true"    # Post a PR Reviewer Guide comment on each push.
+auto_describe = "false" # Skip auto-updating the PR description body.
+auto_improve = "false"  # Skip inline code suggestion comments (reduces noise).
+# Explicitly list the activity types that should trigger auto_review.
+# Without this, PR-Agent's internal default excludes "synchronize" even when the
+# GHA workflow fires on it, causing push-triggered runs to be silently skipped.
+pr_actions = ["opened", "reopened", "ready_for_review", "synchronize"]
+
+[pr_reviewer]
+# Do not include inline code suggestions in the review summary (auto_improve is off).
+num_code_suggestions = 0
+# Post APPROVED when no significant issues are found, so the review loop can detect
+# clean PRs via review state rather than needing to parse the review body.
+# Without this, PR-Agent defaults to COMMENTED for all outcomes, which the loop
+# cannot distinguish from a review with moderate findings.
+# Note: PR-Agent does not support APPROVED/CHANGES_REQUESTED review states via config.
+# It posts all review output as plain PR comments. Use body content markers instead:
+#   "No major issues detected"          → clean
+#   "Recommended focus areas for review" → has issues

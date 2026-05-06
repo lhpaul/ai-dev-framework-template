@@ -12,3 +12,4 @@ Recommended model tier: `balanced`
 3. Follow that protocol exactly.
 4. Keep findings first, ordered by severity, with concrete file references.
 5. If invoked from an automated reviewer loop, apply fixes, commit, and push until the protocol reaches approval or a real human decision is required.
+6. When dispatched for a specific pass (Pass 1: Spec Compliance or Pass 2: Code Quality), restrict evaluation to the corresponding `REVIEW.md` sub-checklist. The pass name is provided in the dispatch prompt by the orchestrating skill.

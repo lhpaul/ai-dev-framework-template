@@ -69,7 +69,7 @@ trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"' EXIT
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,coderabbit] [--poll-interval seconds] [--max-wait seconds]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,pr-agent,coderabbit,codex-github] [--poll-interval seconds] [--max-wait seconds]
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
 triggering a new review, each platform checks for existing blocking findings. If
@@ -82,6 +82,17 @@ REASON=lock_contention and exits 75 (EX_TEMPFAIL).
 Platform selection (in priority order):
   1. --platform flag(s) passed on the command line
   2. review.platforms list in .ai-dev-workflow.yaml at the repo root
+
+Branch-type-aware default timeout:
+  On spec/* and implementation-plan/* branches, Devin has no trigger condition and
+  exits immediately with REASON=no_check_run. To avoid wasting the full 20-minute
+  default wait budget on these branches, the script automatically reduces --max-wait
+  to 60 s and --poll-interval to 30 s when the branch matches spec/* or
+  implementation-plan/* and the caller did not pass the respective flag explicitly.
+  poll_interval is also reduced so it stays below max_wait — the per-loop timeout
+  check requires elapsed >= max_wait, which can only fire after at least one
+  poll_interval has elapsed. Pass --max-wait and/or --poll-interval explicitly to
+  override either value.
 
 Outputs stable key=value lines including:
   RESULT=clean|needs_fixes|escalate|skipped
@@ -420,6 +431,123 @@ run_greptile_review() {
   print_kv BLOCKING_COUNT 0
   print_kv SUGGESTION_COUNT "$suggestion_count"
   return 0
+}
+
+run_codex_github_review() {
+  local pr_number="$1"
+  local branch_name="$2"
+  local poll_interval="$3"
+  local max_wait="$4"
+  local platform="codex-github"
+  local bot_login="${CODEX_GITHUB_BOT_LOGIN:-codex-ai[bot]}"
+  # GraphQL author.login returns the login WITHOUT the "[bot]" suffix that the
+  # REST API uses. Strip it here so check_unresolved_threads comparisons work.
+  local graphql_bot_login="${bot_login%\[bot\]}"
+  local repo
+  local reviewer_script
+  local script_exit=0
+  local thread_check_output=""
+  local thread_check_status=0
+  local unresolved_count=0
+
+  require_gh
+  cd_workflow_repo_root
+  repo="$(repo_slug)"
+
+  # Phase 1: Check for existing unresolved review threads from the codex bot
+  set +e
+  thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" "$graphql_bot_login")"
+  thread_check_status=$?
+  set -e
+  if [ "$thread_check_status" -eq 0 ]; then
+    unresolved_count="$thread_check_output"
+  fi
+
+  if [ "$unresolved_count" -gt 0 ]; then
+    print_kv RESULT needs_fixes
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv REASON existing_findings
+    print_kv COMMENT_COUNT "$unresolved_count"
+    print_kv BLOCKING_COUNT "$unresolved_count"
+    print_kv SUGGESTION_COUNT 0
+    return 1
+  fi
+
+  # Phase 2: Trigger the codex-github review and wait for response
+  reviewer_script="$(workflow_repo_root)/scripts/development-workflow/codex-github-reviewer.sh"
+
+  local owner repo_name
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+  local max_retriggers
+  max_retriggers="${CODEX_GITHUB_MAX_RETRIGGERS:-1}"
+  case "$max_retriggers" in
+    ''|*[!0-9]*) max_retriggers=1 ;;
+  esac
+
+  # Keep polling interval bounded by the wait budget to avoid zero-poll attempts
+  # when a caller provides poll_interval > max_wait.
+  local effective_poll_interval
+  effective_poll_interval="$poll_interval"
+  if [ "$effective_poll_interval" -gt "$max_wait" ]; then
+    effective_poll_interval="$max_wait"
+  fi
+  set +e
+  "$reviewer_script" "$pr_number" "$owner" "$repo_name" \
+    --bot-login "$bot_login" \
+    --poll-interval "$effective_poll_interval" \
+    --max-wait "$max_wait" \
+    --max-retriggers "$max_retriggers" >/dev/null 2>&1
+  script_exit=$?
+  set -e
+
+  case "$script_exit" in
+    0)
+      print_kv RESULT clean
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 0
+      ;;
+    1)
+      unresolved_count=0
+      set +e
+      thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" "$graphql_bot_login")"
+      thread_check_status=$?
+      set -e
+      if [ "$thread_check_status" -eq 0 ]; then
+        unresolved_count="$thread_check_output"
+      fi
+      [ "$unresolved_count" -eq 0 ] && unresolved_count=1
+
+      print_kv RESULT needs_fixes
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv REASON unresolved_review_threads
+      print_kv COMMENT_COUNT "$unresolved_count"
+      print_kv BLOCKING_COUNT "$unresolved_count"
+      print_kv SUGGESTION_COUNT 0
+      return 1
+      ;;
+    *)
+      print_kv RESULT escalate
+      print_kv REASON timeout
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      return 2
+      ;;
+  esac
 }
 
 run_devin_review() {
@@ -863,6 +991,198 @@ run_devin_review() {
   print_kv BLOCKING_COUNT 0
   print_kv SUGGESTION_COUNT 0
   return 0
+}
+
+run_pr_agent_review() {
+  # PR-Agent posts all review output as plain PR issue comments — it does NOT submit
+  # formal GitHub PR reviews (APPROVED/CHANGES_REQUESTED/COMMENTED). The summary
+  # comment always contains "PR Reviewer Guide" in its body. Two stable body markers
+  # distinguish clean from has-issues:
+  #   "No major issues detected"           → clean
+  #   "Recommended focus areas for review" → has issues (needs_fixes)
+  # Bot login is "github-actions[bot]" when using GITHUB_TOKEN. Override with
+  # PR_AGENT_BOT_LOGIN when using a GitHub App token (e.g. for fork PR support).
+  local pr_number="$1"
+  local branch_name="$2"
+  local poll_interval="$3"
+  local max_wait="$4"
+  local platform="pr-agent"
+  local bot_login="${PR_AGENT_BOT_LOGIN:-github-actions[bot]}"
+  local repo
+  local head_sha=""
+  local since_iso=""
+  local elapsed=0
+  local comment_body=""
+
+  require_gh
+  cd_workflow_repo_root
+  repo="$(repo_slug)"
+
+  head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
+  if [ -z "$head_sha" ]; then
+    print_kv RESULT escalate
+    print_kv REASON "head-sha-unavailable"
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    return 2
+  fi
+  # Use the HEAD commit's push timestamp to scope comments to this review cycle.
+  since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
+  if [ -z "$since_iso" ]; then
+    since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
+  fi
+
+  _pr_agent_latest_comment() {
+    local match_mode="${1:-strict_sha}"
+    gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+      | jq -rs --arg bot "$bot_login" --arg sha "$head_sha" --arg since "$since_iso" --arg mode "$match_mode" '
+          add // []
+          | [.[]
+             | select(
+                 .user.login == $bot and
+                 (
+                   ($mode == "strict_sha" and ((.body // "") | contains($sha))) or
+                   ($mode == "recent_or_sha" and (((.body // "") | contains($sha)) or .updated_at > $since))
+                 ) and
+                 ((.body // "") | test("PR Reviewer Guide"; "i"))
+               )
+            ]
+          | sort_by(.updated_at)
+          | last
+          | .body // ""
+        '
+  }
+
+  _pr_agent_classify() {
+    local body="$1"
+    if [ -z "$body" ]; then
+      printf 'none'
+    elif printf '%s\n' "$body" | grep -q "No major issues detected"; then
+      printf 'clean'
+    elif printf '%s\n' "$body" | grep -q "Recommended focus areas for review"; then
+      printf 'needs_fixes'
+    else
+      printf 'escalate'
+    fi
+  }
+
+  # --- Phase 1: Check for an existing PR-Agent summary comment on this HEAD ---
+  comment_body="$(_pr_agent_latest_comment strict_sha)"
+  local verdict
+  verdict="$(_pr_agent_classify "$comment_body")"
+
+  case "$verdict" in
+    clean)
+      print_kv RESULT clean
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 0
+      ;;
+    needs_fixes)
+      print_kv RESULT needs_fixes
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv REASON existing_findings
+      print_kv COMMENT_COUNT 1
+      print_kv BLOCKING_COUNT 1
+      print_kv SUGGESTION_COUNT 0
+      return 1
+      ;;
+    escalate)
+      print_kv RESULT escalate
+      print_kv REASON pr_agent_ambiguous_review
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 2
+      ;;
+  esac
+
+  # --- Phase 2: Poll until PR-Agent posts its summary comment ---
+  while :; do
+    comment_body="$(_pr_agent_latest_comment recent_or_sha)"
+    verdict="$(_pr_agent_classify "$comment_body")"
+
+    if [ "$verdict" != "none" ]; then
+      break
+    fi
+
+    if [ "$elapsed" -ge "$max_wait" ]; then
+      print_kv RESULT skipped
+      print_kv REASON no_review
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 0
+    fi
+
+    sleep "$poll_interval"
+    elapsed=$((elapsed + poll_interval))
+  done
+
+  # --- Phase 3: Classify the comment body ---
+  case "$verdict" in
+    clean)
+      print_kv RESULT clean
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 0
+      ;;
+    needs_fixes)
+      print_kv RESULT needs_fixes
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv REASON existing_findings
+      print_kv COMMENT_COUNT 1
+      print_kv BLOCKING_COUNT 1
+      print_kv SUGGESTION_COUNT 0
+      return 1
+      ;;
+    *)
+      print_kv RESULT escalate
+      print_kv REASON pr_agent_ambiguous_review
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 2
+      ;;
+  esac
 }
 
 is_coderabbit_blocking() {
@@ -1525,11 +1845,16 @@ run_coderabbit_review() {
 bot_login_for_platform() {
   # Returns the GitHub bot login for a given review platform name.
   # Used to filter reviewThreads by bot-authored comments only.
+  # pr-agent is excluded (returns empty): its blocking signal comes from review state,
+  # not inline threads, so mapping it to "github-actions" would incorrectly attribute
+  # threads from any other GHA workflow to PR-Agent.
   case "$1" in
-    coderabbit) printf 'coderabbitai\n' ;;
-    devin)      printf 'devin-ai-integration\n' ;;
-    greptile)   printf 'greptile-apps\n' ;;
-    *)          printf '\n' ;;
+    coderabbit)   printf 'coderabbitai\n' ;;
+    devin)        printf 'devin-ai-integration\n' ;;
+    greptile)     printf 'greptile-apps\n' ;;
+    pr-agent)     printf '\n' ;;
+    codex-github) printf '%s\n' "${CODEX_GITHUB_BOT_LOGIN:-codex-ai[bot]}" ;;
+    *)            printf '\n' ;;
   esac
 }
 
@@ -1661,6 +1986,12 @@ run_platform_review() {
     coderabbit)
       run_coderabbit_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
       ;;
+    pr-agent)
+      run_pr_agent_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      ;;
+    codex-github)
+      run_codex_github_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      ;;
     *)
       print_kv RESULT skipped
       print_kv PLATFORM "$platform"
@@ -1684,7 +2015,9 @@ fi
 pr_number=""
 branch_name=""
 poll_interval=120
+poll_interval_explicit=0
 max_wait=1200
+max_wait_explicit=0
 declare -a platforms=()
 
 while [ "$#" -gt 0 ]; do
@@ -1699,10 +2032,12 @@ while [ "$#" -gt 0 ]; do
       ;;
     --poll-interval)
       poll_interval="$2"
+      poll_interval_explicit=1
       shift 2
       ;;
     --max-wait)
       max_wait="$2"
+      max_wait_explicit=1
       shift 2
       ;;
     -h|--help)
@@ -1746,6 +2081,23 @@ if [ "${#platforms[@]}" -gt 0 ]; then
   if [ -z "$branch_name" ]; then
     branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"
   fi
+fi
+
+# Branch-type-aware timeout: spec/* and implementation-plan/* branches produce
+# REASON=no_check_run immediately when Devin has no trigger condition (non-implementation
+# branches). Waiting the full 1200-second default wastes orchestrator budget.
+# Apply a short max_wait=60 / poll_interval=30 default when the caller did not pass
+# --max-wait / --poll-interval explicitly. poll_interval must be less than max_wait
+# so the per-loop timeout check can fire within the budget.
+if [ "$max_wait_explicit" -eq 0 ]; then
+  case "$branch_name" in
+    spec/*|implementation-plan/*)
+      max_wait=60
+      if [ "$poll_interval_explicit" -eq 0 ]; then
+        poll_interval=30
+      fi
+      ;;
+  esac
 fi
 
 aggregate_result="skipped"

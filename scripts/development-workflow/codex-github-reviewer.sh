@@ -16,8 +16,12 @@
 #                               Default: "codex-ai[bot]"
 #                               Also overridable via CODEX_GITHUB_BOT_LOGIN env var.
 #                               Verify the actual bot login from your GitHub App settings.
-#   --poll-interval <seconds>   Seconds between polling attempts. Default: 30
-#   --max-wait      <seconds>   Maximum total wait time for bot response. Default: 300
+#   --poll-interval  <seconds>   Seconds between polling attempts. Default: 30
+#   --max-wait       <seconds>   Maximum total wait time for bot response across
+#                                all attempts. Default: 600
+#   --max-retriggers <count>     How many times to re-post the trigger after a timeout
+#                                before giving up. Default: 1 (so up to 2 attempts total).
+#                                Set to 0 to disable retriggering.
 #
 # Exit codes:
 #   0 — APPROVED   (bot responded with no blocking findings)
@@ -32,8 +36,18 @@
 #      Note: bare "blocking" is excluded to avoid false positives on
 #      "no blocking issues found" — use specific phrases instead.
 #   2. Approval signals present → APPROVED (exit 0)
-#      Signals (case-insensitive): "approved", "lgtm", "looks good"
+#      Signals (case-insensitive): "approved", "lgtm", "looks good",
+#      "didn't find any major issues" (Codex-specific clean phrase)
 #   3. Neither found (unrecognized format) → safe-fails to NEEDS_REVISION (exit 1)
+#
+# Response source detection (two sources polled each cycle):
+#   - issues/{PR}/comments — plain PR comments; matches both BOT_LOGIN and
+#     BOT_LOGIN_PLAIN (login without [bot] suffix). Codex posts "clean" results
+#     here from the non-[bot] account (e.g. "chatgpt-codex-connector").
+#   - pulls/{PR}/reviews   — GitHub Review objects; matches both logins. Codex
+#     posts findings here from the [bot]-suffixed account. Polled as fallback
+#     when no PR comment is found; review body safe-fails to NEEDS_REVISION,
+#     which causes pr-review-loop.sh to count unresolved inline threads.
 #
 # Idempotency (BR-10):
 #   Before posting a trigger comment, the script queries existing PR comments
@@ -46,7 +60,7 @@ set -euo pipefail
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
 if [ $# -lt 3 ]; then
-  echo "Usage: $0 <pr_number> <owner> <repo> [--trigger-phrase <phrase>] [--bot-login <login>] [--poll-interval <seconds>] [--max-wait <seconds>]" >&2
+  echo "Usage: $0 <pr_number> <owner> <repo> [--trigger-phrase <phrase>] [--bot-login <login>] [--poll-interval <seconds>] [--max-wait <seconds>] [--max-retriggers <count>]" >&2
   exit 2
 fi
 
@@ -83,7 +97,8 @@ esac
 TRIGGER_PHRASE="${CODEX_GITHUB_TRIGGER_PHRASE:-@codex review}"
 BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-codex-ai[bot]}"
 POLL_INTERVAL=30
-MAX_WAIT=300
+MAX_WAIT=600
+MAX_RETRIGGERS=1
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -99,6 +114,9 @@ while [ $# -gt 0 ]; do
     --max-wait)
       if [ $# -lt 2 ]; then echo "ERROR: --max-wait requires a value" >&2; exit 2; fi
       MAX_WAIT="$2"; shift 2;;
+    --max-retriggers)
+      if [ $# -lt 2 ]; then echo "ERROR: --max-retriggers requires a value" >&2; exit 2; fi
+      MAX_RETRIGGERS="$2"; shift 2;;
     *)
       echo "ERROR: unknown option '$1'" >&2; exit 2;;
   esac
@@ -118,6 +136,13 @@ esac
 case "$MAX_WAIT" in
   ''|0|*[!0-9]*)
     echo "ERROR: --max-wait value '$MAX_WAIT' is not a positive integer (must be >= 1)" >&2
+    exit 2
+    ;;
+esac
+# MAX_RETRIGGERS may be 0 (disable retriggering) but must be a non-negative integer.
+case "$MAX_RETRIGGERS" in
+  ''|*[!0-9]*)
+    echo "ERROR: --max-retriggers value '$MAX_RETRIGGERS' is not a non-negative integer (must be >= 0)" >&2
     exit 2
     ;;
 esac
@@ -149,7 +174,17 @@ fi
 echo "INFO: PR #$PR_NUMBER HEAD commit: $CURRENT_SHA"
 echo "INFO: Bot login: $BOT_LOGIN"
 echo "INFO: Trigger phrase: $TRIGGER_PHRASE"
-echo "INFO: Poll interval: ${POLL_INTERVAL}s, Max wait: ${MAX_WAIT}s"
+if [ "$POLL_INTERVAL" -gt "$MAX_WAIT" ]; then
+  POLL_INTERVAL="$MAX_WAIT"
+fi
+echo "INFO: Poll interval: ${POLL_INTERVAL}s, Max wait (total): ${MAX_WAIT}s"
+
+# Derive plain bot login (without [bot] suffix) for matching PR-comment responses.
+# Codex posts "clean" results as regular PR comments from the non-[bot] account
+# (e.g. "chatgpt-codex-connector"), while findings are posted as GitHub Reviews
+# from the [bot]-suffixed account (e.g. "chatgpt-codex-connector[bot]").
+BOT_LOGIN_PLAIN="${BOT_LOGIN%\[bot\]}"
+echo "INFO: Bot login (plain, for PR-comment matching): $BOT_LOGIN_PLAIN"
 
 # ── Idempotency guard (BR-10) ─────────────────────────────────────────────────
 # Check whether a trigger comment for the current commit SHA already exists.
@@ -165,8 +200,8 @@ IDEM_STDERR=$(mktemp)
 IDEM_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
   2>"$IDEM_STDERR" \
-  | jq -r --arg sha "$CURRENT_SHA" --arg trigger "$TRIGGER_PHRASE" --arg bot "$BOT_LOGIN" \
-    '.[] | select(.user.login != $bot) | select((.body | test($sha)) and (.body | ascii_downcase | contains($trigger | ascii_downcase))) | {id: .id, created_at: .created_at, body: .body}' \
+  | jq -r --arg sha "$CURRENT_SHA" --arg marker "review triggered by workflow runner" --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" \
+    '.[] | select(.user.login != $bot and .user.login != $bot_plain) | select((.body | test($sha)) and (.body | ascii_downcase | contains($marker))) | {id: .id, created_at: .created_at, body: .body}' \
   > "$IDEM_TMPFILE"; then
   TRIGGER_COMMENT_INFO=$(head -c 2000 "$IDEM_TMPFILE")
 else
@@ -207,18 +242,32 @@ if [ -z "$TRIGGER_TIME" ]; then
   echo "INFO: trigger comment posted at $TRIGGER_TIME (server-assigned timestamp)"
 fi
 
-# ── Poll for bot response ─────────────────────────────────────────────────────
+# ── Poll for bot response (with retrigger support) ───────────────────────────
+#
+# Outer loop: we keep polling until the shared MAX_WAIT budget is exhausted.
+# If the bot does not respond during an attempt, we re-post the trigger comment
+# (up to MAX_RETRIGGERS times) and continue polling with the remaining budget.
+# This handles the
+# case where Codex silently drops the first @codex review request — in practice
+# a re-post usually gets a response. After all attempts are exhausted, we exit
+# with TIMED_OUT (treated as unavailable by the caller).
 
 echo "INFO: polling for response from '$BOT_LOGIN' (trigger time: $TRIGGER_TIME)..."
+echo "INFO: MAX_WAIT=${MAX_WAIT}s total; up to $((MAX_RETRIGGERS + 1)) attempt(s) (MAX_RETRIGGERS=$MAX_RETRIGGERS)"
 
-ELAPSED=0
+RETRIGGER_COUNT=0
 CONSECUTIVE_API_FAILURES=0
 MAX_CONSECUTIVE_FAILURES=3
-while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
+# Outer retrigger loop. TOTAL_ELAPSED tracks the full shared wait budget.
+# TRIGGER_TIME is updated to the retrigger comment's timestamp after each
+# retrigger post, scoping the next inner poll to responses after that point.
+TOTAL_ELAPSED=0
+while true; do
+  while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
   sleep "$POLL_INTERVAL"
-  ELAPSED=$((ELAPSED + POLL_INTERVAL))
+  TOTAL_ELAPSED=$((TOTAL_ELAPSED + POLL_INTERVAL))
 
-  echo "INFO: polling... elapsed ${ELAPSED}s / ${MAX_WAIT}s"
+  echo "INFO: polling... elapsed ${TOTAL_ELAPSED}s / ${MAX_WAIT}s"
 
   # Query comments authored by the bot that appeared after the trigger comment timestamp.
   # The bot login may include "[bot]" suffix — use exact string match on user.login.
@@ -232,8 +281,8 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
   POLL_TMPFILE=$(mktemp)
   if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
     2>"$POLL_STDERR" \
-    | jq -r --arg bot "$BOT_LOGIN" --arg trigger_time "$TRIGGER_TIME" \
-        '.[] | select(.user.login == $bot) | select(.created_at > $trigger_time) | .body' \
+    | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" \
+        '.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time) | .body' \
     > "$POLL_TMPFILE"; then
     # Truncate after successful API call — no SIGPIPE risk here
     BOT_RESPONSE=$(head -c 10000 "$POLL_TMPFILE")
@@ -250,6 +299,25 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
       exit 2
     fi
     continue
+  fi
+
+  # Also check PR reviews — Codex posts findings as a GitHub Review object
+  # (via pulls/{PR}/reviews), not as a plain PR comment. Combining both sources
+  # ensures we detect findings immediately instead of waiting for a timeout.
+  if [ -z "$BOT_RESPONSE" ]; then
+    REVIEW_TMPFILE=$(mktemp)
+    if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
+      2>/dev/null \
+      | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" \
+          '.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at > $trigger_time) | .body' \
+      > "$REVIEW_TMPFILE" 2>/dev/null; then
+      REVIEW_BODY=$(head -c 5000 "$REVIEW_TMPFILE")
+      if [ -n "$REVIEW_BODY" ]; then
+        BOT_RESPONSE="$REVIEW_BODY"
+        echo "INFO: bot response detected via PR reviews endpoint"
+      fi
+    fi
+    rm -f "$REVIEW_TMPFILE"
   fi
 
   if [ -n "$BOT_RESPONSE" ]; then
@@ -271,7 +339,8 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
     #    "action required", "required:", "❌"
     #
     # 2. Explicit approval signals present → APPROVED (exit 0)   [checked second]
-    #    Approval signals: "approved", "lgtm", "looks good"
+    #    Approval signals: "approved", "lgtm", "looks good",
+    #    "didn't find any major issues" (Codex-specific clean phrase)
     #
     # 3. Neither found (unrecognized response format) → NEEDS_REVISION (exit 1)
     #    Safe-fail: default to NEEDS_REVISION when the format is unrecognized to
@@ -284,7 +353,7 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
       echo "$BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
       exit 1
-    elif echo "$BOT_RESPONSE" | grep -qiE "(approved|lgtm|looks[[:space:]]+good)"; then
+    elif echo "$BOT_RESPONSE" | grep -qiE "(approved|lgtm|looks[[:space:]]+good|didn.t find[[:space:]]+any major[[:space:]]+issues)"; then
       echo "VERDICT: APPROVED"
       echo "---BEGIN BOT RESPONSE---"
       echo "$BOT_RESPONSE"
@@ -298,11 +367,35 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
       exit 1
     fi
   fi
-done
+  done  # end inner poll loop
+
+  # Inner poll loop ended without a bot response — try to re-trigger if budget remains.
+  if [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ] && [ "$RETRIGGER_COUNT" -lt "$MAX_RETRIGGERS" ]; then
+    RETRIGGER_COUNT=$((RETRIGGER_COUNT + 1))
+    ATTEMPT_NUM=$((RETRIGGER_COUNT + 1))
+    TOTAL_ATTEMPTS=$((MAX_RETRIGGERS + 1))
+    echo "INFO: no response yet; re-triggering (attempt ${ATTEMPT_NUM}/${TOTAL_ATTEMPTS}, total elapsed ${TOTAL_ELAPSED}s/${MAX_WAIT}s)..."
+    # --raw-field passes the body string as-is to the GitHub API without shell
+    # re-interpretation, so special characters in TRIGGER_PHRASE are safe.
+    if ! TRIGGER_TIME=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
+      --method POST \
+      --raw-field body="$TRIGGER_PHRASE — retrigger ${RETRIGGER_COUNT}/${MAX_RETRIGGERS} after timeout (sha: $CURRENT_SHA)" \
+      --jq '.created_at'); then
+      echo "ERROR: failed to post retrigger comment to PR #$PR_NUMBER" >&2
+      echo "VERDICT: TIMED_OUT — failed to post retrigger comment (treated as unavailable)"
+      exit 2
+    fi
+    echo "INFO: retrigger comment posted at $TRIGGER_TIME (TRIGGER_TIME updated)"
+    continue
+  else
+    break
+  fi
+done  # end outer retrigger loop
 
 # ── Timeout ───────────────────────────────────────────────────────────────────
 
-echo "VERDICT: TIMED_OUT — no response from '$BOT_LOGIN' within ${MAX_WAIT}s after trigger"
+TOTAL_ATTEMPTS=$((MAX_RETRIGGERS + 1))
+echo "VERDICT: TIMED_OUT — no response from '$BOT_LOGIN' after ${TOTAL_ELAPSED}s (budget ${MAX_WAIT}s) across up to ${TOTAL_ATTEMPTS} attempt(s)"
 echo "INFO: remediation — verify the Codex GitHub App is installed on $OWNER/$REPO."
 echo "INFO: You can manually trigger the review by posting: $TRIGGER_PHRASE"
 exit 2

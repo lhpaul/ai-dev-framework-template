@@ -100,9 +100,29 @@ If the SHA is **not found**, the agent must **not** record it as the resolved co
 
 #### Stale review after timeout
 
-Also handle the case where a platform posted blocking findings after a previous run timed out and the agent moved on: if those findings are still unresolved per the rules above, dispatch a fixer, wait for the push, then run the scripts.
+Also handle the case where a platform posted blocking findings after a previous run timed out and the agent moved on: if those findings are still unresolved per the rules above, address them before re-running the scripts. Apply the **Inline fix rule below first** when all findings are mechanical (single file, fully described, ≤ 5 lines); fall back to dispatching a fixer sub-agent only when the inline rule does not apply. In either case, wait for the push to land before running the scripts again — do not re-trigger the reviewer loop against stale findings.
 
-If unresolved findings exist: dispatch a fixer agent, wait for the push, then proceed to the scripts. Do not re-trigger the reviewer loop against stale findings — fix first.
+### Inline fix rule (attempt before sub-agent dispatch)
+
+Before dispatching a fixer sub-agent, check whether ALL blocking findings are **mechanical** — meeting every one of these criteria:
+
+1. **Single file across the batch**: all blocking findings reference the **same single file** (one file total across the batch — not one file per finding). If two findings name two different files, the inline path does not apply; dispatch a sub-agent.
+2. **Fully described**: each finding's body completely and unambiguously specifies the change (e.g., "replace `grep '^\s*'` with `grep '^[[:space:]]*'`", "add `--limit 100` to the `gh issue list` call", "remove the `states:OPEN` argument").
+3. **Small scope**: the total estimated change across all blocking findings is ≤ 5 lines.
+
+**When ALL criteria are met — apply the fixes directly** in the current session using Edit/Bash tools:
+
+1. Apply every blocking finding in one pass (follow the batching rule: all in one commit).
+2. Commit with a descriptive message (e.g., `fix: address [platform] findings inline ([brief description])`).
+3. Push the commit. *(Push before resolving threads — if push fails, threads must not be falsely marked resolved.)*
+4. Reply to each finding's review thread with the fix description and commit SHA.
+5. Resolve each addressed thread via the GraphQL `resolveReviewThread` mutation.
+6. **Increment `cycle`** (the same counter used in the sub-agent loop). Inline fix retries are bounded by `max_cycles` exactly like sub-agent retries — the inline path is a faster lane, not an unbounded one.
+7. Re-run the reviewer loop script from the top. If it returns `clean`, proceed normally. If the loop still reports unresolved blocking findings **and** `cycle >= max_cycles`, escalate to human (the just-pushed fix is always given a chance to be verified before escalating).
+
+**Do not dispatch a sub-agent for mechanical findings.** Sub-agent startup overhead (context loading, planning) typically costs 10–20 minutes for changes that take 30 seconds to apply directly.
+
+**When ANY criterion fails** — fall through to the sub-agent dispatch path. The inline path is a fast lane, not a mandatory gate. When in doubt about whether a finding is fully described or single-file, dispatch the sub-agent.
 
 ### Worktree discipline for fixer agents (`BATCH_CONTEXT=true`)
 
@@ -127,6 +147,69 @@ Reviewer bots (e.g. Devin) start a new review cycle within 5–8 minutes of each
 Findings that cannot be addressed in this dispatch (e.g. require a human decision, are out of scope, or are genuinely contradictory) should be noted. Do not withhold the push for unresolvable findings — push all the fixes you can, then document what remains.
 
 **When delegating to a fixer subagent**, include this rule explicitly in the subagent instruction so it knows not to push incrementally.
+
+### Attempt-context injection rule
+
+This rule mirrors the Attempt-context injection rule in Protocol 91 Step 7. It governs
+what the orchestrator prepends to the fixer agent's prompt on each dispatch when running
+the standalone reviewer loop path.
+
+**First dispatch (cycle = 1)**
+
+No attempt-context prefix is added. The fixer receives only the standard
+blocking-findings list and the batching rule above.
+
+**Retry dispatches (cycle ≥ 2)**
+
+Before dispatching the fixer, the orchestrator prepends an attempt-context header
+to the fixer's prompt using the following format:
+
+> Attempt N/M: prior attempt(s) tried [per-attempt summaries]. The following findings
+> remain open: [standard blocking-findings list]. Try a different approach for each
+> remaining finding.
+
+Where:
+
+- `N` = the current `cycle` value (matches the loop's `cycle` counter exactly)
+- `M` = `max_cycles` (the loop escalation limit — default: 10)
+- `[per-attempt summaries]` = one entry per prior dispatch, each one-to-two plain-language
+  sentences describing what that attempt changed and which findings it addressed or left
+  open. Derive each entry from the PR feedback ledger and the fixer's commit message /
+  response for that cycle.
+- `[standard blocking-findings list]` = the same findings list passed in any dispatch —
+  the attempt-context prefix does not replace it
+
+**Accumulating summaries across retries**
+
+For cycle N, include summaries for all N-1 prior attempts, not only the most recent.
+Each entry should be keyed to its cycle number for clarity:
+
+> Attempt 1: rewrote the `foo()` function signature in `bar.sh`; MD009 trailing-space
+> finding on line 42 remained open.
+> Attempt 2: removed trailing space on line 42; `relative-links` finding on `baz.md`
+> remained open.
+
+**Fallback when no prior-attempt summary is available**
+
+If no summary was recorded for a prior attempt (e.g., the fixer did not respond or
+the attempt had no ledger entries), use the minimal fallback:
+
+> Attempt N/M: prior attempt did not fully resolve all findings. Try a different approach.
+
+**Reappearance notation**
+
+When a finding that was marked `resolved` in a prior cycle reappears in the current
+ledger (same `(platform, path, body_snippet)` key, status reverted to `open`), the
+per-attempt summary for the cycle in which it was "resolved" must note the reappearance:
+
+> Attempt 2: removed trailing space on line 42 (fix did not hold — finding reappeared
+> in cycle 3).
+
+**In-session state only**
+
+Attempt summaries live in the orchestrator's in-session state for the duration of the
+PR's review loop. They are not persisted to disk or to any external tracker. They are
+discarded when the orchestration session ends.
 
 ### Shell script fix verification (fixer agents)
 
@@ -204,6 +287,36 @@ grep -n "<old-term>" <file>  # verify no stale references remain
 ```
 
 After committing, apply the re-read verification described in [Verification: Re-read to confirm each fix](#verification-re-read-to-confirm-each-fix) above before marking the finding as resolved.
+
+### All-occurrences rule for literal value fixes (mandatory)
+
+When a reviewer flags a specific literal value — a numeric constant, hex value, identifier string, repeated phrase, or any other repeated literal — the fixer agent **must** fix every occurrence of that value across all affected files in the PR, not only the specific line flagged by the reviewer. Fixing one occurrence while leaving identical values elsewhere forces multiple unnecessary review passes and is a protocol violation.
+
+**Required sequence before committing any literal-value fix:**
+
+1. **Search the entire document** for all occurrences of the old value:
+
+   ```bash
+   grep -n "<old_value>" <file>
+   ```
+
+2. **Search all other files affected by the PR** for the same value:
+
+   ```bash
+   # For each file changed in this PR:
+   git diff --name-only HEAD~1 HEAD | xargs grep -ln "<old_value>"
+   ```
+
+3. **Fix every occurrence** in the same commit — do not leave any behind.
+
+4. **Verify with grep** on all affected files to confirm no occurrences remain before pushing:
+
+   ```bash
+   grep -rn "<old_value>" <all-affected-files>
+   # Expected: no output (zero occurrences)
+   ```
+
+This rule applies to any value type: version numbers, timeout values, port numbers, hex color codes, string constants, label names, section headers, or any other repeated literal. If a reviewer flags one instance, treat it as a signal to fix all instances — the reviewer will check all occurrences on the next cycle and finding any remaining instance resets the review loop.
 
 ### PR feedback tracking and comments
 

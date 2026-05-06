@@ -296,7 +296,23 @@ If no blocking human decision remains:
 2. Create branch: `git checkout -b implementation-plan/[branch-slug]` from `develop`
 3. Write the plan file
 4. Write the smoke test runbook
-5. **Pre-commit lint check (mandatory — do not skip)**:
+5. **Cross-section consistency self-check (mandatory — do not skip)**:
+
+   Before committing, verify that every function name, constant, and architecture decision index (ADR/decision number) that appears more than once in the plan has a consistent definition across all occurrences. Contradictory definitions of the same symbol in different sections lead to multiple unnecessary implementation review passes.
+
+   Procedure:
+   1. Collect all identifiers that appear more than once: function/method names, constant names, and decision index labels (e.g., "Decision 1", "ADR-3").
+   2. For each repeated identifier, compare every occurrence across all sections of the plan document.
+   3. If any two occurrences define or describe the identifier differently (e.g., incompatible signatures, conflicting return types, different constant values, or contradictory descriptions), fix the inconsistency before proceeding.
+
+   Common sources of inconsistency to check:
+   - A function described with different signatures or parameters in the "Architecture" section vs. the "Implementation Order" steps.
+   - A constant defined with one value in the overview and a different value in the verification step.
+   - A decision (e.g., "Decision 1: use X") referenced as "Decision 2" or with a different rationale in another section.
+
+   Fix all inconsistencies found before moving to the lint check. Do not proceed to commit with known cross-section contradictions.
+
+6. **Pre-commit lint check (mandatory — do not skip)**:
 
    Run `markdownlint-cli2` on the plan file and smoke test runbook before staging. This catches broken relative links (wrong `../../` depth), trailing spaces, and missing trailing newlines that would otherwise fail CI and require a fix commit.
 
@@ -319,13 +335,13 @@ If no blocking human decision remains:
 
    > **Worktree note**: When running inside a git worktree (e.g., when dispatched by the Portfolio Orchestrator), `node_modules/` does not exist inside the worktree directory. The `$(git rev-parse --git-common-dir)/..` expression resolves to the main repo root in both the main tree and any worktree.
 
-6. **Do NOT update CHANGELOG**: `implementation-plan/*` branches are exempt from CHANGELOG entries. The changelog policy only applies to `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches. Do not create or modify `CHANGELOG.md` in this PR.
-7. Commit: `docs: add implementation plan for [feature-name]`
-8. Push: `git push -u origin implementation-plan/[branch-slug]`
-9. Open a **draft** PR targeting `develop` with:
-   - Title: `docs(plan): [feature-name]`
-   - Body: summary of the approach, complexity estimate, key risks, link to plan and runbook
-10. Return the branch + PR details to the **Work Item Runner**
+7. **Do NOT update CHANGELOG**: `implementation-plan/*` branches are exempt from CHANGELOG entries. The changelog policy only applies to `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches. Do not create or modify `CHANGELOG.md` in this PR.
+8. Commit: `docs: add implementation plan for [feature-name]`
+9. Push: `git push -u origin implementation-plan/[branch-slug]`
+10. Open a **draft** PR targeting `develop` with:
+    - Title: `docs(plan): [feature-name]`
+    - Body: summary of the approach, complexity estimate, key risks, link to plan and runbook
+11. Return the branch + PR details to the **Work Item Runner**
 
 ---
 

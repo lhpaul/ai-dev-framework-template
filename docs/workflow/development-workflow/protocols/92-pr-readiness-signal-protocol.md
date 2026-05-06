@@ -13,6 +13,7 @@ This is a **repo-wide definition**. All agents apply these labels consistently.
 | `ready-for-human-review` | The PR is ready for a human reviewer. CI is green. The `REVIEW.md` gate is satisfied. Every configured automated reviewer is clean or skipped. |
 | `needs-fixes` | The PR still needs fixes before it is ready for human review. This may be due to human-requested changes, failing CI, or blocking automated PR feedback. |
 | `ready-for-regression` | Automated code reviews are clean (or skipped). E2e/regression tests should now run. Applied by the orchestrator (Step 7b) on implementation PRs (`feature/*`, `fix/*`, `hotfix/*`, `refactor/*`), and by the prepare-release flow (protocol `05`) on **production** release PRs (`release/*` → `main`) only. |
+| `needs-setup` | PR introduces one or more infrastructure dependencies (env vars, secrets, DNS records, service account tokens, etc.) that require human setup steps before the feature can be safely enabled. Co-exists with `ready-for-human-review`; the human removes this label after completing (or intentionally deferring) setup. |
 
 ---
 
@@ -57,6 +58,32 @@ Release PRs typically do not use the same draft → `gh pr ready` path as featur
 This label is **not removed** after e2e tests pass — it persists on the PR. The `ready-for-human-review` label is what ultimately signals human readiness after CI (including e2e) is green.
 
 This label is **not applied** to spec or plan PRs (`spec/*`, `implementation-plan/*`). It **is** applied to qualifying release PRs per Case B above.
+
+---
+
+## Conditions for `needs-setup`
+
+Apply this label when the agent's infrastructure dependency scan (Protocol 91 Step 8a) detects one or more infrastructure dependency signals in the PR diff. The agent applies it; the human removes it.
+
+**Who applies it**: The agent, as part of Protocol 91 Step 8a, after all automated reviewer loops and CI checks pass but before applying `ready-for-human-review`. The scan runs on every pass through Step 8a (including after fixer pushes) so the label always reflects the current diff.
+
+**Who removes it**: The human reviewer, after completing the listed setup steps (or intentionally deferring them).
+
+**Valid label combinations**:
+
+| Combination | Meaning |
+|---|---|
+| `ready-for-human-review` only | No setup requirements detected — standard ready state |
+| `ready-for-human-review` + `needs-setup` | PR is technically ready but has unmet setup requirements; human must perform setup and then remove `needs-setup` before or after merge |
+| `needs-fixes` + `needs-setup` | Transitional state — PR has both code changes requested by reviewers and setup requirements; `needs-fixes` must be addressed first, at which point `needs-setup` persists alongside `ready-for-human-review` |
+
+**Invariants**:
+
+- **BR-1**: `needs-setup` must always be accompanied by a `## Pre-merge Setup` section in the PR body. Applying the label without the section is an incomplete signal.
+- **BR-2**: The `## Pre-merge Setup` section must not appear in the PR body without `needs-setup` being applied at that time. After the human removes `needs-setup`, the section may remain as a historical record — this is an intentional audit trail, not an orphaned section.
+- **BR-3**: `needs-setup` does not prevent `ready-for-human-review` from being applied, does not block CI from passing, and does not block automated review tools from completing. It co-exists with `ready-for-human-review`.
+- **BR-7**: When the human removes `needs-setup` (Use Case 3 — setup acknowledged), the `## Pre-merge Setup` section remains in the PR body as a historical record. When the agent rescans and finds no infrastructure dependencies (Use Case 4 — dependency removed from diff), the agent removes both the label and the section.
+- **BR-10**: `needs-setup` is distinct from `needs-fixes`. They have different semantics, different lifecycles, and may co-exist. `needs-fixes` signals reviewer-requested code changes; `needs-setup` signals out-of-band human configuration steps.
 
 ---
 
