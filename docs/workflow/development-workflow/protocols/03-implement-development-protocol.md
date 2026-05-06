@@ -844,7 +844,7 @@ Fix all ShellCheck warnings before committing. Do not commit `.sh` files with Sh
 To write the entry correctly:
 
 1. Determine the next patch version from the most recent released section header (e.g., if the latest is `[1.0.0]`, the hotfix version is `[1.0.1]`).
-2. Insert the new versioned section **directly below `[Unreleased]`** (above all prior versioned sections). `auto-tag-release.yml` extracts the hotfix version via `grep -Em 1 '^## \[[0-9]+\.[0-9]+\.[0-9]+\]'`, which matches only full semver headers and skips `[Unreleased]` and any non-versioned headers. The resulting structure should be:
+2. Insert the new versioned section **directly below `[Unreleased]`** (above all prior versioned sections). `auto-tag-release.yml` extracts the hotfix version via `grep -Em 1 '^## \[[0-9]+\.[0-9]+\.[0-9]+'`, which matches semver headers (X.Y.Z) and skips `[Unreleased]` and any non-versioned headers. The resulting structure should be:
 
 ```markdown
 ## [Unreleased]
