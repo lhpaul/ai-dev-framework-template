@@ -127,6 +127,41 @@ This mirrors what Protocol 90 does at the portfolio level in Step 2.5 and ensure
 
 If the tracker is unavailable, log a warning and proceed — do not block advancement.
 
+### Stale `In Development` pre-dispatch check (AC-6, AC-7, AC-8, AC-10)
+
+**Scope** (BR-7): This check applies **only** when the Work Item Runner was dispatched from the Portfolio Orchestrator (i.e., `BATCH_CONTEXT=true` is present in the handoff metadata). A direct human invocation of `item-orchestrator` will encounter an "In Development" status and should prompt the human for confirmation rather than automatically resetting the tracker — the human may intentionally be resuming in-progress work. When `BATCH_CONTEXT=true` is not set, skip this sub-step.
+
+**When `BATCH_CONTEXT=true`**: If the item's tracker status is exactly `In Development` at this point in Step 2, run the following check before dispatching:
+
+1. **Check for an existing implementation branch or open PR**:
+
+   ```bash
+   HAS_BRANCH=$(git ls-remote origin \
+     "refs/heads/feature/${ISSUE_NUMBER}-*" \
+     "refs/heads/fix/${ISSUE_NUMBER}-*" \
+     "refs/heads/refactor/${ISSUE_NUMBER}-*" \
+     "refs/heads/hotfix/${ISSUE_NUMBER}-*" 2>/dev/null | wc -l | tr -d ' ')
+
+   HAS_PR=$(gh pr list --state open \
+     --json number,headRefName \
+     --jq "[.[] | select(.headRefName | test(\"^(feature|fix|refactor|hotfix)/${ISSUE_NUMBER}($|-)\"))] | length" \
+     2>/dev/null || echo 0)
+   ```
+
+2. **If both checks return zero** (no branch, no PR): the "In Development" status is stale (BR-5). Apply the correction:
+
+   - Log a `STALE_STATUS_CORRECTION:` line:
+
+     ```text
+     STALE_STATUS_CORRECTION: issue #<N> tracker shows 'In Development' but no branch or PR found. Correcting to 'Plan Ready'.
+     ```
+
+   - Update the tracker status to `Plan Ready` using `update_tracker_status_best_effort` (BR-6).
+
+   - Continue dispatching the implementation stage as if the item was `Plan Ready` (the Pre-dispatch tracker status update above will then advance the tracker to `In Development` for the new dispatch).
+
+3. **If either check returns non-zero** (branch or PR found): the item is genuinely in progress — do not reset the status. Resume from the existing branch or PR using `workflow-next-action.sh` (AC-8).
+
 ### Pre-dispatch branch check
 
 Before dispatching any creator-stage agent, run all three checks below. An existing branch or active worktree means work already exists and should be resumed rather than restarted.

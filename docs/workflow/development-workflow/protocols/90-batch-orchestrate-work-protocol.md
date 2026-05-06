@@ -153,6 +153,49 @@ If a due date conflicts with the abstract priority order, flag it to the human r
 
 Before batching an item, check its `Depends on` field or tracker dependency data. If any dependency is not yet `Merged` or `Released`, skip the item and record it as blocked.
 
+### Stale `In Development` correction (AC-6, AC-7, AC-8, AC-10)
+
+After building the initial candidate list from the eligibility table above and after the dependency gate, but **before** Step 2.5 (pre-dispatch tracker updates), scan each candidate item whose tracker status is exactly `In Development`:
+
+1. **Check for an existing implementation branch or open PR**:
+
+   ```bash
+   # Check for any implementation branch matching the item's issue number
+   HAS_BRANCH=$(git ls-remote origin \
+     "refs/heads/feature/${ISSUE_NUMBER}-*" \
+     "refs/heads/fix/${ISSUE_NUMBER}-*" \
+     "refs/heads/refactor/${ISSUE_NUMBER}-*" \
+     "refs/heads/hotfix/${ISSUE_NUMBER}-*" 2>/dev/null | wc -l | tr -d ' ')
+
+   # Check for any open implementation PR associated with the item
+   HAS_PR=$(gh pr list --state open \
+     --json number,headRefName \
+     --jq "[.[] | select(.headRefName | test(\"^(feature|fix|refactor|hotfix)/${ISSUE_NUMBER}($|-)\"))] | length" \
+     2>/dev/null || echo 0)
+   ```
+
+2. **If both checks return zero** (no branch, no PR): the "In Development" status is stale (BR-5). Apply the correction:
+
+   - Log a `STALE_STATUS_CORRECTION:` line to the run output (BR-10, AC-10):
+
+     ```text
+     STALE_STATUS_CORRECTION: issue #<N> tracker shows 'In Development' but no branch or PR found. Correcting to 'Plan Ready'.
+     ```
+
+   - Update the tracker status to `Plan Ready` using `update_tracker_status_best_effort` (BR-6):
+
+     ```bash
+     update_tracker_status_best_effort "$ISSUE_NUMBER" "Plan Ready"
+     ```
+
+   - Re-classify the item as `Plan Ready` in the candidate list so it follows the `Plan Ready` dispatch path in Step 2.5 and Step 3.
+
+3. **If either check returns non-zero** (branch or PR found): the item is genuinely in progress — do not reset the status (BR-5 inverse; AC-8).
+
+4. **Duplicate dispatch prevention** (BR-8): once the corrected item enters dispatch via Step 2.5, the pre-dispatch status update immediately advances the tracker to `In Development` (the `Implement` row). On any subsequent eligibility pass within the same run the item will no longer show `Plan Ready`, so it cannot be re-dispatched. No additional tracking mechanism is required.
+
+5. **Scope** (BR-7): this correction applies only within a Portfolio Orchestrator run (this protocol). Items whose tracker status was set outside an orchestrated run are not in scope; those require human correction or a new orchestrated run to detect them.
+
 ---
 
 ## Step 2.5: Pre-Dispatch Tracker Status Update

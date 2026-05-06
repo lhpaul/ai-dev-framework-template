@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Fix stale tracker status transitions in orchestrator pre-dispatch** (#487): corrects post-merge status mapping documentation and adds stale "In Development" detection and correction to Protocol 90 and Protocol 91; adds `check-tracker-merge-mapping.sh` to verify the workflow-to-tracker mapping (AC-9); adds a mapping-summary log step to `update-tracker-on-merge.yml` for CI auditability (AC-1, AC-2, AC-3).
 - **Correct hotfix CHANGELOG placement documentation**: `auto-tag-release.yml` now uses `grep -Em 1 '^## \[[0-9]+\.[0-9]+\.[0-9]+'` (semver X.Y.Z pattern, replaces the looser `^## \[[0-9]` match) to skip `[Unreleased]` and any non-versioned headers and find the newest versioned section; `AGENTS.md` and `03-implement-development-protocol.md` now correctly document that hotfix versioned sections go directly below `[Unreleased]` (above all prior versioned sections), matching Keep a Changelog ordering — not above `[Unreleased]` as previously stated in PR #295.
 
 ## [0.25.1] - 2026-05-06
