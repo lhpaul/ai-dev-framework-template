@@ -482,17 +482,25 @@ run_codex_github_review() {
   local owner repo_name
   owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
   repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+  local max_retriggers
+  max_retriggers="${CODEX_GITHUB_MAX_RETRIGGERS:-1}"
+  case "$max_retriggers" in
+    ''|*[!0-9]*) max_retriggers=1 ;;
+  esac
 
-  # Split max_wait across 2 attempts (initial + 1 retrigger) so total stays
-  # within the caller's budget. floor(max_wait/2) is conservative by design:
-  # 2 * floor(max_wait/2) <= max_wait. Minor timing slack (< poll_interval
-  # per attempt) is accepted as normal polling variance.
+  # Keep polling interval bounded by the wait budget to avoid zero-poll attempts
+  # when a caller provides poll_interval > max_wait.
+  local effective_poll_interval
+  effective_poll_interval="$poll_interval"
+  if [ "$effective_poll_interval" -gt "$max_wait" ]; then
+    effective_poll_interval="$max_wait"
+  fi
   set +e
   "$reviewer_script" "$pr_number" "$owner" "$repo_name" \
     --bot-login "$bot_login" \
-    --poll-interval "$poll_interval" \
-    --max-wait "$(( max_wait / 2 ))" \
-    --max-retriggers 1 >/dev/null 2>&1
+    --poll-interval "$effective_poll_interval" \
+    --max-wait "$max_wait" \
+    --max-retriggers "$max_retriggers" >/dev/null 2>&1
   script_exit=$?
   set -e
 
@@ -1028,13 +1036,17 @@ run_pr_agent_review() {
   fi
 
   _pr_agent_latest_comment() {
+    local match_mode="${1:-strict_sha}"
     gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-      | jq -rs --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -rs --arg bot "$bot_login" --arg sha "$head_sha" --arg since "$since_iso" --arg mode "$match_mode" '
           add // []
           | [.[]
              | select(
                  .user.login == $bot and
-                 .updated_at > $since and
+                 (
+                   ($mode == "strict_sha" and ((.body // "") | contains($sha))) or
+                   ($mode == "recent_or_sha" and (((.body // "") | contains($sha)) or .updated_at > $since))
+                 ) and
                  ((.body // "") | test("PR Reviewer Guide"; "i"))
                )
             ]
@@ -1058,7 +1070,7 @@ run_pr_agent_review() {
   }
 
   # --- Phase 1: Check for an existing PR-Agent summary comment on this HEAD ---
-  comment_body="$(_pr_agent_latest_comment)"
+  comment_body="$(_pr_agent_latest_comment strict_sha)"
   local verdict
   verdict="$(_pr_agent_classify "$comment_body")"
 
@@ -1105,7 +1117,7 @@ run_pr_agent_review() {
 
   # --- Phase 2: Poll until PR-Agent posts its summary comment ---
   while :; do
-    comment_body="$(_pr_agent_latest_comment)"
+    comment_body="$(_pr_agent_latest_comment recent_or_sha)"
     verdict="$(_pr_agent_classify "$comment_body")"
 
     if [ "$verdict" != "none" ]; then

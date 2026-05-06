@@ -314,7 +314,7 @@ consolidate_changelog_duplicates() {
   # preserved (no reordering) — only sections with actual duplicates are
   # reconstructed; clean sections pass through verbatim.
   python3 - "$file" <<'PYEOF'
-import sys, re, os
+import sys, re, os, tempfile
 
 filepath = sys.argv[1]
 with open(filepath, "r") as fh:
@@ -414,11 +414,26 @@ while i < len(lines):
         result.append(line)
         i += 1
 
-# Write atomically via a temp file
-tmp = filepath + ".dedup.tmp"
-with open(tmp, "w") as fh:
-    fh.writelines(result)
-os.replace(tmp, filepath)
+# Write atomically via a uniquely named temp file in the same directory.
+# This avoids collisions and ensures we never replace the target with a
+# partially written file if an exception occurs mid-write.
+tmp_dir = os.path.dirname(filepath) or "."
+fd = None
+tmp = None
+try:
+    fd, tmp = tempfile.mkstemp(prefix=".dedup.", suffix=".tmp", dir=tmp_dir)
+    with os.fdopen(fd, "w") as fh:
+        fd = None
+        fh.writelines(result)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, filepath)
+    tmp = None
+finally:
+    if fd is not None:
+        os.close(fd)
+    if tmp is not None and os.path.exists(tmp):
+        os.unlink(tmp)
 PYEOF
 }
 
@@ -535,9 +550,11 @@ cmd_merge() {
     if [ -f "CHANGELOG.md" ] && [ -f "$lint_script" ]; then
       if ! bash "$lint_script" CHANGELOG.md >/dev/null 2>&1; then
         echo "INFO: CHANGELOG duplicate section headers detected after clean merge of PR #${pr_num} — auto-consolidating..." >&2
-        # Use '|| true' so a Python3 runtime failure does not abort the merge;
-        # the re-lint check below will detect if consolidation was incomplete.
-        consolidate_changelog_duplicates CHANGELOG.md || true
+        # Do not abort merge flow if consolidation tooling is unavailable, but
+        # emit an explicit warning so this does not fail silently.
+        if ! consolidate_changelog_duplicates CHANGELOG.md; then
+          echo "WARNING: CHANGELOG deduplication helper failed (for example, missing python3); continuing without auto-fix." >&2
+        fi
         # Verify the fix resolved all duplicates before amending.
         if bash "$lint_script" CHANGELOG.md >/dev/null 2>&1; then
           git add CHANGELOG.md
