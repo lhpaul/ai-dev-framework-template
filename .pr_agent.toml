@@ -26,6 +26,7 @@ model_weak = "deepseek/deepseek-chat"
 # Pricing: ~$0.74/1M input, ~$3.49/1M output.
 # model = "moonshot/kimi-k2.6"
 # fallback_models = ["moonshot/kimi-k2.6"]
+# model_weak = "moonshot/kimi-k2.6"
 
 [github_action_config]
 auto_review = "true"    # Post a PR Reviewer Guide comment on each push.
