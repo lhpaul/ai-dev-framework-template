@@ -24,14 +24,22 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # --- Model: DeepSeek (via LiteLLM) ---
-          # Model settings live in .pr_agent.toml; only the API key is needed here.
+          # Pinned as env vars in addition to .pr_agent.toml: PR-Agent can fall back
+          # to its Qodo-hosted GPT-5.4 default before TOML settings are fully merged,
+          # causing AuthenticationError on every run when only DEEPSEEK_API_KEY is set.
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          config.model: "deepseek/deepseek-chat"
+          config.fallback_models: '["deepseek/deepseek-chat"]'
           # --- Alternative: Kimi K2.6 (Moonshot AI) ---
-          # Comment out DEEPSEEK_API_KEY above, uncomment below, and update
-          # the model in .pr_agent.toml to "moonshot/kimi-k2.6".
+          # Comment out the DeepSeek vars above, uncomment below, and set
+          # MOONSHOT_API_KEY in GitHub secrets.
           # MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
-          # --- Action filtering ---
-          # Explicitly set pr_actions here (not only in .pr_agent.toml) because
-          # PR-Agent reads this setting before the repo TOML is fully applied,
-          # causing "Skipping action: synchronize" even when the TOML includes it.
+          # config.model: "moonshot/kimi-k2.6"
+          # config.fallback_models: '["moonshot/kimi-k2.6"]'
+          # --- Action and feature flags ---
+          # Set as env vars (not only in .pr_agent.toml) so they take effect
+          # before PR-Agent's internal action/feature checks run.
           github_action_config.pr_actions: '["opened", "reopened", "ready_for_review", "synchronize"]'
+          github_action_config.auto_review: "true"
+          github_action_config.auto_describe: "false"
+          github_action_config.auto_improve: "false"
