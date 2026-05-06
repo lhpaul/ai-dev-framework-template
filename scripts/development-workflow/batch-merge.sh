@@ -550,9 +550,11 @@ cmd_merge() {
     if [ -f "CHANGELOG.md" ] && [ -f "$lint_script" ]; then
       if ! bash "$lint_script" CHANGELOG.md >/dev/null 2>&1; then
         echo "INFO: CHANGELOG duplicate section headers detected after clean merge of PR #${pr_num} — auto-consolidating..." >&2
-        # Use '|| true' so a Python3 runtime failure does not abort the merge;
-        # the re-lint check below will detect if consolidation was incomplete.
-        consolidate_changelog_duplicates CHANGELOG.md || true
+        # Do not abort merge flow if consolidation tooling is unavailable, but
+        # emit an explicit warning so this does not fail silently.
+        if ! consolidate_changelog_duplicates CHANGELOG.md; then
+          echo "WARNING: CHANGELOG deduplication helper failed (for example, missing python3); continuing without auto-fix." >&2
+        fi
         # Verify the fix resolved all duplicates before amending.
         if bash "$lint_script" CHANGELOG.md >/dev/null 2>&1; then
           git add CHANGELOG.md

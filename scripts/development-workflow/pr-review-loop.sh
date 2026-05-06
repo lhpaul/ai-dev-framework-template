@@ -1036,13 +1036,17 @@ run_pr_agent_review() {
   fi
 
   _pr_agent_latest_comment() {
+    local match_mode="${1:-strict_sha}"
     gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-      | jq -rs --arg bot "$bot_login" --arg sha "$head_sha" '
+      | jq -rs --arg bot "$bot_login" --arg sha "$head_sha" --arg since "$since_iso" --arg mode "$match_mode" '
           add // []
           | [.[]
              | select(
                  .user.login == $bot and
-                 ((.body // "") | contains($sha)) and
+                 (
+                   ($mode == "strict_sha" and ((.body // "") | contains($sha))) or
+                   ($mode == "recent_or_sha" and (((.body // "") | contains($sha)) or .updated_at > $since))
+                 ) and
                  ((.body // "") | test("PR Reviewer Guide"; "i"))
                )
             ]
@@ -1066,7 +1070,7 @@ run_pr_agent_review() {
   }
 
   # --- Phase 1: Check for an existing PR-Agent summary comment on this HEAD ---
-  comment_body="$(_pr_agent_latest_comment)"
+  comment_body="$(_pr_agent_latest_comment strict_sha)"
   local verdict
   verdict="$(_pr_agent_classify "$comment_body")"
 
@@ -1113,7 +1117,7 @@ run_pr_agent_review() {
 
   # --- Phase 2: Poll until PR-Agent posts its summary comment ---
   while :; do
-    comment_body="$(_pr_agent_latest_comment)"
+    comment_body="$(_pr_agent_latest_comment recent_or_sha)"
     verdict="$(_pr_agent_classify "$comment_body")"
 
     if [ "$verdict" != "none" ]; then
