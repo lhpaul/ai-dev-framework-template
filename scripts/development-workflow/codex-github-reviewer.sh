@@ -17,7 +17,8 @@
 #                               Also overridable via CODEX_GITHUB_BOT_LOGIN env var.
 #                               Verify the actual bot login from your GitHub App settings.
 #   --poll-interval  <seconds>   Seconds between polling attempts. Default: 30
-#   --max-wait       <seconds>   Maximum wait time per attempt for bot response. Default: 600
+#   --max-wait       <seconds>   Maximum total wait time for bot response across
+#                                all attempts. Default: 600
 #   --max-retriggers <count>     How many times to re-post the trigger after a timeout
 #                                before giving up. Default: 1 (so up to 2 attempts total).
 #                                Set to 0 to disable retriggering.
@@ -173,7 +174,10 @@ fi
 echo "INFO: PR #$PR_NUMBER HEAD commit: $CURRENT_SHA"
 echo "INFO: Bot login: $BOT_LOGIN"
 echo "INFO: Trigger phrase: $TRIGGER_PHRASE"
-echo "INFO: Poll interval: ${POLL_INTERVAL}s, Max wait: ${MAX_WAIT}s"
+if [ "$POLL_INTERVAL" -gt "$MAX_WAIT" ]; then
+  POLL_INTERVAL="$MAX_WAIT"
+fi
+echo "INFO: Poll interval: ${POLL_INTERVAL}s, Max wait (total): ${MAX_WAIT}s"
 
 # Derive plain bot login (without [bot] suffix) for matching PR-comment responses.
 # Codex posts "clean" results as regular PR comments from the non-[bot] account
@@ -240,29 +244,32 @@ fi
 
 # ── Poll for bot response (with retrigger support) ───────────────────────────
 #
-# Outer loop: each iteration is one full poll attempt of up to MAX_WAIT seconds.
-# If the bot does not respond within MAX_WAIT, we re-post the trigger comment
-# (up to MAX_RETRIGGERS times) and start a fresh inner poll. This handles the
+# Outer loop: we keep polling until the shared MAX_WAIT budget is exhausted.
+# If the bot does not respond during an attempt, we re-post the trigger comment
+# (up to MAX_RETRIGGERS times) and continue polling with the remaining budget.
+# This handles the
 # case where Codex silently drops the first @codex review request — in practice
 # a re-post usually gets a response. After all attempts are exhausted, we exit
 # with TIMED_OUT (treated as unavailable by the caller).
 
 echo "INFO: polling for response from '$BOT_LOGIN' (trigger time: $TRIGGER_TIME)..."
-echo "INFO: MAX_WAIT=${MAX_WAIT}s per attempt; up to $((MAX_RETRIGGERS + 1)) attempt(s) total (MAX_RETRIGGERS=$MAX_RETRIGGERS)"
+echo "INFO: MAX_WAIT=${MAX_WAIT}s total; up to $((MAX_RETRIGGERS + 1)) attempt(s) (MAX_RETRIGGERS=$MAX_RETRIGGERS)"
 
 RETRIGGER_COUNT=0
 CONSECUTIVE_API_FAILURES=0
 MAX_CONSECUTIVE_FAILURES=3
-# Outer retrigger loop. ELAPSED is reset to 0 at the top of each iteration.
+# Outer retrigger loop. TOTAL_ELAPSED tracks the full shared wait budget.
 # TRIGGER_TIME is updated to the retrigger comment's timestamp after each
 # retrigger post, scoping the next inner poll to responses after that point.
+TOTAL_ELAPSED=0
 while true; do
-  ELAPSED=0
-  while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
+  ATTEMPT_ELAPSED=0
+  while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
   sleep "$POLL_INTERVAL"
-  ELAPSED=$((ELAPSED + POLL_INTERVAL))
+  ATTEMPT_ELAPSED=$((ATTEMPT_ELAPSED + POLL_INTERVAL))
+  TOTAL_ELAPSED=$((TOTAL_ELAPSED + POLL_INTERVAL))
 
-  echo "INFO: polling... elapsed ${ELAPSED}s / ${MAX_WAIT}s"
+  echo "INFO: polling... attempt elapsed ${ATTEMPT_ELAPSED}s, total elapsed ${TOTAL_ELAPSED}s / ${MAX_WAIT}s"
 
   # Query comments authored by the bot that appeared after the trigger comment timestamp.
   # The bot login may include "[bot]" suffix — use exact string match on user.login.
@@ -365,11 +372,11 @@ while true; do
   done  # end inner poll loop
 
   # Inner poll loop ended without a bot response — try to re-trigger if budget remains.
-  if [ "$RETRIGGER_COUNT" -lt "$MAX_RETRIGGERS" ]; then
+  if [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ] && [ "$RETRIGGER_COUNT" -lt "$MAX_RETRIGGERS" ]; then
     RETRIGGER_COUNT=$((RETRIGGER_COUNT + 1))
     ATTEMPT_NUM=$((RETRIGGER_COUNT + 1))
     TOTAL_ATTEMPTS=$((MAX_RETRIGGERS + 1))
-    echo "INFO: no response after ${MAX_WAIT}s; re-triggering (attempt ${ATTEMPT_NUM}/${TOTAL_ATTEMPTS})..."
+    echo "INFO: no response yet; re-triggering (attempt ${ATTEMPT_NUM}/${TOTAL_ATTEMPTS}, total elapsed ${TOTAL_ELAPSED}s/${MAX_WAIT}s)..."
     # --raw-field passes the body string as-is to the GitHub API without shell
     # re-interpretation, so special characters in TRIGGER_PHRASE are safe.
     if ! TRIGGER_TIME=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
@@ -390,7 +397,7 @@ done  # end outer retrigger loop
 # ── Timeout ───────────────────────────────────────────────────────────────────
 
 TOTAL_ATTEMPTS=$((MAX_RETRIGGERS + 1))
-echo "VERDICT: TIMED_OUT — no response from '$BOT_LOGIN' after ${TOTAL_ATTEMPTS} attempt(s) (${MAX_WAIT}s each)"
+echo "VERDICT: TIMED_OUT — no response from '$BOT_LOGIN' after ${TOTAL_ELAPSED}s (budget ${MAX_WAIT}s) across up to ${TOTAL_ATTEMPTS} attempt(s)"
 echo "INFO: remediation — verify the Codex GitHub App is installed on $OWNER/$REPO."
 echo "INFO: You can manually trigger the review by posting: $TRIGGER_PHRASE"
 exit 2

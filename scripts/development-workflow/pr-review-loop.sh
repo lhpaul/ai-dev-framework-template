@@ -483,15 +483,18 @@ run_codex_github_review() {
   owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
   repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
 
-  # Split max_wait across 2 attempts (initial + 1 retrigger) so total stays
-  # within the caller's budget. floor(max_wait/2) is conservative by design:
-  # 2 * floor(max_wait/2) <= max_wait. Minor timing slack (< poll_interval
-  # per attempt) is accepted as normal polling variance.
+  # Keep polling interval bounded by the wait budget to avoid zero-poll attempts
+  # when a caller provides poll_interval > max_wait.
+  local effective_poll_interval
+  effective_poll_interval="$poll_interval"
+  if [ "$effective_poll_interval" -gt "$max_wait" ]; then
+    effective_poll_interval="$max_wait"
+  fi
   set +e
   "$reviewer_script" "$pr_number" "$owner" "$repo_name" \
     --bot-login "$bot_login" \
-    --poll-interval "$poll_interval" \
-    --max-wait "$(( max_wait / 2 ))" \
+    --poll-interval "$effective_poll_interval" \
+    --max-wait "$max_wait" \
     --max-retriggers 1 >/dev/null 2>&1
   script_exit=$?
   set -e
@@ -1029,15 +1032,12 @@ run_pr_agent_review() {
 
   _pr_agent_latest_comment() {
     gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-      | jq -rs --arg bot "$bot_login" --arg since "$since_iso" --arg sha "$head_sha" '
+      | jq -rs --arg bot "$bot_login" --arg sha "$head_sha" '
           add // []
           | [.[]
              | select(
                  .user.login == $bot and
-                 (
-                   .updated_at > $since or
-                   ((.body // "") | contains($sha))
-                 ) and
+                 ((.body // "") | contains($sha)) and
                  ((.body // "") | test("PR Reviewer Guide"; "i"))
                )
             ]
