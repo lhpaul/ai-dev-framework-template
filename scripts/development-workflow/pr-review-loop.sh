@@ -483,11 +483,19 @@ run_codex_github_review() {
   owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
   repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
 
+  # Split the caller's max_wait budget across the default 2 attempts (1 initial +
+  # 1 retrigger): pass half the budget per attempt so total wait stays within the
+  # configured max_wait ceiling. Without this, the reviewer script's default of
+  # MAX_RETRIGGERS=1 would silently double the effective timeout for every caller.
+  local per_attempt_wait=$(( max_wait / 2 ))
+  if [ "$per_attempt_wait" -lt 30 ]; then per_attempt_wait=30; fi
+
   set +e
   "$reviewer_script" "$pr_number" "$owner" "$repo_name" \
     --bot-login "$bot_login" \
     --poll-interval "$poll_interval" \
-    --max-wait "$max_wait" >/dev/null 2>&1
+    --max-wait "$per_attempt_wait" \
+    --max-retriggers 1 >/dev/null 2>&1
   script_exit=$?
   set -e
 
