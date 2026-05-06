@@ -247,9 +247,10 @@ fi
    - The rule must match the logic in Step 3 above (same checks, same correction target, same
      log prefix).
    - Scope explicitly: this rule applies only when the Work Item Runner was dispatched from the
-     Portfolio Orchestrator (i.e., `BATCH_CONTEXT=true` or the runner is `item-orchestrator`).
-     A direct human invocation that encounters "In Development" with no branch should prompt the
-     human rather than silently resetting — document this distinction.
+     Portfolio Orchestrator (i.e., `BATCH_CONTEXT=true`). A direct human invocation of
+     `item-orchestrator` does not set `BATCH_CONTEXT=true`, so it will encounter the "In
+     Development" state and should prompt the human rather than silently resetting — document
+     this distinction.
 
 5. **Add a mapping-summary log step to `update-tracker-on-merge.yml`** — append a `run:` step
    to the `update-tracker` job that prints the branch → status mapping in a human-readable form
