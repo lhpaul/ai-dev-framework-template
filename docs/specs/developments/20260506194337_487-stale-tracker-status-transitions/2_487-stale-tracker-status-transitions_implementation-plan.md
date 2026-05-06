@@ -234,9 +234,11 @@ fi
      - Emit a log line prefixed `STALE_STATUS_CORRECTION:` (BR-10, AC-10).
      - Treat the now-corrected item as eligible for dispatch in the "Plan Ready" row of the
        Step 2 eligibility table (BR-6).
-     - Note that the item is dispatched at most once per run (BR-8) — the correction itself
-       does not create an extra dispatch; the item simply advances through the normal Plan Ready
-       path.
+     - Duplicate dispatch prevention (BR-8): once the item enters dispatch via Step 4, the
+       Step 2.5 pre-dispatch status update immediately sets the tracker to "Writing Plan" (or
+       the appropriate in-flight status). On any subsequent eligibility pass within the same
+       run the item will no longer show "Plan Ready", so it cannot be re-dispatched. No
+       additional tracking mechanism is required — the pre-dispatch update is the gate.
    - Scope the rule explicitly to the portfolio orchestrator run (BR-7): items discovered outside
      a Protocol 90/91 orchestrated run are not covered.
 
