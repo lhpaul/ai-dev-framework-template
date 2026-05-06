@@ -42,15 +42,19 @@ jobs:
             # below [Unreleased]. We extract specifically the first semver header after [Unreleased]
             # so malformed CHANGELOGs (versioned sections above [Unreleased]) never yield a
             # stale version.
-            if ! grep -q '^## \[Unreleased\]' CHANGELOG.md; then
+            UNRELEASED_COUNT=$(grep -c '^## \[Unreleased\]' CHANGELOG.md || true)
+            if [ "$UNRELEASED_COUNT" -eq 0 ]; then
               echo "ERROR: CHANGELOG.md is missing the required [Unreleased] section."
               echo "       Hotfix CHANGELOG entries must be placed directly below [Unreleased]."
               exit 1
             fi
+            # Extract the first versioned section (## [X.Y.Z]) that appears after the
+            # first [Unreleased] header. The awk exits on first match so only the
+            # newest versioned section (directly below [Unreleased]) is returned.
             FIRST_VERSIONED=$(awk '
               /^\#\# \[Unreleased\]/ { found_unreleased=1; next }
               found_unreleased && /^\#\# \[[0-9]+\.[0-9]+\.[0-9]+/ { print; exit }
-            ' CHANGELOG.md || true)
+            ' CHANGELOG.md)
             if [ -z "$FIRST_VERSIONED" ]; then
               echo "ERROR: No versioned section (## [X.Y.Z]) found after [Unreleased] in CHANGELOG.md."
               echo "       Add the hotfix versioned section directly below [Unreleased] before merging."
