@@ -253,9 +253,15 @@ echo "INFO: MAX_WAIT=${MAX_WAIT}s per attempt; up to $((MAX_RETRIGGERS + 1)) att
 RETRIGGER_COUNT=0
 CONSECUTIVE_API_FAILURES=0
 MAX_CONSECUTIVE_FAILURES=3
+# Outer retrigger loop. ELAPSED is reset to 0 at the top of each iteration.
+# TRIGGER_TIME is deliberately NOT updated after a retrigger: keeping the
+# original timestamp as the filter floor means the inner loop catches both
+# delayed responses to the first trigger AND responses to any retrigger
+# (since retrigger_time > TRIGGER_TIME, all retrigger responses satisfy
+# created_at > TRIGGER_TIME and are picked up normally).
 while true; do
-ELAPSED=0
-while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
+  ELAPSED=0
+  while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
   sleep "$POLL_INTERVAL"
   ELAPSED=$((ELAPSED + POLL_INTERVAL))
 
@@ -359,34 +365,29 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
       exit 1
     fi
   fi
-done
+  done  # end inner poll loop
 
-# Inner poll loop ended without a bot response — try to re-trigger if budget remains.
-if [ "$RETRIGGER_COUNT" -lt "$MAX_RETRIGGERS" ]; then
-  RETRIGGER_COUNT=$((RETRIGGER_COUNT + 1))
-  ATTEMPT_NUM=$((RETRIGGER_COUNT + 1))
-  TOTAL_ATTEMPTS=$((MAX_RETRIGGERS + 1))
-  echo "INFO: no response after ${MAX_WAIT}s; re-triggering (attempt ${ATTEMPT_NUM}/${TOTAL_ATTEMPTS})..."
-  # Post the retrigger comment but do NOT update TRIGGER_TIME.
-  # Keeping the original TRIGGER_TIME means the inner polling loop will catch
-  # any delayed bot response to the FIRST trigger that arrives during the second
-  # wait window — avoiding the edge case where a late response is missed because
-  # it falls between the first and second TRIGGER_TIME values.
-  _retrigger_posted_at=""
-  if ! _retrigger_posted_at=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
-    --method POST \
-    --raw-field body="$TRIGGER_PHRASE (retrigger ${RETRIGGER_COUNT}/${MAX_RETRIGGERS} after timeout)" \
-    --jq '.created_at'); then
-    echo "ERROR: failed to post retrigger comment to PR #$PR_NUMBER" >&2
-    echo "VERDICT: TIMED_OUT — failed to post retrigger comment (treated as unavailable)"
-    exit 2
+  # Inner poll loop ended without a bot response — try to re-trigger if budget remains.
+  if [ "$RETRIGGER_COUNT" -lt "$MAX_RETRIGGERS" ]; then
+    RETRIGGER_COUNT=$((RETRIGGER_COUNT + 1))
+    ATTEMPT_NUM=$((RETRIGGER_COUNT + 1))
+    TOTAL_ATTEMPTS=$((MAX_RETRIGGERS + 1))
+    echo "INFO: no response after ${MAX_WAIT}s; re-triggering (attempt ${ATTEMPT_NUM}/${TOTAL_ATTEMPTS})..."
+    _retrigger_posted_at=""
+    if ! _retrigger_posted_at=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
+      --method POST \
+      --raw-field body="$TRIGGER_PHRASE (retrigger ${RETRIGGER_COUNT}/${MAX_RETRIGGERS} after timeout)" \
+      --jq '.created_at'); then
+      echo "ERROR: failed to post retrigger comment to PR #$PR_NUMBER" >&2
+      echo "VERDICT: TIMED_OUT — failed to post retrigger comment (treated as unavailable)"
+      exit 2
+    fi
+    echo "INFO: retrigger comment posted at ${_retrigger_posted_at} (polling continues from original TRIGGER_TIME=$TRIGGER_TIME)"
+    continue
+  else
+    break
   fi
-  echo "INFO: retrigger comment posted at ${_retrigger_posted_at} (polling continues from original TRIGGER_TIME=$TRIGGER_TIME)"
-  continue
-else
-  break
-fi
-done
+done  # end outer retrigger loop
 
 # ── Timeout ───────────────────────────────────────────────────────────────────
 
