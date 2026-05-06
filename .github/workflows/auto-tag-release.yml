@@ -39,12 +39,12 @@ jobs:
           else
             # hotfix/* — version is the most recent versioned section in CHANGELOG.md.
             # The developer writes ## [X.Y.Z] - YYYY-MM-DD below [Unreleased] per the hotfix protocol.
-            # Match only headers with a semver version number (X.Y.Z) to skip [Unreleased] and any
-            # non-versioned headers (e.g., ## [beta] or ## [1234]).
+            # Match only headers with a semver version number (X.Y.Z or X.Y.Z-suffix) to skip
+            # [Unreleased] and any non-versioned headers (e.g., ## [beta] or ## [1234]).
             FIRST_VERSIONED=$(grep -Em 1 '^## \[[0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md || true)
-            if ! printf '%s\n' "$FIRST_VERSIONED" | grep -Eq '^## \[[0-9]+\.[0-9]+\.[0-9]+'; then
+            if [ -z "$FIRST_VERSIONED" ]; then
               echo "ERROR: Hotfix requires a versioned section header (## [X.Y.Z]) in CHANGELOG.md."
-              echo "       Found: ${FIRST_VERSIONED:-<no versioned ## header found>}"
+              echo "       No versioned ## header found."
               echo "       Add the hotfix versioned section below [Unreleased] before merging."
               exit 1
             fi
