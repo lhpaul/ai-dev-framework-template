@@ -59,7 +59,7 @@ set -euo pipefail
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
 if [ $# -lt 3 ]; then
-  echo "Usage: $0 <pr_number> <owner> <repo> [--trigger-phrase <phrase>] [--bot-login <login>] [--poll-interval <seconds>] [--max-wait <seconds>]" >&2
+  echo "Usage: $0 <pr_number> <owner> <repo> [--trigger-phrase <phrase>] [--bot-login <login>] [--poll-interval <seconds>] [--max-wait <seconds>] [--max-retriggers <count>]" >&2
   exit 2
 fi
 
