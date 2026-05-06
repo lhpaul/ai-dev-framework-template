@@ -37,17 +37,30 @@ jobs:
             # release/* — version is encoded in the branch name
             VERSION="${BRANCH#release/}"
           else
-            # hotfix/* — version is the topmost versioned section in CHANGELOG.md.
-            # The developer writes ## [X.Y.Z] - YYYY-MM-DD above [Unreleased] per the hotfix protocol.
-            # Guard: the first ## section must be a versioned header, not [Unreleased] or anything else.
-            FIRST_H2=$(grep -m 1 '^## ' CHANGELOG.md || true)
-            if ! printf '%s\n' "$FIRST_H2" | grep -Eq '^## \[[0-9]+\.[0-9]+\.[0-9]+'; then
-              echo "ERROR: Hotfix requires the topmost CHANGELOG section to be a versioned header (## [X.Y.Z] - YYYY-MM-DD)."
-              echo "       Found: ${FIRST_H2:-<no ## header found>}"
-              echo "       Add the hotfix versioned section above [Unreleased] before merging."
+            # hotfix/* — version is the first versioned section after [Unreleased] in CHANGELOG.md.
+            # Per the hotfix protocol, the developer inserts ## [X.Y.Z] - YYYY-MM-DD directly
+            # below [Unreleased]. We extract specifically the first semver header after [Unreleased]
+            # so malformed CHANGELOGs (versioned sections above [Unreleased]) never yield a
+            # stale version.
+            UNRELEASED_COUNT=$(grep -c '^## \[Unreleased\]' CHANGELOG.md || true)
+            if [ "$UNRELEASED_COUNT" -eq 0 ]; then
+              echo "ERROR: CHANGELOG.md is missing the required [Unreleased] section."
+              echo "       Hotfix CHANGELOG entries must be placed directly below [Unreleased]."
               exit 1
             fi
-            VERSION_CLEAN=$(printf '%s\n' "$FIRST_H2" | sed 's/^## \[\([^]]*\)\].*/\1/')
+            # Extract the first versioned section (## [X.Y.Z]) that appears after the
+            # first [Unreleased] header. The awk exits on first match so only the
+            # newest versioned section (directly below [Unreleased]) is returned.
+            FIRST_VERSIONED=$(awk '
+              /^\#\# \[Unreleased\]/ { found_unreleased=1; next }
+              found_unreleased && /^\#\# \[[0-9]+\.[0-9]+\.[0-9]+/ { print; exit }
+            ' CHANGELOG.md)
+            if [ -z "$FIRST_VERSIONED" ]; then
+              echo "ERROR: No versioned section (## [X.Y.Z]) found after [Unreleased] in CHANGELOG.md."
+              echo "       Add the hotfix versioned section directly below [Unreleased] before merging."
+              exit 1
+            fi
+            VERSION_CLEAN=$(printf '%s\n' "$FIRST_VERSIONED" | sed 's/^## \[\([^]]*\)\].*/\1/')
             VERSION="v${VERSION_CLEAN}"
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
