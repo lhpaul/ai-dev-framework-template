@@ -487,19 +487,25 @@ run_codex_github_review() {
   # 1 retrigger): pass half the budget per attempt so total wait stays within the
   # configured max_wait ceiling. Without this, the reviewer script's default of
   # MAX_RETRIGGERS=1 would silently double the effective timeout for every caller.
-  local per_attempt_wait=$(( max_wait / 2 ))
-  # Floor: 30s minimum per attempt so the bot has time to respond.
-  # Ceiling: never exceed max_wait itself — if max_wait < 60, the floor would
-  # otherwise produce a total of 60s and silently blow the configured budget.
-  if [ "$per_attempt_wait" -lt 30 ]; then per_attempt_wait=30; fi
-  if [ "$per_attempt_wait" -gt "$max_wait" ]; then per_attempt_wait="$max_wait"; fi
+  # Split the budget: each of the 2 attempts (initial + 1 retrigger) gets half.
+  # If half the budget is less than 30s, the bot would have no meaningful time
+  # to respond per attempt — fall back to a single full-budget attempt instead.
+  # This guarantees total_wait <= max_wait in all cases.
+  local per_attempt_wait retrigger_count
+  per_attempt_wait=$(( max_wait / 2 ))
+  if [ "$per_attempt_wait" -lt 30 ]; then
+    per_attempt_wait="$max_wait"
+    retrigger_count=0
+  else
+    retrigger_count=1
+  fi
 
   set +e
   "$reviewer_script" "$pr_number" "$owner" "$repo_name" \
     --bot-login "$bot_login" \
     --poll-interval "$poll_interval" \
     --max-wait "$per_attempt_wait" \
-    --max-retriggers 1 >/dev/null 2>&1
+    --max-retriggers "$retrigger_count" >/dev/null 2>&1
   script_exit=$?
   set -e
 

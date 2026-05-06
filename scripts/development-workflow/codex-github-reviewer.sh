@@ -254,11 +254,14 @@ RETRIGGER_COUNT=0
 CONSECUTIVE_API_FAILURES=0
 MAX_CONSECUTIVE_FAILURES=3
 # Outer retrigger loop. ELAPSED is reset to 0 at the top of each iteration.
-# TRIGGER_TIME is deliberately NOT updated after a retrigger: keeping the
-# original timestamp as the filter floor means the inner loop catches both
-# delayed responses to the first trigger AND responses to any retrigger
-# (since retrigger_time > TRIGGER_TIME, all retrigger responses satisfy
-# created_at > TRIGGER_TIME and are picked up normally).
+#
+# Design note — TRIGGER_TIME is deliberately NOT updated after a retrigger.
+# The ticket (#497) says "update TRIGGER_TIME" but we intentionally deviate:
+# keeping the ORIGINAL timestamp as the filter floor means the inner loop
+# catches BOTH delayed responses to the first trigger AND responses to any
+# retrigger, because retrigger_time > original_TRIGGER_TIME, so any response
+# has created_at > TRIGGER_TIME and is picked up. Updating TRIGGER_TIME would
+# miss delayed first-trigger responses that arrive during the second window.
 while true; do
   ELAPSED=0
   while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
