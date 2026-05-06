@@ -37,22 +37,18 @@ jobs:
             # release/* — version is encoded in the branch name
             VERSION="${BRANCH#release/}"
           else
-            # hotfix/* — version is the first versioned section in CHANGELOG.md.
+            # hotfix/* — version is the first versioned section after [Unreleased] in CHANGELOG.md.
             # Per the hotfix protocol, the developer inserts ## [X.Y.Z] - YYYY-MM-DD directly
-            # below [Unreleased], making it the first versioned header in the file.
-            # Guard 1: confirm [Unreleased] is still present (protocol invariant).
-            if ! grep -q '^## \[Unreleased\]' CHANGELOG.md; then
-              echo "ERROR: CHANGELOG.md is missing the [Unreleased] section."
-              echo "       Hotfix CHANGELOG entries must be placed below [Unreleased]."
-              exit 1
-            fi
-            # Guard 2: extract the first versioned section (X.Y.Z numeric prefix,
-            # skipping [Unreleased] and non-semver headers).
-            FIRST_VERSIONED=$(grep -Em 1 '^## \[[0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md || true)
+            # below [Unreleased]. We extract specifically the first semver header after [Unreleased]
+            # so malformed CHANGELOGs (versioned sections above [Unreleased]) never yield a
+            # stale version.
+            FIRST_VERSIONED=$(awk '
+              /^\#\# \[Unreleased\]/ { found_unreleased=1; next }
+              found_unreleased && /^\#\# \[[0-9]+\.[0-9]+\.[0-9]+/ { print; exit }
+            ' CHANGELOG.md || true)
             if [ -z "$FIRST_VERSIONED" ]; then
-              echo "ERROR: Hotfix requires a versioned section header (## [X.Y.Z]) in CHANGELOG.md."
-              echo "       No versioned ## header found."
-              echo "       Add the hotfix versioned section below [Unreleased] before merging."
+              echo "ERROR: No versioned section (## [X.Y.Z]) found after [Unreleased] in CHANGELOG.md."
+              echo "       Add the hotfix versioned section directly below [Unreleased] before merging."
               exit 1
             fi
             VERSION_CLEAN=$(printf '%s\n' "$FIRST_VERSIONED" | sed 's/^## \[\([^]]*\)\].*/\1/')
