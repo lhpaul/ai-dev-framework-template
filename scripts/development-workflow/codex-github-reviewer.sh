@@ -370,8 +370,13 @@ if [ "$RETRIGGER_COUNT" -lt "$MAX_RETRIGGERS" ]; then
   # Refresh CURRENT_SHA in case the PR HEAD changed since the previous attempt.
   # CURRENT_SHA is set before the outer loop (at script start) but may be stale
   # if a new commit was pushed while we were waiting.
-  CURRENT_SHA=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefOid \
-    --jq '.headRefOid' 2>/dev/null | cut -c1-12 || printf '%s' "$CURRENT_SHA")
+  _refreshed_sha=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefOid \
+    --jq '.headRefOid' 2>/dev/null | cut -c1-12)
+  if [ -z "$_refreshed_sha" ]; then
+    echo "WARN: could not refresh HEAD SHA — using previous value ($CURRENT_SHA)" >&2
+  else
+    CURRENT_SHA="$_refreshed_sha"
+  fi
   if ! TRIGGER_TIME=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
     --method POST \
     --raw-field body="$TRIGGER_PHRASE (retrigger ${RETRIGGER_COUNT}/${MAX_RETRIGGERS} after timeout, commit: $CURRENT_SHA)" \
