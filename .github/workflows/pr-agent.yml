@@ -1,0 +1,32 @@
+name: PR-Agent
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+  issue_comment:
+    types: [created]
+
+jobs:
+  pr_agent_job:
+    # For pull_request events: always run, including bot-authored PRs (Dependabot, Renovate).
+    # For issue_comment events: only run when a human comments on a PR (not an issue),
+    # preventing PR-Agent from triggering itself when it posts its own review comment.
+    if: ${{ github.event_name == 'pull_request' || (github.event.sender.type != 'Bot' && github.event.issue.pull_request) }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+      contents: read
+    name: PR-Agent review
+    steps:
+      - name: PR-Agent
+        uses: the-pr-agent/pr-agent@009ba5a116c4d3273368a6dc53a4efdb7904d519 # v0.34.3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # --- Model: DeepSeek (via LiteLLM) ---
+          # Model settings live in .pr_agent.toml; only the API key is needed here.
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          # --- Alternative: Kimi K2.6 (Moonshot AI) ---
+          # Comment out DEEPSEEK_API_KEY above, uncomment below, and update
+          # the model in .pr_agent.toml to "moonshot/kimi-k2.6".
+          # MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
