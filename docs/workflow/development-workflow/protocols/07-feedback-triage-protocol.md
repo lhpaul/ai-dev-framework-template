@@ -93,7 +93,7 @@ First, retrieve the category ID:
 gh api graphql -f query='
   query($owner:String!, $repo:String!) {
     repository(owner:$owner, name:$repo) {
-      discussionCategories(first:20) {
+      discussionCategories(first:100) {
         nodes { id name }
       }
     }
@@ -136,10 +136,12 @@ For each Discussion, check whether either condition is met:
 
 **Note on comment count**: `comments.totalCount` counts all comments including replies
 from the original poster. The threshold requires **at least two distinct non-author
-comments** (not just non-zero non-author engagement). When `totalCount` is borderline
-(2–3), manually verify that the count includes two distinct users other than the
-original poster before treating the threshold as met. A single maintainer comment
-plus author self-replies does **not** satisfy the threshold.
+comments** (not just non-zero non-author engagement). For **every** discussion that
+meets `comments.totalCount >= 2`, manually verify that the count includes at least
+two distinct users other than the original poster before treating the threshold as
+met — even when `totalCount` is high. A discussion with 4+ comments can still have
+only one non-author participant (e.g., one maintainer comment plus author replies),
+which does **not** satisfy the threshold.
 
 If the threshold is **not** met, skip the Discussion — leave it open so community
 signal can continue to accrue.
