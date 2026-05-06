@@ -137,6 +137,7 @@ If the tracker is unavailable, log a warning and proceed — do not block advanc
 
    ```bash
    # Both "feature/123-slug" and "feature/123" forms are matched.
+   # spec/ and implementation-plan/ branches are included defensively.
    HAS_BRANCH=$(git ls-remote origin \
      "refs/heads/feature/${ISSUE_NUMBER}-*" \
      "refs/heads/feature/${ISSUE_NUMBER}" \
@@ -146,11 +147,15 @@ If the tracker is unavailable, log a warning and proceed — do not block advanc
      "refs/heads/refactor/${ISSUE_NUMBER}" \
      "refs/heads/hotfix/${ISSUE_NUMBER}-*" \
      "refs/heads/hotfix/${ISSUE_NUMBER}" \
+     "refs/heads/spec/${ISSUE_NUMBER}-*" \
+     "refs/heads/spec/${ISSUE_NUMBER}" \
+     "refs/heads/implementation-plan/${ISSUE_NUMBER}-*" \
+     "refs/heads/implementation-plan/${ISSUE_NUMBER}" \
      2>/dev/null | wc -l | tr -d ' ')
 
    HAS_PR=$(gh pr list --state open \
      --json number,headRefName \
-     --jq "[.[] | select(.headRefName | test(\"^(feature|fix|refactor|hotfix)/${ISSUE_NUMBER}($|-)\"))] | length" \
+     --jq "[.[] | select(.headRefName | test(\"^(feature|fix|refactor|hotfix|spec|implementation-plan)/${ISSUE_NUMBER}($|-)\"))] | length" \
      2>/dev/null || echo 0)
    ```
 

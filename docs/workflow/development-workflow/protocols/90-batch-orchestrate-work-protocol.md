@@ -160,8 +160,11 @@ After building the initial candidate list from the eligibility table above and a
 1. **Check for an existing implementation branch or open PR**:
 
    ```bash
-   # Check for any implementation branch matching the item's issue number.
+   # Check for any workflow branch matching the item's issue number.
    # Both "feature/123-slug" and "feature/123" forms are matched.
+   # Implementation branches are the primary target; spec/plan branches are
+   # included defensively (an item in "In Development" should not have only
+   # a spec or plan branch, but we check them anyway to avoid false resets).
    HAS_BRANCH=$(git ls-remote origin \
      "refs/heads/feature/${ISSUE_NUMBER}-*" \
      "refs/heads/feature/${ISSUE_NUMBER}" \
@@ -171,12 +174,16 @@ After building the initial candidate list from the eligibility table above and a
      "refs/heads/refactor/${ISSUE_NUMBER}" \
      "refs/heads/hotfix/${ISSUE_NUMBER}-*" \
      "refs/heads/hotfix/${ISSUE_NUMBER}" \
+     "refs/heads/spec/${ISSUE_NUMBER}-*" \
+     "refs/heads/spec/${ISSUE_NUMBER}" \
+     "refs/heads/implementation-plan/${ISSUE_NUMBER}-*" \
+     "refs/heads/implementation-plan/${ISSUE_NUMBER}" \
      2>/dev/null | wc -l | tr -d ' ')
 
-   # Check for any open implementation PR associated with the item
+   # Check for any open PR associated with the item across all workflow prefixes
    HAS_PR=$(gh pr list --state open \
      --json number,headRefName \
-     --jq "[.[] | select(.headRefName | test(\"^(feature|fix|refactor|hotfix)/${ISSUE_NUMBER}($|-)\"))] | length" \
+     --jq "[.[] | select(.headRefName | test(\"^(feature|fix|refactor|hotfix|spec|implementation-plan)/${ISSUE_NUMBER}($|-)\"))] | length" \
      2>/dev/null || echo 0)
    ```
 
