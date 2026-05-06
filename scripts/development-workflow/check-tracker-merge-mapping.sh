@@ -38,9 +38,10 @@ ERRORS=0
 # ---------------------------------------------------------------------------
 get_target_status() {
   local prefix="$1"
-  # Find lines containing the prefix pattern, then capture the TARGET_STATUS
-  # assignment within the next 5 lines.
-  grep -A5 "${prefix}/\*" "$WORKFLOW_FILE" \
+  # Anchor on "== ${prefix}/" to avoid substring false-positives
+  # (e.g., "fix/*" is a substring of "hotfix/*"; anchoring on "== fix/"
+  # prevents the hotfix line from satisfying a fix/* lookup).
+  grep -A5 "== ${prefix}/" "$WORKFLOW_FILE" \
     | grep 'TARGET_STATUS=' \
     | head -1 \
     | sed 's/.*TARGET_STATUS="\([^"]*\)".*/\1/' \
