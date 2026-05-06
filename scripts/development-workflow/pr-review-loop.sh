@@ -483,19 +483,17 @@ run_codex_github_review() {
   owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
   repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
 
-  # Split the caller's max_wait budget across the default 2 attempts (1 initial +
-  # 1 retrigger): pass half the budget per attempt so total wait stays within the
-  # configured max_wait ceiling. Without this, the reviewer script's default of
-  # MAX_RETRIGGERS=1 would silently double the effective timeout for every caller.
-  # Split the budget across 2 attempts (initial + 1 retrigger): each gets
-  # floor(max_wait/2). Integer truncation is intentionally conservative —
-  # total_wait = 2 * floor(max_wait/2) <= max_wait, so the configured budget
-  # is never exceeded. If half the budget is less than 30s the bot would have
-  # no meaningful time to respond per attempt, so fall back to a single
-  # full-budget attempt (retrigger_count=0). This affects max_wait 31-59s;
-  # callers with such small budgets get single-attempt behaviour by design.
+  # Split the caller's max_wait budget across 2 attempts (initial + 1 retrigger).
+  # Each attempt gets floor(max_wait/2) seconds. The reviewer script's inner loop
+  # sleeps POLL_INTERVAL before checking elapsed time, so actual wall-clock time
+  # per attempt can overshoot per_attempt_wait by up to poll_interval seconds.
+  # Subtract poll_interval from per_attempt_wait to absorb that overshoot and
+  # keep total_wait within max_wait. Integer truncation is conservative.
+  # If the result is less than 30s the bot has no meaningful time to respond —
+  # fall back to a single full-budget attempt (retrigger_count=0). This affects
+  # callers with very small max_wait values and is intentional.
   local per_attempt_wait retrigger_count
-  per_attempt_wait=$(( max_wait / 2 ))
+  per_attempt_wait=$(( max_wait / 2 - poll_interval ))
   if [ "$per_attempt_wait" -lt 30 ]; then
     per_attempt_wait="$max_wait"
     retrigger_count=0
