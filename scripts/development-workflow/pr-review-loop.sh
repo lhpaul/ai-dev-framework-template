@@ -483,11 +483,16 @@ run_codex_github_review() {
   owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
   repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
 
+  # Split max_wait across 2 attempts (initial + 1 retrigger) so total stays
+  # within the caller's budget. floor(max_wait/2) is conservative by design:
+  # 2 * floor(max_wait/2) <= max_wait. Minor timing slack (< poll_interval
+  # per attempt) is accepted as normal polling variance.
   set +e
   "$reviewer_script" "$pr_number" "$owner" "$repo_name" \
     --bot-login "$bot_login" \
     --poll-interval "$poll_interval" \
-    --max-wait "$max_wait" >/dev/null 2>&1
+    --max-wait "$(( max_wait / 2 ))" \
+    --max-retriggers 1 >/dev/null 2>&1
   script_exit=$?
   set -e
 
