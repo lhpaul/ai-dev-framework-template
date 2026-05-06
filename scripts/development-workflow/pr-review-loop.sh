@@ -488,7 +488,11 @@ run_codex_github_review() {
   # configured max_wait ceiling. Without this, the reviewer script's default of
   # MAX_RETRIGGERS=1 would silently double the effective timeout for every caller.
   local per_attempt_wait=$(( max_wait / 2 ))
+  # Floor: 30s minimum per attempt so the bot has time to respond.
+  # Ceiling: never exceed max_wait itself — if max_wait < 60, the floor would
+  # otherwise produce a total of 60s and silently blow the configured budget.
   if [ "$per_attempt_wait" -lt 30 ]; then per_attempt_wait=30; fi
+  if [ "$per_attempt_wait" -gt "$max_wait" ]; then per_attempt_wait="$max_wait"; fi
 
   set +e
   "$reviewer_script" "$pr_number" "$owner" "$repo_name" \
