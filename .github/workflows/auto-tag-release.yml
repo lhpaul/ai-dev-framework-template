@@ -37,10 +37,11 @@ jobs:
             # release/* — version is encoded in the branch name
             VERSION="${BRANCH#release/}"
           else
-            # hotfix/* — version is the most recent versioned section in CHANGELOG.md.
-            # The developer writes ## [X.Y.Z] - YYYY-MM-DD below [Unreleased] per the hotfix protocol.
-            # Match only headers with a semver version number (X.Y.Z or X.Y.Z-suffix) to skip
-            # [Unreleased] and any non-versioned headers (e.g., ## [beta] or ## [1234]).
+            # hotfix/* — version is the first versioned section in CHANGELOG.md.
+            # Per the hotfix protocol, the developer inserts ## [X.Y.Z] - YYYY-MM-DD directly
+            # below [Unreleased], making it the first versioned header in the file.
+            # The pattern '^## \[[0-9]+\.[0-9]+\.[0-9]+' anchors on three numeric groups,
+            # which skips [Unreleased] (starts with a letter) and any purely-textual headers.
             FIRST_VERSIONED=$(grep -Em 1 '^## \[[0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md || true)
             if [ -z "$FIRST_VERSIONED" ]; then
               echo "ERROR: Hotfix requires a versioned section header (## [X.Y.Z]) in CHANGELOG.md."
