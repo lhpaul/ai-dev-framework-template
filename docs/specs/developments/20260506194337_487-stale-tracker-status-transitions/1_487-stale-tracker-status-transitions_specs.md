@@ -1,14 +1,12 @@
 # Stale Tracker Status Transitions in the Orchestrator — Spec
 
-**Depends on**: <!-- none -->
+**Issue**: #487
 
 ---
 
 ## Overview
 
 The workflow orchestrator and its supporting scripts sometimes set the wrong tracker status when a spec or plan PR is merged (Case A), and may leave the tracker stuck at "In Development" when a dispatch is abandoned before any PR is created (Case B). Both problems cause subsequent batch runs to misread the true state of an item, leading to incorrect parallelisation decisions and, in the worst case, duplicate dispatch. This spec defines the rules and acceptance criteria to fix both cases and prevent duplicate dispatch.
-
-**Language**: Describe outcomes in product and user terms. Do not use API field names, database column names, JSON keys, or code symbols in this document — use plain-language labels and map technical identifiers only in the implementation plan.
 
 ---
 
