@@ -482,6 +482,11 @@ run_codex_github_review() {
   local owner repo_name
   owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
   repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+  local max_retriggers
+  max_retriggers="${CODEX_GITHUB_MAX_RETRIGGERS:-1}"
+  case "$max_retriggers" in
+    ''|*[!0-9]*) max_retriggers=1 ;;
+  esac
 
   # Keep polling interval bounded by the wait budget to avoid zero-poll attempts
   # when a caller provides poll_interval > max_wait.
@@ -495,7 +500,7 @@ run_codex_github_review() {
     --bot-login "$bot_login" \
     --poll-interval "$effective_poll_interval" \
     --max-wait "$max_wait" \
-    --max-retriggers 1 >/dev/null 2>&1
+    --max-retriggers "$max_retriggers" >/dev/null 2>&1
   script_exit=$?
   set -e
 

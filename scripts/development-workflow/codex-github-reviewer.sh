@@ -263,13 +263,11 @@ MAX_CONSECUTIVE_FAILURES=3
 # retrigger post, scoping the next inner poll to responses after that point.
 TOTAL_ELAPSED=0
 while true; do
-  ATTEMPT_ELAPSED=0
   while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
   sleep "$POLL_INTERVAL"
-  ATTEMPT_ELAPSED=$((ATTEMPT_ELAPSED + POLL_INTERVAL))
   TOTAL_ELAPSED=$((TOTAL_ELAPSED + POLL_INTERVAL))
 
-  echo "INFO: polling... attempt elapsed ${ATTEMPT_ELAPSED}s, total elapsed ${TOTAL_ELAPSED}s / ${MAX_WAIT}s"
+  echo "INFO: polling... elapsed ${TOTAL_ELAPSED}s / ${MAX_WAIT}s"
 
   # Query comments authored by the bot that appeared after the trigger comment timestamp.
   # The bot login may include "[bot]" suffix — use exact string match on user.login.
