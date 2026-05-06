@@ -1026,6 +1026,28 @@ When an automated review platform returns inline comments, classify them before 
 
 Soft suggestions may be reported in summaries, but they do not change the loop result to `needs_fixes`. Any blocking finding does.
 
+### Inline fix rule (attempt before sub-agent dispatch)
+
+Before dispatching a fixer sub-agent, check whether ALL blocking findings are **mechanical** — meeting every one of these criteria:
+
+1. **Single file across the batch**: all blocking findings reference the **same single file** (one file total across the batch — not one file per finding). If two findings name two different files, the inline path does not apply; dispatch a sub-agent.
+2. **Fully described**: each finding's body completely and unambiguously specifies the change (e.g., "replace `grep '^\s*'` with `grep '^[[:space:]]*'`", "add `--limit 100` to the `gh issue list` call", "remove the `states:OPEN` argument").
+3. **Small scope**: the total estimated change across all blocking findings is ≤ 5 lines.
+
+**When ALL criteria are met — apply the fixes directly** in the current session using Edit/Bash tools:
+
+1. Apply every blocking finding in one pass (follow the batching rule: all in one commit).
+2. Commit with a descriptive message (e.g., `fix: address [platform] findings inline ([brief description])`).
+3. Push the commit. *(Push before resolving threads — if push fails, threads must not be falsely marked resolved.)*
+4. Reply to each finding's review thread with the fix description and commit SHA.
+5. Resolve each addressed thread via the GraphQL `resolveReviewThread` mutation.
+6. **Increment `cycle`** (the same counter used in the sub-agent loop). Inline fix retries are bounded by `max_cycles` exactly like sub-agent retries — the inline path is a faster lane, not an unbounded one.
+7. Run `pr-review-loop.sh` again from the top of Step 7. If it returns `clean`, proceed normally. If the loop still reports unresolved blocking findings **and** `cycle >= max_cycles`, escalate to human (the just-pushed fix is always given a chance to be verified before escalating).
+
+**Do not dispatch a sub-agent for mechanical findings.** Sub-agent startup overhead (context loading, planning) typically costs 10–20 minutes for changes that take 30 seconds to apply directly.
+
+**When ANY criterion fails** — fall through to the sub-agent dispatch path below. The inline path is a fast lane, not a mandatory gate. When in doubt about whether a finding is fully described or single-file, dispatch the sub-agent.
+
 **Fixing agent by PR branch type:**
 
 | PR branch prefix | Compatibility fixer to dispatch when direct fixes are needed |
