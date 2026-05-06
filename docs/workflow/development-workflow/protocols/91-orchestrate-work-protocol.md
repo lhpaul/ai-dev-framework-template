@@ -136,11 +136,17 @@ If the tracker is unavailable, log a warning and proceed — do not block advanc
 1. **Check for an existing implementation branch or open PR**:
 
    ```bash
+   # Both "feature/123-slug" and "feature/123" forms are matched.
    HAS_BRANCH=$(git ls-remote origin \
      "refs/heads/feature/${ISSUE_NUMBER}-*" \
+     "refs/heads/feature/${ISSUE_NUMBER}" \
      "refs/heads/fix/${ISSUE_NUMBER}-*" \
+     "refs/heads/fix/${ISSUE_NUMBER}" \
      "refs/heads/refactor/${ISSUE_NUMBER}-*" \
-     "refs/heads/hotfix/${ISSUE_NUMBER}-*" 2>/dev/null | wc -l | tr -d ' ')
+     "refs/heads/refactor/${ISSUE_NUMBER}" \
+     "refs/heads/hotfix/${ISSUE_NUMBER}-*" \
+     "refs/heads/hotfix/${ISSUE_NUMBER}" \
+     2>/dev/null | wc -l | tr -d ' ')
 
    HAS_PR=$(gh pr list --state open \
      --json number,headRefName \

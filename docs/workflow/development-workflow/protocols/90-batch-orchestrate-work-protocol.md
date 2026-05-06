@@ -160,12 +160,18 @@ After building the initial candidate list from the eligibility table above and a
 1. **Check for an existing implementation branch or open PR**:
 
    ```bash
-   # Check for any implementation branch matching the item's issue number
+   # Check for any implementation branch matching the item's issue number.
+   # Both "feature/123-slug" and "feature/123" forms are matched.
    HAS_BRANCH=$(git ls-remote origin \
      "refs/heads/feature/${ISSUE_NUMBER}-*" \
+     "refs/heads/feature/${ISSUE_NUMBER}" \
      "refs/heads/fix/${ISSUE_NUMBER}-*" \
+     "refs/heads/fix/${ISSUE_NUMBER}" \
      "refs/heads/refactor/${ISSUE_NUMBER}-*" \
-     "refs/heads/hotfix/${ISSUE_NUMBER}-*" 2>/dev/null | wc -l | tr -d ' ')
+     "refs/heads/refactor/${ISSUE_NUMBER}" \
+     "refs/heads/hotfix/${ISSUE_NUMBER}-*" \
+     "refs/heads/hotfix/${ISSUE_NUMBER}" \
+     2>/dev/null | wc -l | tr -d ' ')
 
    # Check for any open implementation PR associated with the item
    HAS_PR=$(gh pr list --state open \
