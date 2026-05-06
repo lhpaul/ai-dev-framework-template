@@ -31,13 +31,14 @@
 #
 # Verdict parsing (three-path, blocking markers checked first per safe-fail):
 #   1. Blocking markers present → NEEDS_REVISION (exit 1)
-#      Markers (case-insensitive): "changes requested", "blocking issues/finding",
-#      "blocking:", "must fix", "action required", "required:", "❌"
-#      Note: bare "blocking" is excluded to avoid false positives on
-#      "no blocking issues found" — use specific phrases instead.
+#      Markers (case-insensitive): "changes requested", "blocking issues:" (colon
+#      required), "blocking finding", "blocking:", "must fix", "action required",
+#      "required:", "❌"
+#      Note: "blocking issues:" (with colon) disambiguates the list form from
+#      "no blocking issues found"; bare "blocking" excluded (too broad).
 #   2. Approval signals present → APPROVED (exit 0)
 #      Signals (case-insensitive): "approved", "lgtm", "looks good",
-#      "didn't find any major issues" (Codex-specific clean phrase)
+#      "didn't find any major issues", "no blocking issues" (Codex clean phrases)
 #   3. Neither found (unrecognized format) → safe-fails to NEEDS_REVISION (exit 1)
 #
 # Response source detection (two sources polled each cycle):
@@ -329,18 +330,14 @@ while true; do
     # Three-path classification (per spec BR-4 and implementation plan risk table).
     # Blocking markers are checked FIRST (safe-fail: a false NEEDS_REVISION that
     # triggers an unnecessary fix cycle is safer than a false APPROVED that
-    # silently ignores blocking findings). To avoid false positives on negated
-    # phrases like "No blocking issues found", we pre-filter out lines containing
-    # a leading "no" or "not" before the blocking-marker check, then test those
-    # same phrases as explicit approval signals in the second branch.
-    # The bare word "blocking" is excluded because it is too broad; the phrases
-    # below are more targeted.
+    # silently ignores blocking findings). The bare word "blocking" is excluded
+    # because it is too broad; the phrases below are more targeted.
     #
     # 1. Blocking markers present → NEEDS_REVISION (exit 1)      [checked first]
     #    Blocking markers (case-insensitive): "changes requested",
-    #    "blocking issues", "blocking finding", "blocking:", "must fix",
-    #    "action required", "required:", "❌"
-    #    (checked on negation-filtered response to avoid "No blocking issues found")
+    #    "blocking issues:" (colon required to distinguish from "no blocking issues
+    #    found"), "blocking finding", "blocking:", "must fix", "action required",
+    #    "required:", "❌"
     #
     # 2. Explicit approval signals present → APPROVED (exit 0)   [checked second]
     #    Approval signals: "approved", "lgtm", "looks good",
@@ -350,10 +347,15 @@ while true; do
     #    Safe-fail: default to NEEDS_REVISION when the format is unrecognized to
     #    avoid incorrectly approving a response that is a rejection in an
     #    unexpected format (per spec risk mitigation for BR-4).
+    #
+    # Note on "blocking issues" disambiguation: the phrase "blocking issues" appears
+    # in both blocking context ("blocking issues: 1. foo") and clean context ("no
+    # blocking issues found"). Requiring a colon after "issues" targets the blocking
+    # list form while leaving the clean form to match the APPROVED branch via
+    # "no blocking issues". This avoids false positives without line-level filtering
+    # (which would risk missing a genuine marker on the same line as a negation).
 
-    # Strip lines containing clear negation patterns before the blocking check.
-    BOT_RESPONSE_FOR_BLOCKING=$(echo "$BOT_RESPONSE" | grep -viE "(^|[[:space:]])no[[:space:]]+(blocking|major)")
-    if echo "$BOT_RESPONSE_FOR_BLOCKING" | grep -qiE "(changes[[:space:]]+requested|blocking[[:space:]]+issues?|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)"; then
+    if echo "$BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)"; then
       echo "VERDICT: NEEDS_REVISION"
       echo "---BEGIN BOT RESPONSE---"
       echo "$BOT_RESPONSE"

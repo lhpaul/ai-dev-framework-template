@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `codex-github-reviewer.sh`: verdict parsing now pre-filters negation lines (e.g. "No blocking issues found") before the blocking-marker check, eliminating false NEEDS_REVISION verdicts on clean Codex responses; also adds "no blocking issues" as an explicit approval signal
+- `codex-github-reviewer.sh`: verdict parsing now requires a colon after "blocking issues" (matching list form "blocking issues: …") to disambiguate from clean responses like "No blocking issues found"; also adds "no blocking issues" as an explicit approval signal, eliminating false NEEDS_REVISION verdicts on clean Codex responses
 - `codex-github-reviewer.sh`: idempotency guard now uses `contains($sha)` instead of `test($sha)` in jq for literal substring matching instead of unanchored regex matching
 
 ## [0.25.0] - 2026-05-06
