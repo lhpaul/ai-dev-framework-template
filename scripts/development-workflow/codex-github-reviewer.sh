@@ -370,6 +370,8 @@ while true; do
     ATTEMPT_NUM=$((RETRIGGER_COUNT + 1))
     TOTAL_ATTEMPTS=$((MAX_RETRIGGERS + 1))
     echo "INFO: no response after ${MAX_WAIT}s; re-triggering (attempt ${ATTEMPT_NUM}/${TOTAL_ATTEMPTS})..."
+    # --raw-field passes the body string as-is to the GitHub API without shell
+    # re-interpretation, so special characters in TRIGGER_PHRASE are safe.
     if ! TRIGGER_TIME=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
       --method POST \
       --raw-field body="$TRIGGER_PHRASE — retrigger ${RETRIGGER_COUNT}/${MAX_RETRIGGERS} after timeout" \
