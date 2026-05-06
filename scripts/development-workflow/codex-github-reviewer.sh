@@ -367,10 +367,13 @@ if [ "$RETRIGGER_COUNT" -lt "$MAX_RETRIGGERS" ]; then
   ATTEMPT_NUM=$((RETRIGGER_COUNT + 1))
   TOTAL_ATTEMPTS=$((MAX_RETRIGGERS + 1))
   echo "INFO: no response after ${MAX_WAIT}s; re-triggering (attempt ${ATTEMPT_NUM}/${TOTAL_ATTEMPTS})..."
-  # Refresh CURRENT_SHA in case the PR HEAD changed since the previous attempt.
-  # CURRENT_SHA is set before the outer loop (at script start) but may be stale
-  # if a new commit was pushed while we were waiting.
-  if ! TRIGGER_TIME=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
+  # Post the retrigger comment but do NOT update TRIGGER_TIME.
+  # Keeping the original TRIGGER_TIME means the inner polling loop will catch
+  # any delayed bot response to the FIRST trigger that arrives during the second
+  # wait window — avoiding the edge case where a late response is missed because
+  # it falls between the first and second TRIGGER_TIME values.
+  _retrigger_posted_at=""
+  if ! _retrigger_posted_at=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
     --method POST \
     --raw-field body="$TRIGGER_PHRASE (retrigger ${RETRIGGER_COUNT}/${MAX_RETRIGGERS} after timeout)" \
     --jq '.created_at'); then
@@ -378,7 +381,7 @@ if [ "$RETRIGGER_COUNT" -lt "$MAX_RETRIGGERS" ]; then
     echo "VERDICT: TIMED_OUT — failed to post retrigger comment (treated as unavailable)"
     exit 2
   fi
-  echo "INFO: retrigger comment posted at $TRIGGER_TIME (server-assigned timestamp)"
+  echo "INFO: retrigger comment posted at ${_retrigger_posted_at} (polling continues from original TRIGGER_TIME=$TRIGGER_TIME)"
   continue
 else
   break
