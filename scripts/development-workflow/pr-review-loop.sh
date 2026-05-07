@@ -69,7 +69,7 @@ trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"' EXIT
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,pr-agent,coderabbit,codex-github] [--poll-interval seconds] [--max-wait seconds]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary]
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
 triggering a new review, each platform checks for existing blocking findings. If
@@ -78,6 +78,13 @@ If a platform times out or escalates, the script exits 2. If all configured
 platforms are clean or skipped, the script exits 0. If a second instance is
 detected for the same PR number, the script emits RESULT=escalate with
 REASON=lock_contention and exits 75 (EX_TEMPFAIL).
+
+--post-final-summary:
+  Post the "Automated Reviewer Loop Summary" comment even when the result is
+  needs_fixes. Use this when the orchestrator has reached cycle >= max_cycles and
+  will not dispatch another fixer — i.e. the run is terminal regardless of the
+  script exit code. On clean and escalate exits the summary is always posted
+  (this flag has no additional effect for those exits).
 
 Platform selection (in priority order):
   1. --platform flag(s) passed on the command line
@@ -2088,6 +2095,7 @@ poll_interval=120
 poll_interval_explicit=0
 max_wait=1200
 max_wait_explicit=0
+post_final_summary=0
 declare -a platforms=()
 
 while [ "$#" -gt 0 ]; do
@@ -2109,6 +2117,10 @@ while [ "$#" -gt 0 ]; do
       max_wait="$2"
       max_wait_explicit=1
       shift 2
+      ;;
+    --post-final-summary)
+      post_final_summary=1
+      shift
       ;;
     -h|--help)
       usage
@@ -2338,14 +2350,89 @@ if [ -n "$aggregate_output" ]; then
   [ -n "$review_comment_id" ] && print_kv REVIEW_COMMENT_ID "$review_comment_id"
 fi
 
+# --- Automated Reviewer Loop Summary comment ---
+# Post a summary comment to the PR on terminal exit paths so the Step 8c
+# hasReviewSummary check is satisfied automatically. The comment body matches
+# the regex used by workflow-next-action.sh and Protocol 90 Step 5.1:
+#   "Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"
+# Post on `clean` and `escalate` exits unconditionally. For `needs_fixes` exits,
+# post only when --post-final-summary is set — i.e. when the orchestrator has
+# determined this is the terminal run (cycle >= max_cycles) and will not dispatch
+# another fixer regardless of the exit code. Posting on every `needs_fixes` exit
+# would create duplicate comments per fix cycle.
+# `skipped` exits (no platforms configured) also do not post per protocol spec.
+_post_review_summary() {
+  local result="$1"
+  local reason="$2"
+  local platform_list="$3"
+  local blocking="$4"
+  local suggestions="$5"
+
+  if [ -z "$pr_number" ]; then
+    return 0
+  fi
+
+  local result_line
+  case "$result" in
+    clean)
+      if [ "$blocking" -eq 0 ] && [ "$suggestions" -eq 0 ]; then
+        result_line="clean — no blocking findings"
+      else
+        result_line="clean"
+      fi
+      ;;
+    needs_fixes)
+      result_line="max cycles reached — ${blocking} blocking finding(s) unresolved"
+      ;;
+    escalate)
+      result_line="escalated (${reason:-unknown})"
+      ;;
+    *)
+      result_line="$result"
+      ;;
+  esac
+
+  local comment_body
+  comment_body="$(cat <<EOF
+### Automated Reviewer Loop Summary
+
+**Result:** ${result_line}
+**Platforms:** ${platform_list:-none}
+**Findings:** ${blocking} blocking, ${suggestions} suggestions
+
+*Posted automatically by \`pr-review-loop.sh\`.*
+EOF
+)"
+
+  # Suppress errors — a failed comment post should not change the exit code.
+  # The script's primary contract is the key=value output and exit code.
+  set +e
+  gh pr comment "$pr_number" --body "$comment_body" >/dev/null 2>&1
+  set -e
+}
+
 case "$aggregate_result" in
-  clean|skipped)
+  clean)
+    _post_review_summary "$aggregate_result" "$aggregate_reason" \
+      "$(IFS=,; printf '%s' "${platforms[*]}")" \
+      "$total_blocking_count" "$total_suggestion_count"
+    exit 0
+    ;;
+  skipped)
     exit 0
     ;;
   needs_fixes)
+    if [ "$post_final_summary" -eq 1 ]; then
+      _post_review_summary "$aggregate_result" "$aggregate_reason" \
+        "$(IFS=,; printf '%s' "${platforms[*]}")" \
+        "$total_blocking_count" "$total_suggestion_count"
+    fi
     exit 1
     ;;
   escalate)
+    _post_review_summary "$aggregate_result" "$aggregate_reason" \
+      "$(IFS=,; printf '%s' "${platforms[*]}")" \
+      "$total_blocking_count" "$total_suggestion_count"
     exit 2
     ;;
   *)

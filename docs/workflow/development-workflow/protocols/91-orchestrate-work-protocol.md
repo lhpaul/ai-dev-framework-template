@@ -1022,41 +1022,29 @@ gh api "repos/{owner}/{repo}/pulls/<pr_number>/comments/<comment_id>/replies" \
 
 This is **mandatory** — do not skip this step. Unresolved inline comments cause confusion when humans review the PR on GitHub, even if the underlying issue was already fixed. When delegating to a fixer subagent, include explicit instructions to reply to each addressed comment.
 
-#### Final summary comment (MANDATORY)
+#### Final summary comment (script-owned for `clean` and `escalate`)
 
-**You MUST post a PR comment containing "Automated Reviewer Loop Summary" immediately after `pr-review-loop.sh` exits — regardless of the exit result (`clean`, `needs_fixes` when escalating, or `max_cycles`).** This comment is the only reliable signal that Step 7 ran to completion. The orchestrator's Step 8c verification check (`hasReviewSummary`) searches for this comment and will block `ready-for-human-review` if it is absent.
+**`pr-review-loop.sh` automatically posts an "Automated Reviewer Loop Summary" PR comment on `clean` and `escalate` exits.** You do not need to post this comment manually for those two exit paths. The comment body matches the regex used by `workflow-next-action.sh` and the Step 8c verification gate:
 
-**Do not skip this comment under any circumstance.** Omitting it — even when the loop exits cleanly on the first cycle with no findings — is a protocol violation that causes the Step 8c hard gate to fail and requires re-running Step 7.
+```
+Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback
+```
 
-Post via `gh pr comment`:
+The script does **not** post the summary on `needs_fixes` exits (those are non-terminal — the orchestrator re-runs after each fixer push) or `skipped` exits (no platforms configured). For `needs_fixes` at `cycle >= max_cycles`, pass `--post-final-summary` on the last invocation and the script will post the summary automatically before exiting.
+
+The script-posted comment format:
 
 ````markdown
 ### Automated Reviewer Loop Summary
 
-**Result:** clean | escalated (reason) | max cycles reached
-**Cycles:** N / `max_cycles`
+**Result:** clean — no blocking findings | escalated (reason) | max cycles reached — N blocking finding(s) unresolved
 **Platforms:** greptile, devin
+**Findings:** N blocking, N suggestions
 
-| # | Platform | File | Line | Description | Status | Resolved In |
-|---|----------|------|------|-------------|--------|-------------|
-| 1 | greptile | `src/foo.ts` | 42 | First 80 chars... | Resolved | `abc1234` |
-| 2 | greptile | `src/baz.ts` | 5 | First 80 chars... | Unresolved | -- |
-
-**Resolved:** 1 / 2 findings
-
-**Reply-only resolutions (no code fix):** M thread(s) resolved via reply + resolveReviewThread mutation.
-
-| Thread | Author | Concern summary | Rationale |
-|--------|--------|-----------------|-----------|
-| #1 | coderabbitai[bot] | First 60 chars of concern... | First 80 chars of reply rationale... |
+*Posted automatically by `pr-review-loop.sh`.*
 ````
 
-When M=0 (all resolutions were code fixes), omit the "Reply-only resolutions" subsection entirely.
-
-- If no findings were ever raised (clean on first run): post the summary comment with `**Result:** clean` and `**Resolved:** 0 / 0 findings`, or use the shorter form — "No blocking PR feedback was raised by any configured reviewer tool." Either form satisfies the Step 8c check as long as the comment body contains `"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"`.
-- If result is `skipped` (no platforms configured): do **not** post a summary comment (Step 8c skips this check when Step 7 was skipped).
-
-Prefer the helper script (it reads `.ai-dev-workflow.yaml` for the platform list automatically):
+After running the helper script (it reads `.ai-dev-workflow.yaml` for the platform list automatically):
 
 ```bash
 ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name>
@@ -1066,11 +1054,13 @@ Interpret the result as follows:
 
 | Result | Action |
 |---|---|
-| `clean` | **You MUST post the "Automated Reviewer Loop Summary" comment** (see above), then re-issue the GraphQL `reviewThreads` query (Step 8c) before proceeding — see "Re-query reviewThreads after each push" below |
+| `clean` | Summary comment posted automatically by the script. Re-issue the GraphQL `reviewThreads` query (Step 8c) before proceeding — see "Re-query reviewThreads after each push" below |
 | `skipped` | Continue to Step 7b (implementation PRs) then Step 8 (no summary comment posted — Step 8c skips the check) |
 | `needs_fixes` and `cycle < max_cycles` | Increment `cycle`, dispatch the matching fixer agent, wait for a push, then run Step 7 again |
-| `needs_fixes` and `cycle >= max_cycles` | **You MUST post the "Automated Reviewer Loop Summary" comment** (with `max cycles reached` result), then escalate to human |
-| `escalate` | **You MUST post the "Automated Reviewer Loop Summary" comment** (with the escalation reason), then escalate to human |
+| `needs_fixes` and `cycle >= max_cycles` | Pass `--post-final-summary` to the final invocation — the script posts the summary automatically. Then escalate to human |
+| `escalate` | Summary comment posted automatically by the script. Escalate to human |
+
+**Step 7a summary (Internal Review Gate) is still agent-owned.** The script-posted summary covers Step 7 (external automated reviewers) only. The Step 7a summary comment (`### Step 7a Internal Review Gate Summary`) must still be posted by the orchestrator/agent after the internal review gate completes. Do not conflate the two: they serve different verification purposes and are checked by different gates.
 
 ### Re-query reviewThreads after each push (mandatory)
 

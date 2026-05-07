@@ -410,7 +410,7 @@ gh pr view <pr_number> --json comments --jq '.comments[].body' \
   | grep -c "Automated Reviewer Loop Summary\|Reviewer Loop Summary\|No blocking PR feedback"
 ```
 
-Pass condition: output is `1` or higher. If `0`: re-run `./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>` and wait for it to complete before proceeding.
+Pass condition: output is `1` or higher. **`pr-review-loop.sh` posts this comment automatically on `clean` and `escalate` exits**, so a count of `0` means the script did not run to completion. If `0`: re-run `./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>` and wait for it to complete before proceeding.
 
 Skip this check only when no review platforms are configured and the reviewer loop result was `skipped`.
 
