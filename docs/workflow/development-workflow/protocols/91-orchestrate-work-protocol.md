@@ -127,6 +127,78 @@ This mirrors what Protocol 90 does at the portfolio level in Step 2.5 and ensure
 
 If the tracker is unavailable, log a warning and proceed — do not block advancement.
 
+### Stale `In Development` pre-dispatch check (AC-6, AC-7, AC-8, AC-10)
+
+**Scope** (BR-7): This check applies **only** when the Work Item Runner was dispatched from the Portfolio Orchestrator (i.e., `BATCH_CONTEXT=true` is present in the handoff metadata). A direct human invocation of `item-orchestrator` will encounter an "In Development" status and should prompt the human for confirmation rather than automatically resetting the tracker — the human may intentionally be resuming in-progress work. When `BATCH_CONTEXT=true` is not set, skip this sub-step.
+
+**When `BATCH_CONTEXT=true`**: If the item's tracker status is exactly `In Development` at this point in Step 2, run the following check before dispatching:
+
+1. **Guard — skip if issue number is invalid**: Before running the branch and PR checks, verify that `ISSUE_NUMBER` is a non-empty positive integer. GitHub issue numbers are always positive integers; a non-integer value indicates a data problem and would cause `git ls-remote` to search for unintended patterns. If invalid, set `HAS_BRANCH` and `HAS_PR` to `1` to force the "genuinely in progress" outcome (step 4) and skip the network checks entirely:
+
+   ```bash
+   if ! echo "${ISSUE_NUMBER:-}" | grep -qE '^[1-9][0-9]*$'; then
+     echo "WARNING: invalid ISSUE_NUMBER '${ISSUE_NUMBER:-}' — skipping stale detection; treating item as genuinely in progress."
+     HAS_BRANCH=1  # force "genuinely in progress" — skip network checks below
+     HAS_PR=1
+   fi
+   ```
+
+2. **Check for an existing implementation branch or open PR** (skip if guard above set `HAS_BRANCH=1`):
+
+   ```bash
+   # Only check implementation-stage branches (feature/fix/refactor/hotfix).
+   # spec/* and implementation-plan/* branches persist on the remote after merge
+   # and must not be treated as evidence that implementation is active.
+   # git ls-remote uses bare-number forms only (feature/123-slug, feature/123).
+   # Tracker-prefixed forms (feature/ENG-123-slug) are detected by the more-precise
+   # gh pr list regex below; broad globs like *-123-* false-positive on unrelated
+   # branches containing the issue number in their slug (e.g. feature/456-add-123-logs).
+   # Use pipefail so a network/auth failure propagates; on failure, skip stale
+   # detection and treat the item as genuinely in progress (fail-open).
+   # Only run if the guard above did not already set HAS_BRANCH/HAS_PR=1.
+   if [ "${HAS_BRANCH:-0}" -eq 0 ] && [ "${HAS_PR:-0}" -eq 0 ]; then
+     HAS_BRANCH=$(set -o pipefail; git ls-remote origin \
+       "refs/heads/feature/${ISSUE_NUMBER}-*" \
+       "refs/heads/feature/${ISSUE_NUMBER}" \
+       "refs/heads/fix/${ISSUE_NUMBER}-*" \
+       "refs/heads/fix/${ISSUE_NUMBER}" \
+       "refs/heads/refactor/${ISSUE_NUMBER}-*" \
+       "refs/heads/refactor/${ISSUE_NUMBER}" \
+       "refs/heads/hotfix/${ISSUE_NUMBER}-*" \
+       "refs/heads/hotfix/${ISSUE_NUMBER}" \
+       2>/dev/null | wc -l | tr -d ' ') || {
+       echo "WARNING: git ls-remote failed for issue #${ISSUE_NUMBER} — skipping stale detection."
+       HAS_BRANCH=1  # treat as genuinely in progress
+     }
+
+     # The jq regex includes an optional tracker-prefix group ([A-Z][A-Z0-9]*-)
+     # to match both feature/123-slug and feature/ENG-123-slug forms.
+     # Do NOT use || echo 0: a gh failure must not be interpreted as "no PR exists".
+     # On failure, treat as genuinely in progress (fail-open).
+     HAS_PR=$(gh pr list --state open \
+       --json number,headRefName \
+       --jq "[.[] | select(.headRefName | test(\"^(feature|fix|refactor|hotfix)/([A-Z][A-Z0-9]*-)?${ISSUE_NUMBER}(-|\$)\"))] | length" \
+       2>/dev/null) || {
+       echo "WARNING: gh pr list failed for issue #${ISSUE_NUMBER} — skipping stale detection."
+       HAS_PR=1  # treat as genuinely in progress
+     }
+   fi
+   ```
+
+3. **If both checks return zero** (no branch, no PR): the "In Development" status is stale (BR-5). Apply the correction:
+
+   - Log a `STALE_STATUS_CORRECTION:` line:
+
+     ```text
+     STALE_STATUS_CORRECTION: issue #<N> tracker shows 'In Development' but no branch or PR found. Correcting to 'Plan Ready'.
+     ```
+
+   - Update the tracker status to `Plan Ready` using `update_tracker_status_best_effort` (BR-6).
+
+   - Continue dispatching the implementation stage as if the item was `Plan Ready` (the pre-dispatch tracker status update, which ran earlier in this step and was a no-op because the status was already "In Development", will re-run for the corrected dispatch and advance the tracker back to `In Development`). The brief "Plan Ready" state between the stale reset and the new dispatch is intentional and transient — the orchestrator runs sequentially, so no concurrent observer will act on this intermediate value.
+
+4. **If either check returns non-zero** (branch or PR found): the item is genuinely in progress — do not reset the status. Resume from the existing branch or PR using `workflow-next-action.sh` (AC-8).
+
 ### Pre-dispatch branch check
 
 Before dispatching any creator-stage agent, run all three checks below. An existing branch or active worktree means work already exists and should be resumed rather than restarted.
