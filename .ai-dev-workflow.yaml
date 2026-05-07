@@ -28,7 +28,7 @@ review:
   # Supported today by pr-review-loop.sh: greptile, devin, coderabbit, pr-agent, codex-github
   platforms:
     - pr-agent
-    - codex-github
+    - coderabbit
   #
   # Configurable codex-github options (set via env vars or script flags to codex-github-reviewer.sh):
   #   CODEX_GITHUB_TRIGGER_PHRASE  — trigger phrase sent to the bot (default: "@codex review")
