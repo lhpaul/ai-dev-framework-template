@@ -326,7 +326,7 @@ Follow the "PR feedback tracking and comments" subsection of Step 7 in `91-orche
 - Maintain a PR feedback ledger tracking all blocking findings across cycles (keyed by `(platform, path, body_snippet)`).
 - After each fixer push, post a **fix commit comment** on the PR listing which findings that commit resolved and any remaining open findings.
 - After each fixer push, **reply to each addressed inline review comment** on the PR to mark it as resolved. This is mandatory. Follow Protocol 91 ("Resolve inline review comments") for the exact `gh api` command format and delegation requirements for fixer subagents.
-- When the loop terminates, post a **final summary table** on the PR with all findings and their statuses (`resolved` / `unresolved`).
+- When the loop terminates with `clean` or `escalate`, **`pr-review-loop.sh` automatically posts the "Automated Reviewer Loop Summary" comment** — you do not need to post it manually for those exits. The script-posted comment satisfies the Step 8c `hasReviewSummary` check. For `needs_fixes` at `cycle >= max_cycles`, post the summary manually with `**Result:** max cycles reached` and the full finding ledger table before escalating.
 - If the result is `skipped` (no platforms configured), do not post a summary comment.
 
 ### Review comments audit (post-clean gate)

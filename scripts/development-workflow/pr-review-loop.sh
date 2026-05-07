@@ -2338,14 +2338,81 @@ if [ -n "$aggregate_output" ]; then
   [ -n "$review_comment_id" ] && print_kv REVIEW_COMMENT_ID "$review_comment_id"
 fi
 
+# --- Automated Reviewer Loop Summary comment ---
+# Post a summary comment to the PR on terminal exit paths so the Step 8c
+# hasReviewSummary check is satisfied automatically. The comment body matches
+# the regex used by workflow-next-action.sh and Protocol 90 Step 5.1:
+#   "Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"
+# Only post on `clean` and `escalate` exits. `needs_fixes` exits are non-terminal
+# from the orchestrator's perspective (it re-runs after each fixer push), so
+# posting a summary on every needs_fixes exit would create duplicate comments.
+# The orchestrator is responsible for posting a "max cycles reached" summary when
+# it decides not to dispatch another fixer (cycle >= max_cycles).
+# `skipped` exits (no platforms configured) also do not post per protocol spec.
+_post_review_summary() {
+  local result="$1"
+  local reason="$2"
+  local platform_list="$3"
+  local blocking="$4"
+  local suggestions="$5"
+
+  if [ -z "$pr_number" ]; then
+    return 0
+  fi
+
+  local result_line
+  case "$result" in
+    clean)
+      if [ "$blocking" -eq 0 ] && [ "$suggestions" -eq 0 ]; then
+        result_line="clean — no blocking findings"
+      else
+        result_line="clean"
+      fi
+      ;;
+    escalate)
+      result_line="escalated (${reason:-unknown})"
+      ;;
+    *)
+      result_line="$result"
+      ;;
+  esac
+
+  local comment_body
+  comment_body="$(cat <<EOF
+### Automated Reviewer Loop Summary
+
+**Result:** ${result_line}
+**Platforms:** ${platform_list:-none}
+**Findings:** ${blocking} blocking, ${suggestions} suggestions
+
+*Posted automatically by \`pr-review-loop.sh\`.*
+EOF
+)"
+
+  # Suppress errors — a failed comment post should not change the exit code.
+  # The script's primary contract is the key=value output and exit code.
+  set +e
+  gh pr comment "$pr_number" --body "$comment_body" >/dev/null 2>&1
+  set -e
+}
+
 case "$aggregate_result" in
-  clean|skipped)
+  clean)
+    _post_review_summary "$aggregate_result" "$aggregate_reason" \
+      "$(IFS=,; printf '%s' "${platforms[*]}")" \
+      "$total_blocking_count" "$total_suggestion_count"
+    exit 0
+    ;;
+  skipped)
     exit 0
     ;;
   needs_fixes)
     exit 1
     ;;
   escalate)
+    _post_review_summary "$aggregate_result" "$aggregate_reason" \
+      "$(IFS=,; printf '%s' "${platforms[*]}")" \
+      "$total_blocking_count" "$total_suggestion_count"
     exit 2
     ;;
   *)
