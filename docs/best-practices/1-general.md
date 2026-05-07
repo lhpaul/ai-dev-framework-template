@@ -81,6 +81,8 @@ Never use `|| echo 0` (or similar) to suppress command failures — this masks r
 COUNT=$(some_command | wc -l || echo 0)
 
 # Correct — distinguish absence of data from an actual command failure:
+# pipefail required so the pipeline exit code reflects some_command's exit code
+set -o pipefail
 if ! COUNT=$(some_command | wc -l 2>/dev/null); then
   echo "WARNING: some_command failed — skipping" >&2
   COUNT=0
