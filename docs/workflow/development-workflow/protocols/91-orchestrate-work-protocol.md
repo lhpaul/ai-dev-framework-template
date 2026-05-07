@@ -175,7 +175,7 @@ If the tracker is unavailable, log a warning and proceed — do not block advanc
      # to match both feature/123-slug and feature/ENG-123-slug forms.
      # Do NOT use || echo 0: a gh failure must not be interpreted as "no PR exists".
      # On failure, treat as genuinely in progress (fail-open).
-     HAS_PR=$(gh pr list --state open \
+     HAS_PR=$(gh pr list --state open --limit 1000 \
        --json number,headRefName \
        --jq "[.[] | select(.headRefName | test(\"^(feature|fix|refactor|hotfix)/([A-Z][A-Z0-9]*-)?${ISSUE_NUMBER}(-|\$)\"))] | length" \
        2>/dev/null) || {

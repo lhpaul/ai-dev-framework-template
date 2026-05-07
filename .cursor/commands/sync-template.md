@@ -385,12 +385,12 @@ If any file fails to parse, **do not commit**. Report the broken file(s) and ask
 ### 3. Validate that `scripts/` paths referenced in workflow `run:` steps exist
 
 ```bash
-grep -hE 'scripts/[A-Za-z0-9_/.-]+' .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null \
-  | grep -oE 'scripts/[A-Za-z0-9_/.-]+' \
-  | sort -u \
-  | while read -r script_path; do
+grep -nHE 'scripts/[A-Za-z0-9_/.-]+' .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null \
+  | while IFS=: read -r workflow_file _ matched_line; do
+      script_path=$(printf '%s\n' "$matched_line" | grep -oE 'scripts/[A-Za-z0-9_/.-]+' | head -1)
+      [ -n "$script_path" ] || continue
       if [ ! -e "$script_path" ]; then
-        echo "MISSING SCRIPT: $script_path (referenced in a workflow run: step)"
+        echo "MISSING SCRIPT: $script_path (referenced in $workflow_file)"
       fi
     done
 ```

@@ -5,7 +5,7 @@ description: >
   shows a categorized diff for review, applies approved changes, and generates
   ready-to-use git instructions (branch + commit + PR). Run from the project root.
   Usage: /sync-template [--local=/path/to/template] [--ref=<branch|tag>]
-allowed-tools: Read, Write, Edit, Glob, Grep, Bash(git rev-parse:*), Bash(git status:*), Bash(git branch:*), Bash(git clone:*), Bash(git diff:*), Bash(git add:*), Bash(git commit:*), Bash(git checkout:*), Bash(git push:*), Bash(git rm:*), Bash(cat:*), Bash(cp:*), Bash(find:*), Bash(ls:*), Bash(mkdir:*), Bash(rm:*), Bash(date:*), Bash(jq:*), Bash(diff:*), Bash(chmod:*), Bash(grep:*)
+allowed-tools: Read, Write, Edit, Glob, Grep, Bash(git rev-parse:*), Bash(git status:*), Bash(git branch:*), Bash(git clone:*), Bash(git diff:*), Bash(git add:*), Bash(git commit:*), Bash(git checkout:*), Bash(git push:*), Bash(git rm:*), Bash(cat:*), Bash(cp:*), Bash(find:*), Bash(ls:*), Bash(mkdir:*), Bash(rm:*), Bash(date:*), Bash(jq:*), Bash(diff:*), Bash(chmod:*), Bash(grep:*), Bash(python3:*), Bash(yamllint:*)
 ---
 
 Follow this workflow exactly when invoked. Do not skip steps or reorder them.
@@ -389,12 +389,12 @@ If any file fails to parse, **do not commit**. Report the broken file(s) and ask
 ### 3. Validate that `scripts/` paths referenced in workflow `run:` steps exist
 
 ```bash
-grep -hE 'scripts/[A-Za-z0-9_/.-]+' .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null \
-  | grep -oE 'scripts/[A-Za-z0-9_/.-]+' \
-  | sort -u \
-  | while read -r script_path; do
+grep -nHE 'scripts/[A-Za-z0-9_/.-]+' .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null \
+  | while IFS=: read -r workflow_file _ matched_line; do
+      script_path=$(printf '%s\n' "$matched_line" | grep -oE 'scripts/[A-Za-z0-9_/.-]+' | head -1)
+      [ -n "$script_path" ] || continue
       if [ ! -e "$script_path" ]; then
-        echo "MISSING SCRIPT: $script_path (referenced in a workflow run: step)"
+        echo "MISSING SCRIPT: $script_path (referenced in $workflow_file)"
       fi
     done
 ```
