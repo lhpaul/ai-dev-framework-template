@@ -145,8 +145,9 @@ If the tracker is unavailable, log a warning and proceed — do not block advanc
 2. **Check for an existing implementation branch or open PR**:
 
    ```bash
-   # Both "feature/123-slug" and "feature/123" forms are matched.
-   # spec/ and implementation-plan/ branches are included defensively.
+   # Only check implementation-stage branches (feature/fix/refactor/hotfix).
+   # spec/* and implementation-plan/* branches persist on the remote after merge
+   # and must not be treated as evidence that implementation is active.
    # Use pipefail so a network/auth failure propagates; on failure, skip stale
    # detection and treat the item as genuinely in progress (fail-open).
    HAS_BRANCH=$(set -o pipefail; git ls-remote origin \
@@ -158,20 +159,17 @@ If the tracker is unavailable, log a warning and proceed — do not block advanc
      "refs/heads/refactor/${ISSUE_NUMBER}" \
      "refs/heads/hotfix/${ISSUE_NUMBER}-*" \
      "refs/heads/hotfix/${ISSUE_NUMBER}" \
-     "refs/heads/spec/${ISSUE_NUMBER}-*" \
-     "refs/heads/spec/${ISSUE_NUMBER}" \
-     "refs/heads/implementation-plan/${ISSUE_NUMBER}-*" \
-     "refs/heads/implementation-plan/${ISSUE_NUMBER}" \
      2>/dev/null | wc -l | tr -d ' ') || {
      echo "WARNING: git ls-remote failed for issue #${ISSUE_NUMBER} — skipping stale detection."
      # proceed as if stale check returned non-zero (step 4 below)
    }
 
+   # Same restriction: only match implementation-stage prefixes.
    # Do NOT use || echo 0: a gh failure must not be interpreted as "no PR exists".
    # On failure, skip stale detection (fail-open — treat as genuinely in progress).
    HAS_PR=$(gh pr list --state open \
      --json number,headRefName \
-     --jq "[.[] | select(.headRefName | test(\"^(feature|fix|refactor|hotfix|spec|implementation-plan)/${ISSUE_NUMBER}($|-)\"))] | length" \
+     --jq "[.[] | select(.headRefName | test(\"^(feature|fix|refactor|hotfix)/${ISSUE_NUMBER}($|-)\"))] | length" \
      2>/dev/null) || {
      echo "WARNING: gh pr list failed for issue #${ISSUE_NUMBER} — skipping stale detection."
      # proceed as if stale check returned non-zero (step 4 below)

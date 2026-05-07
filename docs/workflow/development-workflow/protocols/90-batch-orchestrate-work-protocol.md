@@ -169,8 +169,13 @@ After building the initial candidate list from the eligibility table above and a
 2. **Check for an existing implementation branch or open PR** (fail-open: skip stale correction if either check is unreliable):
 
    ```bash
-   # Use pipefail so a git ls-remote network/auth failure propagates through the pipe.
-   # On failure, skip stale detection (treat as genuinely in progress — do not reset).
+   # Only check implementation-stage branches (feature/fix/refactor/hotfix).
+   # spec/* and implementation-plan/* branches persist on the remote after merge
+   # and must not be treated as evidence that implementation is active — doing so
+   # would prevent stale correction from ever firing for items that went through
+   # the spec+plan workflow.
+   # Use pipefail so a network/auth failure propagates; on failure, skip stale
+   # detection (fail-open — treat as genuinely in progress, do not reset).
    HAS_BRANCH=$(set -o pipefail; git ls-remote origin \
      "refs/heads/feature/${ISSUE_NUMBER}-*" \
      "refs/heads/feature/${ISSUE_NUMBER}" \
@@ -180,20 +185,17 @@ After building the initial candidate list from the eligibility table above and a
      "refs/heads/refactor/${ISSUE_NUMBER}" \
      "refs/heads/hotfix/${ISSUE_NUMBER}-*" \
      "refs/heads/hotfix/${ISSUE_NUMBER}" \
-     "refs/heads/spec/${ISSUE_NUMBER}-*" \
-     "refs/heads/spec/${ISSUE_NUMBER}" \
-     "refs/heads/implementation-plan/${ISSUE_NUMBER}-*" \
-     "refs/heads/implementation-plan/${ISSUE_NUMBER}" \
      2>/dev/null | wc -l | tr -d ' ') || {
      echo "WARNING: git ls-remote failed for issue #${ISSUE_NUMBER} — skipping stale detection (treating as genuinely in progress)."
      continue
    }
 
-   # Do NOT use || echo 0: a gh auth/network failure must not be interpreted as
-   # "no PR exists". On failure, skip stale detection (fail-open).
+   # Same restriction: only match implementation-stage prefixes.
+   # Do NOT use || echo 0: a gh failure must not be interpreted as "no PR exists".
+   # On failure, skip stale detection (fail-open).
    HAS_PR=$(gh pr list --state open \
      --json number,headRefName \
-     --jq "[.[] | select(.headRefName | test(\"^(feature|fix|refactor|hotfix|spec|implementation-plan)/${ISSUE_NUMBER}($|-)\"))] | length" \
+     --jq "[.[] | select(.headRefName | test(\"^(feature|fix|refactor|hotfix)/${ISSUE_NUMBER}($|-)\"))] | length" \
      2>/dev/null) || {
      echo "WARNING: gh pr list failed for issue #${ISSUE_NUMBER} — skipping stale detection (treating as genuinely in progress)."
      continue
