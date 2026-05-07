@@ -1030,16 +1030,16 @@ This is **mandatory** — do not skip this step. Unresolved inline comments caus
 Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback
 ```
 
-The script does **not** post the summary on `needs_fixes` exits (those are non-terminal — the orchestrator re-runs after each fixer push) or `skipped` exits (no platforms configured). For `needs_fixes` at `cycle >= max_cycles`, the orchestrator is responsible for posting the final summary before escalating (see the table below).
+The script does **not** post the summary on `needs_fixes` exits (those are non-terminal — the orchestrator re-runs after each fixer push) or `skipped` exits (no platforms configured). For `needs_fixes` at `cycle >= max_cycles`, pass `--post-final-summary` on the last invocation and the script will post the summary automatically before exiting.
 
 The script-posted comment format:
 
 ````markdown
 ### Automated Reviewer Loop Summary
 
-**Result:** clean — no blocking findings | escalated (reason)
+**Result:** clean — no blocking findings | escalated (reason) | max cycles reached — N blocking finding(s) unresolved
 **Platforms:** greptile, devin
-**Findings:** 0 blocking, 0 suggestions
+**Findings:** N blocking, N suggestions
 
 *Posted automatically by `pr-review-loop.sh`.*
 ````
@@ -1057,7 +1057,7 @@ Interpret the result as follows:
 | `clean` | Summary comment posted automatically by the script. Re-issue the GraphQL `reviewThreads` query (Step 8c) before proceeding — see "Re-query reviewThreads after each push" below |
 | `skipped` | Continue to Step 7b (implementation PRs) then Step 8 (no summary comment posted — Step 8c skips the check) |
 | `needs_fixes` and `cycle < max_cycles` | Increment `cycle`, dispatch the matching fixer agent, wait for a push, then run Step 7 again |
-| `needs_fixes` and `cycle >= max_cycles` | **You MUST post the "Automated Reviewer Loop Summary" comment** (with `max cycles reached` result), then escalate to human. Use the format from the Fix commit comment section, with `**Result:** max cycles reached` and the full finding ledger table |
+| `needs_fixes` and `cycle >= max_cycles` | Pass `--post-final-summary` to the final invocation — the script posts the summary automatically. Then escalate to human |
 | `escalate` | Summary comment posted automatically by the script. Escalate to human |
 
 **Step 7a summary (Internal Review Gate) is still agent-owned.** The script-posted summary covers Step 7 (external automated reviewers) only. The Step 7a summary comment (`### Step 7a Internal Review Gate Summary`) must still be posted by the orchestrator/agent after the internal review gate completes. Do not conflate the two: they serve different verification purposes and are checked by different gates.

@@ -69,7 +69,7 @@ trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"' EXIT
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,pr-agent,coderabbit,codex-github] [--poll-interval seconds] [--max-wait seconds]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,pr-agent,coderabbit,codex-github] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary]
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
 triggering a new review, each platform checks for existing blocking findings. If
@@ -78,6 +78,13 @@ If a platform times out or escalates, the script exits 2. If all configured
 platforms are clean or skipped, the script exits 0. If a second instance is
 detected for the same PR number, the script emits RESULT=escalate with
 REASON=lock_contention and exits 75 (EX_TEMPFAIL).
+
+--post-final-summary:
+  Post the "Automated Reviewer Loop Summary" comment even when the result is
+  needs_fixes. Use this when the orchestrator has reached cycle >= max_cycles and
+  will not dispatch another fixer — i.e. the run is terminal regardless of the
+  script exit code. On clean and escalate exits the summary is always posted
+  (this flag has no additional effect for those exits).
 
 Platform selection (in priority order):
   1. --platform flag(s) passed on the command line
@@ -2088,6 +2095,7 @@ poll_interval=120
 poll_interval_explicit=0
 max_wait=1200
 max_wait_explicit=0
+post_final_summary=0
 declare -a platforms=()
 
 while [ "$#" -gt 0 ]; do
@@ -2109,6 +2117,10 @@ while [ "$#" -gt 0 ]; do
       max_wait="$2"
       max_wait_explicit=1
       shift 2
+      ;;
+    --post-final-summary)
+      post_final_summary=1
+      shift
       ;;
     -h|--help)
       usage
@@ -2343,11 +2355,11 @@ fi
 # hasReviewSummary check is satisfied automatically. The comment body matches
 # the regex used by workflow-next-action.sh and Protocol 90 Step 5.1:
 #   "Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"
-# Only post on `clean` and `escalate` exits. `needs_fixes` exits are non-terminal
-# from the orchestrator's perspective (it re-runs after each fixer push), so
-# posting a summary on every needs_fixes exit would create duplicate comments.
-# The orchestrator is responsible for posting a "max cycles reached" summary when
-# it decides not to dispatch another fixer (cycle >= max_cycles).
+# Post on `clean` and `escalate` exits unconditionally. For `needs_fixes` exits,
+# post only when --post-final-summary is set — i.e. when the orchestrator has
+# determined this is the terminal run (cycle >= max_cycles) and will not dispatch
+# another fixer regardless of the exit code. Posting on every `needs_fixes` exit
+# would create duplicate comments per fix cycle.
 # `skipped` exits (no platforms configured) also do not post per protocol spec.
 _post_review_summary() {
   local result="$1"
@@ -2368,6 +2380,9 @@ _post_review_summary() {
       else
         result_line="clean"
       fi
+      ;;
+    needs_fixes)
+      result_line="max cycles reached — ${blocking} blocking finding(s) unresolved"
       ;;
     escalate)
       result_line="escalated (${reason:-unknown})"
@@ -2407,6 +2422,11 @@ case "$aggregate_result" in
     exit 0
     ;;
   needs_fixes)
+    if [ "$post_final_summary" -eq 1 ]; then
+      _post_review_summary "$aggregate_result" "$aggregate_reason" \
+        "$(IFS=,; printf '%s' "${platforms[*]}")" \
+        "$total_blocking_count" "$total_suggestion_count"
+    fi
     exit 1
     ;;
   escalate)
