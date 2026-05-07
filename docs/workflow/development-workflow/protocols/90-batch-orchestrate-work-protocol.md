@@ -885,12 +885,14 @@ If the main working tree is clean and on the correct branch (Case 3), proceed no
 
 **Recurrence tracking (post-PR #345):**
 
+> **Serial dispatch note**: Working-tree residuals from serial subagent dispatch are expected and do **not** constitute Step 5.2 violations. In serial dispatch, no worktree isolation is used — the subagent runs in the main working tree and naturally leaves it on the feature branch it just created. Only increment the violation counter when a **parallel** subagent (one that ran in an isolated worktree) leaves the main working tree dirty or on the wrong branch.
+
 PR #345 (merged into `develop`) added a worktree pre-op checklist to `91-orchestrate-work-protocol.md` to prevent agents from running git state-changing commands in the main working tree instead of their isolated worktree. PR #411 followed up by adding a runtime CWD guard script (`scripts/development-workflow/worktree-cwd-guard.sh`) that catches branch-switching commands issued from the wrong directory at execution time rather than only at post-agent inspection. Step 5.2 violations should be rare when both mitigations are active.
 
-When Step 5.2 fires (Case 1 — wrong branch + clean):
+When Step 5.2 fires (Case 1 — wrong branch + clean) **in a parallel batch**:
 
 1. Record the violation in the batch's retrospective notes, including the item ID, the branch the main tree was on, and the batch date.
-2. **After every 5 batches** following the merge of PR #411, tally the number of Step 5.2 Case 1 violations across those batches. If the count exceeds **1 violation per 5 batches**, escalate to the human with the following message:
+2. **After every 5 batches** following the merge of PR #411, tally the number of Step 5.2 Case 1 violations **from parallel batches only** across those batches. If the count exceeds **1 violation per 5 batches**, escalate to the human with the following message:
 
    > `ESCALATION: Step 5.2 (branch-leak guardrail) has fired more than once in the last 5 batches after the PR #411 runtime CWD guard was merged. Current count: N. Investigate whether the worktree-cwd-guard.sh script was sourced and initialised correctly in the affected batch items (see Protocol 91 Step 3 "Runtime CWD guard" block). If the guard was active, the violation may indicate a new failure mode not yet covered by the guard — escalate for human analysis and a follow-up fix.`
 
@@ -904,7 +906,7 @@ As you supervise the batch, **proactively save issues, human corrections, and an
 - What went wrong (wrong base branch, missing label, incomplete review loop, etc.)
 - What the root cause was (agent skipped a step, protocol gap, timeout, etc.)
 - Whether the human had to intervene and how
-- **Step 5.2 tally**: if Step 5.2 fired (Case 1 — wrong branch + clean) for any item, record it explicitly so the recurrence counter above can be maintained across batches.
+- **Step 5.2 tally**: if Step 5.2 fired (Case 1 — wrong branch + clean) for any **parallel-batch** item, record it explicitly so the recurrence counter above can be maintained across batches. Do **not** count serial-dispatch residuals — those are expected and are not violations.
 
 These notes feed directly into the post-merge retrospective and provide context that GitHub data alone cannot capture.
 
