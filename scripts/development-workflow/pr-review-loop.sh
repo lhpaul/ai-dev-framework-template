@@ -439,7 +439,7 @@ run_codex_github_review() {
   local poll_interval="$3"
   local max_wait="$4"
   local platform="codex-github"
-  local bot_login="${CODEX_GITHUB_BOT_LOGIN:-codex-ai[bot]}"
+  local bot_login="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
   # GraphQL author.login returns the login WITHOUT the "[bot]" suffix that the
   # REST API uses. Strip it here so check_unresolved_threads comparisons work.
   local graphql_bot_login="${bot_login%\[bot\]}"
@@ -1923,7 +1923,7 @@ bot_login_for_platform() {
     devin)        printf 'devin-ai-integration\n' ;;
     greptile)     printf 'greptile-apps\n' ;;
     pr-agent)     printf '\n' ;;
-    codex-github) printf '%s\n' "${CODEX_GITHUB_BOT_LOGIN:-codex-ai[bot]}" ;;
+    codex-github) printf '%s\n' "${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}" ;;
     *)            printf '\n' ;;
   esac
 }
