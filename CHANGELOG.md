@@ -643,7 +643,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.25.1...HEAD
+[0.25.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.25.0...v0.25.1
 [0.25.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.24.1...v0.25.0
 [0.24.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.23.2...v0.24.0
