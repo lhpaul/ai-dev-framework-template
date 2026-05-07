@@ -166,15 +166,12 @@ After building the initial candidate list from the eligibility table above and a
    fi
    ```
 
-2. **Check for an existing implementation branch or open PR**:
+2. **Check for an existing implementation branch or open PR** (fail-open: skip stale correction if either check is unreliable):
 
    ```bash
-   # Check for any workflow branch matching the item's issue number.
-   # Both "feature/123-slug" and "feature/123" forms are matched.
-   # Implementation branches are the primary target; spec/plan branches are
-   # included defensively (an item in "In Development" should not have only
-   # a spec or plan branch, but we check them anyway to avoid false resets).
-   HAS_BRANCH=$(git ls-remote origin \
+   # Use pipefail so a git ls-remote network/auth failure propagates through the pipe.
+   # On failure, skip stale detection (treat as genuinely in progress — do not reset).
+   HAS_BRANCH=$(set -o pipefail; git ls-remote origin \
      "refs/heads/feature/${ISSUE_NUMBER}-*" \
      "refs/heads/feature/${ISSUE_NUMBER}" \
      "refs/heads/fix/${ISSUE_NUMBER}-*" \
@@ -187,13 +184,20 @@ After building the initial candidate list from the eligibility table above and a
      "refs/heads/spec/${ISSUE_NUMBER}" \
      "refs/heads/implementation-plan/${ISSUE_NUMBER}-*" \
      "refs/heads/implementation-plan/${ISSUE_NUMBER}" \
-     2>/dev/null | wc -l | tr -d ' ')
+     2>/dev/null | wc -l | tr -d ' ') || {
+     echo "WARNING: git ls-remote failed for issue #${ISSUE_NUMBER} — skipping stale detection (treating as genuinely in progress)."
+     continue
+   }
 
-   # Check for any open PR associated with the item across all workflow prefixes
+   # Do NOT use || echo 0: a gh auth/network failure must not be interpreted as
+   # "no PR exists". On failure, skip stale detection (fail-open).
    HAS_PR=$(gh pr list --state open \
      --json number,headRefName \
      --jq "[.[] | select(.headRefName | test(\"^(feature|fix|refactor|hotfix|spec|implementation-plan)/${ISSUE_NUMBER}($|-)\"))] | length" \
-     2>/dev/null || echo 0)
+     2>/dev/null) || {
+     echo "WARNING: gh pr list failed for issue #${ISSUE_NUMBER} — skipping stale detection (treating as genuinely in progress)."
+     continue
+   }
    ```
 
 3. **If both checks return zero** (no branch, no PR): the "In Development" status is stale (BR-5). Apply the correction:

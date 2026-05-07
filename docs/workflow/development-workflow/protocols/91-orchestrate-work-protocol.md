@@ -147,7 +147,9 @@ If the tracker is unavailable, log a warning and proceed — do not block advanc
    ```bash
    # Both "feature/123-slug" and "feature/123" forms are matched.
    # spec/ and implementation-plan/ branches are included defensively.
-   HAS_BRANCH=$(git ls-remote origin \
+   # Use pipefail so a network/auth failure propagates; on failure, skip stale
+   # detection and treat the item as genuinely in progress (fail-open).
+   HAS_BRANCH=$(set -o pipefail; git ls-remote origin \
      "refs/heads/feature/${ISSUE_NUMBER}-*" \
      "refs/heads/feature/${ISSUE_NUMBER}" \
      "refs/heads/fix/${ISSUE_NUMBER}-*" \
@@ -160,12 +162,20 @@ If the tracker is unavailable, log a warning and proceed — do not block advanc
      "refs/heads/spec/${ISSUE_NUMBER}" \
      "refs/heads/implementation-plan/${ISSUE_NUMBER}-*" \
      "refs/heads/implementation-plan/${ISSUE_NUMBER}" \
-     2>/dev/null | wc -l | tr -d ' ')
+     2>/dev/null | wc -l | tr -d ' ') || {
+     echo "WARNING: git ls-remote failed for issue #${ISSUE_NUMBER} — skipping stale detection."
+     # proceed as if stale check returned non-zero (step 4 below)
+   }
 
+   # Do NOT use || echo 0: a gh failure must not be interpreted as "no PR exists".
+   # On failure, skip stale detection (fail-open — treat as genuinely in progress).
    HAS_PR=$(gh pr list --state open \
      --json number,headRefName \
      --jq "[.[] | select(.headRefName | test(\"^(feature|fix|refactor|hotfix|spec|implementation-plan)/${ISSUE_NUMBER}($|-)\"))] | length" \
-     2>/dev/null || echo 0)
+     2>/dev/null) || {
+     echo "WARNING: gh pr list failed for issue #${ISSUE_NUMBER} — skipping stale detection."
+     # proceed as if stale check returned non-zero (step 4 below)
+   }
    ```
 
 3. **If both checks return zero** (no branch, no PR): the "In Development" status is stale (BR-5). Apply the correction:
