@@ -149,30 +149,23 @@ If the tracker is unavailable, log a warning and proceed — do not block advanc
    # Only check implementation-stage branches (feature/fix/refactor/hotfix).
    # spec/* and implementation-plan/* branches persist on the remote after merge
    # and must not be treated as evidence that implementation is active.
+   # git ls-remote uses bare-number forms only (feature/123-slug, feature/123).
+   # Tracker-prefixed forms (feature/ENG-123-slug) are detected by the more-precise
+   # gh pr list regex below; broad globs like *-123-* false-positive on unrelated
+   # branches containing the issue number in their slug (e.g. feature/456-add-123-logs).
    # Use pipefail so a network/auth failure propagates; on failure, skip stale
    # detection and treat the item as genuinely in progress (fail-open).
-   # Each prefix gets both bare-number and tracker-prefixed forms:
-   #   feature/123-slug      (plain numeric)
-   #   feature/ENG-123-slug  (tracker-prefixed, e.g. Linear/Jira)
    # Only run if the guard above did not already set HAS_BRANCH/HAS_PR=1.
    if [ "${HAS_BRANCH:-0}" -eq 0 ] && [ "${HAS_PR:-0}" -eq 0 ]; then
      HAS_BRANCH=$(set -o pipefail; git ls-remote origin \
        "refs/heads/feature/${ISSUE_NUMBER}-*" \
        "refs/heads/feature/${ISSUE_NUMBER}" \
-       "refs/heads/feature/*-${ISSUE_NUMBER}-*" \
-       "refs/heads/feature/*-${ISSUE_NUMBER}" \
        "refs/heads/fix/${ISSUE_NUMBER}-*" \
        "refs/heads/fix/${ISSUE_NUMBER}" \
-       "refs/heads/fix/*-${ISSUE_NUMBER}-*" \
-       "refs/heads/fix/*-${ISSUE_NUMBER}" \
        "refs/heads/refactor/${ISSUE_NUMBER}-*" \
        "refs/heads/refactor/${ISSUE_NUMBER}" \
-       "refs/heads/refactor/*-${ISSUE_NUMBER}-*" \
-       "refs/heads/refactor/*-${ISSUE_NUMBER}" \
        "refs/heads/hotfix/${ISSUE_NUMBER}-*" \
        "refs/heads/hotfix/${ISSUE_NUMBER}" \
-       "refs/heads/hotfix/*-${ISSUE_NUMBER}-*" \
-       "refs/heads/hotfix/*-${ISSUE_NUMBER}" \
        2>/dev/null | wc -l | tr -d ' ') || {
        echo "WARNING: git ls-remote failed for issue #${ISSUE_NUMBER} — skipping stale detection."
        HAS_BRANCH=1  # treat as genuinely in progress

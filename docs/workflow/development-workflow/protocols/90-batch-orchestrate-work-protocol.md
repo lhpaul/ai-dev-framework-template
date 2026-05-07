@@ -171,31 +171,23 @@ After building the initial candidate list from the eligibility table above and a
    ```bash
    # Only check implementation-stage branches (feature/fix/refactor/hotfix).
    # spec/* and implementation-plan/* branches persist on the remote after merge
-   # and must not be treated as evidence that implementation is active — doing so
-   # would prevent stale correction from ever firing for items that went through
-   # the spec+plan workflow.
+   # and must not be treated as evidence that implementation is active.
+   # git ls-remote globs use bare-number forms only (feature/123-slug,
+   # feature/123). Tracker-prefixed forms (feature/ENG-123-slug) are detected
+   # by the more-precise gh pr list regex below; broad globs like
+   # *-123-* would false-positive on unrelated branches containing the
+   # issue number in their slug (e.g. feature/456-add-123-logs).
    # Use pipefail so a network/auth failure propagates; on failure, skip stale
    # detection (fail-open — treat as genuinely in progress, do not reset).
-   # Each prefix gets both bare-number and tracker-prefixed forms:
-   #   feature/123-slug      (plain numeric)
-   #   feature/ENG-123-slug  (tracker-prefixed, e.g. Linear/Jira)
    HAS_BRANCH=$(set -o pipefail; git ls-remote origin \
      "refs/heads/feature/${ISSUE_NUMBER}-*" \
      "refs/heads/feature/${ISSUE_NUMBER}" \
-     "refs/heads/feature/*-${ISSUE_NUMBER}-*" \
-     "refs/heads/feature/*-${ISSUE_NUMBER}" \
      "refs/heads/fix/${ISSUE_NUMBER}-*" \
      "refs/heads/fix/${ISSUE_NUMBER}" \
-     "refs/heads/fix/*-${ISSUE_NUMBER}-*" \
-     "refs/heads/fix/*-${ISSUE_NUMBER}" \
      "refs/heads/refactor/${ISSUE_NUMBER}-*" \
      "refs/heads/refactor/${ISSUE_NUMBER}" \
-     "refs/heads/refactor/*-${ISSUE_NUMBER}-*" \
-     "refs/heads/refactor/*-${ISSUE_NUMBER}" \
      "refs/heads/hotfix/${ISSUE_NUMBER}-*" \
      "refs/heads/hotfix/${ISSUE_NUMBER}" \
-     "refs/heads/hotfix/*-${ISSUE_NUMBER}-*" \
-     "refs/heads/hotfix/*-${ISSUE_NUMBER}" \
      2>/dev/null | wc -l | tr -d ' ') || {
      echo "WARNING: git ls-remote failed for issue #${ISSUE_NUMBER} — skipping stale detection (treating as genuinely in progress)."
      continue
