@@ -354,6 +354,62 @@ rm -rf "$TEMPLATE_TEMP_DIR"   # use the exact path, not a wildcard
 
 ---
 
+## Step 4.5 — CI workflow health check
+
+Run this check **after** applying changes and **before** generating git instructions. It verifies that the project's CI workflows are not silently broken after the sync.
+
+### 1. Verify `.github/workflows/` exists
+
+```bash
+if [ ! -d ".github/workflows" ]; then
+  echo "WARNING: .github/workflows/ directory not found. No CI workflows to validate."
+  # Non-fatal — project may not have CI set up yet. Continue to Step 5.
+fi
+```
+
+### 2. Validate all workflow YAML files are parseable
+
+For each `.yml` / `.yaml` file in `.github/workflows/`:
+
+```bash
+for f in .github/workflows/*.yml .github/workflows/*.yaml; do
+  [ -f "$f" ] || continue
+  if command -v yamllint >/dev/null 2>&1; then
+    yamllint -d "{extends: relaxed, rules: {line-length: disable}}" "$f" \
+      || echo "YAML LINT ERROR: $f"
+  else
+    python3 -c "import sys, yaml; yaml.safe_load(open(sys.argv[1]))" "$f" \
+      || echo "YAML PARSE ERROR: $f"
+  fi
+done
+```
+
+If any file fails to parse, **do not commit**. Report the broken file(s) and ask the maintainer to fix them before committing.
+
+### 3. Validate that `scripts/` paths referenced in workflow `run:` steps exist
+
+```bash
+grep -hE 'scripts/[A-Za-z0-9_/.-]+' .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null \
+  | grep -oE 'scripts/[A-Za-z0-9_/.-]+' \
+  | sort -u \
+  | while read -r script_path; do
+      if [ ! -e "$script_path" ]; then
+        echo "MISSING SCRIPT: $script_path (referenced in a workflow run: step)"
+      fi
+    done
+```
+
+Collect all missing script paths. If any are reported:
+- If the missing path was introduced by the template sync (i.e., the file is listed under `scripts/development-workflow/` in the always-sync list but does not exist in the project), note it as a template sync gap and offer to copy the missing script from the template source if it exists there.
+- Otherwise, surface it as a manual fix required:
+  > "WARNING: Workflow file references `<path>` which does not exist in this project. The sync may have introduced a broken workflow reference. Please verify and fix before committing."
+
+If no missing scripts are found, print: `CI workflow health check passed.`
+
+This check is **advisory for the project-specific category** (e.g., `.github/workflows/deploy.yml`, `e2e-regression.yml`): a missing script path in those files may be intentional (placeholder workflow). Surface a warning but do not block the commit.
+
+---
+
 ## Step 5 — Generate git instructions
 
 Before printing the git instructions, record the last-synced template version:
