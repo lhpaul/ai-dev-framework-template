@@ -1090,15 +1090,18 @@ run_pr_agent_review() {
       # blocks elsewhere (e.g. ticket/compliance metadata). Scanning the full body
       # would pick up those labels, and any unrecognized text would set found_unknown=1,
       # recreating the false-loop bug this classifier is meant to fix.
-      # Strategy: use awk to collect lines only between the section marker and the
+      # Strategy: use awk to collect all lines between the section marker and the
       # next section boundary (**bold header, </td>, <tr>, or ---), then extract
-      # <details> lines within that window. Leading whitespace is allowed because
-      # PR-Agent sometimes indents <details> rows; anchoring to ^<details> would
-      # silently drop all labels and fall back to needs_fixes for advisory reviews.
+      # every <strong>…</strong> token from that window.
+      # Parsing the whole section (not just <details> lines) ensures labels are
+      # found even when PR-Agent formats a finding over multiple lines — for example
+      # <details><summary><a ...> on one line and <strong>Possible Issue</strong>
+      # on the next; anchoring to ^<details> would miss those labels and fall back
+      # to needs_fixes for advisory-only reviews.
       labels="$(printf '%s\n' "$body" \
         | awk '/Recommended focus areas for review/{found=1; next}
                found && /^[[:space:]]*(\*\*|<\/td>|<tr>)|^---$/{found=0}
-               found && /^[[:space:]]*<details>/{print}' \
+               found{print}' \
         | grep -oE '<strong>[^<]+</strong>' \
         | sed 's|<strong>||g;s|</strong>||g;s|^[[:space:]]*||;s|[[:space:]]*$||' \
         || true)"
