@@ -133,16 +133,17 @@ If the tracker is unavailable, log a warning and proceed — do not block advanc
 
 **When `BATCH_CONTEXT=true`**: If the item's tracker status is exactly `In Development` at this point in Step 2, run the following check before dispatching:
 
-1. **Guard — skip if issue number is invalid**: Before running the branch and PR checks, verify that `ISSUE_NUMBER` is a non-empty positive integer. GitHub issue numbers are always positive integers; a non-integer value indicates a data problem and would cause `git ls-remote` to search for unintended patterns. If invalid, skip the stale check and treat the item as genuinely in progress:
+1. **Guard — skip if issue number is invalid**: Before running the branch and PR checks, verify that `ISSUE_NUMBER` is a non-empty positive integer. GitHub issue numbers are always positive integers; a non-integer value indicates a data problem and would cause `git ls-remote` to search for unintended patterns. If invalid, set `HAS_BRANCH` and `HAS_PR` to `1` to force the "genuinely in progress" outcome (step 4) and skip the network checks entirely:
 
    ```bash
    if ! echo "${ISSUE_NUMBER:-}" | grep -qE '^[1-9][0-9]*$'; then
      echo "WARNING: invalid ISSUE_NUMBER '${ISSUE_NUMBER:-}' — skipping stale detection; treating item as genuinely in progress."
-     # proceed as if stale check returned non-zero (step 4 below)
+     HAS_BRANCH=1  # force "genuinely in progress" — skip network checks below
+     HAS_PR=1
    fi
    ```
 
-2. **Check for an existing implementation branch or open PR**:
+2. **Check for an existing implementation branch or open PR** (skip if guard above set `HAS_BRANCH=1`):
 
    ```bash
    # Only check implementation-stage branches (feature/fix/refactor/hotfix).
@@ -153,39 +154,42 @@ If the tracker is unavailable, log a warning and proceed — do not block advanc
    # Each prefix gets both bare-number and tracker-prefixed forms:
    #   feature/123-slug      (plain numeric)
    #   feature/ENG-123-slug  (tracker-prefixed, e.g. Linear/Jira)
-   HAS_BRANCH=$(set -o pipefail; git ls-remote origin \
-     "refs/heads/feature/${ISSUE_NUMBER}-*" \
-     "refs/heads/feature/${ISSUE_NUMBER}" \
-     "refs/heads/feature/*-${ISSUE_NUMBER}-*" \
-     "refs/heads/feature/*-${ISSUE_NUMBER}" \
-     "refs/heads/fix/${ISSUE_NUMBER}-*" \
-     "refs/heads/fix/${ISSUE_NUMBER}" \
-     "refs/heads/fix/*-${ISSUE_NUMBER}-*" \
-     "refs/heads/fix/*-${ISSUE_NUMBER}" \
-     "refs/heads/refactor/${ISSUE_NUMBER}-*" \
-     "refs/heads/refactor/${ISSUE_NUMBER}" \
-     "refs/heads/refactor/*-${ISSUE_NUMBER}-*" \
-     "refs/heads/refactor/*-${ISSUE_NUMBER}" \
-     "refs/heads/hotfix/${ISSUE_NUMBER}-*" \
-     "refs/heads/hotfix/${ISSUE_NUMBER}" \
-     "refs/heads/hotfix/*-${ISSUE_NUMBER}-*" \
-     "refs/heads/hotfix/*-${ISSUE_NUMBER}" \
-     2>/dev/null | wc -l | tr -d ' ') || {
-     echo "WARNING: git ls-remote failed for issue #${ISSUE_NUMBER} — skipping stale detection."
-     # proceed as if stale check returned non-zero (step 4 below)
-   }
+   # Only run if the guard above did not already set HAS_BRANCH/HAS_PR=1.
+   if [ "${HAS_BRANCH:-0}" -eq 0 ] && [ "${HAS_PR:-0}" -eq 0 ]; then
+     HAS_BRANCH=$(set -o pipefail; git ls-remote origin \
+       "refs/heads/feature/${ISSUE_NUMBER}-*" \
+       "refs/heads/feature/${ISSUE_NUMBER}" \
+       "refs/heads/feature/*-${ISSUE_NUMBER}-*" \
+       "refs/heads/feature/*-${ISSUE_NUMBER}" \
+       "refs/heads/fix/${ISSUE_NUMBER}-*" \
+       "refs/heads/fix/${ISSUE_NUMBER}" \
+       "refs/heads/fix/*-${ISSUE_NUMBER}-*" \
+       "refs/heads/fix/*-${ISSUE_NUMBER}" \
+       "refs/heads/refactor/${ISSUE_NUMBER}-*" \
+       "refs/heads/refactor/${ISSUE_NUMBER}" \
+       "refs/heads/refactor/*-${ISSUE_NUMBER}-*" \
+       "refs/heads/refactor/*-${ISSUE_NUMBER}" \
+       "refs/heads/hotfix/${ISSUE_NUMBER}-*" \
+       "refs/heads/hotfix/${ISSUE_NUMBER}" \
+       "refs/heads/hotfix/*-${ISSUE_NUMBER}-*" \
+       "refs/heads/hotfix/*-${ISSUE_NUMBER}" \
+       2>/dev/null | wc -l | tr -d ' ') || {
+       echo "WARNING: git ls-remote failed for issue #${ISSUE_NUMBER} — skipping stale detection."
+       HAS_BRANCH=1  # treat as genuinely in progress
+     }
 
-   # The jq regex includes an optional tracker-prefix group ([A-Z][A-Z0-9]*-)
-   # to match both feature/123-slug and feature/ENG-123-slug forms.
-   # Do NOT use || echo 0: a gh failure must not be interpreted as "no PR exists".
-   # On failure, skip stale detection (fail-open — treat as genuinely in progress).
-   HAS_PR=$(gh pr list --state open \
-     --json number,headRefName \
-     --jq "[.[] | select(.headRefName | test(\"^(feature|fix|refactor|hotfix)/([A-Z][A-Z0-9]*-)?${ISSUE_NUMBER}(-|\$)\"))] | length" \
-     2>/dev/null) || {
-     echo "WARNING: gh pr list failed for issue #${ISSUE_NUMBER} — skipping stale detection."
-     # proceed as if stale check returned non-zero (step 4 below)
-   }
+     # The jq regex includes an optional tracker-prefix group ([A-Z][A-Z0-9]*-)
+     # to match both feature/123-slug and feature/ENG-123-slug forms.
+     # Do NOT use || echo 0: a gh failure must not be interpreted as "no PR exists".
+     # On failure, treat as genuinely in progress (fail-open).
+     HAS_PR=$(gh pr list --state open \
+       --json number,headRefName \
+       --jq "[.[] | select(.headRefName | test(\"^(feature|fix|refactor|hotfix)/([A-Z][A-Z0-9]*-)?${ISSUE_NUMBER}(-|\$)\"))] | length" \
+       2>/dev/null) || {
+       echo "WARNING: gh pr list failed for issue #${ISSUE_NUMBER} — skipping stale detection."
+       HAS_PR=1  # treat as genuinely in progress
+     }
+   fi
    ```
 
 3. **If both checks return zero** (no branch, no PR): the "In Development" status is stale (BR-5). Apply the correction:
