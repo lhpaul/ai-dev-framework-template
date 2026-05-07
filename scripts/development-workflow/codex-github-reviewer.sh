@@ -400,6 +400,86 @@ while true; do
   fi
 done  # end outer retrigger loop
 
+# ── Async grace period ────────────────────────────────────────────────────────
+# The Codex bot regularly posts its review asynchronously — AFTER the main poll
+# window has already closed. Before declaring TIMED_OUT, post a single final
+# async-arrival trigger and wait one extra POLL_INTERVAL to catch responses that
+# arrived (or are about to arrive) just after the polling budget was exhausted.
+# This is a lightweight one-shot check: it does not extend the full MAX_WAIT
+# budget and does not add another iteration of the outer retrigger loop.
+
+echo "INFO: poll budget exhausted; posting async-arrival trigger and waiting ${POLL_INTERVAL}s for late response..."
+
+ASYNC_TRIGGER_TIME=""
+if ! ASYNC_TRIGGER_TIME=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
+  --method POST \
+  --raw-field body="$TRIGGER_PHRASE — async-arrival check after poll-window expiry (sha: $CURRENT_SHA)" \
+  --jq '.created_at'); then
+  echo "WARNING: failed to post async-arrival trigger comment; skipping grace check" >&2
+  ASYNC_TRIGGER_TIME=""
+fi
+
+if [ -n "$ASYNC_TRIGGER_TIME" ]; then
+  echo "INFO: async-arrival trigger posted at $ASYNC_TRIGGER_TIME; sleeping ${POLL_INTERVAL}s..."
+  sleep "$POLL_INTERVAL"
+
+  # Single grace poll: check both PR comments and PR reviews
+  ASYNC_BOT_RESPONSE=""
+
+  ASYNC_POLL_TMPFILE=$(mktemp)
+  if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
+    2>/dev/null \
+    | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" \
+        '.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time) | .body' \
+    > "$ASYNC_POLL_TMPFILE" 2>/dev/null; then
+    ASYNC_BOT_RESPONSE=$(head -c 10000 "$ASYNC_POLL_TMPFILE")
+  fi
+  rm -f "$ASYNC_POLL_TMPFILE"
+
+  if [ -z "$ASYNC_BOT_RESPONSE" ]; then
+    ASYNC_REVIEW_TMPFILE=$(mktemp)
+    if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
+      2>/dev/null \
+      | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" \
+          '.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at > $trigger_time) | .body' \
+      > "$ASYNC_REVIEW_TMPFILE" 2>/dev/null; then
+      ASYNC_REVIEW_BODY=$(head -c 5000 "$ASYNC_REVIEW_TMPFILE")
+      if [ -n "$ASYNC_REVIEW_BODY" ]; then
+        ASYNC_BOT_RESPONSE="$ASYNC_REVIEW_BODY"
+        echo "INFO: async-arrival bot response detected via PR reviews endpoint"
+      fi
+    fi
+    rm -f "$ASYNC_REVIEW_TMPFILE"
+  fi
+
+  if [ -n "$ASYNC_BOT_RESPONSE" ]; then
+    echo "INFO: async-arrival bot response detected during grace period"
+
+    # Apply the same three-path verdict parsing as the main poll loop.
+    if echo "$ASYNC_BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)"; then
+      echo "VERDICT: NEEDS_REVISION"
+      echo "---BEGIN BOT RESPONSE---"
+      echo "$ASYNC_BOT_RESPONSE"
+      echo "---END BOT RESPONSE---"
+      exit 1
+    elif echo "$ASYNC_BOT_RESPONSE" | grep -qiE "(approved|lgtm|looks[[:space:]]+good|didn.t find[[:space:]]+any major[[:space:]]+issues|no[[:space:]]+blocking[[:space:]]+issues?)"; then
+      echo "VERDICT: APPROVED"
+      echo "---BEGIN BOT RESPONSE---"
+      echo "$ASYNC_BOT_RESPONSE"
+      echo "---END BOT RESPONSE---"
+      exit 0
+    else
+      echo "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)"
+      echo "---BEGIN BOT RESPONSE---"
+      echo "$ASYNC_BOT_RESPONSE"
+      echo "---END BOT RESPONSE---"
+      exit 1
+    fi
+  fi
+
+  echo "INFO: no bot response during async grace period"
+fi
+
 # ── Timeout ───────────────────────────────────────────────────────────────────
 
 TOTAL_ATTEMPTS=$((MAX_RETRIGGERS + 1))
