@@ -176,26 +176,38 @@ After building the initial candidate list from the eligibility table above and a
    # the spec+plan workflow.
    # Use pipefail so a network/auth failure propagates; on failure, skip stale
    # detection (fail-open — treat as genuinely in progress, do not reset).
+   # Each prefix gets both bare-number and tracker-prefixed forms:
+   #   feature/123-slug      (plain numeric)
+   #   feature/ENG-123-slug  (tracker-prefixed, e.g. Linear/Jira)
    HAS_BRANCH=$(set -o pipefail; git ls-remote origin \
      "refs/heads/feature/${ISSUE_NUMBER}-*" \
      "refs/heads/feature/${ISSUE_NUMBER}" \
+     "refs/heads/feature/*-${ISSUE_NUMBER}-*" \
+     "refs/heads/feature/*-${ISSUE_NUMBER}" \
      "refs/heads/fix/${ISSUE_NUMBER}-*" \
      "refs/heads/fix/${ISSUE_NUMBER}" \
+     "refs/heads/fix/*-${ISSUE_NUMBER}-*" \
+     "refs/heads/fix/*-${ISSUE_NUMBER}" \
      "refs/heads/refactor/${ISSUE_NUMBER}-*" \
      "refs/heads/refactor/${ISSUE_NUMBER}" \
+     "refs/heads/refactor/*-${ISSUE_NUMBER}-*" \
+     "refs/heads/refactor/*-${ISSUE_NUMBER}" \
      "refs/heads/hotfix/${ISSUE_NUMBER}-*" \
      "refs/heads/hotfix/${ISSUE_NUMBER}" \
+     "refs/heads/hotfix/*-${ISSUE_NUMBER}-*" \
+     "refs/heads/hotfix/*-${ISSUE_NUMBER}" \
      2>/dev/null | wc -l | tr -d ' ') || {
      echo "WARNING: git ls-remote failed for issue #${ISSUE_NUMBER} — skipping stale detection (treating as genuinely in progress)."
      continue
    }
 
-   # Same restriction: only match implementation-stage prefixes.
+   # The jq regex includes an optional tracker-prefix group ([A-Z][A-Z0-9]*-)
+   # to match both feature/123-slug and feature/ENG-123-slug forms.
    # Do NOT use || echo 0: a gh failure must not be interpreted as "no PR exists".
    # On failure, skip stale detection (fail-open).
    HAS_PR=$(gh pr list --state open \
      --json number,headRefName \
-     --jq "[.[] | select(.headRefName | test(\"^(feature|fix|refactor|hotfix)/${ISSUE_NUMBER}($|-)\"))] | length" \
+     --jq "[.[] | select(.headRefName | test(\"^(feature|fix|refactor|hotfix)/([A-Z][A-Z0-9]*-)?${ISSUE_NUMBER}(-|\$)\"))] | length" \
      2>/dev/null) || {
      echo "WARNING: gh pr list failed for issue #${ISSUE_NUMBER} — skipping stale detection (treating as genuinely in progress)."
      continue
