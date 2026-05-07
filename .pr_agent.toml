@@ -54,3 +54,8 @@ num_code_suggestions = 0
 # Advisory-only labels (non-blocking):
 #   Possible Issue, Edge Case, Logic Gap, Documentation Inconsistency
 # All other unrecognized labels are treated as blocking (conservative)
+#
+# Context-specific workarounds (e.g. ShellCheck SC2188 false-positives, intentional
+# pipefail suppressions) are typically emitted under "Possible Issue" and are therefore
+# non-blocking. The reviewer loop will classify them as clean and will not loop.
+# See: https://github.com/lhpaul/ai-dev-framework-template/issues/511
