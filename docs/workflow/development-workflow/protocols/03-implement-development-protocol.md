@@ -820,6 +820,12 @@ git checkout -b hotfix/[branch-slug]
 
 Implement the minimal fix (do not bundle unrelated changes).
 
+**Pre-commit edge-case reasoning (required before your first commit)**: Before writing any code or making any change, briefly reason through edge cases for the fix:
+
+- Are there inputs or response formats where the change behaves unexpectedly?
+- For regex or string matching changes, test against both the false-positive case (what you are trying to allow) and the true-positive case (what you must still catch), including cases where both appear in the same string or line.
+- For conditional or filtering logic, verify that a condition you add to suppress a false positive does not also suppress a genuine match when both appear together in the same input.
+
 ### Step 5: Verify
 
 Verify: build, lint, tests pass.
