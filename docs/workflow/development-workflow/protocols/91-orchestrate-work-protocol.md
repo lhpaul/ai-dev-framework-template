@@ -133,7 +133,16 @@ If the tracker is unavailable, log a warning and proceed — do not block advanc
 
 **When `BATCH_CONTEXT=true`**: If the item's tracker status is exactly `In Development` at this point in Step 2, run the following check before dispatching:
 
-1. **Check for an existing implementation branch or open PR**:
+1. **Guard — skip if issue number is empty**: Before running the branch and PR checks, verify that `ISSUE_NUMBER` is non-empty. An empty value would cause `git ls-remote` to search for patterns like `refs/heads/feature/-*`, potentially matching unintended branches. If empty, skip the stale check and treat the item as genuinely in progress:
+
+   ```bash
+   if [ -z "${ISSUE_NUMBER:-}" ]; then
+     echo "WARNING: empty ISSUE_NUMBER — skipping stale detection; treating item as genuinely in progress."
+     # proceed as if stale check returned non-zero (step 3 below)
+   fi
+   ```
+
+2. **Check for an existing implementation branch or open PR**:
 
    ```bash
    # Both "feature/123-slug" and "feature/123" forms are matched.
@@ -159,7 +168,7 @@ If the tracker is unavailable, log a warning and proceed — do not block advanc
      2>/dev/null || echo 0)
    ```
 
-2. **If both checks return zero** (no branch, no PR): the "In Development" status is stale (BR-5). Apply the correction:
+3. **If both checks return zero** (no branch, no PR): the "In Development" status is stale (BR-5). Apply the correction:
 
    - Log a `STALE_STATUS_CORRECTION:` line:
 
@@ -171,7 +180,7 @@ If the tracker is unavailable, log a warning and proceed — do not block advanc
 
    - Continue dispatching the implementation stage as if the item was `Plan Ready` (the Pre-dispatch tracker status update above will then advance the tracker to `In Development` for the new dispatch).
 
-3. **If either check returns non-zero** (branch or PR found): the item is genuinely in progress — do not reset the status. Resume from the existing branch or PR using `workflow-next-action.sh` (AC-8).
+4. **If either check returns non-zero** (branch or PR found): the item is genuinely in progress — do not reset the status. Resume from the existing branch or PR using `workflow-next-action.sh` (AC-8).
 
 ### Pre-dispatch branch check
 
