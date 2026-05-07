@@ -1085,18 +1085,18 @@ run_pr_agent_review() {
       #   - Any other unrecognized label → needs_fixes (conservative)
       # If no labels are parsed at all, default to needs_fixes (unreadable format).
       found_unknown=0
-      # Extract only finding labels, not section headers or code-block content.
-      # Each PR-Agent finding label appears on a line that STARTS with <details>:
-      #   <details><summary><a href='...'><strong>LABEL</strong></a>
-      # Anchoring to ^<details> excludes:
-      #   - Code-snippet lines in the comment body that contain <details> but are
-      #     indented (e.g. "  | grep '<details>' \") — they don't start the line.
-      #   - Section headers ("Recommended focus areas for review") which appear
-      #     outside <details> blocks as <strong>...</strong><br>.
-      # We match <strong>LABEL</strong> without requiring </a> so the extraction
-      # is resilient to minor HTML variations across PR-Agent versions.
+      # Scope extraction to the "Recommended focus areas for review" section only.
+      # PR-Agent comments may include other <details><summary><strong>…</strong>
+      # blocks elsewhere (e.g. ticket/compliance metadata). Scanning the full body
+      # would pick up those labels, and any unrecognized text would set found_unknown=1,
+      # recreating the false-loop bug this classifier is meant to fix.
+      # Strategy: use awk to collect lines only between the section marker and the
+      # next section boundary (**bold header, </td>, <tr>, or ---), then grep for
+      # ^<details> lines within that window to extract finding labels.
       labels="$(printf '%s\n' "$body" \
-        | grep '^<details>' \
+        | awk '/Recommended focus areas for review/{found=1; next}
+               found && /^\*\*|^<\/td>|^<tr>|^---$/{found=0}
+               found && /^<details>/{print}' \
         | grep -oE '<strong>[^<]+</strong>' \
         | sed 's|<strong>||g;s|</strong>||g;s|^[[:space:]]*||;s|[[:space:]]*$||' \
         || true)"
