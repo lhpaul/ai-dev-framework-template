@@ -46,5 +46,11 @@ num_code_suggestions = 0
 # cannot distinguish from a review with moderate findings.
 # Note: PR-Agent does not support APPROVED/CHANGES_REQUESTED review states via config.
 # It posts all review output as plain PR comments. Use body content markers instead:
-#   "No major issues detected"          → clean
-#   "Recommended focus areas for review" → has issues
+#   "No major issues detected"                                → clean
+#   "Recommended focus areas for review" + hard-blocker label → needs_fixes
+#   "Recommended focus areas for review" + advisory labels only → clean (non-blocking)
+# Hard-blocker / security / compat labels (blocking):
+#   Critical, Must Fix, Breaking Change, Security Concern, API Change, Backward Compatibility
+# Advisory-only labels (non-blocking):
+#   Possible Issue, Edge Case, Logic Gap, Documentation Inconsistency
+# All other unrecognized labels are treated as blocking (conservative)

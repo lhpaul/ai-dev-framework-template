@@ -998,8 +998,20 @@ run_pr_agent_review() {
   # formal GitHub PR reviews (APPROVED/CHANGES_REQUESTED/COMMENTED). The summary
   # comment always contains "PR Reviewer Guide" in its body. Two stable body markers
   # distinguish clean from has-issues:
-  #   "No major issues detected"           → clean
-  #   "Recommended focus areas for review" → has issues (needs_fixes)
+  #   "No major issues detected"                                → clean
+  #   "Recommended focus areas for review" → may or may not be blocking (see below)
+  #
+  # PR-Agent always emits "Recommended focus areas for review" when it finds any
+  # suggestion — including purely advisory ones. The bold labels inside that
+  # section determine the verdict:
+  #   Hard-blocker / security / compatibility labels → needs_fixes:
+  #     Critical, Must Fix, Breaking Change, Security Concern,
+  #     API Change, Backward Compatibility
+  #   Explicitly-known advisory-only labels (non-blocking) → clean:
+  #     Possible Issue, Edge Case, Logic Gap, Documentation Inconsistency
+  #   Any other unrecognized label, or no labels parsed → needs_fixes (conservative)
+  # Only return clean when every label found is in the explicit advisory list.
+  #
   # Bot login is "github-actions[bot]" when using GITHUB_TOKEN. Override with
   # PR_AGENT_BOT_LOGIN when using a GitHub App token (e.g. for fork PR support).
   local pr_number="$1"
@@ -1058,12 +1070,65 @@ run_pr_agent_review() {
 
   _pr_agent_classify() {
     local body="$1"
+    local found_unknown label labels
     if [ -z "$body" ]; then
       printf 'none'
     elif printf '%s\n' "$body" | grep -q "No major issues detected"; then
       printf 'clean'
     elif printf '%s\n' "$body" | grep -q "Recommended focus areas for review"; then
-      printf 'needs_fixes'
+      # Inspect every bold label in the section to classify conservatively:
+      #   - Hard-blocker / security / compatibility label → needs_fixes immediately
+      #     (Critical, Must Fix, Breaking Change, Security Concern,
+      #      API Change, Backward Compatibility)
+      #   - Explicitly-known advisory-only labels → skip (non-blocking)
+      #     (Possible Issue, Edge Case, Logic Gap, Documentation Inconsistency)
+      #   - Any other unrecognized label → needs_fixes (conservative)
+      # If no labels are parsed at all, default to needs_fixes (unreadable format).
+      found_unknown=0
+      # Extract only finding labels, not section headers or code-block content.
+      # Each PR-Agent finding label appears on a line that STARTS with <details>:
+      #   <details><summary><a href='...'><strong>LABEL</strong></a>
+      # Anchoring to ^<details> excludes:
+      #   - Code-snippet lines in the comment body that contain <details> but are
+      #     indented (e.g. "  | grep '<details>' \") — they don't start the line.
+      #   - Section headers ("Recommended focus areas for review") which appear
+      #     outside <details> blocks as <strong>...</strong><br>.
+      # We match <strong>LABEL</strong> without requiring </a> so the extraction
+      # is resilient to minor HTML variations across PR-Agent versions.
+      labels="$(printf '%s\n' "$body" \
+        | grep '^<details>' \
+        | grep -oE '<strong>[^<]+</strong>' \
+        | sed 's|<strong>||g;s|</strong>||g;s|^[[:space:]]*||;s|[[:space:]]*$||' \
+        || true)"
+      if [ -z "$labels" ]; then
+        # No finding-label tokens found — treat as unknown/unreadable, be conservative.
+        printf 'needs_fixes'
+        return
+      fi
+      while IFS= read -r label; do
+        [ -z "$label" ] && continue
+        case "$label" in
+          Critical|"Must Fix"|"Breaking Change"|"Security Concern"|"API Change"|"Backward Compatibility")
+            # Hard-blocker or security/compatibility concern — block immediately.
+            printf 'needs_fixes'
+            return
+            ;;
+          "Possible Issue"|"Edge Case"|"Logic Gap"|"Documentation Inconsistency")
+            # Explicitly-known advisory-only labels — non-blocking, keep scanning.
+            ;;
+          *)
+            # Unrecognized label — treat conservatively as blocking.
+            found_unknown=1
+            ;;
+        esac
+      done <<EOF
+$labels
+EOF
+      if [ "$found_unknown" -eq 1 ]; then
+        printf 'needs_fixes'
+      else
+        printf 'clean'
+      fi
     else
       printf 'escalate'
     fi

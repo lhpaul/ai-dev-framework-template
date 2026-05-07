@@ -42,7 +42,8 @@ The workflow file is already committed at `.github/workflows/pr-agent.yml`. It t
 
 Open or push to any PR and confirm that `github-actions[bot]` posts an issue comment with a **PR Reviewer Guide** section. The comment body will contain one of two stable markers:
 - `No major issues detected` — clean (`RESULT=clean`)
-- `Recommended focus areas for review` — blocking findings (`RESULT=needs_fixes`)
+- `Recommended focus areas for review` + hard-blocker label — blocking (`RESULT=needs_fixes`)
+- `Recommended focus areas for review` + advisory labels only — clean (`RESULT=clean`)
 
 ---
 
@@ -110,7 +111,8 @@ PR-Agent signals completion by posting a plain issue comment (not a formal GitHu
 | Result | Action |
 |---|---|
 | Comment with `No major issues detected` | Review complete — clean |
-| Comment with `Recommended focus areas for review` | Review complete — blocking |
+| Comment with `Recommended focus areas for review` + hard-blocker label | Review complete — blocking |
+| Comment with `Recommended focus areas for review` + advisory labels only | Review complete — clean (advisory only) |
 | Comment with neither marker | Ambiguous — escalate for human review |
 | No matching comment and `elapsed < max_wait` | GHA still running — wait `poll_interval` and poll again |
 | `elapsed >= max_wait` and no comment posted | Treat as `skipped` (GHA may not have run, e.g., fork PR with no secrets access) |
@@ -121,10 +123,27 @@ Unlike Devin, there are no check runs to monitor — the comment itself is the c
 
 PR-Agent's blocking classification is based on stable body-content markers in its `PR Reviewer Guide` comment:
 - `No major issues detected` → clean (`RESULT=clean`)
-- `Recommended focus areas for review` → blocking (`RESULT=needs_fixes`)
+- `Recommended focus areas for review` → **may or may not be blocking** (see label check below)
 - Neither marker present → ambiguous (`RESULT=escalate`, requires human review)
 
-There is no inline-comment severity ladder (unlike CodeRabbit's 🔴/🟠 markers). The entire review is either blocking or not based on the body markers in the PR-Agent comment.
+**Label-based severity check**: PR-Agent emits `Recommended focus areas for review` even for purely advisory findings like `Possible Issue`. The classifier inspects the bold `<strong>` labels inside the section's `<details>` elements:
+
+| Label | Blocking? |
+|---|---|
+| `Critical` | Yes — `RESULT=needs_fixes` |
+| `Must Fix` | Yes — `RESULT=needs_fixes` |
+| `Breaking Change` | Yes — `RESULT=needs_fixes` |
+| `Security Concern` | Yes — `RESULT=needs_fixes` (security findings require human review) |
+| `API Change` | Yes — `RESULT=needs_fixes` (compatibility concern) |
+| `Backward Compatibility` | Yes — `RESULT=needs_fixes` (compatibility concern) |
+| `Possible Issue` | No — `RESULT=clean` |
+| `Edge Case` | No — `RESULT=clean` (robustness suggestion) |
+| `Logic Gap` | No — `RESULT=clean` (advisory suggestion) |
+| `Documentation Inconsistency` | No — `RESULT=clean` (doc suggestion) |
+| Any other (unrecognized) label | Yes — `RESULT=needs_fixes` (conservative) |
+| No `<strong>` labels parsed | Yes — `RESULT=needs_fixes` (unreadable format) |
+
+When `Recommended focus areas for review` is present but contains **only** explicitly-known advisory labels (`Possible Issue`, `Edge Case`, `Logic Gap`, `Documentation Inconsistency`), the classifier returns `clean`. Hard-blocker labels, security labels (`Security Concern`), and compatibility labels (`API Change`, `Backward Compatibility`) always block.
 
 ### Fork PR handling
 
