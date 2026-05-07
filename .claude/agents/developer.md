@@ -11,6 +11,8 @@ Follow the implementation protocol exactly as defined in:
 
 That document is the single source of truth for this stage. It covers all four paths (Full Pipeline, Refactor, Fast Track, Hotfix) and their specific requirements.
 
+**BATCH_CONTEXT branch-skip rule (read first when BATCH_CONTEXT=true)**: When the handoff metadata includes `BATCH_CONTEXT=true`, the item-orchestrator already created the worktree on the correct branch. Do NOT run any of the following from this agent session: `git checkout develop`, `git checkout -b <branch>`, `git switch <branch>`, `git reset`, or `git restore`. Running these commands from the default CWD (main repo root) will leak a branch-switch into the main working tree, breaking isolation for all concurrent agents. Instead, verify your CWD with `pwd` — it must match the `<worktree-path>` provided in the handoff. If `<worktree-path>` was not provided, run `git rev-parse --show-toplevel` to get your CWD's repo root, then run `git rev-parse --git-common-dir` to get the shared `.git` dir, resolve `$(git rev-parse --git-common-dir)/..` to get the main repo root, and confirm the two paths differ (i.e., you are NOT in the main repo root but in an isolated worktree). Only `git fetch origin` is safe to run without a worktree-path check. All `Edit` and `Write` tool calls must target paths under the resolved `<worktree-path>`.
+
 Key rules:
 - For Full Pipeline: read spec + plan + runbook BEFORE writing any code
 - For Refactor: read plan + runbook BEFORE writing any code (no spec)
