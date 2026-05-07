@@ -68,6 +68,44 @@ These conventions apply across all languages and frameworks in this project.
     | xargs -0 python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md
   ```
 
+## Shell Scripting
+
+### ShellCheck Suppression Directives
+
+ShellCheck is required for all `.sh` files in this project (see `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md`). Occasionally ShellCheck emits false positives — warnings that flag intentional, correct code. When a genuine false positive cannot be resolved by rewriting the code, use a suppression directive.
+
+**When suppression is appropriate:**
+
+- Glob patterns in `case` statement arms that intentionally require unquoted expansion
+- Intentionally unquoted word-splitting, such as passing a constructed argument list through a variable (`$FLAGS` where the split is intended by design)
+- Constructs where quoting would change behavior and the unquoted form is deliberate and understood
+
+**When suppression is NOT appropriate:**
+
+- To silence a real bug or security risk
+- Because the fix is inconvenient or requires refactoring
+- As a shortcut to avoid understanding the warning
+
+**Correct suppression syntax** — place the directive on the line immediately before the affected code and include a comment explaining why:
+
+```bash
+# shellcheck disable=SC2086  # $FLAGS must word-split to pass multiple arguments to the command
+eval "$runner" $FLAGS
+
+# shellcheck disable=SC2254  # Glob pattern in case arm is intentional — not a variable expansion
+case "$input" in
+  *.tar.gz) extract_tar "$input" ;;
+  *.zip)    extract_zip "$input" ;;
+esac
+```
+
+**Rules for all suppression directives:**
+
+1. One `# shellcheck disable=` comment per suppressed occurrence — do not add blanket file-level disables.
+2. The `# shellcheck disable=` line must include an inline explanation (after `#`) of why the suppression is needed — a bare disable with no explanation is a protocol violation.
+3. Prefer the narrowest scope: use a line-level disable rather than a function-level or file-level one.
+4. If the same construct recurs throughout the file, extract it into a helper function and suppress once there.
+
 ## Dependency Management
 
 - Prefer established, actively maintained libraries
