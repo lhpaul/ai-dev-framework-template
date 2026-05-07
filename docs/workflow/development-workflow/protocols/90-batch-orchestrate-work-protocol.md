@@ -157,11 +157,11 @@ Before batching an item, check its `Depends on` field or tracker dependency data
 
 After building the initial candidate list from the eligibility table above and after the dependency gate, but **before** Step 2.5 (pre-dispatch tracker updates), scan each candidate item whose tracker status is exactly `In Development`:
 
-1. **Guard — skip if issue number is empty**: Before running the branch and PR checks, verify that `ISSUE_NUMBER` is non-empty. An empty value (which should not occur with a well-formed tracker query) would cause `git ls-remote` to search for patterns like `refs/heads/feature/-*`, potentially matching unintended branches:
+1. **Guard — skip if issue number is invalid**: Before running the branch and PR checks, verify that `ISSUE_NUMBER` is a non-empty positive integer. An empty or non-numeric value would cause `git ls-remote` to search for patterns like `refs/heads/feature/-*` or `refs/heads/feature/abc-*`, potentially matching unintended branches. GitHub issue numbers are always positive integers, so a non-integer value indicates a data problem in the candidate list:
 
    ```bash
-   if [ -z "${ISSUE_NUMBER:-}" ]; then
-     echo "WARNING: empty ISSUE_NUMBER for candidate item — skipping stale detection."
+   if ! echo "${ISSUE_NUMBER:-}" | grep -qE '^[1-9][0-9]*$'; then
+     echo "WARNING: invalid ISSUE_NUMBER '${ISSUE_NUMBER:-}' for candidate item — skipping stale detection."
      continue  # move to the next candidate in the eligibility loop
    fi
    ```

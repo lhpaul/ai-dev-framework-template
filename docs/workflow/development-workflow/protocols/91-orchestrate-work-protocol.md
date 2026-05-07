@@ -133,12 +133,12 @@ If the tracker is unavailable, log a warning and proceed — do not block advanc
 
 **When `BATCH_CONTEXT=true`**: If the item's tracker status is exactly `In Development` at this point in Step 2, run the following check before dispatching:
 
-1. **Guard — skip if issue number is empty**: Before running the branch and PR checks, verify that `ISSUE_NUMBER` is non-empty. An empty value would cause `git ls-remote` to search for patterns like `refs/heads/feature/-*`, potentially matching unintended branches. If empty, skip the stale check and treat the item as genuinely in progress:
+1. **Guard — skip if issue number is invalid**: Before running the branch and PR checks, verify that `ISSUE_NUMBER` is a non-empty positive integer. GitHub issue numbers are always positive integers; a non-integer value indicates a data problem and would cause `git ls-remote` to search for unintended patterns. If invalid, skip the stale check and treat the item as genuinely in progress:
 
    ```bash
-   if [ -z "${ISSUE_NUMBER:-}" ]; then
-     echo "WARNING: empty ISSUE_NUMBER — skipping stale detection; treating item as genuinely in progress."
-     # proceed as if stale check returned non-zero (step 3 below)
+   if ! echo "${ISSUE_NUMBER:-}" | grep -qE '^[1-9][0-9]*$'; then
+     echo "WARNING: invalid ISSUE_NUMBER '${ISSUE_NUMBER:-}' — skipping stale detection; treating item as genuinely in progress."
+     # proceed as if stale check returned non-zero (step 4 below)
    fi
    ```
 
@@ -178,7 +178,7 @@ If the tracker is unavailable, log a warning and proceed — do not block advanc
 
    - Update the tracker status to `Plan Ready` using `update_tracker_status_best_effort` (BR-6).
 
-   - Continue dispatching the implementation stage as if the item was `Plan Ready` (the Pre-dispatch tracker status update above will then advance the tracker to `In Development` for the new dispatch).
+   - Continue dispatching the implementation stage as if the item was `Plan Ready` (the pre-dispatch tracker status update, which ran earlier in this step and was a no-op because the status was already "In Development", will re-run for the corrected dispatch and advance the tracker back to `In Development`). The brief "Plan Ready" state between the stale reset and the new dispatch is intentional and transient — the orchestrator runs sequentially, so no concurrent observer will act on this intermediate value.
 
 4. **If either check returns non-zero** (branch or PR found): the item is genuinely in progress — do not reset the status. Resume from the existing branch or PR using `workflow-next-action.sh` (AC-8).
 
