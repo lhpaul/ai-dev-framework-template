@@ -309,6 +309,33 @@ cd <worktree-path>
 
 Use the pre-dispatch branch check from Step 2 (`git branch --list`, `git branch -r --list`) to determine which case applies. Case B and C are common when resuming "In Development" items, PRs with `needs-fixes`, or any item with prior work.
 
+**Branch-context verification — mandatory immediately after entering the worktree**
+
+After `cd <worktree-path>`, verify the active branch before doing any work. `git switch` and `git worktree add` output is filtered by RTK (the shell proxy), suppressing the confirmation message — without explicit verification the agent cannot detect a wrong-branch outcome until a commit reveals the error (the Batch 33 incident: commits landed on `fix/pr-agent-classifier-label-aware-2` instead of the intended `fix/487-stale-tracker-status-transitions`). Use `git rev-parse --abbrev-ref HEAD`, which produces a single branch-name token and is RTK-safe:
+
+```bash
+# Verify branch context — always visible even through RTK filtering:
+CURRENT=$(git rev-parse --abbrev-ref HEAD)
+EXPECTED="<branch-prefix>/<slug>"
+if [ "$CURRENT" != "$EXPECTED" ]; then
+  echo "ERROR: expected branch $EXPECTED, currently on $CURRENT. Aborting."
+  exit 1
+fi
+echo "Branch context verified: $CURRENT"
+```
+
+Apply the same verification pattern any time a `git switch` or `git checkout <branch>` is issued outside the worktree-creation path (e.g., when a stage protocol's recovery step asks to switch branches):
+
+```bash
+git switch <branch>
+# Verify — always visible even through RTK filtering:
+CURRENT=$(git rev-parse --abbrev-ref HEAD)
+if [ "$CURRENT" != "<branch>" ]; then
+  echo "ERROR: expected branch <branch>, currently on $CURRENT. Aborting."
+  exit 1
+fi
+```
+
 **Runtime CWD guard — activate immediately after entering the worktree**
 
 After `cd <worktree-path>`, source and initialise the CWD guard. This provides runtime enforcement that catches branch-switching commands issued from the wrong directory **at execution time** rather than only at the post-agent Step 5.2 inspection:
