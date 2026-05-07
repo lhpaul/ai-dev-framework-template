@@ -1091,12 +1091,14 @@ run_pr_agent_review() {
       # would pick up those labels, and any unrecognized text would set found_unknown=1,
       # recreating the false-loop bug this classifier is meant to fix.
       # Strategy: use awk to collect lines only between the section marker and the
-      # next section boundary (**bold header, </td>, <tr>, or ---), then grep for
-      # ^<details> lines within that window to extract finding labels.
+      # next section boundary (**bold header, </td>, <tr>, or ---), then extract
+      # <details> lines within that window. Leading whitespace is allowed because
+      # PR-Agent sometimes indents <details> rows; anchoring to ^<details> would
+      # silently drop all labels and fall back to needs_fixes for advisory reviews.
       labels="$(printf '%s\n' "$body" \
         | awk '/Recommended focus areas for review/{found=1; next}
-               found && /^\*\*|^<\/td>|^<tr>|^---$/{found=0}
-               found && /^<details>/{print}' \
+               found && /^[[:space:]]*(\*\*|<\/td>|<tr>)|^---$/{found=0}
+               found && /^[[:space:]]*<details>/{print}' \
         | grep -oE '<strong>[^<]+</strong>' \
         | sed 's|<strong>||g;s|</strong>||g;s|^[[:space:]]*||;s|[[:space:]]*$||' \
         || true)"
