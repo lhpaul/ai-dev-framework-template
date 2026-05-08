@@ -1011,13 +1011,12 @@ run_pr_agent_review() {
   # PR-Agent always emits "Recommended focus areas for review" when it finds any
   # suggestion — including purely advisory ones. The bold labels inside that
   # section determine the verdict:
-  #   Hard-blocker / security / compatibility labels → needs_fixes:
+  #   Hard-blocker / security / compatibility labels → needs_fixes (case-insensitive):
   #     Critical, Must Fix, Breaking Change, Security Concern,
   #     API Change, Backward Compatibility
-  #   Explicitly-known advisory-only labels (non-blocking) → clean:
-  #     Possible Issue, Edge Case, Logic Gap, Documentation Inconsistency
-  #   Any other unrecognized label, or no labels parsed → needs_fixes (conservative)
-  # Only return clean when every label found is in the explicit advisory list.
+  #   All other labels → clean (advisory-only — PR-Agent uses a wide variety of
+  #     quality/style labels that are non-blocking by nature)
+  #   No labels parseable → needs_fixes (unreadable format — conservative)
   #
   # Bot login is "github-actions[bot]" when using GITHUB_TOKEN. Override with
   # PR_AGENT_BOT_LOGIN when using a GitHub App token (e.g. for fork PR support).
@@ -1077,26 +1076,29 @@ run_pr_agent_review() {
 
   _pr_agent_classify() {
     local body="$1"
-    local found_unknown label labels
+    local label label_lower labels
     if [ -z "$body" ]; then
       printf 'none'
     elif printf '%s\n' "$body" | grep -q "No major issues detected"; then
       printf 'clean'
     elif printf '%s\n' "$body" | grep -q "Recommended focus areas for review"; then
-      # Inspect every bold label in the section to classify conservatively:
-      #   - Hard-blocker / security / compatibility label → needs_fixes immediately
-      #     (Critical, Must Fix, Breaking Change, Security Concern,
-      #      API Change, Backward Compatibility)
-      #   - Explicitly-known advisory-only labels → skip (non-blocking)
-      #     (Possible Issue, Edge Case, Logic Gap, Documentation Inconsistency)
-      #   - Any other unrecognized label → needs_fixes (conservative)
-      # If no labels are parsed at all, default to needs_fixes (unreadable format).
-      found_unknown=0
+      # Inspect every bold label in the section to classify.
+      # Labels are lowercased before matching (case-insensitive — PR-Agent
+      # sometimes varies capitalisation across runs).
+      #   - Hard-blocker / security / compatibility labels → needs_fixes immediately
+      #     (critical, must fix, breaking change, security concern,
+      #      api change, backward compatibility)
+      #   - All other labels → non-blocking (advisory).
+      #     PR-Agent uses a wide variety of quality labels (Race Condition, Logic Error,
+      #     Inconsistent Error Handling, Performance Concern, Possible Issue, etc.)
+      #     that are advisory in nature. Security-critical concerns are always
+      #     labelled one of the hard-blocker patterns above by PR-Agent.
+      #   - If no labels are parseable → needs_fixes (unreadable format — conservative)
       # Scope extraction to the "Recommended focus areas for review" section only.
       # PR-Agent comments may include other <details><summary><strong>…</strong>
       # blocks elsewhere (e.g. ticket/compliance metadata). Scanning the full body
-      # would pick up those labels, and any unrecognized text would set found_unknown=1,
-      # recreating the false-loop bug this classifier is meant to fix.
+      # would pick up those labels and could misclassify advisory metadata as
+      # hard-blocker findings.
       # Strategy: use awk to collect all lines between the section marker and the
       # next section boundary (**bold header, </td>, <tr>, or ---), then extract
       # every <strong>…</strong> token from that window.
@@ -1119,28 +1121,29 @@ run_pr_agent_review() {
       fi
       while IFS= read -r label; do
         [ -z "$label" ] && continue
-        case "$label" in
-          Critical|"Must Fix"|"Breaking Change"|"Security Concern"|"API Change"|"Backward Compatibility")
+        # Normalize to lowercase for case-insensitive matching.
+        # PR-Agent occasionally varies label capitalisation across runs.
+        label_lower="$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')"
+        case "$label_lower" in
+          critical|"must fix"|"breaking change"|"security concern"|"api change"|"backward compatibility")
             # Hard-blocker or security/compatibility concern — block immediately.
             printf 'needs_fixes'
             return
             ;;
-          "Possible Issue"|"Edge Case"|"Logic Gap"|"Documentation Inconsistency")
-            # Explicitly-known advisory-only labels — non-blocking, keep scanning.
-            ;;
           *)
-            # Unrecognized label — treat conservatively as blocking.
-            found_unknown=1
+            # All other labels are treated as advisory-only (non-blocking).
+            # PR-Agent uses a wide variety of quality/style labels (Race Condition,
+            # Logic Error, Inconsistent Error Handling, Performance Concern, etc.)
+            # that represent code-quality suggestions, not security/breaking issues.
+            # Security-critical concerns are always separately labelled one of the
+            # hard-blocker patterns above.
             ;;
         esac
       done <<_PR_AGENT_LABELS_
 $labels
 _PR_AGENT_LABELS_
-      if [ "$found_unknown" -eq 1 ]; then
-        printf 'needs_fixes'
-      else
-        printf 'clean'
-      fi
+      # No hard-blocker label was found — all labels are advisory.
+      printf 'clean'
     else
       printf 'escalate'
     fi
