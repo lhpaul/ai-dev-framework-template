@@ -28,3 +28,10 @@ reviews:
     - "!**/*.lock"
     - "!**/node_modules/**"
   profile: "assertive"
+  # Scope restriction: restrict CodeRabbit's review to files in the PR diff.
+  # When set to true, CodeRabbit only comments on files that appear in the PR's
+  # changed files list. It will not expand its review to files outside the diff
+  # (e.g., tangentially related documentation or config files).
+  # This prevents scope inflation where CodeRabbit flags unrelated files and
+  # causes agents to make unintended edits that increase PR diff size and risk.
+  changed_files_only: true
