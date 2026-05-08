@@ -220,6 +220,48 @@ When findings target `*.sh` workflow scripts (especially under `scripts/developm
 
 If verification fails, iterate without pushing. When a prior attempt introduced regressions (e.g., misunderstood `IFS`, `read`, or `git worktree list --porcelain` ordering), prefer the **orchestrating agent** applying the fix inline with full conversation context rather than re-dispatching a blind fixer on the same subtle finding.
 
+### Cross-file expansion: defer out-of-scope suggestions to a new issue
+
+Automated reviewers (CodeRabbit, PR-Agent, Devin) can expand their review beyond the
+files intentionally changed in the PR. This "scope inflation" causes agents to make
+additional edits that increase PR diff size, add review burden, and risk unintended
+side-effects.
+
+**Definition of out-of-scope**: A reviewer finding targets a file that is **not** in the
+PR's intentional diff scope — i.e., it was not modified by the PR and its content is not
+required to validate or use the change being reviewed.
+
+**Mandatory handling when out-of-scope findings appear:**
+
+1. **Do not address the finding inline.** Do not edit the file, do not commit changes to
+   it, and do not resolve the thread by making substantive edits to unintended files.
+
+2. **Reply to the review thread** acknowledging the finding and noting it will be tracked
+   in a separate issue:
+
+   > "This finding is outside the intended scope of this PR (file `<path>` was not
+   > intentionally modified). Deferring to a separate backlog item to avoid scope
+   > inflation. This thread is closed without changes to this PR."
+
+3. **Resolve the thread** via the GraphQL `resolveReviewThread` mutation (same as any
+   other addressed thread) so it does not block the PR readiness gate.
+
+4. **Create a new backlog issue** (or add to an existing open issue if one already covers
+   the same concern) describing the suggested improvement. Title it descriptively and
+   include a link to the review comment for traceability. Use the issue tracker configured
+   in `.ai-dev-workflow.yaml`.
+
+5. **Do not label the PR `needs-fixes`** solely on the basis of out-of-scope findings.
+   Out-of-scope findings that are replied to and thread-resolved do not block
+   `ready-for-human-review`.
+
+**Important caveat — cross-cutting consistency fixes**: If a reviewer finding targets a
+file outside the diff but the finding is a *consistency issue* introduced by this PR (for
+example, the PR adds a new signal value to a script but a protocol doc that references
+that script still shows the old value), treat it as **in-scope**. The test is whether
+*this PR's changes* created the inconsistency, not whether the file was originally in the
+diff. When in doubt, fix the consistency issue inline rather than deferring it.
+
 ### Run the loops
 
 Execute **Step 7a: Internal Review Gate**, **Step 7: Automated Reviewer Loop**, **Step 8: CI Loop**, **Step 8a: Label Readiness Checklist**, **Step 8b: Update Tracker Status**, and **Step 8c: Post-Label Independent Verification** exactly as defined in `91-orchestrate-work-protocol.md` (scripts, result interpretation, sequential platform policy, fixer mapping, parameters, and labels). Do not duplicate that logic here — follow 91.
