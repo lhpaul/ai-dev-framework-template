@@ -1133,9 +1133,9 @@ run_pr_agent_review() {
             found_unknown=1
             ;;
         esac
-      done <<EOF
+      done <<_PR_AGENT_LABELS_
 $labels
-EOF
+_PR_AGENT_LABELS_
       if [ "$found_unknown" -eq 1 ]; then
         printf 'needs_fixes'
       else
