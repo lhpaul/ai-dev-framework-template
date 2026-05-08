@@ -1053,10 +1053,15 @@ run_pr_agent_review() {
     since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
   fi
 
-  _pr_agent_latest_comment() {
-    local match_mode="${1:-strict_sha}"
+  # Common helper: fetch the matching PR-Agent comment and return one of its fields.
+  # Parameters: field (e.g. "body" or "html_url"), match_mode (optional, default "strict_sha").
+  # Returns the empty string when no matching comment is found.
+  _pr_agent_latest_comment_field() {
+    local field="$1"
+    local match_mode="${2:-strict_sha}"
     gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-      | jq -rs --arg bot "$bot_login" --arg sha "$head_sha" --arg since "$since_iso" --arg mode "$match_mode" '
+      | jq -rs --arg bot "$bot_login" --arg sha "$head_sha" --arg since "$since_iso" \
+               --arg mode "$match_mode" --arg field "$field" '
           add // []
           | [.[]
              | select(
@@ -1070,8 +1075,68 @@ run_pr_agent_review() {
             ]
           | sort_by(.updated_at)
           | last
-          | .body // ""
+          | .[$field] // ""
         '
+  }
+
+  _pr_agent_latest_comment() {
+    _pr_agent_latest_comment_field "body" "${1:-strict_sha}"
+  }
+
+  _pr_agent_latest_comment_url() {
+    _pr_agent_latest_comment_field "html_url" "${1:-strict_sha}"
+  }
+
+  # Extract <strong>LABEL</strong> tokens from the "Recommended focus areas for
+  # review" section of a PR-Agent comment body.
+  # Returns newline-delimited label strings (empty when section is absent or
+  # yields no tokens). Shared by _pr_agent_extract_advisory_labels and
+  # _pr_agent_classify to avoid duplicating the awk/grep/sed pipeline.
+  _pr_agent_extract_focus_labels() {
+    local body="$1"
+    if ! printf '%s\n' "$body" | grep -qF "Recommended focus areas for review"; then
+      return
+    fi
+    printf '%s\n' "$body" \
+      | awk '/Recommended focus areas for review/{found=1; next}
+             found && /^[[:space:]]*(\*\*|<\/td>|<tr>)|^---$/{found=0}
+             found{print}' \
+      | grep -oE '<strong>[^<]+</strong>' \
+      | sed 's|<strong>||g;s|</strong>||g;s|^[[:space:]]*||;s|[[:space:]]*$||' \
+      || true
+  }
+
+  # Extract advisory (non-blocking) labels from a PR-Agent comment body.
+  # Outputs labels pipe-delimited (|) for safe single-line transport through
+  # print_kv. Only labels that are NOT in the hard-blocker set are returned.
+  # Returns empty string when body has no "Recommended focus areas for review"
+  # section, or when all labels are blocking (handled by _pr_agent_classify).
+  _pr_agent_extract_advisory_labels() {
+    local body="$1"
+    local label label_lower advisory_labels=""
+    local labels
+    labels="$(_pr_agent_extract_focus_labels "$body")"
+    if [ -n "$labels" ]; then
+      while IFS= read -r label; do
+        [ -z "$label" ] && continue
+        label_lower="$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')"
+        case "$label_lower" in
+          critical|"must fix"|"breaking change"|"security concern"|"api change"|"backward compatibility")
+            # Hard-blocker — skip; these are handled by _pr_agent_classify as needs_fixes.
+            ;;
+          *)
+            if [ -n "$advisory_labels" ]; then
+              advisory_labels="${advisory_labels}|${label}"
+            else
+              advisory_labels="$label"
+            fi
+            ;;
+        esac
+      done <<_PR_AGENT_ADVISORY_LABELS_
+$labels
+_PR_AGENT_ADVISORY_LABELS_
+    fi
+    printf '%s' "$advisory_labels"
   }
 
   _pr_agent_classify() {
@@ -1094,26 +1159,7 @@ run_pr_agent_review() {
       #     that are advisory in nature. Security-critical concerns are always
       #     labelled one of the hard-blocker patterns above by PR-Agent.
       #   - If no labels are parseable → needs_fixes (unreadable format — conservative)
-      # Scope extraction to the "Recommended focus areas for review" section only.
-      # PR-Agent comments may include other <details><summary><strong>…</strong>
-      # blocks elsewhere (e.g. ticket/compliance metadata). Scanning the full body
-      # would pick up those labels and could misclassify advisory metadata as
-      # hard-blocker findings.
-      # Strategy: use awk to collect all lines between the section marker and the
-      # next section boundary (**bold header, </td>, <tr>, or ---), then extract
-      # every <strong>…</strong> token from that window.
-      # Parsing the whole section (not just <details> lines) ensures labels are
-      # found even when PR-Agent formats a finding over multiple lines — for example
-      # <details><summary><a ...> on one line and <strong>Possible Issue</strong>
-      # on the next; anchoring to ^<details> would miss those labels and fall back
-      # to needs_fixes for advisory-only reviews.
-      labels="$(printf '%s\n' "$body" \
-        | awk '/Recommended focus areas for review/{found=1; next}
-               found && /^[[:space:]]*(\*\*|<\/td>|<tr>)|^---$/{found=0}
-               found{print}' \
-        | grep -oE '<strong>[^<]+</strong>' \
-        | sed 's|<strong>||g;s|</strong>||g;s|^[[:space:]]*||;s|[[:space:]]*$||' \
-        || true)"
+      labels="$(_pr_agent_extract_focus_labels "$body")"
       if [ -z "$labels" ]; then
         # No finding-label tokens found — treat as unknown/unreadable, be conservative.
         printf 'needs_fixes'
@@ -1156,6 +1202,14 @@ _PR_AGENT_LABELS_
 
   case "$verdict" in
     clean)
+      local _advisory_labels _comment_url _advisory_entry
+      _advisory_labels="$(_pr_agent_extract_advisory_labels "$comment_body")"
+      if [ -n "$_advisory_labels" ]; then
+        _comment_url="$(_pr_agent_latest_comment_url strict_sha)"
+        _advisory_entry="${_advisory_labels}@@@${_comment_url}"
+      else
+        _advisory_entry=""
+      fi
       print_kv RESULT clean
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
@@ -1165,6 +1219,7 @@ _PR_AGENT_LABELS_
       print_kv COMMENT_COUNT 0
       print_kv BLOCKING_COUNT 0
       print_kv SUGGESTION_COUNT 0
+      [ -n "$_advisory_entry" ] && print_kv ADVISORY_LABELS "$_advisory_entry"
       return 0
       ;;
     needs_fixes)
@@ -1225,6 +1280,14 @@ _PR_AGENT_LABELS_
   # --- Phase 3: Classify the comment body ---
   case "$verdict" in
     clean)
+      local _advisory_labels _comment_url _advisory_entry
+      _advisory_labels="$(_pr_agent_extract_advisory_labels "$comment_body")"
+      if [ -n "$_advisory_labels" ]; then
+        _comment_url="$(_pr_agent_latest_comment_url recent_or_sha)"
+        _advisory_entry="${_advisory_labels}@@@${_comment_url}"
+      else
+        _advisory_entry=""
+      fi
       print_kv RESULT clean
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
@@ -1234,6 +1297,7 @@ _PR_AGENT_LABELS_
       print_kv COMMENT_COUNT 0
       print_kv BLOCKING_COUNT 0
       print_kv SUGGESTION_COUNT 0
+      [ -n "$_advisory_entry" ] && print_kv ADVISORY_LABELS "$_advisory_entry"
       return 0
       ;;
     needs_fixes)
@@ -2193,6 +2257,7 @@ aggregate_status=0
 total_comment_count=0
 total_blocking_count=0
 total_suggestion_count=0
+aggregate_advisory_labels=""
 
 print_kv PR_NUMBER "$pr_number"
 print_kv BRANCH "$branch_name"
@@ -2214,10 +2279,18 @@ for index in "${!platforms[@]}"; do
   platform_comment_count="$(kv_value_default COMMENT_COUNT "$platform_output" 0)"
   platform_blocking_count="$(kv_value_default BLOCKING_COUNT "$platform_output" 0)"
   platform_suggestion_count="$(kv_value_default SUGGESTION_COUNT "$platform_output" 0)"
+  platform_advisory_labels="$(kv_value_default ADVISORY_LABELS "$platform_output" "")"
 
   total_comment_count=$((total_comment_count + platform_comment_count))
   total_blocking_count=$((total_blocking_count + platform_blocking_count))
   total_suggestion_count=$((total_suggestion_count + platform_suggestion_count))
+  if [ -n "$platform_advisory_labels" ]; then
+    if [ -n "$aggregate_advisory_labels" ]; then
+      aggregate_advisory_labels="${aggregate_advisory_labels}|||${platform_advisory_labels}"
+    else
+      aggregate_advisory_labels="$platform_advisory_labels"
+    fi
+  fi
   last_platform="$platform_name"
 
   print_kv "PLATFORM_${platform_index}_NAME" "$platform_name"
@@ -2370,6 +2443,7 @@ _post_review_summary() {
   local platform_list="$3"
   local blocking="$4"
   local suggestions="$5"
+  local advisory_labels="${6:-}"
 
   if [ -z "$pr_number" ]; then
     return 0
@@ -2395,13 +2469,51 @@ _post_review_summary() {
       ;;
   esac
 
+  # Build the optional advisory findings section.
+  # advisory_labels format: "<labels>@@@<url>" entries separated by "|||"
+  # Each entry's labels are pipe-separated. Render each label as a list item,
+  # linking to the PR-Agent comment URL when available.
+  local advisory_section=""
+  if [ -n "$advisory_labels" ]; then
+    local _entry _labels _url _label
+    advisory_section="
+
+**Advisory findings (non-blocking):**"
+    # Split entries by ||| separator using sed (IFS does not support multi-char
+    # separators). Each entry has the form "<pipe-delimited labels>@@@<url>".
+    local _entries_normalized
+    _entries_normalized="$(printf '%s' "$advisory_labels" | sed 's/|||/\n/g')"
+    while IFS= read -r _entry; do
+      [ -z "$_entry" ] && continue
+      _labels="${_entry%@@@*}"
+      _url="${_entry##*@@@}"
+      # Split pipe-delimited labels within this entry
+      local _labels_normalized
+      _labels_normalized="$(printf '%s' "$_labels" | tr '|' '\n')"
+      while IFS= read -r _label; do
+        [ -z "$_label" ] && continue
+        if [ -n "$_url" ] && [ "$_url" != "$_labels" ]; then
+          advisory_section="${advisory_section}
+- ${_label} ([view comment](${_url}))"
+        else
+          advisory_section="${advisory_section}
+- ${_label}"
+        fi
+      done <<_ADVISORY_LABEL_LINES_
+$_labels_normalized
+_ADVISORY_LABEL_LINES_
+    done <<_ADVISORY_ENTRY_LINES_
+$_entries_normalized
+_ADVISORY_ENTRY_LINES_
+  fi
+
   local comment_body
   comment_body="$(cat <<EOF
 ### Automated Reviewer Loop Summary
 
 **Result:** ${result_line}
 **Platforms:** ${platform_list:-none}
-**Findings:** ${blocking} blocking, ${suggestions} suggestions
+**Findings:** ${blocking} blocking, ${suggestions} suggestions${advisory_section}
 
 *Posted automatically by \`pr-review-loop.sh\`.*
 EOF
@@ -2418,7 +2530,8 @@ case "$aggregate_result" in
   clean)
     _post_review_summary "$aggregate_result" "$aggregate_reason" \
       "$(IFS=,; printf '%s' "${platforms[*]}")" \
-      "$total_blocking_count" "$total_suggestion_count"
+      "$total_blocking_count" "$total_suggestion_count" \
+      "$aggregate_advisory_labels"
     exit 0
     ;;
   skipped)
@@ -2428,14 +2541,16 @@ case "$aggregate_result" in
     if [ "$post_final_summary" -eq 1 ]; then
       _post_review_summary "$aggregate_result" "$aggregate_reason" \
         "$(IFS=,; printf '%s' "${platforms[*]}")" \
-        "$total_blocking_count" "$total_suggestion_count"
+        "$total_blocking_count" "$total_suggestion_count" \
+        "$aggregate_advisory_labels"
     fi
     exit 1
     ;;
   escalate)
     _post_review_summary "$aggregate_result" "$aggregate_reason" \
       "$(IFS=,; printf '%s' "${platforms[*]}")" \
-      "$total_blocking_count" "$total_suggestion_count"
+      "$total_blocking_count" "$total_suggestion_count" \
+      "$aggregate_advisory_labels"
     exit 2
     ;;
   *)
