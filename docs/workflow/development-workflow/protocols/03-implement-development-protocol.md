@@ -392,18 +392,17 @@ fi
 echo "Base-branch guard passed: branch descends from origin/develop"
 ```
 
-```bash
-gh pr create --draft --base develop --title "feat([scope]): [feature-name]" --body "..."
-```
-
 **Post-create base-branch assertion (mandatory — run immediately after `gh pr create`)**:
 
 ```bash
-# 2. Assert the opened PR targets develop (replace PR_NUMBER with the number returned above)
-ACTUAL_BASE=$(gh pr view PR_NUMBER --json baseRefName --jq '.baseRefName')
+gh pr create --draft --base develop --title "feat([scope]): [feature-name]" --body "..."
+PR_NUMBER=$(gh pr view --json number -q '.number')
+
+# Assert the opened PR targets develop
+ACTUAL_BASE=$(gh pr view "$PR_NUMBER" --json baseRefName -q '.baseRefName')
 if [ "$ACTUAL_BASE" != "develop" ]; then
   echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of 'develop'. Closing the malformed PR."
-  gh pr close PR_NUMBER --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against develop."
+  gh pr close "$PR_NUMBER" --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against develop."
   exit 1
 fi
 echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
@@ -655,18 +654,17 @@ fi
 echo "Base-branch guard passed: branch descends from origin/develop"
 ```
 
-```bash
-gh pr create --draft --base develop --title "refactor([scope]): [short description]" --body "..."
-```
-
 **Post-create base-branch assertion (mandatory — run immediately after `gh pr create`)**:
 
 ```bash
-# 2. Assert the opened PR targets develop (replace PR_NUMBER with the number returned above)
-ACTUAL_BASE=$(gh pr view PR_NUMBER --json baseRefName --jq '.baseRefName')
+gh pr create --draft --base develop --title "refactor([scope]): [short description]" --body "..."
+PR_NUMBER=$(gh pr view --json number -q '.number')
+
+# Assert the opened PR targets develop
+ACTUAL_BASE=$(gh pr view "$PR_NUMBER" --json baseRefName -q '.baseRefName')
 if [ "$ACTUAL_BASE" != "develop" ]; then
   echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of 'develop'. Closing the malformed PR."
-  gh pr close PR_NUMBER --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against develop."
+  gh pr close "$PR_NUMBER" --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against develop."
   exit 1
 fi
 echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
@@ -815,18 +813,17 @@ fi
 echo "Base-branch guard passed: branch descends from origin/develop"
 ```
 
-```bash
-gh pr create --draft --base develop --title "fix([scope]): [description]" --body "..."
-```
-
 **Post-create base-branch assertion (mandatory — run immediately after `gh pr create`)**:
 
 ```bash
-# 2. Assert the opened PR targets develop (replace PR_NUMBER with the number returned above)
-ACTUAL_BASE=$(gh pr view PR_NUMBER --json baseRefName --jq '.baseRefName')
+gh pr create --draft --base develop --title "fix([scope]): [description]" --body "..."
+PR_NUMBER=$(gh pr view --json number -q '.number')
+
+# Assert the opened PR targets develop
+ACTUAL_BASE=$(gh pr view "$PR_NUMBER" --json baseRefName -q '.baseRefName')
 if [ "$ACTUAL_BASE" != "develop" ]; then
   echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of 'develop'. Closing the malformed PR."
-  gh pr close PR_NUMBER --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against develop."
+  gh pr close "$PR_NUMBER" --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against develop."
   exit 1
 fi
 echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
@@ -994,18 +991,17 @@ fi
 echo "Base-branch guard passed: branch descends from origin/main"
 ```
 
-```bash
-gh pr create --draft --base main --title "fix([scope]): [description] (hotfix)" --body "..."
-```
-
 **Post-create base-branch assertion (mandatory — run immediately after `gh pr create`)**:
 
 ```bash
-# 2. Assert the opened PR targets main (replace PR_NUMBER with the number returned above)
-ACTUAL_BASE=$(gh pr view PR_NUMBER --json baseRefName --jq '.baseRefName')
+gh pr create --draft --base main --title "fix([scope]): [description] (hotfix)" --body "..."
+PR_NUMBER=$(gh pr view --json number -q '.number')
+
+# Assert the opened PR targets main
+ACTUAL_BASE=$(gh pr view "$PR_NUMBER" --json baseRefName -q '.baseRefName')
 if [ "$ACTUAL_BASE" != "main" ]; then
   echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of 'main'. Closing the malformed PR."
-  gh pr close PR_NUMBER --comment "Closed: Hotfix PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against main."
+  gh pr close "$PR_NUMBER" --comment "Closed: Hotfix PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against main."
   exit 1
 fi
 echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
@@ -1041,22 +1037,21 @@ fi
 echo "Base-branch guard passed: backport branch descends from origin/main"
 ```
 
+**Post-create base-branch assertion (mandatory)**:
+
 ```bash
 gh pr create --draft --base develop \
   --title "chore(hotfix): backport [slug] to develop" \
   --body "Backports hotfix '[slug]' (merged to main) to keep develop in sync.
 
 Closes the backport requirement for hotfix/[slug]."
-```
+PR_NUMBER=$(gh pr view --json number -q '.number')
 
-**Post-create base-branch assertion (mandatory)**:
-
-```bash
-# Assert the opened backport PR targets develop (replace PR_NUMBER with the number returned above)
-ACTUAL_BASE=$(gh pr view PR_NUMBER --json baseRefName --jq '.baseRefName')
+# Assert the opened backport PR targets develop
+ACTUAL_BASE=$(gh pr view "$PR_NUMBER" --json baseRefName -q '.baseRefName')
 if [ "$ACTUAL_BASE" != "develop" ]; then
   echo "ERROR: Backport PR was created with base '$ACTUAL_BASE' instead of 'develop'. Closing the malformed PR."
-  gh pr close PR_NUMBER --comment "Closed: Backport PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against develop."
+  gh pr close "$PR_NUMBER" --comment "Closed: Backport PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against develop."
   exit 1
 fi
 echo "Post-create assertion passed: backport PR base is '$ACTUAL_BASE'"
