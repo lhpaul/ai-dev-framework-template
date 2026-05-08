@@ -336,6 +336,11 @@ If the count is greater than 1, merge the duplicate sections before staging.
 
 1. **Trailing whitespace**: No line in the written entry should end with one or more whitespace characters. Note: intentional two-space Markdown hard line breaks (`<text>  ` with exactly two trailing spaces followed by a newline) are not trailing whitespace and must not be removed.
 2. **Trailing blank lines**: The entry must not end with two or more consecutive blank lines.
+3. **Link reference definitions**: If you renamed `[Unreleased]` to a versioned section (e.g., `## [1.2.3] - 2026-01-01`), verify that a corresponding link reference definition exists at the bottom of the file (e.g., `[1.2.3]: https://github.com/owner/repo/compare/v1.2.2...v1.2.3`). Run the check to catch any missing definitions:
+
+   ```bash
+   bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md
+   ```
 
 A quick shell check for trailing whitespace on pending CHANGELOG changes (run **before** `git add`, per the "before staging" timing requirement):
 
@@ -611,6 +616,11 @@ git checkout -b refactor/[branch-slug]
 
    1. **Trailing whitespace**: No line in the written entry should end with one or more whitespace characters. Note: intentional two-space Markdown hard line breaks (`<text>  ` with exactly two trailing spaces followed by a newline) are not trailing whitespace and must not be removed.
    2. **Trailing blank lines**: The entry must not end with two or more consecutive blank lines.
+   3. **Link reference definitions**: If you renamed `[Unreleased]` to a versioned section (e.g., `## [1.2.3] - 2026-01-01`), verify that a corresponding link reference definition exists at the bottom of the file (e.g., `[1.2.3]: https://github.com/owner/repo/compare/v1.2.2...v1.2.3`). Run the check to catch any missing definitions:
+
+      ```bash
+      bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md
+      ```
 
    A quick shell check for trailing whitespace on pending CHANGELOG changes (run **before** `git add`, per the "before staging" timing requirement):
 
@@ -769,6 +779,11 @@ Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (skip if this fixes u
 
 1. **Trailing whitespace**: No line in the written entry should end with one or more whitespace characters. Note: intentional two-space Markdown hard line breaks (`<text>  ` with exactly two trailing spaces followed by a newline) are not trailing whitespace and must not be removed.
 2. **Trailing blank lines**: The entry must not end with two or more consecutive blank lines.
+3. **Link reference definitions**: If you renamed `[Unreleased]` to a versioned section (e.g., `## [1.2.3] - 2026-01-01`), verify that a corresponding link reference definition exists at the bottom of the file (e.g., `[1.2.3]: https://github.com/owner/repo/compare/v1.2.2...v1.2.3`). Run the check to catch any missing definitions:
+
+   ```bash
+   bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md
+   ```
 
 A quick shell check for trailing whitespace on pending CHANGELOG changes (run **before** `git add`, per the "before staging" timing requirement):
 
@@ -947,6 +962,11 @@ To write the entry correctly:
 
 1. **Trailing whitespace**: No line in the written entry should end with one or more whitespace characters. Note: intentional two-space Markdown hard line breaks (`<text>  ` with exactly two trailing spaces followed by a newline) are not trailing whitespace and must not be removed.
 2. **Trailing blank lines**: The entry must not end with two or more consecutive blank lines.
+3. **Link reference definitions**: If you renamed `[Unreleased]` to a versioned section (e.g., `## [1.2.3] - 2026-01-01`), verify that a corresponding link reference definition exists at the bottom of the file (e.g., `[1.2.3]: https://github.com/owner/repo/compare/v1.2.2...v1.2.3`). Run the check to catch any missing definitions:
+
+   ```bash
+   bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md
+   ```
 
 A quick shell check for trailing whitespace on pending CHANGELOG changes (run **before** `git add`, per the "before staging" timing requirement):
 

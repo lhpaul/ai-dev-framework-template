@@ -116,3 +116,9 @@ This project uses [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) forma
 - Never defer CHANGELOG entries to release time
 - Use the appropriate category: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`
 - Release PRs move `[Unreleased]` entries to a versioned section: `[X.Y.Z] - YYYY-MM-DD`
+- **Link reference definitions are mandatory**: every `## [X.Y.Z]` version heading (and `## [Unreleased]` when at least one versioned section exists) must have a corresponding link reference definition line at the bottom of the file following Keep a Changelog convention, for example:
+  ```
+  [Unreleased]: https://github.com/owner/repo/compare/vX.Y.Z...HEAD
+  [X.Y.Z]: https://github.com/owner/repo/compare/vPREV...vX.Y.Z
+  ```
+  Missing definitions cause broken links in rendered Markdown. `check-changelog-duplicate-headers.sh` enforces this in CI.
