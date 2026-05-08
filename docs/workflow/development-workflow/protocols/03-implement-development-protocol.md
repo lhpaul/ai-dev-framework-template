@@ -379,11 +379,37 @@ Open a **draft** PR targeting `develop` with:
   - Any deviations from the plan (with justification)
   - CHANGELOG entry preview
 
+**Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
+
+Before running `gh pr create`, verify that the current branch was actually cut from `develop` and confirm the intended base matches:
+
+```bash
+# 1. Verify the current branch descends from origin/develop (not from main or another branch)
+if ! git merge-base --is-ancestor origin/develop HEAD; then
+  echo "ERROR: Current branch does not descend from origin/develop. Verify the branch was cut from develop before opening the PR."
+  exit 1
+fi
+echo "Base-branch guard passed: branch descends from origin/develop"
+```
+
 ```bash
 gh pr create --draft --base develop --title "feat([scope]): [feature-name]" --body "..."
 ```
 
-**Important**: Always use `--base develop` to explicitly target the `develop` branch. This prevents accidental PR creation to `main` or other branches.
+**Post-create base-branch assertion (mandatory — run immediately after `gh pr create`)**:
+
+```bash
+# 2. Assert the opened PR targets develop (replace PR_NUMBER with the number returned above)
+ACTUAL_BASE=$(gh pr view PR_NUMBER --json baseRefName --jq '.baseRefName')
+if [ "$ACTUAL_BASE" != "develop" ]; then
+  echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of 'develop'. Closing the malformed PR."
+  gh pr close PR_NUMBER --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against develop."
+  exit 1
+fi
+echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
+```
+
+**Important**: Always use `--base develop` to explicitly target the `develop` branch. This prevents accidental PR creation to `main` or other branches. The pre-create guard and post-create assertion above are the enforcement mechanism — do not skip them.
 
 ### Step 9: Handoff to Work Item Runner
 
@@ -618,11 +644,35 @@ git checkout -b refactor/[branch-slug]
      - Any deviations from the plan (with justification)
      - CHANGELOG entry preview
 
+**Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
+
+```bash
+# 1. Verify the current branch descends from origin/develop
+if ! git merge-base --is-ancestor origin/develop HEAD; then
+  echo "ERROR: Current branch does not descend from origin/develop. Verify the branch was cut from develop before opening the PR."
+  exit 1
+fi
+echo "Base-branch guard passed: branch descends from origin/develop"
+```
+
 ```bash
 gh pr create --draft --base develop --title "refactor([scope]): [short description]" --body "..."
 ```
 
-**Important**: Always use `--base develop` to explicitly target the `develop` branch.
+**Post-create base-branch assertion (mandatory — run immediately after `gh pr create`)**:
+
+```bash
+# 2. Assert the opened PR targets develop (replace PR_NUMBER with the number returned above)
+ACTUAL_BASE=$(gh pr view PR_NUMBER --json baseRefName --jq '.baseRefName')
+if [ "$ACTUAL_BASE" != "develop" ]; then
+  echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of 'develop'. Closing the malformed PR."
+  gh pr close PR_NUMBER --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against develop."
+  exit 1
+fi
+echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
+```
+
+**Important**: Always use `--base develop` to explicitly target the `develop` branch. The pre-create guard and post-create assertion above are the enforcement mechanism — do not skip them.
 
 10. Hand off to the Work Item Runner with the same lifecycle expectations as Path 1 Step 9 (internal review gate, automated reviewer loop, CI, labels). **Label derivation rule**: `refactor/*` branches always require `ready-for-regression` based on branch prefix, not content type. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table. See `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
 
@@ -754,9 +804,35 @@ git push -u origin fix/[branch-slug]
 
 Open a **draft** PR targeting `develop` using the same structure as Path 1 `### Step 8: Open PR (Draft)`, but with a **`fix(...)`** title and a fix-focused description (omit spec/plan links when none exist):
 
+**Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
+
+```bash
+# 1. Verify the current branch descends from origin/develop
+if ! git merge-base --is-ancestor origin/develop HEAD; then
+  echo "ERROR: Current branch does not descend from origin/develop. Verify the branch was cut from develop before opening the PR."
+  exit 1
+fi
+echo "Base-branch guard passed: branch descends from origin/develop"
+```
+
 ```bash
 gh pr create --draft --base develop --title "fix([scope]): [description]" --body "..."
 ```
+
+**Post-create base-branch assertion (mandatory — run immediately after `gh pr create`)**:
+
+```bash
+# 2. Assert the opened PR targets develop (replace PR_NUMBER with the number returned above)
+ACTUAL_BASE=$(gh pr view PR_NUMBER --json baseRefName --jq '.baseRefName')
+if [ "$ACTUAL_BASE" != "develop" ]; then
+  echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of 'develop'. Closing the malformed PR."
+  gh pr close PR_NUMBER --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against develop."
+  exit 1
+fi
+echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
+```
+
+**Important**: Always use `--base develop` to explicitly target the `develop` branch. This prevents accidental PR creation to `main` or other branches. The pre-create guard and post-create assertion above are the enforcement mechanism — do not skip them.
 
 ### Step 9: Handoff to Work Item Runner
 
@@ -907,11 +983,35 @@ git push -u origin hotfix/[branch-slug]
 
 Open a **draft** PR targeting `main` by adapting Path 1 `### Step 8: Open PR (Draft)` for hotfix (`fix(...)` title with `(hotfix)` as needed, incident-focused body, target branch `main`):
 
+**Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
+
+```bash
+# 1. Verify the current branch descends from origin/main (hotfixes are cut from main)
+if ! git merge-base --is-ancestor origin/main HEAD; then
+  echo "ERROR: Current branch does not descend from origin/main. Verify the branch was cut from main before opening the hotfix PR."
+  exit 1
+fi
+echo "Base-branch guard passed: branch descends from origin/main"
+```
+
 ```bash
 gh pr create --draft --base main --title "fix([scope]): [description] (hotfix)" --body "..."
 ```
 
-**Important**: Use `--base main` for hotfixes (not `develop`). A hotfix merges to production first, then must be backported to `develop`.
+**Post-create base-branch assertion (mandatory — run immediately after `gh pr create`)**:
+
+```bash
+# 2. Assert the opened PR targets main (replace PR_NUMBER with the number returned above)
+ACTUAL_BASE=$(gh pr view PR_NUMBER --json baseRefName --jq '.baseRefName')
+if [ "$ACTUAL_BASE" != "main" ]; then
+  echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of 'main'. Closing the malformed PR."
+  gh pr close PR_NUMBER --comment "Closed: Hotfix PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against main."
+  exit 1
+fi
+echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
+```
+
+**Important**: Use `--base main` for hotfixes (not `develop`). A hotfix merges to production first, then must be backported to `develop`. The pre-create guard and post-create assertion above are the enforcement mechanism — do not skip them.
 
 ### Step 9: Handoff to Work Item Runner
 
@@ -930,12 +1030,36 @@ git checkout -b backport/hotfix/[slug] origin/main
 
 Open a PR targeting `develop`:
 
+**Pre-PR-create base-branch guard (mandatory)**:
+
+```bash
+# Verify the backport branch descends from origin/main (it was cut from origin/main post-merge)
+if ! git merge-base --is-ancestor origin/main HEAD; then
+  echo "ERROR: Backport branch does not descend from origin/main. Verify the branch was created from origin/main after the hotfix merge."
+  exit 1
+fi
+echo "Base-branch guard passed: backport branch descends from origin/main"
+```
+
 ```bash
 gh pr create --draft --base develop \
   --title "chore(hotfix): backport [slug] to develop" \
   --body "Backports hotfix '[slug]' (merged to main) to keep develop in sync.
 
 Closes the backport requirement for hotfix/[slug]."
+```
+
+**Post-create base-branch assertion (mandatory)**:
+
+```bash
+# Assert the opened backport PR targets develop (replace PR_NUMBER with the number returned above)
+ACTUAL_BASE=$(gh pr view PR_NUMBER --json baseRefName --jq '.baseRefName')
+if [ "$ACTUAL_BASE" != "develop" ]; then
+  echo "ERROR: Backport PR was created with base '$ACTUAL_BASE' instead of 'develop'. Closing the malformed PR."
+  gh pr close PR_NUMBER --comment "Closed: Backport PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against develop."
+  exit 1
+fi
+echo "Post-create assertion passed: backport PR base is '$ACTUAL_BASE'"
 ```
 
 **Automated reviewer loop exemption for identical cherry-pick backports**: For identical cherry-pick backport PRs (no changes beyond what was reviewed on the main hotfix PR), running the full automated reviewer loop is optional. If the automated reviewers (PR-Agent, Codex) post a clean result or no result, proceeding directly to merge is acceptable. If any reviewer posts a blocking finding on the backport PR, it must be addressed before merge.
