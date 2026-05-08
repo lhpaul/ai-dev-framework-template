@@ -5,7 +5,7 @@ description: >
   shows a categorized diff for review, applies approved changes, and generates
   ready-to-use git instructions (branch + commit + PR). Run from the project root.
   Usage: /sync-template [--local=/path/to/template] [--ref=<branch|tag>]
-allowed-tools: Read, Write, Edit, Glob, Grep, Bash(git rev-parse:*), Bash(git status:*), Bash(git branch:*), Bash(git clone:*), Bash(git diff:*), Bash(git add:*), Bash(git commit:*), Bash(git checkout:*), Bash(git push:*), Bash(git rm:*), Bash(cat:*), Bash(cp:*), Bash(find:*), Bash(ls:*), Bash(mkdir:*), Bash(rm:*), Bash(date:*), Bash(jq:*), Bash(diff:*), Bash(chmod:*), Bash(grep:*)
+allowed-tools: Read, Write, Edit, Glob, Grep, Bash(git rev-parse:*), Bash(git status:*), Bash(git branch:*), Bash(git clone:*), Bash(git diff:*), Bash(git add:*), Bash(git commit:*), Bash(git checkout:*), Bash(git push:*), Bash(git rm:*), Bash(cat:*), Bash(cp:*), Bash(find:*), Bash(ls:*), Bash(mkdir:*), Bash(rm:*), Bash(date:*), Bash(jq:*), Bash(diff:*), Bash(chmod:*), Bash(grep:*), Bash(python3:*), Bash(yamllint:*)
 ---
 
 Follow this workflow exactly when invoked. Do not skip steps or reorder them.
@@ -372,16 +372,22 @@ fi
 For each `.yml` / `.yaml` file in `.github/workflows/`:
 
 ```bash
+yaml_parse_failed=0
 for f in .github/workflows/*.yml .github/workflows/*.yaml; do
   [ -f "$f" ] || continue
   if command -v yamllint >/dev/null 2>&1; then
     yamllint -d "{extends: relaxed, rules: {line-length: disable}}" "$f" \
-      || echo "YAML LINT ERROR: $f"
+      || { echo "YAML LINT ERROR: $f"; yaml_parse_failed=1; }
   else
     python3 -c "import sys, yaml; yaml.safe_load(open(sys.argv[1]))" "$f" \
-      || echo "YAML PARSE ERROR: $f"
+      || { echo "YAML PARSE ERROR: $f"; yaml_parse_failed=1; }
   fi
 done
+
+if [ "$yaml_parse_failed" -ne 0 ]; then
+  echo "ERROR: One or more workflow YAML files failed validation. Fix before committing."
+  exit 1
+fi
 ```
 
 If any file fails to parse, **do not commit**. Report the broken file(s) and ask the maintainer to fix them before committing.
@@ -389,13 +395,17 @@ If any file fails to parse, **do not commit**. Report the broken file(s) and ask
 ### 3. Validate that `scripts/` paths referenced in workflow `run:` steps exist
 
 ```bash
-grep -hE 'scripts/[A-Za-z0-9_/.-]+' .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null \
-  | grep -oE 'scripts/[A-Za-z0-9_/.-]+' \
-  | sort -u \
-  | while read -r script_path; do
-      if [ ! -e "$script_path" ]; then
-        echo "MISSING SCRIPT: $script_path (referenced in a workflow run: step)"
-      fi
+grep -nHE 'scripts/[A-Za-z0-9_/.-]+' .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null \
+  | while IFS=: read -r workflow_file _ matched_line; do
+      printf '%s\n' "$matched_line" \
+        | grep -oE 'scripts/[A-Za-z0-9_/.-]+' \
+        | sort -u \
+        | while IFS= read -r script_path; do
+            [ -n "$script_path" ] || continue
+            if [ ! -e "$script_path" ]; then
+              echo "MISSING SCRIPT: $script_path (referenced in $workflow_file)"
+            fi
+          done
     done
 ```
 

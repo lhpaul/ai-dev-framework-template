@@ -175,7 +175,7 @@ If the tracker is unavailable, log a warning and proceed — do not block advanc
      # to match both feature/123-slug and feature/ENG-123-slug forms.
      # Do NOT use || echo 0: a gh failure must not be interpreted as "no PR exists".
      # On failure, treat as genuinely in progress (fail-open).
-     HAS_PR=$(gh pr list --state open \
+     HAS_PR=$(gh pr list --state open --limit 1000 \
        --json number,headRefName \
        --jq "[.[] | select(.headRefName | test(\"^(feature|fix|refactor|hotfix)/([A-Z][A-Z0-9]*-)?${ISSUE_NUMBER}(-|\$)\"))] | length" \
        2>/dev/null) || {
@@ -353,6 +353,15 @@ worktree_cwd_guard_init "$WORKTREE_PATH" "$MAIN_REPO_ROOT"
 Once initialised, replace bare `git switch`, `git checkout`, `git reset`, and `git restore` calls with the guarded wrappers exported by the script: `git_switch`, `git_checkout`, `git_reset`, and `git_restore`. If a stage protocol's step calls `git checkout develop && git checkout -b <branch>`, skip it entirely (the worktree was already created on the correct branch) — but if you must call it, use the guarded wrapper so any accidental main-repo targeting is caught immediately.
 
 The guard is **non-blocking**: it emits a `GUARDRAIL WARNING` and returns exit code 1 on a CWD violation, but does not abort the outer shell. Check the return value or `set -e` in the enclosing script to convert warnings into hard failures where appropriate.
+
+**Guard scope limitation — Claude Code subagents**: The `source`/`worktree_cwd_guard_init` sequence above applies to the item-orchestrator's own shell session. It does **not** propagate to Claude Code subagents dispatched via the `Agent` tool — each subagent starts with an independent execution context and has no knowledge of the parent's shell environment. The guard therefore cannot intercept branch-switching commands issued inside a stage subagent. For stage subagents (e.g., `developer`, `tech-lead`), worktree discipline is enforced entirely through the handoff prompt and the agent's own system-prompt rules. See "Stage-agent handoff branch-skip requirement" below.
+
+**Stage-agent handoff branch-skip requirement** (`BATCH_CONTEXT=true` only): Every stage-agent handoff (to `developer`, `tech-lead`, `product-manager`, or any other stage agent) when `BATCH_CONTEXT=true` **must** include:
+
+1. The literal resolved `<worktree-path>` value (e.g., `/path/to/repo/.claude/worktrees/lh-168/fix-lh-168-slug`).
+2. The explicit instruction: "BATCH_CONTEXT=true — the worktree is already on branch `<branch>`. Do NOT run `git checkout develop`, `git checkout -b`, `git switch`, `git reset`, or `git restore` from the main repo root. Confirm CWD matches `<worktree-path>` before any git state-changing command."
+
+Omitting either of these from the handoff is the root cause of the branch-leak pattern where stage subagents run Protocol 03's branching steps (`git checkout develop && git checkout -b <branch>`) from the main repo root CWD, silently switching the main working tree to the feature branch.
 
 **Critical: Worktree Git Discipline** (`BATCH_CONTEXT=true` only)
 

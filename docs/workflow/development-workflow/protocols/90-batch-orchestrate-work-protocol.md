@@ -197,7 +197,7 @@ After building the initial candidate list from the eligibility table above and a
    # to match both feature/123-slug and feature/ENG-123-slug forms.
    # Do NOT use || echo 0: a gh failure must not be interpreted as "no PR exists".
    # On failure, skip stale detection (fail-open).
-   HAS_PR=$(gh pr list --state open \
+   HAS_PR=$(gh pr list --state open --limit 1000 \
      --json number,headRefName \
      --jq "[.[] | select(.headRefName | test(\"^(feature|fix|refactor|hotfix)/([A-Z][A-Z0-9]*-)?${ISSUE_NUMBER}(-|\$)\"))] | length" \
      2>/dev/null) || {
@@ -894,7 +894,7 @@ When Step 5.2 fires (Case 1 — wrong branch + clean) **in a parallel batch**:
 1. Record the violation in the batch's retrospective notes, including the item ID, the branch the main tree was on, and the batch date.
 2. **After every 5 batches** following the merge of PR #411, tally the number of Step 5.2 Case 1 violations **from parallel batches only** across those batches. If the count exceeds **1 violation per 5 batches**, escalate to the human with the following message:
 
-   > `ESCALATION: Step 5.2 (branch-leak guardrail) has fired more than once in the last 5 batches after the PR #411 runtime CWD guard was merged. Current count: N. Investigate whether the worktree-cwd-guard.sh script was sourced and initialised correctly in the affected batch items (see Protocol 91 Step 3 "Runtime CWD guard" block). If the guard was active, the violation may indicate a new failure mode not yet covered by the guard — escalate for human analysis and a follow-up fix.`
+   > `ESCALATION: Step 5.2 (branch-leak guardrail) has fired more than once in the last 5 batches. Current count: N. Known root cause: the CWD guard (worktree-cwd-guard.sh) cannot propagate to Claude Code subagents dispatched via the Agent tool — each subagent starts with an independent shell context. Worktree discipline for stage subagents is enforced via system-prompt rules in developer.md / item-orchestrator.md and the "Stage-agent handoff branch-skip requirement" in Protocol 91 Step 3. Investigate whether: (1) the item-orchestrator included the required BATCH_CONTEXT=true branch-skip instruction in the stage-agent handoff, and (2) the developer agent observed the branch-skip rule. If violations persist after these fixes are merged, a new failure mode is present — escalate for human analysis.`
 
 3. Do **not** suppress or defer this escalation — it is a signal that the runtime guard needs to be reviewed or extended to cover the new failure mode.
 

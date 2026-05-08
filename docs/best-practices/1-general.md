@@ -166,12 +166,21 @@ set -eo pipefail
 cmd1 | cmd2
 ```
 
-When `head`, `grep -m`, or other early-terminating commands appear in a pipeline under `pipefail`, they may produce a SIGPIPE (exit 141) that looks like an error. Guard these cases:
+When `head`, `grep -m`, or other early-terminating commands appear in a pipeline under `pipefail`, they may produce a SIGPIPE (exit 141) that looks like an error. Two safe patterns are available — pick based on whether you can tolerate masking real failures:
 
 ```bash
-# Suppress SIGPIPE false-positive for early-terminating pipeline consumers:
+# Pattern A — || true: suppresses SIGPIPE but also masks ALL other non-zero exits.
+# Only use when any failure in the pipeline is acceptable (e.g., best-effort probes).
 some_command | head -1 || true
+
+# Pattern B — EXIT trap: handles SIGPIPE specifically without masking real errors.
+# Use when you need pipefail protection but want to catch genuine failures.
+_pipefail_exit() { rc=$?; [ $rc -eq 141 ] && exit 0 || exit $rc; }
+trap _pipefail_exit EXIT
+some_command | head -1
 ```
+
+For a full discussion of tradeoffs (including the process-substitution pattern), see the "pipefail + SIGPIPE" section in `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md`.
 
 ### Glob precision
 
