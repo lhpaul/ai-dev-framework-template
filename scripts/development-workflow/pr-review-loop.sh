@@ -1053,10 +1053,15 @@ run_pr_agent_review() {
     since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
   fi
 
-  _pr_agent_latest_comment() {
-    local match_mode="${1:-strict_sha}"
+  # Common helper: fetch the matching PR-Agent comment and return one of its fields.
+  # Parameters: field (e.g. "body" or "html_url"), match_mode (optional, default "strict_sha").
+  # Returns the empty string when no matching comment is found.
+  _pr_agent_latest_comment_field() {
+    local field="$1"
+    local match_mode="${2:-strict_sha}"
     gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-      | jq -rs --arg bot "$bot_login" --arg sha "$head_sha" --arg since "$since_iso" --arg mode "$match_mode" '
+      | jq -rs --arg bot "$bot_login" --arg sha "$head_sha" --arg since "$since_iso" \
+               --arg mode "$match_mode" --arg field "$field" '
           add // []
           | [.[]
              | select(
@@ -1070,29 +1075,35 @@ run_pr_agent_review() {
             ]
           | sort_by(.updated_at)
           | last
-          | .body // ""
+          | .[$field] // ""
         '
   }
 
+  _pr_agent_latest_comment() {
+    _pr_agent_latest_comment_field "body" "${1:-strict_sha}"
+  }
+
   _pr_agent_latest_comment_url() {
-    local match_mode="${1:-strict_sha}"
-    gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-      | jq -rs --arg bot "$bot_login" --arg sha "$head_sha" --arg since "$since_iso" --arg mode "$match_mode" '
-          add // []
-          | [.[]
-             | select(
-                 .user.login == $bot and
-                 (
-                   ($mode == "strict_sha" and ((.body // "") | contains($sha))) or
-                   ($mode == "recent_or_sha" and (((.body // "") | contains($sha)) or .updated_at > $since))
-                 ) and
-                 ((.body // "") | test("PR Reviewer Guide"; "i"))
-               )
-            ]
-          | sort_by(.updated_at)
-          | last
-          | .html_url // ""
-        '
+    _pr_agent_latest_comment_field "html_url" "${1:-strict_sha}"
+  }
+
+  # Extract <strong>LABEL</strong> tokens from the "Recommended focus areas for
+  # review" section of a PR-Agent comment body.
+  # Returns newline-delimited label strings (empty when section is absent or
+  # yields no tokens). Shared by _pr_agent_extract_advisory_labels and
+  # _pr_agent_classify to avoid duplicating the awk/grep/sed pipeline.
+  _pr_agent_extract_focus_labels() {
+    local body="$1"
+    if ! printf '%s\n' "$body" | grep -qF "Recommended focus areas for review"; then
+      return
+    fi
+    printf '%s\n' "$body" \
+      | awk '/Recommended focus areas for review/{found=1; next}
+             found && /^[[:space:]]*(\*\*|<\/td>|<tr>)|^---$/{found=0}
+             found{print}' \
+      | grep -oE '<strong>[^<]+</strong>' \
+      | sed 's|<strong>||g;s|</strong>||g;s|^[[:space:]]*||;s|[[:space:]]*$||' \
+      || true
   }
 
   # Extract advisory (non-blocking) labels from a PR-Agent comment body.
@@ -1104,14 +1115,8 @@ run_pr_agent_review() {
     local body="$1"
     local label label_lower advisory_labels=""
     local labels
-    if printf '%s\n' "$body" | grep -qF "Recommended focus areas for review"; then
-      labels="$(printf '%s\n' "$body" \
-        | awk '/Recommended focus areas for review/{found=1; next}
-               found && /^[[:space:]]*(\*\*|<\/td>|<tr>)|^---$/{found=0}
-               found{print}' \
-        | grep -oE '<strong>[^<]+</strong>' \
-        | sed 's|<strong>||g;s|</strong>||g;s|^[[:space:]]*||;s|[[:space:]]*$||' \
-        || true)"
+    labels="$(_pr_agent_extract_focus_labels "$body")"
+    if [ -n "$labels" ]; then
       while IFS= read -r label; do
         [ -z "$label" ] && continue
         label_lower="$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')"
@@ -1154,26 +1159,7 @@ _PR_AGENT_ADVISORY_LABELS_
       #     that are advisory in nature. Security-critical concerns are always
       #     labelled one of the hard-blocker patterns above by PR-Agent.
       #   - If no labels are parseable → needs_fixes (unreadable format — conservative)
-      # Scope extraction to the "Recommended focus areas for review" section only.
-      # PR-Agent comments may include other <details><summary><strong>…</strong>
-      # blocks elsewhere (e.g. ticket/compliance metadata). Scanning the full body
-      # would pick up those labels and could misclassify advisory metadata as
-      # hard-blocker findings.
-      # Strategy: use awk to collect all lines between the section marker and the
-      # next section boundary (**bold header, </td>, <tr>, or ---), then extract
-      # every <strong>…</strong> token from that window.
-      # Parsing the whole section (not just <details> lines) ensures labels are
-      # found even when PR-Agent formats a finding over multiple lines — for example
-      # <details><summary><a ...> on one line and <strong>Possible Issue</strong>
-      # on the next; anchoring to ^<details> would miss those labels and fall back
-      # to needs_fixes for advisory-only reviews.
-      labels="$(printf '%s\n' "$body" \
-        | awk '/Recommended focus areas for review/{found=1; next}
-               found && /^[[:space:]]*(\*\*|<\/td>|<tr>)|^---$/{found=0}
-               found{print}' \
-        | grep -oE '<strong>[^<]+</strong>' \
-        | sed 's|<strong>||g;s|</strong>||g;s|^[[:space:]]*||;s|[[:space:]]*$||' \
-        || true)"
+      labels="$(_pr_agent_extract_focus_labels "$body")"
       if [ -z "$labels" ]; then
         # No finding-label tokens found — treat as unknown/unreadable, be conservative.
         printf 'needs_fixes'
