@@ -27,7 +27,7 @@ The goal is to let teams use CodeRabbit as an early-draft reviewer alongside or 
 1. The Work Item Runner enters Step 7a for the draft PR.
 2. The runner reads the `review.internal_reviewers` list and performs a runtime-availability check for `coderabbit`.
 3. `coderabbit` passes the availability check (see Business Rules BR-2).
-4. The runner invokes CodeRabbit on the draft PR by posting the CodeRabbit review-trigger comment to the PR (the same trigger phrase used in Step 7 for CodeRabbit-as-external-reviewer).
+4. The runner invokes CodeRabbit on the draft PR. Because CodeRabbit in Step 7 fires automatically on push (no trigger comment required), the Step 7a invocation uses the same auto-review mechanism: the runner confirms that `auto_review.enabled` is `true` in `.coderabbit.yaml` and that CodeRabbit will respond to the draft PR (see BR-5). If a manual trigger comment is needed (e.g., `@coderabbitai review`), that is an implementation detail for the plan stage.
 5. The runner polls for CodeRabbit's response on the draft PR — either an inline review comment or a PR review posted by `coderabbitai[bot]`.
 6. The runner parses the response using the same severity classification as Step 7: `Critical` and `Major` findings are blocking; `Minor` and below are suggestions.
 7. No blocking findings are detected. CodeRabbit's result for this cycle is `APPROVED`.
@@ -48,7 +48,7 @@ The goal is to let teams use CodeRabbit as an early-draft reviewer alongside or 
 - Human reviewers can inspect the Step 7a summary comment to see that CodeRabbit ran internally.
 
 **Considerations**:
-- The trigger comment for CodeRabbit during Step 7a is the same mechanism used in Step 7, but the context is a draft PR. CodeRabbit may behave differently on draft PRs depending on its configuration; the spec requires that the integration work correctly for draft PRs (see BR-5).
+- CodeRabbit's invocation in Step 7a reuses the same auto-review mechanism as Step 7, but the context is a draft PR. CodeRabbit may behave differently on draft PRs depending on its configuration (e.g., `.coderabbit.yaml` `draft_pr_reviews` setting); the spec requires that the integration work correctly for draft PRs (see BR-5). Specific invocation details (auto-trigger vs. explicit trigger comment) are an implementation decision for the plan stage.
 - If `coderabbit` also appears in `review.platforms` (Step 7), both gates are distinct: Step 7a runs on the draft PR before non-draft conversion, and Step 7 runs after conversion. The same CodeRabbit finding may surface in both stages if not resolved between the two (see BR-7).
 
 ---
@@ -66,7 +66,7 @@ The goal is to let teams use CodeRabbit as an early-draft reviewer alongside or 
 2. CodeRabbit is triggered on the draft PR. It responds with one or more `Critical` or `Major` findings.
 3. The runner classifies these findings as blocking (per the existing severity classification table).
 4. The runner records the findings, dispatches the stage-appropriate fixer agent (following the same fixer dispatch rules as in Step 7), and waits for the fix push.
-5. After the fix is pushed, the runner re-triggers CodeRabbit on the updated draft PR and polls for a new response.
+5. After the fix is pushed, CodeRabbit reviews the updated draft PR (via auto-review on push or an explicit trigger comment, per the implementation detail selected in the plan stage). The runner polls for a new response.
 6. CodeRabbit finds no more blocking issues. The result for this cycle is `APPROVED`.
 7. Any remaining internal reviewers run and also `APPROVED`.
 8. The runner posts the Step 7a summary comment and calls `gh pr ready`.
