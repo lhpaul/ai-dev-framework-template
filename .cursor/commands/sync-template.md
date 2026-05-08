@@ -4,7 +4,7 @@ description: >
   Compares template files (local path or remote ref) against this project,
   shows a categorized diff for review, applies approved changes, and generates
   ready-to-use git instructions (branch + commit + PR). Run from the project root.
-  Usage: /sync-template [--local=/path/to/template] [--ref=<branch|tag>]
+  Usage: /sync-template [--local=/path/to/template] [--ref=<branch|tag>] [--dry-run]
 ---
 
 Follow this workflow exactly when invoked. Do not skip steps or reorder them.
@@ -17,6 +17,7 @@ Parse the user's arguments:
 
 - `--local=/path/to/template` → use that local directory as the template source
 - `--ref=<branch|tag>` → fetch remote at that ref (e.g., `--ref=main`, `--ref=v0.4.0`)
+- `--dry-run` → run Step 0.5 (comprehensive pre-flight diagnostic) only and stop; do not modify any files
 - No arguments → check `.tmp/template-config.json` in the current project
 
 **If `.tmp/template-config.json` exists**, read it and use the saved source:
@@ -79,6 +80,161 @@ Have you completed all migration steps above and committed the changes? (yes/no)
 **Do not proceed to Step 1 until the human answers "yes".** If they answer "no", stop and remind them to complete the steps first.
 
 If no applicable notes exist, continue silently.
+
+---
+
+## Step 0.5 — Comprehensive pre-flight diagnostic
+
+Run this diagnostic **after resolving the template source (Step 0) and before the git-state checks (Step 1)**. The goal is to surface all foreseeable conflict categories in a single pass so the resolution sequence can be planned upfront — avoiding the progressive-discovery loop where each category of problem is found only after the previous one is fixed.
+
+This step is **read-only**: it inspects files and computes diffs but makes no changes. Abort only if the diagnostic itself cannot run (e.g., the template source is unreachable). Surface all findings as a structured report regardless of severity; do not filter or suppress any finding at this stage.
+
+### Dry-run mode
+
+If the user invokes sync-template with `--dry-run`, run only this step (Step 0.5) and then stop — do not proceed to Step 1. Print the diagnostic report and exit with a summary of what a full sync would require. This lets the agent (or maintainer) review the full conflict picture before committing to applying any changes. Example invocation:
+
+```
+/sync-template --local=../ai-dev-framework-template --dry-run
+```
+
+When `--dry-run` is active, the final output should end with:
+```
+Dry-run complete. No changes were applied. Re-run without --dry-run to apply changes.
+```
+
+### Category 1 — File-level merge conflicts (always-sync files)
+
+For each file listed in `categories.always_sync` (or the embedded fallback list when `SYNC_MANIFEST=absent`):
+
+1. Enumerate all files using `find` (same method as Step 2).
+2. For files that exist in both the template and the project, run a diff:
+   ```bash
+   diff -u "<project_file>" "<template_file>"
+   ```
+3. Classify files as:
+   - **No conflict** — identical or template is a clean superset of project (no project-local content would be overwritten)
+   - **Conflict risk** — the project has local modifications not present in the template (overwriting will discard them)
+   - **New file** — present in template but not in project
+
+Report all `Conflict risk` files with a one-line summary of what differs. This preview tells the agent which always-sync files will require human attention during Step 4, rather than discovering them one at a time.
+
+### Category 2 — CI configuration issues
+
+Check for known CI/CD configuration mismatches between the template and the project:
+
+1. **Workflow file presence**: compare the set of `.github/workflows/` files in the template (under `categories.special_handling` if manifest is loaded, otherwise the embedded special-handling list) against the project. List any files that are in the template but absent from the project — these may be needed for full CI coverage after the sync.
+
+2. **Workflow YAML parse test** (pre-apply): for each workflow file that *would be updated* based on the Category 1 diff, verify the *template* version parses correctly before applying:
+   ```bash
+   if command -v yamllint >/dev/null 2>&1; then
+     yamllint -d "{extends: relaxed, rules: {line-length: disable}}" "<template_workflow_file>" \
+       || echo "YAML PARSE ISSUE (template source): <template_workflow_file>"
+   else
+     python3 -c "import sys, yaml; yaml.safe_load(open(sys.argv[1]))" "<template_workflow_file>" \
+       || echo "YAML PARSE ISSUE (template source): <template_workflow_file>"
+   fi
+   ```
+   A parse failure in the *template* source is unusual but must be surfaced before applying.
+
+3. **Script reference gaps**: scan all template workflow files for `scripts/` references and check whether those paths exist in the project:
+   ```bash
+   grep -hE 'scripts/[A-Za-z0-9_/.-]+' "<template_dir>"/.github/workflows/*.yml \
+       "<template_dir>"/.github/workflows/*.yaml 2>/dev/null \
+     | grep -oE 'scripts/[A-Za-z0-9_/.-]+' \
+     | sort -u \
+     | while IFS= read -r script_path; do
+         [ -f "$script_path" ] || echo "MISSING (in project): $script_path"
+       done
+   ```
+   Missing script paths indicate that the sync would introduce broken workflow references. List them here so the agent can plan to copy the missing scripts (from the template `scripts/development-workflow/` tree) as part of the same sync commit.
+
+### Category 3 — CHANGELOG structure issues
+
+Compare the project's `CHANGELOG.md` against the template's `CHANGELOG.md` for structural compatibility:
+
+1. **`[Unreleased]` section presence**: verify the project's CHANGELOG has an `[Unreleased]` section:
+   ```bash
+   grep -c '^\#\# \[Unreleased\]' CHANGELOG.md
+   ```
+   If the count is 0, flag: "CHANGELOG missing [Unreleased] section — the sync commit's CHANGELOG entry cannot be placed correctly."
+
+2. **Link reference definitions**: scan the project's CHANGELOG for any `[Unreleased]:` link reference definition line (typically at the bottom of the file):
+   ```bash
+   grep -n '^\[Unreleased\]:' CHANGELOG.md
+   ```
+   If absent, flag: "CHANGELOG missing [Unreleased] link reference — PR automation tools that render comparison links will produce broken links."
+
+3. **Duplicate section headers**: check for duplicate `### Category` headers within the `[Unreleased]` block (a pre-existing structural defect that would cause problems when a CHANGELOG entry is added):
+   ```bash
+   awk '/^\#\# \[Unreleased\]/{found=1} /^\#\# \[/{if(found && !/Unreleased/) exit} found && /^\#\#\# /' CHANGELOG.md \
+     | sort | uniq -d
+   ```
+   Any output means duplicate headers exist; flag them for pre-sync consolidation.
+
+4. **Trailing whitespace or blank-line defects**: run a quick check on the `[Unreleased]` block for trailing whitespace:
+   ```bash
+   awk '/^\#\# \[Unreleased\]/{found=1} /^\#\# \[/{if(found && !/Unreleased/) exit} found' CHANGELOG.md \
+     | grep -nE '[[:space:]]+$'
+   ```
+   Any output should be listed as a pre-existing CHANGELOG defect (non-blocking for the sync, but worth noting since the CHANGELOG will be modified).
+
+### Category 4 — Protocol file incompatibilities
+
+Check for known patterns where the template's protocol files reference tooling or configuration that the project does not have:
+
+1. **`sync-manifest.yaml` presence**: if the template has a `sync-manifest.yaml` but the project does not, note this as expected behavior (manifest-driven sync vs. fallback mode). No action needed, but document it in the report.
+
+2. **`.ai-dev-workflow.yaml` presence and validity**: the sync Step 5 writes to this file; verify it exists and parses as valid YAML:
+   ```bash
+   python3 -c "import sys, yaml; yaml.safe_load(open('.ai-dev-workflow.yaml'))" \
+     && echo "OK" || echo "PARSE ERROR: .ai-dev-workflow.yaml"
+   ```
+   If missing or malformed, flag: "Step 5 will fail to record the last-synced version — fix `.ai-dev-workflow.yaml` before applying."
+
+3. **Issue tracker integration references**: if the template's always-sync files contain references to issue tracker integrations (e.g., Linear, GitHub Projects), check that the project's `.ai-dev-workflow.yaml` has a matching `issue_tracker` section. List any referenced integration that the project has not configured as an informational note (non-blocking).
+
+4. **Review platform references**: scan updated protocol files for references to review platforms (e.g., `devin`, `coderabbitai`, `greptile`, `codex-github`) and note which platforms are configured in the project's `.ai-dev-workflow.yaml` vs. which are referenced but not configured. Non-blocking, but helps the maintainer understand which review integrations will be active after the sync.
+
+### Diagnostic report format
+
+Output the report in this structure before proceeding to Step 1 (or stopping, if `--dry-run`):
+
+```
+## Pre-flight Diagnostic Report
+Template version: v{TEMPLATE_VERSION}  |  Project branch: [branch]
+Manifest: [loaded / absent — fallback mode]
+
+### Category 1 — File-level conflicts
+  No conflict:    N files (will be updated cleanly)
+  Conflict risk:  N files (listed below — project-local content will be overwritten)
+  New files:      N files (will be added)
+  [List conflict-risk files with one-line diff summary]
+
+### Category 2 — CI configuration
+  Workflow files missing from project: [list or "none"]
+  Template workflow YAML parse issues: [list or "none"]
+  Script reference gaps: [list or "none"]
+
+### Category 3 — CHANGELOG structure
+  [Unreleased] section: [present / MISSING]
+  [Unreleased] link reference: [present / MISSING]
+  Duplicate section headers: [none / list]
+  Trailing whitespace defects: [none / N lines]
+
+### Category 4 — Protocol file incompatibilities
+  sync-manifest.yaml: [present in template / absent — fallback mode]
+  .ai-dev-workflow.yaml: [valid / MISSING / PARSE ERROR]
+  Unconfigured issue tracker integrations: [list or "none"]
+  Unconfigured review platforms: [list or "none"]
+
+### Resolution plan
+  [Summarise the sequence of actions required, ordered by dependency:
+   e.g., "1. Fix .ai-dev-workflow.yaml parse error before proceeding.
+          2. Resolve 2 conflict-risk files manually during Step 4.
+          3. Add [Unreleased] link reference to CHANGELOG before committing."]
+```
+
+After printing the report, continue to Step 1 (unless `--dry-run` was specified).
 
 ---
 
