@@ -276,9 +276,9 @@ The recommended action is a suggestion. The human makes the final choice.
 
 **This step runs automatically — no human opt-in required.**
 
-For every finding classified as `contribute-upstream` in Step 3b, create a GitHub issue on `template.repository` before presenting findings to the human. This step applies only when `template.repository` is configured (non-empty) and well-formed; skip silently otherwise.
+For every finding classified as `contribute-upstream` in Step 3b, create a GitHub issue on `template.repository` before presenting findings to the human. This step applies only when `template.repository` is configured (non-empty) and well-formed; skip silently when `template.repository` is absent or empty (Step 3b did not run). Findings classified `check-unavailable` in Step 3b are excluded — do not attempt to file those.
 
-**Precondition**: `template.repository` must be set, non-empty, and well-formed (`owner/repo` format). If the repository is unreachable or malformed, skip auto-filing for affected findings and note the failure inline in Step 4 output. Do not block the retrospective on a network failure.
+**Precondition**: `template.repository` must be set, non-empty, and well-formed (`owner/repo` format) before auto-filing. If the repository is unreachable at filing time (network error, auth failure), skip auto-filing for affected findings and note the failure inline in Step 4 output. Do not block the retrospective on a network failure.
 
 **For each `contribute-upstream` finding**, run:
 
