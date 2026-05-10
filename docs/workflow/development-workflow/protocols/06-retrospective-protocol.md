@@ -271,6 +271,46 @@ For each opportunity, recommend one of:
 
 The recommended action is a suggestion. The human makes the final choice.
 
+### 3e. Mandatory auto-file for `contribute-upstream` findings
+
+**This step runs automatically — no human opt-in required.**
+
+For every finding classified as `contribute-upstream` in Step 3b, create a GitHub issue on `template.repository` before presenting findings to the human. This step applies only when `template.repository` is configured (non-empty) and well-formed; skip silently otherwise.
+
+**Precondition**: `template.repository` must be set, non-empty, and well-formed (`owner/repo` format). If the repository is unreachable or malformed, skip auto-filing for affected findings and note the failure inline in Step 4 output. Do not block the retrospective on a network failure.
+
+**For each `contribute-upstream` finding**, run:
+
+```bash
+gh issue create \
+  --repo <template.repository> \
+  --title "<finding title>" \
+  --label "workflow" \
+  --body "<issue body — see format below>"
+```
+
+Issue body format:
+
+```markdown
+## Finding
+
+[Finding description — root cause, impact, and proposed fix]
+
+## Downstream context
+
+Project: [repo name or anonymised slug, with human consent]
+Batch/date: [batch identifier or date from Step 1 scope]
+
+## Proposed improvement
+
+[Proposed fix or change to the template protocol/tooling]
+```
+
+- Use the `workflow` label (create it first if it does not exist on the template repo).
+- Record the created issue URL for each filing. Print all filed URLs in the Step 4 output alongside the `contribute-upstream` label so the human has direct links for follow-up.
+- If `gh issue create` fails (e.g., auth error, label creation failure), record the failure inline in Step 4 rather than blocking the retrospective. The human can follow up manually using the printed command.
+- Do **not** close the downstream retrospective item automatically — the upstream issue is additive visibility, not a replacement for local backlog tracking.
+
 ### Graceful exit
 
 If the gathered data does not surface any actionable improvement opportunities (e.g., the PR was clean on first attempt, no human corrections were needed, all labels applied correctly), report this clearly:
@@ -303,6 +343,8 @@ Present the categorized findings to the human in a structured format:
 **Related existing item**: #NNN — [title] | No existing backlog item found
 **Template cross-reference**: `already-tracked` | `already-fixed` | `contribute-upstream` | `check-unavailable`
   *(Only include this field if Step 3b was executed — i.e., if `template.repository` was configured)*
+**Upstream issue filed**: <url> | filing failed: <reason> | N/A
+  *(Only include this field for `contribute-upstream` findings)*
 
 ---
 
@@ -325,7 +367,8 @@ Present the categorized findings to the human in a structured format:
 
 Then ask the human to choose an action for each opportunity:
 
-> For each finding above, please choose: **Address now**, **Add to backlog**, **Contribute upstream** (workflow-only insights to the template repository), or **Skip**.
+> For each finding above, please choose: **Address now**, **Add to backlog**, or **Skip**.
+> *(Findings classified `contribute-upstream` have already been filed as upstream issues in Step 3e — no additional action is needed unless you want to expand the filed issue with more context.)*
 
 Wait for the human's choices before executing any action.
 
@@ -432,15 +475,15 @@ Report the created issue with its URL.
 
 ### Contribute upstream
 
-Only when the human explicitly chose **Contribute upstream** for a finding that qualifies as **workflow/tooling/template-process** (per the scope rules above). This path is **opt-in** and must never run without an explicit per-finding choice.
+**Upstream issues for `contribute-upstream` findings are filed automatically in Step 3e — no separate action is needed here.** The Step 4 output includes the filed issue URL for each finding.
 
-1. Confirm the default upstream repository and issue tracker with the human when ambiguous (typically the public template repository this project was derived from).
-2. Create a new issue on the **template** repository using `gh issue create` (or the tracker’s equivalent), with label **`template-feedback`** (create the label first if it does not exist), and a body that includes:
-   - The retrospective insight (Observed / Impact / Proposed improvement), anonymized if needed
-   - A link or name of the downstream repository that produced the insight (only with human consent)
-   - Reference to the original retrospective scope (PR numbers, batch id, or date)
+The only remaining human-driven action in this path is optional: if the human wants to add more context to a filed upstream issue (e.g., attach a downstream PR link, adjust the proposed fix, or confirm consent to name the downstream repository), do so by editing the upstream issue:
 
-3. Do **not** close the downstream retrospective item automatically — the upstream issue is additive visibility, not a replacement for local backlog tracking.
+```bash
+gh issue edit <upstream-issue-number> --repo <template.repository> --body-file <updated-body-file>
+```
+
+If Step 3e filing failed for a finding (noted as "filing failed" in Step 4 output), attempt the filing now using the same command from Step 3e. Report the result to the human.
 
 ### Skip
 
