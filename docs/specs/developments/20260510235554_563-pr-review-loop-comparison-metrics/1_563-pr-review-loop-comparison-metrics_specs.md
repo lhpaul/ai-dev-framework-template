@@ -138,5 +138,5 @@ This feature adds a `--compare` flag to the reviewer loop that runs all configur
 - Visualization or dashboard for the comparison metrics — the log is a plain Markdown table.
 - Cross-repository or cross-project metrics aggregation.
 - Statistical significance testing or confidence intervals.
-- Integration with the structured retro metrics log (`docs/workflow/retro-metrics.md`) — the platform comparison metrics are a separate log in a separate file.
+- Appending platform comparison rows to the existing structured retro metrics log (`docs/workflow/retro-metrics.md`). The brief names `retro-metrics.md` as the target file, but that file stores per-batch workflow health metrics (human interventions, violations, escalations). Mixing platform comparison data into the same table would conflate two distinct measurement concerns and make both harder to query. A dedicated file (`docs/workflow/retro-metrics-platforms.md`) is used instead. Human confirmation is requested if the single-file approach is strongly preferred.
 - Configuring graduation criteria per-repository or per-platform without a protocol update.
