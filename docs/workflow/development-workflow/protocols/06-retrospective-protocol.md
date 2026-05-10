@@ -267,9 +267,10 @@ For each opportunity, recommend one of:
 
 - **Address now** — suitable for changes the agent can self-assess as simple and safe to apply without a review loop (e.g., one-line config fix, missing label in a YAML file, a `.gitignore` entry)
 - **Add to backlog** — suitable for anything requiring implementation planning, cross-file changes, or a review loop
-- **Contribute upstream** — suitable only for **workflow, tooling, or template-process** insights that would benefit every downstream consumer of this template (not product/domain/business retrospectives)
 
 The recommended action is a suggestion. The human makes the final choice.
+
+**Note**: Do **not** recommend "Contribute upstream" as an action here. Findings classified `contribute-upstream` by Step 3b are filed automatically in Step 3e — no human opt-in is required. If `template.repository` is not configured, the `contribute-upstream` classification is not produced and this path does not apply.
 
 ### 3e. Mandatory auto-file for `contribute-upstream` findings
 
