@@ -78,6 +78,7 @@ review:
   # Step 7a for the full multi-reviewer gate procedure.
   internal_reviewers:
     - claude
+    - coderabbit
 
   # Optional: policy when a listed internal reviewer is unreachable from the current runner.
   # Protocol 91 Step 7a enforces this policy at runtime.
