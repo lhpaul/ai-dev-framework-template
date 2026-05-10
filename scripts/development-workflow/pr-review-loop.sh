@@ -1329,6 +1329,66 @@ _PR_AGENT_LABELS_
   esac
 }
 
+check_unreplied_rest_comments() {
+  # Count CodeRabbit root review comments that have received no human (non-bot) reply.
+  # "Root" means in_reply_to_id == null (the original comment, not a reply).
+  #
+  # Unlike check_unresolved_threads (GraphQL reviewThreads), this uses the REST
+  # pulls-comments endpoint which includes outside-diff comments (line == null /
+  # "LNone" in the GitHub UI). These outside-diff comments never create proper
+  # GitHub review threads and are therefore invisible to the GraphQL query, but
+  # they appear in the GitHub PR page as unresolved findings that reviewers can see.
+  #
+  # A root comment is considered "replied" when at least one reply comment exists
+  # whose author is NOT the CodeRabbit bot (i.e., a human or agent acknowledgment).
+  # CodeRabbit's own auto-acknowledgment replies do not count.
+  # Comments containing "✅ Addressed" in the body are also excluded (self-resolved).
+  #
+  # Arguments:
+  #   $1  pr_number  - PR number (integer)
+  #   $2  repo       - "owner/repo" slug
+  #   $3  bot_login  - Full bot login including [bot] suffix (e.g. "coderabbitai[bot]")
+  #                    REST API returns the full login; unlike GraphQL, no stripping needed.
+  #
+  # Prints the count of unreplied root CodeRabbit comments on stdout.
+  # Exit codes: 0 = success, 3 = REST API failure.
+  local pr_number="$1"
+  local repo="$2"
+  local bot_login="$3"
+
+  local result
+  result="$(
+    gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
+    | jq -s --arg bot "$bot_login" '
+        # gh api --paginate | jq -s produces [[page1_items], [page2_items], ...].
+        # Use .[][] to flatten pages before selecting individual comment objects.
+        #
+        # Build the set of root-comment IDs that have received a human (non-bot) reply.
+        (
+          [.[][] | select(
+            .in_reply_to_id != null and
+            .user.login != $bot
+          ) | .in_reply_to_id] | unique
+        ) as $human_replied_ids
+        # Count root CR comments that have NOT been acknowledged by a human reply
+        # and whose body does not self-resolve with "✅ Addressed".
+        | [.[][] | select(
+            .user.login == $bot and
+            .in_reply_to_id == null and
+            ((.body // "") | test("✅ Addressed") | not)
+          ) | select(
+            .id as $id |
+            ($human_replied_ids | index($id)) == null
+          )] | length
+      '
+  )" || {
+    echo "WARN: check_unreplied_rest_comments: REST query failed for PR #$pr_number" >&2
+    return 3
+  }
+
+  printf '%d\n' "${result:-0}"
+}
+
 is_coderabbit_blocking() {
   # Returns 0 (true) if the comment body contains a blocking severity marker.
   # Critical (🔴) and Major (🟠) are blocking; Minor (🟡) and Low (🟢) are not.
@@ -1452,6 +1512,40 @@ coderabbit_thread_gate_clean() {
     print_kv UNRESOLVED_THREAD_COUNT "$out"
     return 1
   fi
+
+  # --- Supplementary REST check for outside-diff comments ---
+  # GraphQL reviewThreads only sees comments anchored to diff lines. CodeRabbit
+  # sometimes posts comments on lines outside the PR diff (line == null); these
+  # never create proper GitHub review threads and are invisible to the GraphQL
+  # query above, but they ARE visible in the GitHub PR UI as unresolved findings.
+  # Detect them via the REST pulls-comments endpoint and require a human reply
+  # before allowing RESULT=clean.
+  local rest_unreplied_raw rest_check_st
+  set +e
+  rest_unreplied_raw="$(check_unreplied_rest_comments "$pr_number" "$repo" "$bot_login")"
+  rest_check_st=$?
+  eval "$prev_errexit"
+
+  if [ "$rest_check_st" -eq 0 ] && [ "${rest_unreplied_raw:-0}" -gt 0 ]; then
+    print_kv RESULT needs_fixes
+    print_kv REASON coderabbit_unreplied_rest_comments
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT "${rest_unreplied_raw:-0}"
+    print_kv BLOCKING_COUNT "${rest_unreplied_raw:-0}"
+    print_kv SUGGESTION_COUNT 0
+    print_kv UNRESOLVED_THREAD_COUNT "${rest_unreplied_raw:-0}"
+    return 1
+  fi
+  if [ "$rest_check_st" -ne 0 ]; then
+    # REST failure is non-fatal: the GraphQL thread check already passed.
+    # Log the warning and allow RESULT=clean to proceed.
+    echo "WARN: check_unreplied_rest_comments failed (exit $rest_check_st) for PR #$pr_number — skipping outside-diff supplement" >&2
+  fi
+
   return 0
 }
 
