@@ -2614,8 +2614,8 @@ _ADVISORY_ENTRY_LINES_
     case "${branch_name:-}" in
       feature/*|fix/*|refactor/*|hotfix/*)
         local _has_regression_label
-        _has_regression_label="$(set +e; gh pr view "$pr_number" --json labels \
-          --jq '[.labels[].name] | any(. == "ready-for-regression")' 2>/dev/null; set -e)"
+        _has_regression_label="$(gh pr view "$pr_number" --json labels \
+          --jq '[.labels[].name] | any(. == "ready-for-regression")' 2>/dev/null)" || true
         if [ "${_has_regression_label:-}" = "false" ]; then
           regression_label_section="
 
