@@ -1252,6 +1252,8 @@ After Step 7 completes with result `clean` or `skipped`, and **before** entering
 **Applies to**: PRs on branches `feature/*`, `fix/*`, `hotfix/*`, `refactor/*`
 **Does not apply to**: PRs on branches `spec/*`, `implementation-plan/*`
 
+**`BATCH_CONTEXT=true` — this step is mandatory and must not be skipped in parallel dispatch**: When agents are dispatched with `BATCH_CONTEXT=true`, they follow a compressed execution path (worktree isolation, branch-skip rules, reduced context). Step 7b is a required step in that path and must be executed **between Step 7 and Step 8** without exception. The orchestrator's Step 5.1 catches a missing label at the end of the batch, but the agent is the primary responsible party and must not rely on Step 5.1 as a fallback.
+
 ```bash
 # Only for implementation PRs:
 gh pr edit <pr_number> --add-label "ready-for-regression"

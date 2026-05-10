@@ -2601,13 +2601,41 @@ $_entries_normalized
 _ADVISORY_ENTRY_LINES_
   fi
 
+  # Step 7b regression-label assertion (clean path, implementation PRs only).
+  # When the reviewer loop exits clean for a feature/fix/refactor/hotfix branch,
+  # the next required step is Step 7b (apply ready-for-regression before Step 8).
+  # Check whether the label is already present and append a warning to the summary
+  # comment if it is missing. This makes the missing label visible to agents and
+  # orchestrators that read the summary comment, without blocking the script's exit.
+  # The check is best-effort: suppress all errors so a gh failure does not change
+  # the script's exit code or prevent the summary comment from being posted.
+  local regression_label_section=""
+  if [ "$result" = "clean" ]; then
+    case "${branch_name:-}" in
+      feature/*|fix/*|refactor/*|hotfix/*)
+        local _has_regression_label
+        _has_regression_label="$(gh pr view "$pr_number" --json labels \
+          --jq '[.labels[].name] | any(. == "ready-for-regression")' 2>/dev/null)" || true
+        if [ "${_has_regression_label:-}" = "false" ]; then
+          regression_label_section="
+
+**Step 7b WARNING: \`ready-for-regression\` label is missing.** Apply it now before entering Step 8 (CI loop):
+\`\`\`
+gh pr edit ${pr_number} --add-label \"ready-for-regression\"
+\`\`\`
+Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs after Step 7 completes clean."
+        fi
+        ;;
+    esac
+  fi
+
   local comment_body
   comment_body="$(cat <<EOF
 ### Automated Reviewer Loop Summary
 
 **Result:** ${result_line}
 **Platforms:** ${platform_list:-none}
-**Findings:** ${blocking} blocking, ${suggestions} suggestions${advisory_section}
+**Findings:** ${blocking} blocking, ${suggestions} suggestions${advisory_section}${regression_label_section}
 
 *Posted automatically by \`pr-review-loop.sh\`.*
 EOF
