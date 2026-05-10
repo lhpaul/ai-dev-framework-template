@@ -1,12 +1,12 @@
 # AI Evaluation Layer for PR-Agent "Possible Issue" Findings — Spec
 
-**Depends on**: <!-- No upstream dependencies -->
+**Depends on**: None
 
 ---
 
 ## Overview
 
-When PR-Agent posts a "Possible Issue" advisory finding on a pull request, the automated reviewer loop currently classifies it as non-blocking and proceeds to `clean` without any further evaluation. This has caused genuine bugs to pass undetected — most notably in Batch 33 (PR #517), where both PR-Agent and CodeRabbit independently flagged a real `set -e` bug inside `check_unreplied_rest_comments`, but only CodeRabbit's unresolved-thread gate blocked the loop. The bug was fixed only after a human asked about it.
+When PR-Agent posts a "Possible Issue" advisory finding on a pull request, the automated reviewer loop currently classifies it as non-blocking and proceeds to `clean` without any further evaluation. This has caused genuine bugs to pass undetected — most notably in Batch 33 (PR #517), where both PR-Agent and CodeRabbit independently flagged a real bug, but only CodeRabbit's unresolved-thread gate blocked the loop. The bug was fixed only after a human asked about it.
 
 This spec defines an AI evaluation sub-step that is inserted into the reviewer loop whenever PR-Agent returns `clean` with one or more "Possible Issue" advisory labels. A code-reviewer agent evaluates each finding against the actual code and either pushes a fix (if a real bug is found) or posts an explicit acknowledgment comment (if the finding is acceptable). This reduces the false-negative rate without introducing a new source of spurious blocking loops.
 
@@ -97,7 +97,7 @@ This spec defines an AI evaluation sub-step that is inserted into the reviewer l
 - If the code-reviewer agent finds the finding acceptable, it must post an acknowledgment comment on the PR before the loop proceeds to `clean`.
 - The evaluation is scoped to the current HEAD commit. A "Possible Issue" finding from a PR-Agent comment that was posted for an earlier commit does not trigger evaluation on a subsequent loop pass (the loop already evaluates only the latest PR-Agent comment for the current HEAD).
 - If the code-reviewer agent dispatch fails (runtime unavailable or timed out), the loop falls back to treating the finding as advisory-only (`clean`) and logs a warning. The fallback must be explicit — it must not silently drop the advisory label from the loop summary.
-- Hard-blocker labels ("Critical", "Must Fix", "Breaking Change", "Security Concern", "API Change", "Backward Compatibility") are already handled as `needs_fixes` by the existing classifier and are unaffected by this feature.
+- Hard-blocker labels ("Critical", "Must Fix", "Breaking Change", "Security Concern", "API Change", "Backward Compatibility") are already blocking by existing reviewer loop behavior and are unaffected by this feature.
 - Spec and chore PRs are included — if a "Possible Issue" advisory label appears on a spec or chore PR, the agent is dispatched; if the finding is noise in that context, the agent acknowledges it and the loop proceeds. No PR type is exempt from evaluation (the agent's acknowledgment is the gate, not the PR type).
 
 ---
