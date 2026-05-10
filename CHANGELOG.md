@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Support CodeRabbit as internal reviewer (Step 7a)** (#528): Add `coderabbit` as a supported value in `review.internal_reviewers` in `.ai-dev-workflow.yaml`, allowing CodeRabbit to run as a Step 7a draft-PR internal reviewer before non-draft conversion. Updates Protocol 91 Step 7a (supported values list, reachability classification table, reviewer dispatch map) and adds a "Step 7a — Internal Reviewer" section to `docs/workflow/development-workflow/integrations/coderabbit.md`.
+
 ### Fixed
 
 - **Add mandatory main-tree return rule to `item-orchestrator` and `developer` agents**: when dispatched without worktree isolation (`BATCH_CONTEXT=false` or absent), the agent switches the main working tree to the feature branch but did not switch back before returning, causing Protocol 90 Step 5.2 to fire a "wrong branch + clean" auto-correct on every subsequent item in a serial batch. Fixed by adding an explicit main-tree return rule (switch back to the integration branch, verify with `git rev-parse --abbrev-ref HEAD`, handle blocked switches via commit/stash) to `.claude/agents/item-orchestrator.md`, `.claude/agents/developer.md`, `.cursor/agents/item-orchestrator.md`, `.cursor/agents/developer.md`, and the Codex `workflow-item-orchestrator` and `workflow-implementer` skills.

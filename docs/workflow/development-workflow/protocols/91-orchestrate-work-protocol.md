@@ -742,7 +742,7 @@ Example `.tmp/template-config.json` override format:
 }
 ```
 
-Supported reviewer values: `claude`, `codex`.
+Supported reviewer values: `claude`, `codex`, `coderabbit`.
 
 If neither file defines `internal_reviewers`, fall back to running the stage-appropriate reviewer once (default behavior: `claude`).
 
@@ -758,12 +758,14 @@ Before dispatching any reviewer, classify each entry in the resolved list as `re
 
 #### Reachability classification table
 
-| Runner context | `claude` reachable? | `codex` reachable? |
-|---|---|---|
-| Claude Code (direct human session) | Yes | No |
-| Claude Code subagent (dispatched by orchestrator) | Yes | No |
-| Codex runner / Codex skill | Yes | Yes |
-| Direct human (shell / CI with `gh`) | Yes | Yes |
+| Runner context | `claude` reachable? | `codex` reachable? | `coderabbit` reachable? |
+|---|---|---|---|
+| Claude Code (direct human session) | Yes | No | Determined at runtime (App check) |
+| Claude Code subagent (dispatched by orchestrator) | Yes | No | Determined at runtime (App check) |
+| Codex runner / Codex skill | Yes | Yes | Determined at runtime (App check) |
+| Direct human (shell / CI with `gh`) | Yes | Yes | Determined at runtime (App check) |
+
+To determine `coderabbit` reachability, the runner checks whether `coderabbitai[bot]` has any prior activity on the repository (App installation signal — via `gh api repos/{owner}/{repo}/installation` or by checking the PR for a prior CodeRabbit comment), **and** confirms that `.coderabbit.yaml` does not disable auto-review or restrict reviews to non-draft PRs (`reviews.auto_review.enabled: true` required). If either check fails, classify `coderabbit` as `unreachable` — the draft-PR restriction in `.coderabbit.yaml` is treated as equivalent to the App not being installed (BR-5 consequence).
 
 #### Policy resolution
 
@@ -825,6 +827,9 @@ For each reviewer in the resolved list, dispatch the stage-appropriate agent:
 | `codex` | `spec/*` | `workflow-spec-reviewer` Codex skill against `REVIEW.md` |
 | `codex` | `implementation-plan/*` | `workflow-plan-reviewer` Codex skill against `REVIEW.md` |
 | `codex` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `workflow-code-reviewer` Codex skill against `REVIEW.md` |
+| `coderabbit` | `spec/*` | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
+| `coderabbit` | `implementation-plan/*` | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
+| `coderabbit` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
 
 ### Branch-type detection
 
