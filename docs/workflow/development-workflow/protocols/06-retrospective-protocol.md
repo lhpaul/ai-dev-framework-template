@@ -137,7 +137,7 @@ Record:
 
 Carry this mapping into Step 4 (presentation) and Step 5 (action execution).
 
-### 3b. Template cross-reference (opt-in — skipped when not configured)
+### 3b. Template cross-reference (runs when `template.repository` is configured; skipped otherwise)
 
 Read `template.repository` from `.ai-dev-workflow.yaml`.
 
@@ -204,6 +204,16 @@ For `contribute-upstream` findings, no extra annotation is required beyond the l
 For `check-unavailable` findings, also include:
 - The reason classification was unavailable (e.g., "Template repository unreachable" or "Malformed template repository configuration")
 - The suggestion: "Fix configuration or network access and re-run the retrospective to enable template cross-reference."
+
+### 3b Gate: mandatory completion check before classifying findings
+
+Before proceeding to Step 3c (classification) and Step 4, verify that Step 3b was completed when it was required:
+
+- Read `template.repository` from `.ai-dev-workflow.yaml`.
+- **If `template.repository` is set (non-empty)** and Step 3b was skipped or not completed during this session: stop here, return to Step 3b, and complete it before classifying any findings. Step 3b handles both the well-formed case (full cross-reference) and the malformed case (`check-unavailable`); the gate fires for both.
+- **If `template.repository` is absent or empty**: the gate is satisfied — proceed to Step 3c.
+
+This gate prevents premature classification of findings (e.g., marking a finding as "Add to backlog" instead of `already-tracked` or `already-fixed`) when the template cross-reference data would have changed the outcome.
 
 ### 3c. Categorization taxonomy
 
