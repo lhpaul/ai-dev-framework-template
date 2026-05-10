@@ -210,7 +210,7 @@ For `check-unavailable` findings, also include:
 Before proceeding to Step 4, verify that Step 3b was completed when it was required:
 
 - Read `template.repository` from `.ai-dev-workflow.yaml`.
-- **If `template.repository` is set (non-empty and well-formed)** and Step 3b was skipped or not completed during this session: stop here, return to Step 3b, and complete it before classifying any findings.
+- **If `template.repository` is set (non-empty)** and Step 3b was skipped or not completed during this session: stop here, return to Step 3b, and complete it before classifying any findings. Step 3b handles both the well-formed case (full cross-reference) and the malformed case (`check-unavailable`); the gate fires for both.
 - **If `template.repository` is absent or empty**: the gate is satisfied — proceed to Step 3c.
 
 This gate prevents premature classification of findings (e.g., marking a finding as "Add to backlog" instead of `already-tracked` or `already-fixed`) when the template cross-reference data would have changed the outcome.
