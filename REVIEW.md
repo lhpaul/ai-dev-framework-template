@@ -164,6 +164,10 @@ Check:
 - Tests cover the changed business behavior
 - New patterns are justified and consistent with the codebase
 
+Additional checks for **documentation PRs** (when a PR adds or modifies documentation files — `*.md`, `*.yaml`, `*.toml` config docs, or any prose-only file):
+- **Intra-file content duplication**: when a new section is added to an existing file, verify that any tables or lists in the new section are not reproducing content already present elsewhere in the same file. If a duplicate is found, flag it as `important` with a recommendation to cross-reference the canonical location instead of duplicating.
+- **Wording consistency**: verify that procedural instructions in a new section (e.g., "push a commit", "apply a label", "run a script") are consistent with the existing flow described in sibling sections of the same file. Flag contradictions as `important`.
+
 Additional checks for **shell scripts** (`*.sh`):
 - Option parsing validates that required values are present before `shift`
 - All error paths emit structured output consistent with the script's output contract
