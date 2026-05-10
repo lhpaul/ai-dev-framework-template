@@ -307,10 +307,15 @@ Batch/date: [batch identifier or date from Step 1 scope]
 [Proposed fix or change to the template protocol/tooling]
 ```
 
-- Use the `workflow` label (create it first if it does not exist on the template repo).
+- Use the `workflow` label. If it does not exist on the template repo, create it first:
+
+  ```bash
+  gh label create "workflow" --repo <template.repository> --color "0075ca" --description "Workflow improvement"
+  ```
+
 - Record the created issue URL for each filing. Print all filed URLs in the Step 4 output alongside the `contribute-upstream` label so the human has direct links for follow-up.
 - If `gh issue create` fails (e.g., auth error, label creation failure), record the failure inline in Step 4 rather than blocking the retrospective. The human can follow up manually using the printed command.
-- Do **not** close the downstream retrospective item automatically — the upstream issue is additive visibility, not a replacement for local backlog tracking.
+- Do **not** automatically close any backlog items that may be created later in Step 5, and do not auto-close pre-existing downstream items identified in Step 3a — the upstream issue is additive visibility, not a replacement for local backlog tracking.
 
 ### Graceful exit
 
@@ -344,8 +349,8 @@ Present the categorized findings to the human in a structured format:
 **Related existing item**: #NNN — [title] | No existing backlog item found
 **Template cross-reference**: `already-tracked` | `already-fixed` | `contribute-upstream` | `check-unavailable`
   *(Only include this field if Step 3b was executed — i.e., if `template.repository` was configured)*
-**Upstream issue filed**: <url> | filing failed: <reason> | N/A
-  *(Only include this field for `contribute-upstream` findings)*
+**Upstream issue filed**: <url> | filing failed: <reason>
+  *(Only include this field for `contribute-upstream` findings; show the URL when Step 3e succeeded, or "filing failed: &lt;reason&gt;" when it did not)*
 
 ---
 
@@ -484,7 +489,7 @@ The only remaining human-driven action in this path is optional: if the human wa
 gh issue edit <upstream-issue-number> --repo <template.repository> --body-file <updated-body-file>
 ```
 
-If Step 3e filing failed for a finding (noted as "filing failed" in Step 4 output), attempt the filing now using the same command from Step 3e. Report the result to the human.
+If Step 3e filing failed for a finding (noted as "filing failed: &lt;reason&gt;" in Step 4 output), attempt the filing now by running the `gh issue create` command from Step 3e — substituting `<template.repository>` with the actual value from `.ai-dev-workflow.yaml`, `<finding title>` with the finding's short title, and the body with the body format from Step 3e populated with the finding's details. Report the result to the human.
 
 ### Skip
 
