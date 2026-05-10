@@ -82,16 +82,7 @@ CodeRabbit auto-reviews on every push when `auto_review.enabled` is `true`. No t
 
 ### Severity Classification
 
-Findings are classified identically to Step 7:
-
-| Severity marker | Classification |
-| --- | --- |
-| `🔴 Critical` | Blocking |
-| `🟠 Major` | Blocking |
-| `🟡 Minor` | Suggestion (non-blocking) |
-| `🟢 Low` or no marker | Suggestion (non-blocking) |
-
-`Critical` and `Major` findings are blocking — the runner applies fixes and re-runs the internal review cycle. `Minor`, `Low`, and unmarked findings are non-blocking suggestions that the runner may optionally address but that do not prevent Step 7a from approving.
+Findings are classified using the same severity matrix as [Step 7](#blocking-vs-suggestion-classification). For Step 7a, only `Critical` and `Major` findings are blocking — the runner applies fixes and re-runs the internal review cycle. `Minor`, `Low`, and unmarked findings are non-blocking suggestions that the runner may optionally address but that do not prevent Step 7a from approving.
 
 ### Fix-Cycle Limit
 
