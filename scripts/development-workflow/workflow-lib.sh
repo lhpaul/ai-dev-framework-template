@@ -523,7 +523,10 @@ update_tracker_status_best_effort() {
   owner="$(workflow_resolve_github_project_owner)"
   project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
   if [ -z "$owner" ] || [ -z "$project_number" ]; then
-    echo "Warning: GITHUB_PROJECT_OWNER or GITHUB_PROJECT_NUMBER not set and no project_number in .ai-dev-workflow.yaml; skipping tracker status update."
+    if [ -z "$project_number" ]; then
+      echo "Warning: GITHUB_PROJECT_NUMBER not set and no project_number in .ai-dev-workflow.yaml; skipping tracker status update."
+    fi
+    # owner-empty case: workflow_resolve_github_project_owner already emitted a warning.
     return 0
   fi
 
