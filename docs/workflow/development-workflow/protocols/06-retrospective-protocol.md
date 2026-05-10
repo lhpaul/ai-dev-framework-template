@@ -451,7 +451,17 @@ After all opportunities have been acted on (or skipped):
    Column order must match the headers in `docs/workflow/retro-metrics.md`:
    `Batch Identifier | Human Interventions Count | Step 5.2 Violations Count | Automated-Reviewer Retry Loops Count | Escalations Count | Prior Action Item Recurrence Assessment`
 
-2. **Provide a confirmation summary**:
+2. **Commit and push `docs/workflow/retro-metrics.md` immediately** — before the session ends or any branch switch occurs. This is mandatory; an uncommitted metrics row is silently lost when branches are switched. The commit goes directly to `develop` (this is an append-only log file, not feature work):
+
+   ```bash
+   git add docs/workflow/retro-metrics.md
+   git commit -m "docs(retro): add [Batch identifier] metrics row"
+   git push origin develop
+   ```
+
+   If `develop` is not the currently checked-out branch (e.g., the retrospective was run from a feature branch), switch to `develop` first, cherry-pick or re-apply the append, then commit and push. Do **not** leave the metrics row uncommitted while switching branches.
+
+3. **Provide a confirmation summary**:
 
 ```markdown
 ## Retrospective Complete
@@ -461,7 +471,7 @@ After all opportunities have been acted on (or skipped):
 | 1 | [title] | [label] | [severity] | Fixed in commit `abc1234` / Issue #42 / Skipped |
 | 2 | ... | ... | ... | ... |
 
-**Metrics block appended to `docs/workflow/retro-metrics.md`.**
+**Metrics block appended and committed to `docs/workflow/retro-metrics.md` on `develop`.**
 ```
 
 The retrospective is now closed.
