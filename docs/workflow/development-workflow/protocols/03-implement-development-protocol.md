@@ -857,11 +857,7 @@ After the draft PR exists, the **Work Item Runner** owns the rest of the lifecyc
 
 **Label derivation rule**: `fix/*` branches always require `ready-for-regression` based on branch prefix, not content type. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table.
 
-**`BATCH_CONTEXT=true` note**: In parallel batch dispatches, agents follow a compressed execution path and may inadvertently omit Step 7b. The pre-label ordering gate below is **not optional** regardless of dispatch mode — treat each numbered step as a mandatory checkpoint.
-
-**Pre-label ordering gate (hard sequential gate — do not skip)**:
-
-Before applying any readiness label, execute and verify **every item** in this two-phase checklist. Do not collapse phases or apply labels simultaneously. Each item requires a specific command to run and a pass condition to confirm — skipping any item is a protocol violation.
+**`BATCH_CONTEXT=true` note — Step 7b is mandatory in parallel dispatch**: In parallel batch dispatches, agents follow a compressed execution path and may inadvertently omit Step 7b. The three steps below (Phase 1) are **not optional** regardless of dispatch mode — treat each as a mandatory checkpoint before entering Step 8.
 
 **Phase 1 checklist — run ALL of these before applying `ready-for-regression`**:
 
@@ -906,27 +902,7 @@ Step 1.3 — Apply `ready-for-regression`:
 gh pr edit <pr_number> --add-label "ready-for-regression"
 ```
 
-**Phase 2 checklist — run ALL of these before applying `ready-for-human-review`**:
-
-Step 2.1 — Wait for CI to settle (run the CI loop script):
-
-```bash
-# Must emit RESULT=green. RESULT=red or RESULT=timeout means do not apply ready-for-human-review.
-./scripts/development-workflow/pr-ci-loop.sh <pr_number>
-```
-
-Pass condition: script exits with `RESULT=green`. If `RESULT=red`: fix the failing checks, push, and re-run from Phase 1. If `RESULT=timeout`: escalate to human.
-
-Step 2.2 — Apply `ready-for-human-review`:
-
-```bash
-# Only after Step 2.1 passes:
-gh pr edit <pr_number> --add-label "ready-for-human-review"
-```
-
-This two-phase sequence aligns with `91-orchestrate-work-protocol.md` Steps 7b → 8 → 8a → 8c. When invoked through the Work Item Runner, those steps enforce this gate automatically. When invoked standalone, execute each numbered step above explicitly and verify its pass condition before proceeding to the next.
-
-If this protocol is invoked **standalone** rather than through the Work Item Runner, hand off manually by following `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` from the newly opened draft PR.
+For Phase 2 (`ready-for-human-review` gate) and the full pre-label ordering contract, follow Path 1 `### Step 9: Handoff to Work Item Runner`. When invoked through the Work Item Runner, `91-orchestrate-work-protocol.md` Steps 7b → 8 → 8a → 8c enforce this gate automatically. When invoked standalone, execute each numbered step explicitly and verify its pass condition before proceeding to the next.
 
 See `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
 
