@@ -253,6 +253,67 @@ workflow_issue_tracker_project_number() {
   workflow_config_field issue_tracker project_number
 }
 
+# workflow_resolve_github_project_owner
+#
+# Resolves the GitHub project owner through a tiered fallback chain.
+# Prints the resolved owner name, or an empty string when all tiers fail.
+# Returns 0 in all cases (non-blocking).
+#
+# Resolution order:
+#   1. GITHUB_PROJECT_OWNER env var (fastest; always preferred)
+#   2. gh repo view API call
+#   3. Parse owner from git remote get-url origin (SSH or HTTPS format)
+#
+# Rationale for Tier 3: when workflow-lib.sh is sourced directly in a
+# subagent shell (not invoked via a wrapper script), GITHUB_TOKEN may be
+# absent and gh repo view fails silently. The git remote URL is available
+# in any cloned repository regardless of gh authentication state.
+#
+# Emits a warning to stderr only when all three tiers fail, so callers can
+# surface the failure visibly rather than silently skipping tracker updates.
+workflow_resolve_github_project_owner() {
+  # Tier 1: explicit env var
+  if [ -n "${GITHUB_PROJECT_OWNER:-}" ]; then
+    printf '%s' "$GITHUB_PROJECT_OWNER"
+    return 0
+  fi
+
+  # Tier 2: gh repo view API
+  local owner
+  owner="$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || true)"
+  if [ -n "$owner" ]; then
+    printf '%s' "$owner"
+    return 0
+  fi
+
+  # Tier 3: parse owner from git remote URL
+  # Supports SSH (git@github.com:owner/repo.git) and HTTPS (https://github.com/owner/repo)
+  local remote_url
+  remote_url="$(git remote get-url origin 2>/dev/null || true)"
+  if [ -n "$remote_url" ]; then
+    case "$remote_url" in
+      https://github.com/*)
+        owner="${remote_url#https://github.com/}"
+        owner="${owner%%/*}"
+        ;;
+      git@github.com:*)
+        owner="${remote_url#git@github.com:}"
+        owner="${owner%%/*}"
+        ;;
+    esac
+    if [ -n "$owner" ]; then
+      printf '%s' "$owner"
+      return 0
+    fi
+  fi
+
+  # All tiers failed — emit a visible warning so the caller knows why the
+  # tracker update was skipped, rather than silently swallowing the failure.
+  echo "Warning: could not resolve GITHUB_PROJECT_OWNER from env var, 'gh repo view', or git remote URL. Set GITHUB_PROJECT_OWNER to enable tracker status updates." >&2
+  printf ''
+  return 0
+}
+
 # workflow_issue_tracker_custom_field <key> [config_file]
 #
 # Reads issue_tracker.custom_fields.<key> from .ai-dev-workflow.yaml.
@@ -390,9 +451,9 @@ __workflow_tracker_cache_json=""
 #   - The issue is not found in the project
 #   - Any API call fails
 # Returns 0 in all cases (non-blocking).
-# Uses GITHUB_PROJECT_OWNER/GITHUB_PROJECT_NUMBER when set; owner falls back
-# to the repository owner if omitted; project_number falls back to the
-# issue_tracker.project_number field in .ai-dev-workflow.yaml if omitted.
+# Owner is resolved via workflow_resolve_github_project_owner (see that function
+# for the tiered fallback chain: env var → gh repo view → git remote URL).
+# project_number falls back to issue_tracker.project_number in .ai-dev-workflow.yaml.
 #
 # The full project item list is fetched once per owner+project pair and cached
 # in script-level variables to avoid a full-board scan on every call.
@@ -400,7 +461,7 @@ get_tracker_status_for_issue() {
   local issue_number="$1"
   local owner project_number item_json current_status
 
-  owner="${GITHUB_PROJECT_OWNER:-$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || true)}"
+  owner="$(workflow_resolve_github_project_owner)"
   project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
   if [ -z "$owner" ] || [ -z "$project_number" ]; then
     printf ''
@@ -449,9 +510,9 @@ print(item.get('status') or '', end='')
 # Best-effort update for GitHub Projects Status field.
 # - Returns 0 in all warning/failure cases to avoid blocking caller flows.
 # - Respects status progression ordering and never rolls status backward.
-# - Uses GITHUB_PROJECT_OWNER/GITHUB_PROJECT_NUMBER when set; owner falls back
-#   to the repository owner if omitted; project_number falls back to the
-#   issue_tracker.project_number field in .ai-dev-workflow.yaml if omitted.
+# - Owner is resolved via workflow_resolve_github_project_owner (see that function
+#   for the tiered fallback chain: env var → gh repo view → git remote URL).
+# - project_number falls back to issue_tracker.project_number in .ai-dev-workflow.yaml.
 update_tracker_status_best_effort() {
   local issue_number="$1"
   local status_label="$2"
@@ -459,7 +520,7 @@ update_tracker_status_best_effort() {
   local owner project_number project_id field_json field_id option_id item_json item_id current_status
   local target_order current_order
 
-  owner="${GITHUB_PROJECT_OWNER:-$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || true)}"
+  owner="$(workflow_resolve_github_project_owner)"
   project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
   if [ -z "$owner" ] || [ -z "$project_number" ]; then
     echo "Warning: GITHUB_PROJECT_OWNER or GITHUB_PROJECT_NUMBER not set and no project_number in .ai-dev-workflow.yaml; skipping tracker status update."
