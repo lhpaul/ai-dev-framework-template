@@ -205,9 +205,9 @@ For `check-unavailable` findings, also include:
 - The reason classification was unavailable (e.g., "Template repository unreachable" or "Malformed template repository configuration")
 - The suggestion: "Fix configuration or network access and re-run the retrospective to enable template cross-reference."
 
-### 3b Gate: mandatory completion check before Step 4
+### 3b Gate: mandatory completion check before classifying findings
 
-Before proceeding to Step 4, verify that Step 3b was completed when it was required:
+Before proceeding to Step 3c (classification) and Step 4, verify that Step 3b was completed when it was required:
 
 - Read `template.repository` from `.ai-dev-workflow.yaml`.
 - **If `template.repository` is set (non-empty)** and Step 3b was skipped or not completed during this session: stop here, return to Step 3b, and complete it before classifying any findings. Step 3b handles both the well-formed case (full cross-reference) and the malformed case (`check-unavailable`); the gate fires for both.
