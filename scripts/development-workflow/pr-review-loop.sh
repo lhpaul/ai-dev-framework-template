@@ -1352,7 +1352,6 @@ check_unreplied_rest_comments() {
   #
   # Prints the count of unreplied root CodeRabbit comments on stdout.
   # Exit codes: 0 = success, 3 = REST API failure.
-  set -e
   local pr_number="$1"
   local repo="$2"
   local bot_login="$3"
