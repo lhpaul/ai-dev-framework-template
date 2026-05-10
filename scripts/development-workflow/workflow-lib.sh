@@ -287,17 +287,28 @@ workflow_resolve_github_project_owner() {
   fi
 
   # Tier 3: parse owner from git remote URL
-  # Supports SSH (git@github.com:owner/repo.git) and HTTPS (https://github.com/owner/repo)
+  # Supports common GitHub remote URL formats:
+  #   HTTPS:             https://github.com/owner/repo.git
+  #   Credentialed HTTPS: https://user@github.com/owner/repo.git
+  #   SCP-style SSH:     git@github.com:owner/repo.git
+  #   SSH URL:           ssh://git@github.com/owner/repo.git
   local remote_url
   remote_url="$(git remote get-url origin 2>/dev/null || true)"
   if [ -n "$remote_url" ]; then
     case "$remote_url" in
-      https://github.com/*)
-        owner="${remote_url#https://github.com/}"
+      https://*github.com/*)
+        # Strip protocol and optional user@ prefix, then extract owner segment
+        owner="${remote_url#https://}"
+        owner="${owner#*@}"          # remove optional user@ for credentialed HTTPS
+        owner="${owner#github.com/}" # remove host
         owner="${owner%%/*}"
         ;;
       git@github.com:*)
         owner="${remote_url#git@github.com:}"
+        owner="${owner%%/*}"
+        ;;
+      ssh://git@github.com/*)
+        owner="${remote_url#ssh://git@github.com/}"
         owner="${owner%%/*}"
         ;;
     esac
@@ -461,9 +472,13 @@ get_tracker_status_for_issue() {
   local issue_number="$1"
   local owner project_number item_json current_status
 
-  owner="$(workflow_resolve_github_project_owner)"
   project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
-  if [ -z "$owner" ] || [ -z "$project_number" ]; then
+  if [ -z "$project_number" ]; then
+    printf ''
+    return 0
+  fi
+  owner="$(workflow_resolve_github_project_owner)"
+  if [ -z "$owner" ]; then
     printf ''
     return 0
   fi
@@ -520,13 +535,14 @@ update_tracker_status_best_effort() {
   local owner project_number project_id field_json field_id option_id item_json item_id current_status
   local target_order current_order
 
-  owner="$(workflow_resolve_github_project_owner)"
   project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
-  if [ -z "$owner" ] || [ -z "$project_number" ]; then
-    if [ -z "$project_number" ]; then
-      echo "Warning: GITHUB_PROJECT_NUMBER not set and no project_number in .ai-dev-workflow.yaml; skipping tracker status update."
-    fi
-    # owner-empty case: workflow_resolve_github_project_owner already emitted a warning.
+  if [ -z "$project_number" ]; then
+    echo "Warning: GITHUB_PROJECT_NUMBER not set and no project_number in .ai-dev-workflow.yaml; skipping tracker status update."
+    return 0
+  fi
+  owner="$(workflow_resolve_github_project_owner)"
+  if [ -z "$owner" ]; then
+    # workflow_resolve_github_project_owner already emitted a warning.
     return 0
   fi
 
