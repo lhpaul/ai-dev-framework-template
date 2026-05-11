@@ -13,7 +13,7 @@
 #   --trigger-phrase <phrase>   Trigger phrase to post. Default: "@codex review"
 #                               Also overridable via CODEX_GITHUB_TRIGGER_PHRASE env var.
 #   --bot-login     <login>     GitHub login of the Codex bot account.
-#                               Default: "codex-ai[bot]"
+#                               Default: "chatgpt-codex-connector[bot]"
 #                               Also overridable via CODEX_GITHUB_BOT_LOGIN env var.
 #                               Verify the actual bot login from your GitHub App settings.
 #   --poll-interval  <seconds>   Seconds between polling attempts. Default: 30
@@ -96,7 +96,7 @@ esac
 
 # Defaults (overridable by flags or env vars)
 TRIGGER_PHRASE="${CODEX_GITHUB_TRIGGER_PHRASE:-@codex review}"
-BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-codex-ai[bot]}"
+BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
 POLL_INTERVAL=30
 MAX_WAIT=600
 MAX_RETRIGGERS=1
