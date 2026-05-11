@@ -2495,6 +2495,7 @@ normalize_platform_verdict() {
   case "$result" in
     clean)       printf 'clean' ;;
     needs_fixes) printf 'blocking' ;;
+    advisory)    printf 'advisory' ;;
     skipped)     printf 'clean' ;;
     needs_rerun) printf 'blocking' ;;
     escalate)
@@ -3154,7 +3155,7 @@ case "$aggregate_result" in
     # PR-Agent "Possible Issue" evaluation pushed a fix; orchestrator must
     # re-invoke the loop on the new HEAD. No summary comment is posted here —
     # the loop re-runs from the top and posts the summary on its terminal exit.
-    print_kv RESULT needs_rerun
+    # RESULT=needs_rerun is already emitted by the general print_kv block above.
     exit 3
     ;;
   escalate)
