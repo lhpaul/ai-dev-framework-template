@@ -451,6 +451,19 @@ for development_path in "${development_paths[@]}"; do
       ;;
   esac
 
+  # Spec/plan stage carve-out: TOOL_FIX=unknown at the spec or plan writing stage
+  # does NOT indicate a serialization hazard.  Spec/* and implementation-plan/*
+  # PRs only write documentation; their reviewer loops do not invoke canonical tool
+  # files.  Downgrade 'unknown' to 'no' so the item is not incorrectly serialized.
+  # (Protocol 90 § "Spec/plan stage carve-out for TOOL_FIX=unknown")
+  case "$next_action" in
+    write-plan|run-spec-review-and-open-pr|run-plan-review-and-open-pr)
+      if [ "$tool_fix" = "unknown" ]; then
+        tool_fix="no"
+      fi
+      ;;
+  esac
+
   print_kv TARGET "development:$development_path"
   print_kv DEVELOPMENT_PATH "$development_path"
   print_kv SLUG "$slug"

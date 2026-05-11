@@ -337,6 +337,19 @@ same as `yes` — apply the serialize-first strategy (conservative default). `TO
 omitted when `TOOL_FIX` is `no` or `unknown`; parsers must treat a missing `TOOL_FIX_FILES` as
 an empty set.
 
+**Spec/plan stage carve-out for `TOOL_FIX=unknown`**: When `TOOL_FIX=unknown` is received for
+an item and the item's tracker status is `Writing Spec` or `Writing Plan` (or its `NEXT_ACTION`
+is `write-plan`, `run-spec-review-and-open-pr`, or `run-plan-review-and-open-pr`), **treat
+`unknown` as `no` for serialization purposes — do not apply the serialize-first rule**.
+
+Rationale: `spec/*` and `implementation-plan/*` branch PRs only write documentation to
+`docs/specs/developments/*/`. Their automated reviewer loops (Step 7) do not invoke or depend on
+any canonical tool file behavior. The serialize-first rule's intent is to prevent consumer items
+from invoking a modified or broken tool during their PR readiness loops — that risk does not
+exist at the spec or plan writing stage. The `TOOL_FIX=yes` classification still applies at the
+**implementation** stage when the item's plan actually modifies canonical tool files; this
+carve-out does not change serialization behavior for implementation-stage dispatches.
+
 **Serialize-first rule**: When a tool-fix item and any consumer item appear in the same candidate
 batch, the tool-fix item **must** be dispatched alone in its own serial sub-batch first. The
 consumer items are held until the tool-fix PR is merged. After the tool-fix item reaches
