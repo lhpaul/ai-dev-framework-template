@@ -2603,21 +2603,18 @@ METRICS_HEADER
     # Column order: PR, Branch Type, <platforms...>, Overall Result, Block Was Real Bug?
     # Fixed columns = 4 (PR, Branch Type, Overall Result, Block Was Real Bug?)
     # Platform columns = total separator tokens - 4
-    existing_sep_row="$(grep '^|---|' "$metrics_file" | head -1)"
+    # Use tail -1 to get the most recent separator row (handles multiple layout changes).
+    existing_sep_row="$(grep '^|---|' "$metrics_file" | tail -1)"
     existing_platform_col_count=$(printf '%s' "$existing_sep_row" | tr -cd '|' | wc -c | tr -d ' ')
     # pipe count = platform_cols + 4 fixed cols + 1 leading pipe → total pipes = platform_cols + 5
     # Solve: existing_platform_col_count (pipes) = existing_platform_cols + 5
     existing_platform_count=$(( existing_platform_col_count - 5 ))
     current_platform_count="${#platform_names[@]}"
     if [ "$current_platform_count" -ne "$existing_platform_count" ]; then
-      # Platform configuration changed: insert a separator row to mark the boundary.
-      # Build blank cells matching the EXISTING header's column count so the
-      # separator row is a valid row in the current table (not the new layout).
-      # Total existing columns = existing_platform_count + 4 fixed columns
-      # (PR, Branch Type, Overall Result, Block Was Real Bug?).
-      # The separator row occupies: 1 cell for the annotation + blank cells for
-      # Branch Type + existing platforms + Overall Result + Block Was Real Bug?
-      # = existing_platform_count + 3 remaining blank cells after the first.
+      # Platform configuration changed: insert an annotation row (in the OLD layout
+      # so it is a valid row for that table) then write a new header block for the
+      # new layout so subsequent rows are correctly labeled.
+      # Build blank cells matching the EXISTING header's column count.
       _sep_blank_cols=""
       _sep_i=0
       while [ "$_sep_i" -lt $(( existing_platform_count + 3 )) ]; do
@@ -2628,6 +2625,11 @@ METRICS_HEADER
         "$(IFS=,; printf '%s' "${platform_names[*]}")" \
         "$_sep_blank_cols" \
         >> "$metrics_file"
+      # New header block for the updated platform layout.
+      printf '\n| PR | Branch Type |%s Overall Result | Block Was Real Bug? |\n' \
+        "$header_platform_cols" >> "$metrics_file"
+      printf '|---|---|%s---|---|\n' \
+        "$separator_platform_cols" >> "$metrics_file"
     fi
   fi
 
@@ -2819,19 +2821,6 @@ if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
     _idx=$((_idx + 2))
   done
 
-  # Append the metrics row (best-effort; suppress errors so a write failure does
-  # not change the script's exit code).
-  set +e
-  # Build the argument list: pr, branch, overall_result, then pairs of (name, verdict).
-  _metrics_args=("$pr_number" "$branch_name" "$aggregate_result")
-  _idx=0
-  while [ "$_idx" -lt "${#compare_verdicts[@]}" ]; do
-    _metrics_args+=("${compare_verdicts[$_idx]}" "${compare_verdicts[$((_idx + 1))]}")
-    _idx=$((_idx + 2))
-  done
-  append_compare_metrics_row "${_metrics_args[@]}" 2>/dev/null || \
-    echo "WARN: append_compare_metrics_row failed — metrics row not written" >&2
-  set -e
 fi
 
 # --- Unresolved review thread gate ---
@@ -2906,6 +2895,22 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
   fi
 else
   print_kv UNRESOLVED_THREAD_COUNT 0
+fi
+
+# Append compare-mode metrics row after the thread gate so the recorded
+# aggregate_result reflects the final settled value (thread audit may flip
+# a platform-clean run to needs_fixes or escalate).
+if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
+  set +e
+  _metrics_args=("$pr_number" "$branch_name" "$aggregate_result")
+  _idx=0
+  while [ "$_idx" -lt "${#compare_verdicts[@]}" ]; do
+    _metrics_args+=("${compare_verdicts[$_idx]}" "${compare_verdicts[$((_idx + 1))]}")
+    _idx=$((_idx + 2))
+  done
+  append_compare_metrics_row "${_metrics_args[@]}" 2>/dev/null || \
+    echo "WARN: append_compare_metrics_row failed — metrics row not written" >&2
+  set -e
 fi
 
 print_kv RESULT "$aggregate_result"
