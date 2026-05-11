@@ -2668,10 +2668,12 @@ EOF
   fi
 
   if [ -n "$_existing_comment_id" ]; then
-    # Edit the existing comment in place.
+    # Edit the existing comment in place; fall back to creating a new comment
+    # if the PATCH fails (e.g. comment was deleted or a transient API error).
     gh api "repos/$_repo/issues/comments/$_existing_comment_id" \
       --method PATCH \
-      -f body="$comment_body" >/dev/null 2>&1
+      -f body="$comment_body" >/dev/null 2>&1 \
+      || gh pr comment "$pr_number" --body "$comment_body" >/dev/null 2>&1
   else
     gh pr comment "$pr_number" --body "$comment_body" >/dev/null 2>&1
   fi
