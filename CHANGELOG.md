@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Spec template and protocol: prevent placeholder artifacts from reaching spec PRs** (#568): the spec template replaces the `**Language**: ...` instruction block with an HTML comment and converts `**Depends on**` to a clearly bracketed placeholder; Protocol 01 adds a mandatory "Template placeholder removal" self-check with a grep command that agents must run before opening every spec PR.
+- **PR-Agent ticket compliance check disabled** (#569): `require_ticket_analysis_review = false` added to `.pr_agent.toml` to prevent false-positive compliance findings. PR-Agent was extracting issue numbers from cross-repository links in PR descriptions (e.g. "ported from other-repo#145") and checking ticket requirements from the wrong issue, creating confusing noise that required manual triage to dismiss.
 
 ## [0.26.0] - 2026-05-11
 
