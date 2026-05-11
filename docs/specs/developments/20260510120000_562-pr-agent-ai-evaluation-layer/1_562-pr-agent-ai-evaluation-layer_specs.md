@@ -120,7 +120,7 @@ This spec defines an AI evaluation sub-step that is inserted into the reviewer l
 ## Operational Visibility
 
 - **Logs**: The reviewer loop emits a log line when dispatching the code-reviewer agent for a "Possible Issue" evaluation, and another when the verdict is received (fix pushed or acknowledged)
-- **Notifications**: No additional notifications beyond the existing PR comment the agent posts (either the fix commit or the acknowledgment comment)
+- **Notifications**: No additional notifications are introduced. When the finding is acceptable, the agent posts an acknowledgment comment on the PR. When a real bug is found, the agent pushes a fix commit to the PR branch (visible in the PR timeline/commits); this is a commit artifact, not a PR comment
 - **Audit trail**: The acknowledgment comment or fix commit is visible on the PR timeline and constitutes the audit record for each evaluated finding
 
 ---
