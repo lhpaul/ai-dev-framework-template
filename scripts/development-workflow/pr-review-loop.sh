@@ -2658,7 +2658,12 @@ EOF
   if [ -n "$_repo" ]; then
     _existing_comment_id="$(gh api "repos/$_repo/issues/$pr_number/comments" \
       --paginate \
-      --jq '[.[] | select(.body | test("pr-review-loop\\.sh"))] | last | .id // empty' \
+      --jq '[.[]
+              | select(
+                  (.body // "" | contains("### Automated Reviewer Loop Summary")) and
+                  (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
+                )
+            ] | sort_by(.created_at) | last | .id // empty' \
       2>/dev/null)" || true
   fi
 
