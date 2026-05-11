@@ -408,13 +408,18 @@ done  # end outer retrigger loop
 # This is a lightweight one-shot check: it does not extend the full MAX_WAIT
 # budget and does not add another iteration of the outer retrigger loop.
 
-echo "INFO: poll budget exhausted; posting async-arrival trigger and waiting ${POLL_INTERVAL}s for late response..."
+echo "INFO: poll budget exhausted; waiting ${POLL_INTERVAL}s for late async response..."
 
-if ! gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
-  --method POST \
-  --raw-field body="$TRIGGER_PHRASE — async-arrival check after poll-window expiry (sha: $CURRENT_SHA)" \
-  --jq '.created_at' >/dev/null; then
-  echo "WARNING: failed to post async-arrival trigger comment; continuing with grace poll from existing trigger time" >&2
+if [ "$MAX_RETRIGGERS" -gt 0 ]; then
+  echo "INFO: posting async-arrival trigger comment..."
+  if ! gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
+    --method POST \
+    --raw-field body="$TRIGGER_PHRASE — async-arrival check after poll-window expiry (sha: $CURRENT_SHA)" \
+    --jq '.created_at' >/dev/null; then
+    echo "WARNING: failed to post async-arrival trigger comment; continuing with grace poll from existing trigger time" >&2
+  fi
+else
+  echo "INFO: MAX_RETRIGGERS=0 — skipping async-arrival trigger comment; grace poll will use existing trigger time"
 fi
 
 echo "INFO: sleeping ${POLL_INTERVAL}s before async grace poll..."
