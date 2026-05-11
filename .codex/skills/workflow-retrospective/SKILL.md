@@ -7,7 +7,7 @@ description: Run a retrospective analysis on completed work to identify process 
 
 Recommended model tier: `economy`
 
-**Meta-Retrospective**: If the user invokes this skill with a meta scope (e.g., "run meta-retro", "periodic verification", or similar phrasing indicating trend analysis of prior improvements), follow `docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md` instead of the regular retrospective flow below.
+**Meta-Retrospective**: If the user invokes this skill with a meta scope (e.g., "run meta-retro", "periodic verification", or similar phrasing indicating trend analysis of prior improvements), follow `docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md` instead of the regular retrospective flow below. The meta-retrospective includes a platform evaluation step (Step 2b) that reads `docs/workflow/retro-metrics-platforms.md` and reports the running exclusive-block rate for each review platform against the graduation criteria. When fewer than 30 compare-mode runs are logged, Step 2b explicitly states data is insufficient for a graduation decision.
 
 1. Read `AGENTS.md` for repository-wide rules.
 2. Read `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md`.

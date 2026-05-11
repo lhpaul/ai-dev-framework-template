@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Add comparison mode and platform metrics tracking to pr-review-loop.sh** (#563): adds a `--compare` flag that runs all configured review platforms to completion regardless of individual blocking verdicts, records per-platform verdicts as `COMPARE_VERDICT_<n>_PLATFORM` / `COMPARE_VERDICT_<n>_RESULT` key=value output lines, appends a structured row to `docs/workflow/retro-metrics-platforms.md` after each run, and adds per-platform verdict details to the Automated Reviewer Loop Summary PR comment. The overall exit code and `RESULT` are unchanged (first blocking platform in config order governs). Adds a platform evaluation step (Step 2b) to the meta-retrospective protocol (`06b-meta-retrospective-protocol.md`) that reads the new metrics file and reports each platform's exclusive-block rate against the graduation criteria (zero exclusive blocks across ≥ 30 runs covering fix, feature, and refactor branch types). Normal (non-`--compare`) invocations are unaffected.
 - **Add AI evaluation layer for PR-Agent "Possible Issue" findings** (#562): When
   PR-Agent returns clean with a "Possible Issue" advisory label, the reviewer loop
   now dispatches the code-reviewer agent to evaluate the finding. If a real bug is

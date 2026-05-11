@@ -18,3 +18,4 @@ That document is the single source of truth for this role. Key responsibilities:
 - After executing Step 5 actions, append the finalized metrics block to `docs/workflow/retro-metrics.md` as a new table row
 - Never apply fixes or create issues without the human's explicit choice
 - For periodic effectiveness verification of prior improvement action items, use `docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md`
+- The meta-retrospective includes a **platform evaluation step (Step 2b)** that reads `docs/workflow/retro-metrics-platforms.md` (populated by `pr-review-loop.sh --compare` runs) and reports the running exclusive-block rate for each review platform against the graduation criteria (zero exclusive blocks across ≥ 30 compare-mode runs covering fix, feature, and refactor branch types). When fewer than 30 runs are logged, Step 2b explicitly states that data is insufficient for a graduation decision.

@@ -70,6 +70,56 @@ Where a field value is `unavailable`, carry it through to the table as-is. Do no
 
 ---
 
+## Step 2b: Platform Evaluation
+
+Read `docs/workflow/retro-metrics-platforms.md`.
+
+```bash
+cat docs/workflow/retro-metrics-platforms.md
+```
+
+**If the file does not exist or has zero data rows** (only the header is present — no table rows below the separator line): state:
+
+> No compare-mode runs logged yet — platform evaluation skipped.
+
+Then proceed to Step 3.
+
+**If fewer than 30 data rows are present**: state explicitly:
+
+> Only N compare-mode runs logged — fewer than 30 runs required for a graduation decision. Data is insufficient. Continuing with available data for informational purposes only.
+
+**Compute per-platform exclusive-block rate** (for each configured platform):
+
+1. Count total data rows in the table (`total_runs`).
+2. For each platform column present in the table header, count the number of rows where that platform's verdict is `blocking` AND at least one other platform's verdict is `clean`. This is the platform's exclusive-block count.
+3. Divide each platform's exclusive-block count by `total_runs` to get its exclusive-block rate.
+
+Example format:
+
+```markdown
+## Platform Evaluation (Step 2b)
+
+**Compare-mode runs logged**: N
+**Data note**: [Full data (≥ 30 runs) | Limited data — only N runs; fewer than 30 required]
+
+| Platform | Exclusive Blocks | Total Runs | Rate | Graduation Status |
+|---|---|---|---|---|
+| coderabbit | 3 | 25 | 12% | data insufficient (< 30 runs) |
+| greptile | 0 | 25 | 0% | data insufficient (< 30 runs) |
+```
+
+**Graduation status** for each platform:
+
+- `safe to evaluate removal` — exclusive-block count is zero, total runs ≥ 30, and runs cover at least one each of `fix`, `feature`, and `refactor` branch types.
+- `data insufficient` — fewer than 30 runs logged, OR the runs do not cover all three required branch types.
+- `not yet ready` — exclusive blocks found (count > 0), regardless of run count.
+
+Report the graduation status for each platform. If any platform reaches `safe to evaluate removal`, flag it explicitly for human review:
+
+> Platform `<name>` meets the graduation criteria. Consider opening a backlog item to evaluate its removal from the review configuration.
+
+---
+
 ## Step 3: Classify Prior Action Items
 
 For each action item recorded in the retrospective entries within the analysis window, classify its outcome based on the metric trend:
@@ -189,4 +239,5 @@ After Step 6 completes, provide a summary:
 ## See Also
 
 - Regular retrospective protocol: `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md`
-- Metrics log: `docs/workflow/retro-metrics.md`
+- Batch metrics log: `docs/workflow/retro-metrics.md`
+- Platform comparison metrics log: `docs/workflow/retro-metrics-platforms.md`
