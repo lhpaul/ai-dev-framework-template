@@ -1,0 +1,37 @@
+# CodeRabbit configuration
+#
+# This file controls CodeRabbit's behavior for this repository.
+# Docs: https://docs.coderabbit.ai/reference/configuration
+#
+# This repository is configured for External PR reviewer mode (Path B):
+# - review.platforms includes "coderabbit" in .ai-dev-workflow.yaml
+# - auto PR reviews are enabled below
+#
+# To switch back to CLI-only mode (Path A):
+#   1. Set reviews.auto_review.enabled to false below
+#   2. Remove "coderabbit" from review.platforms in .ai-dev-workflow.yaml
+
+reviews:
+  tools:
+    github-checks:
+      enabled: true
+      timeout_ms: 600000
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - develop
+      - main
+  path_filters:
+    - "!dist/**"
+    - "!**/*.generated.*"
+    - "!**/*.lock"
+    - "!**/node_modules/**"
+  profile: "assertive"
+  # Scope restriction: restrict CodeRabbit's review to files in the PR diff.
+  # When set to true, CodeRabbit only comments on files that appear in the PR's
+  # changed files list. It will not expand its review to files outside the diff
+  # (e.g., tangentially related documentation or config files).
+  # This prevents scope inflation where CodeRabbit flags unrelated files and
+  # causes agents to make unintended edits that increase PR diff size and risk.
+  changed_files_only: true

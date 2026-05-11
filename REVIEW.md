@@ -112,6 +112,7 @@ Check:
   - Verify each such claim against the real source files — not just against other parts of the plan document
   - Flag any claim that cannot be verified from the codebase as "unverified — implementer must confirm before proceeding"
   - Cross-reference consistency: line numbers, counts, and symbolic references (e.g., smoke test counts, Verification Log output counts, log line references) must be consistent across the plan document; flag any number or reference that cannot be confirmed against the codebase or a prior plan step
+- Behavioral guarantee mechanism citation: every behavioral guarantee stated in the plan (e.g., "at most once per run", "bounded", "idempotent") cites the specific mechanism that enforces it (flag, guard clause, constraint, lock, etc.); a guarantee without a cited enforcement mechanism is unverifiable and must be flagged
 - Cross-section consistency: all references to the same function, constant, or architecture decision are consistent across all sections of the plan (e.g., a function described in the Architecture section must have the same signature in the Implementation Order steps; a constant must carry the same value everywhere it appears; a decision index must map to the same decision in every reference)
 
 Typical `blocking` issues:
@@ -121,6 +122,7 @@ Typical `blocking` issues:
 - A CHANGELOG literal in the Implementation Order uses conventional-commit format (`fix(scope): message`) instead of the project's `**Bold Title** (#N):` format
 - `CHANGELOG.md` is modified in this PR — `implementation-plan/*` branches are exempt from CHANGELOG entries; remove any CHANGELOG modification before merging
 - A behavioral claim about framework/runtime behavior (guard logic, config inheritance, scope, API contract) cannot be verified against the codebase and is not flagged as "unverified"
+- A behavioral guarantee (e.g., "at most once", "bounded", "idempotent") does not cite the specific mechanism (flag, guard clause, constraint, lock) that enforces it
 - Cross-section inconsistency: the same function, constant, or architecture decision is defined or described differently in two or more sections of the plan (e.g., incompatible function signatures, conflicting constant values, contradictory decision rationales)
 
 Typical `important` issues:
@@ -161,6 +163,10 @@ Check:
 - Security boundaries and validation are respected
 - Tests cover the changed business behavior
 - New patterns are justified and consistent with the codebase
+
+Additional checks for **documentation PRs** (when a PR adds or modifies documentation files — `*.md`, `*.yaml`, `*.toml` config docs, or any prose-only file):
+- **Intra-file content duplication**: when a new section is added to an existing file, verify that any tables or lists in the new section are not reproducing content already present elsewhere in the same file. If a duplicate is found, flag it as `important` with a recommendation to cross-reference the canonical location instead of duplicating.
+- **Wording consistency**: verify that procedural instructions in a new section (e.g., "push a commit", "apply a label", "run a script") are consistent with the existing flow described in sibling sections of the same file. Flag contradictions as `important`.
 
 Additional checks for **shell scripts** (`*.sh`):
 - Option parsing validates that required values are present before `shift`

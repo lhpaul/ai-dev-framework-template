@@ -26,6 +26,32 @@ That document is the single source of truth for this supporting role. Key respon
   the literal resolved `<worktree-path>` value in every stage-agent handoff so each
   dispatched agent can validate its own paths independently.
 
+**Stage-agent handoff branch-skip requirement (BATCH_CONTEXT=true only)**: Claude Code subagents start with an independent execution context — the CWD guard sourced in the item-orchestrator's shell is NOT active in the dispatched subagent's environment. To prevent the subagent from running `git checkout develop` or `git checkout -b <branch>` against the main repo root, every stage-agent handoff when `BATCH_CONTEXT=true` **must** include both of the following explicit instructions:
+1. The literal resolved `<worktree-path>` value (e.g., `/path/to/repo/.claude/worktrees/lh-168/fix-lh-168-slug`).
+2. The sentence: "BATCH_CONTEXT=true — the worktree is already on branch `<branch>`. Do NOT run `git checkout develop`, `git checkout -b`, `git switch`, `git reset`, or `git restore` from the main repo root. Confirm CWD matches `<worktree-path>` before any git state-changing command."
+Omitting either instruction is the root cause of the branch-leak pattern where stage subagents run Protocol 03's branching steps from the main repo root CWD, silently switching the main working tree to the feature branch.
+
+**Main-tree return rule (BATCH_CONTEXT=false / no isolation: worktree)**: When this agent is dispatched **without** worktree isolation (i.e., `BATCH_CONTEXT` is `false` or absent), the agent runs in the main working tree. In this case:
+1. When creating the feature/fix branch, the agent switches the main working tree to that branch (e.g., `git checkout -b fix/<slug>`). This is expected.
+2. **Before emitting the Work Item Runner Summary and returning to the caller**, the agent MUST switch the main working tree back to the integration branch:
+
+   ```bash
+   git switch <integration-branch>   # e.g., git switch develop
+   ```
+
+3. Verify the switch succeeded before returning: `git rev-parse --abbrev-ref HEAD` must print the integration branch name.
+4. If the switch fails (e.g., uncommitted changes block it), do NOT force-discard. Instead: stage and commit any outstanding work first (or stash with `git stash`), then switch, then unstash if needed.
+5. The integration branch is `develop` unless overridden by the `integration_branch` key in `.ai-dev-workflow.yaml`; read it with a key-anchored parse, e.g.:
+
+   ```bash
+   integration_branch=$(awk -F': *' '/^[[:space:]]*integration_branch[[:space:]]*:/ {print $2; exit}' .ai-dev-workflow.yaml)
+   integration_branch=${integration_branch%%#*}
+   integration_branch=$(printf '%s' "$integration_branch" | xargs)
+   integration_branch=${integration_branch:-develop}
+   ```
+
+This rule prevents Protocol 90 Step 5.2 from firing the "wrong branch + clean" auto-correct on every item in a batch. Omitting this return step was the root cause of repeated Step 5.2 violations in serial batches.
+
 **`codex-github` internal reviewer dispatch**: When `codex-github` is listed in `review.internal_reviewers`, invoke `scripts/development-workflow/codex-github-reviewer.sh <pr_number> <owner> <repo>` instead of dispatching a CLI-based reviewer agent. This script is universally reachable from all runner contexts (Claude Code, Cursor, Codex, headless CI) because it uses only `gh` CLI — no Codex CLI runtime is needed. Exit code semantics: `0` = APPROVED, `1` = NEEDS_REVISION (blocking findings in stdout), `2` = TIMED_OUT (treat as unavailable under `internal_reviewers_unavailable_policy`). Prerequisite: Codex GitHub App must be installed on the repository and configured to respond to the trigger phrase (default: `@codex review`).
 
 **Permission-denial protocol (subagent runs only)**: If the `Edit` or `Write` tool is denied for **any path** — including `.claude/agents/**`, `.cursor/agents/**`, or any other file — the subagent MUST immediately stop all further work and return:

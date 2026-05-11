@@ -17,4 +17,4 @@ That document is the single source of truth for this role. Key responsibilities:
 - For each opportunity, execute the human's chosen action: "Address now" (apply fix, commit, push — no new PR), "Add to backlog" (create GitHub issue directly), or "Skip"
 - After executing Step 5 actions, append the finalized metrics block to `docs/workflow/retro-metrics.md` as a new table row
 - Never apply fixes or create issues without the human's explicit choice
-- For periodic effectiveness verification of prior improvement action items, use `docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md`
+- For periodic effectiveness verification of prior improvement action items, use `docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md`. The meta-retrospective includes a platform evaluation step (Step 2b) that reads `docs/workflow/retro-metrics-platforms.md` (populated by `pr-review-loop.sh --compare` runs) and applies the graduation criteria defined there. See Step 2b for the full evaluation procedure.

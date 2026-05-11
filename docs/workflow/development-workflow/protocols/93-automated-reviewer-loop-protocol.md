@@ -220,6 +220,48 @@ When findings target `*.sh` workflow scripts (especially under `scripts/developm
 
 If verification fails, iterate without pushing. When a prior attempt introduced regressions (e.g., misunderstood `IFS`, `read`, or `git worktree list --porcelain` ordering), prefer the **orchestrating agent** applying the fix inline with full conversation context rather than re-dispatching a blind fixer on the same subtle finding.
 
+### Cross-file expansion: defer out-of-scope suggestions to a new issue
+
+Automated reviewers (CodeRabbit, PR-Agent, Devin) can expand their review beyond the
+files intentionally changed in the PR. This "scope inflation" causes agents to make
+additional edits that increase PR diff size, add review burden, and risk unintended
+side-effects.
+
+**Definition of out-of-scope**: A reviewer finding targets a file that is **not** in the
+PR's intentional diff scope — i.e., it was not modified by the PR and its content is not
+required to validate or use the change being reviewed.
+
+**Mandatory handling when out-of-scope findings appear:**
+
+1. **Do not address the finding inline.** Do not edit the file, do not commit changes to
+   it, and do not resolve the thread by making substantive edits to unintended files.
+
+2. **Reply to the review thread** acknowledging the finding and noting it will be tracked
+   in a separate issue:
+
+   > "This finding is outside the intended scope of this PR (file `<path>` was not
+   > intentionally modified). Deferring to a separate backlog item to avoid scope
+   > inflation. This thread is closed without changes to this PR."
+
+3. **Resolve the thread** via the GraphQL `resolveReviewThread` mutation (same as any
+   other addressed thread) so it does not block the PR readiness gate.
+
+4. **Create a new backlog issue** (or add to an existing open issue if one already covers
+   the same concern) describing the suggested improvement. Title it descriptively and
+   include a link to the review comment for traceability. Use the issue tracker configured
+   in `.ai-dev-workflow.yaml`.
+
+5. **Do not label the PR `needs-fixes`** solely on the basis of out-of-scope findings.
+   Out-of-scope findings that are replied to and thread-resolved do not block
+   `ready-for-human-review`.
+
+**Important caveat — cross-cutting consistency fixes**: If a reviewer finding targets a
+file outside the diff but the finding is a *consistency issue* introduced by this PR (for
+example, the PR adds a new signal value to a script but a protocol doc that references
+that script still shows the old value), treat it as **in-scope**. The test is whether
+*this PR's changes* created the inconsistency, not whether the file was originally in the
+diff. When in doubt, fix the consistency issue inline rather than deferring it.
+
 ### Run the loops
 
 Execute **Step 7a: Internal Review Gate**, **Step 7: Automated Reviewer Loop**, **Step 8: CI Loop**, **Step 8a: Label Readiness Checklist**, **Step 8b: Update Tracker Status**, and **Step 8c: Post-Label Independent Verification** exactly as defined in `91-orchestrate-work-protocol.md` (scripts, result interpretation, sequential platform policy, fixer mapping, parameters, and labels). Do not duplicate that logic here — follow 91.
@@ -318,6 +360,94 @@ When a reviewer flags a specific literal value — a numeric constant, hex value
 
 This rule applies to any value type: version numbers, timeout values, port numbers, hex color codes, string constants, label names, section headers, or any other repeated literal. If a reviewer flags one instance, treat it as a signal to fix all instances — the reviewer will check all occurrences on the next cycle and finding any remaining instance resets the review loop.
 
+### PR-Agent "Possible Issue" evaluation step
+
+When `pr-review-loop.sh` returns `RESULT=clean` and the output contains
+`PR_AGENT_POSSIBLE_ISSUE_EVAL`, PR-Agent classified the PR as `clean` but the review
+comment contained at least one "Possible Issue" advisory label. The orchestrator must
+dispatch a code-reviewer agent to evaluate the finding before declaring the loop result
+final. `RESULT=needs_rerun` (exit code 3) is a separate follow-up signal emitted only
+after the code-reviewer agent pushed a fix (i.e., `POSSIBLE_ISSUE_EVAL_OUTCOME=fix_pushed`
+is passed to a re-invocation).
+
+#### When this step triggers
+
+`PR_AGENT_POSSIBLE_ISSUE_EVAL` is emitted (with `RESULT=clean`) when all of the
+following are true on the first pass:
+
+- The `pr-agent` platform is configured and ran for this PR.
+- PR-Agent's comment classified as `clean` (no hard-blocker labels).
+- The comment contained at least one `Possible Issue` advisory label (case-insensitive).
+- `POSSIBLE_ISSUE_EVAL_OUTCOME` is empty or `unavailable` (first-pass, before the
+  orchestrator sets an outcome).
+
+`RESULT=needs_rerun` (exit code 3) is emitted on a re-invocation when
+`POSSIBLE_ISSUE_EVAL_OUTCOME=fix_pushed` is set in the environment.
+
+#### Orchestrator dispatch contract
+
+When `pr-review-loop.sh` exits with `RESULT=clean` and includes `PR_AGENT_POSSIBLE_ISSUE_EVAL` in the output:
+
+1. **Read the structured keys** from the script output:
+   - `PR_AGENT_POSSIBLE_ISSUE_EVAL` — format: `<pr_number>@@@<branch_name>`
+   - `PR_AGENT_POSSIBLE_ISSUE_BODY` — the full PR-Agent comment body (newlines
+     escaped; use `kv_value` to extract, then unescape `\n` and `\t` before passing
+     to the agent)
+
+2. **Dispatch the `code-reviewer` agent** (or invoke inline if the finding is
+   mechanical) with:
+   - The PR number and branch
+   - The PR-Agent comment body (the full finding text)
+   - The PR diff (via `gh pr diff <pr_number>`) for context
+   - The following instruction:
+     > Determine whether the PR-Agent finding describes a real bug or an acceptable
+     > advisory concern. If it is a real bug, push a fix commit to the PR branch.
+     > If it is acceptable, post a substantive acknowledgment comment on the PR
+     > explaining the reasoning (do not just say "acknowledged"). Do not push a
+     > commit if the finding is not actionable.
+
+3. **After the agent finishes**, set `POSSIBLE_ISSUE_EVAL_OUTCOME` and re-invoke
+   `pr-review-loop.sh`:
+   - Agent pushed a fix commit → `POSSIBLE_ISSUE_EVAL_OUTCOME=fix_pushed`:
+     ```bash
+     POSSIBLE_ISSUE_EVAL_OUTCOME=fix_pushed \
+       ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>
+     ```
+     The script emits `RESULT=needs_rerun` and exits 3. The orchestrator then
+     does a full fresh re-run **without** `POSSIBLE_ISSUE_EVAL_OUTCOME` set, so
+     the new HEAD is checked from scratch.
+   - Agent posted an acknowledgment → `POSSIBLE_ISSUE_EVAL_OUTCOME=acknowledged`:
+     ```bash
+     POSSIBLE_ISSUE_EVAL_OUTCOME=acknowledged \
+       ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>
+     ```
+   - Agent is unavailable or timed out → `POSSIBLE_ISSUE_EVAL_OUTCOME=unavailable`:
+     ```bash
+     POSSIBLE_ISSUE_EVAL_OUTCOME=unavailable \
+       ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>
+     ```
+
+4. **On the re-invocation** with `acknowledged` or `unavailable`, the script reads
+   `POSSIBLE_ISSUE_EVAL_OUTCOME` from the environment, emits `RESULT=clean`, and
+   exits 0. For `unavailable`, it also logs a warning to stderr and preserves the
+   advisory label in the loop summary. For `fix_pushed`, the script exits 3
+   (`RESULT=needs_rerun`) — the orchestrator then re-runs the loop completely fresh.
+
+#### Retry limits
+
+The `needs_rerun` exit from `pr-review-loop.sh` is **not** counted against the
+orchestrator's `cycle` counter — it is a pre-`clean` evaluation step, not a
+`needs_fixes` fixer dispatch. However, if the agent evaluation itself finds a bug and
+pushes a fix (`fix_pushed`), that subsequent full loop re-run is counted normally.
+
+#### Fallback behavior
+
+If `POSSIBLE_ISSUE_EVAL_OUTCOME` is empty or `unavailable`, the script logs a warning
+to stderr and exits 0 with `RESULT=clean`. The advisory label is still present in the
+loop summary output. The loop does not block indefinitely on agent unavailability.
+
+---
+
 ### PR feedback tracking and comments
 
 Follow the "PR feedback tracking and comments" subsection of Step 7 in `91-orchestrate-work-protocol.md`:
@@ -326,7 +456,7 @@ Follow the "PR feedback tracking and comments" subsection of Step 7 in `91-orche
 - Maintain a PR feedback ledger tracking all blocking findings across cycles (keyed by `(platform, path, body_snippet)`).
 - After each fixer push, post a **fix commit comment** on the PR listing which findings that commit resolved and any remaining open findings.
 - After each fixer push, **reply to each addressed inline review comment** on the PR to mark it as resolved. This is mandatory. Follow Protocol 91 ("Resolve inline review comments") for the exact `gh api` command format and delegation requirements for fixer subagents.
-- When the loop terminates, post a **final summary table** on the PR with all findings and their statuses (`resolved` / `unresolved`).
+- When the loop terminates with `clean` or `escalate`, **`pr-review-loop.sh` automatically posts the "Automated Reviewer Loop Summary" comment** — you do not need to post it manually for those exits. For `needs_fixes` at `cycle >= max_cycles`, pass `--post-final-summary` to the final script invocation and the summary is posted automatically. The script-posted comment satisfies the Step 8c `hasReviewSummary` check in all three cases.
 - If the result is `skipped` (no platforms configured), do not post a summary comment.
 
 ### Review comments audit (post-clean gate)

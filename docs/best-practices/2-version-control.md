@@ -111,8 +111,14 @@ This project uses [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) forma
 - Every feature/fix/hotfix PR adds an entry **before merge**, with these exceptions and rules:
   - Spec-only or plan-only PRs (documentation artifacts for upcoming work) — no entry needed
   - Fixes or changes to developments that have not been released yet — update the existing `[Unreleased]` entry instead of adding a new one; if the original entry already describes the corrected behavior, no change is needed
-  - **Hotfix PRs** (branch prefix `hotfix/*`) — entry goes in a **new versioned section** (e.g., `[1.0.1] - YYYY-MM-DD`), **not** under `[Unreleased]`. A hotfix patches released code on `main` and is itself released immediately on merge. Determine the next patch version from the most recent released section header, then insert the new section as the **first `##` section** in `CHANGELOG.md` (above all existing headers, including prior hotfix versions and `[Unreleased]`). This ensures the auto-tagging workflow extracts the correct version. Do **not** add an `[Unreleased]` entry for the hotfix; the backport PR carries the versioned entry to `develop` automatically.
+  - **Hotfix PRs** (branch prefix `hotfix/*`) — entry goes in a **new versioned section** (e.g., `[1.0.1] - YYYY-MM-DD`), **not** under `[Unreleased]`. A hotfix patches released code on `main` and is itself released immediately on merge. Determine the next patch version from the most recent released section header, then insert the new versioned section **directly below `[Unreleased]`** (above all prior versioned sections). This ensures the auto-tagging workflow extracts the correct version via the first semver header after `[Unreleased]`. Do **not** add an `[Unreleased]` entry for the hotfix; the backport PR carries the versioned entry to `develop` automatically.
   - **Parallel batch items** (when orchestrated by protocol 90): each PR adds its own CHANGELOG entry as normal; merge conflicts are resolved by batch-merge auto-resolution at merge time (see protocol 94 for details).
 - Never defer CHANGELOG entries to release time
 - Use the appropriate category: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`
 - Release PRs move `[Unreleased]` entries to a versioned section: `[X.Y.Z] - YYYY-MM-DD`
+- **Link reference definitions are mandatory**: every `## [X.Y.Z]` version heading (and `## [Unreleased]` when at least one versioned section exists) must have a corresponding link reference definition line at the bottom of the file following Keep a Changelog convention, for example:
+  ```
+  [Unreleased]: https://github.com/owner/repo/compare/vX.Y.Z...HEAD
+  [X.Y.Z]: https://github.com/owner/repo/compare/vPREV...vX.Y.Z
+  ```
+  Missing definitions cause broken links in rendered Markdown. `check-changelog-duplicate-headers.sh` enforces this in CI.

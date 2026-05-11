@@ -137,7 +137,7 @@ Record:
 
 Carry this mapping into Step 4 (presentation) and Step 5 (action execution).
 
-### 3b. Template cross-reference (opt-in — skipped when not configured)
+### 3b. Template cross-reference (runs when `template.repository` is configured; skipped otherwise)
 
 Read `template.repository` from `.ai-dev-workflow.yaml`.
 
@@ -205,6 +205,16 @@ For `check-unavailable` findings, also include:
 - The reason classification was unavailable (e.g., "Template repository unreachable" or "Malformed template repository configuration")
 - The suggestion: "Fix configuration or network access and re-run the retrospective to enable template cross-reference."
 
+### 3b Gate: mandatory completion check before classifying findings
+
+Before proceeding to Step 3c (classification) and Step 4, verify that Step 3b was completed when it was required:
+
+- Read `template.repository` from `.ai-dev-workflow.yaml`.
+- **If `template.repository` is set (non-empty)** and Step 3b was skipped or not completed during this session: stop here, return to Step 3b, and complete it before classifying any findings. Step 3b handles both the well-formed case (full cross-reference) and the malformed case (`check-unavailable`); the gate fires for both.
+- **If `template.repository` is absent or empty**: the gate is satisfied — proceed to Step 3c.
+
+This gate prevents premature classification of findings (e.g., marking a finding as "Add to backlog" instead of `already-tracked` or `already-fixed`) when the template cross-reference data would have changed the outcome.
+
 ### 3c. Categorization taxonomy
 
 Assign each opportunity exactly one category:
@@ -257,9 +267,55 @@ For each opportunity, recommend one of:
 
 - **Address now** — suitable for changes the agent can self-assess as simple and safe to apply without a review loop (e.g., one-line config fix, missing label in a YAML file, a `.gitignore` entry)
 - **Add to backlog** — suitable for anything requiring implementation planning, cross-file changes, or a review loop
-- **Contribute upstream** — suitable only for **workflow, tooling, or template-process** insights that would benefit every downstream consumer of this template (not product/domain/business retrospectives)
 
 The recommended action is a suggestion. The human makes the final choice.
+
+**Note**: Do **not** recommend "Contribute upstream" as an action here. Findings classified `contribute-upstream` by Step 3b are filed automatically in Step 3e — no human opt-in is required. If `template.repository` is not configured, the `contribute-upstream` classification is not produced and this path does not apply.
+
+### 3e. Mandatory auto-file for `contribute-upstream` findings
+
+**This step runs automatically — no human opt-in required.**
+
+For every finding classified as `contribute-upstream` in Step 3b, create a GitHub issue on `template.repository` before presenting findings to the human. This step applies only when `template.repository` is configured (non-empty) and well-formed; skip silently when `template.repository` is absent or empty (Step 3b did not run). Findings classified `check-unavailable` in Step 3b are excluded — do not attempt to file those.
+
+**Precondition**: `template.repository` must be set, non-empty, and well-formed (`owner/repo` format) before auto-filing. If the repository is unreachable at filing time (network error, auth failure), skip auto-filing for affected findings and note the failure inline in Step 4 output. Do not block the retrospective on a network failure.
+
+**For each `contribute-upstream` finding**, run:
+
+```bash
+gh issue create \
+  --repo <template.repository> \
+  --title "<finding title>" \
+  --label "workflow" \
+  --body "<issue body — see format below>"
+```
+
+Issue body format:
+
+```markdown
+## Finding
+
+[Finding description — root cause, impact, and proposed fix]
+
+## Downstream context
+
+Project: [repo name or anonymised slug, with human consent]
+Batch/date: [batch identifier or date from Step 1 scope]
+
+## Proposed improvement
+
+[Proposed fix or change to the template protocol/tooling]
+```
+
+- Use the `workflow` label. If it does not exist on the template repo, create it first:
+
+  ```bash
+  gh label create "workflow" --repo <template.repository> --color "0075ca" --description "Workflow improvement"
+  ```
+
+- Record the created issue URL for each filing. Print all filed URLs in the Step 4 output alongside the `contribute-upstream` label so the human has direct links for follow-up.
+- If `gh issue create` fails (e.g., auth error, label creation failure), record the failure inline in Step 4 rather than blocking the retrospective. The human can follow up manually using the printed command.
+- Do **not** automatically close any backlog items that may be created later in Step 5, and do not auto-close pre-existing downstream items identified in Step 3a — the upstream issue is additive visibility, not a replacement for local backlog tracking.
 
 ### Graceful exit
 
@@ -293,6 +349,8 @@ Present the categorized findings to the human in a structured format:
 **Related existing item**: #NNN — [title] | No existing backlog item found
 **Template cross-reference**: `already-tracked` | `already-fixed` | `contribute-upstream` | `check-unavailable`
   *(Only include this field if Step 3b was executed — i.e., if `template.repository` was configured)*
+**Upstream issue filed**: <url> | filing failed: <reason>
+  *(Only include this field for `contribute-upstream` findings; show the URL when Step 3e succeeded, or "filing failed: &lt;reason&gt;" when it did not)*
 
 ---
 
@@ -315,7 +373,8 @@ Present the categorized findings to the human in a structured format:
 
 Then ask the human to choose an action for each opportunity:
 
-> For each finding above, please choose: **Address now**, **Add to backlog**, **Contribute upstream** (workflow-only insights to the template repository), or **Skip**.
+> For each finding above, please choose: **Address now**, **Add to backlog**, or **Skip**.
+> *(Findings classified `contribute-upstream` have already been filed as upstream issues in Step 3e — no additional action is needed unless you want to expand the filed issue with more context.)*
 
 Wait for the human's choices before executing any action.
 
@@ -422,15 +481,15 @@ Report the created issue with its URL.
 
 ### Contribute upstream
 
-Only when the human explicitly chose **Contribute upstream** for a finding that qualifies as **workflow/tooling/template-process** (per the scope rules above). This path is **opt-in** and must never run without an explicit per-finding choice.
+**Upstream issues for `contribute-upstream` findings are filed automatically in Step 3e — no separate action is needed here.** The Step 4 output includes the filed issue URL for each finding.
 
-1. Confirm the default upstream repository and issue tracker with the human when ambiguous (typically the public template repository this project was derived from).
-2. Create a new issue on the **template** repository using `gh issue create` (or the tracker’s equivalent), with label **`template-feedback`** (create the label first if it does not exist), and a body that includes:
-   - The retrospective insight (Observed / Impact / Proposed improvement), anonymized if needed
-   - A link or name of the downstream repository that produced the insight (only with human consent)
-   - Reference to the original retrospective scope (PR numbers, batch id, or date)
+The only remaining human-driven action in this path is optional: if the human wants to add more context to a filed upstream issue (e.g., attach a downstream PR link, adjust the proposed fix, or confirm consent to name the downstream repository), do so by editing the upstream issue:
 
-3. Do **not** close the downstream retrospective item automatically — the upstream issue is additive visibility, not a replacement for local backlog tracking.
+```bash
+gh issue edit <upstream-issue-number> --repo <template.repository> --body-file <updated-body-file>
+```
+
+If Step 3e filing failed for a finding (noted as "filing failed: &lt;reason&gt;" in Step 4 output), attempt the filing now by running the `gh issue create` command from Step 3e — substituting `<template.repository>` with the actual value from `.ai-dev-workflow.yaml`, `<finding title>` with the finding's short title, and the body with the body format from Step 3e populated with the finding's details. Report the result to the human.
 
 ### Skip
 
@@ -451,7 +510,17 @@ After all opportunities have been acted on (or skipped):
    Column order must match the headers in `docs/workflow/retro-metrics.md`:
    `Batch Identifier | Human Interventions Count | Step 5.2 Violations Count | Automated-Reviewer Retry Loops Count | Escalations Count | Prior Action Item Recurrence Assessment`
 
-2. **Provide a confirmation summary**:
+2. **Commit and push `docs/workflow/retro-metrics.md` immediately** — before the session ends or any branch switch occurs. This is mandatory; an uncommitted metrics row is silently lost when branches are switched. The commit goes directly to `develop` (this is an append-only log file, not feature work):
+
+   ```bash
+   git add docs/workflow/retro-metrics.md
+   git commit -m "docs(retro): add [Batch identifier] metrics row"
+   git push origin develop
+   ```
+
+   If `develop` is not the currently checked-out branch (e.g., the retrospective was run from a feature branch), switch to `develop` first, cherry-pick or re-apply the append, then commit and push. Do **not** leave the metrics row uncommitted while switching branches.
+
+3. **Provide a confirmation summary**:
 
 ```markdown
 ## Retrospective Complete
@@ -461,7 +530,7 @@ After all opportunities have been acted on (or skipped):
 | 1 | [title] | [label] | [severity] | Fixed in commit `abc1234` / Issue #42 / Skipped |
 | 2 | ... | ... | ... | ... |
 
-**Metrics block appended to `docs/workflow/retro-metrics.md`.**
+**Metrics block appended and committed to `docs/workflow/retro-metrics.md` on `develop`.**
 ```
 
 The retrospective is now closed.

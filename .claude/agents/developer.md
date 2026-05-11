@@ -11,6 +11,16 @@ Follow the implementation protocol exactly as defined in:
 
 That document is the single source of truth for this stage. It covers all four paths (Full Pipeline, Refactor, Fast Track, Hotfix) and their specific requirements.
 
+**BATCH_CONTEXT branch-skip rule (read first when BATCH_CONTEXT=true)**: When the handoff metadata includes `BATCH_CONTEXT=true`, the item-orchestrator already created the worktree on the correct branch. Do NOT run any of the following from this agent session: `git checkout develop`, `git checkout -b <branch>`, `git switch <branch>`, `git reset`, or `git restore`. Running these commands from the default CWD (main repo root) will leak a branch-switch into the main working tree, breaking isolation for all concurrent agents. Instead, verify your CWD with `pwd` — it must match the `<worktree-path>` provided in the handoff. If `<worktree-path>` was not provided, run `git rev-parse --show-toplevel` to get your CWD's repo root, then run `git rev-parse --git-common-dir` to get the shared `.git` dir, resolve `$(git rev-parse --git-common-dir)/..` to get the main repo root, and confirm the two paths differ (i.e., you are NOT in the main repo root but in an isolated worktree). Only `git fetch origin` is safe to run without a worktree-path check. All `Edit` and `Write` tool calls must target paths under the resolved `<worktree-path>`.
+
+**Main-tree return rule (BATCH_CONTEXT=false / no worktree isolation)**: When this agent is dispatched **without** worktree isolation (i.e., `BATCH_CONTEXT` is `false` or absent), it runs in the main working tree. After creating the feature/fix branch and completing all work (code, PR, review loop), **before returning to the caller**, the agent MUST switch the main working tree back to the integration branch:
+
+```bash
+git switch <integration-branch>   # e.g., git switch develop
+```
+
+Verify: `git rev-parse --abbrev-ref HEAD` must print the integration branch name. If uncommitted changes block the switch, commit or stash them first — do NOT force-discard. The integration branch is `develop` unless overridden by `integration_branch` in `.ai-dev-workflow.yaml`. Omitting this return step causes Protocol 90 Step 5.2 to fire a "wrong branch + clean" auto-correct on every subsequent item dispatch.
+
 Key rules:
 - For Full Pipeline: read spec + plan + runbook BEFORE writing any code
 - For Refactor: read plan + runbook BEFORE writing any code (no spec)

@@ -153,6 +153,81 @@ If a due date conflicts with the abstract priority order, flag it to the human r
 
 Before batching an item, check its `Depends on` field or tracker dependency data. If any dependency is not yet `Merged` or `Released`, skip the item and record it as blocked.
 
+### Stale `In Development` correction (AC-6, AC-7, AC-8, AC-10)
+
+After building the initial candidate list from the eligibility table above and after the dependency gate, but **before** Step 2.5 (pre-dispatch tracker updates), scan each candidate item whose tracker status is exactly `In Development`:
+
+1. **Guard — skip if issue number is invalid**: Before running the branch and PR checks, verify that `ISSUE_NUMBER` is a non-empty positive integer. An empty or non-numeric value would cause `git ls-remote` to search for patterns like `refs/heads/feature/-*` or `refs/heads/feature/abc-*`, potentially matching unintended branches. GitHub issue numbers are always positive integers, so a non-integer value indicates a data problem in the candidate list:
+
+   ```bash
+   if ! echo "${ISSUE_NUMBER:-}" | grep -qE '^[1-9][0-9]*$'; then
+     echo "WARNING: invalid ISSUE_NUMBER '${ISSUE_NUMBER:-}' for candidate item — skipping stale detection."
+     continue  # move to the next candidate in the eligibility loop
+   fi
+   ```
+
+2. **Check for an existing implementation branch or open PR** (fail-open: skip stale correction if either check is unreliable):
+
+   ```bash
+   # Only check implementation-stage branches (feature/fix/refactor/hotfix).
+   # spec/* and implementation-plan/* branches persist on the remote after merge
+   # and must not be treated as evidence that implementation is active.
+   # git ls-remote globs use bare-number forms only (feature/123-slug,
+   # feature/123). Tracker-prefixed forms (feature/ENG-123-slug) are detected
+   # by the more-precise gh pr list regex below; broad globs like
+   # *-123-* would false-positive on unrelated branches containing the
+   # issue number in their slug (e.g. feature/456-add-123-logs).
+   # Use pipefail so a network/auth failure propagates; on failure, skip stale
+   # detection (fail-open — treat as genuinely in progress, do not reset).
+   HAS_BRANCH=$(set -o pipefail; git ls-remote origin \
+     "refs/heads/feature/${ISSUE_NUMBER}-*" \
+     "refs/heads/feature/${ISSUE_NUMBER}" \
+     "refs/heads/fix/${ISSUE_NUMBER}-*" \
+     "refs/heads/fix/${ISSUE_NUMBER}" \
+     "refs/heads/refactor/${ISSUE_NUMBER}-*" \
+     "refs/heads/refactor/${ISSUE_NUMBER}" \
+     "refs/heads/hotfix/${ISSUE_NUMBER}-*" \
+     "refs/heads/hotfix/${ISSUE_NUMBER}" \
+     2>/dev/null | wc -l | tr -d ' ') || {
+     echo "WARNING: git ls-remote failed for issue #${ISSUE_NUMBER} — skipping stale detection (treating as genuinely in progress)."
+     continue
+   }
+
+   # The jq regex includes an optional tracker-prefix group ([A-Z][A-Z0-9]*-)
+   # to match both feature/123-slug and feature/ENG-123-slug forms.
+   # Do NOT use || echo 0: a gh failure must not be interpreted as "no PR exists".
+   # On failure, skip stale detection (fail-open).
+   HAS_PR=$(gh pr list --state open --limit 1000 \
+     --json number,headRefName \
+     --jq "[.[] | select(.headRefName | test(\"^(feature|fix|refactor|hotfix)/([A-Z][A-Z0-9]*-)?${ISSUE_NUMBER}(-|\$)\"))] | length" \
+     2>/dev/null) || {
+     echo "WARNING: gh pr list failed for issue #${ISSUE_NUMBER} — skipping stale detection (treating as genuinely in progress)."
+     continue
+   }
+   ```
+
+3. **If both checks return zero** (no branch, no PR): the "In Development" status is stale (BR-5). Apply the correction:
+
+   - Log a `STALE_STATUS_CORRECTION:` line to the run output (BR-10, AC-10):
+
+     ```text
+     STALE_STATUS_CORRECTION: issue #<N> tracker shows 'In Development' but no branch or PR found. Correcting to 'Plan Ready'.
+     ```
+
+   - Update the tracker status to `Plan Ready` using `update_tracker_status_best_effort` (BR-6):
+
+     ```bash
+     update_tracker_status_best_effort "$ISSUE_NUMBER" "Plan Ready"
+     ```
+
+   - Re-classify the item as `Plan Ready` in the candidate list so it follows the `Plan Ready` dispatch path in Step 2.5 and Step 3.
+
+4. **If either check returns non-zero** (branch or PR found): the item is genuinely in progress — do not reset the status (BR-5 inverse; AC-8).
+
+5. **Duplicate dispatch prevention** (BR-8): once the corrected item enters dispatch via Step 2.5, the pre-dispatch status update immediately advances the tracker to `In Development` (the `Implement` row). On any subsequent eligibility pass within the same run the item will no longer show `Plan Ready`, so it cannot be re-dispatched. No additional tracking mechanism is required.
+
+6. **Scope** (BR-7): this correction applies only within a Portfolio Orchestrator run (this protocol). Items whose tracker status was set outside an orchestrated run are not in scope; those require human correction or a new orchestrated run to detect them.
+
 ---
 
 ## Step 2.5: Pre-Dispatch Tracker Status Update
@@ -261,6 +336,19 @@ the development folder (e.g., the item is still in `Writing Spec` state). Treat 
 same as `yes` — apply the serialize-first strategy (conservative default). `TOOL_FIX_FILES` is
 omitted when `TOOL_FIX` is `no` or `unknown`; parsers must treat a missing `TOOL_FIX_FILES` as
 an empty set.
+
+**Spec/plan stage carve-out for `TOOL_FIX=unknown`**: When `TOOL_FIX=unknown` is received for
+an item and the item's tracker status is `Writing Spec` or `Writing Plan` (or its `NEXT_ACTION`
+is `write-plan`, `run-spec-review-and-open-pr`, or `run-plan-review-and-open-pr`), **treat
+`unknown` as `no` for serialization purposes — do not apply the serialize-first rule**.
+
+Rationale: `spec/*` and `implementation-plan/*` branch PRs only write documentation to
+`docs/specs/developments/*/`. Their automated reviewer loops (Step 7) do not invoke or depend on
+any canonical tool file behavior. The serialize-first rule's intent is to prevent consumer items
+from invoking a modified or broken tool during their PR readiness loops — that risk does not
+exist at the spec or plan writing stage. The `TOOL_FIX=yes` classification still applies at the
+**implementation** stage when the item's plan actually modifies canonical tool files; this
+carve-out does not change serialization behavior for implementation-stage dispatches.
 
 **Serialize-first rule**: When a tool-fix item and any consumer item appear in the same candidate
 batch, the tool-fix item **must** be dispatched alone in its own serial sub-batch first. The
@@ -670,7 +758,7 @@ Verify all of the following. If any check fails, apply the remediation action in
 | `ready-for-regression` label | Present on `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PRs; not required for `spec/*`, `implementation-plan/*` | **Apply directly** (primary enforcement point): `gh pr edit <pr_number> --add-label "ready-for-regression"`. Log as protocol deviation: `PROTOCOL_DEVIATION: ready-for-regression was missing on PR #<N> — applied by orchestrator Step 5.1`. **Do not redispatch the agent for this gap alone.** |
 | No `needs-fixes` label | Absent | Remove: `gh pr edit <pr_number> --remove-label "needs-fixes"` (only after CI and reviews are confirmed clean) |
 | All automated-reviewer `reviewThreads` resolved | GraphQL `reviewThreads.nodes[].isResolved=true` (or `✅ Addressed` in body) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured) | Redispatch agent to address unresolved threads |
-| Automated reviewer loop summary comment | At least one PR comment containing "Automated Reviewer Loop Summary", "Reviewer Loop Summary", or "No blocking PR feedback" (skip this check only when Step 7 was `skipped` because no review platforms are configured) | Redispatch agent to run Step 7 to completion |
+| Automated reviewer loop summary comment | At least one PR comment containing "Automated Reviewer Loop Summary", "Reviewer Loop Summary", or "No blocking PR feedback" (skip this check only when Step 7 was `skipped` because no review platforms are configured). **`pr-review-loop.sh` posts this comment automatically on `clean` and `escalate` exits** — a missing comment means the script did not run to completion or the PR used an older workflow version | Redispatch agent to run Step 7 to completion |
 | CI checks | All required status checks are green (`state: SUCCESS` or `conclusion: success`) | Redispatch agent to fix failing checks |
 
 **`ready-for-regression` direct-apply rule**: This label is the primary enforcement point for the regression CI gate. If the agent applied `ready-for-human-review` but omitted `ready-for-regression`, the orchestrator:
@@ -679,7 +767,7 @@ Verify all of the following. If any check fails, apply the remediation action in
 2. Logs the deviation: `PROTOCOL_DEVIATION: ready-for-regression was missing on PR #<N> — applied by orchestrator Step 5.1`
 3. **Re-polls CI** — the label triggers the `e2e-regression.yml` workflow. The CI check row in this verification table was evaluated _before_ the label was applied, so the e2e check was not yet in `statusCheckRollup`. After applying the label, wait for CI to settle using `pr-ci-loop.sh <pr_number>` before re-running this verification. Do not mark the PR ready until the re-polled CI check is green.
 
-Do not redispatch the agent for a missing label alone — the label is applied directly here. Redispatching is only required when there are substantive gaps (wrong base branch, unresolved review threads, missing reviewer loop summary, failing CI).
+Do not redispatch the agent for a missing label alone — the label is applied directly here. Redispatching is only required when there are substantive gaps (wrong base branch, unresolved review threads, missing reviewer loop summary, failing CI). A missing reviewer loop summary comment means `pr-review-loop.sh` did not run to completion — redispatch to resume from Step 7.
 
 If a check requires agent redispatch:
 
@@ -810,14 +898,16 @@ If the main working tree is clean and on the correct branch (Case 3), proceed no
 
 **Recurrence tracking (post-PR #345):**
 
+> **Serial dispatch note**: Working-tree residuals from serial subagent dispatch are expected and do **not** constitute Step 5.2 violations. In serial dispatch, no worktree isolation is used — the subagent runs in the main working tree and naturally leaves it on the feature branch it just created. Only increment the violation counter when a **parallel** subagent (one that ran in an isolated worktree) leaves the main working tree dirty or on the wrong branch.
+
 PR #345 (merged into `develop`) added a worktree pre-op checklist to `91-orchestrate-work-protocol.md` to prevent agents from running git state-changing commands in the main working tree instead of their isolated worktree. PR #411 followed up by adding a runtime CWD guard script (`scripts/development-workflow/worktree-cwd-guard.sh`) that catches branch-switching commands issued from the wrong directory at execution time rather than only at post-agent inspection. Step 5.2 violations should be rare when both mitigations are active.
 
-When Step 5.2 fires (Case 1 — wrong branch + clean):
+When Step 5.2 fires (Case 1 — wrong branch + clean) **in a parallel batch**:
 
 1. Record the violation in the batch's retrospective notes, including the item ID, the branch the main tree was on, and the batch date.
-2. **After every 5 batches** following the merge of PR #411, tally the number of Step 5.2 Case 1 violations across those batches. If the count exceeds **1 violation per 5 batches**, escalate to the human with the following message:
+2. **After every 5 batches** following the merge of PR #411, tally the number of Step 5.2 Case 1 violations **from parallel batches only** across those batches. If the count exceeds **1 violation per 5 batches**, escalate to the human with the following message:
 
-   > `ESCALATION: Step 5.2 (branch-leak guardrail) has fired more than once in the last 5 batches after the PR #411 runtime CWD guard was merged. Current count: N. Investigate whether the worktree-cwd-guard.sh script was sourced and initialised correctly in the affected batch items (see Protocol 91 Step 3 "Runtime CWD guard" block). If the guard was active, the violation may indicate a new failure mode not yet covered by the guard — escalate for human analysis and a follow-up fix.`
+   > `ESCALATION: Step 5.2 (branch-leak guardrail) has fired more than once in the last 5 batches. Current count: N. Known root cause: the CWD guard (worktree-cwd-guard.sh) cannot propagate to Claude Code subagents dispatched via the Agent tool — each subagent starts with an independent shell context. Worktree discipline for stage subagents is enforced via system-prompt rules in developer.md / item-orchestrator.md and the "Stage-agent handoff branch-skip requirement" in Protocol 91 Step 3. Investigate whether: (1) the item-orchestrator included the required BATCH_CONTEXT=true branch-skip instruction in the stage-agent handoff, and (2) the developer agent observed the branch-skip rule. If violations persist after these fixes are merged, a new failure mode is present — escalate for human analysis.`
 
 3. Do **not** suppress or defer this escalation — it is a signal that the runtime guard needs to be reviewed or extended to cover the new failure mode.
 
@@ -829,7 +919,7 @@ As you supervise the batch, **proactively save issues, human corrections, and an
 - What went wrong (wrong base branch, missing label, incomplete review loop, etc.)
 - What the root cause was (agent skipped a step, protocol gap, timeout, etc.)
 - Whether the human had to intervene and how
-- **Step 5.2 tally**: if Step 5.2 fired (Case 1 — wrong branch + clean) for any item, record it explicitly so the recurrence counter above can be maintained across batches.
+- **Step 5.2 tally**: if Step 5.2 fired (Case 1 — wrong branch + clean) for any **parallel-batch** item, record it explicitly so the recurrence counter above can be maintained across batches. Do **not** count serial-dispatch residuals — those are expected and are not violations.
 
 These notes feed directly into the post-merge retrospective and provide context that GitHub data alone cannot capture.
 

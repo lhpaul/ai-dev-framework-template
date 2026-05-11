@@ -336,6 +336,11 @@ If the count is greater than 1, merge the duplicate sections before staging.
 
 1. **Trailing whitespace**: No line in the written entry should end with one or more whitespace characters. Note: intentional two-space Markdown hard line breaks (`<text>  ` with exactly two trailing spaces followed by a newline) are not trailing whitespace and must not be removed.
 2. **Trailing blank lines**: The entry must not end with two or more consecutive blank lines.
+3. **Link reference definitions**: If you renamed `[Unreleased]` to a versioned section (e.g., `## [1.2.3] - 2026-01-01`), verify that a corresponding link reference definition exists at the bottom of the file (e.g., `[1.2.3]: https://github.com/owner/repo/compare/v1.2.2...v1.2.3`). Run the check to catch any missing definitions:
+
+   ```bash
+   bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md
+   ```
 
 A quick shell check for trailing whitespace on pending CHANGELOG changes (run **before** `git add`, per the "before staging" timing requirement):
 
@@ -379,11 +384,36 @@ Open a **draft** PR targeting `develop` with:
   - Any deviations from the plan (with justification)
   - CHANGELOG entry preview
 
+**Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
+
+Before running `gh pr create`, verify that the current branch was actually cut from `develop` and confirm the intended base matches:
+
 ```bash
-gh pr create --draft --base develop --title "feat([scope]): [feature-name]" --body "..."
+# 1. Verify the current branch descends from origin/develop (not from main or another branch)
+if ! git merge-base --is-ancestor origin/develop HEAD; then
+  echo "ERROR: Current branch does not descend from origin/develop. Verify the branch was cut from develop before opening the PR."
+  exit 1
+fi
+echo "Base-branch guard passed: branch descends from origin/develop"
 ```
 
-**Important**: Always use `--base develop` to explicitly target the `develop` branch. This prevents accidental PR creation to `main` or other branches.
+**Post-create base-branch assertion (mandatory — run immediately after `gh pr create`)**:
+
+```bash
+gh pr create --draft --base develop --title "feat([scope]): [feature-name]" --body "..."
+PR_NUMBER=$(gh pr view --json number -q '.number')
+
+# Assert the opened PR targets develop
+ACTUAL_BASE=$(gh pr view "$PR_NUMBER" --json baseRefName -q '.baseRefName')
+if [ "$ACTUAL_BASE" != "develop" ]; then
+  echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of 'develop'. Closing the malformed PR."
+  gh pr close "$PR_NUMBER" --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against develop."
+  exit 1
+fi
+echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
+```
+
+**Important**: Always use `--base develop` to explicitly target the `develop` branch. This prevents accidental PR creation to `main` or other branches. The pre-create guard and post-create assertion above are the enforcement mechanism — do not skip them.
 
 ### Step 9: Handoff to Work Item Runner
 
@@ -410,7 +440,7 @@ gh pr view <pr_number> --json comments --jq '.comments[].body' \
   | grep -c "Automated Reviewer Loop Summary\|Reviewer Loop Summary\|No blocking PR feedback"
 ```
 
-Pass condition: output is `1` or higher. If `0`: re-run `./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>` and wait for it to complete before proceeding.
+Pass condition: output is `1` or higher. **`pr-review-loop.sh` posts this comment automatically on `clean` and `escalate` exits**, so a count of `0` means the script did not run to completion. If `0`: re-run `./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>` and wait for it to complete before proceeding.
 
 Skip this check only when no review platforms are configured and the reviewer loop result was `skipped`.
 
@@ -586,6 +616,11 @@ git checkout -b refactor/[branch-slug]
 
    1. **Trailing whitespace**: No line in the written entry should end with one or more whitespace characters. Note: intentional two-space Markdown hard line breaks (`<text>  ` with exactly two trailing spaces followed by a newline) are not trailing whitespace and must not be removed.
    2. **Trailing blank lines**: The entry must not end with two or more consecutive blank lines.
+   3. **Link reference definitions**: If you renamed `[Unreleased]` to a versioned section (e.g., `## [1.2.3] - 2026-01-01`), verify that a corresponding link reference definition exists at the bottom of the file (e.g., `[1.2.3]: https://github.com/owner/repo/compare/v1.2.2...v1.2.3`). Run the check to catch any missing definitions:
+
+      ```bash
+      bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md
+      ```
 
    A quick shell check for trailing whitespace on pending CHANGELOG changes (run **before** `git add`, per the "before staging" timing requirement):
 
@@ -618,11 +653,34 @@ git checkout -b refactor/[branch-slug]
      - Any deviations from the plan (with justification)
      - CHANGELOG entry preview
 
+**Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
+
 ```bash
-gh pr create --draft --base develop --title "refactor([scope]): [short description]" --body "..."
+# 1. Verify the current branch descends from origin/develop
+if ! git merge-base --is-ancestor origin/develop HEAD; then
+  echo "ERROR: Current branch does not descend from origin/develop. Verify the branch was cut from develop before opening the PR."
+  exit 1
+fi
+echo "Base-branch guard passed: branch descends from origin/develop"
 ```
 
-**Important**: Always use `--base develop` to explicitly target the `develop` branch.
+**Post-create base-branch assertion (mandatory — run immediately after `gh pr create`)**:
+
+```bash
+gh pr create --draft --base develop --title "refactor([scope]): [short description]" --body "..."
+PR_NUMBER=$(gh pr view --json number -q '.number')
+
+# Assert the opened PR targets develop
+ACTUAL_BASE=$(gh pr view "$PR_NUMBER" --json baseRefName -q '.baseRefName')
+if [ "$ACTUAL_BASE" != "develop" ]; then
+  echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of 'develop'. Closing the malformed PR."
+  gh pr close "$PR_NUMBER" --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against develop."
+  exit 1
+fi
+echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
+```
+
+**Important**: Always use `--base develop` to explicitly target the `develop` branch. The pre-create guard and post-create assertion above are the enforcement mechanism — do not skip them.
 
 10. Hand off to the Work Item Runner with the same lifecycle expectations as Path 1 Step 9 (internal review gate, automated reviewer loop, CI, labels). **Label derivation rule**: `refactor/*` branches always require `ready-for-regression` based on branch prefix, not content type. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table. See `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
 
@@ -721,6 +779,11 @@ Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (skip if this fixes u
 
 1. **Trailing whitespace**: No line in the written entry should end with one or more whitespace characters. Note: intentional two-space Markdown hard line breaks (`<text>  ` with exactly two trailing spaces followed by a newline) are not trailing whitespace and must not be removed.
 2. **Trailing blank lines**: The entry must not end with two or more consecutive blank lines.
+3. **Link reference definitions**: If you renamed `[Unreleased]` to a versioned section (e.g., `## [1.2.3] - 2026-01-01`), verify that a corresponding link reference definition exists at the bottom of the file (e.g., `[1.2.3]: https://github.com/owner/repo/compare/v1.2.2...v1.2.3`). Run the check to catch any missing definitions:
+
+   ```bash
+   bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md
+   ```
 
 A quick shell check for trailing whitespace on pending CHANGELOG changes (run **before** `git add`, per the "before staging" timing requirement):
 
@@ -754,13 +817,94 @@ git push -u origin fix/[branch-slug]
 
 Open a **draft** PR targeting `develop` using the same structure as Path 1 `### Step 8: Open PR (Draft)`, but with a **`fix(...)`** title and a fix-focused description (omit spec/plan links when none exist):
 
+**Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
+
+```bash
+# 1. Verify the current branch descends from origin/develop
+if ! git merge-base --is-ancestor origin/develop HEAD; then
+  echo "ERROR: Current branch does not descend from origin/develop. Verify the branch was cut from develop before opening the PR."
+  exit 1
+fi
+echo "Base-branch guard passed: branch descends from origin/develop"
+```
+
+**Post-create base-branch assertion (mandatory — run immediately after `gh pr create`)**:
+
 ```bash
 gh pr create --draft --base develop --title "fix([scope]): [description]" --body "..."
+PR_NUMBER=$(gh pr view --json number -q '.number')
+
+# Assert the opened PR targets develop
+ACTUAL_BASE=$(gh pr view "$PR_NUMBER" --json baseRefName -q '.baseRefName')
+if [ "$ACTUAL_BASE" != "develop" ]; then
+  echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of 'develop'. Closing the malformed PR."
+  gh pr close "$PR_NUMBER" --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against develop."
+  exit 1
+fi
+echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
 ```
+
+**Important**: Always use `--base develop` to explicitly target the `develop` branch. This prevents accidental PR creation to `main` or other branches. The pre-create guard and post-create assertion above are the enforcement mechanism — do not skip them.
 
 ### Step 9: Handoff to Work Item Runner
 
-Hand off to the Work Item Runner per Path 1 `### Step 9: Handoff to Work Item Runner`. **Label derivation rule**: `fix/*` branches always require `ready-for-regression` based on branch prefix, not content type. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table.
+After the draft PR exists, the **Work Item Runner** owns the rest of the lifecycle:
+
+- Run the internal code review gate (`code-reviewer` / `03-review-implementation-protocol.md`) on the draft PR
+- Run the automated reviewer loop and CI loop to completion
+- Apply `ready-for-human-review` and move the tracker to **Development in Review** when the PR is human-ready
+- Stop only when the PR is waiting on human review / merge or the run has escalated
+
+**Label derivation rule**: `fix/*` branches always require `ready-for-regression` based on branch prefix, not content type. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table.
+
+**`BATCH_CONTEXT=true` note — Step 7b is mandatory in parallel dispatch**: In parallel batch dispatches, agents follow a compressed execution path and may inadvertently omit Step 7b. The three steps below (Phase 1) are **not optional** regardless of dispatch mode — treat each as a mandatory checkpoint before entering Step 8.
+
+**Phase 1 checklist — run ALL of these before applying `ready-for-regression`**:
+
+Step 1.1 — Confirm the reviewer loop summary comment exists:
+
+```bash
+# Must return at least one match. If empty: Step 7 has not run to completion — do not apply ready-for-regression.
+gh pr view <pr_number> --json comments --jq '.comments[].body' \
+  | grep -c "Automated Reviewer Loop Summary\|Reviewer Loop Summary\|No blocking PR feedback"
+```
+
+Pass condition: output is `1` or higher. **`pr-review-loop.sh` posts this comment automatically on `clean` and `escalate` exits**, so a count of `0` means the script did not run to completion. If `0`: re-run `./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>` and wait for it to complete before proceeding.
+
+Skip this check only when no review platforms are configured and the reviewer loop result was `skipped`.
+
+Step 1.2 — Confirm all automated-reviewer threads are resolved:
+
+```bash
+# Must return empty output. Any line of output means unresolved bot threads exist — do not apply ready-for-regression.
+gh api graphql -f query='
+  query($owner:String!, $repo:String!, $number:Int!) {
+    repository(owner:$owner, name:$repo) {
+      pullRequest(number:$number) {
+        reviewThreads(first: 100) {
+          nodes { isResolved comments(first: 1) { nodes { author { login } body } } }
+        }
+      }
+    }
+  }' -f owner=<owner> -f repo=<repo> -F number=<pr_number> \
+  | jq '.data.repository.pullRequest.reviewThreads.nodes[]
+        | select(.isResolved == false)
+        | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps"] | index($a) != null)
+        | select((.comments.nodes[0].body // "") | test("✅ Addressed") | not)'
+```
+
+Pass condition: empty output. If non-empty: resolve or address each reported thread before proceeding.
+
+Step 1.3 — Apply `ready-for-regression`:
+
+```bash
+# Only after Steps 1.1 and 1.2 pass:
+gh pr edit <pr_number> --add-label "ready-for-regression"
+```
+
+For Phase 2 (`ready-for-human-review` gate) and the full pre-label ordering contract, follow Path 1 `### Step 9: Handoff to Work Item Runner`. When invoked through the Work Item Runner, `91-orchestrate-work-protocol.md` Steps 7b → 8 → 8a → 8c enforce this gate automatically. When invoked standalone, execute each numbered step explicitly and verify its pass condition before proceeding to the next.
+
+See `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
 
 ---
 
@@ -820,6 +964,12 @@ git checkout -b hotfix/[branch-slug]
 
 Implement the minimal fix (do not bundle unrelated changes).
 
+**Pre-commit edge-case reasoning (required before your first commit)**: Before writing any code or making any change, briefly reason through edge cases for the fix:
+
+- Are there inputs or response formats where the change behaves unexpectedly?
+- For regex or string matching changes, test against both the false-positive case (what you are trying to allow) and the true-positive case (what you must still catch), including cases where both appear in the same string or line.
+- For conditional or filtering logic, verify that a condition you add to suppress a false positive does not also suppress a genuine match when both appear together in the same input.
+
 ### Step 5: Verify
 
 Verify: build, lint, tests pass.
@@ -844,19 +994,23 @@ Fix all ShellCheck warnings before committing. Do not commit `.sh` files with Sh
 To write the entry correctly:
 
 1. Determine the next patch version from the most recent released section header (e.g., if the latest is `[1.0.0]`, the hotfix version is `[1.0.1]`).
-2. Insert a new versioned section as the **first `##` section** in `CHANGELOG.md` — above all existing `##` headers, including any prior hotfix versions and `[Unreleased]`. This ensures `auto-tag-release.yml` always extracts the correct (newest) version via `grep -m 1 '^## '`. Do not insert it between `[Unreleased]` and a previous hotfix; insert it at the very top of the versioned history:
+2. Insert the new versioned section **directly below `[Unreleased]`** (above all prior versioned sections). `auto-tag-release.yml` extracts the hotfix version by finding the first semver header (`## [X.Y.Z...]`) that appears after `[Unreleased]` in the file, so the hotfix section must be placed directly below `[Unreleased]`. The resulting structure should be:
 
 ```markdown
+## [Unreleased]
+
 ## [1.0.1] - YYYY-MM-DD
 
 ### Fixed
 
 - **Your hotfix description** (hotfix): brief user-facing summary of what was patched.
+
+## [1.0.0] - YYYY-MM-DD
 ```
 
 3. Do **not** add an entry under `[Unreleased]` for hotfix PRs.
 
-**Duplicate-section prevention (check before writing)**: Before inserting the new versioned section, confirm no section with the same version number already exists in `CHANGELOG.md`. After writing, run: `grep -c "^## \[1\.0\.1\]" CHANGELOG.md` (replace `1.0.1` with the actual version) — expected output: 1.
+**Duplicate-section prevention (check before writing)**: Before inserting the new versioned section, confirm no section with the same version number already exists in `CHANGELOG.md`. After writing, run: `grep -c "^## \[1\.0\.1\]" CHANGELOG.md` (replace `1.0.1` with the actual version) — expected output: 1. Also confirm `[Unreleased]` still appears before the new section (`grep -n "^## " CHANGELOG.md | head -3`).
 
 > **Note for backport PRs**: When the hotfix content is backported to `develop` (Step 9 below), do **not** add another CHANGELOG entry. The versioned entry already exists in `CHANGELOG.md` on `main`, and the backport merge will carry it to `develop` automatically.
 
@@ -864,6 +1018,11 @@ To write the entry correctly:
 
 1. **Trailing whitespace**: No line in the written entry should end with one or more whitespace characters. Note: intentional two-space Markdown hard line breaks (`<text>  ` with exactly two trailing spaces followed by a newline) are not trailing whitespace and must not be removed.
 2. **Trailing blank lines**: The entry must not end with two or more consecutive blank lines.
+3. **Link reference definitions**: If you renamed `[Unreleased]` to a versioned section (e.g., `## [1.2.3] - 2026-01-01`), verify that a corresponding link reference definition exists at the bottom of the file (e.g., `[1.2.3]: https://github.com/owner/repo/compare/v1.2.2...v1.2.3`). Run the check to catch any missing definitions:
+
+   ```bash
+   bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md
+   ```
 
 A quick shell check for trailing whitespace on pending CHANGELOG changes (run **before** `git add`, per the "before staging" timing requirement):
 
@@ -897,11 +1056,34 @@ git push -u origin hotfix/[branch-slug]
 
 Open a **draft** PR targeting `main` by adapting Path 1 `### Step 8: Open PR (Draft)` for hotfix (`fix(...)` title with `(hotfix)` as needed, incident-focused body, target branch `main`):
 
+**Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
+
 ```bash
-gh pr create --draft --base main --title "fix([scope]): [description] (hotfix)" --body "..."
+# 1. Verify the current branch descends from origin/main (hotfixes are cut from main)
+if ! git merge-base --is-ancestor origin/main HEAD; then
+  echo "ERROR: Current branch does not descend from origin/main. Verify the branch was cut from main before opening the hotfix PR."
+  exit 1
+fi
+echo "Base-branch guard passed: branch descends from origin/main"
 ```
 
-**Important**: Use `--base main` for hotfixes (not `develop`). A hotfix merges to production first, then must be backported to `develop`.
+**Post-create base-branch assertion (mandatory — run immediately after `gh pr create`)**:
+
+```bash
+gh pr create --draft --base main --title "fix([scope]): [description] (hotfix)" --body "..."
+PR_NUMBER=$(gh pr view --json number -q '.number')
+
+# Assert the opened PR targets main
+ACTUAL_BASE=$(gh pr view "$PR_NUMBER" --json baseRefName -q '.baseRefName')
+if [ "$ACTUAL_BASE" != "main" ]; then
+  echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of 'main'. Closing the malformed PR."
+  gh pr close "$PR_NUMBER" --comment "Closed: Hotfix PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against main."
+  exit 1
+fi
+echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
+```
+
+**Important**: Use `--base main` for hotfixes (not `develop`). A hotfix merges to production first, then must be backported to `develop`. The pre-create guard and post-create assertion above are the enforcement mechanism — do not skip them.
 
 ### Step 9: Handoff to Work Item Runner
 
@@ -920,15 +1102,42 @@ git checkout -b backport/hotfix/[slug] origin/main
 
 Open a PR targeting `develop`:
 
+**Pre-PR-create base-branch guard (mandatory)**:
+
+```bash
+# Verify the backport branch descends from origin/main (it was cut from origin/main post-merge)
+if ! git merge-base --is-ancestor origin/main HEAD; then
+  echo "ERROR: Backport branch does not descend from origin/main. Verify the branch was created from origin/main after the hotfix merge."
+  exit 1
+fi
+echo "Base-branch guard passed: backport branch descends from origin/main"
+```
+
+**Post-create base-branch assertion (mandatory)**:
+
 ```bash
 gh pr create --draft --base develop \
   --title "chore(hotfix): backport [slug] to develop" \
   --body "Backports hotfix '[slug]' (merged to main) to keep develop in sync.
 
 Closes the backport requirement for hotfix/[slug]."
+PR_NUMBER=$(gh pr view --json number -q '.number')
+
+# Assert the opened backport PR targets develop
+ACTUAL_BASE=$(gh pr view "$PR_NUMBER" --json baseRefName -q '.baseRefName')
+if [ "$ACTUAL_BASE" != "develop" ]; then
+  echo "ERROR: Backport PR was created with base '$ACTUAL_BASE' instead of 'develop'. Closing the malformed PR."
+  gh pr close "$PR_NUMBER" --comment "Closed: Backport PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against develop."
+  exit 1
+fi
+echo "Post-create assertion passed: backport PR base is '$ACTUAL_BASE'"
 ```
 
-Run the same internal review gate, automated reviewer loop, and CI loop as any other implementation PR. Apply `ready-for-regression` and `ready-for-human-review` labels when the PR is clean. The backport PR can be merged by the human alongside or after the main hotfix review.
+**Automated reviewer loop exemption for identical cherry-pick backports**: For identical cherry-pick backport PRs (no changes beyond what was reviewed on the main hotfix PR), running the full automated reviewer loop is optional. If the automated reviewers (PR-Agent, Codex) post a clean result or no result, proceeding directly to merge is acceptable. If any reviewer posts a blocking finding on the backport PR, it must be addressed before merge.
+
+If the backport PR introduces any changes beyond a plain cherry-pick (e.g., conflict resolution changes, develop-only fixups), treat it as a normal implementation PR and run the full internal review gate, automated reviewer loop, and CI loop.
+
+Apply `ready-for-regression` and `ready-for-human-review` labels when the PR is clean. The backport PR can be merged by the human alongside or after the main hotfix review.
 
 **Branch lifecycle summary**:
 

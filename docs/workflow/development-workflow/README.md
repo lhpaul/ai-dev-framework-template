@@ -338,7 +338,7 @@ Path: `hotfix/[slug]` from `main` -> implement -> review gate -> smoke test as n
 
 The backport is not optional. It prevents `main` and `develop` from drifting apart.
 
-**CHANGELOG**: Hotfix entries go in a **new versioned section** (e.g., `[1.0.1] - YYYY-MM-DD`), not under `[Unreleased]`. A hotfix is released immediately when it merges to `main`, so it does not belong in the unreleased block. Determine the next patch version from the most recent released section header, then insert the new versioned section as the **first `##` section** in `CHANGELOG.md` (above all existing headers, including prior hotfix versions and `[Unreleased]`). This ensures the auto-tagging workflow extracts the correct version via `grep -m 1 '^## '`.
+**CHANGELOG**: Hotfix entries go in a **new versioned section** (e.g., `[1.0.1] - YYYY-MM-DD`), not under `[Unreleased]`. A hotfix is released immediately when it merges to `main`, so it does not belong in the unreleased block. Determine the next patch version from the most recent released section header, then insert the new versioned section **directly below `[Unreleased]`** (above all prior versioned sections). This ensures the auto-tagging workflow extracts the correct version via the first semver header after `[Unreleased]`.
 
 **Branch lifecycle**: The `hotfix/[slug]` branch merges to `main` and is then deleted. The backport uses a separate `backport/hotfix/[slug]` branch created from `origin/main` (the post-merge state), targeting `develop`. The hotfix branch is **not** reused for the backport.
 

@@ -127,6 +127,78 @@ This mirrors what Protocol 90 does at the portfolio level in Step 2.5 and ensure
 
 If the tracker is unavailable, log a warning and proceed — do not block advancement.
 
+### Stale `In Development` pre-dispatch check (AC-6, AC-7, AC-8, AC-10)
+
+**Scope** (BR-7): This check applies **only** when the Work Item Runner was dispatched from the Portfolio Orchestrator (i.e., `BATCH_CONTEXT=true` is present in the handoff metadata). A direct human invocation of `item-orchestrator` will encounter an "In Development" status and should prompt the human for confirmation rather than automatically resetting the tracker — the human may intentionally be resuming in-progress work. When `BATCH_CONTEXT=true` is not set, skip this sub-step.
+
+**When `BATCH_CONTEXT=true`**: If the item's tracker status is exactly `In Development` at this point in Step 2, run the following check before dispatching:
+
+1. **Guard — skip if issue number is invalid**: Before running the branch and PR checks, verify that `ISSUE_NUMBER` is a non-empty positive integer. GitHub issue numbers are always positive integers; a non-integer value indicates a data problem and would cause `git ls-remote` to search for unintended patterns. If invalid, set `HAS_BRANCH` and `HAS_PR` to `1` to force the "genuinely in progress" outcome (step 4) and skip the network checks entirely:
+
+   ```bash
+   if ! echo "${ISSUE_NUMBER:-}" | grep -qE '^[1-9][0-9]*$'; then
+     echo "WARNING: invalid ISSUE_NUMBER '${ISSUE_NUMBER:-}' — skipping stale detection; treating item as genuinely in progress."
+     HAS_BRANCH=1  # force "genuinely in progress" — skip network checks below
+     HAS_PR=1
+   fi
+   ```
+
+2. **Check for an existing implementation branch or open PR** (skip if guard above set `HAS_BRANCH=1`):
+
+   ```bash
+   # Only check implementation-stage branches (feature/fix/refactor/hotfix).
+   # spec/* and implementation-plan/* branches persist on the remote after merge
+   # and must not be treated as evidence that implementation is active.
+   # git ls-remote uses bare-number forms only (feature/123-slug, feature/123).
+   # Tracker-prefixed forms (feature/ENG-123-slug) are detected by the more-precise
+   # gh pr list regex below; broad globs like *-123-* false-positive on unrelated
+   # branches containing the issue number in their slug (e.g. feature/456-add-123-logs).
+   # Use pipefail so a network/auth failure propagates; on failure, skip stale
+   # detection and treat the item as genuinely in progress (fail-open).
+   # Only run if the guard above did not already set HAS_BRANCH/HAS_PR=1.
+   if [ "${HAS_BRANCH:-0}" -eq 0 ] && [ "${HAS_PR:-0}" -eq 0 ]; then
+     HAS_BRANCH=$(set -o pipefail; git ls-remote origin \
+       "refs/heads/feature/${ISSUE_NUMBER}-*" \
+       "refs/heads/feature/${ISSUE_NUMBER}" \
+       "refs/heads/fix/${ISSUE_NUMBER}-*" \
+       "refs/heads/fix/${ISSUE_NUMBER}" \
+       "refs/heads/refactor/${ISSUE_NUMBER}-*" \
+       "refs/heads/refactor/${ISSUE_NUMBER}" \
+       "refs/heads/hotfix/${ISSUE_NUMBER}-*" \
+       "refs/heads/hotfix/${ISSUE_NUMBER}" \
+       2>/dev/null | wc -l | tr -d ' ') || {
+       echo "WARNING: git ls-remote failed for issue #${ISSUE_NUMBER} — skipping stale detection."
+       HAS_BRANCH=1  # treat as genuinely in progress
+     }
+
+     # The jq regex includes an optional tracker-prefix group ([A-Z][A-Z0-9]*-)
+     # to match both feature/123-slug and feature/ENG-123-slug forms.
+     # Do NOT use || echo 0: a gh failure must not be interpreted as "no PR exists".
+     # On failure, treat as genuinely in progress (fail-open).
+     HAS_PR=$(gh pr list --state open --limit 1000 \
+       --json number,headRefName \
+       --jq "[.[] | select(.headRefName | test(\"^(feature|fix|refactor|hotfix)/([A-Z][A-Z0-9]*-)?${ISSUE_NUMBER}(-|\$)\"))] | length" \
+       2>/dev/null) || {
+       echo "WARNING: gh pr list failed for issue #${ISSUE_NUMBER} — skipping stale detection."
+       HAS_PR=1  # treat as genuinely in progress
+     }
+   fi
+   ```
+
+3. **If both checks return zero** (no branch, no PR): the "In Development" status is stale (BR-5). Apply the correction:
+
+   - Log a `STALE_STATUS_CORRECTION:` line:
+
+     ```text
+     STALE_STATUS_CORRECTION: issue #<N> tracker shows 'In Development' but no branch or PR found. Correcting to 'Plan Ready'.
+     ```
+
+   - Update the tracker status to `Plan Ready` using `update_tracker_status_best_effort` (BR-6).
+
+   - Continue dispatching the implementation stage as if the item was `Plan Ready` (the pre-dispatch tracker status update, which ran earlier in this step and was a no-op because the status was already "In Development", will re-run for the corrected dispatch and advance the tracker back to `In Development`). The brief "Plan Ready" state between the stale reset and the new dispatch is intentional and transient — the orchestrator runs sequentially, so no concurrent observer will act on this intermediate value.
+
+4. **If either check returns non-zero** (branch or PR found): the item is genuinely in progress — do not reset the status. Resume from the existing branch or PR using `workflow-next-action.sh` (AC-8).
+
 ### Pre-dispatch branch check
 
 Before dispatching any creator-stage agent, run all three checks below. An existing branch or active worktree means work already exists and should be resumed rather than restarted.
@@ -237,6 +309,33 @@ cd <worktree-path>
 
 Use the pre-dispatch branch check from Step 2 (`git branch --list`, `git branch -r --list`) to determine which case applies. Case B and C are common when resuming "In Development" items, PRs with `needs-fixes`, or any item with prior work.
 
+**Branch-context verification — mandatory immediately after entering the worktree**
+
+After `cd <worktree-path>`, verify the active branch before doing any work. `git switch` and `git worktree add` output is filtered by RTK (the shell proxy), suppressing the confirmation message — without explicit verification the agent cannot detect a wrong-branch outcome until a commit reveals the error (the Batch 33 incident: commits landed on `fix/pr-agent-classifier-label-aware-2` instead of the intended `fix/487-stale-tracker-status-transitions`). Use `git rev-parse --abbrev-ref HEAD`, which produces a single branch-name token and is RTK-safe:
+
+```bash
+# Verify branch context — always visible even through RTK filtering:
+CURRENT=$(git rev-parse --abbrev-ref HEAD)
+EXPECTED="<branch-prefix>/<slug>"
+if [ "$CURRENT" != "$EXPECTED" ]; then
+  echo "ERROR: expected branch $EXPECTED, currently on $CURRENT. Aborting."
+  exit 1
+fi
+echo "Branch context verified: $CURRENT"
+```
+
+Apply the same verification pattern any time a `git switch` or `git checkout <branch>` is issued outside the worktree-creation path (e.g., when a stage protocol's recovery step asks to switch branches):
+
+```bash
+git switch <branch>
+# Verify — always visible even through RTK filtering:
+CURRENT=$(git rev-parse --abbrev-ref HEAD)
+if [ "$CURRENT" != "<branch>" ]; then
+  echo "ERROR: expected branch <branch>, currently on $CURRENT. Aborting."
+  exit 1
+fi
+```
+
 **Runtime CWD guard — activate immediately after entering the worktree**
 
 After `cd <worktree-path>`, source and initialise the CWD guard. This provides runtime enforcement that catches branch-switching commands issued from the wrong directory **at execution time** rather than only at the post-agent Step 5.2 inspection:
@@ -254,6 +353,15 @@ worktree_cwd_guard_init "$WORKTREE_PATH" "$MAIN_REPO_ROOT"
 Once initialised, replace bare `git switch`, `git checkout`, `git reset`, and `git restore` calls with the guarded wrappers exported by the script: `git_switch`, `git_checkout`, `git_reset`, and `git_restore`. If a stage protocol's step calls `git checkout develop && git checkout -b <branch>`, skip it entirely (the worktree was already created on the correct branch) — but if you must call it, use the guarded wrapper so any accidental main-repo targeting is caught immediately.
 
 The guard is **non-blocking**: it emits a `GUARDRAIL WARNING` and returns exit code 1 on a CWD violation, but does not abort the outer shell. Check the return value or `set -e` in the enclosing script to convert warnings into hard failures where appropriate.
+
+**Guard scope limitation — Claude Code subagents**: The `source`/`worktree_cwd_guard_init` sequence above applies to the item-orchestrator's own shell session. It does **not** propagate to Claude Code subagents dispatched via the `Agent` tool — each subagent starts with an independent execution context and has no knowledge of the parent's shell environment. The guard therefore cannot intercept branch-switching commands issued inside a stage subagent. For stage subagents (e.g., `developer`, `tech-lead`), worktree discipline is enforced entirely through the handoff prompt and the agent's own system-prompt rules. See "Stage-agent handoff branch-skip requirement" below.
+
+**Stage-agent handoff branch-skip requirement** (`BATCH_CONTEXT=true` only): Every stage-agent handoff (to `developer`, `tech-lead`, `product-manager`, or any other stage agent) when `BATCH_CONTEXT=true` **must** include:
+
+1. The literal resolved `<worktree-path>` value (e.g., `/path/to/repo/.claude/worktrees/lh-168/fix-lh-168-slug`).
+2. The explicit instruction: "BATCH_CONTEXT=true — the worktree is already on branch `<branch>`. Do NOT run `git checkout develop`, `git checkout -b`, `git switch`, `git reset`, or `git restore` from the main repo root. Confirm CWD matches `<worktree-path>` before any git state-changing command."
+
+Omitting either of these from the handoff is the root cause of the branch-leak pattern where stage subagents run Protocol 03's branching steps (`git checkout develop && git checkout -b <branch>`) from the main repo root CWD, silently switching the main working tree to the feature branch.
 
 **Critical: Worktree Git Discipline** (`BATCH_CONTEXT=true` only)
 
@@ -634,7 +742,7 @@ Example `.tmp/template-config.json` override format:
 }
 ```
 
-Supported reviewer values: `claude`, `codex`.
+Supported reviewer values: `claude`, `codex`, `coderabbit`.
 
 If neither file defines `internal_reviewers`, fall back to running the stage-appropriate reviewer once (default behavior: `claude`).
 
@@ -646,16 +754,18 @@ No warning comment is posted for reviewers intentionally removed by the override
 
 ### Runtime-availability check
 
-Before dispatching any reviewer, classify each entry in the resolved list as `reachable` or `unreachable` based on the runner's execution context. The check is deterministic and requires no external network call — runner identity is a sufficient proxy for reviewer reachability (see [codex-reviewer-runtime-fallback spec](../../../specs/developments/20260417203329_codex-reviewer-runtime-fallback/1_codex-reviewer-runtime-fallback_specs.md) — BR-1 and BR-8).
+Before dispatching any reviewer, classify each entry in the resolved list as `reachable` or `unreachable`. For `claude` and `codex`, the check is deterministic and requires no external network call — runner identity is a sufficient proxy for reviewer reachability (see [codex-reviewer-runtime-fallback spec](../../../specs/developments/20260417203329_codex-reviewer-runtime-fallback/1_codex-reviewer-runtime-fallback_specs.md) — BR-1 and BR-8). For `coderabbit`, reachability is determined at runtime via an App installation check (see below).
 
 #### Reachability classification table
 
-| Runner context | `claude` reachable? | `codex` reachable? |
-|---|---|---|
-| Claude Code (direct human session) | Yes | No |
-| Claude Code subagent (dispatched by orchestrator) | Yes | No |
-| Codex runner / Codex skill | Yes | Yes |
-| Direct human (shell / CI with `gh`) | Yes | Yes |
+| Runner context | `claude` reachable? | `codex` reachable? | `coderabbit` reachable? |
+|---|---|---|---|
+| Claude Code (direct human session) | Yes | No | Determined at runtime (App check) |
+| Claude Code subagent (dispatched by orchestrator) | Yes | No | Determined at runtime (App check) |
+| Codex runner / Codex skill | Yes | Yes | Determined at runtime (App check) |
+| Direct human (shell / CI with `gh`) | Yes | Yes | Determined at runtime (App check) |
+
+To determine `coderabbit` reachability, the runner checks whether `coderabbitai[bot]` has any prior activity on the repository (App installation signal — via `gh api repos/{owner}/{repo}/installation` or by checking the PR for a prior CodeRabbit comment), **and** confirms that `.coderabbit.yaml` does not disable auto-review or restrict reviews to non-draft PRs (`reviews.auto_review.enabled: true` required). If either check fails, classify `coderabbit` as `unreachable` — the draft-PR restriction in `.coderabbit.yaml` is treated as equivalent to the App not being installed (BR-5 consequence).
 
 #### Policy resolution
 
@@ -717,6 +827,9 @@ For each reviewer in the resolved list, dispatch the stage-appropriate agent:
 | `codex` | `spec/*` | `workflow-spec-reviewer` Codex skill against `REVIEW.md` |
 | `codex` | `implementation-plan/*` | `workflow-plan-reviewer` Codex skill against `REVIEW.md` |
 | `codex` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `workflow-code-reviewer` Codex skill against `REVIEW.md` |
+| `coderabbit` | `spec/*` | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
+| `coderabbit` | `implementation-plan/*` | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
+| `coderabbit` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
 
 ### Branch-type detection
 
@@ -950,41 +1063,29 @@ gh api "repos/{owner}/{repo}/pulls/<pr_number>/comments/<comment_id>/replies" \
 
 This is **mandatory** — do not skip this step. Unresolved inline comments cause confusion when humans review the PR on GitHub, even if the underlying issue was already fixed. When delegating to a fixer subagent, include explicit instructions to reply to each addressed comment.
 
-#### Final summary comment (MANDATORY)
+#### Final summary comment (script-owned for `clean` and `escalate`)
 
-**You MUST post a PR comment containing "Automated Reviewer Loop Summary" immediately after `pr-review-loop.sh` exits — regardless of the exit result (`clean`, `needs_fixes` when escalating, or `max_cycles`).** This comment is the only reliable signal that Step 7 ran to completion. The orchestrator's Step 8c verification check (`hasReviewSummary`) searches for this comment and will block `ready-for-human-review` if it is absent.
+**`pr-review-loop.sh` automatically posts an "Automated Reviewer Loop Summary" PR comment on `clean` and `escalate` exits.** You do not need to post this comment manually for those two exit paths. The comment body matches the regex used by `workflow-next-action.sh` and the Step 8c verification gate:
 
-**Do not skip this comment under any circumstance.** Omitting it — even when the loop exits cleanly on the first cycle with no findings — is a protocol violation that causes the Step 8c hard gate to fail and requires re-running Step 7.
+```
+Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback
+```
 
-Post via `gh pr comment`:
+The script does **not** post the summary on `needs_fixes` exits (those are non-terminal — the orchestrator re-runs after each fixer push) or `skipped` exits (no platforms configured). For `needs_fixes` at `cycle >= max_cycles`, pass `--post-final-summary` on the last invocation and the script will post the summary automatically before exiting.
+
+The script-posted comment format:
 
 ````markdown
 ### Automated Reviewer Loop Summary
 
-**Result:** clean | escalated (reason) | max cycles reached
-**Cycles:** N / `max_cycles`
+**Result:** clean — no blocking findings | escalated (reason) | max cycles reached — N blocking finding(s) unresolved
 **Platforms:** greptile, devin
+**Findings:** N blocking, N suggestions
 
-| # | Platform | File | Line | Description | Status | Resolved In |
-|---|----------|------|------|-------------|--------|-------------|
-| 1 | greptile | `src/foo.ts` | 42 | First 80 chars... | Resolved | `abc1234` |
-| 2 | greptile | `src/baz.ts` | 5 | First 80 chars... | Unresolved | -- |
-
-**Resolved:** 1 / 2 findings
-
-**Reply-only resolutions (no code fix):** M thread(s) resolved via reply + resolveReviewThread mutation.
-
-| Thread | Author | Concern summary | Rationale |
-|--------|--------|-----------------|-----------|
-| #1 | coderabbitai[bot] | First 60 chars of concern... | First 80 chars of reply rationale... |
+*Posted automatically by `pr-review-loop.sh`.*
 ````
 
-When M=0 (all resolutions were code fixes), omit the "Reply-only resolutions" subsection entirely.
-
-- If no findings were ever raised (clean on first run): post the summary comment with `**Result:** clean` and `**Resolved:** 0 / 0 findings`, or use the shorter form — "No blocking PR feedback was raised by any configured reviewer tool." Either form satisfies the Step 8c check as long as the comment body contains `"Automated Reviewer Loop Summary"` or `"No blocking PR feedback"`.
-- If result is `skipped` (no platforms configured): do **not** post a summary comment (Step 8c skips this check when Step 7 was skipped).
-
-Prefer the helper script (it reads `.ai-dev-workflow.yaml` for the platform list automatically):
+After running the helper script (it reads `.ai-dev-workflow.yaml` for the platform list automatically):
 
 ```bash
 ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name>
@@ -994,11 +1095,66 @@ Interpret the result as follows:
 
 | Result | Action |
 |---|---|
-| `clean` | **You MUST post the "Automated Reviewer Loop Summary" comment** (see above), then re-issue the GraphQL `reviewThreads` query (Step 8c) before proceeding — see "Re-query reviewThreads after each push" below |
+| `clean` | Summary comment posted automatically by the script. Re-issue the GraphQL `reviewThreads` query (Step 8c) before proceeding — see "Re-query reviewThreads after each push" below |
 | `skipped` | Continue to Step 7b (implementation PRs) then Step 8 (no summary comment posted — Step 8c skips the check) |
 | `needs_fixes` and `cycle < max_cycles` | Increment `cycle`, dispatch the matching fixer agent, wait for a push, then run Step 7 again |
-| `needs_fixes` and `cycle >= max_cycles` | **You MUST post the "Automated Reviewer Loop Summary" comment** (with `max cycles reached` result), then escalate to human |
-| `escalate` | **You MUST post the "Automated Reviewer Loop Summary" comment** (with the escalation reason), then escalate to human |
+| `needs_fixes` and `cycle >= max_cycles` | Pass `--post-final-summary` to the final invocation — the script posts the summary automatically. Then escalate to human |
+| `needs_rerun` (exit code 3) | PR-Agent returned clean with a "Possible Issue" advisory. See "PR-Agent 'Possible Issue' evaluation" below — dispatch the code-reviewer agent, set `POSSIBLE_ISSUE_EVAL_OUTCOME`, and re-invoke the loop |
+| `escalate` | Summary comment posted automatically by the script. Escalate to human |
+
+### PR-Agent "Possible Issue" evaluation
+
+When `pr-review-loop.sh` returns `RESULT=clean` AND the output contains
+`PR_AGENT_POSSIBLE_ISSUE_EVAL`, PR-Agent classified the PR as `clean` but included
+a "Possible Issue" advisory label. The script emits two structured keys so the
+orchestrator can dispatch a code-reviewer agent before declaring the result final:
+
+- `PR_AGENT_POSSIBLE_ISSUE_EVAL` — format: `<pr_number>@@@<branch_name>`
+- `PR_AGENT_POSSIBLE_ISSUE_BODY` — the full PR-Agent comment body (newlines escaped)
+
+Note: `RESULT=needs_rerun` (exit code 3) is only emitted on a **re-invocation** after
+the code-reviewer agent pushed a fix (i.e., when `POSSIBLE_ISSUE_EVAL_OUTCOME=fix_pushed`
+is set in the environment). The first-pass result is always `RESULT=clean` with
+`PR_AGENT_POSSIBLE_ISSUE_EVAL` in the output.
+
+**Required sequence:**
+
+1. After any `RESULT=clean` exit, check whether `PR_AGENT_POSSIBLE_ISSUE_EVAL` is
+   present in the script output. If present, do not declare the result clean yet.
+2. Read `PR_AGENT_POSSIBLE_ISSUE_BODY` from the script output and unescape it
+   (replace `\n` with real newlines).
+3. Dispatch the `code-reviewer` agent with the PR number, branch, PR-Agent comment
+   body, and the PR diff (`gh pr diff <pr_number>`). Instruct the agent: determine
+   whether the finding is a real bug or acceptable; if a real bug, push a fix commit;
+   if acceptable, post a substantive acknowledgment comment explaining the reasoning.
+4. After the agent finishes, set `POSSIBLE_ISSUE_EVAL_OUTCOME` and re-invoke the loop:
+
+   ```bash
+   # Agent acknowledged (finding is acceptable):
+   POSSIBLE_ISSUE_EVAL_OUTCOME=acknowledged \
+     ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>
+
+   # Agent unavailable / timed out:
+   POSSIBLE_ISSUE_EVAL_OUTCOME=unavailable \
+     ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>
+
+   # Agent pushed a fix — re-invoke with fix_pushed so the script signals needs_rerun:
+   POSSIBLE_ISSUE_EVAL_OUTCOME=fix_pushed \
+     ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>
+   ```
+
+5. On re-invocation with `acknowledged` or `unavailable`, the script reads
+   `POSSIBLE_ISSUE_EVAL_OUTCOME` from the environment, exits 0, and emits `RESULT=clean`.
+   On re-invocation with `fix_pushed`, the script exits 3 with `RESULT=needs_rerun` —
+   the orchestrator then does a full fresh re-run (without any `POSSIBLE_ISSUE_EVAL_OUTCOME`)
+   on the new HEAD.
+
+This evaluation step is not counted against the orchestrator's `cycle` counter. If
+the agent is unavailable (`POSSIBLE_ISSUE_EVAL_OUTCOME=unavailable` or empty on first
+pass), the script falls back to advisory-only clean and logs a warning to stderr. For
+full details see `93-automated-reviewer-loop-protocol.md`.
+
+**Step 7a summary (Internal Review Gate) is still agent-owned.** The script-posted summary covers Step 7 (external automated reviewers) only. The Step 7a summary comment (`### Step 7a Internal Review Gate Summary`) must still be posted by the orchestrator/agent after the internal review gate completes. Do not conflate the two: they serve different verification purposes and are checked by different gates.
 
 ### Re-query reviewThreads after each push (mandatory)
 
@@ -1148,6 +1304,8 @@ After Step 7 completes with result `clean` or `skipped`, and **before** entering
 
 **Applies to**: PRs on branches `feature/*`, `fix/*`, `hotfix/*`, `refactor/*`
 **Does not apply to**: PRs on branches `spec/*`, `implementation-plan/*`
+
+**`BATCH_CONTEXT=true` — this step is mandatory and must not be skipped in parallel dispatch**: When agents are dispatched with `BATCH_CONTEXT=true`, they follow a compressed execution path (worktree isolation, branch-skip rules, reduced context). Step 7b is a required step in that path and must be executed **between Step 7 and Step 8** without exception. The orchestrator's Step 5.1 catches a missing label at the end of the batch, but the agent is the primary responsible party and must not rely on Step 5.1 as a fallback.
 
 ```bash
 # Only for implementation PRs:

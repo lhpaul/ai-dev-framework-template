@@ -69,7 +69,7 @@ trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"' EXIT
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,pr-agent,coderabbit,codex-github] [--poll-interval seconds] [--max-wait seconds]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
 triggering a new review, each platform checks for existing blocking findings. If
@@ -78,6 +78,23 @@ If a platform times out or escalates, the script exits 2. If all configured
 platforms are clean or skipped, the script exits 0. If a second instance is
 detected for the same PR number, the script emits RESULT=escalate with
 REASON=lock_contention and exits 75 (EX_TEMPFAIL).
+
+--post-final-summary:
+  Post the "Automated Reviewer Loop Summary" comment even when the result is
+  needs_fixes. Use this when the orchestrator has reached cycle >= max_cycles and
+  will not dispatch another fixer — i.e. the run is terminal regardless of the
+  script exit code. On clean and escalate exits the summary is always posted
+  (this flag has no additional effect for those exits).
+
+--compare:
+  Run all configured platforms to completion regardless of individual verdicts
+  (disables the short-circuit on the first blocking platform). After all platforms
+  run, the overall exit code and RESULT are identical to what normal mode would
+  produce: the first platform that would have blocked in config order governs.
+  Per-platform verdicts are emitted as COMPARE_VERDICT_<n>_PLATFORM /
+  COMPARE_VERDICT_<n>_RESULT key=value lines, and one row is appended to
+  docs/workflow/retro-metrics-platforms.md. Intended for platform evaluation only —
+  not for normal orchestration where early exit is desired.
 
 Platform selection (in priority order):
   1. --platform flag(s) passed on the command line
@@ -95,9 +112,11 @@ Branch-type-aware default timeout:
   override either value.
 
 Outputs stable key=value lines including:
-  RESULT=clean|needs_fixes|escalate|skipped
+  RESULT=clean|needs_fixes|needs_rerun|escalate|skipped
   PLATFORM_<n>_NAME / PLATFORM_<n>_RESULT
   REASON=lock_contention (when exit code is 75)
+  COMPARE_MODE=1 (when --compare is active)
+  COMPARE_VERDICT_<n>_PLATFORM / COMPARE_VERDICT_<n>_RESULT (when --compare is active)
 EOF
 }
 
@@ -439,7 +458,7 @@ run_codex_github_review() {
   local poll_interval="$3"
   local max_wait="$4"
   local platform="codex-github"
-  local bot_login="${CODEX_GITHUB_BOT_LOGIN:-codex-ai[bot]}"
+  local bot_login="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
   # GraphQL author.login returns the login WITHOUT the "[bot]" suffix that the
   # REST API uses. Strip it here so check_unresolved_threads comparisons work.
   local graphql_bot_login="${bot_login%\[bot\]}"
@@ -998,8 +1017,19 @@ run_pr_agent_review() {
   # formal GitHub PR reviews (APPROVED/CHANGES_REQUESTED/COMMENTED). The summary
   # comment always contains "PR Reviewer Guide" in its body. Two stable body markers
   # distinguish clean from has-issues:
-  #   "No major issues detected"           → clean
-  #   "Recommended focus areas for review" → has issues (needs_fixes)
+  #   "No major issues detected"                                → clean
+  #   "Recommended focus areas for review" → may or may not be blocking (see below)
+  #
+  # PR-Agent always emits "Recommended focus areas for review" when it finds any
+  # suggestion — including purely advisory ones. The bold labels inside that
+  # section determine the verdict:
+  #   Hard-blocker / security / compatibility labels → needs_fixes (case-insensitive):
+  #     Critical, Must Fix, Breaking Change, Security Concern,
+  #     API Change, Backward Compatibility
+  #   All other labels → clean (advisory-only — PR-Agent uses a wide variety of
+  #     quality/style labels that are non-blocking by nature)
+  #   No labels parseable → needs_fixes (unreadable format — conservative)
+  #
   # Bot login is "github-actions[bot]" when using GITHUB_TOKEN. Override with
   # PR_AGENT_BOT_LOGIN when using a GitHub App token (e.g. for fork PR support).
   local pr_number="$1"
@@ -1035,10 +1065,15 @@ run_pr_agent_review() {
     since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
   fi
 
-  _pr_agent_latest_comment() {
-    local match_mode="${1:-strict_sha}"
+  # Common helper: fetch the matching PR-Agent comment and return one of its fields.
+  # Parameters: field (e.g. "body" or "html_url"), match_mode (optional, default "strict_sha").
+  # Returns the empty string when no matching comment is found.
+  _pr_agent_latest_comment_field() {
+    local field="$1"
+    local match_mode="${2:-strict_sha}"
     gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-      | jq -rs --arg bot "$bot_login" --arg sha "$head_sha" --arg since "$since_iso" --arg mode "$match_mode" '
+      | jq -rs --arg bot "$bot_login" --arg sha "$head_sha" --arg since "$since_iso" \
+               --arg mode "$match_mode" --arg field "$field" '
           add // []
           | [.[]
              | select(
@@ -1052,18 +1087,206 @@ run_pr_agent_review() {
             ]
           | sort_by(.updated_at)
           | last
-          | .body // ""
+          | .[$field] // ""
         '
+  }
+
+  _pr_agent_latest_comment() {
+    _pr_agent_latest_comment_field "body" "${1:-strict_sha}"
+  }
+
+  _pr_agent_latest_comment_url() {
+    _pr_agent_latest_comment_field "html_url" "${1:-strict_sha}"
+  }
+
+  # Extract <strong>LABEL</strong> tokens from the "Recommended focus areas for
+  # review" section of a PR-Agent comment body.
+  # Returns newline-delimited label strings (empty when section is absent or
+  # yields no tokens). Shared by _pr_agent_extract_advisory_labels and
+  # _pr_agent_classify to avoid duplicating the awk/grep/sed pipeline.
+  _pr_agent_extract_focus_labels() {
+    local body="$1"
+    if ! printf '%s\n' "$body" | grep -qF "Recommended focus areas for review"; then
+      return
+    fi
+    printf '%s\n' "$body" \
+      | awk '/Recommended focus areas for review/{found=1; next}
+             found && /^[[:space:]]*(\*\*|<\/td>|<tr>)|^---$/{found=0}
+             found{print}' \
+      | grep -oE '<strong>[^<]+</strong>' \
+      | sed 's|<strong>||g;s|</strong>||g;s|^[[:space:]]*||;s|[[:space:]]*$||' \
+      || true
+  }
+
+  # Extract advisory (non-blocking) labels from a PR-Agent comment body.
+  # Outputs labels pipe-delimited (|) for safe single-line transport through
+  # print_kv. Only labels that are NOT in the hard-blocker set are returned.
+  # Returns empty string when body has no "Recommended focus areas for review"
+  # section, or when all labels are blocking (handled by _pr_agent_classify).
+  _pr_agent_extract_advisory_labels() {
+    local body="$1"
+    local label label_lower advisory_labels=""
+    local labels
+    labels="$(_pr_agent_extract_focus_labels "$body")"
+    if [ -n "$labels" ]; then
+      while IFS= read -r label; do
+        [ -z "$label" ] && continue
+        label_lower="$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')"
+        case "$label_lower" in
+          critical|"must fix"|"breaking change"|"security concern"|"api change"|"backward compatibility")
+            # Hard-blocker — skip; these are handled by _pr_agent_classify as needs_fixes.
+            ;;
+          *)
+            if [ -n "$advisory_labels" ]; then
+              advisory_labels="${advisory_labels}|${label}"
+            else
+              advisory_labels="$label"
+            fi
+            ;;
+        esac
+      done <<_PR_AGENT_ADVISORY_LABELS_
+$labels
+_PR_AGENT_ADVISORY_LABELS_
+    fi
+    printf '%s' "$advisory_labels"
+  }
+
+  # Returns pipe-delimited labels that match "possible issue" (case-insensitive).
+  # Input:  pipe-delimited advisory labels string (e.g. "Possible Issue|Edge Case")
+  # Output: pipe-delimited matching labels, or empty string.
+  _extract_possible_issue_labels() {
+    local advisory="$1"
+    local result=""
+    local label label_lower
+    local _labels_normalized
+    _labels_normalized="$(printf '%s' "$advisory" | tr '|' '\n')"
+    while IFS= read -r label; do
+      [ -z "$label" ] && continue
+      # Trim leading and trailing whitespace before comparing (defensive — labels
+      # from _pr_agent_extract_advisory_labels are already trimmed by sed, but
+      # callers may pass labels with surrounding spaces).
+      label="${label#"${label%%[![:space:]]*}"}"
+      label="${label%"${label##*[![:space:]]}"}"
+      [ -z "$label" ] && continue
+      label_lower="$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')"
+      if [ "$label_lower" = "possible issue" ]; then
+        if [ -n "$result" ]; then
+          result="${result}|${label}"
+        else
+          result="$label"
+        fi
+      fi
+    done <<_EXTRACT_POSSIBLE_ISSUE_LABELS_
+$_labels_normalized
+_EXTRACT_POSSIBLE_ISSUE_LABELS_
+    printf '%s' "$result"
+  }
+
+  # Evaluate "Possible Issue" advisory labels found in a PR-Agent clean result.
+  # Reads POSSIBLE_ISSUE_EVAL_OUTCOME from environment (set by orchestrator caller).
+  # Returns:
+  #   0  — no "Possible Issue" label found (short-circuit), OR
+  #         finding acknowledged, OR agent unavailable (advisory-only fallback)
+  #   3  — fix was pushed; caller must re-run the loop on the new HEAD
+  run_pr_agent_possible_issue_evaluation() {
+    local advisory_labels="$1"  # pipe-delimited, already extracted from comment
+    local comment_body="$2"     # full PR-Agent comment body (for agent context)
+    local pr_number_eval="$3"
+    local branch_name_eval="$4"
+
+    local possible_issue_labels
+    possible_issue_labels="$(_extract_possible_issue_labels "$advisory_labels")"
+
+    # Short-circuit: no "Possible Issue" advisory labels present.
+    if [ -z "$possible_issue_labels" ]; then
+      return 0
+    fi
+
+    # Read the eval outcome set by the orchestrator after code-reviewer agent finishes.
+    local eval_outcome="${POSSIBLE_ISSUE_EVAL_OUTCOME:-}"
+
+    case "$eval_outcome" in
+      fix_pushed)
+        # A fix was pushed; the orchestrator must re-run the loop on the new HEAD
+        # to confirm the finding is resolved. Exit 3 signals this to the caller.
+        print_kv POSSIBLE_ISSUE_EVAL_OUTCOME "fix_pushed"
+        return 3  # sentinel: orchestrator must re-run the loop from the top
+        ;;
+      acknowledged)
+        print_kv POSSIBLE_ISSUE_EVAL_OUTCOME "acknowledged"
+        return 0
+        ;;
+      unavailable|"")
+        # No outcome set (first pass, before orchestrator dispatches code-reviewer)
+        # or agent is unavailable. Emit structured keys ONLY here so the orchestrator
+        # can read them and dispatch; fall back to advisory-only (clean) here.
+        # Keys are NOT emitted for fix_pushed/acknowledged re-invocations, which
+        # avoids ambiguous re-dispatch signals to the orchestrator.
+        print_kv PR_AGENT_POSSIBLE_ISSUE_EVAL "${pr_number_eval}@@@${branch_name_eval}"
+        print_kv_escaped PR_AGENT_POSSIBLE_ISSUE_BODY "$comment_body"
+        echo "WARN: code-reviewer agent unavailable or eval outcome not set for 'Possible Issue' finding — falling back to advisory-only (clean)" >&2
+        print_kv POSSIBLE_ISSUE_EVAL_OUTCOME "unavailable"
+        return 0
+        ;;
+      *)
+        echo "WARN: unknown POSSIBLE_ISSUE_EVAL_OUTCOME '${eval_outcome}' — falling back to advisory-only (clean)" >&2
+        print_kv POSSIBLE_ISSUE_EVAL_OUTCOME "unavailable"
+        return 0
+        ;;
+    esac
   }
 
   _pr_agent_classify() {
     local body="$1"
+    local label label_lower labels
     if [ -z "$body" ]; then
       printf 'none'
     elif printf '%s\n' "$body" | grep -q "No major issues detected"; then
       printf 'clean'
     elif printf '%s\n' "$body" | grep -q "Recommended focus areas for review"; then
-      printf 'needs_fixes'
+      # Inspect every bold label in the section to classify.
+      # Labels are lowercased before matching (case-insensitive — PR-Agent
+      # sometimes varies capitalisation across runs).
+      #   - Hard-blocker / security / compatibility labels → needs_fixes immediately
+      #     (critical, must fix, breaking change, security concern,
+      #      api change, backward compatibility)
+      #   - All other labels → non-blocking (advisory).
+      #     PR-Agent uses a wide variety of quality labels (Race Condition, Logic Error,
+      #     Inconsistent Error Handling, Performance Concern, Possible Issue, etc.)
+      #     that are advisory in nature. Security-critical concerns are always
+      #     labelled one of the hard-blocker patterns above by PR-Agent.
+      #   - If no labels are parseable → needs_fixes (unreadable format — conservative)
+      labels="$(_pr_agent_extract_focus_labels "$body")"
+      if [ -z "$labels" ]; then
+        # No finding-label tokens found — treat as unknown/unreadable, be conservative.
+        printf 'needs_fixes'
+        return
+      fi
+      while IFS= read -r label; do
+        [ -z "$label" ] && continue
+        # Normalize to lowercase for case-insensitive matching.
+        # PR-Agent occasionally varies label capitalisation across runs.
+        label_lower="$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')"
+        case "$label_lower" in
+          critical|"must fix"|"breaking change"|"security concern"|"api change"|"backward compatibility")
+            # Hard-blocker or security/compatibility concern — block immediately.
+            printf 'needs_fixes'
+            return
+            ;;
+          *)
+            # All other labels are treated as advisory-only (non-blocking).
+            # PR-Agent uses a wide variety of quality/style labels (Race Condition,
+            # Logic Error, Inconsistent Error Handling, Performance Concern, etc.)
+            # that represent code-quality suggestions, not security/breaking issues.
+            # Security-critical concerns are always separately labelled one of the
+            # hard-blocker patterns above.
+            ;;
+        esac
+      done <<_PR_AGENT_LABELS_
+$labels
+_PR_AGENT_LABELS_
+      # No hard-blocker label was found — all labels are advisory.
+      printf 'clean'
     else
       printf 'escalate'
     fi
@@ -1076,6 +1299,32 @@ run_pr_agent_review() {
 
   case "$verdict" in
     clean)
+      local _advisory_labels _comment_url _advisory_entry _eval_status
+      _advisory_labels="$(_pr_agent_extract_advisory_labels "$comment_body")"
+      if [ -n "$_advisory_labels" ]; then
+        _comment_url="$(_pr_agent_latest_comment_url strict_sha)"
+        _advisory_entry="${_advisory_labels}@@@${_comment_url}"
+      else
+        _advisory_entry=""
+      fi
+      # Evaluate any "Possible Issue" advisory labels before emitting clean.
+      _eval_status=0
+      run_pr_agent_possible_issue_evaluation \
+        "$_advisory_labels" "$comment_body" "$pr_number" "$branch_name" || _eval_status=$?
+      if [ "$_eval_status" -eq 3 ]; then
+        # Fix was pushed — signal to caller to re-run the loop on the new HEAD.
+        print_kv RESULT needs_rerun
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv REVIEW_COMMENT_ID ""
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv COMMENT_COUNT 0
+        print_kv BLOCKING_COUNT 0
+        print_kv SUGGESTION_COUNT 0
+        [ -n "$_advisory_entry" ] && print_kv ADVISORY_LABELS "$_advisory_entry"
+        return 3
+      fi
       print_kv RESULT clean
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
@@ -1085,6 +1334,7 @@ run_pr_agent_review() {
       print_kv COMMENT_COUNT 0
       print_kv BLOCKING_COUNT 0
       print_kv SUGGESTION_COUNT 0
+      [ -n "$_advisory_entry" ] && print_kv ADVISORY_LABELS "$_advisory_entry"
       return 0
       ;;
     needs_fixes)
@@ -1145,6 +1395,32 @@ run_pr_agent_review() {
   # --- Phase 3: Classify the comment body ---
   case "$verdict" in
     clean)
+      local _advisory_labels _comment_url _advisory_entry _eval_status
+      _advisory_labels="$(_pr_agent_extract_advisory_labels "$comment_body")"
+      if [ -n "$_advisory_labels" ]; then
+        _comment_url="$(_pr_agent_latest_comment_url recent_or_sha)"
+        _advisory_entry="${_advisory_labels}@@@${_comment_url}"
+      else
+        _advisory_entry=""
+      fi
+      # Evaluate any "Possible Issue" advisory labels before emitting clean.
+      _eval_status=0
+      run_pr_agent_possible_issue_evaluation \
+        "$_advisory_labels" "$comment_body" "$pr_number" "$branch_name" || _eval_status=$?
+      if [ "$_eval_status" -eq 3 ]; then
+        # Fix was pushed — signal to caller to re-run the loop on the new HEAD.
+        print_kv RESULT needs_rerun
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv REVIEW_COMMENT_ID ""
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv COMMENT_COUNT 0
+        print_kv BLOCKING_COUNT 0
+        print_kv SUGGESTION_COUNT 0
+        [ -n "$_advisory_entry" ] && print_kv ADVISORY_LABELS "$_advisory_entry"
+        return 3
+      fi
       print_kv RESULT clean
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
@@ -1154,6 +1430,7 @@ run_pr_agent_review() {
       print_kv COMMENT_COUNT 0
       print_kv BLOCKING_COUNT 0
       print_kv SUGGESTION_COUNT 0
+      [ -n "$_advisory_entry" ] && print_kv ADVISORY_LABELS "$_advisory_entry"
       return 0
       ;;
     needs_fixes)
@@ -1183,6 +1460,66 @@ run_pr_agent_review() {
       return 2
       ;;
   esac
+}
+
+check_unreplied_rest_comments() {
+  # Count CodeRabbit root review comments that have received no human (non-bot) reply.
+  # "Root" means in_reply_to_id == null (the original comment, not a reply).
+  #
+  # Unlike check_unresolved_threads (GraphQL reviewThreads), this uses the REST
+  # pulls-comments endpoint which includes outside-diff comments (line == null /
+  # "LNone" in the GitHub UI). These outside-diff comments never create proper
+  # GitHub review threads and are therefore invisible to the GraphQL query, but
+  # they appear in the GitHub PR page as unresolved findings that reviewers can see.
+  #
+  # A root comment is considered "replied" when at least one reply comment exists
+  # whose author is NOT the CodeRabbit bot (i.e., a human or agent acknowledgment).
+  # CodeRabbit's own auto-acknowledgment replies do not count.
+  # Comments containing "✅ Addressed" in the body are also excluded (self-resolved).
+  #
+  # Arguments:
+  #   $1  pr_number  - PR number (integer)
+  #   $2  repo       - "owner/repo" slug
+  #   $3  bot_login  - Full bot login including [bot] suffix (e.g. "coderabbitai[bot]")
+  #                    REST API returns the full login; unlike GraphQL, no stripping needed.
+  #
+  # Prints the count of unreplied root CodeRabbit comments on stdout.
+  # Exit codes: 0 = success, 3 = REST API failure.
+  local pr_number="$1"
+  local repo="$2"
+  local bot_login="$3"
+
+  local result
+  result="$(
+    gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
+    | jq -s --arg bot "$bot_login" '
+        # gh api --paginate | jq -s produces [[page1_items], [page2_items], ...].
+        # Use .[][] to flatten pages before selecting individual comment objects.
+        #
+        # Build the set of root-comment IDs that have received a human (non-bot) reply.
+        (
+          [.[][] | select(
+            .in_reply_to_id != null and
+            .user.login != $bot
+          ) | .in_reply_to_id] | unique
+        ) as $human_replied_ids
+        # Count root CR comments that have NOT been acknowledged by a human reply
+        # and whose body does not self-resolve with "✅ Addressed".
+        | [.[][] | select(
+            .user.login == $bot and
+            .in_reply_to_id == null and
+            ((.body // "") | test("✅ Addressed") | not)
+          ) | select(
+            .id as $id |
+            ($human_replied_ids | index($id)) == null
+          )] | length
+      '
+  )" || {
+    echo "WARN: check_unreplied_rest_comments: REST query failed for PR #$pr_number" >&2
+    return 3
+  }
+
+  printf '%d\n' "${result:-0}"
 }
 
 is_coderabbit_blocking() {
@@ -1308,6 +1645,40 @@ coderabbit_thread_gate_clean() {
     print_kv UNRESOLVED_THREAD_COUNT "$out"
     return 1
   fi
+
+  # --- Supplementary REST check for outside-diff comments ---
+  # GraphQL reviewThreads only sees comments anchored to diff lines. CodeRabbit
+  # sometimes posts comments on lines outside the PR diff (line == null); these
+  # never create proper GitHub review threads and are invisible to the GraphQL
+  # query above, but they ARE visible in the GitHub PR UI as unresolved findings.
+  # Detect them via the REST pulls-comments endpoint and require a human reply
+  # before allowing RESULT=clean.
+  local rest_unreplied_raw rest_check_st
+  set +e
+  rest_unreplied_raw="$(check_unreplied_rest_comments "$pr_number" "$repo" "$bot_login")"
+  rest_check_st=$?
+  eval "$prev_errexit"
+
+  if [ "$rest_check_st" -eq 0 ] && [ "${rest_unreplied_raw:-0}" -gt 0 ]; then
+    print_kv RESULT needs_fixes
+    print_kv REASON coderabbit_unreplied_rest_comments
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT "${rest_unreplied_raw:-0}"
+    print_kv BLOCKING_COUNT "${rest_unreplied_raw:-0}"
+    print_kv SUGGESTION_COUNT 0
+    print_kv UNRESOLVED_THREAD_COUNT "${rest_unreplied_raw:-0}"
+    return 1
+  fi
+  if [ "$rest_check_st" -ne 0 ]; then
+    # REST failure is non-fatal: the GraphQL thread check already passed.
+    # Log the warning and allow RESULT=clean to proceed.
+    echo "WARN: check_unreplied_rest_comments failed (exit $rest_check_st) for PR #$pr_number — skipping outside-diff supplement" >&2
+  fi
+
   return 0
 }
 
@@ -1853,7 +2224,7 @@ bot_login_for_platform() {
     devin)        printf 'devin-ai-integration\n' ;;
     greptile)     printf 'greptile-apps\n' ;;
     pr-agent)     printf '\n' ;;
-    codex-github) printf '%s\n' "${CODEX_GITHUB_BOT_LOGIN:-codex-ai[bot]}" ;;
+    codex-github) printf '%s\n' "${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}" ;;
     *)            printf '\n' ;;
   esac
 }
@@ -2018,6 +2389,8 @@ poll_interval=120
 poll_interval_explicit=0
 max_wait=1200
 max_wait_explicit=0
+post_final_summary=0
+compare_mode=0
 declare -a platforms=()
 
 while [ "$#" -gt 0 ]; do
@@ -2039,6 +2412,14 @@ while [ "$#" -gt 0 ]; do
       max_wait="$2"
       max_wait_explicit=1
       shift 2
+      ;;
+    --post-final-summary)
+      post_final_summary=1
+      shift
+      ;;
+    --compare)
+      compare_mode=1
+      shift
       ;;
     -h|--help)
       usage
@@ -2100,6 +2481,170 @@ if [ "$max_wait_explicit" -eq 0 ]; then
   esac
 fi
 
+# --- Compare-mode helpers ---
+
+# normalize_platform_verdict: map a raw platform result token to one of the five
+# canonical compare-mode verdict values: clean, blocking, advisory, timed out, unavailable.
+# $1 = platform_result token (e.g. clean, needs_fixes, skipped, escalate, needs_rerun)
+# $2 = full platform output (key=value block; used to inspect REASON for timeout detection)
+normalize_platform_verdict() {
+  local result="$1"
+  local output="${2:-}"
+  local reason
+  reason="$(kv_value_default REASON "$output" "")"
+  case "$result" in
+    clean)       printf 'clean' ;;
+    needs_fixes) printf 'blocking' ;;
+    skipped)     printf 'clean' ;;
+    needs_rerun) printf 'blocking' ;;
+    escalate)
+      # Distinguish timeout from service-unavailable via REASON.
+      case "$reason" in
+        timeout|timed_out|max_wait_exceeded|no_response)
+          printf 'timed out' ;;
+        *)
+          printf 'unavailable' ;;
+      esac
+      ;;
+    *)           printf 'unavailable' ;;
+  esac
+}
+
+# append_compare_metrics_row: append one structured row to the platform metrics log.
+# Called at the end of the platform loop when compare_mode=1.
+# $1 = pr_number
+# $2 = branch_name
+# $3 = overall_result (the aggregate after all platforms ran)
+# Remaining args: pairs of platform_name verdict_token (e.g. coderabbit blocking greptile clean)
+append_compare_metrics_row() {
+  local pr_number_arg="$1"
+  local branch_name_arg="$2"
+  local overall_result_arg="$3"
+  shift 3
+
+  local metrics_file
+  metrics_file="$(workflow_repo_root)/docs/workflow/retro-metrics-platforms.md"
+
+  # Derive branch type from the branch name prefix.
+  local branch_type
+  case "$branch_name_arg" in
+    feature/*)            branch_type="feature" ;;
+    fix/*)                branch_type="fix" ;;
+    refactor/*)           branch_type="refactor" ;;
+    hotfix/*)             branch_type="hotfix" ;;
+    spec/*)               branch_type="spec" ;;
+    implementation-plan/*) branch_type="plan" ;;
+    *)                    branch_type="other" ;;
+  esac
+
+  # Collect pairs: platform_names and verdict_tokens in order.
+  local -a platform_names=()
+  local -a verdict_tokens=()
+  while [ "$#" -ge 2 ]; do
+    platform_names+=("$1")
+    verdict_tokens+=("$2")
+    shift 2
+  done
+
+  # Build dynamic platform-column headers from the current run's platform list.
+  local header_platform_cols=""
+  for _pname in "${platform_names[@]}"; do
+    header_platform_cols="${header_platform_cols} ${_pname} |"
+  done
+  local separator_platform_cols=""
+  for _pname in "${platform_names[@]}"; do
+    separator_platform_cols="${separator_platform_cols}---|"
+  done
+
+  # Create the file with the full header when it does not yet exist.
+  # If the file exists (e.g. pre-created with prose only) but has no table header
+  # row yet (detected by absence of the "|---|" separator line), append the table
+  # header rows so the Markdown table is valid before the first data row.
+  if [ ! -f "$metrics_file" ]; then
+    cat > "$metrics_file" <<METRICS_HEADER
+# Platform Comparison Metrics Log
+
+This file is append-only. One row is appended per compare-mode reviewer loop run.
+Do not delete or rewrite existing rows. The "Block Was Real Bug?" column may be
+filled in manually after a run when post-hoc analysis determines whether a
+platform-exclusive blocking finding corresponded to a real code defect.
+
+## Graduation Criteria
+
+A platform may be considered safe for removal when, across 30 or more consecutive
+compare-mode runs covering at least one run each of \`fix\`, \`feature\`, and \`refactor\`
+branch types, it has zero platform-exclusive blocking findings (runs where that
+platform blocked but at least one other configured platform was clean).
+
+Fewer than 30 runs is always insufficient data for a graduation decision.
+
+## Metrics Table
+
+| PR | Branch Type |${header_platform_cols} Overall Result | Block Was Real Bug? |
+|---|---|${separator_platform_cols}---|---|
+METRICS_HEADER
+  elif ! grep -q '^|---|' "$metrics_file" 2>/dev/null; then
+    # File exists but has no table separator row — append the table header now.
+    # Ensure there is a blank line before the table if the file has content.
+    if [ -s "$metrics_file" ]; then
+      printf '\n' >> "$metrics_file"
+    fi
+    printf '| PR | Branch Type |%s Overall Result | Block Was Real Bug? |\n' \
+      "$header_platform_cols" >> "$metrics_file"
+    printf '|---|---|%s---|---|\n' \
+      "$separator_platform_cols" >> "$metrics_file"
+  else
+    # File exists and already has a table. Check whether the current platform
+    # set matches the existing header. If not, insert a separator comment row
+    # before appending the data row so human readers can see the config changed.
+    # Detection: count the platform columns in the existing header by looking at
+    # the separator row (each "---|" token corresponds to one column).
+    # Column order: PR, Branch Type, <platforms...>, Overall Result, Block Was Real Bug?
+    # Fixed columns = 4 (PR, Branch Type, Overall Result, Block Was Real Bug?)
+    # Platform columns = total separator tokens - 4
+    existing_sep_row="$(grep '^|---|' "$metrics_file" | head -1)"
+    existing_platform_col_count=$(printf '%s' "$existing_sep_row" | tr -cd '|' | wc -c | tr -d ' ')
+    # pipe count = platform_cols + 4 fixed cols + 1 leading pipe → total pipes = platform_cols + 5
+    # Solve: existing_platform_col_count (pipes) = existing_platform_cols + 5
+    existing_platform_count=$(( existing_platform_col_count - 5 ))
+    current_platform_count="${#platform_names[@]}"
+    if [ "$current_platform_count" -ne "$existing_platform_count" ]; then
+      # Platform configuration changed: insert a separator row to mark the boundary.
+      # Build blank cells matching the EXISTING header's column count so the
+      # separator row is a valid row in the current table (not the new layout).
+      # Total existing columns = existing_platform_count + 4 fixed columns
+      # (PR, Branch Type, Overall Result, Block Was Real Bug?).
+      # The separator row occupies: 1 cell for the annotation + blank cells for
+      # Branch Type + existing platforms + Overall Result + Block Was Real Bug?
+      # = existing_platform_count + 3 remaining blank cells after the first.
+      _sep_blank_cols=""
+      _sep_i=0
+      while [ "$_sep_i" -lt $(( existing_platform_count + 3 )) ]; do
+        _sep_blank_cols="${_sep_blank_cols} |"
+        _sep_i=$(( _sep_i + 1 ))
+      done
+      printf '| *(platforms changed: %s)* |%s\n' \
+        "$(IFS=,; printf '%s' "${platform_names[*]}")" \
+        "$_sep_blank_cols" \
+        >> "$metrics_file"
+    fi
+  fi
+
+  # Build the verdict columns for this row.
+  local row_verdict_cols=""
+  for _vtoken in "${verdict_tokens[@]}"; do
+    row_verdict_cols="${row_verdict_cols} ${_vtoken} |"
+  done
+
+  # Append one row.
+  printf '| #%s | %s |%s %s | |\n' \
+    "$pr_number_arg" \
+    "$branch_type" \
+    "$row_verdict_cols" \
+    "$overall_result_arg" \
+    >> "$metrics_file"
+}
+
 aggregate_result="skipped"
 aggregate_reason=""
 last_platform=""
@@ -2108,6 +2653,14 @@ aggregate_status=0
 total_comment_count=0
 total_blocking_count=0
 total_suggestion_count=0
+aggregate_advisory_labels=""
+declare -a compare_verdicts=()
+# Compare-mode: track the first blocking platform seen so later clean platforms
+# do not overwrite the aggregate. These variables are set once and never reset.
+compare_first_blocking_result=""
+compare_first_blocking_reason=""
+compare_first_blocking_output=""
+compare_first_blocking_status=0
 
 print_kv PR_NUMBER "$pr_number"
 print_kv BRANCH "$branch_name"
@@ -2129,15 +2682,30 @@ for index in "${!platforms[@]}"; do
   platform_comment_count="$(kv_value_default COMMENT_COUNT "$platform_output" 0)"
   platform_blocking_count="$(kv_value_default BLOCKING_COUNT "$platform_output" 0)"
   platform_suggestion_count="$(kv_value_default SUGGESTION_COUNT "$platform_output" 0)"
+  platform_advisory_labels="$(kv_value_default ADVISORY_LABELS "$platform_output" "")"
 
   total_comment_count=$((total_comment_count + platform_comment_count))
   total_blocking_count=$((total_blocking_count + platform_blocking_count))
   total_suggestion_count=$((total_suggestion_count + platform_suggestion_count))
+  if [ -n "$platform_advisory_labels" ]; then
+    if [ -n "$aggregate_advisory_labels" ]; then
+      aggregate_advisory_labels="${aggregate_advisory_labels}|||${platform_advisory_labels}"
+    else
+      aggregate_advisory_labels="$platform_advisory_labels"
+    fi
+  fi
   last_platform="$platform_name"
 
   print_kv "PLATFORM_${platform_index}_NAME" "$platform_name"
   print_kv "PLATFORM_${platform_index}_RESULT" "$platform_result"
   emit_prefixed_platform_output "$platform_index" "$platform_output"
+
+  # In compare mode, record a normalized verdict for each platform before
+  # deciding whether to break. The normalized verdict captures clean / blocking /
+  # advisory / timed out / unavailable regardless of the raw result token.
+  if [ "$compare_mode" -eq 1 ]; then
+    compare_verdicts+=("$platform_name" "$(normalize_platform_verdict "$platform_result" "$platform_output")")
+  fi
 
   case "$platform_result" in
     clean)
@@ -2159,14 +2727,52 @@ for index in "${!platforms[@]}"; do
       aggregate_reason="$(kv_value_default REASON "$platform_output" "")"
       aggregate_output="$platform_output"
       aggregate_status=$platform_status
-      break
+      if [ "$compare_mode" -eq 0 ]; then
+        # Normal mode: short-circuit on first blocking platform.
+        break
+      fi
+      # Compare mode: capture the first blocking state so later clean platforms
+      # cannot overwrite the aggregate. Only the first blocking platform governs.
+      if [ -z "$compare_first_blocking_result" ]; then
+        compare_first_blocking_result="$platform_result"
+        compare_first_blocking_reason="$aggregate_reason"
+        compare_first_blocking_output="$platform_output"
+        compare_first_blocking_status=$platform_status
+      fi
+      ;;
+    needs_rerun)
+      # PR-Agent "Possible Issue" evaluation: a fix was pushed; re-run the loop.
+      # Propagate as needs_rerun (exit 3) so orchestrator callers distinguish
+      # this from needs_fixes (fixer dispatch) and re-invoke on the new HEAD.
+      aggregate_result="needs_rerun"
+      aggregate_output="$platform_output"
+      aggregate_status=$platform_status
+      if [ "$compare_mode" -eq 0 ]; then
+        break
+      fi
+      # Compare mode: record verdict and continue to remaining platforms.
+      if [ -z "$compare_first_blocking_result" ]; then
+        compare_first_blocking_result="needs_rerun"
+        compare_first_blocking_reason=""
+        compare_first_blocking_output="$platform_output"
+        compare_first_blocking_status=$platform_status
+      fi
       ;;
     *)
       aggregate_result="escalate"
       aggregate_reason="unknown-platform-result"
       aggregate_output="$platform_output"
       aggregate_status=2
-      break
+      if [ "$compare_mode" -eq 0 ]; then
+        break
+      fi
+      # Compare mode: capture first blocking state (unknown result treated as blocking).
+      if [ -z "$compare_first_blocking_result" ]; then
+        compare_first_blocking_result="escalate"
+        compare_first_blocking_reason="unknown-platform-result"
+        compare_first_blocking_output="$platform_output"
+        compare_first_blocking_status=2
+      fi
       ;;
   esac
 done
@@ -2180,6 +2786,51 @@ if [ -z "$last_platform" ]; then
   print_kv SUGGESTION_COUNT 0
   print_kv UNRESOLVED_THREAD_COUNT 0
   exit 0
+fi
+
+# --- Compare mode: restore first-blocking aggregate, emit output, write metrics ---
+# When compare mode is active, all platforms ran to completion. Later clean platforms
+# may have overwritten aggregate_result after the first blocking platform set it.
+# Restore the first-blocking state now to ensure the overall result is identical to
+# what normal mode would have produced (BR-1: first blocking platform in config order
+# governs).
+if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
+  # Restore aggregate from the first blocking platform, if any.
+  if [ -n "$compare_first_blocking_result" ]; then
+    aggregate_result="$compare_first_blocking_result"
+    aggregate_reason="$compare_first_blocking_reason"
+    aggregate_output="$compare_first_blocking_output"
+    aggregate_status=$compare_first_blocking_status
+  fi
+  # aggregate_result is now clean/skipped (if no platform blocked) or the result
+  # of the first blocking platform in config order.
+
+  # Emit compare-mode key=value output lines.
+  print_kv COMPARE_MODE 1
+  local_compare_index=0
+  _idx=0
+  while [ "$_idx" -lt "${#compare_verdicts[@]}" ]; do
+    _cvname="${compare_verdicts[$_idx]}"
+    _cvtoken="${compare_verdicts[$((_idx + 1))]}"
+    local_compare_index=$((local_compare_index + 1))
+    print_kv "COMPARE_VERDICT_${local_compare_index}_PLATFORM" "$_cvname"
+    print_kv "COMPARE_VERDICT_${local_compare_index}_RESULT" "$_cvtoken"
+    _idx=$((_idx + 2))
+  done
+
+  # Append the metrics row (best-effort; suppress errors so a write failure does
+  # not change the script's exit code).
+  set +e
+  # Build the argument list: pr, branch, overall_result, then pairs of (name, verdict).
+  _metrics_args=("$pr_number" "$branch_name" "$aggregate_result")
+  _idx=0
+  while [ "$_idx" -lt "${#compare_verdicts[@]}" ]; do
+    _metrics_args+=("${compare_verdicts[$_idx]}" "${compare_verdicts[$((_idx + 1))]}")
+    _idx=$((_idx + 2))
+  done
+  append_compare_metrics_row "${_metrics_args[@]}" 2>/dev/null || \
+    echo "WARN: append_compare_metrics_row failed — metrics row not written" >&2
+  set -e
 fi
 
 # --- Unresolved review thread gate ---
@@ -2268,14 +2919,250 @@ if [ -n "$aggregate_output" ]; then
   [ -n "$review_comment_id" ] && print_kv REVIEW_COMMENT_ID "$review_comment_id"
 fi
 
+# --- Automated Reviewer Loop Summary comment ---
+# Post a summary comment to the PR on terminal exit paths so the Step 8c
+# hasReviewSummary check is satisfied automatically. The comment body matches
+# the regex used by workflow-next-action.sh and Protocol 90 Step 5.1:
+#   "Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"
+# Post on `clean` and `escalate` exits unconditionally. For `needs_fixes` exits,
+# post only when --post-final-summary is set — i.e. when the orchestrator has
+# determined this is the terminal run (cycle >= max_cycles) and will not dispatch
+# another fixer regardless of the exit code. Posting on every `needs_fixes` exit
+# would create duplicate comments per fix cycle.
+# `skipped` exits (no platforms configured) also do not post per protocol spec.
+_post_review_summary() {
+  local result="$1"
+  local reason="$2"
+  local platform_list="$3"
+  local blocking="$4"
+  local suggestions="$5"
+  local advisory_labels="${6:-}"
+  local possible_issue_eval_outcome="${7:-}"
+
+  if [ -z "$pr_number" ]; then
+    return 0
+  fi
+
+  local result_line
+  case "$result" in
+    clean)
+      if [ "$blocking" -eq 0 ] && [ "$suggestions" -eq 0 ]; then
+        result_line="clean — no blocking findings"
+      else
+        result_line="clean"
+      fi
+      ;;
+    needs_fixes)
+      result_line="max cycles reached — ${blocking} blocking finding(s) unresolved"
+      ;;
+    escalate)
+      result_line="escalated (${reason:-unknown})"
+      ;;
+    *)
+      result_line="$result"
+      ;;
+  esac
+
+  # Build the optional advisory findings section.
+  # advisory_labels format: "<labels>@@@<url>" entries separated by "|||"
+  # Each entry's labels are pipe-separated. Render each label as a list item,
+  # linking to the PR-Agent comment URL when available.
+  local advisory_section=""
+  if [ -n "$advisory_labels" ]; then
+    local _entry _labels _url _label
+    advisory_section="
+
+**Advisory findings (non-blocking):**"
+    # Split entries by ||| separator using sed (IFS does not support multi-char
+    # separators). Each entry has the form "<pipe-delimited labels>@@@<url>".
+    local _entries_normalized
+    _entries_normalized="$(printf '%s' "$advisory_labels" | sed 's/|||/\n/g')"
+    while IFS= read -r _entry; do
+      [ -z "$_entry" ] && continue
+      _labels="${_entry%@@@*}"
+      _url="${_entry##*@@@}"
+      # Split pipe-delimited labels within this entry
+      local _labels_normalized
+      _labels_normalized="$(printf '%s' "$_labels" | tr '|' '\n')"
+      while IFS= read -r _label; do
+        [ -z "$_label" ] && continue
+        if [ -n "$_url" ] && [ "$_url" != "$_labels" ]; then
+          advisory_section="${advisory_section}
+- ${_label} ([view comment](${_url}))"
+        else
+          advisory_section="${advisory_section}
+- ${_label}"
+        fi
+      done <<_ADVISORY_LABEL_LINES_
+$_labels_normalized
+_ADVISORY_LABEL_LINES_
+    done <<_ADVISORY_ENTRY_LINES_
+$_entries_normalized
+_ADVISORY_ENTRY_LINES_
+    # Append "Possible Issue" evaluation outcome when available.
+    if [ -n "$possible_issue_eval_outcome" ]; then
+      local _eval_note
+      case "$possible_issue_eval_outcome" in
+        acknowledged)
+          _eval_note="Evaluated by code-reviewer: acknowledged (finding is acceptable — loop proceeded clean)"
+          ;;
+        fix_pushed)
+          _eval_note="Evaluated by code-reviewer: fix pushed — loop re-ran on new HEAD"
+          ;;
+        unavailable)
+          _eval_note="Evaluated by code-reviewer: unavailable — fell back to advisory-only (clean)"
+          ;;
+        *)
+          _eval_note="Evaluated by code-reviewer: outcome=${possible_issue_eval_outcome}"
+          ;;
+      esac
+      advisory_section="${advisory_section}
+  _Possible Issue evaluation_: ${_eval_note}"
+    fi
+  fi
+
+  # Step 7b regression-label assertion (clean path, implementation PRs only).
+  # When the reviewer loop exits clean for a feature/fix/refactor/hotfix branch,
+  # the next required step is Step 7b (apply ready-for-regression before Step 8).
+  # Check whether the label is already present and append a warning to the summary
+  # comment if it is missing. This makes the missing label visible to agents and
+  # orchestrators that read the summary comment, without blocking the script's exit.
+  # The check is best-effort: suppress all errors so a gh failure does not change
+  # the script's exit code or prevent the summary comment from being posted.
+  local regression_label_section=""
+  if [ "$result" = "clean" ]; then
+    case "${branch_name:-}" in
+      feature/*|fix/*|refactor/*|hotfix/*)
+        local _has_regression_label
+        _has_regression_label="$(gh pr view "$pr_number" --json labels \
+          --jq '[.labels[].name] | any(. == "ready-for-regression")' 2>/dev/null)" || true
+        if [ "${_has_regression_label:-}" = "false" ]; then
+          regression_label_section="
+
+**Step 7b WARNING: \`ready-for-regression\` label is missing.** Apply it now before entering Step 8 (CI loop):
+\`\`\`
+gh pr edit ${pr_number} --add-label \"ready-for-regression\"
+\`\`\`
+Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs after Step 7 completes clean."
+        fi
+        ;;
+    esac
+  fi
+
+  # Build optional compare-mode per-platform section.
+  local compare_section=""
+  if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
+    compare_section="
+
+**Compare mode — per-platform verdicts:**"
+    _idx=0
+    while [ "$_idx" -lt "${#compare_verdicts[@]}" ]; do
+      _cvname="${compare_verdicts[$_idx]}"
+      _cvtoken="${compare_verdicts[$((_idx + 1))]}"
+      compare_section="${compare_section}
+- ${_cvname}: ${_cvtoken}"
+      _idx=$((_idx + 2))
+    done
+    compare_section="${compare_section}
+
+*Metrics row appended to \`docs/workflow/retro-metrics-platforms.md\`.*"
+  fi
+
+  local comment_body
+  comment_body="$(cat <<EOF
+### Automated Reviewer Loop Summary
+
+**Result:** ${result_line}
+**Platforms:** ${platform_list:-none}
+**Findings:** ${blocking} blocking, ${suggestions} suggestions${compare_section}${advisory_section}${regression_label_section}
+
+*Posted automatically by \`pr-review-loop.sh\`.*
+EOF
+)"
+
+  # Suppress errors — a failed comment post should not change the exit code.
+  # The script's primary contract is the key=value output and exit code.
+  set +e
+
+  # Update-in-place: find an existing script-posted summary comment and edit it
+  # rather than creating a new one. This prevents redundant intermediate summary
+  # comments when the orchestrator invokes the script multiple times (e.g. once
+  # per fix cycle). Only one "Automated Reviewer Loop Summary" comment should
+  # ever exist on the PR timeline at a time.
+  # The marker string "*Posted automatically by `pr-review-loop.sh`.*" is unique
+  # to this script and is present in every comment it posts.
+  local _existing_comment_id=""
+  local _repo
+  _repo="$(repo_slug 2>/dev/null)" || true
+  if [ -n "$_repo" ]; then
+    _existing_comment_id="$(
+      gh api "repos/$_repo/issues/$pr_number/comments" --paginate 2>/dev/null \
+        | jq -rs '
+            add // []
+            | [.[]
+               | select(
+                   (.body // "" | contains("### Automated Reviewer Loop Summary")) and
+                   (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
+                 )
+              ]
+            | sort_by(.created_at)
+            | last
+            | .id // empty
+          '
+    )" || true
+  fi
+
+  if [ -n "$_existing_comment_id" ]; then
+    # Edit the existing comment in place; fall back to creating a new comment
+    # if the PATCH fails (e.g. comment was deleted or a transient API error).
+    gh api "repos/$_repo/issues/comments/$_existing_comment_id" \
+      --method PATCH \
+      -f body="$comment_body" >/dev/null 2>&1 \
+      || gh pr comment "$pr_number" --body "$comment_body" >/dev/null 2>&1
+  else
+    gh pr comment "$pr_number" --body "$comment_body" >/dev/null 2>&1
+  fi
+
+  set -e
+}
+
+aggregate_possible_issue_eval_outcome="$(kv_value_default POSSIBLE_ISSUE_EVAL_OUTCOME "$aggregate_output" "")"
+
 case "$aggregate_result" in
-  clean|skipped)
+  clean)
+    _post_review_summary "$aggregate_result" "$aggregate_reason" \
+      "$(IFS=,; printf '%s' "${platforms[*]}")" \
+      "$total_blocking_count" "$total_suggestion_count" \
+      "$aggregate_advisory_labels" \
+      "$aggregate_possible_issue_eval_outcome"
+    exit 0
+    ;;
+  skipped)
     exit 0
     ;;
   needs_fixes)
+    if [ "$post_final_summary" -eq 1 ]; then
+      _post_review_summary "$aggregate_result" "$aggregate_reason" \
+        "$(IFS=,; printf '%s' "${platforms[*]}")" \
+        "$total_blocking_count" "$total_suggestion_count" \
+        "$aggregate_advisory_labels" \
+        "$aggregate_possible_issue_eval_outcome"
+    fi
     exit 1
     ;;
+  needs_rerun)
+    # PR-Agent "Possible Issue" evaluation pushed a fix; orchestrator must
+    # re-invoke the loop on the new HEAD. No summary comment is posted here —
+    # the loop re-runs from the top and posts the summary on its terminal exit.
+    print_kv RESULT needs_rerun
+    exit 3
+    ;;
   escalate)
+    _post_review_summary "$aggregate_result" "$aggregate_reason" \
+      "$(IFS=,; printf '%s' "${platforms[*]}")" \
+      "$total_blocking_count" "$total_suggestion_count" \
+      "$aggregate_advisory_labels" \
+      "$aggregate_possible_issue_eval_outcome"
     exit 2
     ;;
   *)

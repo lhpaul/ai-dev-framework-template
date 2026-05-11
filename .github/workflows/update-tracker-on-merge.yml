@@ -263,3 +263,12 @@ jobs:
           gh issue close "$ISSUE_NUMBER" --repo "$GH_REPO" \
             --comment "Closed automatically: implementation PR merged to develop." \
             || echo "WARNING: gh issue close failed (issue may already be closed or not exist) — continuing."
+
+      - name: Log branch-type to tracker-status mapping summary
+        run: |
+          echo "=== Branch-type → tracker-status mapping (AC-1, AC-2, AC-3) ==="
+          echo "  spec/*                                  → Spec Ready"
+          echo "  implementation-plan/*                   → Plan Ready"
+          echo "  feature/*, fix/*, refactor/*, hotfix/*  → Merged (and close the issue)"
+          echo "========================================================"
+          echo "These mappings are verified by scripts/development-workflow/check-tracker-merge-mapping.sh."
