@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Add AI evaluation layer for PR-Agent "Possible Issue" findings** (#562): When
+  PR-Agent returns clean with a "Possible Issue" advisory label, the reviewer loop
+  now dispatches the code-reviewer agent to evaluate the finding. If a real bug is
+  found the agent pushes a fix and the loop re-runs (exit code 3 / `RESULT=needs_rerun`);
+  if the finding is acceptable the agent posts a substantive acknowledgment comment and
+  the loop proceeds clean. Other advisory labels remain non-blocking and unevaluated.
+  A fallback to advisory-only behaviour is preserved when the agent is unavailable
+  (`POSSIBLE_ISSUE_EVAL_OUTCOME=unavailable`). Protocols 91 Step 7 and 93 "Procedure
+  (per PR)" are updated to document the new dispatch contract.
 - **Support CodeRabbit as internal reviewer (Step 7a)** (#528): Add `coderabbit` as a supported value in `review.internal_reviewers` in `.ai-dev-workflow.yaml`, allowing CodeRabbit to run as a Step 7a draft-PR internal reviewer before non-draft conversion. Updates Protocol 91 Step 7a (supported values list, reachability classification table, reviewer dispatch map) and adds a "Step 7a — Internal Reviewer" section to `docs/workflow/development-workflow/integrations/coderabbit.md`.
 
 ### Fixed

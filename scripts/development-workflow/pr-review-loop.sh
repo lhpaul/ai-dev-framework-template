@@ -102,7 +102,7 @@ Branch-type-aware default timeout:
   override either value.
 
 Outputs stable key=value lines including:
-  RESULT=clean|needs_fixes|escalate|skipped
+  RESULT=clean|needs_fixes|needs_rerun|escalate|skipped
   PLATFORM_<n>_NAME / PLATFORM_<n>_RESULT
   REASON=lock_contention (when exit code is 75)
 EOF
@@ -1139,6 +1139,80 @@ _PR_AGENT_ADVISORY_LABELS_
     printf '%s' "$advisory_labels"
   }
 
+  # Returns pipe-delimited labels that match "possible issue" (case-insensitive).
+  # Input:  pipe-delimited advisory labels string (e.g. "Possible Issue|Edge Case")
+  # Output: pipe-delimited matching labels, or empty string.
+  _extract_possible_issue_labels() {
+    local advisory="$1"
+    local result=""
+    local label label_lower
+    local _labels_normalized
+    _labels_normalized="$(printf '%s' "$advisory" | tr '|' '\n')"
+    while IFS= read -r label; do
+      [ -z "$label" ] && continue
+      label_lower="$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')"
+      if [ "$label_lower" = "possible issue" ]; then
+        if [ -n "$result" ]; then
+          result="${result}|${label}"
+        else
+          result="$label"
+        fi
+      fi
+    done <<_EXTRACT_POSSIBLE_ISSUE_LABELS_
+$_labels_normalized
+_EXTRACT_POSSIBLE_ISSUE_LABELS_
+    printf '%s' "$result"
+  }
+
+  # Evaluate "Possible Issue" advisory labels found in a PR-Agent clean result.
+  # Reads POSSIBLE_ISSUE_EVAL_OUTCOME from environment (set by orchestrator caller).
+  # Returns:
+  #   0  — no "Possible Issue" label found (short-circuit), OR
+  #         finding acknowledged, OR agent unavailable (advisory-only fallback)
+  #   3  — fix was pushed; caller must re-run the loop on the new HEAD
+  run_pr_agent_possible_issue_evaluation() {
+    local advisory_labels="$1"  # pipe-delimited, already extracted from comment
+    local comment_body="$2"     # full PR-Agent comment body (for agent context)
+    local pr_number_eval="$3"
+    local branch_name_eval="$4"
+
+    local possible_issue_labels
+    possible_issue_labels="$(_extract_possible_issue_labels "$advisory_labels")"
+
+    # Short-circuit: no "Possible Issue" advisory labels present.
+    if [ -z "$possible_issue_labels" ]; then
+      return 0
+    fi
+
+    # Emit structured key for the orchestrator caller to consume.
+    print_kv PR_AGENT_POSSIBLE_ISSUE_EVAL "${pr_number_eval}@@@${branch_name_eval}"
+    print_kv_escaped PR_AGENT_POSSIBLE_ISSUE_BODY "$comment_body"
+
+    # Read the eval outcome set by the orchestrator after code-reviewer agent finishes.
+    local eval_outcome="${POSSIBLE_ISSUE_EVAL_OUTCOME:-}"
+
+    case "$eval_outcome" in
+      fix_pushed)
+        print_kv POSSIBLE_ISSUE_EVAL_OUTCOME "fix_pushed"
+        return 3  # sentinel: re-run the loop
+        ;;
+      acknowledged)
+        print_kv POSSIBLE_ISSUE_EVAL_OUTCOME "acknowledged"
+        return 0
+        ;;
+      unavailable|"")
+        echo "WARN: code-reviewer agent unavailable or eval outcome not set for 'Possible Issue' finding — falling back to advisory-only (clean)" >&2
+        print_kv POSSIBLE_ISSUE_EVAL_OUTCOME "unavailable"
+        return 0
+        ;;
+      *)
+        echo "WARN: unknown POSSIBLE_ISSUE_EVAL_OUTCOME '${eval_outcome}' — falling back to advisory-only (clean)" >&2
+        print_kv POSSIBLE_ISSUE_EVAL_OUTCOME "unavailable"
+        return 0
+        ;;
+    esac
+  }
+
   _pr_agent_classify() {
     local body="$1"
     local label label_lower labels
@@ -1202,13 +1276,31 @@ _PR_AGENT_LABELS_
 
   case "$verdict" in
     clean)
-      local _advisory_labels _comment_url _advisory_entry
+      local _advisory_labels _comment_url _advisory_entry _eval_status
       _advisory_labels="$(_pr_agent_extract_advisory_labels "$comment_body")"
       if [ -n "$_advisory_labels" ]; then
         _comment_url="$(_pr_agent_latest_comment_url strict_sha)"
         _advisory_entry="${_advisory_labels}@@@${_comment_url}"
       else
         _advisory_entry=""
+      fi
+      # Evaluate any "Possible Issue" advisory labels before emitting clean.
+      _eval_status=0
+      run_pr_agent_possible_issue_evaluation \
+        "$_advisory_labels" "$comment_body" "$pr_number" "$branch_name" || _eval_status=$?
+      if [ "$_eval_status" -eq 3 ]; then
+        # Fix was pushed — signal to caller to re-run the loop on the new HEAD.
+        print_kv RESULT needs_rerun
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv REVIEW_COMMENT_ID ""
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv COMMENT_COUNT 0
+        print_kv BLOCKING_COUNT 0
+        print_kv SUGGESTION_COUNT 0
+        [ -n "$_advisory_entry" ] && print_kv ADVISORY_LABELS "$_advisory_entry"
+        return 3
       fi
       print_kv RESULT clean
       print_kv PLATFORM "$platform"
@@ -1280,13 +1372,31 @@ _PR_AGENT_LABELS_
   # --- Phase 3: Classify the comment body ---
   case "$verdict" in
     clean)
-      local _advisory_labels _comment_url _advisory_entry
+      local _advisory_labels _comment_url _advisory_entry _eval_status
       _advisory_labels="$(_pr_agent_extract_advisory_labels "$comment_body")"
       if [ -n "$_advisory_labels" ]; then
         _comment_url="$(_pr_agent_latest_comment_url recent_or_sha)"
         _advisory_entry="${_advisory_labels}@@@${_comment_url}"
       else
         _advisory_entry=""
+      fi
+      # Evaluate any "Possible Issue" advisory labels before emitting clean.
+      _eval_status=0
+      run_pr_agent_possible_issue_evaluation \
+        "$_advisory_labels" "$comment_body" "$pr_number" "$branch_name" || _eval_status=$?
+      if [ "$_eval_status" -eq 3 ]; then
+        # Fix was pushed — signal to caller to re-run the loop on the new HEAD.
+        print_kv RESULT needs_rerun
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv REVIEW_COMMENT_ID ""
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv COMMENT_COUNT 0
+        print_kv BLOCKING_COUNT 0
+        print_kv SUGGESTION_COUNT 0
+        [ -n "$_advisory_entry" ] && print_kv ADVISORY_LABELS "$_advisory_entry"
+        return 3
       fi
       print_kv RESULT clean
       print_kv PLATFORM "$platform"
@@ -2413,6 +2523,15 @@ for index in "${!platforms[@]}"; do
       aggregate_status=$platform_status
       break
       ;;
+    needs_rerun)
+      # PR-Agent "Possible Issue" evaluation: a fix was pushed; re-run the loop.
+      # Propagate as needs_rerun (exit 3) so orchestrator callers distinguish
+      # this from needs_fixes (fixer dispatch) and re-invoke on the new HEAD.
+      aggregate_result="needs_rerun"
+      aggregate_output="$platform_output"
+      aggregate_status=$platform_status
+      break
+      ;;
     *)
       aggregate_result="escalate"
       aggregate_reason="unknown-platform-result"
@@ -2538,6 +2657,7 @@ _post_review_summary() {
   local blocking="$4"
   local suggestions="$5"
   local advisory_labels="${6:-}"
+  local possible_issue_eval_outcome="${7:-}"
 
   if [ -z "$pr_number" ]; then
     return 0
@@ -2599,6 +2719,26 @@ _ADVISORY_LABEL_LINES_
     done <<_ADVISORY_ENTRY_LINES_
 $_entries_normalized
 _ADVISORY_ENTRY_LINES_
+    # Append "Possible Issue" evaluation outcome when available.
+    if [ -n "$possible_issue_eval_outcome" ]; then
+      local _eval_note
+      case "$possible_issue_eval_outcome" in
+        acknowledged)
+          _eval_note="Evaluated by code-reviewer: acknowledged (finding is acceptable — loop proceeded clean)"
+          ;;
+        fix_pushed)
+          _eval_note="Evaluated by code-reviewer: fix pushed — loop re-ran on new HEAD"
+          ;;
+        unavailable)
+          _eval_note="Evaluated by code-reviewer: unavailable — fell back to advisory-only (clean)"
+          ;;
+        *)
+          _eval_note="Evaluated by code-reviewer: outcome=${possible_issue_eval_outcome}"
+          ;;
+      esac
+      advisory_section="${advisory_section}
+  _Possible Issue evaluation_: ${_eval_note}"
+    fi
   fi
 
   # Step 7b regression-label assertion (clean path, implementation PRs only).
@@ -2687,12 +2827,15 @@ EOF
   set -e
 }
 
+aggregate_possible_issue_eval_outcome="$(kv_value_default POSSIBLE_ISSUE_EVAL_OUTCOME "$aggregate_output" "")"
+
 case "$aggregate_result" in
   clean)
     _post_review_summary "$aggregate_result" "$aggregate_reason" \
       "$(IFS=,; printf '%s' "${platforms[*]}")" \
       "$total_blocking_count" "$total_suggestion_count" \
-      "$aggregate_advisory_labels"
+      "$aggregate_advisory_labels" \
+      "$aggregate_possible_issue_eval_outcome"
     exit 0
     ;;
   skipped)
@@ -2703,15 +2846,24 @@ case "$aggregate_result" in
       _post_review_summary "$aggregate_result" "$aggregate_reason" \
         "$(IFS=,; printf '%s' "${platforms[*]}")" \
         "$total_blocking_count" "$total_suggestion_count" \
-        "$aggregate_advisory_labels"
+        "$aggregate_advisory_labels" \
+        "$aggregate_possible_issue_eval_outcome"
     fi
     exit 1
+    ;;
+  needs_rerun)
+    # PR-Agent "Possible Issue" evaluation pushed a fix; orchestrator must
+    # re-invoke the loop on the new HEAD. No summary comment is posted here —
+    # the loop re-runs from the top and posts the summary on its terminal exit.
+    print_kv RESULT needs_rerun
+    exit 3
     ;;
   escalate)
     _post_review_summary "$aggregate_result" "$aggregate_reason" \
       "$(IFS=,; printf '%s' "${platforms[*]}")" \
       "$total_blocking_count" "$total_suggestion_count" \
-      "$aggregate_advisory_labels"
+      "$aggregate_advisory_labels" \
+      "$aggregate_possible_issue_eval_outcome"
     exit 2
     ;;
   *)

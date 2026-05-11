@@ -1099,7 +1099,50 @@ Interpret the result as follows:
 | `skipped` | Continue to Step 7b (implementation PRs) then Step 8 (no summary comment posted — Step 8c skips the check) |
 | `needs_fixes` and `cycle < max_cycles` | Increment `cycle`, dispatch the matching fixer agent, wait for a push, then run Step 7 again |
 | `needs_fixes` and `cycle >= max_cycles` | Pass `--post-final-summary` to the final invocation — the script posts the summary automatically. Then escalate to human |
+| `needs_rerun` (exit code 3) | PR-Agent returned clean with a "Possible Issue" advisory. See "PR-Agent 'Possible Issue' evaluation" below — dispatch the code-reviewer agent, set `POSSIBLE_ISSUE_EVAL_OUTCOME`, and re-invoke the loop |
 | `escalate` | Summary comment posted automatically by the script. Escalate to human |
+
+### PR-Agent "Possible Issue" evaluation
+
+When `pr-review-loop.sh` exits with code 3 and `RESULT=needs_rerun`, PR-Agent
+classified the PR as `clean` but included a "Possible Issue" advisory label. The
+script emits two structured keys for the Work Item Runner to consume:
+
+- `PR_AGENT_POSSIBLE_ISSUE_EVAL` — format: `<pr_number>@@@<branch_name>`
+- `PR_AGENT_POSSIBLE_ISSUE_BODY` — the full PR-Agent comment body (newlines escaped)
+
+**Required sequence:**
+
+1. Read `PR_AGENT_POSSIBLE_ISSUE_BODY` from the script output and unescape it
+   (replace `\n` with real newlines).
+2. Dispatch the `code-reviewer` agent with the PR number, branch, PR-Agent comment
+   body, and the PR diff (`gh pr diff <pr_number>`). Instruct the agent: determine
+   whether the finding is a real bug or acceptable; if a real bug, push a fix commit;
+   if acceptable, post a substantive acknowledgment comment explaining the reasoning.
+3. After the agent finishes, set `POSSIBLE_ISSUE_EVAL_OUTCOME` and re-invoke the loop:
+
+   ```bash
+   # Agent pushed a fix:
+   POSSIBLE_ISSUE_EVAL_OUTCOME=fix_pushed \
+     ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>
+
+   # Agent acknowledged (finding is acceptable):
+   POSSIBLE_ISSUE_EVAL_OUTCOME=acknowledged \
+     ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>
+
+   # Agent unavailable / timed out:
+   POSSIBLE_ISSUE_EVAL_OUTCOME=unavailable \
+     ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>
+   ```
+
+4. On re-invocation, the script reads `POSSIBLE_ISSUE_EVAL_OUTCOME` from the
+   environment and exits 0 (`RESULT=clean`) for all three values. For `fix_pushed`,
+   re-run the full loop on the new HEAD as a normal re-run cycle.
+
+This evaluation step is not counted against the orchestrator's `cycle` counter. If
+the agent is unavailable (`POSSIBLE_ISSUE_EVAL_OUTCOME=unavailable` or empty), the
+script falls back to advisory-only clean and logs a warning to stderr. For full
+details see `93-automated-reviewer-loop-protocol.md`.
 
 **Step 7a summary (Internal Review Gate) is still agent-owned.** The script-posted summary covers Step 7 (external automated reviewers) only. The Step 7a summary comment (`### Step 7a Internal Review Gate Summary`) must still be posted by the orchestrator/agent after the internal review gate completes. Do not conflate the two: they serve different verification purposes and are checked by different gates.
 
