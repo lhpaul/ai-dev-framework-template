@@ -2656,15 +2656,21 @@ EOF
   local _repo
   _repo="$(repo_slug 2>/dev/null)" || true
   if [ -n "$_repo" ]; then
-    _existing_comment_id="$(gh api "repos/$_repo/issues/$pr_number/comments" \
-      --paginate \
-      --jq '[.[]
-              | select(
-                  (.body // "" | contains("### Automated Reviewer Loop Summary")) and
-                  (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
-                )
-            ] | sort_by(.created_at) | last | .id // empty' \
-      2>/dev/null)" || true
+    _existing_comment_id="$(
+      gh api "repos/$_repo/issues/$pr_number/comments" --paginate 2>/dev/null \
+        | jq -rs '
+            add // []
+            | [.[]
+               | select(
+                   (.body // "" | contains("### Automated Reviewer Loop Summary")) and
+                   (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
+                 )
+              ]
+            | sort_by(.created_at)
+            | last
+            | .id // empty
+          '
+    )" || true
   fi
 
   if [ -n "$_existing_comment_id" ]; then
