@@ -2644,7 +2644,33 @@ EOF
   # Suppress errors — a failed comment post should not change the exit code.
   # The script's primary contract is the key=value output and exit code.
   set +e
-  gh pr comment "$pr_number" --body "$comment_body" >/dev/null 2>&1
+
+  # Update-in-place: find an existing script-posted summary comment and edit it
+  # rather than creating a new one. This prevents redundant intermediate summary
+  # comments when the orchestrator invokes the script multiple times (e.g. once
+  # per fix cycle). Only one "Automated Reviewer Loop Summary" comment should
+  # ever exist on the PR timeline at a time.
+  # The marker string "*Posted automatically by `pr-review-loop.sh`.*" is unique
+  # to this script and is present in every comment it posts.
+  local _existing_comment_id=""
+  local _repo
+  _repo="$(repo_slug 2>/dev/null)" || true
+  if [ -n "$_repo" ]; then
+    _existing_comment_id="$(gh api "repos/$_repo/issues/$pr_number/comments" \
+      --paginate \
+      --jq '[.[] | select(.body | test("Posted automatically by .pr-review-loop.sh."))] | last | .id // empty' \
+      2>/dev/null)" || true
+  fi
+
+  if [ -n "$_existing_comment_id" ]; then
+    # Edit the existing comment in place.
+    gh api "repos/$_repo/issues/comments/$_existing_comment_id" \
+      --method PATCH \
+      -f body="$comment_body" >/dev/null 2>&1
+  else
+    gh pr comment "$pr_number" --body "$comment_body" >/dev/null 2>&1
+  fi
+
   set -e
 }
 
