@@ -1193,14 +1193,19 @@ _EXTRACT_POSSIBLE_ISSUE_LABELS_
 
     case "$eval_outcome" in
       fix_pushed)
+        # A fix was pushed; the orchestrator must re-run the loop on the new HEAD
+        # to confirm the finding is resolved. Exit 3 signals this to the caller.
         print_kv POSSIBLE_ISSUE_EVAL_OUTCOME "fix_pushed"
-        return 3  # sentinel: re-run the loop
+        return 3  # sentinel: orchestrator must re-run the loop from the top
         ;;
       acknowledged)
         print_kv POSSIBLE_ISSUE_EVAL_OUTCOME "acknowledged"
         return 0
         ;;
       unavailable|"")
+        # No outcome set (first pass, before orchestrator dispatches code-reviewer)
+        # or agent is unavailable. Emit the evaluation keys so the orchestrator can
+        # read them and dispatch; fall back to advisory-only (clean) here.
         echo "WARN: code-reviewer agent unavailable or eval outcome not set for 'Possible Issue' finding — falling back to advisory-only (clean)" >&2
         print_kv POSSIBLE_ISSUE_EVAL_OUTCOME "unavailable"
         return 0

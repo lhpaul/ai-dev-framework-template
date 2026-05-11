@@ -362,22 +362,27 @@ This rule applies to any value type: version numbers, timeout values, port numbe
 
 ### PR-Agent "Possible Issue" evaluation step
 
-When `pr-review-loop.sh` returns exit code 3 with `RESULT=needs_rerun`, it means
-PR-Agent classified the PR as `clean` but the review comment contained at least one
-"Possible Issue" advisory label. The script has emitted a structured dispatch key so
-the orchestrator can evaluate the finding with a code-reviewer agent before the loop
-declares the final result.
+When `pr-review-loop.sh` returns `RESULT=clean` and the output contains
+`PR_AGENT_POSSIBLE_ISSUE_EVAL`, PR-Agent classified the PR as `clean` but the review
+comment contained at least one "Possible Issue" advisory label. The orchestrator must
+dispatch a code-reviewer agent to evaluate the finding before declaring the loop result
+final. `RESULT=needs_rerun` (exit code 3) is a separate follow-up signal emitted only
+after the code-reviewer agent pushed a fix (i.e., `POSSIBLE_ISSUE_EVAL_OUTCOME=fix_pushed`
+is passed to a re-invocation).
 
 #### When this step triggers
 
-`RESULT=needs_rerun` is set only when all of the following are true:
+`PR_AGENT_POSSIBLE_ISSUE_EVAL` is emitted (with `RESULT=clean`) when all of the
+following are true on the first pass:
 
 - The `pr-agent` platform is configured and ran for this PR.
 - PR-Agent's comment classified as `clean` (no hard-blocker labels).
 - The comment contained at least one `Possible Issue` advisory label (case-insensitive).
-- `POSSIBLE_ISSUE_EVAL_OUTCOME` was not already set to `acknowledged`, `fix_pushed`,
-  or `unavailable` by the caller (i.e., this is the first pass through the evaluation
-  sub-step for this HEAD commit).
+- `POSSIBLE_ISSUE_EVAL_OUTCOME` is empty or `unavailable` (first-pass, before the
+  orchestrator sets an outcome).
+
+`RESULT=needs_rerun` (exit code 3) is emitted on a re-invocation when
+`POSSIBLE_ISSUE_EVAL_OUTCOME=fix_pushed` is set in the environment.
 
 #### Orchestrator dispatch contract
 
@@ -401,22 +406,32 @@ When `pr-review-loop.sh` exits with code 3 and `RESULT=needs_rerun`:
      > explaining the reasoning (do not just say "acknowledged"). Do not push a
      > commit if the finding is not actionable.
 
-3. **After the agent finishes**, set `POSSIBLE_ISSUE_EVAL_OUTCOME` in the environment
-   and re-invoke `pr-review-loop.sh` from the top:
-   - Agent pushed a fix commit → `POSSIBLE_ISSUE_EVAL_OUTCOME=fix_pushed`
-   - Agent posted an acknowledgment → `POSSIBLE_ISSUE_EVAL_OUTCOME=acknowledged`
-   - Agent is unavailable or timed out → `POSSIBLE_ISSUE_EVAL_OUTCOME=unavailable`
+3. **After the agent finishes**, set `POSSIBLE_ISSUE_EVAL_OUTCOME` and re-invoke
+   `pr-review-loop.sh`:
+   - Agent pushed a fix commit → `POSSIBLE_ISSUE_EVAL_OUTCOME=fix_pushed`:
+     ```bash
+     POSSIBLE_ISSUE_EVAL_OUTCOME=fix_pushed \
+       ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>
+     ```
+     The script emits `RESULT=needs_rerun` and exits 3. The orchestrator then
+     does a full fresh re-run **without** `POSSIBLE_ISSUE_EVAL_OUTCOME` set, so
+     the new HEAD is checked from scratch.
+   - Agent posted an acknowledgment → `POSSIBLE_ISSUE_EVAL_OUTCOME=acknowledged`:
+     ```bash
+     POSSIBLE_ISSUE_EVAL_OUTCOME=acknowledged \
+       ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>
+     ```
+   - Agent is unavailable or timed out → `POSSIBLE_ISSUE_EVAL_OUTCOME=unavailable`:
+     ```bash
+     POSSIBLE_ISSUE_EVAL_OUTCOME=unavailable \
+       ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>
+     ```
 
-   ```bash
-   POSSIBLE_ISSUE_EVAL_OUTCOME=acknowledged \
-     ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>
-   ```
-
-4. **On the re-invocation**, the script reads `POSSIBLE_ISSUE_EVAL_OUTCOME` from the
-   environment. If `acknowledged`, it emits `RESULT=clean` and exits 0. If
-   `fix_pushed`, it also emits `RESULT=clean` and exits 0 (the caller should then
-   re-run the full loop on the new HEAD as a normal re-run cycle). If `unavailable`
-   or empty, it falls back to advisory-only (`clean`) and logs a warning to stderr.
+4. **On the re-invocation** with `acknowledged` or `unavailable`, the script reads
+   `POSSIBLE_ISSUE_EVAL_OUTCOME` from the environment, emits `RESULT=clean`, and
+   exits 0. For `unavailable`, it also logs a warning to stderr and preserves the
+   advisory label in the loop summary. For `fix_pushed`, the script exits 3
+   (`RESULT=needs_rerun`) — the orchestrator then re-runs the loop completely fresh.
 
 #### Retry limits
 
