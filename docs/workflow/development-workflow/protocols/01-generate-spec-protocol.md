@@ -142,6 +142,33 @@ Use the current timestamp for `YYYYMMDDHHMMSS`.
 
 Skim the spec body once more for: accidental **Open Questions** sections when forbidden, **copy/paste character corruption**, mixed terminology for the same concept, and acceptance criteria that cannot be verified without guessing environment or data setup.
 
+**Template placeholder removal (mandatory — run before every spec PR)**:
+
+After writing the spec, verify that no template placeholder content remains in the output file. These are the most common artifacts that trigger CodeRabbit findings on spec PRs:
+
+1. **`Depends on` line**: If the feature has no dependencies, the `**Depends on**:` line must be removed entirely. If dependencies exist, replace the placeholder slugs with the actual feature slugs. Never leave the line with bracketed placeholders (e.g., `[feature-slug-1, feature-slug-2]`) or the original HTML comment form.
+
+2. **`Language` instruction block**: The `**Language**: ...` block in the Overview is a template instruction, not spec content. Remove it entirely before committing. Replace it with actual spec prose (2–4 sentences describing what the feature does and why it exists).
+
+3. **Unfilled section placeholders**: Every section that remains in the spec must contain real content. Remove or fill:
+   - `<!-- Replace this comment with ... -->` comments (replace with real content)
+   - `[Step 1]`, `[Step 2]`, `[What data the user sees]`, and similar bracketed placeholder lines in use cases
+   - `[Rule 1: an invariant...]`, `[UX rule 1: ...]`, and similar bracketed placeholder items in lists
+   - `[Out of scope item 1]`, `[Out of scope item 2]` lines under Out of Scope
+   - `[Question 1]`, `[Question 2]` lines under Open Questions (fill with real questions or delete the section)
+   - `[Code value]`, `[Display label]`, `[Description]` cells in the Statuses table
+
+4. **Optional sections left with only placeholder content**: Sections such as `## UX Rules`, `## Statuses / Enum Values`, and `## Operational Visibility` include a delete instruction in the template (`<!-- Delete this section if... -->`). If a section is not applicable, delete the entire section including its heading. Never leave a section containing only the placeholder comment or example rows.
+
+Run this grep to catch the most common unfilled placeholder patterns before committing:
+
+```bash
+grep -n "\[Step [0-9]\]\|\[Who initiates\|\[What must be\|\[Rule [0-9]\|\[UX rule\|\[Out of scope item\|\[Question [0-9]\|\[Code value\|\[Display label\|\[feature-slug-[0-9]\|<!-- Delete this section\|<!-- Replace this comment\|<!-- List feature slugs\|\*\*Language\*\*:" \
+  docs/specs/developments/<timestamp>_<slug>/1_<slug>_specs.md
+```
+
+If this grep returns any output, address each match before opening the PR.
+
 ### Brief Coverage Requirements (mandatory when a tracker brief exists)
 
 When a tracker issue or work-item brief exists, add these artifacts before opening the draft PR:
