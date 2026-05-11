@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **PR-Agent ticket compliance check disabled** (#569): `require_ticket_analysis_review = false` added to `.pr_agent.toml` to prevent false-positive compliance findings. PR-Agent was extracting issue numbers from cross-repository links in PR descriptions (e.g. "ported from other-repo#145") and checking ticket requirements from the wrong issue, creating confusing noise that required manual triage to dismiss.
+
 ## [0.26.0] - 2026-05-11
 
 ### Added
