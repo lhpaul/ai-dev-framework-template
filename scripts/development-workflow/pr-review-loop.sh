@@ -2585,10 +2585,41 @@ Fewer than 30 runs is always insufficient data for a graduation decision.
 METRICS_HEADER
   elif ! grep -q '^|---|' "$metrics_file" 2>/dev/null; then
     # File exists but has no table separator row — append the table header now.
+    # Ensure there is a blank line before the table if the file has content.
+    if [ -s "$metrics_file" ]; then
+      printf '\n' >> "$metrics_file"
+    fi
     printf '| PR | Branch Type |%s Overall Result | Block Was Real Bug? |\n' \
       "$header_platform_cols" >> "$metrics_file"
     printf '|---|---|%s---|---|\n' \
       "$separator_platform_cols" >> "$metrics_file"
+  else
+    # File exists and already has a table. Check whether the current platform
+    # set matches the existing header. If not, insert a separator comment row
+    # before appending the data row so human readers can see the config changed.
+    # Detection: count the platform columns in the existing header by looking at
+    # the separator row (each "---|" token corresponds to one column).
+    # Column order: PR, Branch Type, <platforms...>, Overall Result, Block Was Real Bug?
+    # Fixed columns = 4 (PR, Branch Type, Overall Result, Block Was Real Bug?)
+    # Platform columns = total separator tokens - 4
+    existing_sep_row="$(grep '^|---|' "$metrics_file" | head -1)"
+    existing_platform_col_count=$(printf '%s' "$existing_sep_row" | tr -cd '|' | wc -c | tr -d ' ')
+    # pipe count = platform_cols + 4 fixed cols + 1 leading pipe → total pipes = platform_cols + 5
+    # Solve: existing_platform_col_count (pipes) = existing_platform_cols + 5
+    existing_platform_count=$(( existing_platform_col_count - 5 ))
+    current_platform_count="${#platform_names[@]}"
+    if [ "$current_platform_count" -ne "$existing_platform_count" ]; then
+      # Platform configuration changed: insert a separator row to mark the boundary.
+      # Build blank cells matching the new row width.
+      _sep_blank_cols=""
+      for _pname in "${platform_names[@]}"; do
+        _sep_blank_cols="${_sep_blank_cols} |"
+      done
+      printf '| *(platforms changed: %s)* |%s | |\n' \
+        "$(IFS=,; printf '%s' "${platform_names[*]}")" \
+        "$_sep_blank_cols" \
+        >> "$metrics_file"
+    fi
   fi
 
   # Build the verdict columns for this row.
@@ -2708,7 +2739,16 @@ for index in "${!platforms[@]}"; do
       aggregate_result="needs_rerun"
       aggregate_output="$platform_output"
       aggregate_status=$platform_status
-      break
+      if [ "$compare_mode" -eq 0 ]; then
+        break
+      fi
+      # Compare mode: record verdict and continue to remaining platforms.
+      if [ -z "$compare_first_blocking_result" ]; then
+        compare_first_blocking_result="needs_rerun"
+        compare_first_blocking_reason=""
+        compare_first_blocking_output="$platform_output"
+        compare_first_blocking_status=$platform_status
+      fi
       ;;
     *)
       aggregate_result="escalate"

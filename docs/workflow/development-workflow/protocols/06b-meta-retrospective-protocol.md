@@ -91,7 +91,7 @@ Then proceed to Step 3.
 **Compute per-platform exclusive-block rate** (for each configured platform):
 
 1. Count total data rows in the table (`total_runs`).
-2. For each platform column present in the table header, count the number of rows where that platform's verdict is `blocking` AND at least one other platform's verdict is `clean`. This is the platform's exclusive-block count.
+2. For each platform column present in the table header, count the number of rows where that platform's verdict is `blocking` AND at least one other platform's verdict is non-blocking (`clean` or `advisory`). This is the platform's exclusive-block count.
 3. Divide each platform's exclusive-block count by `total_runs` to get its exclusive-block rate.
 
 Example format:
