@@ -69,7 +69,7 @@ trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"' EXIT
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
 triggering a new review, each platform checks for existing blocking findings. If
@@ -85,6 +85,16 @@ REASON=lock_contention and exits 75 (EX_TEMPFAIL).
   will not dispatch another fixer — i.e. the run is terminal regardless of the
   script exit code. On clean and escalate exits the summary is always posted
   (this flag has no additional effect for those exits).
+
+--compare:
+  Run all configured platforms to completion regardless of individual verdicts
+  (disables the short-circuit on the first blocking platform). After all platforms
+  run, the overall exit code and RESULT are identical to what normal mode would
+  produce: the first platform that would have blocked in config order governs.
+  Per-platform verdicts are emitted as COMPARE_VERDICT_<n>_PLATFORM /
+  COMPARE_VERDICT_<n>_RESULT key=value lines, and one row is appended to
+  docs/workflow/retro-metrics-platforms.md. Intended for platform evaluation only —
+  not for normal orchestration where early exit is desired.
 
 Platform selection (in priority order):
   1. --platform flag(s) passed on the command line
@@ -105,6 +115,8 @@ Outputs stable key=value lines including:
   RESULT=clean|needs_fixes|needs_rerun|escalate|skipped
   PLATFORM_<n>_NAME / PLATFORM_<n>_RESULT
   REASON=lock_contention (when exit code is 75)
+  COMPARE_MODE=1 (when --compare is active)
+  COMPARE_VERDICT_<n>_PLATFORM / COMPARE_VERDICT_<n>_RESULT (when --compare is active)
 EOF
 }
 
@@ -2378,6 +2390,7 @@ poll_interval_explicit=0
 max_wait=1200
 max_wait_explicit=0
 post_final_summary=0
+compare_mode=0
 declare -a platforms=()
 
 while [ "$#" -gt 0 ]; do
@@ -2402,6 +2415,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --post-final-summary)
       post_final_summary=1
+      shift
+      ;;
+    --compare)
+      compare_mode=1
       shift
       ;;
     -h|--help)
@@ -2464,6 +2481,170 @@ if [ "$max_wait_explicit" -eq 0 ]; then
   esac
 fi
 
+# --- Compare-mode helpers ---
+
+# normalize_platform_verdict: map a raw platform result token to one of the five
+# canonical compare-mode verdict values: clean, blocking, advisory, timed out, unavailable.
+# $1 = platform_result token (e.g. clean, needs_fixes, skipped, escalate, needs_rerun)
+# $2 = full platform output (key=value block; used to inspect REASON for timeout detection)
+normalize_platform_verdict() {
+  local result="$1"
+  local output="${2:-}"
+  local reason
+  reason="$(kv_value_default REASON "$output" "")"
+  case "$result" in
+    clean)       printf 'clean' ;;
+    needs_fixes) printf 'blocking' ;;
+    skipped)     printf 'clean' ;;
+    needs_rerun) printf 'blocking' ;;
+    escalate)
+      # Distinguish timeout from service-unavailable via REASON.
+      case "$reason" in
+        timeout|timed_out|max_wait_exceeded|no_response)
+          printf 'timed out' ;;
+        *)
+          printf 'unavailable' ;;
+      esac
+      ;;
+    *)           printf 'unavailable' ;;
+  esac
+}
+
+# append_compare_metrics_row: append one structured row to the platform metrics log.
+# Called at the end of the platform loop when compare_mode=1.
+# $1 = pr_number
+# $2 = branch_name
+# $3 = overall_result (the aggregate after all platforms ran)
+# Remaining args: pairs of platform_name verdict_token (e.g. coderabbit blocking greptile clean)
+append_compare_metrics_row() {
+  local pr_number_arg="$1"
+  local branch_name_arg="$2"
+  local overall_result_arg="$3"
+  shift 3
+
+  local metrics_file
+  metrics_file="$(workflow_repo_root)/docs/workflow/retro-metrics-platforms.md"
+
+  # Derive branch type from the branch name prefix.
+  local branch_type
+  case "$branch_name_arg" in
+    feature/*)            branch_type="feature" ;;
+    fix/*)                branch_type="fix" ;;
+    refactor/*)           branch_type="refactor" ;;
+    hotfix/*)             branch_type="hotfix" ;;
+    spec/*)               branch_type="spec" ;;
+    implementation-plan/*) branch_type="plan" ;;
+    *)                    branch_type="other" ;;
+  esac
+
+  # Collect pairs: platform_names and verdict_tokens in order.
+  local -a platform_names=()
+  local -a verdict_tokens=()
+  while [ "$#" -ge 2 ]; do
+    platform_names+=("$1")
+    verdict_tokens+=("$2")
+    shift 2
+  done
+
+  # Build dynamic platform-column headers from the current run's platform list.
+  local header_platform_cols=""
+  for _pname in "${platform_names[@]}"; do
+    header_platform_cols="${header_platform_cols} ${_pname} |"
+  done
+  local separator_platform_cols=""
+  for _pname in "${platform_names[@]}"; do
+    separator_platform_cols="${separator_platform_cols}---|"
+  done
+
+  # Create the file with the full header when it does not yet exist.
+  # If the file exists (e.g. pre-created with prose only) but has no table header
+  # row yet (detected by absence of the "|---|" separator line), append the table
+  # header rows so the Markdown table is valid before the first data row.
+  if [ ! -f "$metrics_file" ]; then
+    cat > "$metrics_file" <<METRICS_HEADER
+# Platform Comparison Metrics Log
+
+This file is append-only. One row is appended per compare-mode reviewer loop run.
+Do not delete or rewrite existing rows. The "Block Was Real Bug?" column may be
+filled in manually after a run when post-hoc analysis determines whether a
+platform-exclusive blocking finding corresponded to a real code defect.
+
+## Graduation Criteria
+
+A platform may be considered safe for removal when, across 30 or more consecutive
+compare-mode runs covering at least one run each of \`fix\`, \`feature\`, and \`refactor\`
+branch types, it has zero platform-exclusive blocking findings (runs where that
+platform blocked but at least one other configured platform was clean).
+
+Fewer than 30 runs is always insufficient data for a graduation decision.
+
+## Metrics Table
+
+| PR | Branch Type |${header_platform_cols} Overall Result | Block Was Real Bug? |
+|---|---|${separator_platform_cols}---|---|
+METRICS_HEADER
+  elif ! grep -q '^|---|' "$metrics_file" 2>/dev/null; then
+    # File exists but has no table separator row — append the table header now.
+    # Ensure there is a blank line before the table if the file has content.
+    if [ -s "$metrics_file" ]; then
+      printf '\n' >> "$metrics_file"
+    fi
+    printf '| PR | Branch Type |%s Overall Result | Block Was Real Bug? |\n' \
+      "$header_platform_cols" >> "$metrics_file"
+    printf '|---|---|%s---|---|\n' \
+      "$separator_platform_cols" >> "$metrics_file"
+  else
+    # File exists and already has a table. Check whether the current platform
+    # set matches the existing header. If not, insert a separator comment row
+    # before appending the data row so human readers can see the config changed.
+    # Detection: count the platform columns in the existing header by looking at
+    # the separator row (each "---|" token corresponds to one column).
+    # Column order: PR, Branch Type, <platforms...>, Overall Result, Block Was Real Bug?
+    # Fixed columns = 4 (PR, Branch Type, Overall Result, Block Was Real Bug?)
+    # Platform columns = total separator tokens - 4
+    existing_sep_row="$(grep '^|---|' "$metrics_file" | head -1)"
+    existing_platform_col_count=$(printf '%s' "$existing_sep_row" | tr -cd '|' | wc -c | tr -d ' ')
+    # pipe count = platform_cols + 4 fixed cols + 1 leading pipe → total pipes = platform_cols + 5
+    # Solve: existing_platform_col_count (pipes) = existing_platform_cols + 5
+    existing_platform_count=$(( existing_platform_col_count - 5 ))
+    current_platform_count="${#platform_names[@]}"
+    if [ "$current_platform_count" -ne "$existing_platform_count" ]; then
+      # Platform configuration changed: insert a separator row to mark the boundary.
+      # Build blank cells matching the EXISTING header's column count so the
+      # separator row is a valid row in the current table (not the new layout).
+      # Total existing columns = existing_platform_count + 4 fixed columns
+      # (PR, Branch Type, Overall Result, Block Was Real Bug?).
+      # The separator row occupies: 1 cell for the annotation + blank cells for
+      # Branch Type + existing platforms + Overall Result + Block Was Real Bug?
+      # = existing_platform_count + 3 remaining blank cells after the first.
+      _sep_blank_cols=""
+      _sep_i=0
+      while [ "$_sep_i" -lt $(( existing_platform_count + 3 )) ]; do
+        _sep_blank_cols="${_sep_blank_cols} |"
+        _sep_i=$(( _sep_i + 1 ))
+      done
+      printf '| *(platforms changed: %s)* |%s\n' \
+        "$(IFS=,; printf '%s' "${platform_names[*]}")" \
+        "$_sep_blank_cols" \
+        >> "$metrics_file"
+    fi
+  fi
+
+  # Build the verdict columns for this row.
+  local row_verdict_cols=""
+  for _vtoken in "${verdict_tokens[@]}"; do
+    row_verdict_cols="${row_verdict_cols} ${_vtoken} |"
+  done
+
+  # Append one row.
+  printf '| #%s | %s |%s %s | |\n' \
+    "$pr_number_arg" \
+    "$branch_type" \
+    "$row_verdict_cols" \
+    "$overall_result_arg" \
+    >> "$metrics_file"
+}
+
 aggregate_result="skipped"
 aggregate_reason=""
 last_platform=""
@@ -2473,6 +2654,13 @@ total_comment_count=0
 total_blocking_count=0
 total_suggestion_count=0
 aggregate_advisory_labels=""
+declare -a compare_verdicts=()
+# Compare-mode: track the first blocking platform seen so later clean platforms
+# do not overwrite the aggregate. These variables are set once and never reset.
+compare_first_blocking_result=""
+compare_first_blocking_reason=""
+compare_first_blocking_output=""
+compare_first_blocking_status=0
 
 print_kv PR_NUMBER "$pr_number"
 print_kv BRANCH "$branch_name"
@@ -2512,6 +2700,13 @@ for index in "${!platforms[@]}"; do
   print_kv "PLATFORM_${platform_index}_RESULT" "$platform_result"
   emit_prefixed_platform_output "$platform_index" "$platform_output"
 
+  # In compare mode, record a normalized verdict for each platform before
+  # deciding whether to break. The normalized verdict captures clean / blocking /
+  # advisory / timed out / unavailable regardless of the raw result token.
+  if [ "$compare_mode" -eq 1 ]; then
+    compare_verdicts+=("$platform_name" "$(normalize_platform_verdict "$platform_result" "$platform_output")")
+  fi
+
   case "$platform_result" in
     clean)
       aggregate_result="clean"
@@ -2532,7 +2727,18 @@ for index in "${!platforms[@]}"; do
       aggregate_reason="$(kv_value_default REASON "$platform_output" "")"
       aggregate_output="$platform_output"
       aggregate_status=$platform_status
-      break
+      if [ "$compare_mode" -eq 0 ]; then
+        # Normal mode: short-circuit on first blocking platform.
+        break
+      fi
+      # Compare mode: capture the first blocking state so later clean platforms
+      # cannot overwrite the aggregate. Only the first blocking platform governs.
+      if [ -z "$compare_first_blocking_result" ]; then
+        compare_first_blocking_result="$platform_result"
+        compare_first_blocking_reason="$aggregate_reason"
+        compare_first_blocking_output="$platform_output"
+        compare_first_blocking_status=$platform_status
+      fi
       ;;
     needs_rerun)
       # PR-Agent "Possible Issue" evaluation: a fix was pushed; re-run the loop.
@@ -2541,14 +2747,32 @@ for index in "${!platforms[@]}"; do
       aggregate_result="needs_rerun"
       aggregate_output="$platform_output"
       aggregate_status=$platform_status
-      break
+      if [ "$compare_mode" -eq 0 ]; then
+        break
+      fi
+      # Compare mode: record verdict and continue to remaining platforms.
+      if [ -z "$compare_first_blocking_result" ]; then
+        compare_first_blocking_result="needs_rerun"
+        compare_first_blocking_reason=""
+        compare_first_blocking_output="$platform_output"
+        compare_first_blocking_status=$platform_status
+      fi
       ;;
     *)
       aggregate_result="escalate"
       aggregate_reason="unknown-platform-result"
       aggregate_output="$platform_output"
       aggregate_status=2
-      break
+      if [ "$compare_mode" -eq 0 ]; then
+        break
+      fi
+      # Compare mode: capture first blocking state (unknown result treated as blocking).
+      if [ -z "$compare_first_blocking_result" ]; then
+        compare_first_blocking_result="escalate"
+        compare_first_blocking_reason="unknown-platform-result"
+        compare_first_blocking_output="$platform_output"
+        compare_first_blocking_status=2
+      fi
       ;;
   esac
 done
@@ -2562,6 +2786,51 @@ if [ -z "$last_platform" ]; then
   print_kv SUGGESTION_COUNT 0
   print_kv UNRESOLVED_THREAD_COUNT 0
   exit 0
+fi
+
+# --- Compare mode: restore first-blocking aggregate, emit output, write metrics ---
+# When compare mode is active, all platforms ran to completion. Later clean platforms
+# may have overwritten aggregate_result after the first blocking platform set it.
+# Restore the first-blocking state now to ensure the overall result is identical to
+# what normal mode would have produced (BR-1: first blocking platform in config order
+# governs).
+if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
+  # Restore aggregate from the first blocking platform, if any.
+  if [ -n "$compare_first_blocking_result" ]; then
+    aggregate_result="$compare_first_blocking_result"
+    aggregate_reason="$compare_first_blocking_reason"
+    aggregate_output="$compare_first_blocking_output"
+    aggregate_status=$compare_first_blocking_status
+  fi
+  # aggregate_result is now clean/skipped (if no platform blocked) or the result
+  # of the first blocking platform in config order.
+
+  # Emit compare-mode key=value output lines.
+  print_kv COMPARE_MODE 1
+  local_compare_index=0
+  _idx=0
+  while [ "$_idx" -lt "${#compare_verdicts[@]}" ]; do
+    _cvname="${compare_verdicts[$_idx]}"
+    _cvtoken="${compare_verdicts[$((_idx + 1))]}"
+    local_compare_index=$((local_compare_index + 1))
+    print_kv "COMPARE_VERDICT_${local_compare_index}_PLATFORM" "$_cvname"
+    print_kv "COMPARE_VERDICT_${local_compare_index}_RESULT" "$_cvtoken"
+    _idx=$((_idx + 2))
+  done
+
+  # Append the metrics row (best-effort; suppress errors so a write failure does
+  # not change the script's exit code).
+  set +e
+  # Build the argument list: pr, branch, overall_result, then pairs of (name, verdict).
+  _metrics_args=("$pr_number" "$branch_name" "$aggregate_result")
+  _idx=0
+  while [ "$_idx" -lt "${#compare_verdicts[@]}" ]; do
+    _metrics_args+=("${compare_verdicts[$_idx]}" "${compare_verdicts[$((_idx + 1))]}")
+    _idx=$((_idx + 2))
+  done
+  append_compare_metrics_row "${_metrics_args[@]}" 2>/dev/null || \
+    echo "WARN: append_compare_metrics_row failed — metrics row not written" >&2
+  set -e
 fi
 
 # --- Unresolved review thread gate ---
@@ -2780,13 +3049,32 @@ Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs afte
     esac
   fi
 
+  # Build optional compare-mode per-platform section.
+  local compare_section=""
+  if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
+    compare_section="
+
+**Compare mode — per-platform verdicts:**"
+    _idx=0
+    while [ "$_idx" -lt "${#compare_verdicts[@]}" ]; do
+      _cvname="${compare_verdicts[$_idx]}"
+      _cvtoken="${compare_verdicts[$((_idx + 1))]}"
+      compare_section="${compare_section}
+- ${_cvname}: ${_cvtoken}"
+      _idx=$((_idx + 2))
+    done
+    compare_section="${compare_section}
+
+*Metrics row appended to \`docs/workflow/retro-metrics-platforms.md\`.*"
+  fi
+
   local comment_body
   comment_body="$(cat <<EOF
 ### Automated Reviewer Loop Summary
 
 **Result:** ${result_line}
 **Platforms:** ${platform_list:-none}
-**Findings:** ${blocking} blocking, ${suggestions} suggestions${advisory_section}${regression_label_section}
+**Findings:** ${blocking} blocking, ${suggestions} suggestions${compare_section}${advisory_section}${regression_label_section}
 
 *Posted automatically by \`pr-review-loop.sh\`.*
 EOF
