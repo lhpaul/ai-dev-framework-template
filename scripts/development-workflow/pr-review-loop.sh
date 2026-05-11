@@ -2616,6 +2616,12 @@ total_blocking_count=0
 total_suggestion_count=0
 aggregate_advisory_labels=""
 declare -a compare_verdicts=()
+# Compare-mode: track the first blocking platform seen so later clean platforms
+# do not overwrite the aggregate. These variables are set once and never reset.
+compare_first_blocking_result=""
+compare_first_blocking_reason=""
+compare_first_blocking_output=""
+compare_first_blocking_status=0
 
 print_kv PR_NUMBER "$pr_number"
 print_kv BRANCH "$branch_name"
@@ -2686,7 +2692,14 @@ for index in "${!platforms[@]}"; do
         # Normal mode: short-circuit on first blocking platform.
         break
       fi
-      # Compare mode: record verdict and continue to remaining platforms.
+      # Compare mode: capture the first blocking state so later clean platforms
+      # cannot overwrite the aggregate. Only the first blocking platform governs.
+      if [ -z "$compare_first_blocking_result" ]; then
+        compare_first_blocking_result="$platform_result"
+        compare_first_blocking_reason="$aggregate_reason"
+        compare_first_blocking_output="$platform_output"
+        compare_first_blocking_status=$platform_status
+      fi
       ;;
     needs_rerun)
       # PR-Agent "Possible Issue" evaluation: a fix was pushed; re-run the loop.
@@ -2705,7 +2718,13 @@ for index in "${!platforms[@]}"; do
       if [ "$compare_mode" -eq 0 ]; then
         break
       fi
-      # Compare mode: continue to remaining platforms even on unknown result.
+      # Compare mode: capture first blocking state (unknown result treated as blocking).
+      if [ -z "$compare_first_blocking_result" ]; then
+        compare_first_blocking_result="escalate"
+        compare_first_blocking_reason="unknown-platform-result"
+        compare_first_blocking_output="$platform_output"
+        compare_first_blocking_status=2
+      fi
       ;;
   esac
 done
@@ -2721,22 +2740,26 @@ if [ -z "$last_platform" ]; then
   exit 0
 fi
 
-# --- Compare mode: recompute aggregate from collected verdicts, emit output, write metrics ---
-# When compare mode is active, all platforms ran to completion. Recompute the aggregate
-# result from the stored per-platform verdicts to enforce "first blocking platform in
-# config order governs" (BR-1). This ensures the compare-mode result is identical to
-# what normal mode would have produced.
+# --- Compare mode: restore first-blocking aggregate, emit output, write metrics ---
+# When compare mode is active, all platforms ran to completion. Later clean platforms
+# may have overwritten aggregate_result after the first blocking platform set it.
+# Restore the first-blocking state now to ensure the overall result is identical to
+# what normal mode would have produced (BR-1: first blocking platform in config order
+# governs).
 if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
+  # Restore aggregate from the first blocking platform, if any.
+  if [ -n "$compare_first_blocking_result" ]; then
+    aggregate_result="$compare_first_blocking_result"
+    aggregate_reason="$compare_first_blocking_reason"
+    aggregate_output="$compare_first_blocking_output"
+    aggregate_status=$compare_first_blocking_status
+  fi
+  # aggregate_result is now clean/skipped (if no platform blocked) or the result
+  # of the first blocking platform in config order.
+
   # Emit compare-mode key=value output lines.
   print_kv COMPARE_MODE 1
   local_compare_index=0
-  compare_overall_result="$aggregate_result"
-  compare_overall_output="$aggregate_output"
-  compare_overall_status=$aggregate_status
-  compare_overall_reason="$aggregate_reason"
-  first_blocking_found=0
-
-  # Iterate the compare_verdicts pairs (name, verdict) in order.
   _idx=0
   while [ "$_idx" -lt "${#compare_verdicts[@]}" ]; do
     _cvname="${compare_verdicts[$_idx]}"
@@ -2744,34 +2767,6 @@ if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
     local_compare_index=$((local_compare_index + 1))
     print_kv "COMPARE_VERDICT_${local_compare_index}_PLATFORM" "$_cvname"
     print_kv "COMPARE_VERDICT_${local_compare_index}_RESULT" "$_cvtoken"
-    _idx=$((_idx + 2))
-  done
-
-  # Recompute overall result from verdicts: first blocking/timed-out/unavailable
-  # platform in config order governs (same semantics as normal mode short-circuit).
-  # This ensures compare mode never changes the exit contract (BR-1).
-  # The aggregate_result was already updated during the loop; it reflects the last
-  # blocking platform seen (or clean if none blocked). In compare mode the "last"
-  # may not be "first" — re-derive from compare_verdicts in order.
-  _idx=0
-  first_blocking_found=0
-  while [ "$_idx" -lt "${#compare_verdicts[@]}" ]; do
-    _cvname="${compare_verdicts[$_idx]}"
-    _cvtoken="${compare_verdicts[$((_idx + 1))]}"
-    case "$_cvtoken" in
-      blocking|timed\ out|unavailable)
-        if [ "$first_blocking_found" -eq 0 ]; then
-          first_blocking_found=1
-          # The aggregate_result is already set to the matching raw result from the
-          # platform loop (needs_fixes / escalate) — trust that value; it was set
-          # when compare_verdicts was populated at the same loop iteration.
-          # We keep aggregate_result/reason/output/status as-is: they already
-          # reflect the outcome of the first blocking-equivalent platform encountered
-          # because the loop processes platforms in order and only overwrites these
-          # variables when a new needs_fixes/escalate is seen.
-        fi
-        ;;
-    esac
     _idx=$((_idx + 2))
   done
 
