@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`codex-github-reviewer.sh` async-arrival grace period** (#505): after all poll retries are exhausted, the script waits one additional `POLL_INTERVAL` before declaring `TIMED_OUT`, catching bot responses that arrive just after the polling window closes.
 - **Hotfix backport PR reviewer-loop exemption documented** (#508): identical cherry-pick backport PRs may proceed directly to merge when automated reviewers return clean or no result; backports with conflict-resolution changes must still run the full loop.
 
+
 ## [0.25.1] - 2026-05-06
 
 ### Fixed
