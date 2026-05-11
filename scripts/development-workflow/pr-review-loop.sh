@@ -2610,12 +2610,20 @@ METRICS_HEADER
     current_platform_count="${#platform_names[@]}"
     if [ "$current_platform_count" -ne "$existing_platform_count" ]; then
       # Platform configuration changed: insert a separator row to mark the boundary.
-      # Build blank cells matching the new row width.
+      # Build blank cells matching the EXISTING header's column count so the
+      # separator row is a valid row in the current table (not the new layout).
+      # Total existing columns = existing_platform_count + 4 fixed columns
+      # (PR, Branch Type, Overall Result, Block Was Real Bug?).
+      # The separator row occupies: 1 cell for the annotation + blank cells for
+      # Branch Type + existing platforms + Overall Result + Block Was Real Bug?
+      # = existing_platform_count + 3 remaining blank cells after the first.
       _sep_blank_cols=""
-      for _pname in "${platform_names[@]}"; do
+      _sep_i=0
+      while [ "$_sep_i" -lt $(( existing_platform_count + 3 )) ]; do
         _sep_blank_cols="${_sep_blank_cols} |"
+        _sep_i=$(( _sep_i + 1 ))
       done
-      printf '| *(platforms changed: %s)* |%s | |\n' \
+      printf '| *(platforms changed: %s)* |%s\n' \
         "$(IFS=,; printf '%s' "${platform_names[*]}")" \
         "$_sep_blank_cols" \
         >> "$metrics_file"
