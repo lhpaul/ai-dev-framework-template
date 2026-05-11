@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.1] - 2026-05-11
+
+### Fixed
+
+- **`pr-review-loop.sh`: remove duplicate `RESULT=needs_rerun` output** (hotfix): `print_kv RESULT needs_rerun` was emitted twice — once by the general emit block and again inside the final `case` switch. The redundant emission in the `needs_rerun)` branch is removed; only the general block emits the value.
+- **`pr-review-loop.sh`: `normalize_platform_verdict` now handles `advisory` result** (hotfix): compare-mode runs where a platform returned `advisory` fell through to the `*)` catch-all and were logged as `unavailable` in the metrics file. An explicit `advisory) printf 'advisory' ;;` case is added.
+- **`codex-github-reviewer.sh`: async grace trigger comment respects `--max-retriggers=0`** (hotfix): the async grace period unconditionally posted a trigger comment even when callers passed `--max-retriggers=0`. The `gh api POST` call is now guarded by `[ "$MAX_RETRIGGERS" -gt 0 ]`; when retriggers are disabled the grace poll still runs but no comment is posted.
+
 ## [0.26.0] - 2026-05-11
 
 ### Added
@@ -655,7 +663,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.26.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.26.1...HEAD
+[0.26.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.25.1...v0.26.0
 [0.25.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.25.0...v0.25.1
 [0.25.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.24.1...v0.25.0
