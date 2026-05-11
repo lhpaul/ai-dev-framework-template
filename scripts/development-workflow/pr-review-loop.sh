@@ -1150,6 +1150,12 @@ _PR_AGENT_ADVISORY_LABELS_
     _labels_normalized="$(printf '%s' "$advisory" | tr '|' '\n')"
     while IFS= read -r label; do
       [ -z "$label" ] && continue
+      # Trim leading and trailing whitespace before comparing (defensive — labels
+      # from _pr_agent_extract_advisory_labels are already trimmed by sed, but
+      # callers may pass labels with surrounding spaces).
+      label="${label#"${label%%[![:space:]]*}"}"
+      label="${label%"${label##*[![:space:]]}"}"
+      [ -z "$label" ] && continue
       label_lower="$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')"
       if [ "$label_lower" = "possible issue" ]; then
         if [ -n "$result" ]; then
