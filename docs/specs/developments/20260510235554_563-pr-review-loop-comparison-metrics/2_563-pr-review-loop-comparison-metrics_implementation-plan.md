@@ -133,7 +133,7 @@ append_compare_metrics_row() {
   local branch_name="$2"
   # remaining args: pairs of platform_name verdict_token
   local metrics_file
-  metrics_file="$(cd_workflow_repo_root_path)/docs/workflow/retro-metrics-platforms.md"
+  metrics_file="$(workflow_repo_root)/docs/workflow/retro-metrics-platforms.md"
 
   local branch_type
   case "$branch_name" in
@@ -227,7 +227,7 @@ append_compare_metrics_row() {
 
    Insert the function before the final `case "$aggregate_result"` block. Steps:
 
-   a. Determine the metrics file path: `$(cd_workflow_repo_root_path)/docs/workflow/retro-metrics-platforms.md`. Use `cd_workflow_repo_root_path` (a helper that returns the repo root path without changing CWD) or derive it from `$SCRIPT_DIR/../../` with `realpath` / `cd && pwd`.
+   a. Determine the metrics file path using `workflow_repo_root` (defined in `workflow-lib.sh` — returns the repo root path without changing CWD; already sourced at the top of `pr-review-loop.sh`): `metrics_file="$(workflow_repo_root)/docs/workflow/retro-metrics-platforms.md"`. Do NOT use `cd_workflow_repo_root` here — that changes the shell CWD, which would interfere with the script's own path assumptions.
 
    b. If the file does not exist, write the header:
 
@@ -317,7 +317,7 @@ append_compare_metrics_row() {
 
 11. **Update project docs per Documentation Updates section above**
 
-    Both updates (new `retro-metrics-platforms.md` and updated `06b-meta-retrospective-protocol.md`) are performed in this PR.
+    Both updates listed in the Documentation Updates section (Step 2b addition to `06b-meta-retrospective-protocol.md` and the new `docs/workflow/retro-metrics-platforms.md` header file) are performed in the **implementation PR** (not this plan PR). This step is a reminder for the developer to execute those changes as part of implementation.
 
 12. **Update `CHANGELOG.md` under `[Unreleased]`**
 
