@@ -163,7 +163,7 @@ After writing the spec, verify that no template placeholder content remains in t
 Run this grep to catch the most common unfilled placeholder patterns before committing:
 
 ```bash
-grep -n "\[Step [0-9]\]\|\[Who initiates\|\[What must be\|\[Rule [0-9]\|\[UX rule\|\[Out of scope item\|\[Question [0-9]\|\[Code value\|\[Display label\|\[feature-slug-[0-9]\|<!-- Delete this section\|<!-- Replace this comment\|<!-- Depends on:\|\*\*Language\*\*:" \
+grep -n "\[Step [0-9]\]\|\[Who initiates\|\[What must be\|\[Rule [0-9]\|\[UX rule\|\[Out of scope item\|\[Question [0-9]\|\[Code value\|\[Display label\|\[Description\]\|\[feature-slug-[0-9]\|<!-- Delete this section\|<!-- Replace this comment\|<!-- Depends on:\|\*\*Language\*\*:" \
   docs/specs/developments/<timestamp>_<slug>/1_<slug>_specs.md
 ```
 
