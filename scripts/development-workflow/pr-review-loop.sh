@@ -1190,10 +1190,6 @@ _EXTRACT_POSSIBLE_ISSUE_LABELS_
       return 0
     fi
 
-    # Emit structured key for the orchestrator caller to consume.
-    print_kv PR_AGENT_POSSIBLE_ISSUE_EVAL "${pr_number_eval}@@@${branch_name_eval}"
-    print_kv_escaped PR_AGENT_POSSIBLE_ISSUE_BODY "$comment_body"
-
     # Read the eval outcome set by the orchestrator after code-reviewer agent finishes.
     local eval_outcome="${POSSIBLE_ISSUE_EVAL_OUTCOME:-}"
 
@@ -1210,8 +1206,12 @@ _EXTRACT_POSSIBLE_ISSUE_LABELS_
         ;;
       unavailable|"")
         # No outcome set (first pass, before orchestrator dispatches code-reviewer)
-        # or agent is unavailable. Emit the evaluation keys so the orchestrator can
-        # read them and dispatch; fall back to advisory-only (clean) here.
+        # or agent is unavailable. Emit structured keys ONLY here so the orchestrator
+        # can read them and dispatch; fall back to advisory-only (clean) here.
+        # Keys are NOT emitted for fix_pushed/acknowledged re-invocations, which
+        # avoids ambiguous re-dispatch signals to the orchestrator.
+        print_kv PR_AGENT_POSSIBLE_ISSUE_EVAL "${pr_number_eval}@@@${branch_name_eval}"
+        print_kv_escaped PR_AGENT_POSSIBLE_ISSUE_BODY "$comment_body"
         echo "WARN: code-reviewer agent unavailable or eval outcome not set for 'Possible Issue' finding — falling back to advisory-only (clean)" >&2
         print_kv POSSIBLE_ISSUE_EVAL_OUTCOME "unavailable"
         return 0

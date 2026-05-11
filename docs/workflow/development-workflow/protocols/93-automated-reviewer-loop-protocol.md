@@ -386,7 +386,7 @@ following are true on the first pass:
 
 #### Orchestrator dispatch contract
 
-When `pr-review-loop.sh` exits with code 3 and `RESULT=needs_rerun`:
+When `pr-review-loop.sh` exits with `RESULT=clean` and includes `PR_AGENT_POSSIBLE_ISSUE_EVAL` in the output:
 
 1. **Read the structured keys** from the script output:
    - `PR_AGENT_POSSIBLE_ISSUE_EVAL` — format: `<pr_number>@@@<branch_name>`
