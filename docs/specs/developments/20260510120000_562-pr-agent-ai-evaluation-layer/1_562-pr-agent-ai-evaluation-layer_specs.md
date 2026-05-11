@@ -49,7 +49,7 @@ This spec defines an AI evaluation sub-step that is inserted into the reviewer l
 **Considerations**:
 - If the code-reviewer agent cannot be dispatched (runtime unavailable, timeout), the loop should fall back to the current advisory-only behavior (log a warning and proceed `clean`) rather than blocking indefinitely
 - The acknowledgment comment must be substantive — it must explain the reasoning, not just say "acknowledged"
-- If the agent posts an acknowledgment and the loop later re-runs (e.g., due to a new push), the loop should not re-evaluate the same already-acknowledged "Possible Issue" comment; it should only evaluate findings on the current HEAD commit
+- If the agent posts an acknowledgment and the loop later re-runs (e.g., due to a new push), the finding will not be re-evaluated (evaluation is scoped to the current HEAD — see Business Rules)
 
 ---
 
@@ -69,6 +69,12 @@ This spec defines an AI evaluation sub-step that is inserted into the reviewer l
 
 **Postconditions**: Loop result is `clean`; advisory labels are surfaced in the summary without triggering evaluation
 
+**Information shown**:
+- (No additional information — existing loop summary behavior)
+
+**Actions available**:
+- (No actions — no evaluation step triggered)
+
 **Considerations**:
 - This use case defines the explicit boundary of the feature: only "Possible Issue" triggers AI evaluation; all other advisory labels remain non-blocking and unevaluated
 
@@ -86,6 +92,15 @@ This spec defines an AI evaluation sub-step that is inserted into the reviewer l
 3. Loop proceeds to `clean` immediately
 
 **Postconditions**: Loop result is `clean` — no change from current behavior
+
+**Information shown**:
+- (No additional information — standard clean result)
+
+**Actions available**:
+- (No actions — loop proceeds normally)
+
+**Considerations**:
+- (None — this is the baseline happy path)
 
 ---
 
