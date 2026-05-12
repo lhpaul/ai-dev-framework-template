@@ -448,6 +448,48 @@ loop summary output. The loop does not block indefinitely on agent unavailabilit
 
 ---
 
+### Advisory finding dispositions (post-clean)
+
+When `pr-review-loop.sh` exits `clean` and the output contains a non-empty `ADVISORY_LABELS` value (advisory findings from any configured platform), the runner must document the disposition of each advisory finding and update the summary comment before marking the PR ready. This closes the gap between "we saw this finding" and "here is why it was or was not addressed."
+
+#### When this step triggers
+
+Any clean exit where the script output includes one or more advisory label entries in the `ADVISORY_LABELS` key (comma-separated names, e.g. `Possible Issue,Logic Issue`).
+
+#### Procedure
+
+1. **For each advisory finding** listed in the "Advisory findings" section of the Automated Reviewer Loop Summary comment, read the full finding text from the linked PR comment.
+
+2. **Determine the disposition** — choose one per finding:
+   - **Addressed** — the finding describes a real issue that was fixed in this PR. Cite the commit SHA.
+   - **Accepted** — the finding is technically valid but intentionally not fixed. Provide a one-line rationale (e.g., "edge case that cannot occur in practice because platform names are always set programmatically").
+   - **Deferred** — the finding will be tracked separately. Note the issue or backlog reference.
+   - **Rejected** — the finding is a false positive. Explain why (e.g., "regex verified correct via manual test — pattern correctly excludes `[bot]`-suffixed logins").
+
+3. **Update the Automated Reviewer Loop Summary comment** to append an "Advisory dispositions" subsection immediately after the advisory findings list:
+
+   ```
+   **Advisory dispositions:**
+   - *Finding Name*: [Addressed in `<sha>` | Accepted | Deferred | Rejected] — one-line reason.
+   ```
+
+4. **Edit the comment in place** using `gh api PATCH`:
+
+   ```bash
+   # Find the summary comment ID (last match in case of multiple).
+   # Use the same multi-marker pattern as Step 8c to cover all accepted summary forms.
+   comment_id=$(gh api repos/{owner}/{repo}/issues/{pr_number}/comments \
+     --jq '[.[] | select(.body | test("Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"))] | last | .id')
+
+   # Patch with the updated body (include dispositions section at the end, before the script footer)
+   gh api repos/{owner}/{repo}/issues/comments/$comment_id \
+     -X PATCH -f body="<updated body>"
+   ```
+
+This step is mandatory when advisory findings are present. A summary comment that only lists finding names and links without dispositions leaves human reviewers and future retrospectives without visibility into whether findings were considered and why.
+
+---
+
 ### PR feedback tracking and comments
 
 Follow the "PR feedback tracking and comments" subsection of Step 7 in `91-orchestrate-work-protocol.md`:
