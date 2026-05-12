@@ -476,9 +476,10 @@ Any clean exit where the script output includes one or more advisory label entri
 4. **Edit the comment in place** using `gh api PATCH`:
 
    ```bash
-   # Find the summary comment ID (last match in case of multiple)
+   # Find the summary comment ID (last match in case of multiple).
+   # Use the same multi-marker pattern as Step 8c to cover all accepted summary forms.
    comment_id=$(gh api repos/{owner}/{repo}/issues/{pr_number}/comments \
-     --jq '[.[] | select(.body | test("Automated Reviewer Loop Summary"))] | last | .id')
+     --jq '[.[] | select(.body | test("Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"))] | last | .id')
 
    # Patch with the updated body (include dispositions section at the end, before the script footer)
    gh api repos/{owner}/{repo}/issues/comments/$comment_id \
