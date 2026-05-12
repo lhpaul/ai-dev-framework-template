@@ -42,10 +42,10 @@ get_target_status() {
   # (e.g., "fix/*" is a substring of "hotfix/*"; anchoring on "== fix/"
   # prevents the hotfix line from satisfying a fix/* lookup).
   # Extract the block from the matching "== ${prefix}/" line up to (but not
-  # including) the next branch clause ("== "), then search that block for
-  # TARGET_STATUS. This is more robust than grep -A5 when the assignment
-  # is more than 5 lines away from the branch marker.
-  awk "/== ${prefix}\\//{found=1; next} found && /== /{exit} found{print}" "$WORKFLOW_FILE" \
+  # including) the next branch clause (detected by "elif"), then search that
+  # block for TARGET_STATUS. Using "elif" as the terminator is more explicit
+  # and robust than the generic "== " pattern.
+  awk "/== ${prefix}\\//{found=1; next} found && /elif/{exit} found{print}" "$WORKFLOW_FILE" \
     | grep 'TARGET_STATUS=' \
     | head -1 \
     | sed 's/.*TARGET_STATUS="\([^"]*\)".*/\1/' \
