@@ -110,7 +110,7 @@ This feature adds a pre-release quality gate that runs CodeRabbit on the product
 
 ## Acceptance Criteria
 
-- [ ] A test harness script exists at `scripts/development-workflow/tests/test-pr-review-loop.sh` (or equivalent path) and is executable without external tooling beyond `bash`.
+- [ ] A test harness script exists at `scripts/development-workflow/tests/test-pr-review-loop.sh` and is executable without external tooling beyond `bash`.
 - [ ] The harness covers at least these three logic areas of `pr-review-loop.sh`: (1) `normalize_platform_verdict` verdict mapping (including `skipped` → `unavailable` in compare mode), (2) `check_unreplied_rest_comments` bot-account exclusion (all `[bot]`-suffixed accounts excluded, not only the primary reviewer), (3) compare-mode analytics: platform config change detection by ordered platform names rather than column count.
 - [ ] A CI workflow step (or addition to the existing `shellcheck.yml`) runs the harness on pull requests that modify `pr-review-loop.sh` or `workflow-lib.sh`, and fails the CI run if any test case fails.
 - [ ] The harness runs successfully to completion locally using only `bash` (no additional runtime required).
