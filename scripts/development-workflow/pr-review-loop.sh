@@ -1923,6 +1923,8 @@ run_coderabbit_review() {
   local coderabbit_rate_limit_retries=0
   local coderabbit_rate_limit_max_retries="${CODERABBIT_RATE_LIMIT_MAX_RETRIES:-2}"
   local coderabbit_rate_limit_wait="${CODERABBIT_RATE_LIMIT_WAIT:-180}"
+  local coderabbit_no_trigger_timeout="${CODERABBIT_NO_TRIGGER_TIMEOUT:-600}"
+  local coderabbit_no_trigger_retriggers=0
   if ! [[ "$coderabbit_rate_limit_max_retries" =~ ^[0-9]+$ ]]; then
     echo "WARN: CODERABBIT_RATE_LIMIT_MAX_RETRIES must be a non-negative integer; defaulting to 2" >&2
     coderabbit_rate_limit_max_retries=2
@@ -1930,6 +1932,10 @@ run_coderabbit_review() {
   if ! [[ "$coderabbit_rate_limit_wait" =~ ^[0-9]+$ ]] || [ "$coderabbit_rate_limit_wait" -le 0 ]; then
     echo "WARN: CODERABBIT_RATE_LIMIT_WAIT must be a positive integer; defaulting to 180" >&2
     coderabbit_rate_limit_wait=180
+  fi
+  if ! [[ "$coderabbit_no_trigger_timeout" =~ ^[0-9]+$ ]] || [ "$coderabbit_no_trigger_timeout" -le 0 ]; then
+    echo "WARN: CODERABBIT_NO_TRIGGER_TIMEOUT must be a positive integer; defaulting to 600" >&2
+    coderabbit_no_trigger_timeout=600
   fi
 
   while :; do
@@ -2008,6 +2014,50 @@ run_coderabbit_review() {
           echo "WARN: failed to post retrigger comment — will not reset timer" >&2
           coderabbit_retrigger_attempted=1
         fi
+        sleep "$poll_interval"
+        elapsed=$((elapsed + poll_interval))
+        continue
+      fi
+    fi
+
+    # --- Auto-retrigger: detect CodeRabbit silent non-trigger after push ---
+    # CodeRabbit sometimes does not auto-trigger after a push commit: no review
+    # appears, no "Reviews paused" comment, and no rate-limit comment — CodeRabbit
+    # simply stays silent. When no activity has been seen after
+    # CODERABBIT_NO_TRIGGER_TIMEOUT seconds (default 600 s), post
+    # "@coderabbitai review" to force a fresh review. Uses
+    # CODERABBIT_RATE_LIMIT_MAX_RETRIES as the combined retrigger cap so callers
+    # have a single knob for total retrigger attempts across both mechanisms.
+    if [ "$coderabbit_any_activity" -eq 0 ] \
+        && [ "$coderabbit_retrigger_attempted" -eq 0 ] \
+        && [ "$coderabbit_no_trigger_retriggers" -lt "$coderabbit_rate_limit_max_retries" ] \
+        && [ "$elapsed" -ge "$coderabbit_no_trigger_timeout" ]; then
+      # Confirm neither the "paused" nor the "rate limit" comment is present —
+      # those are handled by their own dedicated blocks above/below.
+      local silent_no_paused_count
+      silent_no_paused_count="$(
+        gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+          | jq --arg bot "$bot_login" --arg since "$since_iso" '
+              [.[] | select(
+                  .user.login == $bot and
+                  .created_at > $since and
+                  (
+                    ((.body // "") | test("Reviews paused|review paused"; "i")) or
+                    ((.body // "") | test("rate.?limit"; "i"))
+                  )
+              )] | length
+            '
+      )"
+      if [ "${silent_no_paused_count:-0}" -eq 0 ]; then
+        coderabbit_no_trigger_retriggers=$((coderabbit_no_trigger_retriggers + 1))
+        echo "INFO: CodeRabbit has not auto-triggered after ${elapsed}s (silent non-trigger, attempt ${coderabbit_no_trigger_retriggers}/${coderabbit_rate_limit_max_retries}) — posting @coderabbitai review" >&2
+        if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
+          echo "INFO: @coderabbitai review trigger posted" >&2
+        else
+          echo "WARN: failed to post @coderabbitai review trigger for silent non-trigger" >&2
+        fi
+        # Reset the elapsed timer to give the retrigger a full polling window.
+        elapsed=0
         sleep "$poll_interval"
         elapsed=$((elapsed + poll_interval))
         continue
