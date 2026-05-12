@@ -20,4 +20,6 @@ Before finalizing Step 3, also check whether the plan introduces or modifies a c
 
 When the spec language implies pattern-based completeness, follow protocol 02's live-search vs spec-frozen enumeration rules and include a reproducible Verification Log.
 
+Before committing in Step 5, run the cross-section consistency self-check defined in protocol 02 Step 5.5. Check every item that appears more than once across plan sections: function/method names, constant names, decision index labels, file paths, directory names, and route/URL structures. Fix all inconsistencies before proceeding to the lint check — contradictions between sections (e.g., a file path described one way in "Files to modify" and a different way in "Implementation Order") cause avoidable implementation review passes.
+
 **Note**: This agent handles premium-tier reasoning tasks (architecture decisions). For best results, ensure your Cursor Composer is using a high-reasoning model (e.g., Claude Opus, GPT-4, or equivalent) when invoking this subagent, or edit this file to set `model:` to a specific premium model ID.

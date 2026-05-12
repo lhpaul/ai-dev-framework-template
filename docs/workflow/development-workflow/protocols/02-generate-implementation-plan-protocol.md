@@ -298,17 +298,19 @@ If no blocking human decision remains:
 4. Write the smoke test runbook
 5. **Cross-section consistency self-check (mandatory — do not skip)**:
 
-   Before committing, verify that every function name, constant, and architecture decision index (ADR/decision number) that appears more than once in the plan has a consistent definition across all occurrences. Contradictory definitions of the same symbol in different sections lead to multiple unnecessary implementation review passes.
+   Before committing, verify that every symbol and structural decision that appears more than once in the plan has a consistent definition across all occurrences. Contradictory definitions discovered during implementation waste implementation cycles and cause agent confusion.
 
    Procedure:
-   1. Collect all identifiers that appear more than once: function/method names, constant names, and decision index labels (e.g., "Decision 1", "ADR-3").
-   2. For each repeated identifier, compare every occurrence across all sections of the plan document.
-   3. If any two occurrences define or describe the identifier differently (e.g., incompatible signatures, conflicting return types, different constant values, or contradictory descriptions), fix the inconsistency before proceeding.
+   1. Collect all items that appear more than once across plan sections: function/method names, constant names, decision index labels (e.g., "Decision 1", "ADR-3"), file paths, directory names, and route/URL structures.
+   2. For each repeated item, compare every occurrence across all sections of the plan document.
+   3. If any two occurrences define or describe the item differently, fix the inconsistency before proceeding.
 
    Common sources of inconsistency to check:
    - A function described with different signatures or parameters in the "Architecture" section vs. the "Implementation Order" steps.
    - A constant defined with one value in the overview and a different value in the verification step.
    - A decision (e.g., "Decision 1: use X") referenced as "Decision 2" or with a different rationale in another section.
+   - A file path or directory structure described one way in the "Files to modify" or "Architecture" section and a different way in the "Implementation Order" steps or summary (e.g., a route file placed under `routes/api/` in one section but under `api/routes/` in another).
+   - A URL or route pattern defined in one section (e.g., `/api/v1/users`) that conflicts with a different pattern in another section (e.g., `/v1/api/users`).
 
    Fix all inconsistencies found before moving to the lint check. Do not proceed to commit with known cross-section contradictions.
 
