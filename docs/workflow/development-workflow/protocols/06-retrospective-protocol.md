@@ -144,8 +144,9 @@ Carry this mapping into Step 4 (presentation) and Step 5 (action execution).
 Read `template.repository` from `.ai-dev-workflow.yaml`:
 
 ```bash
-# Read template.repository from the config file
-grep -A1 '^template:' .ai-dev-workflow.yaml | grep 'repository:' | sed 's/.*repository: *//' | tr -d '"'
+# Read template.repository from the config file (works without yq)
+# Extracts the value of the `repository:` key within the `template:` block
+awk '/^template:/{found=1} found && /^ *repository:/{gsub(/.*repository: */, ""); gsub(/"/, ""); print; exit}' .ai-dev-workflow.yaml
 # Or use yq if available:
 # yq '.template.repository' .ai-dev-workflow.yaml
 ```
