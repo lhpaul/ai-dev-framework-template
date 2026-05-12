@@ -1477,22 +1477,33 @@ check_unreplied_rest_comments() {
   # CodeRabbit's own auto-acknowledgment replies do not count.
   # Comments containing "✅ Addressed" in the body are also excluded (self-resolved).
   #
+  # Root REST comments whose corresponding GraphQL review thread is already resolved
+  # (isResolved=true) are also excluded. This prevents false-positive "unreplied"
+  # counts when a reviewer resolves a thread via the GitHub UI without adding a reply:
+  # the GraphQL isResolved flag reflects the true resolved state, so any REST comment
+  # that belongs to an already-resolved thread must not block the review loop.
+  # The caller supplies the set of resolved root comment database IDs via $4.
+  #
   # Arguments:
-  #   $1  pr_number  - PR number (integer)
-  #   $2  repo       - "owner/repo" slug
-  #   $3  bot_login  - Full bot login including [bot] suffix (e.g. "coderabbitai[bot]")
-  #                    REST API returns the full login; unlike GraphQL, no stripping needed.
+  #   $1  pr_number              - PR number (integer)
+  #   $2  repo                   - "owner/repo" slug
+  #   $3  bot_login              - Full bot login including [bot] suffix (e.g. "coderabbitai[bot]")
+  #                                REST API returns the full login; unlike GraphQL, no stripping needed.
+  #   $4  resolved_ids_json      - (optional) JSON array of integer database IDs for root comments
+  #                                whose GraphQL thread is already resolved (isResolved=true).
+  #                                Pass "[]" or omit to skip this filter.
   #
   # Prints the count of unreplied root CodeRabbit comments on stdout.
   # Exit codes: 0 = success, 3 = REST API failure.
   local pr_number="$1"
   local repo="$2"
   local bot_login="$3"
+  local resolved_ids_json="${4:-[]}"
 
   local result
   result="$(
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
-    | jq -s --arg bot "$bot_login" '
+    | jq -s --arg bot "$bot_login" --argjson resolved_ids "$resolved_ids_json" '
         # gh api --paginate | jq -s produces [[page1_items], [page2_items], ...].
         # Use .[][] to flatten pages before selecting individual comment objects.
         #
@@ -1505,8 +1516,9 @@ check_unreplied_rest_comments() {
             (.user.login | test("\\[bot\\]$") | not)
           ) | .in_reply_to_id] | unique
         ) as $human_replied_ids
-        # Count root CR comments that have NOT been acknowledged by a human reply
-        # and whose body does not self-resolve with "✅ Addressed".
+        # Count root CR comments that have NOT been acknowledged by a human reply,
+        # whose body does not self-resolve with "✅ Addressed", and whose GraphQL
+        # review thread has not already been resolved (isResolved=true).
         | [.[][] | select(
             .user.login == $bot and
             .in_reply_to_id == null and
@@ -1514,6 +1526,9 @@ check_unreplied_rest_comments() {
           ) | select(
             .id as $id |
             ($human_replied_ids | index($id)) == null
+          ) | select(
+            .id as $id |
+            ($resolved_ids | index($id)) == null
           )] | length
       '
   )" || {
@@ -1522,6 +1537,89 @@ check_unreplied_rest_comments() {
   }
 
   printf '%d\n' "${result:-0}"
+}
+
+get_resolved_thread_comment_ids() {
+  # Fetch the database IDs of root comments from already-resolved GraphQL review
+  # threads on a PR. These IDs are used by check_unreplied_rest_comments to skip
+  # REST comments whose corresponding thread was resolved via the GitHub UI
+  # (isResolved=true), even when no non-bot reply exists on that thread.
+  #
+  # A thread's "root comment" is its first comment; its databaseId matches the
+  # REST pulls-comments API .id field, enabling cross-API correlation.
+  #
+  # Arguments:
+  #   $1  pr_number      - PR number (integer)
+  #   $2  repo           - "owner/repo" slug
+  #   $3  graphql_bot_login - Bot login WITHOUT [bot] suffix (as returned by GraphQL API)
+  #
+  # Prints a compact JSON array of integer IDs on stdout, e.g. [123456, 789012].
+  # Prints "[]" when no resolved threads exist or on any API failure (non-fatal).
+  # Exit codes: always 0 (failures are non-fatal; caller receives "[]").
+  local pr_number="$1"
+  local repo="$2"
+  local graphql_bot_login="$3"
+
+  local owner repo_name
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  # GraphQL query: paginate reviewThreads, fetch first comment databaseId per thread.
+  # Select only resolved threads whose first comment was authored by the bot.
+  local graphql_query
+  graphql_query='query($owner:String!,$repo:String!,$pr:Int!,$cursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor}nodes{isResolved comments(first:1){nodes{databaseId author{login}}}}}}}}'
+
+  local all_ids="[]"
+  local cursor=""
+  local has_next_page="true"
+  local page=0
+  local max_pages=10
+
+  while [ "$has_next_page" = "true" ]; do
+    page=$((page + 1))
+    if [ "$page" -gt "$max_pages" ]; then
+      echo "WARN: get_resolved_thread_comment_ids: exceeded $max_pages pages for PR #$pr_number — returning partial results" >&2
+      break
+    fi
+
+    local result
+    if [ -n "$cursor" ]; then
+      result="$(gh api graphql \
+        -f query="$graphql_query" \
+        -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" -f cursor="$cursor" \
+        --jq '.data.repository.pullRequest.reviewThreads' 2>/dev/null)" || {
+        echo "WARN: get_resolved_thread_comment_ids: GraphQL query failed for PR #$pr_number — returning partial results" >&2
+        break
+      }
+    else
+      result="$(gh api graphql \
+        -f query="$graphql_query" \
+        -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" \
+        --jq '.data.repository.pullRequest.reviewThreads' 2>/dev/null)" || {
+        echo "WARN: get_resolved_thread_comment_ids: GraphQL query failed for PR #$pr_number — returning partial results" >&2
+        break
+      }
+    fi
+
+    has_next_page="$(printf '%s\n' "$result" | jq -r '.pageInfo.hasNextPage')"
+    cursor="$(printf '%s\n' "$result" | jq -r '.pageInfo.endCursor // empty')"
+
+    # Accumulate databaseIds of root comments from resolved bot-authored threads.
+    local page_ids
+    page_ids="$(printf '%s\n' "$result" \
+      | jq --arg bot "$graphql_bot_login" '
+          [.nodes[] |
+            select(.isResolved == true) |
+            select(.comments.nodes[0].author.login == $bot) |
+            .comments.nodes[0].databaseId
+          ]
+        ')" || continue
+
+    all_ids="$(printf '%s\n%s\n' "$all_ids" "$page_ids" \
+      | jq -s 'add | unique')" || continue
+  done
+
+  printf '%s\n' "$all_ids"
 }
 
 is_coderabbit_blocking() {
@@ -1655,9 +1753,20 @@ coderabbit_thread_gate_clean() {
   # query above, but they ARE visible in the GitHub PR UI as unresolved findings.
   # Detect them via the REST pulls-comments endpoint and require a human reply
   # before allowing RESULT=clean.
+  #
+  # Fetch the database IDs of root comments from already-resolved GraphQL threads
+  # so that check_unreplied_rest_comments can skip them. When a reviewer resolves
+  # a thread via the GitHub UI (isResolved=true), the REST comment is still present
+  # but the thread is already resolved — it must not block the review loop.
+  local resolved_ids_json
+  set +e
+  resolved_ids_json="$(get_resolved_thread_comment_ids "$pr_number" "$repo" "$graphql_bot_login")"
+  eval "$prev_errexit"
+  resolved_ids_json="${resolved_ids_json:-[]}"
+
   local rest_unreplied_raw rest_check_st
   set +e
-  rest_unreplied_raw="$(check_unreplied_rest_comments "$pr_number" "$repo" "$bot_login")"
+  rest_unreplied_raw="$(check_unreplied_rest_comments "$pr_number" "$repo" "$bot_login" "$resolved_ids_json")"
   rest_check_st=$?
   eval "$prev_errexit"
 
