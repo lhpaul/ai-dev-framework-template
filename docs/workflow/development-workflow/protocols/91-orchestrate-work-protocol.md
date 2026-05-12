@@ -1312,10 +1312,12 @@ discarded when the orchestration session ends.
 
 After Step 7 completes with result `clean` or `skipped`, and **before** entering Step 8, apply the `ready-for-regression` label on implementation PRs to trigger label-gated e2e/regression CI checks.
 
-**Applies to**: PRs on branches `feature/*`, `fix/*`, `hotfix/*`, `refactor/*`
+**Applies to**: PRs on branches `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`
 **Does not apply to**: PRs on branches `spec/*`, `implementation-plan/*`
 
-**`BATCH_CONTEXT=true` — this step is mandatory and must not be skipped in parallel dispatch**: When agents are dispatched with `BATCH_CONTEXT=true`, they follow a compressed execution path (worktree isolation, branch-skip rules, reduced context). Step 7b is a required step in that path and must be executed **between Step 7 and Step 8** without exception. The orchestrator's Step 5.1 catches a missing label at the end of the batch, but the agent is the primary responsible party and must not rely on Step 5.1 as a fallback.
+> **`refactor/*` is not exempt**: `refactor/*` branches require `ready-for-regression` exactly like `fix/*` and `feature/*` branches. Refactors that reach `ready-for-human-review` without this label will bypass e2e/regression CI. Apply the label unconditionally for any `refactor/*` PR — do not infer exemption from the content of the refactor (e.g., "it's documentation-only" or "it changes no logic").
+
+**`BATCH_CONTEXT=true` — this step is mandatory and must not be skipped in parallel dispatch**: When agents are dispatched with `BATCH_CONTEXT=true`, they follow a compressed execution path (worktree isolation, branch-skip rules, reduced context). Step 7b is a required step in that path and must be executed **between Step 7 and Step 8** without exception for **all** implementation branch types (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`). The orchestrator's Step 5.1 catches a missing label at the end of the batch, but the agent is the primary responsible party and must not rely on Step 5.1 as a fallback.
 
 ```bash
 # Only for implementation PRs:
