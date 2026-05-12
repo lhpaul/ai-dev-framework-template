@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Reviewer loop: mandatory advisory finding dispositions in summary comment**: Protocol 93 gains a new "Advisory finding dispositions" step — when the loop exits clean with non-empty `ADVISORY_LABELS`, the runner must evaluate each advisory finding, assign a disposition (Addressed / Accepted / Deferred / Rejected) with a one-line rationale, and update the Automated Reviewer Loop Summary comment with a "Advisory dispositions" subsection. Protocol 91 Step 7 result table is updated to reference this step on `clean` exits.
+- **Reviewer loop: mandatory advisory finding dispositions in summary comment**: Protocol 93 gains a new "Advisory finding dispositions" step — when the loop exits clean with non-empty `ADVISORY_LABELS`, the runner must evaluate each advisory finding, assign a disposition (Addressed / Accepted / Deferred / Rejected) with a one-line rationale, and update the Automated Reviewer Loop Summary comment with an "Advisory dispositions" subsection. Protocol 91 Step 7 result table is updated to reference this step on `clean` exits.
 
 ### Fixed
 
