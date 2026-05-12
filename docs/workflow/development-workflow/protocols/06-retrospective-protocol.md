@@ -139,7 +139,16 @@ Carry this mapping into Step 4 (presentation) and Step 5 (action execution).
 
 ### 3b. Template cross-reference (runs when `template.repository` is configured; skipped otherwise)
 
-Read `template.repository` from `.ai-dev-workflow.yaml`.
+**Subagent context note**: Step 3b uses `gh` CLI exclusively — it does not require MCP tools. When the retrospective agent is dispatched as a subagent (i.e., without an interactive system prompt that lists available MCP tools), it must still execute Step 3b if `template.repository` is configured. The agent must read `.ai-dev-workflow.yaml` directly from the filesystem (`cat .ai-dev-workflow.yaml` or equivalent) to obtain the `template.repository` value — do not rely on memory or assume the field is empty. Failure to read the YAML (e.g., file not found, parse error) is treated as `check-unavailable` with `check_status: warning` — mark all findings accordingly and continue.
+
+Read `template.repository` from `.ai-dev-workflow.yaml`:
+
+```bash
+# Read template.repository from the config file
+grep -A1 '^template:' .ai-dev-workflow.yaml | grep 'repository:' | sed 's/.*repository: *//' | tr -d '"'
+# Or use yq if available:
+# yq '.template.repository' .ai-dev-workflow.yaml
+```
 
 - **If absent or empty**: skip this substep silently. Do not mention it in output.
 - **If present but malformed** (not `owner/repo` format): mark all findings as `check-unavailable` with `check_status: error` and continue. Report the error inline with each finding in Step 4 output.
@@ -209,9 +218,11 @@ For `check-unavailable` findings, also include:
 
 Before proceeding to Step 3c (classification) and Step 4, verify that Step 3b was completed when it was required:
 
-- Read `template.repository` from `.ai-dev-workflow.yaml`.
-- **If `template.repository` is set (non-empty)** and Step 3b was skipped or not completed during this session: stop here, return to Step 3b, and complete it before classifying any findings. Step 3b handles both the well-formed case (full cross-reference) and the malformed case (`check-unavailable`); the gate fires for both.
+- Read `template.repository` from `.ai-dev-workflow.yaml` using the filesystem command shown in Step 3b (do not rely on memory).
+- **If `template.repository` is set (non-empty)** and Step 3b was skipped or not completed during this session: stop here, return to Step 3b, and complete it before classifying any findings. Step 3b handles the well-formed case (full cross-reference), the malformed case (`check-unavailable`), and the subagent / YAML-unreadable case (`check-unavailable` with `check_status: warning`) — the gate is satisfied for all three outcomes. The gate fires only when Step 3b was entirely omitted.
 - **If `template.repository` is absent or empty**: the gate is satisfied — proceed to Step 3c.
+
+**Subagent-specific guidance**: When this gate runs in a subagent context and Step 3b was skipped because the agent assumed `template.repository` was empty without reading the YAML, the gate is **not** satisfied. The agent must read the YAML (even in a subagent shell with no MCP tools), run Step 3b using `gh` CLI, and return. If the YAML is unreadable, mark all findings `check-unavailable` — that satisfies the gate and allows the retrospective to continue.
 
 This gate prevents premature classification of findings (e.g., marking a finding as "Add to backlog" instead of `already-tracked` or `already-fixed`) when the template cross-reference data would have changed the outcome.
 
