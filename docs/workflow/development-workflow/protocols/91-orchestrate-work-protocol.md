@@ -1095,7 +1095,7 @@ Interpret the result as follows:
 
 | Result | Action |
 |---|---|
-| `clean` | Summary comment posted automatically by the script. Re-issue the GraphQL `reviewThreads` query (Step 8c) before proceeding — see "Re-query reviewThreads after each push" below |
+| `clean` | Summary comment posted automatically by the script. If `ADVISORY_LABELS` is non-empty, document a disposition for each advisory finding and update the summary comment before proceeding — see "Advisory finding dispositions" in `93-automated-reviewer-loop-protocol.md`. Then re-issue the GraphQL `reviewThreads` query (Step 8c) — see "Re-query reviewThreads after each push" below |
 | `skipped` | Continue to Step 7b (implementation PRs) then Step 8 (no summary comment posted — Step 8c skips the check) |
 | `needs_fixes` and `cycle < max_cycles` | Increment `cycle`, dispatch the matching fixer agent, wait for a push, then run Step 7 again |
 | `needs_fixes` and `cycle >= max_cycles` | Pass `--post-final-summary` to the final invocation — the script posts the summary automatically. Then escalate to human |
