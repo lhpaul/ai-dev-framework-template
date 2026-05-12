@@ -20,8 +20,8 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)"
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../.." && pwd)"
 WORKFLOW_FILE="$REPO_ROOT/.github/workflows/update-tracker-on-merge.yml"
 
 if [ ! -f "$WORKFLOW_FILE" ]; then
@@ -41,7 +41,11 @@ get_target_status() {
   # Anchor on "== ${prefix}/" to avoid substring false-positives
   # (e.g., "fix/*" is a substring of "hotfix/*"; anchoring on "== fix/"
   # prevents the hotfix line from satisfying a fix/* lookup).
-  grep -A5 "== ${prefix}/" "$WORKFLOW_FILE" \
+  # Extract the block from the matching "== ${prefix}/" line up to (but not
+  # including) the next branch clause (detected by "elif"), then search that
+  # block for TARGET_STATUS. Using "elif" as the terminator is more explicit
+  # and robust than the generic "== " pattern.
+  awk "/== ${prefix}\\//{found=1; next} found && /elif/{exit} found{print}" "$WORKFLOW_FILE" \
     | grep 'TARGET_STATUS=' \
     | head -1 \
     | sed 's/.*TARGET_STATUS="\([^"]*\)".*/\1/' \

@@ -3,11 +3,11 @@
 set -euo pipefail
 
 workflow_script_dir() {
-  CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd
+  CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd
 }
 
 workflow_repo_root() {
-  CDPATH= cd -- "$(workflow_script_dir)/../.." && pwd
+  CDPATH='' cd -- "$(workflow_script_dir)/../.." && pwd
 }
 
 workflow_config_file() {
