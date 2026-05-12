@@ -49,7 +49,7 @@ This feature adds a pre-release quality gate that runs CodeRabbit on the product
 **Steps**:
 1. The CI system detects that `pr-review-loop.sh` or `workflow-lib.sh` was modified in the PR.
 2. CI runs the test harness, which exercises the key logic paths of `pr-review-loop.sh` using mocked `gh` and `git` calls — no real GitHub API calls or PRs are needed.
-3. Each test case verifies a specific behavior: verdict normalization, retry logic, thread-resolution detection, compare-mode metrics, or async grace period handling.
+3. Each test case verifies a specific behavior within the three targeted logic areas: verdict normalization (`normalize_platform_verdict`), thread-resolution detection (`check_unreplied_rest_comments`), and compare-mode analytics. Future test cases may extend coverage to retry logic, async grace period handling, and other logic paths — those are out of scope for the initial harness.
 4. If any test case fails, CI reports the failure with the test name and a description of the expected versus actual behavior.
 5. If all test cases pass, CI reports success and the PR can proceed.
 
