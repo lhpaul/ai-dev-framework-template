@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 
@@ -1497,10 +1497,12 @@ check_unreplied_rest_comments() {
         # Use .[][] to flatten pages before selecting individual comment objects.
         #
         # Build the set of root-comment IDs that have received a human (non-bot) reply.
+        # Exclude the primary bot login AND any other GitHub bot accounts (login ends with "[bot]").
         (
           [.[][] | select(
             .in_reply_to_id != null and
-            .user.login != $bot
+            .user.login != $bot and
+            (.user.login | test("\\[bot\\]$") | not)
           ) | .in_reply_to_id] | unique
         ) as $human_replied_ids
         # Count root CR comments that have NOT been acknowledged by a human reply
@@ -2496,7 +2498,7 @@ normalize_platform_verdict() {
     clean)       printf 'clean' ;;
     needs_fixes) printf 'blocking' ;;
     advisory)    printf 'advisory' ;;
-    skipped)     printf 'clean' ;;
+    skipped)     printf 'unavailable' ;;
     needs_rerun) printf 'blocking' ;;
     escalate)
       # Distinguish timeout from service-unavailable via REASON.
@@ -2598,19 +2600,30 @@ METRICS_HEADER
     # File exists and already has a table. Check whether the current platform
     # set matches the existing header. If not, insert a separator comment row
     # before appending the data row so human readers can see the config changed.
-    # Detection: count the platform columns in the existing header by looking at
-    # the separator row (each "---|" token corresponds to one column).
+    # Detection: compare platform names (and order) by parsing the header row
+    # above the last separator row. A count-only check misses platform renames
+    # or reordering with the same count.
     # Column order: PR, Branch Type, <platforms...>, Overall Result, Block Was Real Bug?
     # Fixed columns = 4 (PR, Branch Type, Overall Result, Block Was Real Bug?)
-    # Platform columns = total separator tokens - 4
-    # Use tail -1 to get the most recent separator row (handles multiple layout changes).
     existing_sep_row="$(grep '^|---|' "$metrics_file" | tail -1)"
     existing_platform_col_count=$(printf '%s' "$existing_sep_row" | tr -cd '|' | wc -c | tr -d ' ')
     # pipe count = platform_cols + 4 fixed cols + 1 leading pipe → total pipes = platform_cols + 5
-    # Solve: existing_platform_col_count (pipes) = existing_platform_cols + 5
     existing_platform_count=$(( existing_platform_col_count - 5 ))
     current_platform_count="${#platform_names[@]}"
-    if [ "$current_platform_count" -ne "$existing_platform_count" ]; then
+    # Parse platform names from the header row above the last separator row.
+    existing_sep_line_num="$(grep -n '^|---|' "$metrics_file" | tail -1 | cut -d: -f1)"
+    existing_header_row="$(sed -n "$(( existing_sep_line_num - 1 ))p" "$metrics_file")"
+    # awk splits by |: field 1=empty, 2=PR, 3=Branch Type, 4..NF-3=platforms, NF-2=Overall Result, NF-1=Block Was Real Bug?, NF=empty
+    existing_platform_str="$(printf '%s' "$existing_header_row" | awk -F'|' '{
+      sep=""
+      for (i = 4; i <= NF - 3; i++) {
+        gsub(/^[ \t]+|[ \t]+$/, "", $i)
+        printf "%s%s", sep, $i
+        sep = ","
+      }
+    }')"
+    current_platform_str="$(IFS=,; printf '%s' "${platform_names[*]}")"
+    if [ "$current_platform_count" -ne "$existing_platform_count" ] || [ "$existing_platform_str" != "$current_platform_str" ]; then
       # Platform configuration changed: insert an annotation row (in the OLD layout
       # so it is a valid row for that table) then write a new header block for the
       # new layout so subsequent rows are correctly labeled.
@@ -2900,6 +2913,7 @@ fi
 # Append compare-mode metrics row after the thread gate so the recorded
 # aggregate_result reflects the final settled value (thread audit may flip
 # a platform-clean run to needs_fixes or escalate).
+_compare_metrics_appended=0
 if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
   set +e
   _metrics_args=("$pr_number" "$branch_name" "$aggregate_result")
@@ -2908,7 +2922,8 @@ if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
     _metrics_args+=("${compare_verdicts[$_idx]}" "${compare_verdicts[$((_idx + 1))]}")
     _idx=$((_idx + 2))
   done
-  append_compare_metrics_row "${_metrics_args[@]}" 2>/dev/null || \
+  append_compare_metrics_row "${_metrics_args[@]}" 2>/dev/null && \
+    _compare_metrics_appended=1 || \
     echo "WARN: append_compare_metrics_row failed — metrics row not written" >&2
   set -e
 fi
@@ -3069,9 +3084,11 @@ Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs afte
 - ${_cvname}: ${_cvtoken}"
       _idx=$((_idx + 2))
     done
-    compare_section="${compare_section}
+    if [ "${_compare_metrics_appended:-0}" -eq 1 ]; then
+      compare_section="${compare_section}
 
 *Metrics row appended to \`docs/workflow/retro-metrics-platforms.md\`.*"
+    fi
   fi
 
   local comment_body
