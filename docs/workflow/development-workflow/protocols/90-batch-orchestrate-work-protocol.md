@@ -720,7 +720,7 @@ After a Work Item Runner returns:
 
 1. **Re-check tracker status first** when an issue tracker is configured — query the tracker for the item's current status before consulting VCS state. Do not rely solely on `workflow-next-action.sh` to determine whether an item should advance, as VCS-derived status cannot reliably distinguish certain states (e.g., a spec PR awaiting review vs. one already merged). Use `workflow-next-action.sh` only for VCS-level enrichment (branch existence, PR labels) after the tracker status is known.
 2. If the tracker is unavailable, fall back to `workflow-next-action.sh` but flag to the human that status may be stale.
-3. If the next action is still deterministic because the Work Item Runner returned early or was interrupted, redispatch / resume that same item.
+3. If the next action is still deterministic because the Work Item Runner returned early or was interrupted, redispatch / resume that same item. **Worktree isolation is mandatory on redispatch**: when the original batch used parallel dispatch (`BATCH_CONTEXT=true`), every redispatch — including fixer-agent passes triggered by review findings — must carry `BATCH_CONTEXT=true` and the resolved `<worktree-path>` in the handoff. Redispatching without `BATCH_CONTEXT=true` causes fixer agents to use main-repo file paths in `Read`/`Edit`/`Write` calls while committing via the worktree git context, leaving uncommitted files in the main working tree instead of the isolated branch.
 4. Stop supervising that item only when it is waiting on a human, blocked, or escalated.
 5. **Collect deferred tracker transitions**: scan the Work Item Runner's summary for any `TRACKER_UPDATE_REQUIRED:` lines. These are transitions that the subagent could not perform (e.g., because the provider requires MCP and MCP is not available in the subagent context). Apply each deferred transition now via MCP before moving on to the next item. For GitHub Projects, subagents use `gh` CLI directly and do not emit `TRACKER_UPDATE_REQUIRED:` — this step only applies to providers without CLI support (e.g., Linear).
 6. **When a human confirms PRs have been merged**: run post-merge status transitions per the table in Step 10 of `91-orchestrate-work-protocol.md` — set tracker status to `Spec Ready`, `Plan Ready`, or `Merged` depending on the branch type of the merged PR — and clean up local branches and worktrees associated with the merged PRs.
@@ -774,7 +774,7 @@ If a check requires agent redispatch:
 1. Log the specific failure in your retrospective notes (see "Retrospective notes during supervision" below).
 2. Remove `ready-for-human-review` if it is present: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.
 3. Add the `needs-fixes` label to the PR: `gh pr edit <pr_number> --add-label "needs-fixes"`.
-4. Redispatch / resume the Work Item Runner for that item to address the gap.
+4. Redispatch / resume the Work Item Runner for that item to address the gap. **Worktree isolation is mandatory**: if the original batch used parallel dispatch (`BATCH_CONTEXT=true`), the redispatched Work Item Runner must also receive `BATCH_CONTEXT=true` and the resolved `<worktree-path>` so it operates inside the existing worktree. Do not redispatch without these values — fixer agents that run outside the worktree will use main-repo file paths and leave uncommitted changes in the main working tree.
 5. Re-run this verification after the next Work Item Runner return.
 
 Do not consider the batch complete until every dispatched item has reached a real terminal condition.

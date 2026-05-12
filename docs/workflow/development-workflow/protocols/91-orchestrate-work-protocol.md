@@ -1212,6 +1212,16 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
 | `implementation-plan/*` | `implementation-plan-reviewer` |
 | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `code-reviewer` |
 
+**Fixer agent worktree isolation rule (mandatory for parallel batches):**
+
+When this Work Item Runner was dispatched as part of a parallel batch (`BATCH_CONTEXT=true`), all fixer agents dispatched from this step **must** receive `BATCH_CONTEXT=true` and the resolved `<worktree-path>` in their handoff. Fixer agents that run without these values will use main-repo absolute file paths in `Read`/`Edit`/`Write` calls while committing via the worktree git context — causing their changes to be written to the main working tree and left uncommitted on the integration branch instead of on the isolated feature branch.
+
+Required fixer handoff values (parallel batches only):
+
+- `BATCH_CONTEXT=true`
+- `WORKTREE_PATH=<resolved-absolute-worktree-path>` — the same path used when this item was first dispatched
+- The explicit branch-skip instruction: "BATCH_CONTEXT=true — the worktree is already on branch `<branch>`. Do NOT run `git checkout develop`, `git checkout -b`, `git switch`, `git reset`, or `git restore` from the main repo root."
+
 **Fixer agent batching rule (mandatory):**
 
 When dispatching a fixer agent, include the following explicit instruction:
