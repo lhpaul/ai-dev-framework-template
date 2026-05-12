@@ -145,8 +145,15 @@ Read `template.repository` from `.ai-dev-workflow.yaml`:
 
 ```bash
 # Read template.repository from the config file (works without yq)
-# Extracts the value of the `repository:` key within the `template:` block
-awk '/^template:/{found=1} found && /^ *repository:/{gsub(/.*repository: */, ""); gsub(/"/, ""); print; exit}' .ai-dev-workflow.yaml
+# Scans only the template: block; stops at the next top-level key to avoid
+# picking up unrelated repository: keys from other YAML blocks (e.g. vcs:).
+awk '
+/^[[:space:]]*template:[[:space:]]*$/ { in_template=1; next }
+in_template && /^[^[:space:]]/ { in_template=0 }
+in_template && /^[[:space:]]*repository:[[:space:]]*/ {
+  val=$0; sub(/^[[:space:]]*repository:[[:space:]]*/, "", val); gsub(/"/, "", val); print val; exit
+}
+' .ai-dev-workflow.yaml
 # Or use yq if available:
 # yq '.template.repository' .ai-dev-workflow.yaml
 ```
