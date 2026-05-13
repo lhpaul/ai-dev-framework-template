@@ -101,8 +101,7 @@ ready` (converting the draft PR to non-draft).
    - Effective reviewer set: none (zero reachable)
    - Skipped reviewers: all listed reviewers, each with reason `unreachable`
    - Final verdict: `hard-fail / blocked`
-   - Remediation guidance, for example:
-     > `Step 7a BLOCKED: no internal reviewer is reachable from the current
+   - Remediation guidance, for example: > `Step 7a BLOCKED: no internal reviewer is reachable from the current
 runner. Effective reviewer set: none. Skipped: [codex (unreachable),
 claude (unreachable)]. Verdict: hard-fail. To unblock: run Step 7a from a
 runner that supports all configured reviewers, or temporarily override
