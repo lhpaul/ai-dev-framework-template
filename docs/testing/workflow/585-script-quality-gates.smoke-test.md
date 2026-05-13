@@ -61,7 +61,7 @@ Before running this smoke test:
    ```
 2. Run ShellCheck (if available locally):
    ```bash
-   shellcheck scripts/development-workflow/tests/test-pr-review-loop.sh
+   shellcheck --severity=warning scripts/development-workflow/tests/test-pr-review-loop.sh
    ```
 
 **Expected result**: File has execute permission. ShellCheck reports zero warnings at

@@ -378,9 +378,10 @@ run_test "verdict_clean" "clean" "$actual"
 
 3. **Extend `.github/workflows/shellcheck.yml` with a harness step**
 
-   In `.github/workflows/shellcheck.yml`, add a second job (or a second step within the
-   existing `shellcheck` job — prefer a separate job so failures are distinguishable)
-   named `test-harness` with a `paths` filter on:
+   Add a `test-harness` job that triggers only when the two target files change.
+   Prefer a dedicated workflow file over adding it to `shellcheck.yml` so the two
+   jobs trigger on different path sets and their failures remain distinguishable.
+   The two target files to monitor are:
    - `scripts/development-workflow/pr-review-loop.sh`
    - `scripts/development-workflow/workflow-lib.sh`
 
@@ -392,32 +393,14 @@ run_test "verdict_clean" "clean" "$actual"
    No additional dependencies or setup are required — the harness uses only `bash` and
    `git`.
 
-   Because `shellcheck.yml` already has `on.pull_request.paths`, add the same
-   path-filtering logic to the new job via `on.pull_request.paths` at the job level, or
-   use the `paths-filter` action if the existing workflow already uses it. The simplest
-   approach: add a separate top-level `on` entry or use `if: contains(...)` step
-   condition. Use a dedicated job with its own `on.pull_request.paths` filter so it
-   triggers independently of the ShellCheck job.
+   Path filtering in GitHub Actions is defined at the workflow trigger level (`on:
+   pull_request: paths:`), not at the job level. Use a separate workflow file
+   (`.github/workflows/test-pr-review-loop.yml`) with its own `paths` filter scoped
+   to only the two target files. This is the cleanest approach: the harness job
+   triggers only when the files it tests actually change, independently of the
+   ShellCheck workflow.
 
-   Preferred structure (two separate jobs in the same file):
-
-   ```yaml
-   # Illustrative — adapt during implementation
-   test-harness:
-     name: pr-review-loop test harness
-     runs-on: ubuntu-latest
-     if: |
-       contains(github.event.pull_request.changed_files, 'pr-review-loop.sh') ||
-       contains(github.event.pull_request.changed_files, 'workflow-lib.sh')
-     steps:
-       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
-       - name: Run test harness
-         run: bash scripts/development-workflow/tests/test-pr-review-loop.sh
-   ```
-
-   Note: the `contains(github.event.pull_request.changed_files, ...)` expression is not
-   available for the `paths` key directly in a job-level filter. Use the workflow-level
-   `on.pull_request.paths` approach instead:
+   Illustrative structure for `.github/workflows/test-pr-review-loop.yml`:
 
    ```yaml
    # Illustrative — adapt during implementation
@@ -429,16 +412,20 @@ run_test "verdict_clean" "clean" "$actual"
        paths:
          - 'scripts/development-workflow/pr-review-loop.sh'
          - 'scripts/development-workflow/workflow-lib.sh'
-         - 'scripts/development-workflow/**/*.sh'
-         - '.shellcheckrc'
+
+   jobs:
+     test-harness:
+       name: pr-review-loop test harness
+       runs-on: ubuntu-latest
+       steps:
+         - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+         - name: Run test harness
+           run: bash scripts/development-workflow/tests/test-pr-review-loop.sh
    ```
 
-   Both the `shellcheck` and `test-harness` jobs share the same `on` trigger but the
-   `test-harness` job adds an extra conditional step to skip itself when neither target
-   file changed. Alternatively, use a separate workflow file
-   (`.github/workflows/test-pr-review-loop.yml`) with its own `paths` filter scoped to
-   only the two target files. The separate workflow approach is cleaner — choose during
-   implementation based on which avoids redundant triggers and keeps CI output readable.
+   Alternatively, add the `test-harness` job to the existing `shellcheck.yml` file
+   by extending its `on.pull_request.paths` trigger to include the two target files
+   and adding the job definition there.
 
    Verify: confirm the new CI check appears in the PR checks list and fails when a test
    case is intentionally broken.
