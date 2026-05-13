@@ -123,7 +123,7 @@ Using the template at `docs/workflow/development-workflow/templates/spec-templat
 **Output location**:
 
 ```markdown
-docs/specs/developments/[YYYYMMDDHHMMSS]_[feature-slug]/1_[feature-slug]_specs.md
+docs/specs/developments/[YYYYMMDDHHMMSS]_[feature-slug]/1_[feature-slug]\_specs.md
 ```
 
 Use the current timestamp for `YYYYMMDDHHMMSS`.
@@ -188,6 +188,7 @@ No objective may be silently dropped. If an objective is not mapped in the matri
 
 ```markdown
 # Spec: [feature-name]
+
 ...
 ```
 

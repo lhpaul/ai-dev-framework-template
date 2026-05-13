@@ -47,6 +47,7 @@ Not applicable — this is a doc-only change.
 **Test types**: Manual / Smoke
 
 **Key scenarios to test**:
+
 1. Portfolio Orchestrator runs against items in Backlog with no project board entry — items are added to the board and set to the correct in-flight status before any Work Item Runner is dispatched
 2. Portfolio Orchestrator runs against items already in the correct in-flight status — no spurious status changes occur (idempotent)
 3. Work Item Runner invoked directly for a single Refactor item that is still `Backlog` — runner sets status to `Writing Plan` before proceeding
@@ -74,11 +75,11 @@ No other project docs require updating. The change does not affect architecture,
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| Step numbering conflict with existing protocol cross-references | Low | Low | Introduce the new step as "Step 2.5" (a sub-step after Step 2) to avoid renumbering existing Step 3 through Step 6 which are referenced in Protocol 91 and elsewhere |
-| New step adds overhead to orchestrator runs when the tracker is unavailable | Low | Low | Step 2.5 should follow the same "warn and fall back" pattern established in Steps 1a–1c: if the tracker API is unreachable, log a warning and proceed without blocking the batch |
-| Duplicate status updates from Protocol 91 when Protocol 90 already ran | Low | Low | Both protocols use idempotent `gh` GraphQL mutations; updating an already-correct status is a no-op |
+| Risk                                                                        | Likelihood | Impact | Mitigation                                                                                                                                                                       |
+| --------------------------------------------------------------------------- | ---------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Step numbering conflict with existing protocol cross-references             | Low        | Low    | Introduce the new step as "Step 2.5" (a sub-step after Step 2) to avoid renumbering existing Step 3 through Step 6 which are referenced in Protocol 91 and elsewhere             |
+| New step adds overhead to orchestrator runs when the tracker is unavailable | Low        | Low    | Step 2.5 should follow the same "warn and fall back" pattern established in Steps 1a–1c: if the tracker API is unreachable, log a warning and proceed without blocking the batch |
+| Duplicate status updates from Protocol 91 when Protocol 90 already ran      | Low        | Low    | Both protocols use idempotent `gh` GraphQL mutations; updating an already-correct status is a no-op                                                                              |
 
 ---
 

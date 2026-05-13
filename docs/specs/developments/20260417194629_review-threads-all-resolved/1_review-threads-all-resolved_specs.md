@@ -19,10 +19,12 @@ This directly fixes a recurring pattern across batches 4, 5, 7, and 8 where huma
 **Actor**: Orchestration agent (item-orchestrator or portfolio-orchestrator) running the PR review loop
 
 **Preconditions**:
+
 - A PR is open and non-draft
 - An automated reviewer (CodeRabbit, Devin) has posted one or more inline review comments, including at least one thread whose severity is Nitpick, Trivial, or Minor
 
 **Steps**:
+
 1. Agent runs the PR review loop (Step 7 in Protocol 91)
 2. The review loop script enumerates all review threads on the PR and checks each one for its resolved state
 3. The script identifies unresolved threads authored by automated reviewers (regardless of severity)
@@ -35,13 +37,16 @@ This directly fixes a recurring pattern across batches 4, 5, 7, and 8 where huma
 **Postconditions**: All review threads on the PR authored by automated reviewers are resolved (`isResolved: true`)
 
 **Information shown**:
+
 - The loop script emits `UNRESOLVED_THREAD_COUNT=N` alongside the existing `BLOCKING_COUNT` output
 - When a thread is resolved via reply-only (no code fix), the fixer emits a note in the Automated Reviewer Loop Summary indicating the thread was acknowledged
 
 **Actions available**:
+
 - Fixer agent can resolve via (a) reply + `resolveReviewThread` mutation, or (b) code fix on current HEAD followed by normal loop re-run
 
 **Considerations**:
+
 - Only threads authored by known automated reviewer bot accounts (configurable list; defaults to `coderabbitai[bot]`, `devin-ai-integration[bot]`, `greptile-apps[bot]`) are subject to the gate
 - Human-authored threads on the PR are not subject to this gate (those are covered by the `needs-fixes` label flow in Protocol 91 Step 9)
 - A thread that is already `isResolved: true` on entry counts as resolved regardless of when it was resolved
@@ -53,10 +58,12 @@ This directly fixes a recurring pattern across batches 4, 5, 7, and 8 where huma
 **Actor**: Orchestration agent running the PR review loop in a subsequent cycle after a fixer push
 
 **Preconditions**:
+
 - A PR had unresolved automated-reviewer threads in a prior cycle
 - Fixer agent pushed a code fix to the current HEAD
 
 **Steps**:
+
 1. Agent re-runs the PR review loop on the updated HEAD
 2. The loop script re-enumerates all review threads
 3. CodeRabbit appends "✅ Addressed in commit ..." to previously open threads after the push — these are counted as resolved
@@ -67,12 +74,15 @@ This directly fixes a recurring pattern across batches 4, 5, 7, and 8 where huma
 **Postconditions**: Loop emits `clean` only when all automated-reviewer threads are resolved
 
 **Information shown**:
+
 - Loop summary comment lists which threads were resolved in this cycle and which remain
 
 **Actions available**:
+
 - Agent may call `resolveReviewThread` mutation directly for threads whose concern was addressed but which CodeRabbit has not auto-resolved
 
 **Considerations**:
+
 - The `✅ Addressed` text from CodeRabbit on the parent comment is treated as equivalent to `isResolved: true` for the purposes of this gate (consistent with existing behavior in `is_coderabbit_blocking`)
 - When CodeRabbit skips spec branches entirely (documented behavior), Devin result is authoritative and the unresolved-thread check falls back to Devin-authored threads only
 
@@ -83,10 +93,12 @@ This directly fixes a recurring pattern across batches 4, 5, 7, and 8 where huma
 **Actor**: Orchestration agent performing the post-label verification in Protocol 91 Step 8c
 
 **Preconditions**:
+
 - Step 7 completed with `clean` but the unresolved-thread check was not performed (e.g., from a prior run before this feature shipped)
 - One or more review threads on the PR are still `isResolved: false`
 
 **Steps**:
+
 1. Agent runs Step 8c independent verification
 2. Step 8c enumerates all review threads on the PR and checks each one's resolved state
 3. Any unresolved automated-reviewer thread causes Step 8c to fail
@@ -97,12 +109,15 @@ This directly fixes a recurring pattern across batches 4, 5, 7, and 8 where huma
 **Postconditions**: Step 8c passes only when `isResolved: true` for all automated-reviewer threads
 
 **Information shown**:
+
 - Step 8c log lists the unresolved thread IDs and their authors
 
 **Actions available**:
+
 - Fixer resolves threads via reply + mutation or code fix
 
 **Considerations**:
+
 - This use case is the safety net for cases where the loop script's thread check was bypassed or is running against an older version of the script
 
 ---

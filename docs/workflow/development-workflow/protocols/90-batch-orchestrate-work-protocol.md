@@ -72,6 +72,7 @@ gh pr list --state merged --limit 1000 --search "<issue-number>" --json number,t
 ```
 
 If a merged PR is found for an item whose tracker status is not already terminal:
+
 1. Inspect the `headRefName` of the merged PR to determine its branch type
 2. Apply the appropriate status transition per Step 10 of `91-orchestrate-work-protocol.md`:
    - `spec/*` → Set tracker status to `Spec Ready`
@@ -125,19 +126,19 @@ Combine tracker and VCS data into a portfolio map of:
 
 Use the **tracker status** as the canonical state for each item. VCS signals (branch existence, PR labels) provide supplementary detail but do not override the tracker. When no tracker is configured, fall back to VCS-derived status.
 
-| Portfolio item state (per tracker) | Can advance if... | Dispatch target |
-|---|---|---|
-| Backlog (Feature) | Human explicitly requested it | Work Item Runner on the tracker item / brief (starts at spec stage) |
-| Backlog (Refactor) | Human explicitly requested it as a Refactor | Work Item Runner on the tracker item / brief (starts at plan stage, skips spec) |
-| Writing Spec | Tracker **Writing Spec**; spec PR not yet human-ready | Work Item Runner on the tracker item / branch / PR |
-| Writing Plan | Tracker **Writing Plan**; plan PR not yet human-ready | Work Item Runner on the tracker item / branch / PR |
-| In Development | Tracker **In Development**; feature/fix PR not yet human-ready | Work Item Runner on the tracker item / branch / PR |
-| Spec Ready | Tracker **Spec Ready** | Work Item Runner on the development folder |
-| Plan Ready | Tracker **Plan Ready** | Work Item Runner on the development folder |
-| Pushed workflow branch, no PR yet | Branch exists on local/remote/worktree (VCS supplementary) | Work Item Runner on the branch |
-| PR open, no readiness label | PR exists and latest push has not fully cleared (VCS supplementary) | Work Item Runner on the PR |
-| PR labeled `needs-fixes` | Human or automated systems requested changes (VCS supplementary) | Work Item Runner on the PR |
-| Spec in Review / Plan in Review / Development in Review or `ready-for-human-review` | — | Wait; do not redispatch (unless human feedback requires a fix loop) |
+| Portfolio item state (per tracker)                                                  | Can advance if...                                                   | Dispatch target                                                                 |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Backlog (Feature)                                                                   | Human explicitly requested it                                       | Work Item Runner on the tracker item / brief (starts at spec stage)             |
+| Backlog (Refactor)                                                                  | Human explicitly requested it as a Refactor                         | Work Item Runner on the tracker item / brief (starts at plan stage, skips spec) |
+| Writing Spec                                                                        | Tracker **Writing Spec**; spec PR not yet human-ready               | Work Item Runner on the tracker item / branch / PR                              |
+| Writing Plan                                                                        | Tracker **Writing Plan**; plan PR not yet human-ready               | Work Item Runner on the tracker item / branch / PR                              |
+| In Development                                                                      | Tracker **In Development**; feature/fix PR not yet human-ready      | Work Item Runner on the tracker item / branch / PR                              |
+| Spec Ready                                                                          | Tracker **Spec Ready**                                              | Work Item Runner on the development folder                                      |
+| Plan Ready                                                                          | Tracker **Plan Ready**                                              | Work Item Runner on the development folder                                      |
+| Pushed workflow branch, no PR yet                                                   | Branch exists on local/remote/worktree (VCS supplementary)          | Work Item Runner on the branch                                                  |
+| PR open, no readiness label                                                         | PR exists and latest push has not fully cleared (VCS supplementary) | Work Item Runner on the PR                                                      |
+| PR labeled `needs-fixes`                                                            | Human or automated systems requested changes (VCS supplementary)    | Work Item Runner on the PR                                                      |
+| Spec in Review / Plan in Review / Development in Review or `ready-for-human-review` | —                                                                   | Wait; do not redispatch (unless human feedback requires a fix loop)             |
 
 ### Priority order
 
@@ -207,7 +208,6 @@ After building the initial candidate list from the eligibility table above and a
    ```
 
 3. **If both checks return zero** (no branch, no PR): the "In Development" status is stale (BR-5). Apply the correction:
-
    - Log a `STALE_STATUS_CORRECTION:` line to the run output (BR-10, AC-10):
 
      ```text
@@ -246,12 +246,12 @@ For each item that passed the Step 2 eligibility check:
 
 2. **Update tracker status to the appropriate in-flight value** based on the next action that will be dispatched:
 
-   | Next action to dispatch | Tracker status to set |
-   |---|---|
-   | Write Spec | `Writing Spec` |
-   | Write Plan | `Writing Plan` |
-   | Implement (feature/fix/refactor/hotfix branch) | `In Development` |
-   | Resume in-progress stage (status already `Writing Spec`, `Writing Plan`, or `In Development`) | No change — skip |
+   | Next action to dispatch                                                                       | Tracker status to set |
+   | --------------------------------------------------------------------------------------------- | --------------------- |
+   | Write Spec                                                                                    | `Writing Spec`        |
+   | Write Plan                                                                                    | `Writing Plan`        |
+   | Implement (feature/fix/refactor/hotfix branch)                                                | `In Development`      |
+   | Resume in-progress stage (status already `Writing Spec`, `Writing Plan`, or `In Development`) | No change — skip      |
 
    For resume items (the last row), the status is already correct — do not reset it. This keeps the update idempotent.
 
@@ -555,11 +555,11 @@ echo "Integration branch '${INTEGRATION_BRANCH}': ${AHEAD} commit(s) ahead of or
    ```
 3. Present the resolution options to the human — **do not choose automatically**:
 
-   | Option | Command | When to use |
-   |---|---|---|
-   | Rebase local onto origin | `git rebase origin/<integration-branch>` | Local commits are unpublished or belong to you; you want a linear history |
-   | Merge origin into local | `git merge origin/<integration-branch>` | You want to preserve both histories with a merge commit |
-   | Reset local to origin | `git reset --hard origin/<integration-branch>` | Local commits are safe to discard (e.g., already merged via another path); **destructive** |
+   | Option                   | Command                                        | When to use                                                                                |
+   | ------------------------ | ---------------------------------------------- | ------------------------------------------------------------------------------------------ |
+   | Rebase local onto origin | `git rebase origin/<integration-branch>`       | Local commits are unpublished or belong to you; you want a linear history                  |
+   | Merge origin into local  | `git merge origin/<integration-branch>`        | You want to preserve both histories with a merge commit                                    |
+   | Reset local to origin    | `git reset --hard origin/<integration-branch>` | Local commits are safe to discard (e.g., already merged via another path); **destructive** |
 
 4. **Block batch dispatch** until the human selects and applies one of the above options and the check re-runs with `AHEAD=0, BEHIND=0` (or `AHEAD>0, BEHIND=0` if the human chose rebase/merge and still needs to push). Require explicit human choice — do not auto-apply any resolution.
 
@@ -649,11 +649,11 @@ Dispatch exactly one Work Item Runner per item in the current batch.
 
 **Preferred handoff target by runner**:
 
-| Runner | Handoff target |
-|---|---|
-| Claude Code | `item-orchestrator` agent |
-| Cursor | `/item-orchestrator` or `/run-item-work` |
-| Codex | `workflow-item-orchestrator` skill |
+| Runner      | Handoff target                           |
+| ----------- | ---------------------------------------- |
+| Claude Code | `item-orchestrator` agent                |
+| Cursor      | `/item-orchestrator` or `/run-item-work` |
+| Codex       | `workflow-item-orchestrator` skill       |
 
 If the runner supports true concurrent subagents, launch the full batch in parallel.
 
@@ -750,16 +750,16 @@ gh api graphql -f query='
 
 Verify all of the following. If any check fails, apply the remediation action in the table below — **do not redispatch the agent for label-only gaps**:
 
-| Check | Pass condition | Remediation if failing |
-|---|---|---|
-| Base branch | `develop` for `feature/*`, `fix/*`, `refactor/*`, `spec/*`, `implementation-plan/*`; `main` for `hotfix/*` | Redispatch agent to rebase onto the correct base |
-| PR is non-draft | `isDraft: false` | Run `gh pr ready <pr_number>` directly; log as protocol deviation |
-| `ready-for-human-review` label | Present | Apply directly: `gh pr edit <pr_number> --add-label "ready-for-human-review"` (after all other checks pass) |
-| `ready-for-regression` label | Present on `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PRs; not required for `spec/*`, `implementation-plan/*` | **Apply directly** (primary enforcement point): `gh pr edit <pr_number> --add-label "ready-for-regression"`. Log as protocol deviation: `PROTOCOL_DEVIATION: ready-for-regression was missing on PR #<N> — applied by orchestrator Step 5.1`. **Do not redispatch the agent for this gap alone.** |
-| No `needs-fixes` label | Absent | Remove: `gh pr edit <pr_number> --remove-label "needs-fixes"` (only after CI and reviews are confirmed clean) |
-| All automated-reviewer `reviewThreads` resolved | GraphQL `reviewThreads.nodes[].isResolved=true` (or `✅ Addressed` in body) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured) | Redispatch agent to address unresolved threads |
-| Automated reviewer loop summary comment | At least one PR comment containing "Automated Reviewer Loop Summary", "Reviewer Loop Summary", or "No blocking PR feedback" (skip this check only when Step 7 was `skipped` because no review platforms are configured). **`pr-review-loop.sh` posts this comment automatically on `clean` and `escalate` exits** — a missing comment means the script did not run to completion or the PR used an older workflow version | Redispatch agent to run Step 7 to completion |
-| CI checks | All required status checks are green (`state: SUCCESS` or `conclusion: success`) | Redispatch agent to fix failing checks |
+| Check                                           | Pass condition                                                                                                                                                                                                                                                                                                                                                                                                            | Remediation if failing                                                                                                                                                                                                                                                                            |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Base branch                                     | `develop` for `feature/*`, `fix/*`, `refactor/*`, `spec/*`, `implementation-plan/*`; `main` for `hotfix/*`                                                                                                                                                                                                                                                                                                                | Redispatch agent to rebase onto the correct base                                                                                                                                                                                                                                                  |
+| PR is non-draft                                 | `isDraft: false`                                                                                                                                                                                                                                                                                                                                                                                                          | Run `gh pr ready <pr_number>` directly; log as protocol deviation                                                                                                                                                                                                                                 |
+| `ready-for-human-review` label                  | Present                                                                                                                                                                                                                                                                                                                                                                                                                   | Apply directly: `gh pr edit <pr_number> --add-label "ready-for-human-review"` (after all other checks pass)                                                                                                                                                                                       |
+| `ready-for-regression` label                    | Present on `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PRs; not required for `spec/*`, `implementation-plan/*`                                                                                                                                                                                                                                                                                                         | **Apply directly** (primary enforcement point): `gh pr edit <pr_number> --add-label "ready-for-regression"`. Log as protocol deviation: `PROTOCOL_DEVIATION: ready-for-regression was missing on PR #<N> — applied by orchestrator Step 5.1`. **Do not redispatch the agent for this gap alone.** |
+| No `needs-fixes` label                          | Absent                                                                                                                                                                                                                                                                                                                                                                                                                    | Remove: `gh pr edit <pr_number> --remove-label "needs-fixes"` (only after CI and reviews are confirmed clean)                                                                                                                                                                                     |
+| All automated-reviewer `reviewThreads` resolved | GraphQL `reviewThreads.nodes[].isResolved=true` (or `✅ Addressed` in body) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured)                                                                                                                                                                                               | Redispatch agent to address unresolved threads                                                                                                                                                                                                                                                    |
+| Automated reviewer loop summary comment         | At least one PR comment containing "Automated Reviewer Loop Summary", "Reviewer Loop Summary", or "No blocking PR feedback" (skip this check only when Step 7 was `skipped` because no review platforms are configured). **`pr-review-loop.sh` posts this comment automatically on `clean` and `escalate` exits** — a missing comment means the script did not run to completion or the PR used an older workflow version | Redispatch agent to run Step 7 to completion                                                                                                                                                                                                                                                      |
+| CI checks                                       | All required status checks are green (`state: SUCCESS` or `conclusion: success`)                                                                                                                                                                                                                                                                                                                                          | Redispatch agent to fix failing checks                                                                                                                                                                                                                                                            |
 
 **`ready-for-regression` direct-apply rule**: This label is the primary enforcement point for the regression CI gate. It applies to **all** implementation PR types: `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*`. If the agent applied `ready-for-human-review` but omitted `ready-for-regression` on any of these branch types, the orchestrator:
 
@@ -786,9 +786,11 @@ Do not consider the batch complete until every dispatched item has reached a rea
 A PR may appear "almost ready" — non-draft, with readiness labels applied — but actually be in an incomplete state because the agent timed out before finishing Step 7 (external automated reviewers). The canonical detection heuristic depends on PR type:
 
 **Implementation PRs** (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`):
+
 > non-draft + `ready-for-regression` present + no reviewer loop summary comment = incomplete run
 
 **Spec/plan PRs** (`spec/*`, `implementation-plan/*`):
+
 > non-draft + `ready-for-human-review` present + no reviewer loop summary comment = incomplete run
 
 The reviewer loop summary comment is the only reliable indicator that Step 7 ran to completion. `ready-for-human-review` alone is NOT a reliable completion signal. This check applies only when review platforms are configured — skip it for repos where Step 7 is `skipped` (no platforms configured).
@@ -815,14 +817,14 @@ gh pr view <pr_number> --json isDraft,labels,comments \
 
 **Classification table** (evaluate in order; first matching row wins):
 
-| `isDraft` | `hasRegressionLabel` | `hasReadyLabel` | `hasReviewSummary` | Classification |
-|---|---|---|---|---|
-| `true` | any | any | any | Draft PR — run Step 7a and convert to non-draft |
-| `false` | `true` | any | `false` | Incomplete run (post-regression, pre-Step-7) |
-| `false` | any | `true` | `false` | Incomplete run (post-label, pre-Step-7) |
-| `false` | `false` | `false` | `false` | **Pre-label orphaned run** — treat as incomplete |
-| `false` | `true` | `false` | `true` | Incomplete run (post-regression, post-summary, pre-ready-label) — apply `ready-for-human-review` label, then proceed to Step 5.1 |
-| `false` | any | `true` | `true` | Ready (proceed to Step 5.1 full verification) |
+| `isDraft` | `hasRegressionLabel` | `hasReadyLabel` | `hasReviewSummary` | Classification                                                                                                                   |
+| --------- | -------------------- | --------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| `true`    | any                  | any             | any                | Draft PR — run Step 7a and convert to non-draft                                                                                  |
+| `false`   | `true`               | any             | `false`            | Incomplete run (post-regression, pre-Step-7)                                                                                     |
+| `false`   | any                  | `true`          | `false`            | Incomplete run (post-label, pre-Step-7)                                                                                          |
+| `false`   | `false`              | `false`         | `false`            | **Pre-label orphaned run** — treat as incomplete                                                                                 |
+| `false`   | `true`               | `false`         | `true`             | Incomplete run (post-regression, post-summary, pre-ready-label) — apply `ready-for-human-review` label, then proceed to Step 5.1 |
+| `false`   | any                  | `true`          | `true`             | Ready (proceed to Step 5.1 full verification)                                                                                    |
 
 For the pre-label orphaned case (`isDraft=false`, no labels, no summary): the PR is not a fresh PR awaiting first dispatch — it is an orphaned in-progress run. Treat it the same as other incomplete states and redispatch the Work Item Runner to resume from Step 7a.
 
@@ -841,7 +843,7 @@ This pattern also applies to PRs where an agent timed out mid-CI-loop: detect vi
 
 **CWD safety: always derive `MAIN_REPO_ROOT` using `--git-common-dir`**
 
-After a Work Item Runner completes, the shell's CWD may be inside an isolated worktree directory (`.claude/worktrees/<id>/`). Using `git rev-parse --show-toplevel` from that context returns the *worktree* path rather than the main repo root, causing every `git -C` command below to run against the wrong tree and producing false results (wrong branch, phantom dirty files, or a spurious Case 1 auto-correct). Use `git rev-parse --git-common-dir` instead — it always resolves to the `.git` directory of the *main* repo regardless of the current working directory:
+After a Work Item Runner completes, the shell's CWD may be inside an isolated worktree directory (`.claude/worktrees/<id>/`). Using `git rev-parse --show-toplevel` from that context returns the _worktree_ path rather than the main repo root, causing every `git -C` command below to run against the wrong tree and producing false results (wrong branch, phantom dirty files, or a spurious Case 1 auto-correct). Use `git rev-parse --git-common-dir` instead — it always resolves to the `.git` directory of the _main_ repo regardless of the current working directory:
 
 ```bash
 # Always safe — returns an absolute main repo root path even when CWD is inside a worktree
@@ -889,12 +891,12 @@ fi
 
 **Postcondition state summary:**
 
-| Main branch | Main cleanliness | Action |
-|---|---|---|
-| Wrong branch | Clean | Auto-correct: `git switch <integration-branch>`. Log as guardrail violation in retrospective notes — a wrong-branch + clean result typically means the agent ran in the main tree instead of its isolated worktree, or a stage protocol issued a branch-switching command that leaked out of the worktree boundary. Proceed normally after correction. |
-| Wrong branch | Dirty | Halt and escalate. Log full `git status --porcelain` output and item ID. Do not dispatch additional agents. |
-| Correct branch | Clean | Proceed normally. |
-| Correct branch | Dirty | Halt and escalate. Log full `git status --porcelain` output and item ID. Do not dispatch additional agents. |
+| Main branch    | Main cleanliness | Action                                                                                                                                                                                                                                                                                                                                                 |
+| -------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Wrong branch   | Clean            | Auto-correct: `git switch <integration-branch>`. Log as guardrail violation in retrospective notes — a wrong-branch + clean result typically means the agent ran in the main tree instead of its isolated worktree, or a stage protocol issued a branch-switching command that leaked out of the worktree boundary. Proceed normally after correction. |
+| Wrong branch   | Dirty            | Halt and escalate. Log full `git status --porcelain` output and item ID. Do not dispatch additional agents.                                                                                                                                                                                                                                            |
+| Correct branch | Clean            | Proceed normally.                                                                                                                                                                                                                                                                                                                                      |
+| Correct branch | Dirty            | Halt and escalate. Log full `git status --porcelain` output and item ID. Do not dispatch additional agents.                                                                                                                                                                                                                                            |
 
 If the main working tree is clean and on the correct branch (Case 3), proceed normally with Step 5.1 (PR verification) and then with the next Work Item Runner dispatch if any remain in the batch.
 
@@ -1023,11 +1025,11 @@ If any PR is still in progress or labeled `needs-fixes`, continue supervising (S
 
 When merging a parallel implementation batch, **always** invoke `batch-merge.sh discover --prs <list>` followed by execution of `94-batch-merge-protocol.md`. Direct `gh pr merge` calls are only acceptable for single-PR merges or non-implementation PRs (spec, plan). **Never** use `gh pr merge` individually for parallel implementation batches — it bypasses CHANGELOG auto-resolution (Protocol 94 Step 4.3) and active-worktree awareness.
 
-| Merge scenario | Required tool |
-|---|---|
+| Merge scenario                         | Required tool                  |
+| -------------------------------------- | ------------------------------ |
 | Parallel implementation batch (2+ PRs) | `batch-merge.sh` + Protocol 94 |
-| Single implementation PR | `gh pr merge` is acceptable |
-| Spec or plan PR (any count) | `gh pr merge` is acceptable |
+| Single implementation PR               | `gh pr merge` is acceptable    |
+| Spec or plan PR (any count)            | `gh pr merge` is acceptable    |
 
 Violating this rule causes CHANGELOG merge conflicts that must be resolved manually, as observed in the Batch 4 incident (2026-04-22).
 
@@ -1048,17 +1050,21 @@ After all currently eligible items have reached a terminal condition, provide a 
 ## Batch Orchestration Summary
 
 ### Batches Executed
+
 - Batch 1 (parallel): [Item A], [Item B]
 - Batch 2 (serialized): [Item C] — serialized because both items touch schema migrations
 
 ### Ready for Human Review
+
 - [PR link] — [item] — [stage] — Automated review: ✅ / ⏭️ / ⚠️
 
 ### Waiting on Human
+
 - [Item D]: architecture decision needed
 - [Item E]: PR already open and waiting to be merged
 
 ### Blocked / Escalated
+
 - [Item F]: blocked by [Item G]
 - [Item H]: reviewer loop escalated after max cycles
 
@@ -1066,6 +1072,7 @@ After all currently eligible items have reached a terminal condition, provide a 
 ```
 
 ❌ **Do NOT append this to the summary:**
+
 > "Would you like to run a retrospective on this batch's work?"
 
 This offer belongs only after the human confirms PRs have been merged.

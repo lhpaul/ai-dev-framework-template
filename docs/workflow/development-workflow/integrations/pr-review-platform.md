@@ -3,6 +3,7 @@
 This document defines **platform-agnostic** expectations for how agents use one or more automated PR review tools in this workflow.
 
 Platform-specific setup lives in each platform's own integration doc. See:
+
 - [`integrations/coderabbit.md`](coderabbit.md)
 - [`integrations/greptile.md`](greptile.md)
 - [`integrations/devin.md`](devin.md)
@@ -14,6 +15,7 @@ Platform-specific setup lives in each platform's own integration doc. See:
 Automated PR reviewer tools are **post-push validation**. They do not replace the pre-PR review gate defined in [`REVIEW.md`](../../../../REVIEW.md).
 
 Default policy is **sequential gating**:
+
 - Configure reviewer tools in a fixed order
 - Run the first configured reviewer tool
 - Only continue to the next reviewer tool when the current one is `clean` or `skipped`
@@ -48,6 +50,7 @@ The aggregate loop result is:
 - `skipped` when no automated reviewer tool is configured at all
 
 Additional rules:
+
 - Suggestions are non-blocking regardless of platform
 - `needs_fixes` summaries should include the blocking reviewer tool identity
 - Unsupported configured platforms may be reported as `skipped` with a reason such as `unsupported-platform`
@@ -93,6 +96,7 @@ It also accepts comma-separated platform lists:
 ```
 
 The script emits:
+
 - One aggregate `RESULT=...`
 - Ordered `PLATFORM_<n>_NAME` / `PLATFORM_<n>_RESULT` records
 - Platform-specific counts and blocking summaries for the platform that stopped the loop

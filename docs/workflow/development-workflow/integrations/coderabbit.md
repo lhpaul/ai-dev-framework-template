@@ -99,13 +99,13 @@ If either check fails, `coderabbit` is classified as `unreachable`. The configur
 
 ### Troubleshooting
 
-| Symptom | Cause | Resolution |
-| --- | --- | --- |
-| `coderabbit` classified as `unreachable` — warning comment posted | CodeRabbit GitHub App is not installed on the repository | Install the CodeRabbit GitHub App at [coderabbit.ai](https://www.coderabbit.ai) and verify it has access to the repository |
-| `coderabbit` classified as `unreachable` — `auto_review.enabled: false` | `.coderabbit.yaml` has auto-review disabled | Set `reviews.auto_review.enabled: true` in `.coderabbit.yaml` |
-| `coderabbit` classified as `unreachable` — draft PRs not enabled | CodeRabbit App configuration or `.coderabbit.yaml` filters out draft PRs | Confirm the CodeRabbit App settings permit draft PR reviews and that `.coderabbit.yaml` does not restrict to non-draft only |
-| All Step 7a reviewers unreachable — hard-fail | No reachable internal reviewers available | Run Step 7a from a context where at least one reviewer is reachable, or temporarily override `review.internal_reviewers` via `.tmp/template-config.json` to remove unreachable reviewers |
-| CodeRabbit does not post a review after push | App installed but auto-review trigger not firing | Push a new commit to the draft PR, confirm the App is active, and check the CodeRabbit dashboard for any rate limiting or quota issues |
+| Symptom                                                                 | Cause                                                                    | Resolution                                                                                                                                                                               |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `coderabbit` classified as `unreachable` — warning comment posted       | CodeRabbit GitHub App is not installed on the repository                 | Install the CodeRabbit GitHub App at [coderabbit.ai](https://www.coderabbit.ai) and verify it has access to the repository                                                               |
+| `coderabbit` classified as `unreachable` — `auto_review.enabled: false` | `.coderabbit.yaml` has auto-review disabled                              | Set `reviews.auto_review.enabled: true` in `.coderabbit.yaml`                                                                                                                            |
+| `coderabbit` classified as `unreachable` — draft PRs not enabled        | CodeRabbit App configuration or `.coderabbit.yaml` filters out draft PRs | Confirm the CodeRabbit App settings permit draft PR reviews and that `.coderabbit.yaml` does not restrict to non-draft only                                                              |
+| All Step 7a reviewers unreachable — hard-fail                           | No reachable internal reviewers available                                | Run Step 7a from a context where at least one reviewer is reachable, or temporarily override `review.internal_reviewers` via `.tmp/template-config.json` to remove unreachable reviewers |
+| CodeRabbit does not post a review after push                            | App installed but auto-review trigger not firing                         | Push a new commit to the draft PR, confirm the App is active, and check the CodeRabbit dashboard for any rate limiting or quota issues                                                   |
 
 ---
 
@@ -167,12 +167,12 @@ The helper script checks for a CodeRabbit review on each poll iteration. If a re
 
 As a secondary signal, the script also checks for CodeRabbit issue comments (e.g., the PR summary comment) as an **activity indicator** — this is used only to distinguish "CodeRabbit is active but hasn't finished" from "CodeRabbit didn't review this HEAD at all" when the timeout is reached.
 
-| Result | Action |
-| --- | --- |
-| CodeRabbit review found after HEAD commit | Review complete — proceed to Step 7.3 |
-| No review yet and `elapsed < max_wait` | Not finished yet — wait another `poll_interval` and poll again |
-| `elapsed >= max_wait` and no CodeRabbit activity detected | Stale findings recovery, then skip as `no_review` if none found |
-| `elapsed >= max_wait` and CodeRabbit activity was detected | Timeout — escalate to human |
+| Result                                                     | Action                                                          |
+| ---------------------------------------------------------- | --------------------------------------------------------------- |
+| CodeRabbit review found after HEAD commit                  | Review complete — proceed to Step 7.3                           |
+| No review yet and `elapsed < max_wait`                     | Not finished yet — wait another `poll_interval` and poll again  |
+| `elapsed >= max_wait` and no CodeRabbit activity detected  | Stale findings recovery, then skip as `no_review` if none found |
+| `elapsed >= max_wait` and CodeRabbit activity was detected | Timeout — escalate to human                                     |
 
 ### Step 7.3 — Fetch inline comments and reviews
 
@@ -187,11 +187,11 @@ Additionally, `CHANGES_REQUESTED` reviews posted by `coderabbitai[bot]` after th
 
 Unlike Devin (where all findings are blocking), CodeRabbit inline comments include severity markers that determine blocking status:
 
-| Severity marker | Classification |
-| --- | --- |
-| `🔴 Critical` | Blocking |
-| `🟠 Major` | Blocking |
-| `🟡 Minor` | Suggestion (non-blocking) |
+| Severity marker       | Classification            |
+| --------------------- | ------------------------- |
+| `🔴 Critical`         | Blocking                  |
+| `🟠 Major`            | Blocking                  |
+| `🟡 Minor`            | Suggestion (non-blocking) |
 | `🟢 Low` or no marker | Suggestion (non-blocking) |
 
 The adapter parses the comment body for these emoji+label patterns. Comments without a recognized severity marker default to suggestion.

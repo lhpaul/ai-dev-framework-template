@@ -8,12 +8,12 @@
 
 ## Which Path to Use?
 
-| Path | Branch | Use when |
-|---|---|---|
-| **Full Pipeline** | `feature/[slug]` from `develop` | Feature with approved spec + plan |
-| **Refactor** | `refactor/[slug]` from `develop` | Code restructuring with approved plan (no spec) |
-| **Fast Track** | `fix/[slug]` from `develop` | Bug or simple change — clear scope, ≤3 files, no schema changes, no new patterns |
-| **Hotfix** | `hotfix/[slug]` from `main` | Critical production bug requiring immediate deployment |
+| Path              | Branch                           | Use when                                                                         |
+| ----------------- | -------------------------------- | -------------------------------------------------------------------------------- |
+| **Full Pipeline** | `feature/[slug]` from `develop`  | Feature with approved spec + plan                                                |
+| **Refactor**      | `refactor/[slug]` from `develop` | Code restructuring with approved plan (no spec)                                  |
+| **Fast Track**    | `fix/[slug]` from `develop`      | Bug or simple change — clear scope, ≤3 files, no schema changes, no new patterns |
+| **Hotfix**        | `hotfix/[slug]` from `main`      | Critical production bug requiring immediate deployment                           |
 
 ---
 
@@ -51,7 +51,7 @@ result=$(echo "$json" | jq --argjson count "$COUNT" '.items | .[:$count]')
 
 When using `set -o pipefail` (or `set -eo pipefail`), commands like `head`, `grep -m`, and others that close a pipe early will cause the writing process to receive SIGPIPE (exit code 141). Under `pipefail`, the parent shell observes the 141 exit code from the child process and (combined with `set -e`) exits the script. This looks like an error even when the behavior is intentional.
 
-**Note**: `trap ... PIPE` does **not** fire for pipeline SIGPIPE. SIGPIPE is delivered to the *child subprocess* writing to the closed pipe, not to the parent shell. The parent shell only observes the 141 exit code via `waitpid`. To catch this at the script level, use `trap ... EXIT` — it fires when `set -e` causes the shell to exit due to the pipefail-detected 141 status.
+**Note**: `trap ... PIPE` does **not** fire for pipeline SIGPIPE. SIGPIPE is delivered to the _child subprocess_ writing to the closed pipe, not to the parent shell. The parent shell only observes the 141 exit code via `waitpid`. To catch this at the script level, use `trap ... EXIT` — it fires when `set -e` causes the shell to exit due to the pipefail-detected 141 status.
 
 Guard against SIGPIPE false-positives on pipelines that may close early:
 
@@ -75,13 +75,13 @@ Choose the option that matches your script's error-handling strategy. Option A i
 
 Under `set -e`, any command that exits non-zero causes the script to abort — **including commands inside compound expressions**. The rules for compound expressions are counter-intuitive:
 
-| Expression | `set -e` behavior |
-|---|---|
-| `cmd` (bare) | Abort on non-zero |
-| `if cmd; then` | Safe — exit code is tested by `if`, never propagated |
+| Expression      | `set -e` behavior                                         |
+| --------------- | --------------------------------------------------------- |
+| `cmd` (bare)    | Abort on non-zero                                         |
+| `if cmd; then`  | Safe — exit code is tested by `if`, never propagated      |
 | `cmd \|\| true` | Safe — `true` always exits 0, so the `\|\|` chain exits 0 |
-| `cmd && other` | Safe — `set -e` does not abort on the left side of `&&` |
-| `result=$(cmd)` | **Abort on non-zero** — same as bare command |
+| `cmd && other`  | Safe — `set -e` does not abort on the left side of `&&`   |
+| `result=$(cmd)` | **Abort on non-zero** — same as bare command              |
 
 Capture exit codes explicitly when the command can legitimately fail:
 
@@ -572,11 +572,11 @@ git checkout -b refactor/[branch-slug]
 
    After performing any global substitution (find-and-replace, `sed`, `git mv`, or IDE rename), verify all three reference categories before committing:
 
-   | Category | What to check | Example pattern |
-   |---|---|---|
-   | **Link targets** | `[text](old-path)` — both the link target and `text` when text mirrors the old path | `[docs/ai/old](docs/ai/old)` |
+   | Category                  | What to check                                                                                         | Example pattern                    |
+   | ------------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------- |
+   | **Link targets**          | `[text](old-path)` — both the link target and `text` when text mirrors the old path                   | `[docs/ai/old](docs/ai/old)`       |
    | **Display text in links** | `[old-path-text](new-path)` — link target already updated but display text still shows the old string | `[docs/ai/old](docs/workflow/new)` |
-   | **Non-link occurrences** | Bare old-string in prose, code blocks, directory trees, YAML values, and shell scripts | `docs/ai/old` inside a code fence |
+   | **Non-link occurrences**  | Bare old-string in prose, code blocks, directory trees, YAML values, and shell scripts                | `docs/ai/old` inside a code fence  |
 
    Run a residual-occurrence check immediately after the substitution and before staging:
 
@@ -613,7 +613,6 @@ git checkout -b refactor/[branch-slug]
    **Duplicate-section prevention (check before writing)**: Before writing the CHANGELOG entry, read the existing `[Unreleased]` block and check whether a `### Changed` section header already exists. If it does, append your bullet(s) to the existing section — do **not** create a new `### Changed` header. If `### Changed` does not yet exist under `[Unreleased]`, create it. After writing, verify that the header appears exactly once within the `[Unreleased]` block: `awk '/^## \[Unreleased\]/{found=1} /^## \[/{if(found && !/Unreleased/) exit} found' CHANGELOG.md | grep -c "^### Changed"` — expected output: 1; if greater than 1, merge the duplicate sections before staging.
 
    **CHANGELOG format verification (before staging)**: After writing the CHANGELOG entry, verify the entry for the following defects and fix them in-place before staging:
-
    1. **Trailing whitespace**: No line in the written entry should end with one or more whitespace characters. Note: intentional two-space Markdown hard line breaks (`<text>  ` with exactly two trailing spaces followed by a newline) are not trailing whitespace and must not be removed.
    2. **Trailing blank lines**: The entry must not end with two or more consecutive blank lines.
    3. **Link reference definitions**: If you renamed `[Unreleased]` to a versioned section (e.g., `## [1.2.3] - 2026-01-01`), verify that a corresponding link reference definition exists at the bottom of the file (e.g., `[1.2.3]: https://github.com/owner/repo/compare/v1.2.2...v1.2.3`). Run the check to catch any missing definitions:
@@ -1141,10 +1140,10 @@ Apply `ready-for-regression` and `ready-for-human-review` labels when the PR is 
 
 **Branch lifecycle summary**:
 
-| Branch | Created from | Merges into | Reused for backport? |
-|---|---|---|---|
-| `hotfix/[slug]` | `main` | `main` | No |
-| `backport/hotfix/[slug]` | `origin/main` (post-merge) | `develop` | — |
+| Branch                   | Created from               | Merges into | Reused for backport? |
+| ------------------------ | -------------------------- | ----------- | -------------------- |
+| `hotfix/[slug]`          | `main`                     | `main`      | No                   |
+| `backport/hotfix/[slug]` | `origin/main` (post-merge) | `develop`   | —                    |
 
 **CHANGELOG on backport PR**: Do **not** add a new CHANGELOG entry on the backport branch. The versioned entry written in Step 6 already exists in `main` and will flow into `develop` via the merge.
 
@@ -1186,6 +1185,7 @@ When you encounter something the spec or plan doesn't cover:
   3. **Move on** without implementing the out-of-scope fix
 
   This prevents merge conflicts, scope creep, and wasted review cycles. Scope boundaries are especially critical in parallel batch orchestration where multiple agents work simultaneously.
+
 - Follow all best practices in `docs/best-practices/`
 - Never expose raw internal values (enum codes, IDs) directly in user-facing output — use display labels
 - Extract duplication only when the same logic appears 3+ times and the abstraction is clear

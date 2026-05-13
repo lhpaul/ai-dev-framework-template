@@ -157,7 +157,7 @@ Using the template at `docs/workflow/development-workflow/templates/implementati
 **Output location**:
 
 ```markdown
-docs/specs/developments/[timestamp]_[feature-slug]/2_[feature-slug]_implementation-plan.md
+docs/specs/developments/[timestamp]_[feature-slug]/2_[feature-slug]\_implementation-plan.md
 ```
 
 **Quality guardrails**:
@@ -267,6 +267,7 @@ If none of these signals apply, skip this entire block.
 
 ```markdown
 # Implementation Plan: [slug]
+
 ...
 ```
 

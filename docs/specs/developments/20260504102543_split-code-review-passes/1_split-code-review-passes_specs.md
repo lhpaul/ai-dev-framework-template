@@ -16,11 +16,13 @@ The current internal code review gate (Step 7a of Protocol 91) performs a single
 
 **Actor**: Work Item Runner (automated orchestrator) executing the internal review gate for an implementation PR (`feature/*`, `fix/*`, `refactor/*`, or `hotfix/*` branch)
 **Preconditions**:
+
 - A draft implementation PR is open
 - The spec document for the item is available on the target branch (for Full Pipeline items) or the work item brief is accessible (for Refactor items)
 - At least one internal reviewer is configured and reachable
 
 **Steps**:
+
 1. The Work Item Runner opens the draft PR and initiates Step 7a.
 2. The runner dispatches **Pass 1 (Spec-Compliance Pass)**: the reviewer evaluates whether the implementation matches the spec (or work item brief for Refactor items) — checking that all acceptance criteria are addressed, no out-of-scope behavior is introduced, and there are no missing or extra behaviors.
 3. If Pass 1 returns findings, the runner applies fixes, pushes, and re-runs Pass 1 until it approves.
@@ -29,20 +31,24 @@ The current internal code review gate (Step 7a of Protocol 91) performs a single
 6. When both passes have approved for the same commit, the runner posts the Step 7a summary comment and converts the PR from draft to non-draft.
 
 **Postconditions**:
+
 - Both passes have approved the PR at the same commit SHA
 - The Step 7a summary comment distinguishes findings from Pass 1 and Pass 2
 - The PR is non-draft and ready for Step 7 (external automated reviewers)
 
 **Information shown** (in the Step 7a summary comment):
+
 - Which passes ran (Pass 1: Spec Compliance, Pass 2: Code Quality)
 - Findings from each pass, labeled by pass
 - Final verdict (APPROVED, escalated, or hard-fail)
 
 **Actions available**:
+
 - Reviewer may approve each pass independently
 - Reviewer may return findings requiring fixes before proceeding
 
 **Considerations**:
+
 - If Pass 1 finds a spec-compliance issue during a Pass 2 fix cycle (because the fix introduced a regression), Pass 1 must re-approve before Pass 2 continues
 - If the implementation is a Refactor item (no spec), Pass 1 evaluates against the work item brief instead
 - The trivial-fix skip rule applies to Pass 2 re-runs after Step 7 fixer pushes (same conditions as the existing trivial-fix rule in Protocol 91)
@@ -53,17 +59,21 @@ The current internal code review gate (Step 7a of Protocol 91) performs a single
 
 **Actor**: Work Item Runner executing the internal review gate for a `spec/*` or `implementation-plan/*` PR
 **Preconditions**:
+
 - A draft spec or plan PR is open
 
 **Steps**:
+
 1. The Work Item Runner initiates Step 7a as currently defined — single-pass review.
 2. The single-pass reviewer evaluates the spec or plan against the review checklist in `REVIEW.md`.
 3. The runner follows the existing gate outcome logic.
 
 **Postconditions**:
+
 - The gate runs as a single pass (no split), unchanged from current behavior
 
 **Considerations**:
+
 - The two-pass split applies only to implementation PRs; spec and plan PRs remain single-pass
 
 ---
@@ -74,14 +84,17 @@ The current internal code review gate (Step 7a of Protocol 91) performs a single
 **Preconditions**: Step 7a has completed for an implementation PR
 
 **Steps**:
+
 1. The human opens the PR and reads the Step 7a summary comment.
 2. The comment clearly labels findings by pass (Pass 1: Spec Compliance vs. Pass 2: Code Quality).
 3. The human can immediately see whether the failures were about spec alignment or code structure.
 
 **Postconditions**:
+
 - Human reviewer has a clear categorized view of what was found and fixed during Step 7a
 
 **Information shown**:
+
 - Pass 1 findings and their resolution status
 - Pass 2 findings and their resolution status
 - Per-reviewer results for each pass (when multiple internal reviewers are configured)

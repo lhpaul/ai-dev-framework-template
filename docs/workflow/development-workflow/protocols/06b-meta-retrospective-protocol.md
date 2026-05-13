@@ -34,6 +34,7 @@ cat docs/workflow/retro-metrics.md
 ```
 
 Extract from each entry:
+
 - Batch identifier
 - Human interventions count
 - Step 5.2 violations count
@@ -56,12 +57,12 @@ Example format:
 ```markdown
 ## Trend Table
 
-| Metric | Batch A | Batch B | Batch C | Batch D | Batch E |
-|---|---|---|---|---|---|
-| Human Interventions Count | 2 | 1 | 0 | 1 | 0 |
-| Step 5.2 Violations Count | 3 | 1 | 0 | 0 | 0 |
-| Automated-Reviewer Retry Loops Count | 5 | 3 | 2 | 1 | 2 |
-| Escalations Count | 1 | 0 | 0 | 0 | 0 |
+| Metric                               | Batch A | Batch B | Batch C | Batch D | Batch E |
+| ------------------------------------ | ------- | ------- | ------- | ------- | ------- |
+| Human Interventions Count            | 2       | 1       | 0       | 1       | 0       |
+| Step 5.2 Violations Count            | 3       | 1       | 0       | 0       | 0       |
+| Automated-Reviewer Retry Loops Count | 5       | 3       | 2       | 1       | 2       |
+| Escalations Count                    | 1       | 0       | 0       | 0       | 0       |
 ```
 
 Where a field value is `unavailable`, carry it through to the table as-is. Do not substitute a guess or a zero.
@@ -102,10 +103,10 @@ Example format:
 **Compare-mode runs logged**: N
 **Data note**: [Full data (≥ 30 runs) | Limited data — only N runs; fewer than 30 required]
 
-| Platform | Exclusive Blocks | Total Runs | Rate | Graduation Status |
-|---|---|---|---|---|
-| coderabbit | 3 | 25 | 12% | data insufficient (< 30 runs) |
-| greptile | 0 | 25 | 0% | data insufficient (< 30 runs) |
+| Platform   | Exclusive Blocks | Total Runs | Rate | Graduation Status             |
+| ---------- | ---------------- | ---------- | ---- | ----------------------------- |
+| coderabbit | 3                | 25         | 12%  | data insufficient (< 30 runs) |
+| greptile   | 0                | 25         | 0%   | data insufficient (< 30 runs) |
 ```
 
 **Graduation status** for each platform:
@@ -124,10 +125,10 @@ Report the graduation status for each platform. If any platform reaches `safe to
 
 For each action item recorded in the retrospective entries within the analysis window, classify its outcome based on the metric trend:
 
-| Outcome | Label | Condition |
-|---|---|---|
-| Fixed | `Verified fixed` | The targeted failure mode has not recurred in any batch within the analysis window |
-| Improving | `Partially fixed` | The targeted failure mode recurred less frequently than before the fix was applied |
+| Outcome      | Label             | Condition                                                                               |
+| ------------ | ----------------- | --------------------------------------------------------------------------------------- |
+| Fixed        | `Verified fixed`  | The targeted failure mode has not recurred in any batch within the analysis window      |
+| Improving    | `Partially fixed` | The targeted failure mode recurred less frequently than before the fix was applied      |
 | Not resolved | `Still recurring` | The targeted failure mode recurred at the same or higher rate after the fix was applied |
 
 If a failure mode cannot be matched to a specific action item (e.g., the failure mode appeared but no prior action item targeted it), note it as a new observation rather than forcing a classification.
@@ -145,6 +146,7 @@ For each action item classified as `Still recurring`:
 3. Explicitly note that this item is escalated from the meta-retrospective because the targeted failure mode persisted through the analysis window despite a prior action item.
 
 Constraints:
+
 - Severity for `Still recurring` items is always `high`, regardless of the original severity assigned when the action item was first created.
 - Do not create backlog items, edit existing issues, or push changes before the human-approval gate in Step 5.
 - The meta-retrospective must not edit any entries in `docs/workflow/retro-metrics.md`. This file is append-only and is written exclusively by the regular retrospective in its Step 6 close action.
@@ -164,6 +166,7 @@ Present the following to the human and wait for approval before proceeding to St
 Prompt the human:
 
 > For each "Still recurring" item above, please choose:
+>
 > - **Create backlog item**: create a new issue with the escalated finding
 > - **Expand existing**: add the escalated finding to an existing issue
 > - **Skip**: acknowledge and move on (with optional note)
@@ -205,6 +208,7 @@ Prior action item: #NNN — [original action item title or description]
 Report each created or updated issue with its URL.
 
 **Constraints**:
+
 - Do not write to `docs/workflow/retro-metrics.md`. Only the regular retrospective (Step 6 close) appends to that file.
 - Do not close or edit historical retrospective output documents.
 
@@ -223,10 +227,10 @@ After Step 6 completes, provide a summary:
 
 ### Classification Results
 
-| Action Item | Outcome | Escalated? |
-|---|---|---|
-| [description] | Verified fixed | No |
-| [description] | Partially fixed | No |
+| Action Item   | Outcome         | Escalated?               |
+| ------------- | --------------- | ------------------------ |
+| [description] | Verified fixed  | No                       |
+| [description] | Partially fixed | No                       |
 | [description] | Still recurring | Yes — Issue #NNN created |
 
 ### Escalated Findings

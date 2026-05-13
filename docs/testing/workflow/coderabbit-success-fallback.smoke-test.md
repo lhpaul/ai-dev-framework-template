@@ -20,13 +20,13 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Value |
-|---|---|
-| Script under test | `scripts/development-workflow/pr-review-loop.sh` |
-| Function under test | `run_coderabbit_review()` |
-| Environment variable (poll interval) | `POLL_INTERVAL` (default 120s) |
-| Environment variable (max wait) | `MAX_WAIT` (default 1200s) |
-| Environment variable (rate-limit retries) | `CODERABBIT_RATE_LIMIT_MAX_RETRIES` (default 2) |
+| Item                                      | Value                                            |
+| ----------------------------------------- | ------------------------------------------------ |
+| Script under test                         | `scripts/development-workflow/pr-review-loop.sh` |
+| Function under test                       | `run_coderabbit_review()`                        |
+| Environment variable (poll interval)      | `POLL_INTERVAL` (default 120s)                   |
+| Environment variable (max wait)           | `MAX_WAIT` (default 1200s)                       |
+| Environment variable (rate-limit retries) | `CODERABBIT_RATE_LIMIT_MAX_RETRIES` (default 2)  |
 
 > **Note**: These smoke tests require shell-level inspection of the script logic and controlled API conditions. Full end-to-end testing requires an actual PR with a CodeRabbit SUCCESS commit-status. Steps below describe both a live test path (preferred) and a code-inspection verification path (fallback).
 
@@ -99,6 +99,7 @@ Before running this smoke test:
 3. Capture the output.
 
 **Expected result**:
+
 - `RESULT=clean`
 - `REASON=coderabbit_status_success_fallback`
 - Script exits with code `0`
@@ -128,6 +129,7 @@ Before running this smoke test:
 3. Capture the output.
 
 **Expected result**:
+
 - Script does NOT output `REASON=coderabbit_status_success_fallback`
 - Behavior falls through to existing stale-findings recovery: `RESULT=skipped` with `REASON=no_review` (if no stale blocking comments) or `RESULT=needs_fixes` with `REASON=stale_findings` (if stale blocking comments exist)
 - Script exits with code `0` (skipped) or `1` (needs_fixes)
@@ -153,6 +155,7 @@ Before running this smoke test:
 3. Capture the output.
 
 **Expected result**:
+
 - `RESULT=needs_fixes`
 - `REASON=existing_findings` (Phase 1 intercepts the blocking comment before the polling loop starts)
 - `BLOCKING_COUNT` is greater than 0
@@ -190,20 +193,20 @@ Each checkbox maps to an acceptance criterion from the spec.
 
 ## Seed Data Reference
 
-| Entity | Scenario | How to load |
-|---|---|---|
-| N/A | Shell script test — no application seed data required | — |
+| Entity | Scenario                                              | How to load |
+| ------ | ----------------------------------------------------- | ----------- |
+| N/A    | Shell script test — no application seed data required | —           |
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| Script still returns `skipped (no_review)` even with SUCCESS commit-status | Fallback not inserted before stale-findings block | Verify insertion point is before the stale-findings `stale_comments` query |
-| `jq` filter returns 0 even when status exists | Context name mismatch | Check the actual `.context` value in the API response and update the `test("coderabbit")` filter if needed |
-| `gh api` returns paginated results that miss the status | Missing `--paginate` flag | Confirm `--paginate` is included in the API call |
-| Phase 1 returns `needs_fixes` before fallback runs | Blocking comments exist from a prior commit and are being picked up | Verify `since_iso` is correctly set to the HEAD commit timestamp |
+| Symptom                                                                    | Likely cause                                                        | Fix                                                                                                        |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Script still returns `skipped (no_review)` even with SUCCESS commit-status | Fallback not inserted before stale-findings block                   | Verify insertion point is before the stale-findings `stale_comments` query                                 |
+| `jq` filter returns 0 even when status exists                              | Context name mismatch                                               | Check the actual `.context` value in the API response and update the `test("coderabbit")` filter if needed |
+| `gh api` returns paginated results that miss the status                    | Missing `--paginate` flag                                           | Confirm `--paginate` is included in the API call                                                           |
+| Phase 1 returns `needs_fixes` before fallback runs                         | Blocking comments exist from a prior commit and are being picked up | Verify `since_iso` is correctly set to the HEAD commit timestamp                                           |
 
 ---
 

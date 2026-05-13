@@ -22,6 +22,7 @@ git switch <integration-branch>   # e.g., git switch develop
 Verify: `git rev-parse --abbrev-ref HEAD` must print the integration branch name. If uncommitted changes block the switch, commit or stash them first — do NOT force-discard. The integration branch is `develop` unless overridden by `integration_branch` in `.ai-dev-workflow.yaml`. Omitting this return step causes Protocol 90 Step 5.2 to fire a "wrong branch + clean" auto-correct on every subsequent item dispatch.
 
 Key rules:
+
 - For Full Pipeline: read spec + plan + runbook BEFORE writing any code
 - For Refactor: read plan + runbook BEFORE writing any code (no spec)
 - For Fast Track: stop and report if scope exceeds the brief

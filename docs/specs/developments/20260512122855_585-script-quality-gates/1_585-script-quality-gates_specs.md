@@ -20,6 +20,7 @@ This feature adds a pre-release quality gate that runs CodeRabbit on the product
 **Preconditions**: The prepare-release protocol has opened the production PR to `main`. The PR includes all changes accumulated since the last release, including any modifications to `scripts/development-workflow/pr-review-loop.sh` or other workflow scripts.
 
 **Steps**:
+
 1. The release operator follows the prepare-release protocol (`05-prepare-release-protocol.md`), which runs the automated reviewer loop (CodeRabbit, pr-agent) on the production PR to `main`.
 2. CodeRabbit reviews all modified workflow scripts in the production PR and flags any logic bugs found.
 3. The operator addresses all blocking findings in the release branch before the production PR is labeled `ready-for-human-review`.
@@ -28,14 +29,17 @@ This feature adds a pre-release quality gate that runs CodeRabbit on the product
 **Postconditions**: The production release includes no script bugs that CodeRabbit would catch. Downstream projects that sync from this release receive clean scripts.
 
 **Information shown**:
+
 - CodeRabbit review results on the production PR (blocking, advisory, or clean verdict)
 - Clear indication that the reviewer loop ran to completion on the release PR
 
 **Actions available**:
+
 - Address blocking findings in the release branch
 - Accept advisory findings with explicit disposition if appropriate
 
 **Considerations**:
+
 - The prepare-release protocol already requires running the automated reviewer loop on the production PR. This use case formalizes the expectation that the loop must cover all modified workflow scripts, not only the files changed since the last prepare-release commit.
 - If CodeRabbit is not installed on the repository, the reviewer loop reports `skipped` for CodeRabbit; the operator must manually review the scripts or escalate.
 
@@ -47,6 +51,7 @@ This feature adds a pre-release quality gate that runs CodeRabbit on the product
 **Preconditions**: A PR is open against `develop` that modifies `pr-review-loop.sh` or `workflow-lib.sh`. The test harness is present and enabled in CI.
 
 **Steps**:
+
 1. The CI system detects that `pr-review-loop.sh` or `workflow-lib.sh` was modified in the PR.
 2. CI runs the test harness, which exercises the key logic paths of `pr-review-loop.sh` using mocked `gh` and `git` calls — no real GitHub API calls or PRs are needed.
 3. Each test case verifies a specific behavior within the three targeted logic areas: verdict normalization (`normalize_platform_verdict`), thread-resolution detection (`check_unreplied_rest_comments`), and compare-mode analytics. Future test cases may extend coverage to retry logic, async grace period handling, and other logic paths — those are out of scope for the initial harness.
@@ -56,14 +61,17 @@ This feature adds a pre-release quality gate that runs CodeRabbit on the product
 **Postconditions**: The PR's changes to `pr-review-loop.sh` have been validated against known-good behavior for all covered logic paths.
 
 **Information shown**:
+
 - Test case names and pass/fail status for each case
 - Failure output showing expected versus actual behavior when a test fails
 
 **Actions available**:
+
 - Fix the regression in `pr-review-loop.sh` and push a new commit to re-run CI
 - Add a new test case to cover the fixed behavior if it was not previously covered
 
 **Considerations**:
+
 - The harness uses mocked external commands (`gh`, `git`, `curl`). It does not test network behavior or real GitHub API responses.
 - The harness targets the logic paths most frequently changed and most frequently the source of downstream bugs: verdict normalization (`normalize_platform_verdict`), thread-resolution detection (`check_unreplied_rest_comments`), and the compare-mode analytics section.
 - The harness does not need to achieve complete code coverage. Coverage of the three highest-risk sections is the initial target.
@@ -77,6 +85,7 @@ This feature adds a pre-release quality gate that runs CodeRabbit on the product
 **Preconditions**: The developer has the repository checked out locally and has modified `pr-review-loop.sh`.
 
 **Steps**:
+
 1. The developer runs the test harness script directly from the repository root.
 2. The harness outputs pass/fail results for each test case.
 3. If any test fails, the developer iterates on the fix and re-runs the harness before pushing.
@@ -84,14 +93,17 @@ This feature adds a pre-release quality gate that runs CodeRabbit on the product
 **Postconditions**: The developer has verified their changes do not break any covered behavior before creating a PR.
 
 **Information shown**:
+
 - Test case names and pass/fail status
 - Summary: total passed, total failed
 
 **Actions available**:
+
 - Fix the failing behavior and re-run locally
 - Push the PR once all tests pass
 
 **Considerations**:
+
 - No additional tooling is required. The harness is a self-contained shell script.
 - Running the harness locally does not substitute for CI — CI is the authoritative gate.
 

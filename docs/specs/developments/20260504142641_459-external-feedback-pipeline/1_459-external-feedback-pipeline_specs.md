@@ -12,12 +12,12 @@ External users of the template repository currently have no structured way to co
 
 ## Brief Coverage
 
-| Brief Objective | Spec Trace |
-|---|---|
-| Enable GitHub Discussions with a "Feedback & Ideas" category as the public intake point | AC-1, Use Case 1 |
-| Add a `CONTRIBUTING.md` or README section directing external users to Discussions (not Issues) | AC-2, Use Case 1 |
-| Add a feedback triage protocol defining cadence, promotion criteria, and duplicate handling | AC-3, AC-4, Use Cases 2–4, Business Rules |
-| Optionally update the retrospective protocol to include a triage step | Out of scope (MVP) — see Out of Scope section |
+| Brief Objective                                                                                | Spec Trace                                    |
+| ---------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| Enable GitHub Discussions with a "Feedback & Ideas" category as the public intake point        | AC-1, Use Case 1                              |
+| Add a `CONTRIBUTING.md` or README section directing external users to Discussions (not Issues) | AC-2, Use Case 1                              |
+| Add a feedback triage protocol defining cadence, promotion criteria, and duplicate handling    | AC-3, AC-4, Use Cases 2–4, Business Rules     |
+| Optionally update the retrospective protocol to include a triage step                          | Out of scope (MVP) — see Out of Scope section |
 
 ---
 
@@ -29,6 +29,7 @@ External users of the template repository currently have no structured way to co
 **Preconditions**: GitHub Discussions is enabled on the template repository with a "Feedback & Ideas" category
 
 **Steps**:
+
 1. The external user visits the repository and finds a link to GitHub Discussions in `CONTRIBUTING.md` or the repository README
 2. The user opens a new Discussion in the "Feedback & Ideas" category describing their feedback, problem, or idea
 3. Other community members can upvote (thumbs-up reaction on the opening post) or comment on the Discussion
@@ -37,15 +38,18 @@ External users of the template repository currently have no structured way to co
 **Postconditions**: The feedback exists as a GitHub Discussion entry, separate from the Issues backlog, with community signal accruing over time
 
 **Information shown**:
+
 - The Discussion title, body, author, creation date, reaction count (upvotes), and comment count are all visible on the repository's Discussions page
 - The Discussions page shows all entries in the "Feedback & Ideas" category
 
 **Actions available**:
+
 - Any GitHub user can react (upvote) or comment on the Discussion
 - The Discussion author can edit their post
 - Maintainers can close, lock, or convert the Discussion
 
 **Considerations**:
+
 - External users are not required to have write access to the repository
 - The Discussions intake is not a commitment to implement any item; CONTRIBUTING.md should set this expectation
 - If a user opens a GitHub Issue instead of a Discussion, maintainers may redirect them to Discussions and close the issue
@@ -58,6 +62,7 @@ External users of the template repository currently have no structured way to co
 **Preconditions**: GitHub Discussions is enabled; the "Feedback & Ideas" category has at least one open Discussion
 
 **Steps**:
+
 1. The maintainer invokes the triage protocol (e.g., via `/run-feedback-triage` or by following the protocol document)
 2. The triage runner queries all open Discussions in the "Feedback & Ideas" category
 3. For each Discussion, the runner evaluates the signal threshold (see Business Rules)
@@ -70,13 +75,16 @@ External users of the template repository currently have no structured way to co
 **Postconditions**: Each candidate Discussion has been either promoted to a backlog issue, linked to an existing duplicate, or explicitly closed as out of scope
 
 **Information shown**:
+
 - For each processed Discussion: its title, signal metrics (upvote count, comment count), the outcome (promoted, duplicate, out of scope), and — if promoted — the newly created issue number and URL
 
 **Actions available**:
+
 - The maintainer may override the triage runner's assessment for any individual Discussion before it is acted on
 - The maintainer may defer a Discussion (leave it open for more signal) even if it meets the threshold
 
 **Considerations**:
+
 - The triage protocol is run on-demand, not automatically; the cadence is a guideline (see Business Rules), not a hard trigger
 - The runner should present a preview of proposed actions and wait for maintainer confirmation before creating issues or closing Discussions in the default (interactive) mode
 - A non-interactive mode (for scripted or CI use) is out of scope for the initial version
@@ -89,6 +97,7 @@ External users of the template repository currently have no structured way to co
 **Preconditions**: A candidate Discussion has met the signal threshold; a matching open backlog issue already exists
 
 **Steps**:
+
 1. The triage runner identifies a duplicate match between the Discussion and an existing open issue (see Business Rules: Duplicate detection)
 2. The runner comments on the Discussion with a message acknowledging the feedback and linking to the existing issue
 3. The runner closes the Discussion
@@ -96,12 +105,15 @@ External users of the template repository currently have no structured way to co
 **Postconditions**: The Discussion is closed; the existing issue is unchanged (or optionally updated with a note that community interest exists)
 
 **Information shown**:
+
 - Comment on the Discussion: "Thank you for this feedback! This topic is already tracked in [issue link]. You can follow or comment there to add your context."
 
 **Actions available**:
+
 - The maintainer may choose to update the linked issue with a note that community interest was signaled via Discussion
 
 **Considerations**:
+
 - The existing issue is not automatically relabeled or reprioritized; the triage runner surfaces the signal and leaves prioritization to the maintainer
 - If the existing issue is closed (resolved or won't-fix), the triage runner notes this and lets the maintainer decide whether to reopen
 
@@ -113,15 +125,18 @@ External users of the template repository currently have no structured way to co
 **Preconditions**: A candidate Discussion met the signal threshold but its content is outside the template's defined scope, is a support request, or is a duplicate of a previously closed and resolved issue
 
 **Steps**:
+
 1. The triage runner identifies the Discussion as out of scope (not a template workflow improvement, not actionable as a backlog item, or requesting something explicitly excluded)
 2. The runner closes the Discussion with a polite, informative comment explaining why the feedback is not being promoted
 
 **Postconditions**: The Discussion is closed with a clear explanation
 
 **Information shown**:
+
 - Comment on the Discussion: a brief acknowledgment of the feedback, a clear explanation of why it is not being promoted (e.g., out of scope, a support question rather than a feature request, or already resolved upstream), and optionally a pointer to where the user can get help or follow up
 
 **Considerations**:
+
 - "Out of scope" determinations should use plain language; the triage runner should not be dismissive
 - In interactive mode, the maintainer confirms the out-of-scope classification before the Discussion is closed
 

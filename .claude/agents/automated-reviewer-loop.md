@@ -10,6 +10,7 @@ Follow the standalone automated reviewer loop protocol:
 `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`
 
 That document is the single source of truth. Key responsibilities:
+
 - Determine target PR from user input (explicit number, "current" branch, or all open workflow PRs if requested)
 - Step 7a runs **two sequential passes** for implementation PRs (Pass 1: Spec Compliance, then Pass 2: Code Quality) before converting to non-draft. Spec and plan PRs remain single-pass.
 - Run Step 7 (pr-review-loop.sh) to completion, then Step 8 (pr-ci-loop.sh); do not run Step 7 in the background. Do not pass `--platform` unless intentionally overriding: the script reads `.ai-dev-workflow.yaml` and uses `review.platforms` when no `--platform` is given.

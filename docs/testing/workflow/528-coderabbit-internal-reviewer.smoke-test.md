@@ -12,23 +12,23 @@
 Before running this smoke test:
 
 - [ ] Protocol 91 Step 7a has been updated (supported values list, reachability table,
-  reviewer dispatch map)
+      reviewer dispatch map)
 - [ ] `coderabbit.md` has a "Step 7a — Internal Reviewer (Draft PRs)" section
 - [ ] `.ai-dev-workflow.yaml` comment block lists `coderabbit` as a supported
-  `internal_reviewers` value
+      `internal_reviewers` value
 - [ ] You have access to the repository files to inspect
 
 ---
 
 ## Test Data
 
-| Item | Value |
-|---|---|
-| Protocol file | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` |
-| Integration doc | `docs/workflow/development-workflow/integrations/coderabbit.md` |
-| Config file | `.ai-dev-workflow.yaml` |
-| Supported values line (before) | `` `claude`, `codex`. `` |
-| Supported values line (after) | `` `claude`, `codex`, `coderabbit`. `` |
+| Item                           | Value                                                                          |
+| ------------------------------ | ------------------------------------------------------------------------------ |
+| Protocol file                  | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` |
+| Integration doc                | `docs/workflow/development-workflow/integrations/coderabbit.md`                |
+| Config file                    | `.ai-dev-workflow.yaml`                                                        |
+| Supported values line (before) | `` `claude`, `codex`. ``                                                       |
+| Supported values line (after)  | `` `claude`, `codex`, `coderabbit`. ``                                         |
 
 ---
 
@@ -65,6 +65,7 @@ indicating "Determined at runtime (App check)" or equivalent wording.
 - Immediately after the reachability classification table, look for an explanatory paragraph
 
 **Expected result**: A paragraph is present that describes:
+
 1. How the runner detects CodeRabbit App installation (e.g., `gh api` or checking prior
    `coderabbitai[bot]` PR activity)
 2. That `.coderabbit.yaml` is checked for draft-PR restrictions
@@ -79,6 +80,7 @@ indicating "Determined at runtime (App check)" or equivalent wording.
 - Locate the "Reviewer dispatch map" table in Protocol 91 Step 7a
 
 **Expected result**: The table contains three rows for `coderabbit`:
+
 - One row for `spec/*` branch prefix
 - One row for `implementation-plan/*` branch prefix
 - One row for `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` branch prefixes
@@ -105,15 +107,16 @@ present as a top-level section.
 - Open the "Step 7a — Internal Reviewer (Draft PRs)" section in `coderabbit.md`
 
 **Expected result**: The section contains all of the following:
+
 - [ ] Configuration instructions (set `coderabbit` in `review.internal_reviewers`)
 - [ ] Draft-PR requirement: `reviews.auto_review.enabled: true` in `.coderabbit.yaml`
 - [ ] Invocation mechanism: CodeRabbit auto-reviews on push; runner polls for
-  `coderabbitai[bot]` response
+      `coderabbitai[bot]` response
 - [ ] Severity classification: `Critical` and `Major` blocking; `Minor`/`Low`/no-marker
-  are suggestions
+      are suggestions
 - [ ] Fix-cycle limit: subject to `max_internal_review_cycles` (default: 5)
 - [ ] Troubleshooting subsection with entries for: App not installed, `auto_review.enabled:
-  false`, draft PRs not enabled, all reviewers unreachable
+false`, draft PRs not enabled, all reviewers unreachable
 
 ---
 
@@ -151,16 +154,16 @@ Each checkbox maps to an acceptance criterion from the spec.
 
 - [ ] Protocol 91 Step 7a "Supported reviewer values" sentence includes `coderabbit`
 - [ ] Reachability classification table has a `coderabbit` column with runtime-check
-  annotation
+      annotation
 - [ ] Reviewer dispatch map has `coderabbit` rows for all three branch-prefix groups
 - [ ] `coderabbit.md` has a "Step 7a — Internal Reviewer (Draft PRs)" section
 - [ ] The Step 7a section in `coderabbit.md` covers: configuration, draft-PR requirement,
-  invocation, severity classification (BR-3), fix-cycle limit (BR-4), availability check
-  (BR-2), and troubleshooting
+      invocation, severity classification (BR-3), fix-cycle limit (BR-4), availability check
+      (BR-2), and troubleshooting
 - [ ] `.ai-dev-workflow.yaml` comment block lists `coderabbit` as a supported
-  `internal_reviewers` value (BR-10)
+      `internal_reviewers` value (BR-10)
 - [ ] No change to Step 7 (external reviewer loop) behaviour — `review.platforms` path
-  unaffected (BR-8)
+      unaffected (BR-8)
 
 ---
 
@@ -169,19 +172,19 @@ Each checkbox maps to an acceptance criterion from the spec.
 None. This feature affects only protocol documentation and configuration comments.
 
 | Entity | Scenario | How to load |
-|---|---|---|
-| — | — | — |
+| ------ | -------- | ----------- |
+| —      | —        | —           |
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `coderabbit` still not in "Supported reviewer values" sentence | Implementation step 1 not applied | Re-check the exact line in Protocol 91 and apply the change |
-| Reachability table missing `coderabbit` column | Implementation step 2 not applied | Add the column with "Determined at runtime (App check)" values for all four runner contexts |
-| `coderabbit.md` has no Step 7a section | Implementation step 4 not applied | Add the section after "Usage Modes" with required subsections |
-| `.ai-dev-workflow.yaml` comment not updated | Implementation step 5 not applied | Insert the `coderabbit` block comment after the `codex` comment block |
+| Symptom                                                        | Likely cause                      | Fix                                                                                         |
+| -------------------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------- |
+| `coderabbit` still not in "Supported reviewer values" sentence | Implementation step 1 not applied | Re-check the exact line in Protocol 91 and apply the change                                 |
+| Reachability table missing `coderabbit` column                 | Implementation step 2 not applied | Add the column with "Determined at runtime (App check)" values for all four runner contexts |
+| `coderabbit.md` has no Step 7a section                         | Implementation step 4 not applied | Add the section after "Usage Modes" with required subsections                               |
+| `.ai-dev-workflow.yaml` comment not updated                    | Implementation step 5 not applied | Insert the `coderabbit` block comment after the `codex` comment block                       |
 
 ---
 

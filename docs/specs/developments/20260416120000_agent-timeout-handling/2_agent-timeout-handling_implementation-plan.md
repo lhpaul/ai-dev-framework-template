@@ -10,7 +10,9 @@
 **Approach**: This is a documentation-only change across three protocol/config files. The work adds explicit timeout-handling guidance to `agent-model-config.md` (expected run durations + resume runbook), adds a stale-PR detection heuristic to `90-batch-orchestrate-work-protocol.md`, and confirms/strengthens the reviewer loop summary comment check already in Step 8c of `91-orchestrate-work-protocol.md`.
 
 **Estimated complexity**: S
+
 <!-- S: < 1 day -->
+
 **Rationale**: All five acceptance criteria map to targeted additions inside existing protocol documents. No code, scripts, or CI changes are required. The largest single addition is the resume runbook section in `agent-model-config.md` (~30–40 lines).
 
 **Dependencies**: None
@@ -33,6 +35,7 @@
 **Test types**: Manual (document review only — no runnable code)
 
 **Key scenarios to test**:
+
 1. Reviewer reads `agent-model-config.md` and can find the resume guide within 30 seconds — maps to Acceptance Criterion 3 (UX rule: scannable in under 30 seconds)
 2. Acceptance Criteria 1–4 are verified by inspecting the changed files
 3. Acceptance Criterion 5 (documentation-only) is satisfied by confirming no code/script/CI files were changed — maps to Acceptance Criterion 5
@@ -61,11 +64,11 @@ No other `docs/project/` files, `AGENTS.md`, or `docs/best-practices/` files req
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| Open question: resume section location (`agent-model-config.md` vs. dedicated runbook) | Low | Low | Spec Open Question 1 defers to this plan. Place the section in `agent-model-config.md` for discoverability — it is the document operators already consult for agent behavior. Link it from the "Expected Run Durations" subsection so operators encounter it naturally. A dedicated runbook adds a navigation hop with no benefit for an initial MVP section. |
-| Reviewer loop summary check in Step 8c could be ambiguously worded | Low | Med | The implementation step explicitly reviews and, if needed, strengthens the wording of the existing check — not just confirms it exists. |
-| Changes to protocol documents could introduce cross-reference inconsistencies | Low | Low | The implementation order requires a final cross-read of all three files after edits to verify references and wording are consistent. |
+| Risk                                                                                   | Likelihood | Impact | Mitigation                                                                                                                                                                                                                                                                                                                                                    |
+| -------------------------------------------------------------------------------------- | ---------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Open question: resume section location (`agent-model-config.md` vs. dedicated runbook) | Low        | Low    | Spec Open Question 1 defers to this plan. Place the section in `agent-model-config.md` for discoverability — it is the document operators already consult for agent behavior. Link it from the "Expected Run Durations" subsection so operators encounter it naturally. A dedicated runbook adds a navigation hop with no benefit for an initial MVP section. |
+| Reviewer loop summary check in Step 8c could be ambiguously worded                     | Low        | Med    | The implementation step explicitly reviews and, if needed, strengthens the wording of the existing check — not just confirms it exists.                                                                                                                                                                                                                       |
+| Changes to protocol documents could introduce cross-reference inconsistencies          | Low        | Low    | The implementation order requires a final cross-read of all three files after edits to verify references and wording are consistent.                                                                                                                                                                                                                          |
 
 ---
 

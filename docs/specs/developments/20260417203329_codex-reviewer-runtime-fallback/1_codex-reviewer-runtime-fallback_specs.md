@@ -27,6 +27,7 @@ either halts the gate or proceeds only after explicit human acknowledgement.
 
 **Actor**: Work Item Runner (orchestrator agent or human-delegated CI run)
 **Preconditions**:
+
 - `.ai-dev-workflow.yaml` lists two or more internal reviewers (e.g., `claude`
   and `codex`).
 - Step 7a is about to start for a draft PR.
@@ -35,6 +36,7 @@ either halts the gate or proceeds only after explicit human acknowledgement.
 - The repo's `internal_reviewers_unavailable_policy` is `warn` (default).
 
 **Steps**:
+
 1. The Work Item Runner reads the `review.internal_reviewers` list.
 2. Before dispatching any reviewer, the runner performs a runtime-availability
    check for each listed reviewer.
@@ -43,36 +45,40 @@ either halts the gate or proceeds only after explicit human acknowledgement.
 4. The runner emits a warning to the PR (via `gh pr comment`) and to the console
    log:
    > `WARNING: internal_reviewer 'codex' unreachable from current runner
-   > (Claude Code subagent) — skipping. Only 'claude' will run in this Step 7a
-   > cycle. Reviewer coverage is reduced from 2 to 1.`
+(Claude Code subagent) — skipping. Only 'claude' will run in this Step 7a
+cycle. Reviewer coverage is reduced from 2 to 1.`
 5. The runner records the skipped reviewer as `skipped (unreachable)` — not
    `approved` and not `needs_revision`.
 6. The runner dispatches the remaining reachable reviewer (`claude`) and awaits
    its verdict.
 7. If `claude` returns `APPROVED`, the runner posts a Step 7a summary comment
    listing which reviewers ran and which were skipped, then proceeds to `gh pr
-   ready` (converting the draft PR to non-draft).
+ready` (converting the draft PR to non-draft).
 8. If `claude` returns `NEEDS REVISION`, the runner applies fixes and re-runs
    the full available reviewer list (only `claude` in this context) as normal.
 
 **Postconditions**:
+
 - The draft PR is converted to non-draft after all reachable reviewers approve.
 - A warning comment in the PR records that `codex` was unreachable and skipped.
 - The Step 7a summary comment lists the effective reviewer set for this cycle.
 - The reviewer coverage gap is visible to human reviewers inspecting the PR.
 
 **Information shown**:
+
 - Warning message in PR comments: which reviewer was skipped and why.
 - Step 7a summary comment: which reviewers ran, which were skipped, and the
   effective verdict.
 
 **Actions available**:
+
 - The human reviewer can inspect the PR and choose not to merge if the reduced
   reviewer coverage is unacceptable for that change.
 - The human can re-run Step 7a in a runner context where all reviewers are
   available before approving.
 
 **Considerations**:
+
 - If ALL reviewers are unreachable, the hard-fail rule (BR-3) applies
   regardless of the configured policy.
 
@@ -82,10 +88,12 @@ either halts the gate or proceeds only after explicit human acknowledgement.
 
 **Actor**: Work Item Runner
 **Preconditions**:
+
 - All listed internal reviewers are unreachable from the current runner (zero
   reachable regardless of configured policy).
 
 **Steps**:
+
 1. The Work Item Runner performs the runtime-availability check.
 2. No reachable reviewer is found (all listed reviewers are unavailable).
 3. The runner posts a Step 7a summary comment to the PR that serves as both
@@ -95,31 +103,35 @@ either halts the gate or proceeds only after explicit human acknowledgement.
    - Final verdict: `hard-fail / blocked`
    - Remediation guidance, for example:
      > `Step 7a BLOCKED: no internal reviewer is reachable from the current
-     > runner. Effective reviewer set: none. Skipped: [codex (unreachable),
-     > claude (unreachable)]. Verdict: hard-fail. To unblock: run Step 7a from a
-     > runner that supports all configured reviewers, or temporarily override
-     > 'review.internal_reviewers' via .tmp/template-config.json.`
+runner. Effective reviewer set: none. Skipped: [codex (unreachable),
+claude (unreachable)]. Verdict: hard-fail. To unblock: run Step 7a from a
+runner that supports all configured reviewers, or temporarily override
+'review.internal_reviewers' via .tmp/template-config.json.`
 4. The runner does NOT convert the draft PR to non-draft.
 5. The runner stops and reports the item as "blocked — no reviewer available"
    to the Portfolio Orchestrator or human operator.
 
 **Postconditions**:
+
 - The draft PR remains in draft state.
 - A Step 7a summary comment (satisfying BR-7) is posted to the PR, listing all
   skipped reviewers with reason, and the hard-fail verdict.
 - The item is escalated to human for resolution.
 
 **Information shown**:
+
 - Step 7a summary comment listing all listed reviewers as unreachable and the
   hard-fail verdict, with remediation guidance.
 
 **Actions available**:
+
 - The human can run Step 7a from a runner context where reviewers are available
   (e.g., invoke the Codex `workflow-spec-reviewer` skill directly).
 - The human can override `internal_reviewers` locally via
   `.tmp/template-config.json` to run a reduced set, then re-trigger Step 7a.
 
 **Considerations**:
+
 - This use case applies regardless of the configured policy: when zero reviewers
   are reachable, the gate must hard-fail even under the `warn` default policy.
   BR-3 is a floor that no policy can override.
@@ -130,9 +142,11 @@ either halts the gate or proceeds only after explicit human acknowledgement.
 
 **Actor**: Work Item Runner
 **Preconditions**:
+
 - All listed internal reviewers are reachable from the current runner.
 
 **Steps**:
+
 1. The Work Item Runner performs the runtime-availability check for each
    reviewer.
 2. All reviewers pass the availability check.
@@ -140,9 +154,11 @@ either halts the gate or proceeds only after explicit human acknowledgement.
    change to behavior.
 
 **Postconditions**:
+
 - All reviewers run as declared; the gate behaves as today.
 
 **Considerations**:
+
 - No additional comments or warnings are posted in this flow.
 
 ---
@@ -151,6 +167,7 @@ either halts the gate or proceeds only after explicit human acknowledgement.
 
 **Actor**: Developer or CI operator
 **Preconditions**:
+
 - The developer cannot access one of the listed internal reviewers from their
   local environment or CI runner.
 - The developer has created `.tmp/template-config.json` with an
@@ -158,6 +175,7 @@ either halts the gate or proceeds only after explicit human acknowledgement.
   invoke.
 
 **Steps**:
+
 1. The Work Item Runner reads `.tmp/template-config.json` and finds the
    `overrides.review.internal_reviewers` override.
 2. The runner uses the override list for Step 7a instead of the
@@ -166,15 +184,17 @@ either halts the gate or proceeds only after explicit human acknowledgement.
 4. All reviewers in the override list are reachable; Step 7a runs normally.
 5. The runner logs that the override was applied:
    > `INFO: Using internal_reviewers override from .tmp/template-config.json:
-   > [claude]. Original list: [claude, codex].`
+[claude]. Original list: [claude, codex].`
 
 **Postconditions**:
+
 - Step 7a runs with the reduced reviewer set declared in the override.
 - A log entry notes that the override was applied.
 - No warning comment is posted to the PR (the developer knowingly overrode the
   list).
 
 **Considerations**:
+
 - The override file is gitignored; it does not affect shared config.
 - The override only suppresses the availability check warning; it does not bypass
   the gate if any overridden reviewer is itself unreachable.

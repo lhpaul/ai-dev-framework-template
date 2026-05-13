@@ -19,17 +19,17 @@
 
 ## Verification Log
 
-| Check | Command / query | Result |
-|---|---|---|
-| Repo revision | `git rev-parse --short HEAD` | `ddeb154` |
-| pr-review-loop.sh line count | `wc -l scripts/development-workflow/pr-review-loop.sh` | 2681 lines |
-| Existing platform loop location | `grep -n "for index in" scripts/development-workflow/pr-review-loop.sh` | line 2363 |
-| Existing `break` in platform loop | `grep -n "break$" scripts/development-workflow/pr-review-loop.sh` | line 2414 |
-| Argument-parsing block start | `grep -n 'while \[ "\$#"' scripts/development-workflow/pr-review-loop.sh` | line 2262 |
-| Metrics file exists | `ls docs/workflow/retro-metrics-platforms.md` | not present (must be created) |
-| Meta-retrospective protocol | `wc -l docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md` | 193 lines |
-| Retrospective agent files | `grep -rl "06b-meta-retrospective" .claude/agents/ .cursor/agents/ .codex/skills/` | `.claude/agents/retrospective.md`, `.cursor/agents/retrospective.md`, `.codex/skills/workflow-retrospective/SKILL.md` |
-| automated-reviewer-loop agent references pr-review-loop | `grep -c "pr-review-loop" .claude/agents/automated-reviewer-loop.md` | 0 (indirect via protocol 93) |
+| Check                                                   | Command / query                                                                         | Result                                                                                                                |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Repo revision                                           | `git rev-parse --short HEAD`                                                            | `ddeb154`                                                                                                             |
+| pr-review-loop.sh line count                            | `wc -l scripts/development-workflow/pr-review-loop.sh`                                  | 2681 lines                                                                                                            |
+| Existing platform loop location                         | `grep -n "for index in" scripts/development-workflow/pr-review-loop.sh`                 | line 2363                                                                                                             |
+| Existing `break` in platform loop                       | `grep -n "break$" scripts/development-workflow/pr-review-loop.sh`                       | line 2414                                                                                                             |
+| Argument-parsing block start                            | `grep -n 'while \[ "\$#"' scripts/development-workflow/pr-review-loop.sh`               | line 2262                                                                                                             |
+| Metrics file exists                                     | `ls docs/workflow/retro-metrics-platforms.md`                                           | not present (must be created)                                                                                         |
+| Meta-retrospective protocol                             | `wc -l docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md` | 193 lines                                                                                                             |
+| Retrospective agent files                               | `grep -rl "06b-meta-retrospective" .claude/agents/ .cursor/agents/ .codex/skills/`      | `.claude/agents/retrospective.md`, `.cursor/agents/retrospective.md`, `.codex/skills/workflow-retrospective/SKILL.md` |
+| automated-reviewer-loop agent references pr-review-loop | `grep -c "pr-review-loop" .claude/agents/automated-reviewer-loop.md`                    | 0 (indirect via protocol 93)                                                                                          |
 
 ---
 
@@ -93,12 +93,12 @@ All other project docs in `docs/project/`, `docs/best-practices/`, and `AGENTS.m
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| `append_compare_metrics_row` fails to create the file atomically if two concurrent compare runs target the same PR | Low | Low | File append is single-process (the lock guard at the top of `pr-review-loop.sh` prevents concurrent runs for the same PR number) |
-| Branch-type detection regex in `append_compare_metrics_row` does not match an unusual branch name | Low | Low | Default to `other` as the branch type when no pattern matches; this is a metrics-only field and does not affect exit code |
-| Meta-retrospective step reads a partially written row (file truncated mid-append) | Very low | Low | Shell `>>` append is atomic for lines shorter than PIPE_BUF (4 KB) on Linux/macOS; the row is short enough that this is safe |
-| `--compare` used in normal orchestration inadvertently, slowing reviews | Low | Med | Flag is opt-in and not set in any default orchestration path; document intended usage in the `usage()` function |
+| Risk                                                                                                               | Likelihood | Impact | Mitigation                                                                                                                       |
+| ------------------------------------------------------------------------------------------------------------------ | ---------- | ------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| `append_compare_metrics_row` fails to create the file atomically if two concurrent compare runs target the same PR | Low        | Low    | File append is single-process (the lock guard at the top of `pr-review-loop.sh` prevents concurrent runs for the same PR number) |
+| Branch-type detection regex in `append_compare_metrics_row` does not match an unusual branch name                  | Low        | Low    | Default to `other` as the branch type when no pattern matches; this is a metrics-only field and does not affect exit code        |
+| Meta-retrospective step reads a partially written row (file truncated mid-append)                                  | Very low   | Low    | Shell `>>` append is atomic for lines shorter than PIPE_BUF (4 KB) on Linux/macOS; the row is short enough that this is safe     |
+| `--compare` used in normal orchestration inadvertently, slowing reviews                                            | Low        | Med    | Flag is opt-in and not set in any default orchestration path; document intended usage in the `usage()` function                  |
 
 ---
 

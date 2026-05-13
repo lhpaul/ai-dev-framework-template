@@ -21,13 +21,13 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Value |
-|---|---|
-| Test template repository | A GitHub repo you control in `owner/repo` format (e.g., `your-org/ai-dev-framework-template`) |
-| Open template issue (for `already-tracked` test) | Any open issue in the test template repository |
-| Closed template issue with known version (for `already-fixed` test) | Any closed issue in the test template repository |
-| Malformed repository reference | `not-a-valid-format` (missing `/` separator) |
-| Unreachable repository reference | `nonexistent-owner-xyz123/nonexistent-repo-xyz123` |
+| Item                                                                | Value                                                                                         |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Test template repository                                            | A GitHub repo you control in `owner/repo` format (e.g., `your-org/ai-dev-framework-template`) |
+| Open template issue (for `already-tracked` test)                    | Any open issue in the test template repository                                                |
+| Closed template issue with known version (for `already-fixed` test) | Any closed issue in the test template repository                                              |
+| Malformed repository reference                                      | `not-a-valid-format` (missing `/` separator)                                                  |
+| Unreachable repository reference                                    | `nonexistent-owner-xyz123/nonexistent-repo-xyz123`                                            |
 
 ---
 
@@ -63,6 +63,7 @@ Before running this smoke test:
 3. Observe Step 3b output
 
 **Expected result**:
+
 - Finding matching open issue: labeled "Already in template backlog: template#NNN" **and the presentation suggests Skip or Expand as alternatives to creating a new upstream issue** (per AC 3)
 - Finding matching newer closed issue: labeled "Already fixed upstream in vX.Y.Z — you are on v0.22.0; consider syncing instead of contributing"
 - Finding with no match: labeled "Contribute upstream candidate"
@@ -104,6 +105,7 @@ Before running this smoke test:
 3. Observe Step 3b output and Step 4 presentation
 
 **Expected result**:
+
 - Step 3b reports an error (not a warning) about the malformed reference
 - All findings show "Template check unavailable" classification
 - The retrospective does not fail entirely — it continues to Step 4 and completes
@@ -119,6 +121,7 @@ Before running this smoke test:
 3. Observe Step 3b output
 
 **Expected result**:
+
 - Step 3b reports a warning (not an error) about the unreachable repository
 - All findings show "Template check unavailable" classification
 - The retrospective does not fail entirely — it continues and completes
@@ -134,6 +137,7 @@ Before running this smoke test:
 3. Inspect `.ai-dev-workflow.yaml` after the sync step runs
 
 **Expected result**:
+
 - `.ai-dev-workflow.yaml` shows `template.last_synced_version: "v0.24.0"` (or the actual version from the template's CHANGELOG)
 - The git instructions printed by Step 5 include `.ai-dev-workflow.yaml` in the `git add` command
 - If `template.last_synced_version` already existed with a different value, it was overwritten with the new version
@@ -148,6 +152,7 @@ Before running this smoke test:
 2. Locate the `template:` section
 
 **Expected result**:
+
 - The `template:` section exists with both `repository:` and `last_synced_version:` fields
 - Each field has a comment explaining its purpose and how it is used
 
@@ -168,6 +173,7 @@ Set up three retrospective findings in the session:
 Run Step 3b cross-reference and observe the classification for each.
 
 **Expected result**:
+
 - Finding A classified as "Already in template backlog: template#NNN" (exact match criterion per BR-4, AC 12)
 - Finding B classified as "Already in template backlog: template#NNN" or another bucket, depending on open/closed status (keyword overlap criterion per BR-4, AC 13)
 - Finding C classified based on category label overlap (shared root-cause category criterion per BR-4, AC 14)
@@ -202,20 +208,20 @@ Run Step 3b cross-reference and observe the classification for each.
 
 ## Seed Data Reference
 
-| Entity | Scenario | How to load |
-|---|---|---|
-| No seed data required | All scenarios are protocol walkthroughs; test template repo is a real GitHub repo you control | N/A |
+| Entity                | Scenario                                                                                      | How to load |
+| --------------------- | --------------------------------------------------------------------------------------------- | ----------- |
+| No seed data required | All scenarios are protocol walkthroughs; test template repo is a real GitHub repo you control | N/A         |
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `gh issue list --repo owner/repo` returns 0 results | Wrong repo reference or no issues in test repo | Create a test issue in the template repo before running the test |
-| Step 3b does not appear even with `template.repository` configured | Implementation not complete or file not saved | Confirm the protocol file was updated and saved |
-| `last_synced_version` not written after sync | Sync-template Step 5 update not implemented or TEMPLATE_VERSION not resolved | Verify the sync-template file was updated per the implementation plan |
-| Malformed reference test shows warning instead of error | Implementation uses wrong severity | Error severity is required for malformed references (BR-9 vs. BR-5) |
+| Symptom                                                            | Likely cause                                                                 | Fix                                                                   |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `gh issue list --repo owner/repo` returns 0 results                | Wrong repo reference or no issues in test repo                               | Create a test issue in the template repo before running the test      |
+| Step 3b does not appear even with `template.repository` configured | Implementation not complete or file not saved                                | Confirm the protocol file was updated and saved                       |
+| `last_synced_version` not written after sync                       | Sync-template Step 5 update not implemented or TEMPLATE_VERSION not resolved | Verify the sync-template file was updated per the implementation plan |
+| Malformed reference test shows warning instead of error            | Implementation uses wrong severity                                           | Error severity is required for malformed references (BR-9 vs. BR-5)   |
 
 ---
 

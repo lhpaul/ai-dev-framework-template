@@ -20,10 +20,10 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Value |
-|---|---|
-| Repository | The current repository (or any repo with recent PR activity) |
-| Target PR (for scoped test) | Any recently merged PR with review comments |
+| Item                        | Value                                                        |
+| --------------------------- | ------------------------------------------------------------ |
+| Repository                  | The current repository (or any repo with recent PR activity) |
+| Target PR (for scoped test) | Any recently merged PR with review comments                  |
 
 ---
 

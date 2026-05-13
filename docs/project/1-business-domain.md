@@ -15,8 +15,8 @@
 
 > List the main users/systems that interact with the product.
 
-| Actor | Description |
-|---|---|
+| Actor     | Description                 |
+| --------- | --------------------------- |
 | [Actor 1] | [What they do / their role] |
 | [Actor 2] | [What they do / their role] |
 
@@ -41,8 +41,8 @@
 
 > Define domain-specific terms that appear in specs, code, and conversations.
 
-| Term | Definition |
-|---|---|
+| Term   | Definition   |
+| ------ | ------------ |
 | [Term] | [Definition] |
 
 ## Out of Scope

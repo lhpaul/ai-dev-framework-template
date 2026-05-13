@@ -14,11 +14,13 @@ This feature adds a design reviewer to the AI development workflow that uses bro
 
 **Actor**: Work Item Runner (automated orchestration agent, acting on behalf of the developer)
 **Preconditions**:
+
 - A pull request exists that includes one or more frontend files (HTML, CSS, JavaScript, or frontend framework component files such as React, Vue, Svelte, etc.)
 - Browser automation is available in the current environment (the configured provider is reachable)
 - The development server or preview environment for the changed pages/components can be started or is already running
 
 **Steps**:
+
 1. The Work Item Runner reaches Step 7a (Internal Review Gate) while processing an implementation PR.
 2. The runner inspects the PR's changed files and detects that at least one file is a frontend file.
 3. The runner invokes the design-reviewer agent, passing context about the PR: the list of changed frontend files and any available preview URL or instructions to start the development server.
@@ -36,6 +38,7 @@ This feature adds a design reviewer to the AI development workflow that uses bro
 **Postconditions**: A structured design review comment is present on the PR. If the review revealed blocking issues, those issues must be addressed before the PR can advance to human review.
 
 **Information shown** (in the PR review comment):
+
 - Whether frontend changes were detected
 - List of pages/components reviewed with a screenshot attached (or link to screenshot artifact)
 - Console errors and warnings found during rendering (if any)
@@ -43,10 +46,12 @@ This feature adds a design reviewer to the AI development workflow that uses bro
 - Overall verdict: approved or needs revision
 
 **Actions available**:
+
 - Developer addresses flagged issues and pushes fixes; the runner re-triggers the design review.
 - Developer reviews the screenshots and accessibility report in the PR comment.
 
 **Considerations**:
+
 - If the development server cannot be started or the preview URL is unreachable, the agent reports this as a configuration error and skips the review without blocking the PR.
 - If the browser automation provider is unavailable in the current runner environment, the agent gracefully no-ops and posts a notice on the PR indicating that design review was skipped.
 - Pages or components that require authentication or special setup should be noted as out of scope for this first iteration (see Out of Scope section).
@@ -57,9 +62,11 @@ This feature adds a design reviewer to the AI development workflow that uses bro
 
 **Actor**: Work Item Runner
 **Preconditions**:
+
 - A pull request exists that does NOT include any frontend files (e.g., it is a backend-only change, a documentation update, or a workflow tooling change).
 
 **Steps**:
+
 1. The Work Item Runner reaches Step 7a and inspects the PR's changed files.
 2. No frontend files are found in the changed file list.
 3. The design-reviewer agent is not invoked; the runner continues without it.
@@ -71,6 +78,7 @@ This feature adds a design reviewer to the AI development workflow that uses bro
 **Actions available**: None — the runner continues the normal review flow.
 
 **Considerations**:
+
 - The detection logic must be documented so downstream teams can understand which file extensions and paths are treated as "frontend."
 
 ---
@@ -79,10 +87,12 @@ This feature adds a design reviewer to the AI development workflow that uses bro
 
 **Actor**: Work Item Runner
 **Preconditions**:
+
 - A pull request includes frontend files.
 - The browser automation provider is unavailable (e.g., the configured provider is not installed, not reachable, or explicitly set to `none`).
 
 **Steps**:
+
 1. The Work Item Runner reaches Step 7a and detects frontend changes.
 2. The runner checks whether the configured browser automation provider is reachable.
 3. The provider is not reachable.
@@ -92,11 +102,13 @@ This feature adds a design reviewer to the AI development workflow that uses bro
 **Postconditions**: A notice is posted to the PR. The PR is not blocked; normal review flow continues.
 
 **Information shown** (in the PR notice comment):
+
 - The name of the configured provider.
 - The reason for skipping (provider unavailable).
 - Guidance on how to enable design review (e.g., install the provider or update configuration).
 
 **Actions available**:
+
 - Operator installs and configures the browser automation provider to enable design review in future runs.
 
 ---
@@ -169,17 +181,17 @@ This feature has no user-facing UI of its own. Its "UX" is the structured PR com
 
 ## Brief Coverage Matrix
 
-| Brief Objective | Mapped to |
-|---|---|
-| A new `design-reviewer` agent exists that uses Playwright | AC-1, AC-3 |
-| Agent detects when a PR includes frontend changes | AC-2, AC-8 |
-| Agent launches Playwright browser to render changed pages/components | AC-3 |
-| Agent captures screenshots | AC-3 |
-| Agent checks for console errors | AC-4 |
-| Agent runs axe-core accessibility checks | AC-5 |
-| Agent reports findings as a structured PR review comment | AC-6 |
+| Brief Objective                                                           | Mapped to   |
+| ------------------------------------------------------------------------- | ----------- |
+| A new `design-reviewer` agent exists that uses Playwright                 | AC-1, AC-3  |
+| Agent detects when a PR includes frontend changes                         | AC-2, AC-8  |
+| Agent launches Playwright browser to render changed pages/components      | AC-3        |
+| Agent captures screenshots                                                | AC-3        |
+| Agent checks for console errors                                           | AC-4        |
+| Agent runs axe-core accessibility checks                                  | AC-5        |
+| Agent reports findings as a structured PR review comment                  | AC-6        |
 | Protocol 91 Step 7a invokes design-reviewer for PRs with frontend changes | AC-2, AC-11 |
-| Agent gracefully skips when no frontend changes detected | AC-8 |
-| Agent gracefully skips when Playwright is unavailable | AC-9 |
-| Agent gracefully skips when preview URL or dev server is unreachable | AC-12 |
-| This repo's `browser_automation.provider: playwright_cli` is used | AC-10 |
+| Agent gracefully skips when no frontend changes detected                  | AC-8        |
+| Agent gracefully skips when Playwright is unavailable                     | AC-9        |
+| Agent gracefully skips when preview URL or dev server is unreachable      | AC-12       |
+| This repo's `browser_automation.provider: playwright_cli` is used         | AC-10       |

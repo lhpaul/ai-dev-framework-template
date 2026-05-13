@@ -22,14 +22,14 @@ Before running this smoke test:
 
 Create the following test PRs before running the smoke test. Each PR should be a small, real change (e.g., adding a comment to a file, creating a test file) so merges are meaningful.
 
-| Item | Description |
-|---|---|
-| PR A (no CHANGELOG) | Targets `develop`, has `ready-for-human-review` label, does NOT modify `CHANGELOG.md`. Lowest PR number of the batch. |
-| PR B (with CHANGELOG) | Targets `develop`, has `ready-for-human-review` label, adds an entry under `[Unreleased]` in `CHANGELOG.md`. |
-| PR C (with CHANGELOG) | Targets `develop`, has `ready-for-human-review` label, adds a different entry under `[Unreleased]` in `CHANGELOG.md`. Higher PR number than PR B. |
-| PR D (no label) | Targets `develop`, does NOT have `ready-for-human-review` label. Used for readiness gate testing. |
-| PR E (conflict) | Targets `develop`, has `ready-for-human-review` label, modifies a non-doc code file that will conflict with an earlier PR (e.g., same line in a script). Used for non-trivial conflict testing. |
-| PR F (doc conflict) | Targets `develop`, has `ready-for-human-review` label, modifies a documentation file (e.g., a file under `docs/`) in non-overlapping line ranges compared to another PR that also modifies the same file. Used for doc file auto-resolution testing. |
+| Item                  | Description                                                                                                                                                                                                                                          |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PR A (no CHANGELOG)   | Targets `develop`, has `ready-for-human-review` label, does NOT modify `CHANGELOG.md`. Lowest PR number of the batch.                                                                                                                                |
+| PR B (with CHANGELOG) | Targets `develop`, has `ready-for-human-review` label, adds an entry under `[Unreleased]` in `CHANGELOG.md`.                                                                                                                                         |
+| PR C (with CHANGELOG) | Targets `develop`, has `ready-for-human-review` label, adds a different entry under `[Unreleased]` in `CHANGELOG.md`. Higher PR number than PR B.                                                                                                    |
+| PR D (no label)       | Targets `develop`, does NOT have `ready-for-human-review` label. Used for readiness gate testing.                                                                                                                                                    |
+| PR E (conflict)       | Targets `develop`, has `ready-for-human-review` label, modifies a non-doc code file that will conflict with an earlier PR (e.g., same line in a script). Used for non-trivial conflict testing.                                                      |
+| PR F (doc conflict)   | Targets `develop`, has `ready-for-human-review` label, modifies a documentation file (e.g., a file under `docs/`) in non-overlapping line ranges compared to another PR that also modifies the same file. Used for doc file auto-resolution testing. |
 
 ---
 
@@ -54,6 +54,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 2. Run `/batch-merge` with no arguments.
 
 **Expected result**:
+
 - The command discovers PRs A, B, C, E, and F and displays a candidate summary table showing PR number, title, branch, labels, and readiness status.
 - The command asks for confirmation before proceeding. No merge has occurred yet.
 - Cancel/decline the confirmation to avoid merging (we will test merging in later steps).
@@ -67,6 +68,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 1. Run `/batch-merge` specifying PR numbers for PR A and PR B explicitly (e.g., `/batch-merge #101 #102`).
 
 **Expected result**:
+
 - The command shows only PRs A and B in the candidate list (not C, D, or E).
 - The command asks for confirmation before proceeding.
 - Cancel the confirmation.
@@ -80,6 +82,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 1. Run `/batch-merge` specifying PR D (the one without `ready-for-human-review`) explicitly.
 
 **Expected result**:
+
 - The command warns that PR D is missing the `ready-for-human-review` label.
 - The command asks whether to include or skip PR D.
 - Choose "skip" and verify PR D is excluded and noted as `skipped_not_ready`.
@@ -87,6 +90,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 2. Run the same command again and this time choose "include".
 
 **Expected result**:
+
 - PR D is included in the candidate list with a "not fully reviewed" notation.
 - The command proceeds to the confirmation step.
 
@@ -100,6 +104,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 2. Confirm the merge plan.
 
 **Expected result**:
+
 - The merge order displayed is: PR A first (no CHANGELOG, lowest number), then PR B (CHANGELOG, lower number), then PR C (CHANGELOG, higher number).
 - Verify this order in the confirmation prompt before any merge occurs.
 
@@ -113,6 +118,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 2. Confirm the merge plan.
 
 **Expected result**:
+
 - PR A merges cleanly into `develop`.
 - The command reports `merged_clean` for PR A immediately after the merge.
 - `post-merge-cleanup` runs for PR A's branch (branch is deleted locally, develop is updated).
@@ -129,6 +135,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 2. PR B adds a CHANGELOG entry under `[Unreleased]`. After PR A was merged, PR B's branch diverges from `develop`.
 
 **Expected result**:
+
 - When PR B is merged, a CHANGELOG conflict is detected (if PR A also modified CHANGELOG or the base has diverged).
 - If a CHANGELOG conflict occurs: the command auto-resolves it by combining all `[Unreleased]` entries from both sides, preserving all entries (none dropped), and reports `merged_auto` with a description of what was combined.
 - If no conflict occurs (PR A did not touch CHANGELOG): the merge is clean and reports `merged_clean`.
@@ -136,6 +143,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 3. PR C is next. Since PR B just merged with CHANGELOG changes, PR C's CHANGELOG changes will conflict.
 
 **Expected result**:
+
 - The CHANGELOG conflict is auto-resolved: entries from PR B (already in develop) appear first, followed by entries from PR C.
 - The command reports `merged_auto` with details of the combined entries.
 - No entries are dropped.
@@ -151,6 +159,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 3. Confirm the merge plan.
 
 **Expected result**:
+
 - The command detects a conflict in the documentation file.
 - Since the changes are in non-overlapping line ranges, the conflict is classified as trivial and auto-resolved.
 - The command reports `merged_auto` with a description of which files were combined.
@@ -167,6 +176,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 3. Confirm the merge plan.
 
 **Expected result**:
+
 - The command detects a non-trivial conflict.
 - The command displays the conflicting file path(s) and a short excerpt of the conflict markers.
 - The command pauses and asks the human to resolve the conflict in their editor.
@@ -175,6 +185,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 5. Signal the command to resume.
 
 **Expected result**:
+
 - The command completes the merge and reports `merged_human`.
 - `post-merge-cleanup` runs successfully.
 
@@ -190,6 +201,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 4. When the conflict is detected and the command pauses, choose to abort the merge for this PR.
 
 **Expected result**:
+
 - The merge is canceled and `develop` is returned to its pre-merge state (verify with `git status` — clean working tree).
 - PR F2 is reported as `skipped_conflict`.
 - The command continues with any remaining PRs (or reports the final summary if PR F2 was the last).
@@ -206,6 +218,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 4. After PR G merges successfully, abort the entire batch when prompted for PR H.
 
 **Expected result**:
+
 - PR G remains merged (already completed).
 - PR H is marked `not_attempted`.
 - PR I is marked `not_attempted`.
@@ -220,6 +233,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 1. Review the final summary from any of the above test runs.
 
 **Expected result**:
+
 - Every candidate PR is listed with exactly one outcome code: `merged_clean`, `merged_auto`, `merged_human`, `skipped_not_ready`, `skipped_conflict`, `failed`, or `not_attempted`.
 - Auto-resolved conflicts include a description of what was combined.
 - The summary is printed regardless of whether all merges succeeded.
@@ -255,7 +269,7 @@ Each checkbox maps to an acceptance criterion from the spec.
 - [ ] AC 11: `post-merge-cleanup` runs after each successful merge
 - [ ] AC 12: Final summary lists every PR with correct outcome code
 - [ ] AC 13: Command works as Claude Code command, Cursor command, and Codex skill; auto-discovery with no ready PRs exits cleanly
-- [ ] AC 14: Orchestrator-invoked mode requires human confirmation for unready PRs *(stretch goal — see Known Limitations)*
+- [ ] AC 14: Orchestrator-invoked mode requires human confirmation for unready PRs _(stretch goal — see Known Limitations)_
 - [ ] AC 15: Abort stops future merges; already-merged PRs stay; remaining marked `not_attempted`
 
 ---
@@ -264,22 +278,22 @@ Each checkbox maps to an acceptance criterion from the spec.
 
 No database seed data. Test PRs must be created manually per the Test Data section.
 
-| Entity | Scenario | How to load |
-|---|---|---|
+| Entity       | Scenario                | How to load                                             |
+| ------------ | ----------------------- | ------------------------------------------------------- |
 | Test PRs A-F | Various merge scenarios | Create manually with `gh pr create` targeting `develop` |
-| Test PRs G-I | Abort scenario | Create manually with `gh pr create` targeting `develop` |
+| Test PRs G-I | Abort scenario          | Create manually with `gh pr create` targeting `develop` |
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `gh pr list` returns no PRs | `gh` not authenticated or wrong repo | Run `gh auth status` and verify you are in the correct repo |
-| `git merge` fails with "not something we can merge" | Remote branch not fetched | Ensure `git fetch origin` runs before merge attempt |
-| `post-merge-cleanup.sh` fails with "branch does not exist" | Branch already deleted remotely | Script should handle this gracefully; verify branch name is correct |
-| CHANGELOG auto-resolution drops entries | Bug in conflict marker parsing | Check the agent's conflict resolution logic; ensure both sides of markers are read completely |
-| `develop` left in conflicted state | `git merge --abort` not called on failure path | Verify all error paths include `git merge --abort`; manually run it to recover |
+| Symptom                                                    | Likely cause                                   | Fix                                                                                           |
+| ---------------------------------------------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `gh pr list` returns no PRs                                | `gh` not authenticated or wrong repo           | Run `gh auth status` and verify you are in the correct repo                                   |
+| `git merge` fails with "not something we can merge"        | Remote branch not fetched                      | Ensure `git fetch origin` runs before merge attempt                                           |
+| `post-merge-cleanup.sh` fails with "branch does not exist" | Branch already deleted remotely                | Script should handle this gracefully; verify branch name is correct                           |
+| CHANGELOG auto-resolution drops entries                    | Bug in conflict marker parsing                 | Check the agent's conflict resolution logic; ensure both sides of markers are read completely |
+| `develop` left in conflicted state                         | `git merge --abort` not called on failure path | Verify all error paths include `git merge --abort`; manually run it to recover                |
 
 ---
 

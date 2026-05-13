@@ -22,7 +22,7 @@
 ### Scripts / Shell (`scripts/development-workflow/post-merge-cleanup.sh`)
 
 - [ ] **Unify issue-number extraction** (Bug Fix 1 — contradictory log output):
-  Replace the two separate `if/elif` regex blocks for `(fix|feature|hotfix|refactor)` and `(spec|implementation-plan)` with a single block that captures the issue number from any matching prefix and sets a `BRANCH_TYPE` variable (`implementation`, `spec`, or `plan`). The `STAGE_ISSUE` variable and the separate `ISSUE_NUMBER` variable are merged into a single `ISSUE_NUMBER` extraction followed by a `BRANCH_TYPE` classification. This eliminates the code path that sets `STAGE_ISSUE` without setting `ISSUE_NUMBER`, which is the root cause of the spurious "No issue number detected" fallthrough for spec/plan branches.
+      Replace the two separate `if/elif` regex blocks for `(fix|feature|hotfix|refactor)` and `(spec|implementation-plan)` with a single block that captures the issue number from any matching prefix and sets a `BRANCH_TYPE` variable (`implementation`, `spec`, or `plan`). The `STAGE_ISSUE` variable and the separate `ISSUE_NUMBER` variable are merged into a single `ISSUE_NUMBER` extraction followed by a `BRANCH_TYPE` classification. This eliminates the code path that sets `STAGE_ISSUE` without setting `ISSUE_NUMBER`, which is the root cause of the spurious "No issue number detected" fallthrough for spec/plan branches.
 
 - [ ] **Add `update_tracker_status` helper function**: Implement a bash function `update_tracker_status <issue_number> <status_label>` that:
   1. Reads `GITHUB_PROJECT_NUMBER` and `GITHUB_PROJECT_OWNER` from environment (with fallback to querying the repo owner via `gh repo view --json owner`).
@@ -56,6 +56,7 @@
 **Test types**: Manual smoke test (shell script — no automated unit test suite in this repo for scripts)
 
 **Key scenarios to test**:
+
 1. Run `post-merge-cleanup.sh spec/184-…` (simulated/dry-run path) — single log line, no "No issue number detected", tracker update attempted for `Spec Ready` — maps to AC 1 and AC 4
 2. Run `post-merge-cleanup.sh implementation-plan/184-…` — single log line, tracker update attempted for `Plan Ready` — maps to AC 2 and AC 5
 3. Run `post-merge-cleanup.sh feature/184-…` — issue close preserved, tracker update attempted for `Merged` — maps to AC 3
@@ -74,7 +75,7 @@ Not applicable. This feature modifies a shell script with no database or seed da
 
 ## Documentation Updates
 
-- [ ] `docs/workflow/development-workflow/integrations/github-projects.md` — update the "Post-Merge Cleanup" section to list all three status transitions (Spec Ready, Plan Ready, Merged) rather than only Merged. *(This update is planned in the Layer-by-Layer Changes above and executed during implementation.)*
+- [ ] `docs/workflow/development-workflow/integrations/github-projects.md` — update the "Post-Merge Cleanup" section to list all three status transitions (Spec Ready, Plan Ready, Merged) rather than only Merged. _(This update is planned in the Layer-by-Layer Changes above and executed during implementation.)_
 
 No other project docs require changes. `AGENTS.md`/`CLAUDE.md` reference the `post-merge-cleanup` command but do not describe its internal tracker behavior. `docs/best-practices/2-version-control.md` and Protocol 91 Step 10 already list the correct status transitions without prescribing how the script implements them.
 
@@ -82,12 +83,12 @@ No other project docs require changes. `AGENTS.md`/`CLAUDE.md` reference the `po
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| GitHub Projects API fields not discoverable (project not configured) | Low | Low | Helper is best-effort: logs warning, exits 0. Git cleanup always runs first. |
-| Regex unification accidentally breaks feature/fix/refactor/hotfix issue extraction | Low | Med | New unified regex covers the same patterns; add explicit test cases in smoke runbook for each prefix type |
-| `gh project item-list` returns empty for issues not added to any project | Low | Low | Helper detects empty item ID and logs warning, exits 0 |
-| Collision with #177 impl edits to `post-merge-cleanup.sh` | Low | Low | Edits are in non-overlapping line ranges (worktree unlock near `git worktree remove`; unified regex near `gh issue close`; new tracker block after close block). Batch-merge auto-resolution handles CHANGELOG conflicts. |
+| Risk                                                                               | Likelihood | Impact | Mitigation                                                                                                                                                                                                                |
+| ---------------------------------------------------------------------------------- | ---------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GitHub Projects API fields not discoverable (project not configured)               | Low        | Low    | Helper is best-effort: logs warning, exits 0. Git cleanup always runs first.                                                                                                                                              |
+| Regex unification accidentally breaks feature/fix/refactor/hotfix issue extraction | Low        | Med    | New unified regex covers the same patterns; add explicit test cases in smoke runbook for each prefix type                                                                                                                 |
+| `gh project item-list` returns empty for issues not added to any project           | Low        | Low    | Helper detects empty item ID and logs warning, exits 0                                                                                                                                                                    |
+| Collision with #177 impl edits to `post-merge-cleanup.sh`                          | Low        | Low    | Edits are in non-overlapping line ranges (worktree unlock near `git worktree remove`; unified regex near `gh issue close`; new tracker block after close block). Batch-merge auto-resolution handles CHANGELOG conflicts. |
 
 ---
 

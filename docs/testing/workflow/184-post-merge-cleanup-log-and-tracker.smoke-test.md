@@ -23,16 +23,16 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Value |
-|---|---|
-| Repo root | Repository root directory |
-| Test branch (spec) | `spec/184-smoke-test-dummy` (create locally, do not push) |
-| Test branch (plan) | `implementation-plan/184-smoke-test-dummy` (create locally, do not push) |
-| Test branch (feature) | `feature/184-smoke-test-dummy` (create locally, do not push) |
-| Test branch (no issue) | `feature/my-legacy-feature` (create locally, do not push) |
-| GitHub issue | `#184` (must exist in the repo) |
-| Project number | `$GITHUB_PROJECT_NUMBER` (set in environment) |
-| Project owner | `$GITHUB_PROJECT_OWNER` (set in environment) |
+| Item                   | Value                                                                    |
+| ---------------------- | ------------------------------------------------------------------------ |
+| Repo root              | Repository root directory                                                |
+| Test branch (spec)     | `spec/184-smoke-test-dummy` (create locally, do not push)                |
+| Test branch (plan)     | `implementation-plan/184-smoke-test-dummy` (create locally, do not push) |
+| Test branch (feature)  | `feature/184-smoke-test-dummy` (create locally, do not push)             |
+| Test branch (no issue) | `feature/my-legacy-feature` (create locally, do not push)                |
+| GitHub issue           | `#184` (must exist in the repo)                                          |
+| Project number         | `$GITHUB_PROJECT_NUMBER` (set in environment)                            |
+| Project owner          | `$GITHUB_PROJECT_OWNER` (set in environment)                             |
 
 ---
 
@@ -206,14 +206,14 @@ Not applicable. No seed data is required. Test branches are created locally duri
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `Local branch 'spec/184-smoke-test-dummy' does not exist` | Branch was not created in Step 0 | Run `git branch spec/184-smoke-test-dummy` from `develop` |
-| `You are on 'develop'. Pass the merged branch name…` | Passed wrong argument or no arg | Pass the branch name explicitly as the first argument |
-| `Warning: GITHUB_PROJECT_OWNER or GITHUB_PROJECT_NUMBER not set` | Env vars not exported | Export `GITHUB_PROJECT_NUMBER` and `GITHUB_PROJECT_OWNER` before running |
-| `Warning: could not resolve project ID` | Wrong project number or owner | Verify with `gh project list --owner <OWNER>` |
-| `Warning: issue #184 not found in project` | Issue not added to the project | Add issue #184 to the project via GitHub UI or `gh project item-add` |
-| Two log lines appear for spec/plan branch | Bug not fully fixed | Review the unified extraction block; ensure `STAGE_ISSUE` variable path is removed |
+| Symptom                                                          | Likely cause                     | Fix                                                                                |
+| ---------------------------------------------------------------- | -------------------------------- | ---------------------------------------------------------------------------------- |
+| `Local branch 'spec/184-smoke-test-dummy' does not exist`        | Branch was not created in Step 0 | Run `git branch spec/184-smoke-test-dummy` from `develop`                          |
+| `You are on 'develop'. Pass the merged branch name…`             | Passed wrong argument or no arg  | Pass the branch name explicitly as the first argument                              |
+| `Warning: GITHUB_PROJECT_OWNER or GITHUB_PROJECT_NUMBER not set` | Env vars not exported            | Export `GITHUB_PROJECT_NUMBER` and `GITHUB_PROJECT_OWNER` before running           |
+| `Warning: could not resolve project ID`                          | Wrong project number or owner    | Verify with `gh project list --owner <OWNER>`                                      |
+| `Warning: issue #184 not found in project`                       | Issue not added to the project   | Add issue #184 to the project via GitHub UI or `gh project item-add`               |
+| Two log lines appear for spec/plan branch                        | Bug not fully fixed              | Review the unified extraction block; ensure `STAGE_ISSUE` variable path is removed |
 
 ---
 

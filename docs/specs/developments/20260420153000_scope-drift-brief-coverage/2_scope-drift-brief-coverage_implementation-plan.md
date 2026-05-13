@@ -18,10 +18,10 @@
 
 ## Verification Log (plan-write time)
 
-| Check | Command / note | Result |
-|---|---|---|
-| Repo revision | `git rev-parse --short HEAD` (run at authoring time in worktree) | `f74c5cd` |
-| Spec file presence | `test -f docs/specs/developments/20260420153000_scope-drift-brief-coverage/1_scope-drift-brief-coverage_specs.md` | present |
+| Check              | Command / note                                                                                                    | Result    |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------- | --------- |
+| Repo revision      | `git rev-parse --short HEAD` (run at authoring time in worktree)                                                  | `f74c5cd` |
+| Spec file presence | `test -f docs/specs/developments/20260420153000_scope-drift-brief-coverage/1_scope-drift-brief-coverage_specs.md` | present   |
 
 ---
 
@@ -78,8 +78,8 @@
 
 ## Seed Data
 
-| Entity | Values / Scenario | File |
-|---|---|---|
+| Entity                      | Values / Scenario        | File                                                                                   |
+| --------------------------- | ------------------------ | -------------------------------------------------------------------------------------- |
 | Synthetic stale enumeration | Fixture markdown for AC5 | `docs/testing/workflow/fixtures/186-scope-drift-pattern-enumeration-mismatch.md` (new) |
 
 ---
@@ -105,11 +105,11 @@ Files the developer edits during implementation (this plan already targets them;
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| Protocol text becomes too long; agents skip it | Med | Med | Use scannable headings + a short checklist table at the top of each new subsection |
-| AC5 fixture drifts as repo grows | Low | Med | Fixture uses a **stable path subset** (e.g. only `docs/workflow/development-workflow/protocols/*.md`) and documents the exact `rg` pattern so counts remain meaningful |
-| Parallel wording between 01/02 protocols and `REVIEW.md` diverges | Med | Med | Single source of truth in protocols; `REVIEW.md` bullets only point to behaviors already spelled out there |
+| Risk                                                              | Likelihood | Impact | Mitigation                                                                                                                                                             |
+| ----------------------------------------------------------------- | ---------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Protocol text becomes too long; agents skip it                    | Med        | Med    | Use scannable headings + a short checklist table at the top of each new subsection                                                                                     |
+| AC5 fixture drifts as repo grows                                  | Low        | Med    | Fixture uses a **stable path subset** (e.g. only `docs/workflow/development-workflow/protocols/*.md`) and documents the exact `rg` pattern so counts remain meaningful |
+| Parallel wording between 01/02 protocols and `REVIEW.md` diverges | Med        | Med    | Single source of truth in protocols; `REVIEW.md` bullets only point to behaviors already spelled out there                                                             |
 
 ---
 

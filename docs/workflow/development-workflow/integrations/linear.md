@@ -22,33 +22,36 @@ Linear is **optional**. The workflow functions without it — the **Portfolio Or
 
 Configure the following statuses in your Linear team settings:
 
-| Linear Status | Workflow Stage |
-|---|---|
-| Backlog | Backlog |
-| Writing Spec | Spec is being drafted and driven to human-ready (draft PR, internal review, reviewer tools, CI) |
-| Spec in Review | Spec PR is ready for human review / merge |
-| Spec Ready | Spec PR is merged |
-| Writing Plan | Implementation plan is being drafted and driven to human-ready (same PR-readiness pattern as spec) |
-| Plan in Review | Plan PR is ready for human review / merge |
-| Plan Ready | Plan PR is merged |
-| In Development | Feature/fix PR in progress (draft through PR readiness, until human-ready) |
-| Development in Review | Feature/fix PR is ready for human review / merge |
-| Merged | Feature/fix PR merged to `develop` |
-| Released | Released to production |
+| Linear Status         | Workflow Stage                                                                                     |
+| --------------------- | -------------------------------------------------------------------------------------------------- |
+| Backlog               | Backlog                                                                                            |
+| Writing Spec          | Spec is being drafted and driven to human-ready (draft PR, internal review, reviewer tools, CI)    |
+| Spec in Review        | Spec PR is ready for human review / merge                                                          |
+| Spec Ready            | Spec PR is merged                                                                                  |
+| Writing Plan          | Implementation plan is being drafted and driven to human-ready (same PR-readiness pattern as spec) |
+| Plan in Review        | Plan PR is ready for human review / merge                                                          |
+| Plan Ready            | Plan PR is merged                                                                                  |
+| In Development        | Feature/fix PR in progress (draft through PR readiness, until human-ready)                         |
+| Development in Review | Feature/fix PR is ready for human review / merge                                                   |
+| Merged                | Feature/fix PR merged to `develop`                                                                 |
+| Released              | Released to production                                                                             |
 
 ### Labels
 
 **Type labels** (one per work item):
+
 - `Feature` — new capability
 - `Bug` — something broken
 - `Refactor` — code restructuring or tech-debt cleanup
 
 **Scope labels** (one or more per work item):
+
 - Add labels matching your app/service names (e.g., `Admin Portal`, `API`, `Mobile`)
 
 ### Priority
 
 Use Linear's built-in priority field:
+
 - Urgent (1) → Urgent
 - High (2) → High
 - Medium (3) → Normal
@@ -81,14 +84,14 @@ When the **Portfolio Orchestrator** has Linear access, it should:
 
 When a Linear work item exists, use the Linear identifier as the branch slug prefix:
 
-| Branch type | Pattern | Example |
-|---|---|---|
-| Spec | `spec/[work-item-id]-[slug]` | `spec/ENG-123-user-auth` |
+| Branch type         | Pattern                                     | Example                                 |
+| ------------------- | ------------------------------------------- | --------------------------------------- |
+| Spec                | `spec/[work-item-id]-[slug]`                | `spec/ENG-123-user-auth`                |
 | Implementation plan | `implementation-plan/[work-item-id]-[slug]` | `implementation-plan/ENG-123-user-auth` |
-| Feature | `feature/[work-item-id]-[slug]` | `feature/ENG-123-user-auth` |
-| Refactor | `refactor/[work-item-id]-[slug]` | `refactor/ENG-321-extract-auth-service` |
-| Bug fix | `fix/[work-item-id]-[slug]` | `fix/ENG-456-login-redirect` |
-| Hotfix | `hotfix/[work-item-id]-[slug]` | `hotfix/ENG-789-payment-crash` |
+| Feature             | `feature/[work-item-id]-[slug]`             | `feature/ENG-123-user-auth`             |
+| Refactor            | `refactor/[work-item-id]-[slug]`            | `refactor/ENG-321-extract-auth-service` |
+| Bug fix             | `fix/[work-item-id]-[slug]`                 | `fix/ENG-456-login-redirect`            |
+| Hotfix              | `hotfix/[work-item-id]-[slug]`              | `hotfix/ENG-789-payment-crash`          |
 
 The `[slug]` is a short kebab-case description derived from the work item title (omit common words like "add", "fix", "update" to keep it short). Linear also auto-suggests a branch name on each work item — use it directly if preferred.
 
@@ -98,8 +101,8 @@ The `[slug]` is a short kebab-case description derived from the work item title 
 
 The `issue_tracker.custom_fields` flat map in `.ai-dev-workflow.yaml` holds provider-specific fields that extend the standard `issue_tracker` configuration. For the Linear provider, the following key is recognised by workflow scripts:
 
-| Key | Format | Effect |
-|---|---|---|
+| Key       | Format                   | Effect                                                                                                                                                                                                            |
+| --------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `project` | Linear project ID string | When set, issue creation associates the new issue with the specified Linear project. The project ID is found in the Linear project URL (`https://linear.app/<team>/projects/<project-id>`) or via the Linear API. |
 
 When `project` is absent from `custom_fields` (or `custom_fields` itself is absent), issue creation proceeds without a project association — this is the current default behaviour and is fully backward-compatible.
@@ -128,18 +131,18 @@ Unrecognised keys in `custom_fields` are silently ignored by all current scripts
 
 The **Portfolio Orchestrator**, **Work Item Runner**, or stage agent updates the Linear work item status at each stage transition:
 
-| Action | Status transition |
-|---|---|
-| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `product-manager` | → Writing Spec |
-| Spec PR is human-ready (automation clean; ready for humans) | → Spec in Review |
-| Spec PR merged | → Spec Ready |
-| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `tech-lead` | → Writing Plan (Refactor items skip directly here from Backlog) |
-| Plan PR is human-ready (automation clean) | → Plan in Review |
-| Plan PR merged | → Plan Ready |
-| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `developer` | → In Development |
-| Feature/fix PR is human-ready (automation clean) | → Development in Review |
-| Feature/fix PR merged to develop | → Merged |
-| Release deployed to production | → Released |
+| Action                                                                                          | Status transition                                               |
+| ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `product-manager` | → Writing Spec                                                  |
+| Spec PR is human-ready (automation clean; ready for humans)                                     | → Spec in Review                                                |
+| Spec PR merged                                                                                  | → Spec Ready                                                    |
+| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `tech-lead`       | → Writing Plan (Refactor items skip directly here from Backlog) |
+| Plan PR is human-ready (automation clean)                                                       | → Plan in Review                                                |
+| Plan PR merged                                                                                  | → Plan Ready                                                    |
+| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `developer`       | → In Development                                                |
+| Feature/fix PR is human-ready (automation clean)                                                | → Development in Review                                         |
+| Feature/fix PR merged to develop                                                                | → Merged                                                        |
+| Release deployed to production                                                                  | → Released                                                      |
 
 ---
 
@@ -171,6 +174,7 @@ With the MCP server, agents can read and update work items directly without the 
 If you don't use Linear, the **Portfolio Orchestrator** asks the human:
 
 > "What should I work on next? Please provide:
+>
 > - Feature name and slug
 > - Path: Full Pipeline / Refactor / Fast Track / Hotfix
 > - Priority context (if any)

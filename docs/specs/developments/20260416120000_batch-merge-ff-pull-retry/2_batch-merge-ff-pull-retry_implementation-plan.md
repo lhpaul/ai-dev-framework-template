@@ -38,11 +38,11 @@
 
 **Key scenarios to test**:
 
-1. Transient failure recovery — first `git pull --ff-only` fails, retry succeeds → `MERGE_RESULT=clean` emitted, no human intervention. *(Maps to Acceptance Criterion 1)*
-2. Genuine divergence — both attempts fail → `MERGE_RESULT=failed` + `ERROR_MESSAGE` emitted, same structured output as before. *(Maps to Acceptance Criterion 2)*
-3. Diagnostic message present — when a retry is attempted, stderr contains a "retrying" message. *(Maps to Acceptance Criterion 3)*
-4. No regression — existing call paths (clean first attempt, conflict, non-conflict non-ff failure) behave identically to before the change. *(Maps to Acceptance Criterion 4)*
-5. Change isolation — discovery mode, conflict classification, and post-merge logic are unmodified. *(Maps to Acceptance Criterion 5)*
+1. Transient failure recovery — first `git pull --ff-only` fails, retry succeeds → `MERGE_RESULT=clean` emitted, no human intervention. _(Maps to Acceptance Criterion 1)_
+2. Genuine divergence — both attempts fail → `MERGE_RESULT=failed` + `ERROR_MESSAGE` emitted, same structured output as before. _(Maps to Acceptance Criterion 2)_
+3. Diagnostic message present — when a retry is attempted, stderr contains a "retrying" message. _(Maps to Acceptance Criterion 3)_
+4. No regression — existing call paths (clean first attempt, conflict, non-conflict non-ff failure) behave identically to before the change. _(Maps to Acceptance Criterion 4)_
+5. Change isolation — discovery mode, conflict classification, and post-merge logic are unmodified. _(Maps to Acceptance Criterion 5)_
 
 **Smoke test runbook**: See the canonical runbook linked in the document header above.
 
@@ -62,11 +62,11 @@ None — this change is a self-contained bug fix in a single script. It does not
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| Retry masks a genuine but intermittent divergence | Low | Med | The retry only changes the result if `git pull --ff-only` succeeds on the second attempt — a genuine divergence will fail both times and still emit `MERGE_RESULT=failed` exactly as before. |
-| 2-second sleep adds noticeable latency | Low | Low | The sleep only fires on the failure path. A clean first attempt (the common case) has zero added latency. Even in the worst case the delay is a fixed 2 seconds. |
-| Variable `TARGET_BASE` referenced incorrectly | Low | Med | Use `"$TARGET_BASE"` consistently in both the fetch and the pull; this is already the pattern in the surrounding code. |
+| Risk                                              | Likelihood | Impact | Mitigation                                                                                                                                                                                   |
+| ------------------------------------------------- | ---------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Retry masks a genuine but intermittent divergence | Low        | Med    | The retry only changes the result if `git pull --ff-only` succeeds on the second attempt — a genuine divergence will fail both times and still emit `MERGE_RESULT=failed` exactly as before. |
+| 2-second sleep adds noticeable latency            | Low        | Low    | The sleep only fires on the failure path. A clean first attempt (the common case) has zero added latency. Even in the worst case the delay is a fixed 2 seconds.                             |
+| Variable `TARGET_BASE` referenced incorrectly     | Low        | Med    | Use `"$TARGET_BASE"` consistently in both the fetch and the pull; this is already the pattern in the surrounding code.                                                                       |
 
 ---
 

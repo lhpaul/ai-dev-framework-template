@@ -10,7 +10,9 @@
 **Approach**: [2-3 sentences describing the high-level technical approach]
 
 **Estimated complexity**: S / M / L
+
 <!-- S: < 1 day | M: 1-3 days | L: 3+ days -->
+
 **Rationale**: [Why this complexity estimate]
 
 **Dependencies**: [List any features that must be Merged/Released before implementation starts, or "None"]
@@ -21,10 +23,10 @@
 
 > Record reproducible plan-time verification commands that influenced scope, counts, or file lists. Include repo revision and concrete results.
 
-| Check | Command / query | Result |
-|---|---|---|
-| Repo revision | `git rev-parse --short HEAD` | [short SHA] |
-| [Pattern/search validation] | `[exact command]` | [count and key paths] |
+| Check                       | Command / query              | Result                |
+| --------------------------- | ---------------------------- | --------------------- |
+| Repo revision               | `git rev-parse --short HEAD` | [short SHA]           |
+| [Pattern/search validation] | `[exact command]`            | [count and key paths] |
 
 ---
 
@@ -63,6 +65,7 @@
 **Test types**: [Unit / Integration / Smoke / Manual]
 
 **Key scenarios to test**:
+
 1. [Scenario 1 — maps to Acceptance Criterion N]
 2. [Scenario 2]
 
@@ -94,8 +97,8 @@ For each item below, document the design decision when the item applies, or note
 
 > List the specific seed data needed to test this feature after implementation.
 
-| Entity | Values / Scenario | File |
-|---|---|---|
+| Entity        | Values / Scenario         | File        |
+| ------------- | ------------------------- | ----------- |
 | [Entity name] | [Specific values to seed] | [File path] |
 
 ---
@@ -106,14 +109,14 @@ For each item below, document the design decision when the item applies, or note
 
 - [ ] `docs/project/[file].md` — [what to update]
 - [ ] `AGENTS.md` — [if project overview, commands, or conventions need updating]
-- [ ] *(or "None" with brief justification if no project docs are affected)*
+- [ ] _(or "None" with brief justification if no project docs are affected)_
 
 ---
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
+| Risk     | Likelihood   | Impact       | Mitigation        |
+| -------- | ------------ | ------------ | ----------------- |
 | [Risk 1] | Low/Med/High | Low/Med/High | [How to mitigate] |
 
 ---
