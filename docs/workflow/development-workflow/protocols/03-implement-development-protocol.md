@@ -696,13 +696,9 @@ echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
 - [ ] Human provided a clear, self-contained brief
 - [ ] **No multi-layer scope signals** — the issue title, body, and any linked spec/plan do not contain concrete signals that the change spans more than one architectural layer (see "Cross-layer scope check" below)
 
-**Cross-layer scope check**: Before applying fast-track, inspect the issue title, body, and any linked spec or plan document for signals that the change touches more than one architectural layer simultaneously. Examples of multi-layer signals:
-
-- Issue body mentions two or more of: database schema, API endpoint, UI component, data pipeline, storage, mapper, presentation layer.
-- Issue body or a linked spec/plan describes coordinating changes across distinct subsystems (e.g., "update the model, the API, and the UI").
-- Any linked spec or plan document covers more than one architectural layer.
-
-This check is **deterministic**: it requires at least one concrete signal from the issue or linked document text — not a heuristic judgment. If no concrete multi-layer signal is present, the item may proceed as fast-track. If a concrete multi-layer signal is found, the item must not be fast-tracked; use the Full Pipeline instead so that all layers are planned and coordinated.
+**Cross-layer scope check**: Apply the deterministic decision rule in
+[`91-orchestrate-work-protocol.md` Step 2 — Cross-layer scope check](./91-orchestrate-work-protocol.md)
+before selecting Fast Track. That section is the authoritative definition of multi-layer signals, the inspection scope, and the routing decision.
 
 **If any criterion fails**: Use the Full Pipeline instead.
 
