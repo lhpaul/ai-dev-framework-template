@@ -2,6 +2,7 @@
 
 <!-- Depends on: list feature slugs this depends on (e.g. "feature-a, feature-b"), then remove this comment.
      If there are no dependencies, remove the "Depends on" line entirely. -->
+
 **Depends on**: [feature-slug-1, feature-slug-2]
 
 ---
@@ -22,6 +23,7 @@
 **Preconditions**: [What must be true before this action can happen]
 
 **Steps**:
+
 1. [Step 1]
 2. [Step 2]
 3. ...
@@ -29,12 +31,15 @@
 **Postconditions**: [What is true after the action succeeds]
 
 **Information shown**:
+
 - [What data the user sees on screen]
 
 **Actions available**:
+
 - [What the user can do from this state]
 
 **Considerations**:
+
 - [Edge cases, error states, or special scenarios]
 
 ---
@@ -65,12 +70,13 @@
 
 <!-- Delete this section if no statuses or enums are introduced -->
 
-| Code value | Display label | Description |
-|---|---|---|
-| `pending` | Pending | [Description] |
-| `active` | Active | [Description] |
+| Code value | Display label | Description   |
+| ---------- | ------------- | ------------- |
+| `pending`  | Pending       | [Description] |
+| `active`   | Active        | [Description] |
 
 **Valid transitions**:
+
 - `pending` → `active` when [trigger]
 - `active` → [next] when [trigger]
 

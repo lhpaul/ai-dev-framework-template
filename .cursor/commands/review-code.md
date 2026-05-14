@@ -11,6 +11,7 @@ For compatibility with the repo workflow, also follow:
 If invoked as part of a reviewer loop, apply fixes, commit, and push until the review gate reaches approval or a real human decision is required.
 
 Locate the code to review using this priority:
+
 1. Explicit file paths provided in the command argument
 2. Files edited in the current conversation
 3. All files changed in the current branch (`git diff develop...HEAD`)

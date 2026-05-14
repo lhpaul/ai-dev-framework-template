@@ -64,13 +64,13 @@ The helper script:
 - If no such review is seen, checks for Devin check runs and, once a completed check run is seen, applies a 120s grace period before treating the run as complete.
 - If no Devin review and no Devin check run appear during the full `max_wait` window, checks for stale findings (see below) before returning `skipped`.
 
-| Result | Action |
-| --- | --- |
-| Any Devin review with "**Devin Review**", "Devin Review has completed", or "No Issues Found" | Review complete — proceed to Step 7.3 |
-| `check_completed > 0` and grace period (120s) elapsed | Assume complete — proceed to Step 7.3 |
-| No completion review yet and `elapsed < max_wait` | Not finished yet — wait another `poll_interval` and poll again |
-| `elapsed >= max_wait` and no Devin check run was ever seen | Stale findings recovery, then skip as `no_check_run` if none found |
-| `elapsed >= max_wait` and a Devin check run was seen | Timeout — escalate to human |
+| Result                                                                                       | Action                                                             |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Any Devin review with "**Devin Review**", "Devin Review has completed", or "No Issues Found" | Review complete — proceed to Step 7.3                              |
+| `check_completed > 0` and grace period (120s) elapsed                                        | Assume complete — proceed to Step 7.3                              |
+| No completion review yet and `elapsed < max_wait`                                            | Not finished yet — wait another `poll_interval` and poll again     |
+| `elapsed >= max_wait` and no Devin check run was ever seen                                   | Stale findings recovery, then skip as `no_check_run` if none found |
+| `elapsed >= max_wait` and a Devin check run was seen                                         | Timeout — escalate to human                                        |
 
 ### Step 7.3 — Fetch inline comments
 

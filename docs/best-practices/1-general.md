@@ -33,7 +33,7 @@ These conventions apply across all languages and frameworks in this project.
 
 ### Comments
 
-- Comment *why*, not *what* — the code says what it does; comments should explain intent
+- Comment _why_, not _what_ — the code says what it does; comments should explain intent
 - Add comments only where the logic isn't self-evident
 - Keep comments up to date — stale comments are worse than no comments
 

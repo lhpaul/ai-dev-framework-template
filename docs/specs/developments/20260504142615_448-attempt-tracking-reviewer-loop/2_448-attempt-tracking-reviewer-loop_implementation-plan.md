@@ -19,14 +19,14 @@
 
 ## Verification Log
 
-| Check | Command / query | Result |
-|---|---|---|
-| Repo revision | `git rev-parse --short HEAD` | `1ab1488` |
-| Files that define fixer dispatch in Protocol 91 | `grep -n "Fixer agent batching rule\|dispatch.*fixer\|needs_fixes.*cycle" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | Lines 766, 895, 933–944 (fixer batching rule block, `needs_fixes` dispatch table, loop parameters) |
-| Files that define fixer dispatch in Protocol 93 | `grep -n "Fixer agent batching rule\|dispatch.*fixer" docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` | Lines 117–129 (fixer batching rule block) |
-| Protocol 91 line count | `wc -l docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | 1385 |
-| Protocol 93 line count | `wc -l docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` | 286 |
-| Other agents/skills referencing these protocols | `grep -rl "91-orchestrate-work-protocol\|93-automated-reviewer-loop" .claude/agents/ .cursor/agents/ .codex/skills/ 2>/dev/null` | Results include `.claude/agents/automated-reviewer-loop.md`, `.cursor/agents/automated-reviewer-loop.md`, `.claude/agents/item-orchestrator.md`, `.cursor/agents/item-orchestrator.md` — these reference the protocols by pointer only; the injection rule lives in the protocols themselves, so the agent files do not need updating |
+| Check                                           | Command / query                                                                                                                                         | Result                                                                                                                                                                                                                                                                                                                                |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Repo revision                                   | `git rev-parse --short HEAD`                                                                                                                            | `1ab1488`                                                                                                                                                                                                                                                                                                                             |
+| Files that define fixer dispatch in Protocol 91 | `grep -n "Fixer agent batching rule\|dispatch.*fixer\|needs_fixes.*cycle" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | Lines 766, 895, 933–944 (fixer batching rule block, `needs_fixes` dispatch table, loop parameters)                                                                                                                                                                                                                                    |
+| Files that define fixer dispatch in Protocol 93 | `grep -n "Fixer agent batching rule\|dispatch.*fixer" docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`              | Lines 117–129 (fixer batching rule block)                                                                                                                                                                                                                                                                                             |
+| Protocol 91 line count                          | `wc -l docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`                                                                    | 1385                                                                                                                                                                                                                                                                                                                                  |
+| Protocol 93 line count                          | `wc -l docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`                                                             | 286                                                                                                                                                                                                                                                                                                                                   |
+| Other agents/skills referencing these protocols | `grep -rl "91-orchestrate-work-protocol\|93-automated-reviewer-loop" .claude/agents/ .cursor/agents/ .codex/skills/ 2>/dev/null`                        | Results include `.claude/agents/automated-reviewer-loop.md`, `.cursor/agents/automated-reviewer-loop.md`, `.claude/agents/item-orchestrator.md`, `.cursor/agents/item-orchestrator.md` — these reference the protocols by pointer only; the injection rule lives in the protocols themselves, so the agent files do not need updating |
 
 ---
 
@@ -79,11 +79,11 @@ No other project docs in `docs/project/`, `docs/best-practices/`, or `AGENTS.md`
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| Attempt-context prompt grows too long for large max_cycles values | Low | Med | Spec mandates one-to-two sentences per attempt summary; plan enforces this in the documented format |
-| Fixer agent ignores the attempt-context prefix | Low | Med | The prefix is informational context only; the standard blocking-findings list is unchanged and the agent still has all findings to work from |
-| Protocol 93 diverges from Protocol 91 over time | Low | Med | Both are updated in the same PR so they are in sync at merge; future editors are advised by the subsection header that this rule mirrors Protocol 91 Step 7 |
+| Risk                                                              | Likelihood | Impact | Mitigation                                                                                                                                                  |
+| ----------------------------------------------------------------- | ---------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Attempt-context prompt grows too long for large max_cycles values | Low        | Med    | Spec mandates one-to-two sentences per attempt summary; plan enforces this in the documented format                                                         |
+| Fixer agent ignores the attempt-context prefix                    | Low        | Med    | The prefix is informational context only; the standard blocking-findings list is unchanged and the agent still has all findings to work from                |
+| Protocol 93 diverges from Protocol 91 over time                   | Low        | Med    | Both are updated in the same PR so they are in sync at merge; future editors are advised by the subsection header that this rule mirrors Protocol 91 Step 7 |
 
 ---
 
@@ -97,6 +97,7 @@ The following shows the content to add to the `### Attempt-context injection rul
 
 ```markdown
 <!-- Illustrative — adapt during implementation -->
+
 ### Attempt-context injection rule (Step 7 fixer dispatch)
 
 This rule governs what the orchestrator prepends to the fixer agent's prompt on each
@@ -118,6 +119,7 @@ to the fixer's prompt using the following format:
 > remaining finding.
 
 Where:
+
 - `N` = the current `cycle` value (matches the loop's `cycle` counter exactly)
 - `M` = `max_cycles` (the loop escalation limit — default: 10)
 - `[per-attempt summaries]` = one entry per prior dispatch, each one-to-two plain-language

@@ -1,7 +1,7 @@
 # Smoke Test Runbook: External Feedback Pipeline
 
 **Feature**: External Feedback Pipeline: GitHub Discussions Staging and Triage Protocol
-**Spec**: [docs/specs/developments/20260504142641\_459-external-feedback-pipeline/1\_459-external-feedback-pipeline\_specs.md](../../specs/developments/20260504142641_459-external-feedback-pipeline/1_459-external-feedback-pipeline_specs.md)
+**Spec**: [docs/specs/developments/20260504142641_459-external-feedback-pipeline/1_459-external-feedback-pipeline_specs.md](../../specs/developments/20260504142641_459-external-feedback-pipeline/1_459-external-feedback-pipeline_specs.md)
 **Created in**: Plan Ready stage
 **Updated in**: In Development stage
 
@@ -23,15 +23,15 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Value |
-|---|---|
-| Repository | Current repository (run `gh repo view --json nameWithOwner`) |
-| Discussions category | "Feedback & Ideas" |
-| `feedback-staging` label | Created via `gh label create` per protocol prerequisites |
-| Sample Discussion A (promote path) | A Discussion with ≥ 3 upvotes or ≥ 2 comments from distinct users; title and body do not overlap with any existing open issue |
-| Sample Discussion B (duplicate path) | A Discussion whose title/body shares ≥ 3 significant keywords with an existing open issue |
-| Sample Discussion C (out-of-scope path) | A Discussion asking a support question or requesting a project-specific customization |
-| Sample Discussion D (below threshold) | A Discussion with 0–2 upvotes and 0–1 comments |
+| Item                                    | Value                                                                                                                         |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Repository                              | Current repository (run `gh repo view --json nameWithOwner`)                                                                  |
+| Discussions category                    | "Feedback & Ideas"                                                                                                            |
+| `feedback-staging` label                | Created via `gh label create` per protocol prerequisites                                                                      |
+| Sample Discussion A (promote path)      | A Discussion with ≥ 3 upvotes or ≥ 2 comments from distinct users; title and body do not overlap with any existing open issue |
+| Sample Discussion B (duplicate path)    | A Discussion whose title/body shares ≥ 3 significant keywords with an existing open issue                                     |
+| Sample Discussion C (out-of-scope path) | A Discussion asking a support question or requesting a project-specific customization                                         |
+| Sample Discussion D (below threshold)   | A Discussion with 0–2 upvotes and 0–1 comments                                                                                |
 
 ---
 
@@ -167,25 +167,25 @@ Each checkbox maps to an acceptance criterion from the spec.
 
 All test data for this smoke test is created manually via GitHub UI or `gh` CLI. There is no automated seed data.
 
-| Entity | Scenario | How to load |
-|---|---|---|
-| `feedback-staging` label | Required for triage run | `gh label create "feedback-staging" --description "Issue promoted from a GitHub Discussions feedback entry" --color "0e8a16"` |
-| "Feedback & Ideas" category | Required Discussion intake point | Create via GitHub repository Settings → Discussions → Categories |
-| Sample Discussion A | Promote path (≥ 3 upvotes or ≥ 2 distinct comments) | Create manually in "Feedback & Ideas" via GitHub UI; add upvote reactions or comments |
-| Sample Discussion B | Duplicate path | Create manually; ensure title/body shares ≥ 3 keywords with an existing open issue |
-| Sample Discussion C | Out-of-scope path | Create manually with a support question or downstream-specific request |
+| Entity                      | Scenario                                            | How to load                                                                                                                   |
+| --------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `feedback-staging` label    | Required for triage run                             | `gh label create "feedback-staging" --description "Issue promoted from a GitHub Discussions feedback entry" --color "0e8a16"` |
+| "Feedback & Ideas" category | Required Discussion intake point                    | Create via GitHub repository Settings → Discussions → Categories                                                              |
+| Sample Discussion A         | Promote path (≥ 3 upvotes or ≥ 2 distinct comments) | Create manually in "Feedback & Ideas" via GitHub UI; add upvote reactions or comments                                         |
+| Sample Discussion B         | Duplicate path                                      | Create manually; ensure title/body shares ≥ 3 keywords with an existing open issue                                            |
+| Sample Discussion C         | Out-of-scope path                                   | Create manually with a support question or downstream-specific request                                                        |
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `gh label list \| grep feedback-staging` returns nothing | Label was not created | Run the `gh label create` command from `07-feedback-triage-protocol.md` Prerequisites section |
-| "Feedback & Ideas" category not visible in Discussions | Category was not created | Create it via GitHub Settings → Discussions → Categories |
-| GraphQL query for Discussions returns an error | Wrong category ID or Discussions not enabled | Re-run the category ID query; confirm `hasDiscussionsEnabled: true` via `gh repo view --json hasDiscussionsEnabled` |
-| Promoted issue is missing the `feedback-staging` label | Label name typo or label not created | Confirm label exists with `gh label list`; re-apply label with `gh issue edit <number> --add-label feedback-staging` |
-| Discussion closed without a comment | Triage runner skipped the mandatory closing comment step | Re-open the Discussion, add the required comment, then close it again |
+| Symptom                                                  | Likely cause                                             | Fix                                                                                                                  |
+| -------------------------------------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `gh label list \| grep feedback-staging` returns nothing | Label was not created                                    | Run the `gh label create` command from `07-feedback-triage-protocol.md` Prerequisites section                        |
+| "Feedback & Ideas" category not visible in Discussions   | Category was not created                                 | Create it via GitHub Settings → Discussions → Categories                                                             |
+| GraphQL query for Discussions returns an error           | Wrong category ID or Discussions not enabled             | Re-run the category ID query; confirm `hasDiscussionsEnabled: true` via `gh repo view --json hasDiscussionsEnabled`  |
+| Promoted issue is missing the `feedback-staging` label   | Label name typo or label not created                     | Confirm label exists with `gh label list`; re-apply label with `gh issue edit <number> --add-label feedback-staging` |
+| Discussion closed without a comment                      | Triage runner skipped the mandatory closing comment step | Re-open the Discussion, add the required comment, then close it again                                                |
 
 ---
 

@@ -20,6 +20,7 @@ This feature adds a `--compare` flag to the reviewer loop that runs all configur
 **Preconditions**: The reviewer loop is configured with two or more review platforms. The `--compare` flag is passed on invocation.
 
 **Steps**:
+
 1. The operator invokes the reviewer loop with the `--compare` flag for a specific PR number.
 2. The loop runs every configured platform to completion, regardless of whether an earlier platform returned a blocking verdict.
 3. After all platforms have run, the loop determines the overall exit result: the first platform that would have caused a block under normal (non-compare) mode governs the overall exit code.
@@ -30,15 +31,18 @@ This feature adds a `--compare` flag to the reviewer loop that runs all configur
 **Postconditions**: All platforms have run. A new row exists in the metrics log. The exit code reflects the result that normal mode would have produced.
 
 **Information shown**:
+
 - Per-platform verdict for each platform that ran (clean / blocking / advisory / timed out)
 - Overall result (same semantics as normal mode)
 - Confirmation that a metrics row was appended
 
 **Actions available**:
+
 - Proceed with fixes if the overall result is blocking (same as normal mode)
 - Review the metrics log to see the accumulated per-platform history
 
 **Considerations**:
+
 - If a platform times out in compare mode, its verdict is recorded as "timed out" in the metrics log; the run continues with remaining platforms.
 - If a platform's configuration is missing or the platform is unavailable, its verdict is recorded as "unavailable" and the run continues.
 - The overall exit code in compare mode is identical to what normal mode would produce: the first blocking platform (in configuration order) wins. Compare mode does not change whether the PR needs fixes.
@@ -51,6 +55,7 @@ This feature adds a `--compare` flag to the reviewer loop that runs all configur
 **Preconditions**: At least one reviewer loop run in compare mode has completed, producing at least one row in the metrics log.
 
 **Steps**:
+
 1. The analyst reads the platform comparison metrics log.
 2. The log shows one row per compare-mode run, with columns for PR number, branch type, and each platform's verdict.
 3. The analyst identifies runs where one platform blocked but another was clean (platform-exclusive blocks).
@@ -60,14 +65,17 @@ This feature adds a `--compare` flag to the reviewer loop that runs all configur
 **Postconditions**: The analyst has a structured dataset to support a data-driven platform evaluation decision.
 
 **Information shown**:
+
 - One row per compare-mode run: PR number, branch type, per-platform verdicts, whether a platform-exclusive block resulted in a code fix
 - Log header documenting the graduation criteria for safely removing a platform
 
 **Actions available**:
+
 - Update the "block was a real bug" field for a past row if a fix was later determined to be real (manual update by the analyst)
 - Use the accumulated data in a meta-retrospective platform evaluation step
 
 **Considerations**:
+
 - The "block was a real bug" field cannot be filled automatically at run time — it requires post-hoc human or analyst judgment about whether a fix was genuinely necessary. The field defaults to blank and must be filled in manually.
 - The metrics log is append-only. Rows must not be deleted or edited except to fill in the "block was a real bug" field.
 
@@ -79,6 +87,7 @@ This feature adds a `--compare` flag to the reviewer loop that runs all configur
 **Preconditions**: The meta-retrospective protocol includes a platform evaluation step. The platform comparison metrics log has at least one row.
 
 **Steps**:
+
 1. During the meta-retrospective, the analyst reads the platform comparison metrics log.
 2. The analyst computes the running rate of platform-exclusive blocking findings (cases where one platform blocked but at least one other did not) across all logged runs.
 3. The analyst compares this rate against the graduation criteria documented in the log header.
@@ -88,17 +97,20 @@ This feature adds a `--compare` flag to the reviewer loop that runs all configur
 **Postconditions**: The meta-retrospective output includes a platform evaluation section with the computed rate and a recommendation.
 
 **Information shown**:
+
 - Total runs logged in compare mode
 - Per-platform exclusive-block count and rate
 - Whether any platform meets the graduation criteria
 - Recommendation (continue collecting / safe to evaluate removal / data insufficient)
 
 **Actions available**:
+
 - Accept the recommendation as-is
 - Request additional data collection before deciding
 - Initiate a backlog item to remove a platform
 
 **Considerations**:
+
 - The graduation criteria are documented in the log header and are not evaluated automatically — the analyst reads them and applies them to the data.
 - Fewer than 30 runs is always insufficient data; the analyst must explicitly flag this if the log has fewer than 30 rows.
 

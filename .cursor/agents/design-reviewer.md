@@ -18,6 +18,7 @@ The Work Item Runner invokes this agent during Step 7a of Protocol 91 when:
 2. At least one frontend file is detected in the PR's changed files.
 
 The runner passes:
+
 - `PR_NUMBER`: the pull request number
 - `FRONTEND_FILES`: the list of changed frontend files (newline-separated)
 - `PREVIEW_URL` (optional): a base URL for the running development server or preview environment
@@ -37,6 +38,7 @@ echo "Provider: $PROVIDER"
 ```
 
 If `PROVIDER` is empty, `none`, or missing:
+
 - Post a skip notice (see "Skip Notice Format" below) with reason: provider not configured.
 - Exit with verdict `Skipped`.
 
@@ -58,6 +60,7 @@ fi
 ```
 
 If `PLAYWRIGHT_AVAILABLE` is `false`:
+
 - Post a skip notice with reason: `playwright_cli` is not installed or not reachable in the current environment.
 - Exit with verdict `Skipped`.
 
@@ -99,6 +102,7 @@ npx playwright screenshot --browser chromium "<PAGE_URL>" /tmp/design-review-<sl
 ```
 
 If navigation fails (non-zero exit, timeout, or network error):
+
 - Log the failure.
 - Note the page as unreachable in the PR comment.
 - Continue to the next page rather than aborting.
@@ -106,6 +110,7 @@ If navigation fails (non-zero exit, timeout, or network error):
 ### 5.2 Collect Console Errors
 
 Run a short Playwright script (inline via `npx playwright` or a temp script) to:
+
 1. Navigate to the page.
 2. Capture all `console.error` and `console.warn` messages.
 3. Print them to stdout.
@@ -139,10 +144,12 @@ npx axe "<PAGE_URL>" --reporter json 2>/dev/null
 ```
 
 If axe-core is not available:
+
 - Note accessibility check was skipped for this page in the PR comment.
 - The overall design review can still report screenshot and console error findings.
 
 Parse the axe-core JSON output. Group violations by severity:
+
 - **Critical**: `impact: "critical"` — blocking (BR-6)
 - **Serious**: `impact: "serious"` — blocking (BR-6)
 - **Moderate**: `impact: "moderate"` — reported, non-blocking
@@ -180,7 +187,7 @@ The comment **must** begin with this exact header and verdict line so the Work I
 
 Full comment structure:
 
-````markdown
+```markdown
 ## Design Review Summary
 
 **Verdict**: <Approved|Needs Revision|Skipped>
@@ -194,7 +201,7 @@ Full comment structure:
 
 #### `<page-url>`
 
-**Screenshot**: ![screenshot](<screenshot-link-or-note>)
+**Screenshot**: ![screenshot](screenshot-link-or-note)
 
 **Console errors**: N errors found
 | Type | Message | URL |
@@ -203,28 +210,28 @@ Full comment structure:
 
 **Accessibility findings**:
 
-| Severity | Count | Violation |
-|----------|-------|-----------|
-| Critical | N | Description... |
-| Serious | N | Description... |
-| Moderate | N | Description... |
-| Minor | N | Description... |
+| Severity | Count | Violation      |
+| -------- | ----- | -------------- |
+| Critical | N     | Description... |
+| Serious  | N     | Description... |
+| Moderate | N     | Description... |
+| Minor    | N     | Description... |
 
 ---
 
 ### Summary
 
-| Category | Result |
-|----------|--------|
+| Category             | Result      |
+| -------------------- | ----------- |
 | Screenshots captured | N / N pages |
-| Console errors | N |
-| Critical violations | N |
-| Serious violations | N |
-| Moderate violations | N |
-| Minor violations | N |
+| Console errors       | N           |
+| Critical violations  | N           |
+| Serious violations   | N           |
+| Moderate violations  | N           |
+| Minor violations     | N           |
 
 **Verdict rationale**: <brief explanation>
-````
+```
 
 ### Skip Notice Format
 

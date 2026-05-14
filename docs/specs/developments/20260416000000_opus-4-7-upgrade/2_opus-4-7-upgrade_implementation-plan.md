@@ -32,6 +32,7 @@
 **Test types**: Manual / Smoke
 
 **Key scenarios to test**:
+
 1. Confirm `grep -r "claude-opus-4-6" .claude/ .cursor/ .codex/ docs/workflow/` returns no matches — maps to success criterion 1
 2. Confirm `grep -r "claude-opus-4-5" .claude/ .cursor/ .codex/ docs/workflow/` returns no matches — maps to success criterion 1
 3. Confirm `.claude/agents/tech-lead.md` front-matter has `model: claude-opus-4-7` — maps to success criterion 1
@@ -61,10 +62,10 @@ No other project docs in `docs/project/`, `AGENTS.md`, or `docs/best-practices/`
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| Accidentally bumping Sonnet or Haiku references | Low | Low | Targeted search before and after for `claude-opus` only; verify Sonnet/Haiku lines are unchanged |
-| Stale worktrees contain old references | Low | None | Worktrees are transient; only the tracked repo files matter |
+| Risk                                            | Likelihood | Impact | Mitigation                                                                                       |
+| ----------------------------------------------- | ---------- | ------ | ------------------------------------------------------------------------------------------------ |
+| Accidentally bumping Sonnet or Haiku references | Low        | Low    | Targeted search before and after for `claude-opus` only; verify Sonnet/Haiku lines are unchanged |
+| Stale worktrees contain old references          | Low        | None   | Worktrees are transient; only the tracked repo files matter                                      |
 
 ---
 

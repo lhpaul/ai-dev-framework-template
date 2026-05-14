@@ -156,6 +156,7 @@ Using the template at `docs/workflow/development-workflow/templates/implementati
 
 **Output location**:
 
+<!-- prettier-ignore -->
 ```markdown
 docs/specs/developments/[timestamp]_[feature-slug]/2_[feature-slug]_implementation-plan.md
 ```
@@ -267,6 +268,7 @@ If none of these signals apply, skip this entire block.
 
 ```markdown
 # Implementation Plan: [slug]
+
 ...
 ```
 

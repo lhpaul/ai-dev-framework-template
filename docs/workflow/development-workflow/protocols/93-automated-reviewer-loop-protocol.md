@@ -46,6 +46,7 @@ Devin always uses `COMMENTED` as its review state regardless of finding severity
 - The review is accompanied by unresolved inline PR review comments from `devin-ai-integration[bot]` (the `COMMENTED` review is the umbrella review object for those inline findings)
 
 Only treat a `COMMENTED` Devin review as non-blocking when **both** of the following hold:
+
 - The body does NOT start with `**Devin Review**`, AND
 - There are NO unresolved inline PR review comments from Devin on the current HEAD
 
@@ -56,7 +57,7 @@ This behavior is implemented in `pr-review-loop.sh` (`run_devin_review`): the ex
 A **blocking** inline comment or review from a configured platform (see `.ai-dev-workflow.yaml` under `review.platforms`) counts as **unresolved** when:
 
 1. It applies to **any commit in this PR's history** (not only commits after the current `HEAD`). After merging the base branch (e.g. `develop`) into the PR branch, older bot comments are still open unless the **substantive issue** they describe is fixed in the codebase. A merge commit does not dismiss them.
-2. There is no later resolved confirmation **for that same finding** (match by `(platform, path, body_snippet)` or Devin's inline comment id in the body, not by "most recent comment on the PR"). A resolved comment from Devin about *one* issue does not resolve a different blocking finding. Devin's resolved comments start with `✅` and must be excluded from blocking counts.
+2. There is no later resolved confirmation **for that same finding** (match by `(platform, path, body_snippet)` or Devin's inline comment id in the body, not by "most recent comment on the PR"). A resolved comment from Devin about _one_ issue does not resolve a different blocking finding. Devin's resolved comments start with `✅` and must be excluded from blocking counts.
 
 #### Merge / rebase trap
 
@@ -114,7 +115,7 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
 
 1. Apply every blocking finding in one pass (follow the batching rule: all in one commit).
 2. Commit with a descriptive message (e.g., `fix: address [platform] findings inline ([brief description])`).
-3. Push the commit. *(Push before resolving threads — if push fails, threads must not be falsely marked resolved.)*
+3. Push the commit. _(Push before resolving threads — if push fails, threads must not be falsely marked resolved.)_
 4. Reply to each finding's review thread with the fix description and commit SHA.
 5. Resolve each addressed thread via the GraphQL `resolveReviewThread` mutation.
 6. **Increment `cycle`** (the same counter used in the sub-agent loop). Inline fix retries are bounded by `max_cycles` exactly like sub-agent retries — the inline path is a faster lane, not an unbounded one.
@@ -256,10 +257,10 @@ required to validate or use the change being reviewed.
    `ready-for-human-review`.
 
 **Important caveat — cross-cutting consistency fixes**: If a reviewer finding targets a
-file outside the diff but the finding is a *consistency issue* introduced by this PR (for
+file outside the diff but the finding is a _consistency issue_ introduced by this PR (for
 example, the PR adds a new signal value to a script but a protocol doc that references
 that script still shows the old value), treat it as **in-scope**. The test is whether
-*this PR's changes* created the inconsistency, not whether the file was originally in the
+_this PR's changes_ created the inconsistency, not whether the file was originally in the
 diff. When in doubt, fix the consistency issue inline rather than deferring it.
 
 ### Run the loops
@@ -307,18 +308,19 @@ Stop the loop and escalate to human when any of the above conditions are met. In
 - A recommendation to the human (e.g., "Finding X appears unfixable by current fix agent; consider manual fix" or "Review cycle has not converged; recommend pausing to reassess root cause")
 
 Example escalation comment:
-````markdown
+
+```markdown
 ### Automated Reviewer Loop Escalation
 
 **Reason:** No progress detected — 3 consecutive cycles with 2 unresolved findings.
 
-| # | Platform | File | Status | Cycles open | Resolved in | Reappeared in |
-|---|----------|------|--------|-------------|-------------|---------------|
-| 1 | greptile | `src/foo.ts` | Open | 4 | -- | -- |
-| 2 | devin | `src/bar.ts` | Open | 3 | `abc1234` | `def5678` |
+| #   | Platform | File         | Status | Cycles open | Resolved in | Reappeared in |
+| --- | -------- | ------------ | ------ | ----------- | ----------- | ------------- |
+| 1   | greptile | `src/foo.ts` | Open   | 4           | --          | --            |
+| 2   | devin    | `src/bar.ts` | Open   | 3           | `abc1234`   | `def5678`     |
 
 **Recommendation:** Finding #2 reappeared after fix in cycle 4. This may indicate a fundamental issue that the automated fixer cannot resolve; consider manual review and fix.
-````
+```
 
 ### After fixing findings: cross-reference check
 

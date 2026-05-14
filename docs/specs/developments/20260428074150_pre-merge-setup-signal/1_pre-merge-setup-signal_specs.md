@@ -18,6 +18,7 @@ When an agent produces a PR that is technically complete and reviewer-loop clean
 **Preconditions**: The PR is approaching `ready-for-human-review`. The implementation introduces at least one infrastructure dependency that requires a human to perform a setup step before the feature can be enabled or safely used (e.g., a new environment variable, a GitHub Actions secret, a DNS record, or a service account token).
 
 **Steps**:
+
 1. After all automated reviewer loops and CI checks pass (Step 8 of the orchestration protocol), the agent scans the PR diff for infrastructure dependency signals.
 2. The agent identifies one or more setup requirements from the diff.
 3. The agent populates a standardized "Pre-merge Setup" section in the PR body listing each requirement with a plain-language description, the type of requirement (e.g., environment variable, secret, DNS record), and where it must be set (e.g., GitHub Actions secrets, Railway environment, DNS provider).
@@ -27,15 +28,18 @@ When an agent produces a PR that is technically complete and reviewer-loop clean
 **Postconditions**: The PR has both `needs-setup` and `ready-for-human-review` labels. The PR body contains a "Pre-merge Setup" section that enumerates each setup requirement in a structured format.
 
 **Information shown**:
+
 - The `needs-setup` label is visible on the PR in the GitHub interface and in label-based PR listing.
 - The "Pre-merge Setup" section is visible in the PR body, at a fixed location (near the top or in a dedicated section), and contains one row per requirement with: requirement name, type, value description, and where to set it.
 
 **Actions available**:
+
 - The human can read the setup requirements and perform each one.
 - After completing all setup steps, the human removes the `needs-setup` label.
 - The human then proceeds to merge (or defer merge) at their own discretion.
 
 **Considerations**:
+
 - The `needs-setup` label does not prevent merge — it is a signal, not a hard gate. The decision to merge before, after, or without completing setup belongs to the human.
 - If no infrastructure dependencies are detected, the `needs-setup` label is not applied and no "Pre-merge Setup" section is added to the PR body.
 - The section must be omitted (not included with empty content) when there are no setup requirements.
@@ -48,6 +52,7 @@ When an agent produces a PR that is technically complete and reviewer-loop clean
 **Preconditions**: The PR is approaching `ready-for-human-review`. The implementation does not introduce any infrastructure dependency signals.
 
 **Steps**:
+
 1. After all automated reviewer loops and CI checks pass, the agent scans the PR diff for infrastructure dependency signals.
 2. No signals are found.
 3. The agent does not apply `needs-setup` and does not add a "Pre-merge Setup" section.
@@ -56,12 +61,15 @@ When an agent produces a PR that is technically complete and reviewer-loop clean
 **Postconditions**: The PR has only `ready-for-human-review` (and any other applicable labels). No `needs-setup` label is present. No "Pre-merge Setup" section appears in the PR body.
 
 **Information shown**:
+
 - Standard PR labels and body without any setup-signal additions.
 
 **Actions available**:
+
 - The human reviews and merges the PR as normal.
 
 **Considerations**:
+
 - The absence of `needs-setup` is a meaningful signal: the agent found no infrastructure dependencies. This is the expected state for the majority of PRs.
 
 ---
@@ -72,6 +80,7 @@ When an agent produces a PR that is technically complete and reviewer-loop clean
 **Preconditions**: The PR has both `needs-setup` and `ready-for-human-review` labels. The human has completed (or intentionally deferred) the listed setup steps.
 
 **Steps**:
+
 1. Human reads the "Pre-merge Setup" section in the PR body.
 2. Human performs each required setup step (or decides to defer).
 3. Human removes the `needs-setup` label from the PR.
@@ -79,12 +88,15 @@ When an agent produces a PR that is technically complete and reviewer-loop clean
 **Postconditions**: The `needs-setup` label is no longer on the PR. The "Pre-merge Setup" section remains in the PR body as a record (it is not deleted when the label is removed).
 
 **Information shown**:
+
 - After removing the label, the PR shows only `ready-for-human-review`.
 
 **Actions available**:
+
 - Human merges the PR.
 
 **Considerations**:
+
 - The human may defer setup and merge anyway — this is intentional. The signal documents the requirement; enforcement is the human's responsibility.
 - The "Pre-merge Setup" section is not removed when the label is cleared, so the requirement is preserved in the PR history.
 
@@ -96,6 +108,7 @@ When an agent produces a PR that is technically complete and reviewer-loop clean
 **Preconditions**: A fixer push has been made to the PR branch (e.g., to address a reviewer finding after the initial setup signal was applied).
 
 **Steps**:
+
 1. After the fixer push, the agent re-runs automated review and CI loops.
 2. The agent re-scans the PR diff for infrastructure dependency signals.
 3. If setup requirements remain or new ones were introduced, the agent updates the "Pre-merge Setup" section and ensures `needs-setup` is present.
@@ -104,12 +117,15 @@ When an agent produces a PR that is technically complete and reviewer-loop clean
 **Postconditions**: The PR body and labels accurately reflect the current state of the diff — not the state at initial scan time.
 
 **Information shown**:
+
 - The "Pre-merge Setup" section is up to date with the latest diff.
 
 **Actions available**:
+
 - Human reviews the updated signal and acts accordingly.
 
 **Considerations**:
+
 - Re-scanning on every push is the correct behavior. Stale setup sections from prior commits mislead humans.
 
 ---
@@ -131,12 +147,13 @@ When an agent produces a PR that is technically complete and reviewer-loop clean
 
 ## Statuses / Enum Values
 
-| Code value | Display label | Description |
-|---|---|---|
-| `needs-setup` | Needs Setup | PR introduces one or more infrastructure dependencies that require human setup steps before the feature can be safely enabled |
-| `ready-for-human-review` | Ready for Human Review | PR is technically complete and all automated checks have passed |
+| Code value               | Display label          | Description                                                                                                                   |
+| ------------------------ | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `needs-setup`            | Needs Setup            | PR introduces one or more infrastructure dependencies that require human setup steps before the feature can be safely enabled |
+| `ready-for-human-review` | Ready for Human Review | PR is technically complete and all automated checks have passed                                                               |
 
 **Valid label combinations**:
+
 - `ready-for-human-review` only — no setup requirements detected; standard ready state
 - `ready-for-human-review` + `needs-setup` — PR is technically ready but has unmet setup requirements; human must perform setup and then remove `needs-setup` before or after merge
 - `needs-fixes` + `needs-setup` — PR has both code changes requested by reviewers and setup requirements; `needs-fixes` must be addressed before the PR can reach `ready-for-human-review`, at which point `needs-setup` persists alongside it (see combination above)

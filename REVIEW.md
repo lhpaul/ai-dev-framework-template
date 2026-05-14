@@ -15,20 +15,22 @@ Use it for every pre-PR review gate and as the normalization layer for PR review
 
 ### Severity
 
-| Severity | Meaning | Default action |
-|---|---|---|
-| `blocking` | Incorrect behavior, spec/plan deviation, broken workflow contract, security issue, missing critical validation or tests | Fix before PR is ready |
-| `important` | Edge-case gap, maintainability issue, unclear design choice, incomplete workflow update | Fix by default unless a human decision is required |
-| `suggestion` | Improvement that is optional and low-risk | Fix by default; report if scope-expanding or requires a product decision |
+| Severity     | Meaning                                                                                                                 | Default action                                                           |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `blocking`   | Incorrect behavior, spec/plan deviation, broken workflow contract, security issue, missing critical validation or tests | Fix before PR is ready                                                   |
+| `important`  | Edge-case gap, maintainability issue, unclear design choice, incomplete workflow update                                 | Fix by default unless a human decision is required                       |
+| `suggestion` | Improvement that is optional and low-risk                                                                               | Fix by default; report if scope-expanding or requires a product decision |
 
 ### Fix vs. Report
 
 Fix directly when:
+
 - The correct change is clear and low-risk
 - The issue is `blocking`, `important`, or `suggestion`
 - The change is mechanical: links, wording, formatting, naming, checklist completion, or deterministic script/doc updates
 
 Report instead of fixing when:
+
 - A product, design, or architecture decision is required
 - Multiple valid fixes exist and the tradeoff is material
 - The request would expand scope beyond the approved work
@@ -36,6 +38,7 @@ Report instead of fixing when:
 ### PR Readiness
 
 A PR is ready for human review only when all of the following are true:
+
 - The relevant `REVIEW.md` checklist is satisfied
 - The branch reflects any required direct fixes from the review gate
 - CI is green
@@ -49,11 +52,13 @@ If any blocking finding remains, the PR must stay out of `ready-for-human-review
 ## Spec Review Checklist
 
 Read before reviewing:
+
 - `docs/project/1-business-domain.md`
 - `docs/project/3-software-architecture.md`
 - The target spec
 
 Check:
+
 - Required spec template sections are present and no placeholders are unintentionally left behind
 - Use cases are explicit: actor, trigger, steps, outcome
 - Acceptance criteria are specific and testable
@@ -65,12 +70,14 @@ Check:
 - Terms align with the project domain and existing business rules
 
 Typical `blocking` issues:
+
 - Missing or ambiguous acceptance criteria
 - Contradictory business rules
 - Spec drift that would force engineering to guess
 - `CHANGELOG.md` is modified in this PR — `spec/*` branches are exempt from CHANGELOG entries; remove any CHANGELOG modification before merging
 
 Typical `important` issues:
+
 - Missing edge cases
 - Unclear actor/trigger language
 - Technical implementation detail leaking into product requirements
@@ -80,12 +87,14 @@ Typical `important` issues:
 ## Plan Review Checklist
 
 Read before reviewing:
+
 - The corresponding spec (Full Pipeline only — Refactor items have no spec; use the work item brief instead)
 - The implementation plan
 - Relevant code and architecture docs
 - The smoke test runbook when one exists
 
 Check:
+
 - Every use case and acceptance criterion from the spec (or from the work item brief for Refactor items) is addressed
 - Steps are specific enough to execute without guessing
 - Ordering is feasible and dependencies are explicit
@@ -116,6 +125,7 @@ Check:
 - Cross-section consistency: all references to the same function, constant, architecture decision, file path, directory name, or route/URL structure are consistent across all sections of the plan (e.g., a function described in the Architecture section must have the same signature in the Implementation Order steps; a constant must carry the same value everywhere it appears; a decision index must map to the same decision in every reference; a file path or route pattern defined in one section must match every other section where it appears)
 
 Typical `blocking` issues:
+
 - Plan steps do not cover required acceptance criteria
 - The plan requires guessing at implementation details
 - The plan introduces unsafe or contradictory architecture decisions
@@ -126,6 +136,7 @@ Typical `blocking` issues:
 - Cross-section inconsistency: the same function, constant, architecture decision, file path, directory name, or route/URL structure is defined or described differently in two or more sections of the plan (e.g., incompatible function signatures, conflicting constant values, contradictory decision rationales, a file placed under different directories in different sections, a route pattern that differs between sections)
 
 Typical `important` issues:
+
 - Vague wording like "update as needed"
 - Missing documentation/test updates
 - Incomplete dependency or rollout notes
@@ -139,6 +150,7 @@ Typical `important` issues:
 For implementation PRs (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`), this checklist is divided into two sequential passes (Pass 1 then Pass 2). Spec and plan PRs use a single-pass review and are not affected by this split.
 
 Read before reviewing:
+
 - The corresponding spec (Full Pipeline only — Refactor items have no spec; use the work item brief instead)
 - The implementation plan
 - Relevant best-practice docs
@@ -147,10 +159,12 @@ Read before reviewing:
 ### Pass 1: Spec Compliance
 
 Check:
+
 - Implementation matches the approved spec and plan (or the plan and work item brief for Refactor items), or any deviations are documented. All acceptance criteria addressed, no out-of-scope behaviour, no missing or extra behaviours.
 - CHANGELOG and workflow-specific artifacts are updated when required (spec/plan-only PRs are exempt; fixes to unreleased work update existing entries rather than adding new ones; in parallel batches, each PR adds its own CHANGELOG entry as normal; merge conflicts are resolved by batch-merge auto-resolution per protocol 94 Step 4.3)
 
 Typical `blocking` issues:
+
 - Implementation diverges from the approved spec or plan in a way that changes observable behaviour
 - Missing acceptance criteria coverage
 - CHANGELOG entry absent when required, or present when exempt (spec/plan PRs)
@@ -158,6 +172,7 @@ Typical `blocking` issues:
 ### Pass 2: Code Quality
 
 Check:
+
 - Project and stack conventions are followed
 - Logic and edge cases are correct
 - Security boundaries and validation are respected
@@ -165,19 +180,23 @@ Check:
 - New patterns are justified and consistent with the codebase
 
 Additional checks for **documentation PRs** (when a PR adds or modifies documentation files — `*.md`, `*.yaml`, `*.toml` config docs, or any prose-only file):
+
 - **Intra-file content duplication**: when a new section is added to an existing file, verify that any tables or lists in the new section are not reproducing content already present elsewhere in the same file. If a duplicate is found, flag it as `important` with a recommendation to cross-reference the canonical location instead of duplicating.
 - **Wording consistency**: verify that procedural instructions in a new section (e.g., "push a commit", "apply a label", "run a script") are consistent with the existing flow described in sibling sections of the same file. Flag contradictions as `important`.
 
 Additional checks for **shell scripts** (`*.sh`):
+
 - Option parsing validates that required values are present before `shift`
 - All error paths emit structured output consistent with the script's output contract
 - User-supplied input (PR numbers, branch names) is validated before interpolation into file paths or commands
 - `|| true` does not silently swallow failures from external commands (e.g., `gh`, `git`) that the caller needs to know about
 
 Additional checks for **database migrations** (when a migration adds or changes triggers, functions, or backfills):
+
 - **Trigger/backfill arithmetic parity**: If both a trigger and a backfill compute the same derived value, they must use the **same formula**, including guards such as `GREATEST`, `LEAST`, `COALESCE`, and null handling. A trigger that differs from its backfill is a latent production bug.
 
 Additional checks for **features with concurrent event sources** (when the PR introduces or modifies code where multiple execution contexts — listeners, timers, callbacks, async queues — can access shared mutable state):
+
 - **Shared mutable state guards**: shared state is protected from concurrent reads/writes by a consistent access pattern (e.g., serialized queue, ownership transfer, copy-on-update)
 - **Re-entrancy / in-flight tracking**: the handler correctly tracks or rejects concurrent in-flight operations when a second event can arrive before the first completes
 - **Event deduplication**: duplicate logical events (e.g., reconnect triggers, repeated callbacks) are deduplicated or idempotent
@@ -187,12 +206,14 @@ Additional checks for **features with concurrent event sources** (when the PR in
 - **Error propagation across async boundaries**: errors from async callbacks are surfaced to the caller; unhandled rejections or uncaught exceptions in callbacks do not silently swallow failures
 
 Typical `blocking` issues:
+
 - Incorrect behavior
 - Security flaw
 - Broken build/test path
 - Missing critical test coverage for changed business logic
 
 Typical `important` issues:
+
 - Important edge cases missed
 - Unnecessary complexity
 - Inconsistent architecture or unclear code structure

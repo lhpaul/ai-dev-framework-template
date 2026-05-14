@@ -29,17 +29,17 @@ protocol text.
 
 ## Verification Log
 
-| Check | Command / query | Result |
-|---|---|---|
-| Repo revision | `git rev-parse --short HEAD` | `e37c5f0` |
-| `post-merge-cleanup.sh` mapping for `spec/*` | `grep -A3 "BRANCH_TYPE.*spec" scripts/development-workflow/post-merge-cleanup.sh` | Line 210: `update_tracker_status_best_effort "$ISSUE_NUMBER" "Spec Ready"` — correct |
-| `post-merge-cleanup.sh` mapping for `implementation-plan/*` | `grep -A3 "BRANCH_TYPE.*plan" scripts/development-workflow/post-merge-cleanup.sh` | Line 215: `update_tracker_status_best_effort "$ISSUE_NUMBER" "Plan Ready"` — correct |
-| `post-merge-cleanup.sh` mapping for implementation branches | `grep -A1 "BRANCH_TYPE.*implementation" scripts/development-workflow/post-merge-cleanup.sh` | Line 182: `update_tracker_status_best_effort "$ISSUE_NUMBER" "Merged"` — correct |
-| `update-tracker-on-merge.yml` mapping | `grep -A2 "BRANCH_TYPE\|TARGET_STATUS" .github/workflows/update-tracker-on-merge.yml \| head -20` | `spec/*` → `Spec Ready`, `implementation-plan/*` → `Plan Ready`, `feature/*`/`fix/*`/`refactor/*`/`hotfix/*` → `Merged` — correct |
-| Protocol 91 Step 10 rule table | `grep -A5 "Merged PR branch type" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | Lists: `spec/*` → Spec Ready, `implementation-plan/*` → Plan Ready, `feature/*`/`fix/*`/`refactor/*`/`hotfix/*` → Merged — correct |
-| Stale "In Development" detection in Protocol 90 | `grep -c "stale.*In Development\|In Development.*stale" docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` | 0 — no stale detection exists |
-| Stale "In Development" detection in Protocol 91 | `grep -c "stale.*In Development\|In Development.*stale" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | 0 — no stale detection exists |
-| Existing automated check scripts for workflow mappings | `ls scripts/development-workflow/check-*.sh scripts/lint/check-*.sh` | `check-workflow-branch.sh`, `check-changelog-duplicate-headers.sh` — no mapping verification script exists |
+| Check                                                       | Command / query                                                                                                                             | Result                                                                                                                             |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Repo revision                                               | `git rev-parse --short HEAD`                                                                                                                | `e37c5f0`                                                                                                                          |
+| `post-merge-cleanup.sh` mapping for `spec/*`                | `grep -A3 "BRANCH_TYPE.*spec" scripts/development-workflow/post-merge-cleanup.sh`                                                           | Line 210: `update_tracker_status_best_effort "$ISSUE_NUMBER" "Spec Ready"` — correct                                               |
+| `post-merge-cleanup.sh` mapping for `implementation-plan/*` | `grep -A3 "BRANCH_TYPE.*plan" scripts/development-workflow/post-merge-cleanup.sh`                                                           | Line 215: `update_tracker_status_best_effort "$ISSUE_NUMBER" "Plan Ready"` — correct                                               |
+| `post-merge-cleanup.sh` mapping for implementation branches | `grep -A1 "BRANCH_TYPE.*implementation" scripts/development-workflow/post-merge-cleanup.sh`                                                 | Line 182: `update_tracker_status_best_effort "$ISSUE_NUMBER" "Merged"` — correct                                                   |
+| `update-tracker-on-merge.yml` mapping                       | `grep -A2 "BRANCH_TYPE\|TARGET_STATUS" .github/workflows/update-tracker-on-merge.yml \| head -20`                                           | `spec/*` → `Spec Ready`, `implementation-plan/*` → `Plan Ready`, `feature/*`/`fix/*`/`refactor/*`/`hotfix/*` → `Merged` — correct  |
+| Protocol 91 Step 10 rule table                              | `grep -A5 "Merged PR branch type" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`                             | Lists: `spec/*` → Spec Ready, `implementation-plan/*` → Plan Ready, `feature/*`/`fix/*`/`refactor/*`/`hotfix/*` → Merged — correct |
+| Stale "In Development" detection in Protocol 90             | `grep -c "stale.*In Development\|In Development.*stale" docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` | 0 — no stale detection exists                                                                                                      |
+| Stale "In Development" detection in Protocol 91             | `grep -c "stale.*In Development\|In Development.*stale" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`       | 0 — no stale detection exists                                                                                                      |
+| Existing automated check scripts for workflow mappings      | `ls scripts/development-workflow/check-*.sh scripts/lint/check-*.sh`                                                                        | `check-workflow-branch.sh`, `check-changelog-duplicate-headers.sh` — no mapping verification script exists                         |
 
 ---
 
@@ -48,33 +48,33 @@ protocol text.
 ### Scripts / Tooling
 
 - [ ] **Create `scripts/development-workflow/check-tracker-merge-mapping.sh`** — new verification
-  script (AC-9). The script reads the branch-type → status mapping from
-  `update-tracker-on-merge.yml` and asserts that each of the six required branch prefixes
-  (`spec/*`, `implementation-plan/*`, `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`) maps to the
-  correct target status. Exits non-zero if any mapping is incorrect or missing.
+      script (AC-9). The script reads the branch-type → status mapping from
+      `update-tracker-on-merge.yml` and asserts that each of the six required branch prefixes
+      (`spec/*`, `implementation-plan/*`, `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`) maps to the
+      correct target status. Exits non-zero if any mapping is incorrect or missing.
 
 ### Protocol Documents
 
 - [ ] **`docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`**
-  — Add a "Stale `In Development` correction" sub-step inside Step 2 (eligibility determination).
-  When the portfolio scan encounters an item whose tracker status is "In Development" and the
-  branch/PR existence check returns no match, the protocol must correct the status to "Plan Ready"
-  and log the correction before treating the item as eligible for dispatch (AC-6, AC-7, AC-8,
-  AC-10, BR-5, BR-6, BR-7, BR-8, BR-10).
+      — Add a "Stale `In Development` correction" sub-step inside Step 2 (eligibility determination).
+      When the portfolio scan encounters an item whose tracker status is "In Development" and the
+      branch/PR existence check returns no match, the protocol must correct the status to "Plan Ready"
+      and log the correction before treating the item as eligible for dispatch (AC-6, AC-7, AC-8,
+      AC-10, BR-5, BR-6, BR-7, BR-8, BR-10).
 
 - [ ] **`docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`**
-  — Add a "Stale `In Development` pre-dispatch check" rule inside Step 2 (determine next
-  deterministic action). When a single-item runner reads "In Development" from the tracker and the
-  branch/PR existence check returns no match, the protocol must correct the status to "Plan Ready"
-  and log the correction before dispatching the implementation stage (same AC set as above; see
-  BR-7 — applies to items dispatched from Protocol 90 only).
+      — Add a "Stale `In Development` pre-dispatch check" rule inside Step 2 (determine next
+      deterministic action). When a single-item runner reads "In Development" from the tracker and the
+      branch/PR existence check returns no match, the protocol must correct the status to "Plan Ready"
+      and log the correction before dispatching the implementation stage (same AC set as above; see
+      BR-7 — applies to items dispatched from Protocol 90 only).
 
 ### GitHub Actions Workflow
 
 - [ ] **`.github/workflows/update-tracker-on-merge.yml`** — No mapping changes required (the
-  mapping is already correct). Add one step that prints a human-readable mapping summary to the
-  Actions log so reviewers can verify consistency without reading the raw YAML. This satisfies
-  AC-1, AC-2, AC-3 by making the mapping explicit and auditable in CI output.
+      mapping is already correct). Add one step that prints a human-readable mapping summary to the
+      Actions log so reviewers can verify consistency without reading the raw YAML. This satisfies
+      AC-1, AC-2, AC-3 by making the mapping explicit and auditable in CI output.
 
 ---
 
@@ -116,17 +116,17 @@ Not applicable. This fix operates on tracker state and VCS state; no application
 involved.
 
 | Entity | Values / Scenario | File |
-|---|---|---|
-| (none) | — | — |
+| ------ | ----------------- | ---- |
+| (none) | —                 | —    |
 
 ---
 
 ## Documentation Updates
 
 - [ ] `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` —
-  updated directly as part of this implementation (see Layer-by-Layer Changes).
+      updated directly as part of this implementation (see Layer-by-Layer Changes).
 - [ ] `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` —
-  updated directly as part of this implementation (see Layer-by-Layer Changes).
+      updated directly as part of this implementation (see Layer-by-Layer Changes).
 
 No other `docs/project/` or `AGENTS.md` updates are required — the fix affects internal
 orchestration logic, not externally documented project concepts.
@@ -135,11 +135,11 @@ orchestration logic, not externally documented project concepts.
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| The stale correction rule in Protocol 91 is triggered on items dispatched outside Protocol 90/91 (violating BR-7) | Low | Low | Scope the rule explicitly to items dispatched through Protocol 90 (i.e., when `BATCH_CONTEXT=true` OR when the runner is the item-orchestrator dispatched from the portfolio orchestrator). Direct standalone invocations of Protocol 91 by a human operator should apply no-rollback (BR-4) rather than automatic correction — document this explicitly in the rule. |
-| The `check-tracker-merge-mapping.sh` script parses YAML with `grep`/`sed` and misidentifies mapping values if the YAML is reformatted | Low | Low | The YAML structure in `update-tracker-on-merge.yml` is controlled by this template and rarely changes shape. Use anchored grep patterns tied to the specific YAML key paths; document the required YAML structure in the script header. |
-| Adding a log line for stale corrections (AC-10) inflates normal output when many items are in flight | Very Low | Low | The log note is emitted only when a correction is made (not on every item scan). Use a distinguishable prefix (e.g., `STALE_STATUS_CORRECTION:`) so operators can grep it selectively. |
+| Risk                                                                                                                                  | Likelihood | Impact | Mitigation                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The stale correction rule in Protocol 91 is triggered on items dispatched outside Protocol 90/91 (violating BR-7)                     | Low        | Low    | Scope the rule explicitly to items dispatched through Protocol 90 (i.e., when `BATCH_CONTEXT=true` OR when the runner is the item-orchestrator dispatched from the portfolio orchestrator). Direct standalone invocations of Protocol 91 by a human operator should apply no-rollback (BR-4) rather than automatic correction — document this explicitly in the rule. |
+| The `check-tracker-merge-mapping.sh` script parses YAML with `grep`/`sed` and misidentifies mapping values if the YAML is reformatted | Low        | Low    | The YAML structure in `update-tracker-on-merge.yml` is controlled by this template and rarely changes shape. Use anchored grep patterns tied to the specific YAML key paths; document the required YAML structure in the script header.                                                                                                                               |
+| Adding a log line for stale corrections (AC-10) inflates normal output when many items are in flight                                  | Very Low   | Low    | The log note is emitted only when a correction is made (not on every item scan). Use a distinguishable prefix (e.g., `STALE_STATUS_CORRECTION:`) so operators can grep it selectively.                                                                                                                                                                                |
 
 ---
 

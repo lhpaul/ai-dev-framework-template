@@ -21,14 +21,14 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Value |
-|---|---|
-| Protocol under test (retrospective) | `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md` |
-| Protocol under test (meta) | `docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md` |
-| Metrics log file | `docs/workflow/retro-metrics.md` |
-| Agent file (Claude Code) | `.claude/agents/retrospective.md` |
-| Agent file (Cursor) | `.cursor/agents/retrospective.md` |
-| Skill file (Codex) | `.codex/skills/workflow-retrospective/SKILL.md` |
+| Item                                | Value                                                                             |
+| ----------------------------------- | --------------------------------------------------------------------------------- |
+| Protocol under test (retrospective) | `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md`       |
+| Protocol under test (meta)          | `docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md` |
+| Metrics log file                    | `docs/workflow/retro-metrics.md`                                                  |
+| Agent file (Claude Code)            | `.claude/agents/retrospective.md`                                                 |
+| Agent file (Cursor)                 | `.cursor/agents/retrospective.md`                                                 |
+| Skill file (Codex)                  | `.codex/skills/workflow-retrospective/SKILL.md`                                   |
 
 ---
 
@@ -184,21 +184,21 @@ Before running this smoke test:
 
 Not applicable — no application seed data. The `docs/workflow/retro-metrics.md` file is created with headers only.
 
-| Entity | Scenario | How to load |
-|---|---|---|
+| Entity      | Scenario                     | How to load                                 |
+| ----------- | ---------------------------- | ------------------------------------------- |
 | Metrics log | Initial state (headers only) | Created by implementation; no action needed |
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| Step 3d not found in `06-retrospective-protocol.md` | Implementation missed inserting the step | Re-read the protocol and insert Step 3d after Step 3c |
-| `docs/workflow/retro-metrics.md` missing | Implementation forgot to create the initial file | Create the file with column headers per Implementation Order Step 1 |
-| `06b-meta-retrospective-protocol.md` missing | Implementation did not create the new protocol file | Create the file per Implementation Order Step 2 |
-| Column headers in `retro-metrics.md` do not match `06-retrospective-protocol.md` Step 3d fields | Cross-section consistency check not performed | Run Step 9 (consistency check) from the Implementation Order and align field names |
-| Agent files not updated | Implementation skipped Steps 4–6 | Update `.claude/agents/retrospective.md`, `.cursor/agents/retrospective.md`, `.codex/skills/workflow-retrospective/SKILL.md` |
+| Symptom                                                                                         | Likely cause                                        | Fix                                                                                                                          |
+| ----------------------------------------------------------------------------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Step 3d not found in `06-retrospective-protocol.md`                                             | Implementation missed inserting the step            | Re-read the protocol and insert Step 3d after Step 3c                                                                        |
+| `docs/workflow/retro-metrics.md` missing                                                        | Implementation forgot to create the initial file    | Create the file with column headers per Implementation Order Step 1                                                          |
+| `06b-meta-retrospective-protocol.md` missing                                                    | Implementation did not create the new protocol file | Create the file per Implementation Order Step 2                                                                              |
+| Column headers in `retro-metrics.md` do not match `06-retrospective-protocol.md` Step 3d fields | Cross-section consistency check not performed       | Run Step 9 (consistency check) from the Implementation Order and align field names                                           |
+| Agent files not updated                                                                         | Implementation skipped Steps 4–6                    | Update `.claude/agents/retrospective.md`, `.cursor/agents/retrospective.md`, `.codex/skills/workflow-retrospective/SKILL.md` |
 
 ---
 

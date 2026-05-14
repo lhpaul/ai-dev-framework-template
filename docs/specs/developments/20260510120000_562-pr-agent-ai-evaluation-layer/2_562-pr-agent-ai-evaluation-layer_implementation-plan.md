@@ -1,6 +1,6 @@
 # AI Evaluation Layer for PR-Agent "Possible Issue" Findings — Implementation Plan
 
-**Spec**: [1\_562-pr-agent-ai-evaluation-layer\_specs.md](./1_562-pr-agent-ai-evaluation-layer_specs.md)
+**Spec**: [1_562-pr-agent-ai-evaluation-layer_specs.md](./1_562-pr-agent-ai-evaluation-layer_specs.md)
 **Smoke test runbook**: [../../../testing/workflow/562-pr-agent-ai-evaluation-layer.smoke-test.md](../../../testing/workflow/562-pr-agent-ai-evaluation-layer.smoke-test.md)
 
 ---
@@ -33,14 +33,14 @@ introduced; the fallback path (advisory-only) is a trivial `return 0`.
 
 ## Verification Log
 
-| Check | Command / query | Result |
-|---|---|---|
-| Repo revision | `git rev-parse --short HEAD` | `ddeb154` |
-| Occurrences of "Possible Issue" in pr-review-loop.sh | `grep -c "Possible Issue" scripts/development-workflow/pr-review-loop.sh` | 1 (only in a comment; no runtime handling exists yet) |
-| Advisory label extraction function | `grep -n "_pr_agent_extract_advisory_labels" scripts/development-workflow/pr-review-loop.sh` | Lines 1114–1139 (function body), 1206, 1284 (call sites) |
-| Clean result paths in run\_pr\_agent\_review | Lines 1203–1223 (Phase 1 clean path) and 1281–1301 (Phase 3 clean path) | Two symmetric `clean` case blocks; both emit `ADVISORY_LABELS` |
-| Aggregate clean exit | Line 2651–2657 | Final `case "$aggregate_result" in clean)` block calls `_post_review_summary` and `exit 0` |
-| Smoke test directory | `ls docs/testing/workflow/ \| head -5` | Confirmed path exists; naming pattern is `<issue>-<slug>.smoke-test.md` |
+| Check                                                | Command / query                                                                              | Result                                                                                     |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Repo revision                                        | `git rev-parse --short HEAD`                                                                 | `ddeb154`                                                                                  |
+| Occurrences of "Possible Issue" in pr-review-loop.sh | `grep -c "Possible Issue" scripts/development-workflow/pr-review-loop.sh`                    | 1 (only in a comment; no runtime handling exists yet)                                      |
+| Advisory label extraction function                   | `grep -n "_pr_agent_extract_advisory_labels" scripts/development-workflow/pr-review-loop.sh` | Lines 1114–1139 (function body), 1206, 1284 (call sites)                                   |
+| Clean result paths in run_pr_agent_review            | Lines 1203–1223 (Phase 1 clean path) and 1281–1301 (Phase 3 clean path)                      | Two symmetric `clean` case blocks; both emit `ADVISORY_LABELS`                             |
+| Aggregate clean exit                                 | Line 2651–2657                                                                               | Final `case "$aggregate_result" in clean)` block calls `_post_review_summary` and `exit 0` |
+| Smoke test directory                                 | `ls docs/testing/workflow/ \| head -5`                                                       | Confirmed path exists; naming pattern is `<issue>-<slug>.smoke-test.md`                    |
 
 ---
 
@@ -49,9 +49,9 @@ introduced; the fallback path (advisory-only) is a trivial `return 0`.
 ### Scripts / Automation Layer
 
 - [ ] **`scripts/development-workflow/pr-review-loop.sh`** — add the
-  `run_pr_agent_possible_issue_evaluation` function (see Architecture section)
-  and call it from both `clean` case blocks inside `run_pr_agent_review`
-  (Phase 1 and Phase 3).
+      `run_pr_agent_possible_issue_evaluation` function (see Architecture section)
+      and call it from both `clean` case blocks inside `run_pr_agent_review`
+      (Phase 1 and Phase 3).
 
   Specifically:
   - Add helper `_extract_possible_issue_labels` that filters the pipe-delimited
@@ -82,27 +82,27 @@ introduced; the fallback path (advisory-only) is a trivial `return 0`.
     absent when no "Possible Issue" label was present).
 
 - [ ] **`scripts/development-workflow/pr-review-loop.sh`** — update
-  `_post_review_summary` to include the evaluation outcome in the advisory
-  section text when `POSSIBLE_ISSUE_EVAL_OUTCOME` is set.
+      `_post_review_summary` to include the evaluation outcome in the advisory
+      section text when `POSSIBLE_ISSUE_EVAL_OUTCOME` is set.
 
 ### Documentation / Protocol Layer
 
 - [ ] **`docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`**
-  — add a subsection under "Procedure (per PR)" that describes the new
-  "Possible Issue" evaluation step: when it runs, how the orchestrator caller
-  dispatches the code-reviewer agent, and how the outcome is fed back via
-  `POSSIBLE_ISSUE_EVAL_OUTCOME`.
+      — add a subsection under "Procedure (per PR)" that describes the new
+      "Possible Issue" evaluation step: when it runs, how the orchestrator caller
+      dispatches the code-reviewer agent, and how the outcome is fed back via
+      `POSSIBLE_ISSUE_EVAL_OUTCOME`.
 
 - [ ] **`docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`**
-  — add a note in Step 7 (or the Step 7 → automated reviewer loop description)
-  explaining that when `pr-review-loop.sh` emits `PR_AGENT_POSSIBLE_ISSUE_EVAL`,
-  the Work Item Runner must dispatch the code-reviewer agent and then re-invoke
-  the loop with `POSSIBLE_ISSUE_EVAL_OUTCOME` set.
+      — add a note in Step 7 (or the Step 7 → automated reviewer loop description)
+      explaining that when `pr-review-loop.sh` emits `PR_AGENT_POSSIBLE_ISSUE_EVAL`,
+      the Work Item Runner must dispatch the code-reviewer agent and then re-invoke
+      the loop with `POSSIBLE_ISSUE_EVAL_OUTCOME` set.
 
 ### Testing Layer
 
 - [ ] **`docs/testing/workflow/562-pr-agent-ai-evaluation-layer.smoke-test.md`**
-  — new smoke test runbook covering all six acceptance criteria.
+      — new smoke test runbook covering all six acceptance criteria.
 
 ---
 
@@ -266,13 +266,13 @@ must handle the new `RESULT=needs_rerun` / exit-3 output from `run_pr_agent_revi
    Maps to Acceptance Criterion 4.
 
 4. **Spec/chore PR with Possible Issue**: Run loop on a spec or chore PR
-   (implementation-plan/* branch) where PR-Agent returns a "Possible Issue"
+   (implementation-plan/\* branch) where PR-Agent returns a "Possible Issue"
    advisory. Verify the evaluation sub-step runs (not exempted) and exits clean
    after acknowledgment.
    Maps to Acceptance Criterion 5.
 
 5. **Agent unavailable fallback**: Simulate agent dispatch failure
-   (POSSIBLE\_ISSUE\_EVAL\_OUTCOME unset or empty). Verify the loop logs a
+   (POSSIBLE_ISSUE_EVAL_OUTCOME unset or empty). Verify the loop logs a
    warning, emits `POSSIBLE_ISSUE_EVAL_OUTCOME=unavailable`, and exits clean
    with the advisory label still present in the loop summary.
    Maps to Acceptance Criterion 6.
@@ -287,8 +287,8 @@ must handle the new `RESULT=needs_rerun` / exit-3 output from `run_pr_agent_revi
 
 ## Seed Data
 
-| Entity | Values / Scenario | File |
-|---|---|---|
+| Entity                                 | Values / Scenario                                                                                | File              |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------ | ----------------- |
 | Test PR with "Possible Issue" advisory | Any open PR in the repo can be used; the smoke test describes how to simulate the advisory label | N/A — see runbook |
 
 ---
@@ -296,23 +296,23 @@ must handle the new `RESULT=needs_rerun` / exit-3 output from `run_pr_agent_revi
 ## Documentation Updates
 
 - [ ] `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`
-  — add subsection describing the "Possible Issue" evaluation step and how the
-  orchestrator caller handles `PR_AGENT_POSSIBLE_ISSUE_EVAL` output.
+      — add subsection describing the "Possible Issue" evaluation step and how the
+      orchestrator caller handles `PR_AGENT_POSSIBLE_ISSUE_EVAL` output.
 - [ ] `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
-  — add note in the Step 7 description about `PR_AGENT_POSSIBLE_ISSUE_EVAL`
-  dispatch and `POSSIBLE_ISSUE_EVAL_OUTCOME` feedback loop.
+      — add note in the Step 7 description about `PR_AGENT_POSSIBLE_ISSUE_EVAL`
+      dispatch and `POSSIBLE_ISSUE_EVAL_OUTCOME` feedback loop.
 
 ---
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| `POSSIBLE_ISSUE_EVAL_OUTCOME` env var not set by caller | Med | Low | Treat empty value as `unavailable`; fallback is advisory-only (no blocking) |
-| PR-Agent comment body contains shell-unsafe characters | Low | Med | Use `print_kv_escaped` for `PR_AGENT_POSSIBLE_ISSUE_BODY`; orchestrator reads via `kv_value` which handles escaped newlines |
-| New `needs_rerun` RESULT value breaks existing callers | Low | Med | Existing callers read `RESULT` via `kv_value_default`; unknown values fall through to `escalate` in the main loop's `case` — add explicit `needs_rerun` handling there |
-| Re-run loop subject to existing retry limits | Low | Low | Spec explicitly states re-runs are subject to existing retry limits; no special bypass needed |
-| "Possible Issue" label string varies in capitalisation across PR-Agent versions | Low | Low | Matching is case-insensitive (see `_extract_possible_issue_labels`) |
+| Risk                                                                            | Likelihood | Impact | Mitigation                                                                                                                                                             |
+| ------------------------------------------------------------------------------- | ---------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POSSIBLE_ISSUE_EVAL_OUTCOME` env var not set by caller                         | Med        | Low    | Treat empty value as `unavailable`; fallback is advisory-only (no blocking)                                                                                            |
+| PR-Agent comment body contains shell-unsafe characters                          | Low        | Med    | Use `print_kv_escaped` for `PR_AGENT_POSSIBLE_ISSUE_BODY`; orchestrator reads via `kv_value` which handles escaped newlines                                            |
+| New `needs_rerun` RESULT value breaks existing callers                          | Low        | Med    | Existing callers read `RESULT` via `kv_value_default`; unknown values fall through to `escalate` in the main loop's `case` — add explicit `needs_rerun` handling there |
+| Re-run loop subject to existing retry limits                                    | Low        | Low    | Spec explicitly states re-runs are subject to existing retry limits; no special bypass needed                                                                          |
+| "Possible Issue" label string varies in capitalisation across PR-Agent versions | Low        | Low    | Matching is case-insensitive (see `_extract_possible_issue_labels`)                                                                                                    |
 
 ---
 
@@ -351,7 +351,7 @@ must handle the new `RESULT=needs_rerun` / exit-3 output from `run_pr_agent_revi
    `platform_result=needs_rerun`, set `aggregate_result="needs_rerun"` and
    break (same as `needs_fixes` but triggers a loop re-run rather than a
    fixer dispatch). Add `needs_rerun` handling in the final `case
-   "$aggregate_result"` block: emit `RESULT=needs_rerun` with exit code 3 so
+"$aggregate_result"` block: emit `RESULT=needs_rerun` with exit code 3 so
    orchestrator callers distinguish it from `needs_fixes`.
 
 6. **Update `_post_review_summary`** — when `POSSIBLE_ISSUE_EVAL_OUTCOME` is set

@@ -20,11 +20,11 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Value |
-|---|---|
-| Test implementation branch | `fix/smoke-test-449` (create fresh for each run) |
-| Test spec/plan branch | `spec/smoke-test-449` (create fresh for single-pass verification) |
-| Reviewer config | `internal_reviewers: [claude]` in `.ai-dev-workflow.yaml` |
+| Item                       | Value                                                             |
+| -------------------------- | ----------------------------------------------------------------- |
+| Test implementation branch | `fix/smoke-test-449` (create fresh for each run)                  |
+| Test spec/plan branch      | `spec/smoke-test-449` (create fresh for single-pass verification) |
+| Reviewer config            | `internal_reviewers: [claude]` in `.ai-dev-workflow.yaml`         |
 
 ---
 
@@ -149,22 +149,22 @@ Each checkbox maps to an acceptance criterion from the spec.
 
 No persistent seed data is required. Each scenario creates its own transient test PR on the fly.
 
-| Entity | Scenario | How to load |
-|---|---|---|
-| Test fix branch | Scenarios 1–3, 5–7 | `git checkout -b fix/smoke-test-449 origin/develop` |
-| Test spec branch | Scenario 4 | `git checkout -b spec/smoke-test-449 origin/develop` |
-| Test refactor branch | Scenario 8 | `git checkout -b refactor/smoke-test-449 origin/develop` |
+| Entity               | Scenario           | How to load                                              |
+| -------------------- | ------------------ | -------------------------------------------------------- |
+| Test fix branch      | Scenarios 1–3, 5–7 | `git checkout -b fix/smoke-test-449 origin/develop`      |
+| Test spec branch     | Scenario 4         | `git checkout -b spec/smoke-test-449 origin/develop`     |
+| Test refactor branch | Scenario 8         | `git checkout -b refactor/smoke-test-449 origin/develop` |
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| Pass 2 dispatched without Pass 1 approving | Orchestrator skipped branch-type detection | Verify that Protocol 91 Step 7a now contains the implementation-PR branch-type preamble |
-| `gh pr ready` called before Pass 2 approves | Summary comment posted prematurely | Confirm the two-pass execution rule requires both passes approved at same SHA |
-| Summary comment shows no pass labels | Old Step 7a code path still executing | Confirm Protocol 91 Step 7a summary comment template was updated |
-| Pass 1 re-run after trivial fix | Trivial-fix conditions not validated by orchestrator | Confirm orchestrator independently verifies all three trivial-fix conditions before skipping |
+| Symptom                                     | Likely cause                                         | Fix                                                                                          |
+| ------------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Pass 2 dispatched without Pass 1 approving  | Orchestrator skipped branch-type detection           | Verify that Protocol 91 Step 7a now contains the implementation-PR branch-type preamble      |
+| `gh pr ready` called before Pass 2 approves | Summary comment posted prematurely                   | Confirm the two-pass execution rule requires both passes approved at same SHA                |
+| Summary comment shows no pass labels        | Old Step 7a code path still executing                | Confirm Protocol 91 Step 7a summary comment template was updated                             |
+| Pass 1 re-run after trivial fix             | Trivial-fix conditions not validated by orchestrator | Confirm orchestrator independently verifies all three trivial-fix conditions before skipping |
 
 ---
 

@@ -12,12 +12,12 @@ When the automated reviewer loop retries a fixer agent dispatch after a failed a
 
 ## Brief Coverage
 
-| Brief Objective | Spec Trace |
-|---|---|
-| Track attempt number and pass it to fixer agent on each retry | AC-1, AC-2, Use Case 1 |
+| Brief Objective                                                  | Spec Trace             |
+| ---------------------------------------------------------------- | ---------------------- |
+| Track attempt number and pass it to fixer agent on each retry    | AC-1, AC-2, Use Case 1 |
 | Include summary of what prior attempts tried and why they failed | AC-5, AC-6, Use Case 3 |
-| First attempt has no prior context overhead | AC-5, Business Rules |
-| No change to the external reviewer step (pr-review-loop.sh) | Out of Scope |
+| First attempt has no prior context overhead                      | AC-5, Business Rules   |
+| No change to the external reviewer step (pr-review-loop.sh)      | Out of Scope           |
 
 ---
 
@@ -29,6 +29,7 @@ When the automated reviewer loop retries a fixer agent dispatch after a failed a
 **Preconditions**: The reviewer loop has dispatched a fixer agent at least once for a PR, the previous attempt did not fully resolve all blocking findings, and the loop is preparing to dispatch the fixer again.
 
 **Steps**:
+
 1. The orchestrator increments the attempt counter (cycle N → N+1)
 2. The orchestrator collects a brief summary of what the previous attempt addressed and what findings remain open
 3. The orchestrator prepends the attempt context to the fixer agent's prompt: "Attempt N/M: prior attempt(s) tried [summary of what was done]. The following findings remain open: [list]. Try a different approach for each remaining finding."
@@ -38,14 +39,17 @@ When the automated reviewer loop retries a fixer agent dispatch after a failed a
 **Postconditions**: The fixer agent's output reflects awareness of prior attempts; it does not simply repeat the same change that was already tried and found insufficient.
 
 **Information shown** (to the fixer agent in its prompt):
+
 - Current attempt number and the configured maximum
 - A short description of what each prior attempt addressed (e.g., "Attempt 1 rewrote the function signature in `foo.sh`")
 - The specific findings still open after the last push
 
 **Actions available**:
+
 - The fixer agent can choose a different strategy for each remaining finding based on the context provided
 
 **Considerations**:
+
 - The attempt summary must be concise — it is prepended to the fixer's prompt and counts against its token budget
 - If no prior attempt summary is available (e.g., the first retry has no recorded context), the orchestrator falls back to a minimal note: "Attempt 2/N: prior attempt did not fully resolve all findings. Try a different approach."
 - The maximum attempt count shown to the fixer agent is the same `max_cycles` value that governs loop escalation
@@ -58,12 +62,14 @@ When the automated reviewer loop retries a fixer agent dispatch after a failed a
 **Preconditions**: A fixer agent is being dispatched for the first time for a given PR (cycle = 1).
 
 **Steps**:
+
 1. The orchestrator dispatches the fixer agent with the standard blocking-findings list and no attempt-context prefix
 2. The fixer agent receives only the blocking findings and the standard fixer batching rule
 
 **Postconditions**: The first-attempt prompt is unchanged from the current behavior; no attempt-counter overhead is added.
 
 **Considerations**:
+
 - The absence of attempt context on the first dispatch is intentional — the agent should not be primed with "retry" framing when it has not yet tried anything
 
 ---
@@ -74,6 +80,7 @@ When the automated reviewer loop retries a fixer agent dispatch after a failed a
 **Preconditions**: The fixer has been dispatched two or more times and findings remain after each attempt.
 
 **Steps**:
+
 1. After each fixer push, the orchestrator records a short summary entry for that attempt (what was changed and which findings were addressed or left open)
 2. On the next dispatch, the orchestrator includes summaries for all prior attempts, not only the most recent one
 3. The fixer agent can see the full history of what was tried to avoid repeating the same approaches
@@ -81,6 +88,7 @@ When the automated reviewer loop retries a fixer agent dispatch after a failed a
 **Postconditions**: The fixer agent's prompt for attempt N contains summaries for attempts 1 through N-1.
 
 **Considerations**:
+
 - Each per-attempt summary entry should be kept to one or two sentences to control prompt length
 - When a finding was previously addressed but reappeared (regression), the summary should note the reappearance explicitly so the fixer understands the fix did not hold
 

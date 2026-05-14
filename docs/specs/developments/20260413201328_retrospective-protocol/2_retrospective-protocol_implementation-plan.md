@@ -10,7 +10,9 @@
 **Approach**: Add a new protocol document (`06-retrospective-protocol.md`) that defines the retrospective analysis flow, then integrate post-merge retrospective suggestion hooks into Protocols 90 and 91 (deferred until after the human confirms PRs are merged, not at the Step 6 summary point). Create the `/retrospective` command/skill across all three supported platforms (Claude Code, Cursor, Codex) following the existing patterns for each. Finally, update the workflow README and AGENTS.md to reference the new protocol and command.
 
 **Estimated complexity**: S
+
 <!-- S: < 1 day | M: 1-3 days | L: 3+ days -->
+
 **Rationale**: All deliverables are Markdown documentation and platform configuration files. No code, database, or infrastructure changes. All platform patterns (Claude Code commands, Cursor agents, Codex skills) are well-established and can be copied from existing examples.
 
 **Dependencies**: None
@@ -52,12 +54,13 @@
 **Test types**: Smoke / Manual
 
 **Key scenarios to test**:
+
 1. Invoke `/retrospective` in a fresh session with no scope hint — verify the agent queries recent PRs, presents categorized findings (or closes gracefully if none), and respects the human's choice for each (AC 1, 2, 3, 4, 12)
 2. Invoke `/retrospective` with a specific PR number as scope hint — verify findings are scoped to that PR (AC 1)
 3. Choose "Address now" for a simple finding — verify fix is applied, committed, and pushed without a new PR (AC 5)
 4. Choose "Address now" for a complex finding — verify agent recommends "Add to backlog" instead and explains why (AC 6)
 5. Choose "Add to backlog" for a finding with no related existing item — verify a new GitHub issue is created with the `workflow` label, descriptive title/body, and the URL is returned (AC 7)
-5b. Choose "Add to backlog" for a finding with a related existing item — verify the agent offers "Expand existing" vs "Create new"; choosing "Expand existing" appends the observation to the existing issue body and returns the updated URL (AC 13)
+   5b. Choose "Add to backlog" for a finding with a related existing item — verify the agent offers "Expand existing" vs "Create new"; choosing "Expand existing" appends the observation to the existing issue body and returns the updated URL (AC 13)
 6. Complete a batch run via Protocol 90, verify retrospective is NOT suggested after the batch summary, then confirm PRs are merged and verify retrospective is now suggested (AC 9)
 7. Complete a standalone item run via Protocol 91, verify retrospective is NOT suggested immediately after the item summary, then confirm PR is merged and verify retrospective is now suggested (AC 10)
 8. Complete a dispatched (non-standalone) item run via Protocol 91 and verify retrospective is NOT suggested (AC 10)
@@ -82,10 +85,10 @@ No seed data is required. The retrospective protocol operates on existing GitHub
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| Protocol 90/91 integration text conflicts with other in-flight changes | Low | Low | Changes are additive (appended to existing Step 6 sections); merge conflicts are easy to resolve |
-| "Address now" action could make unintended changes | Low | Medium | Protocol explicitly constrains "Address now" to simple, self-assessed-safe changes; complex items redirect to backlog |
+| Risk                                                                   | Likelihood | Impact | Mitigation                                                                                                            |
+| ---------------------------------------------------------------------- | ---------- | ------ | --------------------------------------------------------------------------------------------------------------------- |
+| Protocol 90/91 integration text conflicts with other in-flight changes | Low        | Low    | Changes are additive (appended to existing Step 6 sections); merge conflicts are easy to resolve                      |
+| "Address now" action could make unintended changes                     | Low        | Medium | Protocol explicitly constrains "Address now" to simple, self-assessed-safe changes; complex items redirect to backlog |
 
 ---
 

@@ -30,12 +30,12 @@
 
 > [One-line description of what this table stores]
 
-| Column | Type | Nullable | Description |
-|---|---|---|---|
-| `id` | uuid | no | Primary key |
-| `[column]` | [type] | [yes/no] | [Description] |
-| `created_at` | timestamptz | no | Creation timestamp |
-| `updated_at` | timestamptz | no | Last update timestamp |
+| Column       | Type        | Nullable | Description           |
+| ------------ | ----------- | -------- | --------------------- |
+| `id`         | uuid        | no       | Primary key           |
+| `[column]`   | [type]      | [yes/no] | [Description]         |
+| `created_at` | timestamptz | no       | Creation timestamp    |
+| `updated_at` | timestamptz | no       | Last update timestamp |
 
 ## Access Control
 
@@ -48,9 +48,9 @@
 
 ### Rules per Table
 
-| Table | Who can read | Who can write | Notes |
-|---|---|---|---|
-| `[table]` | [rule] | [rule] | [notes] |
+| Table     | Who can read | Who can write | Notes   |
+| --------- | ------------ | ------------- | ------- |
+| `[table]` | [rule]       | [rule]        | [notes] |
 
 ## Migrations
 

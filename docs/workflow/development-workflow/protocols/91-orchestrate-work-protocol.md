@@ -17,6 +17,7 @@ This protocol may be entered in either of two ways:
 ## Overview
 
 The Work Item Runner:
+
 1. Resolves the request to exactly one workflow item
 2. Determines the next deterministic action for that item
 3. Executes creator, review-gate, PR, CI, and automated-review work as one continuous control loop
@@ -90,38 +91,38 @@ When dispatching a subagent for this item, include a short "Tracker Work Item Su
 
 ### What can advance now?
 
-| Current state / detection | Can advance if... | Next action |
-|---|---|---|
-| Backlog (Feature) | Human has requested this specific item | Set tracker status to **Writing Spec**, then run `01-generate-spec-protocol.md` |
-| Backlog (Refactor) | Human has requested this specific item as a Refactor | Set tracker status to **Writing Plan**, then run `02-generate-implementation-plan-protocol.md` (skip spec) |
-| Writing Spec | Tracker **Writing Spec** — spec PR not yet human-ready | Continue spec branch/PR work (generate, internal review, reviewer tools, CI) until tracker moves to **Spec in Review** |
-| Spec in Review | Tracker **Spec in Review** — spec PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
-| Spec branch pushed, no PR yet | Branch exists on local / remote / worktree | Run the spec review gate via `REVIEW.md` / `01-review-spec-protocol.md`, open the PR, then finish PR readiness |
-| Spec Ready | Spec PR is merged | Set tracker status to **Writing Plan**, then run `02-generate-implementation-plan-protocol.md` |
-| Plan written locally, spec PR not yet merged | Plan branch exists locally or in worktree; spec PR is still open (not merged) | **Ordering gate**: do NOT open the plan PR. Stop after the spec PR is `ready-for-human-review` and report: "spec PR is ready; plan is written and staged locally, but plan PR will not be opened until spec PR is confirmed merged." Resume in next run after spec PR merge. |
-| Writing Plan | Tracker **Writing Plan** — plan PR not yet human-ready — spec PR already merged (Full Pipeline only; Refactor items are exempt — no spec PR exists) | Continue plan branch/PR work until tracker moves to **Plan in Review** |
-| Plan in Review | Tracker **Plan in Review** — plan PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
-| Plan branch pushed, no PR yet | Branch exists on local / remote / worktree; spec PR already merged (Full Pipeline only; Refactor items are exempt — no spec PR exists) | Run the plan review gate via `REVIEW.md` / `02-review-implementation-plan-protocol.md`, open the PR, then finish PR readiness |
-| Plan Ready | Plan PR is merged | Set tracker status to **In Development**, then run `03-implement-development-protocol.md` |
-| In Development | Tracker **In Development** — feature/fix PR not yet human-ready | Continue implementation branch/PR work (Step 7a, 7, 8) until tracker moves to **Development in Review** |
-| Development in Review | Tracker **Development in Review** — feature/fix PR ready for humans | Wait — human review / merge (unless addressing `needs-fixes`) |
-| Dev branch pushed, no PR yet | Branch exists on local / remote / worktree | Open draft PR, run the internal review gate (Step 7a), run `gh pr ready` to convert to non-draft, then run automated reviewer loop (Step 7) and CI loop (Step 8) |
-| Draft PR open, internal review pending | PR is draft and the relevant internal review gate has not run yet or has open findings | Run the stage-specific internal review gate (Step 7a); apply fixes, push, repeat until clean. Once APPROVED, run `gh pr ready` to convert to non-draft |
-| Non-draft PR open, no readiness label, external review not yet run | PR is non-draft (converted after Step 7a APPROVED), external review not yet run | Run Step 7 (external automated reviewers) and Step 8 (CI) |
-| PR open (non-draft), no readiness label | PR exists and latest push has not fully cleared | Run Step 7 and Step 8 until clean or escalated |
-| PR labeled `needs-fixes` | Human or automated systems requested changes | Address feedback, push, then run Step 7a, Step 7, and Step 8 |
-| PR labeled `ready-for-human-review` | — | Wait — human review / merge required |
+| Current state / detection                                          | Can advance if...                                                                                                                                   | Next action                                                                                                                                                                                                                                                                  |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Backlog (Feature)                                                  | Human has requested this specific item                                                                                                              | Set tracker status to **Writing Spec**, then run `01-generate-spec-protocol.md`                                                                                                                                                                                              |
+| Backlog (Refactor)                                                 | Human has requested this specific item as a Refactor                                                                                                | Set tracker status to **Writing Plan**, then run `02-generate-implementation-plan-protocol.md` (skip spec)                                                                                                                                                                   |
+| Writing Spec                                                       | Tracker **Writing Spec** — spec PR not yet human-ready                                                                                              | Continue spec branch/PR work (generate, internal review, reviewer tools, CI) until tracker moves to **Spec in Review**                                                                                                                                                       |
+| Spec in Review                                                     | Tracker **Spec in Review** — spec PR ready for humans                                                                                               | Wait — human review / merge (unless addressing `needs-fixes`)                                                                                                                                                                                                                |
+| Spec branch pushed, no PR yet                                      | Branch exists on local / remote / worktree                                                                                                          | Run the spec review gate via `REVIEW.md` / `01-review-spec-protocol.md`, open the PR, then finish PR readiness                                                                                                                                                               |
+| Spec Ready                                                         | Spec PR is merged                                                                                                                                   | Set tracker status to **Writing Plan**, then run `02-generate-implementation-plan-protocol.md`                                                                                                                                                                               |
+| Plan written locally, spec PR not yet merged                       | Plan branch exists locally or in worktree; spec PR is still open (not merged)                                                                       | **Ordering gate**: do NOT open the plan PR. Stop after the spec PR is `ready-for-human-review` and report: "spec PR is ready; plan is written and staged locally, but plan PR will not be opened until spec PR is confirmed merged." Resume in next run after spec PR merge. |
+| Writing Plan                                                       | Tracker **Writing Plan** — plan PR not yet human-ready — spec PR already merged (Full Pipeline only; Refactor items are exempt — no spec PR exists) | Continue plan branch/PR work until tracker moves to **Plan in Review**                                                                                                                                                                                                       |
+| Plan in Review                                                     | Tracker **Plan in Review** — plan PR ready for humans                                                                                               | Wait — human review / merge (unless addressing `needs-fixes`)                                                                                                                                                                                                                |
+| Plan branch pushed, no PR yet                                      | Branch exists on local / remote / worktree; spec PR already merged (Full Pipeline only; Refactor items are exempt — no spec PR exists)              | Run the plan review gate via `REVIEW.md` / `02-review-implementation-plan-protocol.md`, open the PR, then finish PR readiness                                                                                                                                                |
+| Plan Ready                                                         | Plan PR is merged                                                                                                                                   | Set tracker status to **In Development**, then run `03-implement-development-protocol.md`                                                                                                                                                                                    |
+| In Development                                                     | Tracker **In Development** — feature/fix PR not yet human-ready                                                                                     | Continue implementation branch/PR work (Step 7a, 7, 8) until tracker moves to **Development in Review**                                                                                                                                                                      |
+| Development in Review                                              | Tracker **Development in Review** — feature/fix PR ready for humans                                                                                 | Wait — human review / merge (unless addressing `needs-fixes`)                                                                                                                                                                                                                |
+| Dev branch pushed, no PR yet                                       | Branch exists on local / remote / worktree                                                                                                          | Open draft PR, run the internal review gate (Step 7a), run `gh pr ready` to convert to non-draft, then run automated reviewer loop (Step 7) and CI loop (Step 8)                                                                                                             |
+| Draft PR open, internal review pending                             | PR is draft and the relevant internal review gate has not run yet or has open findings                                                              | Run the stage-specific internal review gate (Step 7a); apply fixes, push, repeat until clean. Once APPROVED, run `gh pr ready` to convert to non-draft                                                                                                                       |
+| Non-draft PR open, no readiness label, external review not yet run | PR is non-draft (converted after Step 7a APPROVED), external review not yet run                                                                     | Run Step 7 (external automated reviewers) and Step 8 (CI)                                                                                                                                                                                                                    |
+| PR open (non-draft), no readiness label                            | PR exists and latest push has not fully cleared                                                                                                     | Run Step 7 and Step 8 until clean or escalated                                                                                                                                                                                                                               |
+| PR labeled `needs-fixes`                                           | Human or automated systems requested changes                                                                                                        | Address feedback, push, then run Step 7a, Step 7, and Step 8                                                                                                                                                                                                                 |
+| PR labeled `ready-for-human-review`                                | —                                                                                                                                                   | Wait — human review / merge required                                                                                                                                                                                                                                         |
 
 ### Pre-dispatch tracker status update (single-item path)
 
 When the Work Item Runner is invoked **directly** (not via Protocol 90) and the item's tracker status is stale — for example, a Refactor item is still `Backlog` even though the plan is merged and implementation is about to start — the runner must update the tracker status **before** dispatching the creator agent. Use the same transition table as Protocol 90 Step 2.5:
 
-| Next action to dispatch | Tracker status to set |
-|---|---|
-| Write Spec | `Writing Spec` |
-| Write Plan | `Writing Plan` |
-| Implement (feature/fix/refactor/hotfix branch) | `In Development` |
-| Resume in-progress stage (status already `Writing Spec`, `Writing Plan`, or `In Development`) | No change — skip |
+| Next action to dispatch                                                                       | Tracker status to set |
+| --------------------------------------------------------------------------------------------- | --------------------- |
+| Write Spec                                                                                    | `Writing Spec`        |
+| Write Plan                                                                                    | `Writing Plan`        |
+| Implement (feature/fix/refactor/hotfix branch)                                                | `In Development`      |
+| Resume in-progress stage (status already `Writing Spec`, `Writing Plan`, or `In Development`) | No change — skip      |
 
 This mirrors what Protocol 90 does at the portfolio level in Step 2.5 and ensures the tracker reflects the correct in-flight state regardless of whether the item was dispatched by the Portfolio Orchestrator or invoked directly by a human.
 
@@ -186,7 +187,6 @@ If the tracker is unavailable, log a warning and proceed — do not block advanc
    ```
 
 3. **If both checks return zero** (no branch, no PR): the "In Development" status is stale (BR-5). Apply the correction:
-
    - Log a `STALE_STATUS_CORRECTION:` line:
 
      ```text
@@ -210,11 +210,11 @@ git worktree list | grep "<branch-prefix>/<slug>"
 ```
 
 | Stage about to dispatch | Branch / worktree to check for |
-|---|---|
-| Write spec | `spec/[slug]` |
-| Write plan | `implementation-plan/[slug]` |
-| Implement (Feature) | `feature/[slug]` |
-| Implement (Refactor) | `refactor/[slug]` |
+| ----------------------- | ------------------------------ |
+| Write spec              | `spec/[slug]`                  |
+| Write plan              | `implementation-plan/[slug]`   |
+| Implement (Feature)     | `feature/[slug]`               |
+| Implement (Refactor)    | `refactor/[slug]`              |
 
 If any check returns a match: **do not re-dispatch**. Resume from the existing branch or PR with `workflow-next-action.sh`.
 
@@ -261,13 +261,13 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 
 **Subagent assignment by stage:**
 
-| Stage action | Preferred execution path |
-|---|---|
-| Write spec | `product-manager` |
-| Review spec | Native review against `REVIEW.md` or the compatibility wrapper `01-review-spec-protocol.md` |
-| Write plan | `tech-lead` |
-| Review plan | Native review against `REVIEW.md` or the compatibility wrapper `02-review-implementation-plan-protocol.md` |
-| Implement feature | `developer` |
+| Stage action                | Preferred execution path                                                                                                                |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Write spec                  | `product-manager`                                                                                                                       |
+| Review spec                 | Native review against `REVIEW.md` or the compatibility wrapper `01-review-spec-protocol.md`                                             |
+| Write plan                  | `tech-lead`                                                                                                                             |
+| Review plan                 | Native review against `REVIEW.md` or the compatibility wrapper `02-review-implementation-plan-protocol.md`                              |
+| Implement feature           | `developer`                                                                                                                             |
 | Review code (post-draft-PR) | `code-reviewer` agent (Claude Code: `/code-review`); for other runners use compatibility wrapper `03-review-implementation-protocol.md` |
 
 ### Worktree isolation for parallel batches
@@ -278,13 +278,13 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 
 2. Determine the appropriate base branch for the worktree:
 
-| Item type | Base branch |
-|-----------|------------|
-| Feature (`feature/`) | `origin/develop` |
-| Refactor (`refactor/`) | `origin/develop` |
-| Fast Track fix (`fix/`) | `origin/develop` |
-| Hotfix (`hotfix/`) | `origin/main` |
-| Spec (`spec/`) | `origin/develop` |
+| Item type                     | Base branch      |
+| ----------------------------- | ---------------- |
+| Feature (`feature/`)          | `origin/develop` |
+| Refactor (`refactor/`)        | `origin/develop` |
+| Fast Track fix (`fix/`)       | `origin/develop` |
+| Hotfix (`hotfix/`)            | `origin/main`    |
+| Spec (`spec/`)                | `origin/develop` |
 | Plan (`implementation-plan/`) | `origin/develop` |
 
 **Note:** Use `origin/<base>` (remote tracking) rather than local `<base>` to avoid git worktree conflicts if the local base branch is already checked out elsewhere.
@@ -410,9 +410,9 @@ This hook is advisory and not required for the guardrail to function. The Critic
 
 **Common worktree gotcha — `git rev-parse --show-toplevel` returns the worktree path, not the main repo root**
 
-When an agent runs inside an isolated worktree (`.claude/worktrees/<branch>/`), `git rev-parse --show-toplevel` returns the *worktree* path rather than the main repo root. Any script or agent instruction that relies on this command to locate `node_modules/`, project-level config files, or other resources installed at the main repo root will construct wrong paths.
+When an agent runs inside an isolated worktree (`.claude/worktrees/<branch>/`), `git rev-parse --show-toplevel` returns the _worktree_ path rather than the main repo root. Any script or agent instruction that relies on this command to locate `node_modules/`, project-level config files, or other resources installed at the main repo root will construct wrong paths.
 
-Use `git rev-parse --git-common-dir` instead — it always points to the `.git` directory of the *main* repo regardless of which worktree is active. Append `/..` to get the main repo root:
+Use `git rev-parse --git-common-dir` instead — it always points to the `.git` directory of the _main_ repo regardless of which worktree is active. Append `/..` to get the main repo root:
 
 ```bash
 # Wrong — returns the worktree path when run inside an isolated worktree:
@@ -497,15 +497,15 @@ A pre-tool-use hook can enforce the Write/Edit path rule automatically:
 3. If `WORKTREE_ROOT` is unset, skip the check (non-worktree session — no-op).
 4. If the target path does not start with `$WORKTREE_ROOT`, emit:
    `"GUARDRAIL: Write/Edit target '<path>' is outside the designated worktree
-   '<WORKTREE_ROOT>'. Correct the path before proceeding."`
+'<WORKTREE_ROOT>'. Correct the path before proceeding."`
 5. The hook is **non-blocking** — it warns but does not prevent the tool call. This
    allows the agent to correct the path in subsequent calls and prevents cascading
    failures from false positives.
 6. The hook must NOT intercept read-only tools (`Read`, `Glob`, `Grep`).
 
-4. **Suggested worktree path**: `<repo-root>/.claude/worktrees/<item-id>/<branch-prefix>-<slug>` where `<item-id>` is the issue number, tracker ID, or slug.
+7. **Suggested worktree path**: `<repo-root>/.claude/worktrees/<item-id>/<branch-prefix>-<slug>` where `<item-id>` is the issue number, tracker ID, or slug.
 
-5. After the item reaches a terminal condition, the cleanup script will remove the worktree:
+8. After the item reaches a terminal condition, the cleanup script will remove the worktree:
 
 ```bash
 # IMPORTANT: Change directory to the main repo root BEFORE deleting the worktree
@@ -542,6 +542,7 @@ This field is mandatory in all cases so the orchestrator can identify and resolv
 **Rationale**: These side-channel writes bypass the canonical `Edit`/`Write` tool pipeline, which means any pre-tool-use hooks (e.g., path validation, write tracking) do not fire. They also make it impossible for the Portfolio Orchestrator to detect that a permission gap exists and perform the correct inline fallback. Silent degradation to a workaround tool is a protocol violation that erodes the orchestrator's ability to track item state reliably.
 
 Before exiting:
+
 - Do **not** apply any PR labels.
 - Do **not** commit any partial work.
 - Do **not** update the tracker status.
@@ -559,6 +560,7 @@ See Protocol 90 Step 3.6 for the canonical CHANGELOG strategy in parallel batche
 When dispatching a stage agent (creator, reviewer, or fixer), include the following explicit instruction:
 
 > **Critical scope rule**: This item is assigned only to [ISSUE_ID]. Modify **only** files directly related to this issue. If a finding or review comment requires changes outside this issue's scope (e.g., fixing issues in unrelated modules, applying a new pattern to the broader codebase, or addressing tech debt elsewhere), do **not** implement it. Instead:
+>
 > 1. Note it as a separate finding
 > 2. Suggest opening a new issue if appropriate
 > 3. Continue with in-scope work only
@@ -589,6 +591,7 @@ SUBAGENT_PERMISSION_DENIAL: [DENIED_TOOL] tool denied on <denied-target>. No par
 ```
 
 **Self-check rules**:
+
 - Always target `.tmp/` for the self-check write (this path is gitignored).
 - Clean up the temp file after the check regardless of outcome.
 - Never touch tracked files during the self-check.
@@ -698,17 +701,18 @@ Skip the design-reviewer agent entirely. No comment is posted. Proceed to "Deter
 **Path B — Frontend changes detected, provider available (Use Case 1):**
 
 Invoke the `design-reviewer` agent, passing:
+
 - The PR number
 - The list of changed frontend files
 - The `PREVIEW_URL` environment variable (if set) or instructions to start the development server
 
 After the agent posts its PR comment, parse the verdict from the comment header (the comment must begin with `## Design Review Summary` and the verdict must appear as `**Verdict**: <value>` — BR-9):
 
-| Verdict | Action |
-|---------|--------|
-| `Approved` | Proceed normally to "Determining which reviewers to run" |
+| Verdict          | Action                                                                                                                            |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `Approved`       | Proceed normally to "Determining which reviewers to run"                                                                          |
 | `Needs Revision` | Treat as a review finding. Do not advance to `ready-for-human-review` until the issues are resolved or explicitly accepted (BR-5) |
-| `Skipped` | Development server was unreachable; log the skip and continue without blocking (BR-4) |
+| `Skipped`        | Development server was unreachable; log the skip and continue without blocking (BR-4)                                             |
 
 **Path C — Frontend changes detected, provider unavailable (Use Case 3):**
 
@@ -758,12 +762,12 @@ Before dispatching any reviewer, classify each entry in the resolved list as `re
 
 #### Reachability classification table
 
-| Runner context | `claude` reachable? | `codex` reachable? | `coderabbit` reachable? |
-|---|---|---|---|
-| Claude Code (direct human session) | Yes | No | Determined at runtime (App check) |
-| Claude Code subagent (dispatched by orchestrator) | Yes | No | Determined at runtime (App check) |
-| Codex runner / Codex skill | Yes | Yes | Determined at runtime (App check) |
-| Direct human (shell / CI with `gh`) | Yes | Yes | Determined at runtime (App check) |
+| Runner context                                    | `claude` reachable? | `codex` reachable? | `coderabbit` reachable?           |
+| ------------------------------------------------- | ------------------- | ------------------ | --------------------------------- |
+| Claude Code (direct human session)                | Yes                 | No                 | Determined at runtime (App check) |
+| Claude Code subagent (dispatched by orchestrator) | Yes                 | No                 | Determined at runtime (App check) |
+| Codex runner / Codex skill                        | Yes                 | Yes                | Determined at runtime (App check) |
+| Direct human (shell / CI with `gh`)               | Yes                 | Yes                | Determined at runtime (App check) |
 
 To determine `coderabbit` reachability, the runner checks whether `coderabbitai[bot]` has any prior activity on the repository (App installation signal — via `gh api repos/{owner}/{repo}/installation` or by checking the PR for a prior CodeRabbit comment), **and** confirms that `.coderabbit.yaml` does not disable auto-review or restrict reviews to non-draft PRs (`reviews.auto_review.enabled: true` required). If either check fails, classify `coderabbit` as `unreachable` — the draft-PR restriction in `.coderabbit.yaml` is treated as equivalent to the App not being installed (BR-5 consequence).
 
@@ -786,12 +790,12 @@ To override the policy locally without changing shared config, use `.tmp/templat
 
 Allowed values: `warn` (default), `fail-if-any-unavailable`.
 
-| Condition | Policy | Action |
-|---|---|---|
-| Zero reviewers reachable | Any | **Hard-fail** — post the Step 7a summary comment (as error/blocked comment per Use Case 2) and stop. Do NOT call `gh pr ready`. Escalate to human. |
-| One or more reviewers unreachable, at least one reachable | `warn` (default) | Post a warning comment to the PR naming each unreachable reviewer and the runner context, record each as `skipped (unreachable)`, then proceed with the reachable subset. |
-| Any reviewer unreachable | `fail-if-any-unavailable` | **Hard-fail** — same outcome as zero-reachable (no reviewers dispatched, PR stays draft, escalate to human) even when some reviewers are reachable. Post the Step 7a summary comment using the hard-fail comment format **Case B** below and stop. Do NOT call `gh pr ready`. Escalate to human. |
-| All reviewers reachable | Any | Proceed normally — no warning comment, no deviation from the existing flow. |
+| Condition                                                 | Policy                    | Action                                                                                                                                                                                                                                                                                           |
+| --------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Zero reviewers reachable                                  | Any                       | **Hard-fail** — post the Step 7a summary comment (as error/blocked comment per Use Case 2) and stop. Do NOT call `gh pr ready`. Escalate to human.                                                                                                                                               |
+| One or more reviewers unreachable, at least one reachable | `warn` (default)          | Post a warning comment to the PR naming each unreachable reviewer and the runner context, record each as `skipped (unreachable)`, then proceed with the reachable subset.                                                                                                                        |
+| Any reviewer unreachable                                  | `fail-if-any-unavailable` | **Hard-fail** — same outcome as zero-reachable (no reviewers dispatched, PR stays draft, escalate to human) even when some reviewers are reachable. Post the Step 7a summary comment using the hard-fail comment format **Case B** below and stop. Do NOT call `gh pr ready`. Escalate to human. |
+| All reviewers reachable                                   | Any                       | Proceed normally — no warning comment, no deviation from the existing flow.                                                                                                                                                                                                                      |
 
 #### Warning comment format (one or more unreachable, `warn` policy)
 
@@ -819,16 +823,16 @@ Post via `gh pr comment`. This comment doubles as the BR-7 mandatory Step 7a sum
 
 For each reviewer in the resolved list, dispatch the stage-appropriate agent:
 
-| Reviewer | PR branch prefix | Agent / protocol to dispatch |
-|---|---|---|
-| `claude` | `spec/*` | `spec-reviewer` or `01-review-spec-protocol.md` |
-| `claude` | `implementation-plan/*` | `implementation-plan-reviewer` or `02-review-implementation-plan-protocol.md` |
-| `claude` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `code-reviewer` or `03-review-implementation-protocol.md` |
-| `codex` | `spec/*` | `workflow-spec-reviewer` Codex skill against `REVIEW.md` |
-| `codex` | `implementation-plan/*` | `workflow-plan-reviewer` Codex skill against `REVIEW.md` |
-| `codex` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `workflow-code-reviewer` Codex skill against `REVIEW.md` |
-| `coderabbit` | `spec/*` | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
-| `coderabbit` | `implementation-plan/*` | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
+| Reviewer     | PR branch prefix                                  | Agent / protocol to dispatch                                                                                           |
+| ------------ | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `claude`     | `spec/*`                                          | `spec-reviewer` or `01-review-spec-protocol.md`                                                                        |
+| `claude`     | `implementation-plan/*`                           | `implementation-plan-reviewer` or `02-review-implementation-plan-protocol.md`                                          |
+| `claude`     | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `code-reviewer` or `03-review-implementation-protocol.md`                                                              |
+| `codex`      | `spec/*`                                          | `workflow-spec-reviewer` Codex skill against `REVIEW.md`                                                               |
+| `codex`      | `implementation-plan/*`                           | `workflow-plan-reviewer` Codex skill against `REVIEW.md`                                                               |
+| `codex`      | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `workflow-code-reviewer` Codex skill against `REVIEW.md`                                                               |
+| `coderabbit` | `spec/*`                                          | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
+| `coderabbit` | `implementation-plan/*`                           | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
 | `coderabbit` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
 
 ### Branch-type detection
@@ -844,18 +848,18 @@ Run all configured internal reviewers **sequentially** in the order listed. Each
 
 Initialize `internal_review_cycle = 0` at the start of Step 7a. Increment each time the full Pass 1 → Pass 2 cycle is restarted (for implementation PRs) or the full reviewer list is restarted (for non-implementation PRs). Escalate to human when `internal_review_cycle` reaches `max_internal_review_cycles` (default: 5).
 
-#### Non-implementation PRs (spec/*, implementation-plan/*): single-pass
+#### Non-implementation PRs (spec/_, implementation-plan/_): single-pass
 
-| Outcome | Action |
-|---|---|
-| All reviewers `APPROVED` | Post the Step 7a summary comment (see below), then run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then continue to Step 7 (external automated reviewers) |
-| Any reviewer returns `NEEDS REVISION` (fixable) and `internal_review_cycle < max_internal_review_cycles` | Fixes already applied by the agent; increment `internal_review_cycle`; re-run **all** internal reviewers from the beginning of the list |
-| Any reviewer returns `NEEDS REVISION` (fixable) and `internal_review_cycle >= max_internal_review_cycles` | Post the Step 7a summary comment with verdict `escalated — max cycles reached`, then escalate to human |
-| Any reviewer returns `NEEDS REVISION` (product/design decision) | Post the Step 7a summary comment with verdict `escalated — human decision required`, then stop and escalate to human before proceeding |
+| Outcome                                                                                                   | Action                                                                                                                                                                        |
+| --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| All reviewers `APPROVED`                                                                                  | Post the Step 7a summary comment (see below), then run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then continue to Step 7 (external automated reviewers) |
+| Any reviewer returns `NEEDS REVISION` (fixable) and `internal_review_cycle < max_internal_review_cycles`  | Fixes already applied by the agent; increment `internal_review_cycle`; re-run **all** internal reviewers from the beginning of the list                                       |
+| Any reviewer returns `NEEDS REVISION` (fixable) and `internal_review_cycle >= max_internal_review_cycles` | Post the Step 7a summary comment with verdict `escalated — max cycles reached`, then escalate to human                                                                        |
+| Any reviewer returns `NEEDS REVISION` (product/design decision)                                           | Post the Step 7a summary comment with verdict `escalated — human decision required`, then stop and escalate to human before proceeding                                        |
 
 All internal reviewers must APPROVE before `gh pr ready` is called. If any reviewer finds issues, fix them and re-run ALL internal reviewers.
 
-#### Implementation PRs (feature/*, fix/*, refactor/*, hotfix/*): two-pass
+#### Implementation PRs (feature/_, fix/_, refactor/_, hotfix/_): two-pass
 
 Implementation PRs run two sequential passes before `gh pr ready` is called. Pass 2 is never dispatched until all reviewers have approved Pass 1 for the current commit.
 
@@ -867,17 +871,17 @@ Implementation PRs run two sequential passes before `gh pr ready` is called. Pas
 
 **Same-commit SHA requirement**: when both passes run without a trivial-fix skip, both passes must approve at the same commit SHA before `gh pr ready` is called. When Pass 1 is skipped under the trivial-fix path (see below), only Pass 2 must approve at the current commit SHA — Pass 1's earlier approval (at a prior SHA) remains valid for that cycle.
 
-| Outcome | Action |
-|---|---|
-| All reviewers `APPROVED` on Pass 1 | Proceed to Pass 2 for all reviewers |
-| Any reviewer returns `NEEDS REVISION` on Pass 1 (fixable) and `internal_review_cycle < max_internal_review_cycles` | Fixes already applied; increment `internal_review_cycle`; restart from Pass 1 for all reviewers |
-| Any reviewer returns `NEEDS REVISION` on Pass 1 (fixable) and `internal_review_cycle >= max_internal_review_cycles` | Post the Step 7a summary comment with verdict `escalated — max cycles reached`, then escalate to human |
-| Any reviewer returns `NEEDS REVISION` on Pass 1 (product/design decision) | Post the Step 7a summary comment with verdict `escalated — human decision required`, then stop and escalate to human |
-| All reviewers `APPROVED` on Pass 2 | Post the Step 7a summary comment (see below), then run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then continue to Step 7 (external automated reviewers) |
-| Any reviewer returns `NEEDS REVISION` on Pass 2 (fixable) — fix is **non-trivial** — and `internal_review_cycle < max_internal_review_cycles` | Fixes already applied; increment `internal_review_cycle`; restart from **Pass 1** for all reviewers |
+| Outcome                                                                                                                                                                          | Action                                                                                                                                                                                                                                                                                  |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| All reviewers `APPROVED` on Pass 1                                                                                                                                               | Proceed to Pass 2 for all reviewers                                                                                                                                                                                                                                                     |
+| Any reviewer returns `NEEDS REVISION` on Pass 1 (fixable) and `internal_review_cycle < max_internal_review_cycles`                                                               | Fixes already applied; increment `internal_review_cycle`; restart from Pass 1 for all reviewers                                                                                                                                                                                         |
+| Any reviewer returns `NEEDS REVISION` on Pass 1 (fixable) and `internal_review_cycle >= max_internal_review_cycles`                                                              | Post the Step 7a summary comment with verdict `escalated — max cycles reached`, then escalate to human                                                                                                                                                                                  |
+| Any reviewer returns `NEEDS REVISION` on Pass 1 (product/design decision)                                                                                                        | Post the Step 7a summary comment with verdict `escalated — human decision required`, then stop and escalate to human                                                                                                                                                                    |
+| All reviewers `APPROVED` on Pass 2                                                                                                                                               | Post the Step 7a summary comment (see below), then run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then continue to Step 7 (external automated reviewers)                                                                                                           |
+| Any reviewer returns `NEEDS REVISION` on Pass 2 (fixable) — fix is **non-trivial** — and `internal_review_cycle < max_internal_review_cycles`                                    | Fixes already applied; increment `internal_review_cycle`; restart from **Pass 1** for all reviewers                                                                                                                                                                                     |
 | Any reviewer returns `NEEDS REVISION` on Pass 2 (fixable) — fix is **trivial** (all three trivial-fix conditions met) — and `internal_review_cycle < max_internal_review_cycles` | Skip Pass 1 re-run; increment `internal_review_cycle`; post a skip note (see Trivial-fix skip rule); restart from **Pass 2** only. The same-SHA requirement does not apply to Pass 1 for this cycle — only Pass 2 must approve at the current commit SHA before `gh pr ready` is called |
-| Any reviewer returns `NEEDS REVISION` on Pass 2 (fixable) and `internal_review_cycle >= max_internal_review_cycles` | Post the Step 7a summary comment with verdict `escalated — max cycles reached`, then escalate to human |
-| Any reviewer returns `NEEDS REVISION` on Pass 2 (product/design decision) | Post the Step 7a summary comment with verdict `escalated — human decision required`, then stop and escalate to human |
+| Any reviewer returns `NEEDS REVISION` on Pass 2 (fixable) and `internal_review_cycle >= max_internal_review_cycles`                                                              | Post the Step 7a summary comment with verdict `escalated — max cycles reached`, then escalate to human                                                                                                                                                                                  |
+| Any reviewer returns `NEEDS REVISION` on Pass 2 (product/design decision)                                                                                                        | Post the Step 7a summary comment with verdict `escalated — human decision required`, then stop and escalate to human                                                                                                                                                                    |
 
 Both passes must complete with all reviewers `APPROVED` before `gh pr ready` is called. The `internal_review_cycle` counter increments on every fix cycle — whether the fix is trivial (Pass 2 restart only) or non-trivial (full Pass 1 → Pass 2 restart). This ensures that repeated trivial-fix cycles are bounded by `max_internal_review_cycles` and cannot loop indefinitely.
 
@@ -915,9 +919,11 @@ Example format for an **implementation PR** (two-pass):
 **Skipped reviewers**: codex (unreachable from Claude Code subagent)
 
 **Pass 1 (Spec Compliance)**
+
 - claude: APPROVED (0 findings)
 
 **Pass 2 (Code Quality)**
+
 - claude: APPROVED after 1 fix cycle (1 finding resolved)
 
 **Verdict**: APPROVED
@@ -930,9 +936,9 @@ In the hard-fail case (zero reachable reviewers or `fail-if-any-unavailable` pol
 
 ### Step 7a loop parameters
 
-| Parameter | Default | Description |
-|---|---|---|
-| `max_internal_review_cycles` | 5 | Max fix cycles before escalating. For implementation PRs, increments on every Pass 2 fix — trivial (Pass 2 restart only) or non-trivial (full Pass 1 → Pass 2 restart). For non-implementation PRs, counts full single-pass restarts as before |
+| Parameter                    | Default | Description                                                                                                                                                                                                                                    |
+| ---------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `max_internal_review_cycles` | 5       | Max fix cycles before escalating. For implementation PRs, increments on every Pass 2 fix — trivial (Pass 2 restart only) or non-trivial (full Pass 1 → Pass 2 restart). For non-implementation PRs, counts full single-pass restarts as before |
 
 Step 7a runs **before** Step 7 (external reviewers). Only proceed to Step 7 once all internal reviewers in Step 7a produce `APPROVED`. After any fixer push triggered by Step 7 (external reviewers), re-run Step 7a (all internal reviewers) to ensure the stage-specific internal review gate is still clean — **unless the push qualifies as a trivial fix** (see "Trivial-fix skip rule" below).
 
@@ -986,16 +992,16 @@ Initialize `cycle = 0` once per orchestration run for the PR. Increment `cycle` 
 
 Maintain a **PR feedback ledger** alongside the cycle counter. Each entry tracks:
 
-| Field | Description |
-|---|---|
-| `id` | Sequential integer assigned in discovery order |
-| `platform` | Review platform name (e.g. `greptile`, `devin`) |
-| `path` | File path |
-| `line` | Line number (display-only — can shift between commits) |
-| `body_snippet` | First 120 chars of the finding body (used as matching key — line-shift-safe) |
-| `discovered_cycle` | Cycle when first seen |
-| `status` | `open` · `resolved` · `unresolved` |
-| `resolved_commit` | Short SHA (set when resolved) |
+| Field              | Description                                                                  |
+| ------------------ | ---------------------------------------------------------------------------- |
+| `id`               | Sequential integer assigned in discovery order                               |
+| `platform`         | Review platform name (e.g. `greptile`, `devin`)                              |
+| `path`             | File path                                                                    |
+| `line`             | Line number (display-only — can shift between commits)                       |
+| `body_snippet`     | First 120 chars of the finding body (used as matching key — line-shift-safe) |
+| `discovered_cycle` | Cycle when first seen                                                        |
+| `status`           | `open` · `resolved` · `unresolved`                                           |
+| `resolved_commit`  | Short SHA (set when resolved)                                                |
 
 **Matching key**: `(platform, path, body_snippet)` — not line number, since lines shift after fixes. If a finding looks like a restatement of existing open PR feedback (same platform, same file, similar description), match it rather than creating a duplicate.
 
@@ -1032,23 +1038,23 @@ REAL_SHA=$(git log --oneline -1 | awk '{print $1}')
 
 Post via `gh pr comment` immediately after updating the ledger following a fixer push:
 
-````markdown
+```markdown
 ### Automated Fix: commit `<short_sha>`
 
 Addressed **N** finding(s) from cycle M:
 
-| # | Platform | File | Description |
-|---|----------|------|-------------|
-| 1 | greptile | `src/foo.ts:42` | First 80 chars of body... |
+| #   | Platform | File            | Description               |
+| --- | -------- | --------------- | ------------------------- |
+| 1   | greptile | `src/foo.ts:42` | First 80 chars of body... |
 
 <details><summary>Remaining open findings: K</summary>
 
-| # | Platform | File | Description |
-|---|----------|------|-------------|
-| 3 | greptile | `src/baz.ts:5` | First 80 chars of body... |
+| #   | Platform | File           | Description               |
+| --- | -------- | -------------- | ------------------------- |
+| 3   | greptile | `src/baz.ts:5` | First 80 chars of body... |
 
 </details>
-````
+```
 
 If 0 findings were resolved: post a shorter note — "Pushed fixes for cycle M. 0 findings resolved so far — re-running review to check."
 
@@ -1075,15 +1081,15 @@ The script does **not** post the summary on `needs_fixes` exits (those are non-t
 
 The script-posted comment format:
 
-````markdown
+```markdown
 ### Automated Reviewer Loop Summary
 
 **Result:** clean — no blocking findings | escalated (reason) | max cycles reached — N blocking finding(s) unresolved
 **Platforms:** greptile, devin
 **Findings:** N blocking, N suggestions
 
-*Posted automatically by `pr-review-loop.sh`.*
-````
+_Posted automatically by `pr-review-loop.sh`._
+```
 
 After running the helper script (it reads `.ai-dev-workflow.yaml` for the platform list automatically):
 
@@ -1093,14 +1099,14 @@ After running the helper script (it reads `.ai-dev-workflow.yaml` for the platfo
 
 Interpret the result as follows:
 
-| Result | Action |
-|---|---|
-| `clean` | Summary comment posted automatically by the script. If `ADVISORY_LABELS` is non-empty, document a disposition for each advisory finding and update the summary comment before proceeding — see "Advisory finding dispositions" in `93-automated-reviewer-loop-protocol.md`. Then re-issue the GraphQL `reviewThreads` query (Step 8c) — see "Re-query reviewThreads after each push" below |
-| `skipped` | Continue to Step 7b (implementation PRs) then Step 8 (no summary comment posted — Step 8c skips the check) |
-| `needs_fixes` and `cycle < max_cycles` | Increment `cycle`, dispatch the matching fixer agent, wait for a push, then run Step 7 again |
-| `needs_fixes` and `cycle >= max_cycles` | Pass `--post-final-summary` to the final invocation — the script posts the summary automatically. Then escalate to human |
-| `needs_rerun` (exit code 3) | PR-Agent returned clean with a "Possible Issue" advisory. See "PR-Agent 'Possible Issue' evaluation" below — dispatch the code-reviewer agent, set `POSSIBLE_ISSUE_EVAL_OUTCOME`, and re-invoke the loop |
-| `escalate` | Summary comment posted automatically by the script. Escalate to human |
+| Result                                  | Action                                                                                                                                                                                                                                                                                                                                                                                     |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `clean`                                 | Summary comment posted automatically by the script. If `ADVISORY_LABELS` is non-empty, document a disposition for each advisory finding and update the summary comment before proceeding — see "Advisory finding dispositions" in `93-automated-reviewer-loop-protocol.md`. Then re-issue the GraphQL `reviewThreads` query (Step 8c) — see "Re-query reviewThreads after each push" below |
+| `skipped`                               | Continue to Step 7b (implementation PRs) then Step 8 (no summary comment posted — Step 8c skips the check)                                                                                                                                                                                                                                                                                 |
+| `needs_fixes` and `cycle < max_cycles`  | Increment `cycle`, dispatch the matching fixer agent, wait for a push, then run Step 7 again                                                                                                                                                                                                                                                                                               |
+| `needs_fixes` and `cycle >= max_cycles` | Pass `--post-final-summary` to the final invocation — the script posts the summary automatically. Then escalate to human                                                                                                                                                                                                                                                                   |
+| `needs_rerun` (exit code 3)             | PR-Agent returned clean with a "Possible Issue" advisory. See "PR-Agent 'Possible Issue' evaluation" below — dispatch the code-reviewer agent, set `POSSIBLE_ISSUE_EVAL_OUTCOME`, and re-invoke the loop                                                                                                                                                                                   |
+| `escalate`                              | Summary comment posted automatically by the script. Escalate to human                                                                                                                                                                                                                                                                                                                      |
 
 ### PR-Agent "Possible Issue" evaluation
 
@@ -1194,7 +1200,7 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
 
 1. Apply every blocking finding in one pass (follow the batching rule: all in one commit).
 2. Commit with a descriptive message (e.g., `fix: address [platform] findings inline ([brief description])`).
-3. Push the commit. *(Push before resolving threads — if push fails, threads must not be falsely marked resolved.)*
+3. Push the commit. _(Push before resolving threads — if push fails, threads must not be falsely marked resolved.)_
 4. Reply to each finding's review thread with the fix description and commit SHA.
 5. Resolve each addressed thread via the GraphQL `resolveReviewThread` mutation.
 6. **Increment `cycle`** (the same counter used in the sub-agent loop). Inline fix retries are bounded by `max_cycles` exactly like sub-agent retries — the inline path is a faster lane, not an unbounded one.
@@ -1206,11 +1212,11 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
 
 **Fixing agent by PR branch type:**
 
-| PR branch prefix | Compatibility fixer to dispatch when direct fixes are needed |
-|---|---|
-| `spec/*` | `spec-reviewer` |
-| `implementation-plan/*` | `implementation-plan-reviewer` |
-| `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `code-reviewer` |
+| PR branch prefix                                  | Compatibility fixer to dispatch when direct fixes are needed |
+| ------------------------------------------------- | ------------------------------------------------------------ |
+| `spec/*`                                          | `spec-reviewer`                                              |
+| `implementation-plan/*`                           | `implementation-plan-reviewer`                               |
+| `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `code-reviewer`                                              |
 
 **Fixer agent worktree isolation rule (mandatory for parallel batches):**
 
@@ -1229,6 +1235,7 @@ When dispatching a fixer agent, include the following explicit instruction:
 > **Critical batching rule**: Do NOT address findings one-by-one with a separate push after each fix. Reviewer bots (e.g. Devin) start a new review cycle within 5–8 minutes of each push. If you push before all addressable fixes are done, the reviewer will start re-reviewing stale state while you are still working — creating a "one cycle behind" loop that can spin for dozens of cycles.
 >
 > Required sequence for every fixer dispatch:
+>
 > 1. **Read ALL blocking findings first** — before touching any file, collect the complete list of open blocking findings from the current review cycle.
 > 2. **Apply ALL addressable fixes** — implement every fix you can address in this dispatch, across all files.
 > 3. **One commit, then push** — bundle every fix into a single commit and push once. Do not push after each individual fix.
@@ -1300,11 +1307,11 @@ discarded when the orchestration session ends.
 
 ### Loop parameters
 
-| Parameter | Value | Description |
-|---|---|---|
-| `poll_interval` | 2 min | Time to wait between review status checks |
-| `max_wait` | 20 min | Max wait **per fix cycle** for the reviewer to respond |
-| `max_cycles` | 10 | Max number of times a fixing agent is dispatched before escalating |
+| Parameter       | Value  | Description                                                        |
+| --------------- | ------ | ------------------------------------------------------------------ |
+| `poll_interval` | 2 min  | Time to wait between review status checks                          |
+| `max_wait`      | 20 min | Max wait **per fix cycle** for the reviewer to respond             |
+| `max_cycles`    | 10     | Max number of times a fixing agent is dispatched before escalating |
 
 ---
 
@@ -1357,11 +1364,11 @@ Prefer the helper script:
 
 Interpret the result as follows:
 
-| Result | Action |
-|---|---|
-| `green` | Proceed to Step 8a (label readiness checklist) → Step 8b (tracker status) → Step 8c (independent verification) |
-| `red` | Apply `needs-fixes`, dispatch the matching fixer agent, wait for a push, then return to Step 7 |
-| `timeout` | Escalate to human; do not apply `ready-for-human-review` |
+| Result    | Action                                                                                                         |
+| --------- | -------------------------------------------------------------------------------------------------------------- |
+| `green`   | Proceed to Step 8a (label readiness checklist) → Step 8b (tracker status) → Step 8c (independent verification) |
+| `red`     | Apply `needs-fixes`, dispatch the matching fixer agent, wait for a push, then return to Step 7                 |
+| `timeout` | Escalate to human; do not apply `ready-for-human-review`                                                       |
 
 ---
 
@@ -1371,13 +1378,13 @@ Interpret the result as follows:
 
 ### Exit code contract
 
-| Exit Code | Meaning | Action |
-|---|---|---|
-| 0 | PR is ready (non-draft, regression label verified for implementation PRs, no unresolved threads) | Apply `ready-for-human-review` |
-| 1 | PR is still in draft | Run `gh pr ready` first |
-| 2 | `ready-for-regression` label applied this run | Re-run Step 8 (pr-ci-loop.sh) before returning here |
-| 3 | `ready-for-regression` label missing at pre-Check-4 gate | Apply label, re-run Step 8 |
-| 4 | Unresolved review threads at pre-Check-4 gate | Resolve threads, push fixes, re-run checklist |
+| Exit Code | Meaning                                                                                          | Action                                              |
+| --------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------- |
+| 0         | PR is ready (non-draft, regression label verified for implementation PRs, no unresolved threads) | Apply `ready-for-human-review`                      |
+| 1         | PR is still in draft                                                                             | Run `gh pr ready` first                             |
+| 2         | `ready-for-regression` label applied this run                                                    | Re-run Step 8 (pr-ci-loop.sh) before returning here |
+| 3         | `ready-for-regression` label missing at pre-Check-4 gate                                         | Apply label, re-run Step 8                          |
+| 4         | Unresolved review threads at pre-Check-4 gate                                                    | Resolve threads, push fixes, re-run checklist       |
 
 When adding a new gate to this checklist, allocate the next unused exit code and update this table. Exit codes must not collide.
 
@@ -1387,14 +1394,14 @@ When adding a new gate to this checklist, allocate the next unused exit code and
 
 Required labels are determined by the **branch prefix**, not by the content of the PR (e.g., whether it changes code vs. documentation). An agent must never infer labels from what was changed inside the PR.
 
-| Branch prefix | Requires `ready-for-regression` | When to apply |
-|---|---|---|
-| `feature/*` | Yes | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
-| `fix/*` | Yes | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
-| `refactor/*` | Yes | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
-| `hotfix/*` | Yes | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
-| `spec/*` | No | — |
-| `implementation-plan/*` | No | — |
+| Branch prefix           | Requires `ready-for-regression` | When to apply                                              |
+| ----------------------- | ------------------------------- | ---------------------------------------------------------- |
+| `feature/*`             | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
+| `fix/*`                 | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
+| `refactor/*`            | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
+| `hotfix/*`              | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
+| `spec/*`                | No                              | —                                                          |
+| `implementation-plan/*` | No                              | —                                                          |
 
 Any branch that does not match a recognized prefix is treated as non-implementation (i.e., `ready-for-regression` is NOT required), but this should be treated as a configuration anomaly and reported to the human.
 
@@ -1413,7 +1420,6 @@ Before running the readiness checklist below, perform a best-effort scan of the 
    ```
 
 2. Scan the diff for infrastructure dependency signals on **added lines** (lines starting with `+`). The following heuristics are best-effort and intentionally incomplete (BR-9 — false negatives are acceptable):
-
    - **New environment variable references**: added lines matching patterns like `process.env.NEW_VAR`, `os.environ["NEW_VAR"]`, `$NEW_VAR` in shell scripts, or new entries added to `.env.example`, `.env.template`, or similar env-template files.
    - **New GitHub Actions secret references**: added lines in `.github/workflows/**` files that reference `${{ secrets.NEW_SECRET }}`.
    - **New config key additions to environment-specific config files**: added keys in files named `*.env`, `.env.*`, `config/production.*`, or similar deployment-configuration files.
@@ -1422,10 +1428,10 @@ Before running the readiness checklist below, perform a best-effort scan of the 
 3. **If one or more signals are found**:
 
    a. Construct a `## Pre-merge Setup` section listing each detected requirement with (BR-8):
-      - Requirement name
-      - Type (e.g., environment variable, GitHub Actions secret, DNS record, service account token)
-      - Plain-language description of the expected value
-      - Where to set it (e.g., GitHub Actions secrets, Railway environment, DNS provider)
+   - Requirement name
+   - Type (e.g., environment variable, GitHub Actions secret, DNS record, service account token)
+   - Plain-language description of the expected value
+   - Where to set it (e.g., GitHub Actions secrets, Railway environment, DNS provider)
 
    b. Replace any existing `## Pre-merge Setup` section in the PR body with the newly constructed one, then update the PR body. This step runs on every pass through Step 8a (including after fixer pushes), so the section must always reflect the current diff — never accumulate stale or duplicate sections:
 
@@ -1602,6 +1608,7 @@ echo "✅ Label readiness checklist passed. PR is ready for human review."
 ### 8a.1: Async Bot Thread Re-check (Mandatory for async review platforms)
 
 **When to run this substep:**
+
 - After the label readiness checklist passes (all checks = exit 0)
 - Before proceeding to Step 8b
 - Only when `review.platforms` in `.ai-dev-workflow.yaml` includes `codex-github` or any other known async-posting review bot
@@ -1612,6 +1619,7 @@ Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asyn
 **Procedure:**
 
 1. **Wait for async bot threads**:
+
    ```bash
    # Sleep to allow async bots time to post new threads after the agent's pre-Check-4 query
    echo "Waiting 10 seconds for async-posting review bots (e.g., codex-github) to post any new threads..."
@@ -1621,6 +1629,7 @@ Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asyn
 2. **Re-query review threads**:
 
    Before running the query, resolve the Codex bot login. Use the value of `CODEX_GITHUB_BOT_LOGIN` if set; otherwise default to `"codex-ai[bot]"` (the default used by `codex-github-reviewer.sh`). Strip the `[bot]` suffix because GraphQL `author.login` values omit it:
+
    ```bash
    CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-codex-ai[bot]}"
    # GraphQL author.login omits the "[bot]" suffix present in REST API logins; strip it.
@@ -1741,17 +1750,17 @@ The output must contain no unresolved threads from configured bot reviewers (e.g
 
 Verify all of the following. If any check fails, **do not report ready** — treat it the same as `needs-fixes` and re-enter the fix loop from Step 7a:
 
-| Check | Pass condition |
-|---|---|
-| Base branch | `develop` for `feature/*`, `fix/*`, `refactor/*`; `main` for `hotfix/*`; `develop` for `spec/*`, `implementation-plan/*` |
-| PR is non-draft | `isDraft: false` |
-| `ready-for-human-review` label | Present in `labels[].name` |
-| `ready-for-regression` label | Present in `labels[].name` for `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`; absent/ignored for `spec/*`, `implementation-plan/*` |
-| No `needs-fixes` label | `needs-fixes` absent from `labels[].name` |
-| `needs-setup` label (if present) | **Valid co-label** — `needs-setup` may be present alongside `ready-for-human-review` when the diff contains infrastructure dependency signals. Its presence does **not** constitute a verification failure and does not block this check. Do not remove it. |
-| All automated-reviewer `reviewThreads` resolved | GraphQL query above returns empty output — `isResolved: true` (or first comment body contains `✅ Addressed`) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured) |
-| Automated reviewer loop summary | At least one comment whose body contains `"Automated Reviewer Loop Summary"`, `"Reviewer Loop Summary"`, or `"No blocking PR feedback"` (skip this check only when Step 7 was `skipped` because no review platforms are configured). **This is a hard requirement. Agents applying fixes MUST NOT remove or skip this check — the presence of the comment is the only reliable signal that Step 7 ran to completion. A PR that has `ready-for-human-review` but lacks this comment is in an incomplete state and must re-run Step 7.** (Note: the Step 7a summary comment posted by the internal review gate is a distinct comment from a distinct step — it does not satisfy this check. This check targets the external automated reviewer loop summary from Step 7 only.) |
-| CI checks | All required status checks have `state: SUCCESS` or `conclusion: success` in `statusCheckRollup` (no check in `PENDING`, `FAILURE`, or `ERROR` state) |
+| Check                                           | Pass condition                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Base branch                                     | `develop` for `feature/*`, `fix/*`, `refactor/*`; `main` for `hotfix/*`; `develop` for `spec/*`, `implementation-plan/*`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| PR is non-draft                                 | `isDraft: false`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `ready-for-human-review` label                  | Present in `labels[].name`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `ready-for-regression` label                    | Present in `labels[].name` for `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`; absent/ignored for `spec/*`, `implementation-plan/*`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| No `needs-fixes` label                          | `needs-fixes` absent from `labels[].name`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `needs-setup` label (if present)                | **Valid co-label** — `needs-setup` may be present alongside `ready-for-human-review` when the diff contains infrastructure dependency signals. Its presence does **not** constitute a verification failure and does not block this check. Do not remove it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| All automated-reviewer `reviewThreads` resolved | GraphQL query above returns empty output — `isResolved: true` (or first comment body contains `✅ Addressed`) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Automated reviewer loop summary                 | At least one comment whose body contains `"Automated Reviewer Loop Summary"`, `"Reviewer Loop Summary"`, or `"No blocking PR feedback"` (skip this check only when Step 7 was `skipped` because no review platforms are configured). **This is a hard requirement. Agents applying fixes MUST NOT remove or skip this check — the presence of the comment is the only reliable signal that Step 7 ran to completion. A PR that has `ready-for-human-review` but lacks this comment is in an incomplete state and must re-run Step 7.** (Note: the Step 7a summary comment posted by the internal review gate is a distinct comment from a distinct step — it does not satisfy this check. This check targets the external automated reviewer loop summary from Step 7 only.) |
+| CI checks                                       | All required status checks have `state: SUCCESS` or `conclusion: success` in `statusCheckRollup` (no check in `PENDING`, `FAILURE`, or `ERROR` state)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 If any check fails:
 
@@ -1789,11 +1798,11 @@ See `92-pr-readiness-signal-protocol.md` for label definitions.
 
 When a human confirms that a PR has been merged, update the issue tracker and clean up local state according to this table:
 
-| Merged PR branch type | Set tracker status to |
-|---|---|
-| `spec/*` | Spec Ready |
-| `implementation-plan/*` | Plan Ready |
-| `feature/*` / `fix/*` / `refactor/*` / `hotfix/*` | Merged |
+| Merged PR branch type                             | Set tracker status to |
+| ------------------------------------------------- | --------------------- |
+| `spec/*`                                          | Spec Ready            |
+| `implementation-plan/*`                           | Plan Ready            |
+| `feature/*` / `fix/*` / `refactor/*` / `hotfix/*` | Merged                |
 
 **Key rules:**
 

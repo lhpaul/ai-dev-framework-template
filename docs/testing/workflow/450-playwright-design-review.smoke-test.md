@@ -21,14 +21,14 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Value |
-|---|---|
-| Frontend-change PR | A PR on a `feature/*` or `fix/*` branch that changes at least one file with extension `.html`, `.css`, `.scss`, `.jsx`, `.tsx`, `.vue`, or `.svelte` |
-| Non-frontend PR | A PR on a `feature/*` or `fix/*` branch that changes only `.md` or `.sh` files |
-| Repository browser automation provider | `playwright_cli` (set in `.ai-dev-workflow.yaml`) |
-| Design-reviewer agent (Claude) | `.claude/agents/design-reviewer.md` |
-| Design-reviewer agent (Cursor) | `.cursor/agents/design-reviewer.md` |
-| Protocol 91 | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` |
+| Item                                   | Value                                                                                                                                                |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Frontend-change PR                     | A PR on a `feature/*` or `fix/*` branch that changes at least one file with extension `.html`, `.css`, `.scss`, `.jsx`, `.tsx`, `.vue`, or `.svelte` |
+| Non-frontend PR                        | A PR on a `feature/*` or `fix/*` branch that changes only `.md` or `.sh` files                                                                       |
+| Repository browser automation provider | `playwright_cli` (set in `.ai-dev-workflow.yaml`)                                                                                                    |
+| Design-reviewer agent (Claude)         | `.claude/agents/design-reviewer.md`                                                                                                                  |
+| Design-reviewer agent (Cursor)         | `.cursor/agents/design-reviewer.md`                                                                                                                  |
+| Protocol 91                            | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`                                                                       |
 
 ---
 
@@ -221,13 +221,13 @@ Not applicable — this feature adds workflow agent files and protocol documenta
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| Design-reviewer agent not found at `.claude/agents/design-reviewer.md` | Implementation step 1 was not completed | Verify the implementation PR included both agent files |
-| `## Design Review Summary` comment not posted on a frontend-change PR | Protocol 91 Step 7a sub-section missing or Work Item Runner is an older version | Verify Step 7a sub-section exists in the protocol; re-run with the updated runner |
-| Verdict not found or malformed in PR comment | Agent body does not follow the `**Verdict**: ...` format | Check the agent file for the verdict line format |
-| PR blocked despite `Skipped` verdict | Runner incorrectly treating `Skipped` as a failure | Verify Protocol 91 Step 7a skip semantics state that `Skipped` is not a failure (BR-3, BR-4, BR-10) |
-| axe-core not running | `axe-core` not installed in runner environment | Check environment setup; agent must handle this as a skip sub-condition |
+| Symptom                                                                | Likely cause                                                                    | Fix                                                                                                 |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Design-reviewer agent not found at `.claude/agents/design-reviewer.md` | Implementation step 1 was not completed                                         | Verify the implementation PR included both agent files                                              |
+| `## Design Review Summary` comment not posted on a frontend-change PR  | Protocol 91 Step 7a sub-section missing or Work Item Runner is an older version | Verify Step 7a sub-section exists in the protocol; re-run with the updated runner                   |
+| Verdict not found or malformed in PR comment                           | Agent body does not follow the `**Verdict**: ...` format                        | Check the agent file for the verdict line format                                                    |
+| PR blocked despite `Skipped` verdict                                   | Runner incorrectly treating `Skipped` as a failure                              | Verify Protocol 91 Step 7a skip semantics state that `Skipped` is not a failure (BR-3, BR-4, BR-10) |
+| axe-core not running                                                   | `axe-core` not installed in runner environment                                  | Check environment setup; agent must handle this as a skip sub-condition                             |
 
 ---
 

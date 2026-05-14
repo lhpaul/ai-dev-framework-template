@@ -53,8 +53,8 @@
 
 No database seed data required. Testing relies on a real GitHub PR with controlled thread states.
 
-| Entity | Values / Scenario | File |
-|---|---|---|
+| Entity  | Values / Scenario                                            | File                               |
+| ------- | ------------------------------------------------------------ | ---------------------------------- |
 | Test PR | PR with at least one open Nitpick-severity CodeRabbit thread | Created manually during smoke test |
 
 ---
@@ -67,13 +67,13 @@ The protocol document changes (Step 8c in Protocol 91, Step 5.1 in Protocol 90, 
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| GitHub GraphQL `reviewThreads` paginates beyond 100 nodes | Low | High (silent miss) | Use cursor-based pagination in the query loop; emit a warning if cursor is non-null after 10 pages |
-| Bot login list in `.ai-dev-workflow.yaml` diverges from actual bot accounts | Low | Med | Read bot logins from `review.platforms` mapping at runtime; document the mapping in the plan |
-| `✅ Addressed` text appears in a human comment, causing false positive "resolved" | Very Low | Low | Scope the `✅ Addressed` equivalence check to comments authored by bot logins only |
-| `resolveReviewThread` mutation requires the `id` (node ID), not the REST `comment_id` | Med | Med | GraphQL query already returns `id` (node ID) per thread; document this in code comment |
-| Spec/plan branches where CodeRabbit skips review have zero bot threads — gate must not block | Low | Med | Guard: if `UNRESOLVED_THREAD_COUNT=0`, always pass; only fail when count > 0 |
+| Risk                                                                                         | Likelihood | Impact             | Mitigation                                                                                         |
+| -------------------------------------------------------------------------------------------- | ---------- | ------------------ | -------------------------------------------------------------------------------------------------- |
+| GitHub GraphQL `reviewThreads` paginates beyond 100 nodes                                    | Low        | High (silent miss) | Use cursor-based pagination in the query loop; emit a warning if cursor is non-null after 10 pages |
+| Bot login list in `.ai-dev-workflow.yaml` diverges from actual bot accounts                  | Low        | Med                | Read bot logins from `review.platforms` mapping at runtime; document the mapping in the plan       |
+| `✅ Addressed` text appears in a human comment, causing false positive "resolved"            | Very Low   | Low                | Scope the `✅ Addressed` equivalence check to comments authored by bot logins only                 |
+| `resolveReviewThread` mutation requires the `id` (node ID), not the REST `comment_id`        | Med        | Med                | GraphQL query already returns `id` (node ID) per thread; document this in code comment             |
+| Spec/plan branches where CodeRabbit skips review have zero bot threads — gate must not block | Low        | Med                | Guard: if `UNRESOLVED_THREAD_COUNT=0`, always pass; only fail when count > 0                       |
 
 ---
 
@@ -85,17 +85,22 @@ The protocol document changes (Step 8c in Protocol 91, Step 5.1 in Protocol 90, 
 
 ```graphql
 # Illustrative — adapt during implementation
-query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
+query ($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $pr) {
       reviewThreads(first: 100, after: $cursor) {
-        pageInfo { hasNextPage endCursor }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
         nodes {
           id
           isResolved
           comments(first: 1) {
             nodes {
-              author { login }
+              author {
+                login
+              }
               body
             }
           }
@@ -220,8 +225,8 @@ fi
 
 5. **Update `91-orchestrate-work-protocol.md` Step 8c** — add a new row to the verification checklist table:
 
-   | Check | Pass condition |
-   |---|---|
+   | Check                                           | Pass condition                                                                                                                                 |
+   | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
    | All automated-reviewer `reviewThreads` resolved | GraphQL `reviewThreads.nodes[].isResolved=true` (or `✅ Addressed` in parent comment body) for every thread authored by a configured bot login |
 
    Add a code block showing the `gh api graphql` command that evaluates this check, consistent with the illustrative sample in this plan. Place this row after the "No `needs-fixes` label" row and before the "Automated reviewer loop summary" row in the existing table.
@@ -233,17 +238,17 @@ fi
    ```markdown
    **Reply-only resolutions (no code fix):** M thread(s) resolved via reply + resolveReviewThread mutation.
 
-   | Thread | Author | Concern summary | Rationale |
-   |--------|--------|-----------------|-----------|
-   | #1 | coderabbitai[bot] | First 60 chars of concern... | First 80 chars of reply rationale... |
+   | Thread | Author            | Concern summary              | Rationale                            |
+   | ------ | ----------------- | ---------------------------- | ------------------------------------ |
+   | #1     | coderabbitai[bot] | First 60 chars of concern... | First 80 chars of reply rationale... |
    ```
 
    When M=0 (all resolutions were code fixes), omit this subsection.
 
 7. **Update `90-batch-orchestrate-work-protocol.md` Step 5.1** — add the same `reviewThreads` unresolved-thread check to the post-dispatch PR verification checklist table (AC7). Add a row after "No `needs-fixes` label":
 
-   | Check | Pass condition |
-   |---|---|
+   | Check                                           | Pass condition                                                                                                                  |
+   | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
    | All automated-reviewer `reviewThreads` resolved | GraphQL `reviewThreads.nodes[].isResolved=true` (or `✅ Addressed` in body) for every thread authored by a configured bot login |
 
 8. **Verify `shellcheck` passes** — run `shellcheck scripts/development-workflow/pr-review-loop.sh` in the worktree and fix any warnings before committing.

@@ -20,13 +20,13 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Value |
-|---|---|
-| Protocol file | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` |
-| Config file | `.ai-dev-workflow.yaml` |
-| Local override file | `.tmp/template-config.json` (gitignored) |
-| Internal reviewers (default config) | `[claude, codex]` |
-| Default policy | `warn` |
+| Item                                | Value                                                                          |
+| ----------------------------------- | ------------------------------------------------------------------------------ |
+| Protocol file                       | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` |
+| Config file                         | `.ai-dev-workflow.yaml`                                                        |
+| Local override file                 | `.tmp/template-config.json` (gitignored)                                       |
+| Internal reviewers (default config) | `[claude, codex]`                                                              |
+| Default policy                      | `warn`                                                                         |
 
 ---
 
@@ -39,6 +39,7 @@ Before running this smoke test:
 - Verify the sub-section "Runtime-availability check" appears before the "Reviewer dispatch map" table
 
 **Expected result**: The sub-section is present and contains:
+
 - A reachability classification table listing runner contexts and which reviewers they can invoke
 - Policy resolution logic for `warn`, `fail-if-any-unavailable`, and zero-reachable cases
 - Warning comment format for skipped reviewers
@@ -201,12 +202,12 @@ Not applicable — this feature is a protocol documentation change. No runtime s
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| Step 7a summary comment requirement is missing from Step 7a | Implementation skipped BR-7 wording | Re-read BR-7 and add the mandatory summary comment rule to Step 7a |
-| Hard-fail comment format is undocumented | Use Case 2 wording was not included | Add the exact comment format from Use Case 2 step 3 to the protocol |
-| Override log message format is wrong | Use Case 4 exact wording was paraphrased | Match the exact wording from the spec Use Case 4 step 5 |
-| Smoke test link uses four `../` hops instead of three | Plan file depth miscounted | Plan file is at depth 4 (`docs/specs/developments/<folder>/`), so three `../` hops reach `docs/`; correct to `../../../testing/workflow/...` |
+| Symptom                                                     | Likely cause                             | Fix                                                                                                                                          |
+| ----------------------------------------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Step 7a summary comment requirement is missing from Step 7a | Implementation skipped BR-7 wording      | Re-read BR-7 and add the mandatory summary comment rule to Step 7a                                                                           |
+| Hard-fail comment format is undocumented                    | Use Case 2 wording was not included      | Add the exact comment format from Use Case 2 step 3 to the protocol                                                                          |
+| Override log message format is wrong                        | Use Case 4 exact wording was paraphrased | Match the exact wording from the spec Use Case 4 step 5                                                                                      |
+| Smoke test link uses four `../` hops instead of three       | Plan file depth miscounted               | Plan file is at depth 4 (`docs/specs/developments/<folder>/`), so three `../` hops reach `docs/`; correct to `../../../testing/workflow/...` |
 
 ---
 

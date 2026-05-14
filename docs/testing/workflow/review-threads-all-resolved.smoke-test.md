@@ -20,12 +20,12 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Value |
-|---|---|
-| Test PR | A PR where CodeRabbit has posted at least one inline thread of any severity |
-| Bot login (CodeRabbit) | `coderabbitai` |
-| Bot login (Devin) | `devin-ai-integration` |
-| `.ai-dev-workflow.yaml` platforms | `devin` and `coderabbit` (repo default) |
+| Item                              | Value                                                                       |
+| --------------------------------- | --------------------------------------------------------------------------- |
+| Test PR                           | A PR where CodeRabbit has posted at least one inline thread of any severity |
+| Bot login (CodeRabbit)            | `coderabbitai`                                                              |
+| Bot login (Devin)                 | `devin-ai-integration`                                                      |
+| `.ai-dev-workflow.yaml` platforms | `devin` and `coderabbit` (repo default)                                     |
 
 ---
 
@@ -63,6 +63,7 @@ Before running this smoke test:
 2. Wait for the script to complete.
 
 **Expected result**:
+
 - Script exits with non-zero status (1)
 - Output contains `RESULT=needs_fixes`
 - Output contains `UNRESOLVED_THREAD_COUNT=N` where N >= 1
@@ -89,6 +90,7 @@ Before running this smoke test:
    ```
 
 **Expected result**:
+
 - Script exits with status 0
 - Output contains `RESULT=clean`
 - Output contains `UNRESOLVED_THREAD_COUNT=0`
@@ -105,6 +107,7 @@ Before running this smoke test:
    ```
 
 **Expected result**:
+
 - The thread with `✅ Addressed` in the first comment body does **not** contribute to `UNRESOLVED_THREAD_COUNT`.
 - If that was the only unresolved thread, `RESULT=clean`.
 
@@ -121,6 +124,7 @@ Before running this smoke test:
    ```
 
 **Expected result**:
+
 - Script exits with status 0
 - Output contains `RESULT=clean`
 - Output contains `UNRESOLVED_THREAD_COUNT=0`
@@ -149,6 +153,7 @@ Before running this smoke test:
 4. Confirm the protocol's Step 8c logic would reject `ready-for-human-review` for this PR.
 
 **Expected result**:
+
 - GraphQL query returns N > 0
 - Step 8c would remove `ready-for-human-review` and apply `needs-fixes` for this PR
 
@@ -160,6 +165,7 @@ Before running this smoke test:
 2. Check the Automated Reviewer Loop Summary comment posted on the PR.
 
 **Expected result**:
+
 - The summary comment includes a section (or note) indicating which threads were resolved via reply-only with a short rationale
 - The `Resolved` count in the summary reflects the reply-only resolution
 
@@ -181,21 +187,21 @@ Before running this smoke test:
 
 No persistent seed data required. All test scenarios use live GitHub PRs.
 
-| Entity | Scenario | How to load |
-|---|---|---|
-| Test PR with unresolved CodeRabbit thread | AC1, AC2, AC4 | Create a PR; wait for CodeRabbit to post a Nitpick/Minor comment; do not resolve it |
-| Test PR with `✅ Addressed` comment | AC2 | Push a fix commit to a PR where CodeRabbit has a finding; CodeRabbit auto-appends the marker |
-| Test PR with human-authored thread | AC6 | Open a PR; human reviewer posts an inline comment without resolving it |
+| Entity                                    | Scenario      | How to load                                                                                  |
+| ----------------------------------------- | ------------- | -------------------------------------------------------------------------------------------- |
+| Test PR with unresolved CodeRabbit thread | AC1, AC2, AC4 | Create a PR; wait for CodeRabbit to post a Nitpick/Minor comment; do not resolve it          |
+| Test PR with `✅ Addressed` comment       | AC2           | Push a fix commit to a PR where CodeRabbit has a finding; CodeRabbit auto-appends the marker |
+| Test PR with human-authored thread        | AC6           | Open a PR; human reviewer posts an inline comment without resolving it                       |
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `UNRESOLVED_THREAD_COUNT` not in output | Running old version of `pr-review-loop.sh` | Check out feature branch; confirm `check_unresolved_threads` function exists in script |
-| GraphQL query returns 0 threads even though comments exist | Comments are REST inline comments, not review threads | Verify the comment was posted as part of a review (pull request review thread), not a standalone PR comment |
-| `resolveReviewThread` mutation fails with "Not Found" | Using REST `comment_id` instead of GraphQL node `id` | Re-run GraphQL query from Step 1; use the `id` field (node ID starting with `PRT_`) |
+| Symptom                                                                        | Likely cause                                            | Fix                                                                                                                   |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `UNRESOLVED_THREAD_COUNT` not in output                                        | Running old version of `pr-review-loop.sh`              | Check out feature branch; confirm `check_unresolved_threads` function exists in script                                |
+| GraphQL query returns 0 threads even though comments exist                     | Comments are REST inline comments, not review threads   | Verify the comment was posted as part of a review (pull request review thread), not a standalone PR comment           |
+| `resolveReviewThread` mutation fails with "Not Found"                          | Using REST `comment_id` instead of GraphQL node `id`    | Re-run GraphQL query from Step 1; use the `id` field (node ID starting with `PRT_`)                                   |
 | CodeRabbit thread still shows `isResolved: false` after `✅ Addressed` appears | Normal — `✅ Addressed` in body is the equivalence path | Script should still treat it as resolved; if not, check the `✅ Addressed` grep pattern in `check_unresolved_threads` |
 
 ---

@@ -19,12 +19,12 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Value |
-|---|---|
-| Test user (role X) | `[email or username]` |
-| Test user (role Y) | `[email or username]` |
-| [Entity] ID | `[ID or how to find it]` |
-| Feature URL | `[URL path]` |
+| Item               | Value                    |
+| ------------------ | ------------------------ |
+| Test user (role X) | `[email or username]`    |
+| Test user (role Y) | `[email or username]`    |
+| [Entity] ID        | `[ID or how to find it]` |
+| Feature URL        | `[URL path]`             |
 
 ---
 
@@ -81,18 +81,18 @@ Each checkbox maps to an acceptance criterion from the spec.
 
 The following seed data must be present:
 
-| Entity | Scenario | How to load |
-|---|---|---|
+| Entity   | Scenario               | How to load      |
+| -------- | ---------------------- | ---------------- |
 | [Entity] | [Scenario description] | `[seed command]` |
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| [Symptom 1] | [Cause] | [How to fix] |
-| [Symptom 2] | [Cause] | [How to fix] |
+| Symptom     | Likely cause | Fix          |
+| ----------- | ------------ | ------------ |
+| [Symptom 1] | [Cause]      | [How to fix] |
+| [Symptom 2] | [Cause]      | [How to fix] |
 
 ---
 

@@ -19,16 +19,16 @@
 
 ## Verification Log
 
-| Check | Command / query | Result |
-|---|---|---|
-| Repo revision | `git rev-parse --short HEAD` | `a314508` |
-| Retrospective protocol line count | `wc -l docs/workflow/development-workflow/protocols/06-retrospective-protocol.md` | 350 lines |
-| Sync-template Claude command line count | `wc -l .claude/commands/sync-template.md` | 296 lines |
-| Sync-template Cursor command line count | `wc -l .cursor/commands/sync-template.md` | 287 lines |
-| Codex sync-template skill files | `ls .codex/skills/workflow-sync-template/` | `SKILL.md` only |
-| .ai-dev-workflow.yaml line count | `wc -l .ai-dev-workflow.yaml` | 96 lines |
-| README workflow config section | `grep -n "schema_version" docs/workflow/development-workflow/README.md` | line 373 |
-| Existing retro smoke test | `ls docs/testing/workflow/ \| grep retro` | `retrospective-protocol.smoke-test.md` |
+| Check                                   | Command / query                                                                   | Result                                 |
+| --------------------------------------- | --------------------------------------------------------------------------------- | -------------------------------------- |
+| Repo revision                           | `git rev-parse --short HEAD`                                                      | `a314508`                              |
+| Retrospective protocol line count       | `wc -l docs/workflow/development-workflow/protocols/06-retrospective-protocol.md` | 350 lines                              |
+| Sync-template Claude command line count | `wc -l .claude/commands/sync-template.md`                                         | 296 lines                              |
+| Sync-template Cursor command line count | `wc -l .cursor/commands/sync-template.md`                                         | 287 lines                              |
+| Codex sync-template skill files         | `ls .codex/skills/workflow-sync-template/`                                        | `SKILL.md` only                        |
+| .ai-dev-workflow.yaml line count        | `wc -l .ai-dev-workflow.yaml`                                                     | 96 lines                               |
+| README workflow config section          | `grep -n "schema_version" docs/workflow/development-workflow/README.md`           | line 373                               |
+| Existing retro smoke test               | `ls docs/testing/workflow/ \| grep retro`                                         | `retrospective-protocol.smoke-test.md` |
 
 ---
 
@@ -77,9 +77,9 @@
 
 ## Seed Data
 
-| Entity | Values / Scenario | File |
-|---|---|---|
-| No seed data required | All scenarios are protocol-level text walkthroughs | N/A |
+| Entity                | Values / Scenario                                  | File |
+| --------------------- | -------------------------------------------------- | ---- |
+| No seed data required | All scenarios are protocol-level text walkthroughs | N/A  |
 
 ---
 
@@ -94,11 +94,11 @@ No other `docs/project/` or `AGENTS.md` files require updates for this feature.
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| Step 5 version-recording change in sync-template disrupts existing sync flow | Low | Low | The recording step is purely additive — it writes to a new field that did not exist before. Implementation Order step 4 adds `.ai-dev-workflow.yaml` to the git stage instructions so the updated file is included in the commit. |
-| Retrospective Step 3b calling `gh issue list` on external template repo fails in offline/restricted environments | Low | Low | BR-5 graceful degradation: mark all findings as "Template check unavailable" and continue |
-| Parallel worktrees or batch agents write different `last_synced_version` values to `.ai-dev-workflow.yaml` | Low | Low | `last_synced_version` is written only by the sync-template skill (BR-7), which is always run in a single-developer context, not in parallel batch orchestration |
+| Risk                                                                                                             | Likelihood | Impact | Mitigation                                                                                                                                                                                                                        |
+| ---------------------------------------------------------------------------------------------------------------- | ---------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Step 5 version-recording change in sync-template disrupts existing sync flow                                     | Low        | Low    | The recording step is purely additive — it writes to a new field that did not exist before. Implementation Order step 4 adds `.ai-dev-workflow.yaml` to the git stage instructions so the updated file is included in the commit. |
+| Retrospective Step 3b calling `gh issue list` on external template repo fails in offline/restricted environments | Low        | Low    | BR-5 graceful degradation: mark all findings as "Template check unavailable" and continue                                                                                                                                         |
+| Parallel worktrees or batch agents write different `last_synced_version` values to `.ai-dev-workflow.yaml`       | Low        | Low    | `last_synced_version` is written only by the sync-template skill (BR-7), which is always run in a single-developer context, not in parallel batch orchestration                                                                   |
 
 ---
 

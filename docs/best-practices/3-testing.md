@@ -19,15 +19,18 @@ Define it there during project setup. This file covers principles and convention
 ## What to Test
 
 ### Always test:
+
 - Business logic and domain rules
 - Edge cases (empty lists, null values, boundary conditions)
 - Error handling paths (what happens when a dependency fails)
 
 ### Test selectively:
+
 - Integration with external services (use mocks/stubs at the boundary)
 - UI components (test interaction, not styling)
 
 ### Don't over-test:
+
 - Simple getters/setters with no logic
 - Framework code or third-party library internals
 - Implementation details that may change during refactoring
@@ -43,6 +46,7 @@ docs/testing/[app-or-section]/[feature-slug].smoke-test.md
 See the [smoke test runbook template](../workflow/development-workflow/templates/smoke-test-runbook-template.md) for the standard format, and [docs/testing/README.md](../testing/README.md) for how to execute them in this repo.
 
 Smoke tests should be run:
+
 - Before every release
 - After deploying to staging
 - When investigating a reported production issue
@@ -71,5 +75,6 @@ The recommended approach is a **two-tier execution model**: a committed automate
 ## CI Integration
 
 All tests run automatically on every pull request. A PR cannot be merged if:
+
 - Any test fails
 - Test coverage drops below the configured threshold (if applicable)

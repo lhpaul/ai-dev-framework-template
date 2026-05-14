@@ -18,6 +18,7 @@ Before starting work on an item, agents must treat the tracker work item as the 
 - **Priority + due date + status** (for orchestration/prioritization)
 
 If the agent does not have direct tracker access, it must ask the human to paste:
+
 - the current description, and
 - the relevant recent comments (especially any decisions/changes).
 

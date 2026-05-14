@@ -69,8 +69,8 @@
 ## Seed Data
 
 | Entity | Values / Scenario | File |
-|---|---|---|
-| None | No seed data | — |
+| ------ | ----------------- | ---- |
+| None   | No seed data      | —    |
 
 ---
 
@@ -85,10 +85,10 @@ Per protocol 02: list project docs the **developer** must touch during implement
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| Checklist buried below long Path 1 content | Low | Medium | Place section **above** Path 1 so it appears in the first screen of the doc. |
-| Wording contradicts `.github` or security docs elsewhere | Low | Low | During implementation, run `grep -Ri "permissions:" docs/workflow/development-workflow/` (and similar) to align terminology. |
+| Risk                                                     | Likelihood | Impact | Mitigation                                                                                                                   |
+| -------------------------------------------------------- | ---------- | ------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| Checklist buried below long Path 1 content               | Low        | Medium | Place section **above** Path 1 so it appears in the first screen of the doc.                                                 |
+| Wording contradicts `.github` or security docs elsewhere | Low        | Low    | During implementation, run `grep -Ri "permissions:" docs/workflow/development-workflow/` (and similar) to align terminology. |
 
 ---
 

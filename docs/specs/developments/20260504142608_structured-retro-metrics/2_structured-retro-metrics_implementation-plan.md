@@ -19,13 +19,13 @@
 
 ## Verification Log
 
-| Check | Command / query | Result |
-|---|---|---|
-| Repo revision | `git rev-parse --short HEAD` | `ff2a19c` |
-| Files referencing retrospective protocol | `grep -rl "06-retrospective-protocol\|retrospective" .claude/agents/ .cursor/agents/ .codex/skills/ docs/workflow/development-workflow/ CLAUDE.md` | 11 files (see Layer-by-Layer Changes) |
-| Existing meta-retrospective file | `ls docs/workflow/development-workflow/protocols/ \| grep -E "06b\|meta"` | none — file does not yet exist |
-| Existing retro-metrics log | `ls docs/workflow/ \| grep retro` | none — file does not yet exist |
-| Smoke test location | `ls docs/testing/workflow/` | 19 existing `.smoke-test.md` files; new file will be added at `docs/testing/workflow/458-structured-retro-metrics.smoke-test.md` |
+| Check                                    | Command / query                                                                                                                                    | Result                                                                                                                           |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Repo revision                            | `git rev-parse --short HEAD`                                                                                                                       | `ff2a19c`                                                                                                                        |
+| Files referencing retrospective protocol | `grep -rl "06-retrospective-protocol\|retrospective" .claude/agents/ .cursor/agents/ .codex/skills/ docs/workflow/development-workflow/ CLAUDE.md` | 11 files (see Layer-by-Layer Changes)                                                                                            |
+| Existing meta-retrospective file         | `ls docs/workflow/development-workflow/protocols/ \| grep -E "06b\|meta"`                                                                          | none — file does not yet exist                                                                                                   |
+| Existing retro-metrics log               | `ls docs/workflow/ \| grep retro`                                                                                                                  | none — file does not yet exist                                                                                                   |
+| Smoke test location                      | `ls docs/testing/workflow/`                                                                                                                        | 19 existing `.smoke-test.md` files; new file will be added at `docs/testing/workflow/458-structured-retro-metrics.smoke-test.md` |
 
 ---
 
@@ -91,8 +91,8 @@ All changes are Markdown file additions or modifications.
 
 Not applicable — this feature introduces no data model or application state. The metrics log file (`docs/workflow/retro-metrics.md`) is created with headers only.
 
-| Entity | Values / Scenario | File |
-|---|---|---|
+| Entity              | Values / Scenario                 | File                             |
+| ------------------- | --------------------------------- | -------------------------------- |
 | Initial metrics log | Column headers only, no data rows | `docs/workflow/retro-metrics.md` |
 
 ---
@@ -108,13 +108,13 @@ All other documentation updates are the implementation itself (the protocol file
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| Metrics block step disrupts existing retro protocol structure | Low | Medium | Insert as Step 3d (a sub-step of existing Step 3), keeping Steps 4–6 numbering unchanged; re-read the protocol before committing |
-| `docs/workflow/retro-metrics.md` path conflicts with a planned sister item | Low | Low | Verify path is not claimed by any other in-flight branch before pushing |
-| Agent files reference the old six-step protocol numbering explicitly | Low | Medium | Inspect each agent/skill file for hard-coded step references before updating |
-| Missing fields in metrics block definition lead to ambiguous entries | Low | High | Define all required fields with precise, unambiguous names and units in the protocol text; replicate from the spec's Acceptance Criteria |
-| Meta-retrospective classified "Still recurring" triggers unnecessary escalations | Low | Low | Protocol explicitly states directional analysis only; analyst must not overstate confidence (BR-8 cadence is advisory) |
+| Risk                                                                             | Likelihood | Impact | Mitigation                                                                                                                               |
+| -------------------------------------------------------------------------------- | ---------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Metrics block step disrupts existing retro protocol structure                    | Low        | Medium | Insert as Step 3d (a sub-step of existing Step 3), keeping Steps 4–6 numbering unchanged; re-read the protocol before committing         |
+| `docs/workflow/retro-metrics.md` path conflicts with a planned sister item       | Low        | Low    | Verify path is not claimed by any other in-flight branch before pushing                                                                  |
+| Agent files reference the old six-step protocol numbering explicitly             | Low        | Medium | Inspect each agent/skill file for hard-coded step references before updating                                                             |
+| Missing fields in metrics block definition lead to ambiguous entries             | Low        | High   | Define all required fields with precise, unambiguous names and units in the protocol text; replicate from the spec's Acceptance Criteria |
+| Meta-retrospective classified "Still recurring" triggers unnecessary escalations | Low        | Low    | Protocol explicitly states directional analysis only; analyst must not overstate confidence (BR-8 cadence is advisory)                   |
 
 ---
 
@@ -125,7 +125,6 @@ All other documentation updates are the implementation itself (the protocol file
    Verify: file exists at `docs/workflow/retro-metrics.md`, opens without lint errors, headers match the field list from spec Acceptance Criterion 1.
 
 2. **Create `docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md`** with the following required sections:
-
    - **Header**: role = Retrospective Analyst, purpose = periodic verification of prior improvement effectiveness
    - **Prerequisites**: metrics log exists at `docs/workflow/retro-metrics.md`; at least one prior retrospective entry present (if fewer than default window size, note limited data and proceed)
    - **Step 1: Resolve Scope** — read N most recent entries from `docs/workflow/retro-metrics.md`; default window = 5; document how to override (human passes a number at invocation)
@@ -142,24 +141,25 @@ All other documentation updates are the implementation itself (the protocol file
 3. **Update `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md`**:
 
    a. After existing Step 3c (Categorization taxonomy), insert **Step 3d: Populate Metrics Block**. Content must include:
-      - Instruction: after completing Steps 3a–3c, fill in the required metrics block
-      - Required fields with unambiguous definitions:
-        - **Batch identifier**: the PR numbers or batch date used as the scope in Step 1
-        - **Human interventions count**: number of moments where the human had to correct the agent's direction mid-run (source: Step 2c or PR events)
-        - **Step 5.2 violations count**: number of instances where the automated reviewer found a Step 5.2 (PR-readiness) violation (source: PR comments)
-        - **Automated-reviewer retry loops count**: number of additional pr-review-loop iterations beyond the first pass (source: PR comment timestamps)
-        - **Escalations count**: number of items that escalated past the automated retry limit (source: PR labels or conversation notes)
-        - **Prior action item recurrence assessment**: for each open action item from prior retrospectives whose targeted failure mode was observable in this batch, record "recurred" or "did not recur" (source: comparison with prior retrospective output)
-      - "Unavailable" rule: if a field cannot be reliably determined from available data, record "unavailable" (not blank, not a guess) — BR-7
-      - Zero is a valid value — BR-1
-      - The metrics block is part of the retrospective output presented in Step 4
+   - Instruction: after completing Steps 3a–3c, fill in the required metrics block
+   - Required fields with unambiguous definitions:
+     - **Batch identifier**: the PR numbers or batch date used as the scope in Step 1
+     - **Human interventions count**: number of moments where the human had to correct the agent's direction mid-run (source: Step 2c or PR events)
+     - **Step 5.2 violations count**: number of instances where the automated reviewer found a Step 5.2 (PR-readiness) violation (source: PR comments)
+     - **Automated-reviewer retry loops count**: number of additional pr-review-loop iterations beyond the first pass (source: PR comment timestamps)
+     - **Escalations count**: number of items that escalated past the automated retry limit (source: PR labels or conversation notes)
+     - **Prior action item recurrence assessment**: for each open action item from prior retrospectives whose targeted failure mode was observable in this batch, record "recurred" or "did not recur" (source: comparison with prior retrospective output)
+   - "Unavailable" rule: if a field cannot be reliably determined from available data, record "unavailable" (not blank, not a guess) — BR-7
+   - Zero is a valid value — BR-1
+   - The metrics block is part of the retrospective output presented in Step 4
 
    b. Update **Step 4** to include the metrics block in the structured output format (alongside improvement opportunities). The block may be presented as a separate section after improvement opportunities.
 
    c. Update **Step 6 (Close)** to add: after confirming all opportunities have been acted on, append the finalized metrics block to `docs/workflow/retro-metrics.md` (create the file if it does not exist). Instruction should specify the Markdown table row format matching the column headers in that file.
 
    d. At the end of the file (after the Step 6 close section), add a **"See also"** reference:
-      > For periodic verification of whether prior improvement action items are working, run the meta-retrospective protocol: `docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md`. Recommended cadence: every 5 batches. Can be triggered at any time.
+
+   > For periodic verification of whether prior improvement action items are working, run the meta-retrospective protocol: `docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md`. Recommended cadence: every 5 batches. Can be triggered at any time.
 
    Verify: Step 3d exists between Steps 3c and Step 4; Step 6 includes append instruction; "See also" section references `06b-meta-retrospective-protocol.md`; no existing step numbering is broken.
 

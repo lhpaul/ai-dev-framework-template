@@ -18,6 +18,7 @@ This feature adds two complementary protocol enhancements: a required metrics bl
 **Preconditions**: At least one batch or item run has just completed and the retrospective analyst is synthesizing findings.
 
 **Steps**:
+
 1. The analyst runs the retrospective as normal (Steps 1–3 of the current protocol).
 2. After synthesizing findings, the analyst fills in the required metrics block covering the batch just analyzed.
 3. For each prior retrospective action item that targeted the same failure modes observed in this batch, the analyst records whether each mode recurred.
@@ -28,15 +29,18 @@ This feature adds two complementary protocol enhancements: a required metrics bl
 **Postconditions**: The metrics log contains one new entry for this batch with all required fields populated.
 
 **Information shown**:
+
 - The batch identifier (PR numbers or batch date)
 - Counts for each tracked metric (human interventions, Step 5.2 violations, retry loops, escalations)
 - A recurrence assessment for each prior action item relevant to this batch
 
 **Actions available**:
+
 - Approve the metrics block as-is
 - Correct a metric value before finalizing
 
 **Considerations**:
+
 - If a metric cannot be determined from available data (e.g., PR event history is unavailable), the field is marked "unavailable" rather than left blank or guessed.
 - Metrics are additive: if a batch produced zero human interventions, that is a valid and useful data point.
 
@@ -48,6 +52,7 @@ This feature adds two complementary protocol enhancements: a required metrics bl
 **Preconditions**: At least one prior retrospective entry exists in the metrics log. (When fewer than the default analysis window — 5 entries — are available, the meta-retrospective runs with all available entries and explicitly notes the limited data; it does not require a minimum of 3 entries to proceed.)
 
 **Steps**:
+
 1. The analyst reads the N most recent entries from the metrics log (default window: last 5 entries, configurable by the human).
 2. For each action item recorded across those entries, the analyst classifies the item's outcome based on the metric trend:
    - "Verified fixed": the targeted failure mode has not recurred in any subsequent batch
@@ -61,16 +66,19 @@ This feature adds two complementary protocol enhancements: a required metrics bl
 **Postconditions**: Each action item from the review window has a recorded outcome. Unresolved recurring failure modes are escalated into the active backlog.
 
 **Information shown**:
+
 - A trend table: batch identifiers across columns, tracked metrics as rows, values filled in for each batch
 - A per-action-item outcome classification
 - Escalated findings list (items classified "Still recurring")
 
 **Actions available**:
+
 - Override a classification if the human disagrees with the analyst's reading
 - Accept escalated findings into the backlog
 - Skip creating a backlog item for a specific finding (with optional note)
 
 **Considerations**:
+
 - The analysis window is configurable. If fewer entries than the default window exist, the analyst uses all available entries and notes the limited data.
 - Trend data is directional, not statistically rigorous. The analyst must not overstate confidence (e.g., one clean batch after a fix does not definitively verify the fix).
 - The meta-retrospective does not replace the regular retrospective. It is a periodic verification layer on top of the existing protocol.
