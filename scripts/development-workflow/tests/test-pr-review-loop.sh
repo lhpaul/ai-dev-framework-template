@@ -58,13 +58,14 @@ chmod +x "$MOCK_BIN/gh"
 cat > "$MOCK_BIN/git" <<'MOCK_GIT'
 #!/usr/bin/env bash
 # Return the configured repo root when rev-parse --git-common-dir is requested.
-# For all other git calls, succeed silently.
+# For all other git calls, fail fast so unintended git dependencies are explicit.
 case "${*}" in
   *"rev-parse"*"--git-common-dir"*)
     printf '%s/.git\n' "${MOCK_REPO_ROOT:-.}"
     ;;
   *)
-    exit 0
+    printf 'unexpected git invocation in harness: git %s\n' "$*" >&2
+    exit 64
     ;;
 esac
 MOCK_GIT
