@@ -492,13 +492,75 @@ This step is mandatory when advisory findings are present. A summary comment tha
 
 ---
 
+### Pre-post verification guard (mandatory before every `gh pr comment` / `gh pr review` call)
+
+Before executing any `gh pr comment` or `gh pr review` command that summarises or
+characterises platform results (approval, pass, clean, or any equivalent verdict claim),
+the agent **must** complete this three-step guard. This applies equally to inline fix-pass
+summaries and to the final reviewer-loop summary comment.
+
+**Step 1 — Re-read the platform transcript.**
+
+Retrieve the raw platform response immediately before composing the comment body. Do not
+rely on in-session memory of what a platform said earlier in the loop. For each platform
+whose result will be cited, run a fresh fetch:
+
+```bash
+# Fetch the most recent review comment from a bot (adjust login pattern as needed)
+gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
+  --jq '[.[] | select(.user.login | test("coderabbit|devin|greptile|pr-agent"))] | last'
+
+# Or fetch the most recent issue comment
+gh api repos/{owner}/{repo}/issues/{pr_number}/comments \
+  --jq '[.[] | select(.user.login | test("coderabbit|devin|greptile|pr-agent"))] | last'
+```
+
+For script-posted summaries (`pr-review-loop.sh --post-final-summary` or auto-posted by the
+script on `clean`/`escalate` exits), the script itself is the authoritative transcript
+source — this guard applies to agent-composed comments, not script-composed output.
+
+**Step 2 — Cross-check every claim against the transcript.**
+
+For every claim of approval, pass, or clean status in the draft comment body:
+
+1. Identify the exact excerpt in the freshly fetched transcript that supports the claim.
+2. If no excerpt supports the claim, remove or reword the claim before posting.
+
+Examples of claims that must be directly supported:
+
+- "CodeRabbit APPROVED" — requires a review event with `state: APPROVED` or a transcript
+  excerpt such as "All discussions resolved" or an explicit approval statement.
+- "Devin found no issues" — requires a Devin comment body confirming no findings, not
+  merely the absence of a `CHANGES_REQUESTED` review.
+- "All platforms passed" — requires at least one supporting excerpt per platform cited.
+
+**Step 3 — Apply the conservative fallback when the transcript is absent or ambiguous.**
+
+If the transcript is unavailable (fetch returned empty, rate-limited, or timed out) or
+ambiguous (the platform comment does not clearly indicate approval or pass), **do not
+fabricate a result**. Use the following conservative fallback message instead of a
+fabricated summary:
+
+> "Review completed — see individual platform comments for details."
+
+This fallback is always safe to post. It does not make a false claim and does not block
+the PR from proceeding; human reviewers can read the platform comments directly.
+
+**Escalation on repeated transcript unavailability.**
+
+If the transcript fetch fails on two or more consecutive attempts for the same platform,
+log a warning in the fix commit comment and escalate to human review rather than continuing
+to compose summary comments without transcript support.
+
+---
+
 ### PR feedback tracking and comments
 
 Follow the "PR feedback tracking and comments" subsection of Step 7 in `91-orchestrate-work-protocol.md`:
 
 - **Ledger bootstrap:** Before starting Step 7, seed the PR feedback ledger with **all** open blocking findings visible on the PR across its full history (not only comments timestamped after the current `HEAD`). That way a fresh run does not declare clean while a code bug from an earlier commit on the branch is still open. Align with the pre-flight rules above. Note: `pr-review-loop.sh` performs a **stale findings recovery** for Devin — when Devin does not review the current HEAD (no check run), the script scans the full PR history for unresolved findings and reports `needs_fixes` with reason `stale_findings`.
 - Maintain a PR feedback ledger tracking all blocking findings across cycles (keyed by `(platform, path, body_snippet)`).
-- After each fixer push, post a **fix commit comment** on the PR listing which findings that commit resolved and any remaining open findings.
+- After each fixer push, post a **fix commit comment** on the PR listing which findings that commit resolved and any remaining open findings. Apply the [Pre-post verification guard](#pre-post-verification-guard-mandatory-before-every-gh-pr-comment--gh-pr-review-call) before composing each fix commit comment.
 - After each fixer push, **reply to each addressed inline review comment** on the PR to mark it as resolved. This is mandatory. Follow Protocol 91 ("Resolve inline review comments") for the exact `gh api` command format and delegation requirements for fixer subagents.
 - When the loop terminates with `clean` or `escalate`, **`pr-review-loop.sh` automatically posts the "Automated Reviewer Loop Summary" comment** — you do not need to post it manually for those exits. For `needs_fixes` at `cycle >= max_cycles`, pass `--post-final-summary` to the final script invocation and the summary is posted automatically. The script-posted comment satisfies the Step 8c `hasReviewSummary` check in all three cases.
 - If the result is `skipped` (no platforms configured), do not post a summary comment.
