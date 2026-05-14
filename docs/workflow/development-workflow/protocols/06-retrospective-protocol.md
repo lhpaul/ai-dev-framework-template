@@ -141,10 +141,11 @@ Record:
 Carry this mapping into Step 4 (presentation) and Step 5 (action execution).
 
 **Downstream script-bug tracking prompt**: Were any template workflow script bugs
-fixed in a downstream sync PR during this retrospective's cycle? If yes, file a
-GitHub issue in the template repository tagged with the `workflow` label and include
-a link to the downstream fix commit in the issue body. This prevents the same bug
-from shipping to future downstream syncs.
+fixed in a downstream sync PR during this retrospective's cycle? If yes, treat the
+bug as a finding and classify it as `contribute-upstream` in Step 3b so that Step 3e
+automatically files exactly one upstream issue (labelled `workflow`) with a link to
+the downstream fix commit. This prevents the same bug from shipping to future
+downstream syncs without creating duplicate issues.
 
 ### 3b. Template cross-reference (runs when `template.repository` is configured; skipped otherwise)
 

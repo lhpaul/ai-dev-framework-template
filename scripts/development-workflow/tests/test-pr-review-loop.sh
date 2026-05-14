@@ -13,7 +13,6 @@
 # Exit code: 0 if all tests pass, 1 if any test fails.
 
 set -euo pipefail
-trap 'case $? in 141) exit 0 ;; *) exit $? ;; esac' EXIT
 
 # ---------------------------------------------------------------------------
 # Locate repository root (works inside worktrees and normal checkouts).
@@ -31,11 +30,19 @@ REPO_ROOT="$(cd "$SCRIPT_DIR" && CDPATH='' cd -- "$(git rev-parse --git-common-d
 MOCK_BIN="$(mktemp -d)"
 _METRICS_TMP=""
 _METRICS_DIR=""
-# Combine cleanup: remove mock bin AND any temp metrics file used by Area 3 tests.
-trap '
+
+# Single EXIT trap: normalise SIGPIPE exit code (141 -> 0) and clean up temp
+# directories. A second trap would override this one, losing the 141 guard.
+_harness_exit() {
+  local status=$?
   rm -rf "$MOCK_BIN"
   [ -n "${_METRICS_DIR:-}" ] && rm -rf "$_METRICS_DIR"
-' EXIT
+  case "$status" in
+    141) exit 0 ;;
+    *)   exit "$status" ;;
+  esac
+}
+trap _harness_exit EXIT
 
 # Mock gh: prints $MOCK_GH_OUTPUT and exits with $MOCK_GH_EXIT (default 0).
 cat > "$MOCK_BIN/gh" <<'MOCK_GH'

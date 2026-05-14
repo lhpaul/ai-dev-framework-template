@@ -148,7 +148,7 @@ bugs before labeling the production PR `ready-for-human-review`.
 were filed from downstream sync retrospectives:
 
 ```bash
-gh issue list --label workflow --state open
+gh issue list --label workflow --state open --limit 200
 ```
 
 If any known script bugs remain open and affect code in this release, address them
