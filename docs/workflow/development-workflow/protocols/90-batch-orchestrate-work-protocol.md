@@ -49,6 +49,35 @@ If the request is explicitly about a single development, branch, or PR, skip thi
 
 ---
 
+## Explicit Item List Scope Guard
+
+**Hard-refuse rule**: When the Portfolio Orchestrator is dispatched with an explicit item list (e.g., `/run-work 143 148 145` or a handoff metadata field `ITEM_LIST=143,148,145`), it **must not** take any artifact-mutating action on items outside that list. This rule applies to **all** of the following artifact mutations:
+
+- Branch creation
+- PR opening, labeling, or editing
+- Tracker status updates
+- Subagent dispatch (Work Item Runner or stage agent)
+- CHANGELOG edits
+
+**Detection**: An explicit item list is present when the human invocation or handoff metadata includes a bounded set of issue numbers, tracker IDs, branch names, or PR numbers. An unrestricted invocation ("run everything that can advance") does **not** set the scope guard.
+
+**Out-of-scope item detection**: While gathering portfolio state (Step 1) and during batch supervision (Step 5), if the orchestrator encounters any open PR, branch, or tracker item that is **not** in the explicit list:
+
+1. **Do not touch it** — skip all artifact mutations for that item.
+2. **Log a WARNING** (do not silently skip):
+
+   ```text
+   WARNING: out-of-scope item detected — [branch/PR/issue identifier] is not in the explicit item list [<list>]. Skipping all actions for this item.
+   ```
+
+3. Include all detected out-of-scope items in the Step 6 summary under a dedicated "Out-of-Scope Items Detected (Skipped)" section.
+
+**Corollary — no opportunistic advancement**: When an explicit list is active, the orchestrator must not opportunistically advance an out-of-scope item even if it is clearly ready (e.g., a stale-status correction that would normally proceed automatically). Every such item gets the WARNING log and is skipped.
+
+**Human override**: An explicit human instruction within the same session may expand the scope. The override must be stated explicitly (e.g., "also advance #329"). Log the override in the batch summary.
+
+---
+
 ## Step 1: Gather Portfolio State
 
 ### 1a. Query the issue tracker (primary source of truth)

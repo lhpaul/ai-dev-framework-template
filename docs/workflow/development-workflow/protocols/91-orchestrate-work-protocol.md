@@ -55,6 +55,33 @@ Prefer the helper scripts in `scripts/development-workflow/` for deterministic s
 
 **CHANGELOG in parallel batches**: Each item in a parallel batch adds its own CHANGELOG entry as normal. CHANGELOG merge conflicts are resolved at merge time by the batch-merge auto-resolution (protocol 94 Step 4.3). Do not skip or consolidate CHANGELOG entries — see protocol 90 Step 3.6 for rationale.
 
+### Explicit Item List Scope Guard
+
+**Hard-refuse rule**: When the Work Item Runner is dispatched with an explicit item list (e.g., `ITEM_LIST=143,148,145` in handoff metadata, or a direct human invocation like `/run-item-work 143 148 145`), it **must not** take any artifact-mutating action on items outside that list. This rule applies to **all** of the following artifact mutations:
+
+- Branch creation
+- PR opening, labeling, or editing
+- Tracker status updates
+- Stage-agent dispatch
+- CHANGELOG edits
+
+**Detection**: An explicit item list is present when the handoff metadata or human invocation includes a bounded set of issue numbers, tracker IDs, branch names, or PR numbers. A single-item invocation targeting one specific item is self-scoping and does not require a list check beyond confirming that any encountered open PR or branch belongs to the same item.
+
+**Out-of-scope item detection**: During Step 1 (resolve), Step 2 (determine next action), and at any point during execution, if the Work Item Runner encounters any open PR, branch, or tracker item that is **not** in the explicit list:
+
+1. **Do not touch it** — skip all artifact mutations for that item.
+2. **Log a WARNING** (do not silently skip):
+
+   ```text
+   WARNING: out-of-scope item detected — [branch/PR/issue identifier] is not in the explicit item list [<list>]. Skipping all actions for this item.
+   ```
+
+3. Include all detected out-of-scope items in the Step 6 summary under a dedicated "Out-of-Scope Items Detected (Skipped)" section.
+
+**Corollary — no opportunistic advancement**: When an explicit list is active, the Work Item Runner must not opportunistically advance an out-of-scope item even if it appears clearly ready or related. Every such item gets the WARNING log and is skipped.
+
+**Human override**: An explicit human instruction within the same session may expand the scope. The override must be stated explicitly. Log the override in the Step 6 summary.
+
 Resolve the request to exactly one of the following:
 
 1. **Backlog / tracker work item** — use when a human explicitly requests a not-yet-started item
