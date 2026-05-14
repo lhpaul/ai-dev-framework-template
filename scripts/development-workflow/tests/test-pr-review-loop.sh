@@ -19,9 +19,9 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 # Locate repo root from the script's directory.
-# git rev-parse --git-common-dir may return a relative path; resolve it by
-# cd-ing into SCRIPT_DIR first, then navigating from the git-common-dir result.
-REPO_ROOT="$(cd "$SCRIPT_DIR" && CDPATH='' cd -- "$(git rev-parse --git-common-dir)/.." && pwd)"
+# Use --show-toplevel so the path resolves to the current worktree root
+# (correct when the harness runs inside a linked worktree).
+REPO_ROOT="$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel)"
 
 # ---------------------------------------------------------------------------
 # Mock PATH setup — create a temp dir with stub commands for gh and git.
