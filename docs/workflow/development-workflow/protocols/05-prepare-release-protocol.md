@@ -137,6 +137,23 @@ Per `93-automated-reviewer-loop-protocol.md`, check for existing unresolved bloc
 
 Run `pr-review-loop.sh` to completion **before** starting the CI loop. Do not run reviewer and CI in parallel.
 
+**Script-coverage requirement**: Before running the reviewer loop, confirm that
+CodeRabbit (when available) is configured to review all files in
+`scripts/development-workflow/` that were modified since the last release. If
+CodeRabbit is not installed, manually review changed workflow scripts for logic
+bugs before labeling the production PR `ready-for-human-review`.
+
+**Downstream script-bug review**: Before labeling the production PR
+`ready-for-human-review`, search for open GitHub issues labeled `workflow` that
+were filed from downstream sync retrospectives:
+
+```bash
+gh issue list --label workflow --state open
+```
+
+If any known script bugs remain open and affect code in this release, address them
+in the release branch or document the decision to defer with a comment on the issue.
+
 Interpret `RESULT` from the script output:
 
 | Result        | Action                                                                                                                                                                                                                       |
