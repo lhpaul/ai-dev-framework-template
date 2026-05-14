@@ -140,6 +140,13 @@ Record:
 
 Carry this mapping into Step 4 (presentation) and Step 5 (action execution).
 
+**Downstream script-bug tracking prompt**: Were any template workflow script bugs
+fixed in a downstream sync PR during this retrospective's cycle? If yes, treat the
+bug as a finding and classify it as `contribute-upstream` in Step 3b so that Step 3e
+automatically files exactly one upstream issue (labelled `workflow`) with a link to
+the downstream fix commit. This prevents the same bug from shipping to future
+downstream syncs without creating duplicate issues.
+
 ### 3b. Template cross-reference (runs when `template.repository` is configured; skipped otherwise)
 
 **Subagent context note**: Step 3b uses `gh` CLI exclusively — it does not require MCP tools. When the retrospective agent is dispatched as a subagent (i.e., without an interactive system prompt that lists available MCP tools), it must still execute Step 3b if `template.repository` is configured. The agent must read `.ai-dev-workflow.yaml` directly from the filesystem (`cat .ai-dev-workflow.yaml` or equivalent) to obtain the `template.repository` value — do not rely on memory or assume the field is empty. Failure to read the YAML (e.g., file not found, parse error) is treated as `check-unavailable` with `check_status: warning` — mark all findings accordingly and continue.

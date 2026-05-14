@@ -2,9 +2,17 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+# Use BASH_SOURCE[0] so that SCRIPT_DIR resolves correctly even when this
+# script is sourced by the test harness (in HARNESS_MODE=1).  When executed
+# directly, BASH_SOURCE[0] is identical to $0.
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
+
+# In HARNESS_MODE, skip the single-instance lock guard entirely.
+# The guard is irrelevant when the script is sourced by the test harness
+# (no real PR is being processed and no lock directory should be created).
+if [ "${HARNESS_MODE:-0}" -ne 1 ]; then
 
 # --- Single-instance guard ---
 # Prevent two simultaneous invocations for the same PR. Uses an atomic mkdir
@@ -66,6 +74,8 @@ else
   fi
 fi
 trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"' EXIT
+
+fi  # end HARNESS_MODE guard (single-instance lock guard skipped in harness mode)
 
 usage() {
   cat <<'EOF'
@@ -2539,110 +2549,10 @@ run_platform_review() {
   esac
 }
 
-if [ "$#" -lt 1 ]; then
-  usage >&2
-  exit 64
-fi
-
-pr_number=""
-branch_name=""
-poll_interval=120
-poll_interval_explicit=0
-max_wait=1200
-max_wait_explicit=0
-post_final_summary=0
-compare_mode=0
-declare -a platforms=()
-
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --branch)
-      branch_name="$2"
-      shift 2
-      ;;
-    --platform)
-      append_platforms "$2"
-      shift 2
-      ;;
-    --poll-interval)
-      poll_interval="$2"
-      poll_interval_explicit=1
-      shift 2
-      ;;
-    --max-wait)
-      max_wait="$2"
-      max_wait_explicit=1
-      shift 2
-      ;;
-    --post-final-summary)
-      post_final_summary=1
-      shift
-      ;;
-    --compare)
-      compare_mode=1
-      shift
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    -*)
-      echo "Unknown option: $1" >&2
-      exit 64
-      ;;
-    *)
-      if [ -n "$pr_number" ]; then
-        echo "Only one PR number may be provided." >&2
-        exit 64
-      fi
-      pr_number="$1"
-      shift
-      ;;
-  esac
-done
-
-if [ -z "$pr_number" ]; then
-  usage >&2
-  exit 64
-fi
-
-if [ "${#platforms[@]}" -eq 0 ]; then
-  config_file="$(workflow_config_file)"
-  if workflow_config_exists; then
-    while IFS= read -r line; do
-      line="$(trim "$line")"
-      [ -n "$line" ] && platforms+=("$line")
-    done < <(workflow_config_review_platforms "$config_file")
-  fi
-fi
-
-if [ "${#platforms[@]}" -gt 0 ]; then
-  require_gh
-  cd_workflow_repo_root
-
-  if [ -z "$branch_name" ]; then
-    branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"
-  fi
-fi
-
-# Branch-type-aware timeout: spec/* and implementation-plan/* branches produce
-# REASON=no_check_run immediately when Devin has no trigger condition (non-implementation
-# branches). Waiting the full 1200-second default wastes orchestrator budget.
-# Apply a short max_wait=60 / poll_interval=30 default when the caller did not pass
-# --max-wait / --poll-interval explicitly. poll_interval must be less than max_wait
-# so the per-loop timeout check can fire within the budget.
-if [ "$max_wait_explicit" -eq 0 ]; then
-  case "$branch_name" in
-    spec/*|implementation-plan/*)
-      max_wait=60
-      if [ "$poll_interval_explicit" -eq 0 ]; then
-        poll_interval=30
-      fi
-      ;;
-  esac
-fi
-
 # --- Compare-mode helpers ---
+# These functions are defined here (before the main execution block) so that
+# the test harness can load them via HARNESS_MODE=1 sourcing without executing
+# the argument-parsing and main-loop sections below.
 
 # normalize_platform_verdict: map a raw platform result token to one of the five
 # canonical compare-mode verdict values: clean, blocking, advisory, timed out, unavailable.
@@ -2819,6 +2729,115 @@ METRICS_HEADER
     "$overall_result_arg" \
     >> "$metrics_file"
 }
+
+# Skip the main execution block when sourced in test-harness mode.
+# All function definitions above (including normalize_platform_verdict and
+# append_compare_metrics_row) are loaded; only the argument-parsing and
+# execution sections below are skipped.
+[ "${HARNESS_MODE:-0}" -eq 1 ] && return 0 2>/dev/null || true
+
+if [ "$#" -lt 1 ]; then
+  usage >&2
+  exit 64
+fi
+
+pr_number=""
+branch_name=""
+poll_interval=120
+poll_interval_explicit=0
+max_wait=1200
+max_wait_explicit=0
+post_final_summary=0
+compare_mode=0
+declare -a platforms=()
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --branch)
+      branch_name="$2"
+      shift 2
+      ;;
+    --platform)
+      append_platforms "$2"
+      shift 2
+      ;;
+    --poll-interval)
+      poll_interval="$2"
+      poll_interval_explicit=1
+      shift 2
+      ;;
+    --max-wait)
+      max_wait="$2"
+      max_wait_explicit=1
+      shift 2
+      ;;
+    --post-final-summary)
+      post_final_summary=1
+      shift
+      ;;
+    --compare)
+      compare_mode=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      exit 64
+      ;;
+    *)
+      if [ -n "$pr_number" ]; then
+        echo "Only one PR number may be provided." >&2
+        exit 64
+      fi
+      pr_number="$1"
+      shift
+      ;;
+  esac
+done
+
+if [ -z "$pr_number" ]; then
+  usage >&2
+  exit 64
+fi
+
+if [ "${#platforms[@]}" -eq 0 ]; then
+  config_file="$(workflow_config_file)"
+  if workflow_config_exists; then
+    while IFS= read -r line; do
+      line="$(trim "$line")"
+      [ -n "$line" ] && platforms+=("$line")
+    done < <(workflow_config_review_platforms "$config_file")
+  fi
+fi
+
+if [ "${#platforms[@]}" -gt 0 ]; then
+  require_gh
+  cd_workflow_repo_root
+
+  if [ -z "$branch_name" ]; then
+    branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"
+  fi
+fi
+
+# Branch-type-aware timeout: spec/* and implementation-plan/* branches produce
+# REASON=no_check_run immediately when Devin has no trigger condition (non-implementation
+# branches). Waiting the full 1200-second default wastes orchestrator budget.
+# Apply a short max_wait=60 / poll_interval=30 default when the caller did not pass
+# --max-wait / --poll-interval explicitly. poll_interval must be less than max_wait
+# so the per-loop timeout check can fire within the budget.
+if [ "$max_wait_explicit" -eq 0 ]; then
+  case "$branch_name" in
+    spec/*|implementation-plan/*)
+      max_wait=60
+      if [ "$poll_interval_explicit" -eq 0 ]; then
+        poll_interval=30
+      fi
+      ;;
+  esac
+fi
 
 aggregate_result="skipped"
 aggregate_reason=""
