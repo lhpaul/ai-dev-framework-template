@@ -32,7 +32,10 @@ MOCK_BIN="$(mktemp -d)"
 _METRICS_TMP=""
 _METRICS_DIR=""
 # Combine cleanup: remove mock bin AND any temp metrics file used by Area 3 tests.
-trap 'rm -rf "$MOCK_BIN" "${_METRICS_DIR:-}"' EXIT
+trap '
+  rm -rf "$MOCK_BIN"
+  [ -n "${_METRICS_DIR:-}" ] && rm -rf "$_METRICS_DIR"
+' EXIT
 
 # Mock gh: prints $MOCK_GH_OUTPUT and exits with $MOCK_GH_EXIT (default 0).
 cat > "$MOCK_BIN/gh" <<'MOCK_GH'
@@ -287,10 +290,6 @@ append_compare_metrics_row "10" "fix/first" "clean" "coderabbit" "clean"
 append_compare_metrics_row "11" "fix/second" "clean" "pr-agent" "clean"
 sep_count="$(_has_separator_row)"
 run_test "compare_platform_renamed" "1" "$sep_count"
-
-# Cleanup last metrics dir
-rm -rf "${_METRICS_DIR:-}"
-_METRICS_DIR=""
 
 # ---------------------------------------------------------------------------
 # Summary
