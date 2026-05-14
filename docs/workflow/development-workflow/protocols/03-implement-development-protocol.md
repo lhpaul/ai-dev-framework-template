@@ -176,6 +176,27 @@ The `${VAR:?message}` form causes the script to exit with an informative error i
 
 ---
 
+## Test Harness Coverage Checklist
+
+When your implementation includes **any test script, test function, or validation harness** (a script, function, or workflow that validates other scripts or logic), complete this checklist before self-approving at the verify/pre-commit step.
+
+**Why this checklist exists**: Agents naturally optimize for the happy path — writing tests that verify the code works under normal inputs. Edge cases (empty input, missing environment variables, concurrent invocations) are consistently missed during self-review and surface only in the external automated review phase (CodeRabbit, PR-Agent), causing multiple fix rounds. This checklist prompts deliberate coverage of boundary conditions before the PR is opened.
+
+**When to apply**: Mandatory for any implementation that ships or modifies a test script, test function, CI workflow step that runs tests, or any other harness that validates script or function behavior. Not required for non-test implementation files (application logic, documentation, configuration) that happen to be covered by existing tests.
+
+Complete every item below. If an item is not applicable, state why before skipping it — do not silently skip.
+
+- [ ] **Empty / zero-length input**: does the harness include at least one test where the primary input (string, array, file) is empty or zero-length, and the assertion verifies the correct behavior (error, warning, or defined default)?
+- [ ] **Whitespace-only input**: does the harness test input that is non-empty but contains only whitespace characters (spaces, tabs, newlines), where the expected behavior differs from a non-blank string?
+- [ ] **Boundary values**: does the harness test the minimum and maximum expected values (e.g., count = 0, count = 1, count = max, thresholds at the boundary, off-by-one positions)?
+- [ ] **Missing / absent environment variables**: does the harness test behavior when required environment variables (`GITHUB_TOKEN`, `OWNER`, `REPO`, custom vars) are unset or empty, and assert that the script exits with a clear error rather than silently proceeding?
+- [ ] **Concurrent / parallel execution**: for scripts that write shared state (files, git objects, GitHub API rate-limited resources), does the harness include at least one scenario that considers what happens under concurrent invocation, or explicitly document why isolation makes this safe?
+- [ ] **Negative assertions**: for every positive assertion ("output equals X when input is Y"), is there at least one corresponding negative assertion ("assertion fails when the code is broken") — for example, testing that a function returns non-zero on bad input, or that a mock captures the call that would be skipped on the wrong branch?
+
+If any item is unchecked after honest review: add the missing test cases before committing. Do not open the PR with known coverage gaps — the automated external reviewers (CodeRabbit) will catch them and require a fix round.
+
+---
+
 ## Path 1: Full Pipeline
 
 ### Step 1: Non-Negotiable Prep
@@ -278,6 +299,8 @@ Execute each step from the implementation plan in order.
 ### Step 5: Pre-Commit Verification
 
 Before committing, verify:
+
+**Test Harness Coverage Checklist (if the implementation includes any test script, test function, or validation harness)**: Complete `## Test Harness Coverage Checklist` above before self-approving. Do not open the PR with known coverage gaps.
 
 **ShellCheck (if any `.sh` files were modified)**:
 
@@ -595,7 +618,11 @@ git checkout -b refactor/[branch-slug]
    3. Re-run the check until the output contains only intentional occurrences.
 
 4. If scope is larger than the plan described, **stop and report**
-5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area. If any `.sh` files were modified, run ShellCheck before committing:
+5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area.
+
+   **Test Harness Coverage Checklist (if the implementation includes any test script, test function, or validation harness)**: Complete `## Test Harness Coverage Checklist` above before self-approving. Do not open the PR with known coverage gaps.
+
+   If any `.sh` files were modified, run ShellCheck before committing:
 
    ```bash
    CHANGED_SH=$({ git diff --name-only --diff-filter=d; git ls-files --others --exclude-standard; } | grep '\.sh$' | sort -u || true)
@@ -754,6 +781,8 @@ Implement the fix.
 ### Step 5: Verify
 
 Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area.
+
+**Test Harness Coverage Checklist (if the implementation includes any test script, test function, or validation harness)**: Complete `## Test Harness Coverage Checklist` above before self-approving. Do not open the PR with known coverage gaps.
 
 **ShellCheck (if any `.sh` files were modified)**:
 
@@ -972,6 +1001,8 @@ Implement the minimal fix (do not bundle unrelated changes).
 ### Step 5: Verify
 
 Verify: build, lint, tests pass.
+
+**Test Harness Coverage Checklist (if the implementation includes any test script, test function, or validation harness)**: Complete `## Test Harness Coverage Checklist` above before self-approving. Do not open the PR with known coverage gaps.
 
 **ShellCheck (if any `.sh` files were modified)**:
 
