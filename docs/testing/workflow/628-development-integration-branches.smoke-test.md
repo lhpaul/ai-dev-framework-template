@@ -115,8 +115,9 @@ Before running this smoke test:
 
 **Maps to**: Acceptance Criterion 7
 
-1. In protocols 90, 91, and 03, confirm each integration-branch section has an explicit "single-item exemption" or equivalent guard that skips the label check when no `integration-branch:*` label is present.
-2. Confirm the default base branch (`develop`) is still used when the label is absent.
+1. In protocols 90 and 91, confirm each integration-branch section has an explicit "single-item exemption" or equivalent guard that skips the label check when no `integration-branch:*` label is present.
+2. In protocol 03, confirm the branching note is conditional on the `integration-branch:<slug>` label (so unlabeled items keep default behavior).
+3. Confirm the default base branch (`develop`) is still used when the label is absent.
 
 **Expected result**: Each affected protocol contains an explicit guard preserving the existing behavior for single-item developments.
 
@@ -136,8 +137,8 @@ Each checkbox maps to an acceptance criterion from the spec.
 - [ ] AC 4: `05b-graduate-development-protocol.md` exists and opens a PR from `develop-<slug>` to `develop` with a sub-item summary.
 - [ ] AC 5: The graduation protocol states the merge strategy must be a **merge commit** (not squash or rebase).
 - [ ] AC 6: The graduation protocol's Step 5 deletes `develop-<slug>` after the graduation PR is merged.
-- [ ] AC 7: Each modified protocol contains an explicit single-item exemption guard confirming that PRs for unlabeled items still target `develop`.
-- [ ] AC 8: The following five files all contain integration-branch concept, naming convention, label schema, and/or graduation command: `README.md`, `00-add-backlog-item-protocol.md`, `90-batch-orchestrate-work-protocol.md`, `91-orchestrate-work-protocol.md`, `05b-graduate-development-protocol.md`.
+- [ ] AC 7: Protocols 90 and 91 contain explicit single-item exemption guards, and protocol 03 conditionally applies `develop-<slug>` only when `integration-branch:<slug>` is present.
+- [ ] AC 8: The following five files all contain integration-branch concept, naming convention, label schema, and/or graduation command: `docs/workflow/development-workflow/README.md`, `00-add-backlog-item-protocol.md`, `90-batch-orchestrate-work-protocol.md`, `91-orchestrate-work-protocol.md`, `05b-graduate-development-protocol.md`.
 
 ---
 

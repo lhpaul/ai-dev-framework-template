@@ -128,8 +128,8 @@ Accept `<slug>` as input. Derive the integration branch name: `develop-<slug>`.
 1. List all GitHub issues labeled `integration-branch:<slug>` using `gh issue list --label "integration-branch:<slug>"`.
 2. For each sub-item, confirm that its implementation PR is merged:
    ```bash
-   gh pr list --state merged --search "<issue-number>" --json number,headRefName,mergedAt \
-     --jq '[.[] | select(.headRefName | test("^(feature|fix|refactor)/<issue-number>(-|$)"))]'
+   gh pr list --state merged --search "<issue-number>" --json number,headRefName,baseRefName,mergedAt \
+     --jq '[.[] | select((.headRefName | test("^(feature|fix|refactor)/<issue-number>(-|$)")) and .baseRefName=="develop-<slug>")]'
    ```
 3. If any sub-item has no merged implementation PR, list the unmerged items and stop:
    > Graduation blocked: the following sub-items have no merged implementation PR on `develop-<slug>`: [list]. Complete or merge those items before graduating.
@@ -285,8 +285,8 @@ If an `integration-branch:<slug>` label is found:
 3. **If the branch does not exist**, create and push it from `develop`:
    ```bash
    git fetch origin develop
-   git checkout -b develop-<slug> origin/develop
-   git push origin develop-<slug>
+   git checkout -B develop-<slug> origin/develop
+   git push -u origin develop-<slug>
    ```
    Log: `INFO: created integration branch develop-<slug> from origin/develop for epic sub-item #<issue-number>.`
 4. **Pass the base branch override to the Work Item Runner handoff**: include `BASE_BRANCH=develop-<slug>` in the handoff metadata so the Work Item Runner and stage agents open PRs against `develop-<slug>` instead of `develop`.
@@ -321,8 +321,8 @@ If the label is present:
 3. **If the branch does not exist**, create and push it from `develop`:
    ```bash
    git fetch origin develop
-   git checkout -b develop-<slug> origin/develop
-   git push origin develop-<slug>
+   git checkout -B develop-<slug> origin/develop
+   git push -u origin develop-<slug>
    git switch develop  # return to develop immediately after creation
    ```
    Log: `INFO: created integration branch develop-<slug> from origin/develop for sub-item #<issue-number>.`
