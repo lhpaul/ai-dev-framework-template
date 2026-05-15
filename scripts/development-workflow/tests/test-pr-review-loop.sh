@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # test-pr-review-loop.sh — Self-contained test harness for pr-review-loop.sh.
 #
-# Exercises three highest-risk logic areas:
+# Exercises four highest-risk logic areas:
 #   1. normalize_platform_verdict (verdict normalization / mapping)
 #   2. check_unreplied_rest_comments (bot-account exclusion, reply detection)
 #   3. append_compare_metrics_row (compare-mode platform config change detection)
+#   4. Lock cleanup on SIGTERM (signal trap removes lockdir before exit)
 #
 # Usage: bash scripts/development-workflow/tests/test-pr-review-loop.sh
 # No external tooling required beyond bash and git (git is used only to locate
@@ -298,6 +299,108 @@ append_compare_metrics_row "10" "fix/first" "clean" "coderabbit" "clean"
 append_compare_metrics_row "11" "fix/second" "clean" "pr-agent" "clean"
 sep_count="$(_has_separator_row)"
 run_test "compare_platform_renamed" "1" "$sep_count"
+
+# ---------------------------------------------------------------------------
+# Area 4: lock cleanup on SIGTERM
+#
+# This test verifies that the TERM signal trap in the lock guard section removes
+# the lockdir before the process exits.
+#
+# SIGINT is not testable via kill -INT on a background subprocess because bash
+# sets SIGINT disposition to SIG_IGN for background processes (POSIX behaviour).
+# The SIGINT trap is still valuable for interactive invocations (Ctrl+C) — it is
+# verified by inspection rather than subprocess signalling.
+#
+# A self-contained wrapper script is used instead of invoking pr-review-loop.sh
+# directly because the full script requires workflow-lib.sh functions and a
+# valid git/gh context that are not available in the test environment.
+# The lock guard section itself is small and stable; testing it in isolation
+# avoids mocking the entire script ecosystem while still validating the traps.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 4: lock cleanup on SIGTERM ==="
+
+# Helper: spin up a subprocess that acquires a lockdir then sleeps indefinitely,
+# send SIGTERM, and verify the lockdir is removed by the signal trap.
+_run_sigterm_lock_test() {
+  local pr_num="9997${RANDOM}"
+  local lock_dir="/tmp/pr-review-loop-${pr_num}.lockdir"
+  rm -rf "$lock_dir"
+
+  # Self-contained wrapper: reproduces the lock guard + signal traps from
+  # pr-review-loop.sh, then sleeps until terminated.
+  local wrapper
+  # Use XXXXXX at the end (macOS mktemp requires Xs at the end of the template).
+  wrapper="$(mktemp /tmp/pr-review-loop-lock-test.XXXXXX)"
+  # Build with printf to avoid heredoc quoting issues with embedded variables.
+  printf '#!/usr/bin/env bash\n'                                                          > "$wrapper"
+  printf 'set -euo pipefail\n'                                                           >> "$wrapper"
+  printf '_LOCK_DIR="%s"\n'                   "$lock_dir"                               >> "$wrapper"
+  printf '_OWN_LOCK=0\n'                                                                 >> "$wrapper"
+  printf 'if mkdir "$_LOCK_DIR" 2>/dev/null; then\n'                                    >> "$wrapper"
+  printf '  printf '"'"'%%d\\n'"'"' "$$"           > "$_LOCK_DIR/pid"\n'               >> "$wrapper"
+  printf '  printf '"'"'%%s\\n'"'"' "test-locker"  > "$_LOCK_DIR/cmd"\n'               >> "$wrapper"
+  printf '  _OWN_LOCK=1\n'                                                               >> "$wrapper"
+  printf 'fi\n'                                                                           >> "$wrapper"
+  printf 'trap '"'"'[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"'"'"' EXIT\n'         >> "$wrapper"
+  printf 'trap '"'"'[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"; trap - TERM; kill -TERM "$$"'"'"' TERM\n' >> "$wrapper"
+  printf 'trap '"'"'[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"; trap - INT;  kill -INT  "$$"'"'"' INT\n'  >> "$wrapper"
+  # Use sleep in background + wait so SIGTERM can interrupt the wait and fire
+  # the trap immediately (bash only fires traps between commands when a
+  # foreground command is running; wait is interruptible by signals).
+  printf 'sleep 3600 &\n'                                                                >> "$wrapper"
+  printf 'wait\n'                                                                        >> "$wrapper"
+  chmod +x "$wrapper"
+
+  bash "$wrapper" &
+  local sub_pid=$!
+
+  # Wait for the lock dir to appear (up to 3 s, polling every 0.1 s).
+  local waited=0
+  while [ ! -d "$lock_dir" ] && [ "$waited" -lt 30 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+
+  if [ ! -d "$lock_dir" ]; then
+    run_test "sigterm_lock_acquired" "lock_dir_present" "lock_dir_absent"
+    wait "$sub_pid" 2>/dev/null || true
+    rm -f "$wrapper"
+    return
+  fi
+  run_test "sigterm_lock_acquired" "lock_dir_present" "lock_dir_present"
+
+  # Send SIGTERM and wait for the subprocess to exit (up to 3 s).
+  kill -TERM "$sub_pid" 2>/dev/null || true
+  local kill_waited=0
+  while kill -0 "$sub_pid" 2>/dev/null && [ "$kill_waited" -lt 30 ]; do
+    sleep 0.1
+    kill_waited=$((kill_waited + 1))
+  done
+  wait "$sub_pid" 2>/dev/null || true
+
+  if [ -d "$lock_dir" ]; then
+    run_test "sigterm_lock_cleaned" "lock_dir_absent" "lock_dir_present"
+    rm -rf "$lock_dir"
+  else
+    run_test "sigterm_lock_cleaned" "lock_dir_absent" "lock_dir_absent"
+  fi
+
+  rm -f "$wrapper"
+}
+
+_run_sigterm_lock_test
+
+# Verify that the INT trap is registered (code inspection — SIGINT cannot be
+# tested via kill -INT on a background subprocess because bash resets SIGINT
+# to SIG_IGN for background processes per POSIX).
+int_trap_present="$(grep -c 'kill -INT.*\$\$' \
+  "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null || true)"
+if [ "${int_trap_present:-0}" -gt 0 ]; then
+  run_test "sigint_trap_registered" "present" "present"
+else
+  run_test "sigint_trap_registered" "present" "absent"
+fi
 
 # ---------------------------------------------------------------------------
 # Summary

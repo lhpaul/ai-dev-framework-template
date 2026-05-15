@@ -74,6 +74,13 @@ else
   fi
 fi
 trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"' EXIT
+# SIGTERM/SIGINT handlers: clean up the lock dir, then re-raise the signal so
+# the parent process sees the correct exit status (death-by-signal, not 0).
+# The re-raise pattern (trap - SIG; kill -SIG $$) is required because bash
+# normally translates signal death to exit code 128+N, which callers rely on
+# to distinguish a killed process from a clean exit.
+trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"; trap - TERM; kill -TERM "$$"' TERM
+trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"; trap - INT;  kill -INT  "$$"' INT
 
 fi  # end HARNESS_MODE guard (single-instance lock guard skipped in harness mode)
 
