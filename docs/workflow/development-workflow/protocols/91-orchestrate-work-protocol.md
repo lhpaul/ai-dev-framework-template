@@ -113,6 +113,23 @@ When dispatching a subagent for this item, include a short "Tracker Work Item Su
 | PR labeled `needs-fixes`                                           | Human or automated systems requested changes                                                                                                        | Address feedback, push, then run Step 7a, Step 7, and Step 8                                                                                                                                                                                                                 |
 | PR labeled `ready-for-human-review`                                | —                                                                                                                                                   | Wait — human review / merge required                                                                                                                                                                                                                                         |
 
+### Cross-layer scope check (mandatory before fast-track dispatch)
+
+**When to run**: Before classifying a backlog item as Fast Track and dispatching it to `03-implement-development-protocol.md` Path 3, run this check. It applies to any item whose issue type, tracker label, or brief suggests a bug fix or simple change (i.e., not a feature requiring a spec).
+
+**What to check**: Inspect the issue title, body, and any linked spec or plan document for concrete signals that the change spans more than one architectural layer simultaneously. Examples of multi-layer signals:
+
+- Issue body mentions two or more of: database schema, API endpoint, UI component, data pipeline, storage, mapper, presentation layer.
+- Issue body or a linked spec/plan describes coordinating changes across distinct subsystems (e.g., "update the model, the API, and the UI").
+- Any linked spec or plan document covers more than one architectural layer.
+
+**Decision rule (deterministic)**:
+
+- **No concrete multi-layer signal found** → the item may proceed as fast-track.
+- **At least one concrete multi-layer signal found** → the item must NOT be fast-tracked. Route it to the Full Pipeline (spec → plan → implement) so all layers are planned and coordinated. Update the tracker status to **Writing Spec** and dispatch `01-generate-spec-protocol.md`.
+
+This check is deterministic: it does not rely on heuristics alone. A vague or general description is not a multi-layer signal. At least one concrete signal — where the issue or linked document text explicitly mentions two or more distinct architectural layers — is required to block fast-track.
+
 ### Pre-dispatch tracker status update (single-item path)
 
 When the Work Item Runner is invoked **directly** (not via Protocol 90) and the item's tracker status is stale — for example, a Refactor item is still `Backlog` even though the plan is merged and implementation is about to start — the runner must update the tracker status **before** dispatching the creator agent. Use the same transition table as Protocol 90 Step 2.5:

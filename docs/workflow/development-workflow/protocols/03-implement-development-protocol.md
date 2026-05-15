@@ -694,6 +694,11 @@ echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
 - [ ] No new database schema migrations
 - [ ] No new architectural patterns
 - [ ] Human provided a clear, self-contained brief
+- [ ] **No multi-layer scope signals** — the issue title, body, and any linked spec/plan do not contain concrete signals that the change spans more than one architectural layer (see "Cross-layer scope check" below)
+
+**Cross-layer scope check**: Apply the deterministic decision rule in
+[`91-orchestrate-work-protocol.md` Step 2 — Cross-layer scope check](./91-orchestrate-work-protocol.md)
+before selecting Fast Track. That section is the authoritative definition of multi-layer signals, the inspection scope, and the routing decision.
 
 **If any criterion fails**: Use the Full Pipeline instead.
 
