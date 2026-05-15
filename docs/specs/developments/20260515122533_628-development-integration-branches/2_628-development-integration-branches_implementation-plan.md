@@ -44,7 +44,7 @@ This is a documentation-only change. All affected files are under `docs/workflow
 
 #### Existing files to modify
 
-- [ ] `docs/workflow/development-workflow/README.md` — add the `develop-<slug>` integration-branch concept to the "Branch Naming" section and add the `/graduate-development` graduation command to the "Commands By Stage" table and "Workflow At A Glance" section (graduation step)
+- [ ] `docs/workflow/development-workflow/README.md` — add the `develop-<slug>` integration-branch concept to the "Branch Naming" section and add the `/graduate-development` graduation command to the "Commands By Stage" table
 - [ ] `docs/workflow/development-workflow/protocols/00-add-backlog-item-protocol.md` — add a new Step (after existing steps) covering multi-item epic detection and the `integration-branch:<slug>` label creation
 - [ ] `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — add integration-branch detection in Step 1 (portfolio state gathering), integration-branch creation in the pre-dispatch checks, and base-branch override logic (`develop-<slug>` instead of `develop`) when a sub-item carries the label
 - [ ] `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — add integration-branch detection to the pre-dispatch branch check (Step 2), base-branch override when the sub-item label is present, and integration-branch creation when missing
