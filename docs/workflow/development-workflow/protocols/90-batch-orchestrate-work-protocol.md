@@ -485,13 +485,13 @@ gh issue view <issue-number> --json labels --jq '.labels[].name | select(startsw
 If an `integration-branch:<slug>` label is found:
 
 1. **Derive the integration branch name**: `develop-<slug>`.
-2. **Verify the branch exists on the remote**:
+2. **Verify the branch exists on the remote** (output `0` = does not exist, `1` = exists):
 
    ```bash
-   git ls-remote origin "refs/heads/develop-<slug>" | wc -l
+   BRANCH_EXISTS=$(git ls-remote origin "refs/heads/develop-<slug>" | wc -l | tr -d ' ')
    ```
 
-3. **If the branch does not exist**, create and push it from `develop`:
+3. **If the branch does not exist** (`BRANCH_EXISTS` is `0`), create and push it from `develop`:
 
    ```bash
    git fetch origin develop
