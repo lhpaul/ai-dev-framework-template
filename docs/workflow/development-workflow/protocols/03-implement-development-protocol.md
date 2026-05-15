@@ -710,6 +710,27 @@ Read the brief. If the work item exists in an issue tracker, follow `docs/workfl
 
 If your changes touch `.github/workflows/*.yml`, apply `## GitHub Actions Workflow Security Checklist` before opening the PR.
 
+#### Verify-Before-Add (mandatory for tickets claiming a feature is missing or unavailable)
+
+When the issue claims that a feature, field, or capability is "missing," "unavailable," or "not working" — but does not include a stack trace, failing test, or other reproducible artifact — you must verify the gap exists before writing any code.
+
+**Apply this check when the ticket uses language such as:**
+
+- "X is not available in Y"
+- "Y does not return X"
+- "X is missing from the response"
+- "X is not supported"
+
+**Do not apply this check to:** confirmed bugs with stack traces, failing automated tests, or issues with explicit reproduction steps that you have already verified independently.
+
+**Verification steps (run before Step 1b):**
+
+1. **Reproduce the reported gap independently** using the exact steps described in the ticket — do not assume the reporter's description is complete or correct.
+2. **If the gap cannot be reproduced** (the feature already exists or works as described): cancel the ticket, post a comment explaining the finding, and stop. Do not implement anything.
+3. **If the gap is confirmed reproducible**: continue to Step 1b and proceed with implementation.
+
+> **Example**: A ticket claims "`qualificationDate` is not available in `search_projects`." Before writing any code, call `search_projects` with a `fields` projection that includes `qualificationDate`. If the field is returned, the feature already exists — the ticket is based on a misreading of the API description. Cancel the ticket and document the finding. Only proceed if `qualificationDate` is genuinely absent and cannot be obtained via any supported projection.
+
 ### Step 1b: Pre-Implementation Scope Checklist
 
 Complete this checklist **before writing any code**. It takes 5–10 minutes and prevents review round-trips caused by missed files, scope drift, or inconsistencies with related files.
