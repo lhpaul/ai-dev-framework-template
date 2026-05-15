@@ -196,6 +196,7 @@ Complete every item below. If an item is not applicable, state why before skippi
 **Additional items for Bash test harnesses** (apply when the harness is a `.sh` script that sources or invokes other shell scripts):
 
 - [ ] **Single EXIT trap**: does the harness register at most one `trap ... EXIT` handler? Multiple `trap` registrations silently overwrite the previous handler; verify the harness does not lose cleanup logic by checking that any additional cleanup is chained inside a single trap.
+- [ ] **Variable-length quoting safety**: does the harness include at least one test with variable-length or path-like input (filenames with spaces, tabs, glob characters, or newlines) and verify that variables are consistently quoted (`"$var"`, `"${arr[@]}"`) so word-splitting and globbing do not alter behavior?
 - [ ] **`BASH_SOURCE` / `HARNESS_MODE` guard placement**: if the harness uses `[[ "${BASH_SOURCE[0]}" == "${0}" ]]` or a `HARNESS_MODE` guard to distinguish sourced vs. executed contexts, verify the guard is top-level and evaluated before side effects/main execution, while keeping required function definitions and source statements available for sourced mode; tests must exercise both sourced and executed paths.
 - [ ] **Sourced-function ordering**: when the harness sources other scripts to expose functions under test, verify the source order matches the dependency order — a function sourced after the file that calls it will silently use the caller's stale definition rather than the updated one.
 
