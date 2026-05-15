@@ -183,6 +183,22 @@ if [ "${#ISSUE_NUMBERS[@]}" -eq 0 ]; then
   exit 0
 fi
 
+# Detect tracker provider. Linear status transitions cannot be performed
+# automatically by this script (they require MCP/API access). Emit per-issue
+# manual action guidance and exit cleanly rather than silently skipping or
+# failing with UPDATED=0.
+TRACKER_PROVIDER="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+if [ "$TRACKER_PROVIDER" = "linear" ]; then
+  echo "Linear tracker detected: automatic '$MERGED_LABEL' -> '$RELEASED_LABEL' transitions are not supported by this script."
+  echo "Manually transition the following issue(s) to '$RELEASED_LABEL' in Linear (via MCP server or API):"
+  for issue in "${ISSUE_NUMBERS[@]}"; do
+    echo "  - Issue #$issue: set status to '$RELEASED_LABEL'"
+  done
+  echo "See docs/workflow/development-workflow/integrations/linear.md for guidance."
+  echo "Release post-merge cleanup complete."
+  exit 0
+fi
+
 echo "Transitioning scoped issues from '$MERGED_LABEL' to '$RELEASED_LABEL'..."
 TRACKER_UPDATED=0
 TRACKER_SKIPPED=0

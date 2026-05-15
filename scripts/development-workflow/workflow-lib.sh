@@ -455,9 +455,10 @@ __workflow_tracker_cache_json=""
 
 # get_tracker_status_for_issue <issue_number>
 #
-# Queries GitHub Projects for the current Status of the given issue.
+# Queries the configured issue tracker for the current Status of the given issue.
 # Prints the status string (e.g. "Merged", "Released", "In Development").
 # Prints an empty string when:
+#   - provider is 'linear' (Linear status reads require MCP/API; not available in shell)
 #   - project_number is unset in both GITHUB_PROJECT_NUMBER and .ai-dev-workflow.yaml
 #   - The issue is not found in the project
 #   - Any API call fails
@@ -471,6 +472,15 @@ __workflow_tracker_cache_json=""
 get_tracker_status_for_issue() {
   local issue_number="$1"
   local owner project_number item_json current_status
+
+  # Provider routing: Linear status reads require MCP/API and cannot be
+  # performed by this shell function. Return empty (caller treats as unknown).
+  local _gts_provider
+  _gts_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+  if [ "$_gts_provider" = "linear" ]; then
+    printf ''
+    return 0
+  fi
 
   project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
   if [ -z "$project_number" ]; then
@@ -522,9 +532,12 @@ print(item.get('status') or '', end='')
 
 # update_tracker_status_best_effort <issue_number> <status_label> [required_current_status]
 #
-# Best-effort update for GitHub Projects Status field.
+# Best-effort update for the configured issue tracker's Status field.
+# Supports GitHub Projects (provider: github_projects) and emits actionable
+# guidance for Linear (provider: linear), which requires MCP/API access.
 # - Returns 0 in all warning/failure cases to avoid blocking caller flows.
-# - Respects status progression ordering and never rolls status backward.
+# - Respects status progression ordering and never rolls status backward
+#   (GitHub Projects path only; ordering is not enforced for Linear).
 # - Owner is resolved via workflow_resolve_github_project_owner (see that function
 #   for the tiered fallback chain: env var → gh repo view → git remote URL).
 # - project_number falls back to issue_tracker.project_number in .ai-dev-workflow.yaml.
@@ -534,6 +547,16 @@ update_tracker_status_best_effort() {
   local required_current_status="${3:-}"
   local owner project_number project_id field_json field_id option_id item_json item_id current_status
   local target_order current_order
+
+  # Provider routing: Linear status updates require MCP/API and cannot be
+  # performed automatically by this shell function. Emit a clear, actionable
+  # message so callers (and operators) know what manual step is needed.
+  local _utsbe_provider
+  _utsbe_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+  if [ "$_utsbe_provider" = "linear" ]; then
+    echo "Warning: Linear tracker detected — cannot update issue #${issue_number} status to '${status_label}' automatically. Use the Linear MCP server or API to transition this issue to '${status_label}'. See docs/workflow/development-workflow/integrations/linear.md for details."
+    return 0
+  fi
 
   project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
   if [ -z "$project_number" ]; then
