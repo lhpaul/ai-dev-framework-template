@@ -280,7 +280,7 @@ If the label is present:
    ```bash
    BRANCH_EXISTS=$(set -o pipefail; git ls-remote origin "refs/heads/develop-<slug>" 2>/dev/null | wc -l | tr -d ' ') || {
      echo "WARNING: failed to verify whether develop-<slug> exists on origin; skipping auto-create for this item."
-     # Abort dispatch for this sub-item; report to orchestrator
+     continue  # or return 1 / exit 1 depending on surrounding loop/function context
    }
    ```
 
