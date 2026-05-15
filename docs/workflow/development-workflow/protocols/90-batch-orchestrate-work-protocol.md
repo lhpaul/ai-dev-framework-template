@@ -136,6 +136,8 @@ Use these helpers to gather detail on specific items:
 
 These scripts read from development folders (`docs/specs/developments/`), workflow branches, worktrees, and open PRs. Use their output to **enrich** tracker data with VCS-level detail (e.g., whether a branch exists, whether a PR is open, PR labels), but **do not use VCS-derived status to override the tracker status**. Development folders contain spec and plan documents but are not reliable indicators of item status — items may be completed, cancelled, or reorganized in the tracker without corresponding changes to these folders.
 
+When gathering VCS state, also collect the set of open `develop-<slug>` integration branches: `git branch -r | grep "^  origin/develop-"`. For each integration branch found, look up any issues labeled `integration-branch:<slug>` to match the branch to its epic. Record the integration branch name against each matching sub-item in the portfolio map.
+
 ### 1c. Build the portfolio map
 
 Combine tracker and VCS data into a portfolio map of:
@@ -471,6 +473,35 @@ For each item in the batch, prepare a short handoff:
 **When batching items for parallel dispatch**: Each item in a parallel batch **must** run in its own isolated worktree (or checked-out copy) to prevent branch contamination, PR cross-pollution, and shared-state conflicts between concurrent agents.
 
 Do **not** dispatch multiple Work Item Runners to operate in the same working directory.
+
+### Integration-branch base override
+
+Before dispatching any Work Item Runner for a sub-item, check whether the item carries an `integration-branch:<slug>` label:
+
+```bash
+gh issue view <issue-number> --json labels --jq '.labels[].name | select(startswith("integration-branch:"))'
+```
+
+If an `integration-branch:<slug>` label is found:
+
+1. **Derive the integration branch name**: `develop-<slug>`.
+2. **Verify the branch exists on the remote**:
+
+   ```bash
+   git ls-remote origin "refs/heads/develop-<slug>" | wc -l
+   ```
+
+3. **If the branch does not exist**, create and push it from `develop`:
+
+   ```bash
+   git fetch origin develop
+   git checkout -B develop-<slug> origin/develop
+   git push -u origin develop-<slug>
+   ```
+
+   Log: `INFO: created integration branch develop-<slug> from origin/develop for epic sub-item #<issue-number>.`
+
+4. **Pass the base branch override to the Work Item Runner handoff**: include `BASE_BRANCH=develop-<slug>` in the handoff metadata so the Work Item Runner and stage agents open PRs against `develop-<slug>` instead of `develop`.
 
 ---
 

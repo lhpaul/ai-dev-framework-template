@@ -140,6 +140,8 @@ When dispatching a subagent for this item, include a short "Tracker Work Item Su
 | PR labeled `needs-fixes`                                           | Human or automated systems requested changes                                                                                                        | Address feedback, push, then run Step 7a, Step 7, and Step 8                                                                                                                                                                                                                 |
 | PR labeled `ready-for-human-review`                                | —                                                                                                                                                   | Wait — human review / merge required                                                                                                                                                                                                                                         |
 
+> **Integration-branch note**: When the item carries an `integration-branch:<slug>` label, the plan PR targets `develop-<slug>` instead of `develop`. The ordering gate (spec PR merged before plan PR) still applies, but to `develop-<slug>` not `develop`.
+
 ### Cross-layer scope check (mandatory before fast-track dispatch)
 
 **When to run**: Before classifying a backlog item as Fast Track and dispatching it to `03-implement-development-protocol.md` Path 3, run this check. It applies to any item whose issue type, tracker label, or brief suggests a bug fix or simple change (i.e., not a feature requiring a spec).
@@ -262,6 +264,38 @@ git worktree list | grep "<branch-prefix>/<slug>"
 
 If any check returns a match: **do not re-dispatch**. Resume from the existing branch or PR with `workflow-next-action.sh`.
 
+### Integration-branch base override (sub-items with `integration-branch:<slug>` label)
+
+Before dispatching any creator-stage agent, check whether the item carries an `integration-branch:<slug>` label:
+
+```bash
+gh issue view <issue-number> --json labels --jq '.labels[].name | select(startswith("integration-branch:"))'
+```
+
+If the label is present:
+
+1. **Derive the integration branch name**: `develop-<slug>` (replace `<slug>` with the value after `integration-branch:`).
+2. **Verify the branch exists on the remote**:
+
+   ```bash
+   git ls-remote origin "refs/heads/develop-<slug>" | wc -l
+   ```
+
+3. **If the branch does not exist**, create and push it from `develop`:
+
+   ```bash
+   git fetch origin develop
+   git checkout -B develop-<slug> origin/develop
+   git push -u origin develop-<slug>
+   git switch develop  # return to develop immediately after creation
+   ```
+
+   Log: `INFO: created integration branch develop-<slug> from origin/develop for sub-item #<issue-number>.`
+
+4. **Record the base branch**: store `BASE_BRANCH=develop-<slug>` and pass it to every stage-agent dispatch for this item. All PRs opened for this sub-item (spec, plan, implementation, fix, refactor) must target `develop-<slug>`.
+
+**Single-item exemption**: When the item carries no `integration-branch:*` label, skip this check. The default base branch (`develop`) applies.
+
 ### Spec-Plan ordering gate
 
 **The plan PR must never be opened before the spec PR has been merged to the integration branch.**
@@ -292,6 +326,8 @@ gh pr view <spec_pr_number> --json state --jq '.state'
 If the spec PR is still `OPEN`, apply the ordering gate above and stop. If the spec PR is `CLOSED` (rejected without merge), do **not** open the plan PR and do **not** apply the ordering gate — escalate to the human, because the spec was rejected and the plan cannot proceed without a merged spec.
 
 **Exception — Refactor items (no spec):** Items following the Refactor path (`02-generate-implementation-plan-protocol.md` without a preceding spec step) are exempt from this gate. There is no spec PR to wait for.
+
+(When the item carries an `integration-branch:<slug>` label, "spec PR merged to the integration branch" means merged to `develop-<slug>`, not to `develop`. The ordering gate applies identically; only the target branch changes.)
 
 ### Dependency check
 
