@@ -489,7 +489,10 @@ If an `integration-branch:<slug>` label is found:
 2. **Verify the branch exists on the remote** (output `0` = does not exist, `1` = exists):
 
    ```bash
-   BRANCH_EXISTS=$(git ls-remote origin "refs/heads/develop-<slug>" | wc -l | tr -d ' ')
+   BRANCH_EXISTS=$(set -o pipefail; git ls-remote origin "refs/heads/develop-<slug>" 2>/dev/null | wc -l | tr -d ' ') || {
+     echo "WARNING: failed to verify whether develop-<slug> exists on origin; skipping auto-create for this item."
+     continue
+   }
    ```
 
 3. **If the branch does not exist** (`BRANCH_EXISTS` is `0`), create and push it from `develop`:

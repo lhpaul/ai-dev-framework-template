@@ -73,19 +73,26 @@ Run the automated reviewer loop (`pr-review-loop.sh`) and CI loop on the graduat
 
 After the human merges the graduation PR (must use a **merge commit**):
 
-1. Delete the integration branch on the remote:
+1. Switch to `develop` and sync the merge commit:
+
+   ```bash
+   git checkout develop
+   git pull origin develop
+   ```
+
+2. Delete the integration branch on the remote:
 
    ```bash
    git push origin --delete develop-<slug>
    ```
 
-2. Delete the local branch:
+3. Delete the local branch:
 
    ```bash
    git branch -d develop-<slug>
    ```
 
-3. Confirm to the human: "Integration branch `develop-<slug>` has been deleted. All sub-items are now on `develop`."
+4. Confirm to the human: "Integration branch `develop-<slug>` has been deleted. All sub-items are now on `develop`."
 
 ---
 
