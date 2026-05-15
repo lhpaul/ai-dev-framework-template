@@ -161,7 +161,7 @@ When a large development effort is split across multiple backlog items (spec, pl
 - [ ] The graduation PR uses a merge commit (not squash or rebase).
 - [ ] The `develop-<slug>` branch is deleted after the graduation PR is successfully merged.
 - [ ] Single-item developments (no epic, no `integration-branch` label) are unaffected: their PRs continue to target `develop` as before.
-- [ ] The workflow documentation (relevant protocol files and the development workflow README) describes the integration branch concept, naming convention, label schema, and graduation command.
+- [ ] The following workflow documentation files describe the integration branch concept, naming convention, label schema, and graduation command: `docs/workflow/development-workflow/README.md`, `docs/workflow/development-workflow/protocols/00-add-backlog-item-protocol.md`, `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`, `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`, and a new `docs/workflow/development-workflow/protocols/05b-graduate-development-protocol.md`.
 
 ---
 
