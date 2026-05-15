@@ -304,7 +304,16 @@ run_test "compare_platform_renamed" "1" "$sep_count"
 # Area 4: lock cleanup on SIGTERM
 #
 # This test verifies that the TERM signal trap in the lock guard section removes
-# the lockdir before the process exits.
+# the lockdir before the process exits — specifically when the script is blocked
+# inside _interruptible_sleep (a background sleep + wait pattern), which is the
+# actual blocking pattern used in all polling loops.
+#
+# The previous test used "sleep 3600 & wait" directly in the wrapper.  That
+# already uses the interruptible pattern, but it did NOT test the CURRENT_CHILD_PID
+# kill-child step that the production code now uses to interrupt a running child
+# before the wait returns.  This updated test reproduces the full
+# _interruptible_sleep helper (including CURRENT_CHILD_PID tracking) so that the
+# TERM handler's "kill -TERM $CURRENT_CHILD_PID" path is exercised.
 #
 # SIGINT is not testable via kill -INT on a background subprocess because bash
 # sets SIGINT disposition to SIG_IGN for background processes (POSIX behaviour).
@@ -320,15 +329,18 @@ run_test "compare_platform_renamed" "1" "$sep_count"
 echo ""
 echo "=== Area 4: lock cleanup on SIGTERM ==="
 
-# Helper: spin up a subprocess that acquires a lockdir then sleeps indefinitely,
-# send SIGTERM, and verify the lockdir is removed by the signal trap.
+# Helper: spin up a subprocess that acquires a lockdir then blocks inside
+# _interruptible_sleep (foreground blocking via background child + wait),
+# send SIGTERM to the outer process, and verify the lockdir is removed.
 _run_sigterm_lock_test() {
   local pr_num="9997${RANDOM}"
   local lock_dir="/tmp/pr-review-loop-${pr_num}.lockdir"
   rm -rf "$lock_dir"
 
-  # Self-contained wrapper: reproduces the lock guard + signal traps from
-  # pr-review-loop.sh, then sleeps until terminated.
+  # Self-contained wrapper: reproduces the lock guard + CURRENT_CHILD_PID-aware
+  # signal traps from pr-review-loop.sh, then calls _interruptible_sleep to
+  # simulate the foreground-blocking polling-loop scenario that was the root
+  # cause of #615.
   local wrapper
   # Use XXXXXX at the end (macOS mktemp requires Xs at the end of the template).
   wrapper="$(mktemp /tmp/pr-review-loop-lock-test.XXXXXX)"
@@ -337,19 +349,22 @@ _run_sigterm_lock_test() {
   printf 'set -euo pipefail\n'                                                           >> "$wrapper"
   printf '_LOCK_DIR="%s"\n'                   "$lock_dir"                               >> "$wrapper"
   printf '_OWN_LOCK=0\n'                                                                 >> "$wrapper"
+  printf 'CURRENT_CHILD_PID=""\n'                                                        >> "$wrapper"
   printf 'if mkdir "$_LOCK_DIR" 2>/dev/null; then\n'                                    >> "$wrapper"
   printf '  printf '"'"'%%d\\n'"'"' "$$"           > "$_LOCK_DIR/pid"\n'               >> "$wrapper"
   printf '  printf '"'"'%%s\\n'"'"' "test-locker"  > "$_LOCK_DIR/cmd"\n'               >> "$wrapper"
   printf '  _OWN_LOCK=1\n'                                                               >> "$wrapper"
   printf 'fi\n'                                                                           >> "$wrapper"
   printf 'trap '"'"'[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"'"'"' EXIT\n'         >> "$wrapper"
-  printf 'trap '"'"'[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"; trap - TERM; kill -TERM "$$"'"'"' TERM\n' >> "$wrapper"
-  printf 'trap '"'"'[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"; trap - INT;  kill -INT  "$$"'"'"' INT\n'  >> "$wrapper"
-  # Use sleep in background + wait so SIGTERM can interrupt the wait and fire
-  # the trap immediately (bash only fires traps between commands when a
-  # foreground command is running; wait is interruptible by signals).
-  printf 'sleep 3600 &\n'                                                                >> "$wrapper"
-  printf 'wait\n'                                                                        >> "$wrapper"
+  # Updated TERM/INT traps: kill the background child (CURRENT_CHILD_PID) before
+  # removing the lock — mirrors the production trap handlers added to fix #615.
+  printf 'trap '"'"'[ -n "$CURRENT_CHILD_PID" ] && kill -TERM "$CURRENT_CHILD_PID" 2>/dev/null || true; [ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"; trap - TERM; kill -TERM "$$"'"'"' TERM\n' >> "$wrapper"
+  printf 'trap '"'"'[ -n "$CURRENT_CHILD_PID" ] && kill -TERM "$CURRENT_CHILD_PID" 2>/dev/null || true; [ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"; trap - INT;  kill -INT  "$$"'"'"' INT\n'  >> "$wrapper"
+  # Reproduce _interruptible_sleep: start sleep as a background job so that
+  # (a) CURRENT_CHILD_PID is set (exercising the kill-child path in the trap), and
+  # (b) wait IS interruptible by signals (bash fires traps between commands during wait).
+  printf '_interruptible_sleep() { sleep "$1" & CURRENT_CHILD_PID=$!; wait "$CURRENT_CHILD_PID" 2>/dev/null || true; CURRENT_CHILD_PID=""; }\n' >> "$wrapper"
+  printf '_interruptible_sleep 3600\n'                                                   >> "$wrapper"
   chmod +x "$wrapper"
 
   bash "$wrapper" &

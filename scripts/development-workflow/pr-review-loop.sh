@@ -36,6 +36,11 @@ done
 unset _skip_next
 _LOCK_DIR="/tmp/pr-review-loop-${_PR_ARG:-unknown}.lockdir"
 _OWN_LOCK=0
+# PID of the current background child (sleep or gh api) started by
+# _interruptible_sleep / _interruptible_gh.  The TERM/INT handlers kill this
+# child before removing the lock so the signal fires promptly instead of waiting
+# for the foreground command to return on its own.
+CURRENT_CHILD_PID=""
 
 if mkdir "$_LOCK_DIR" 2>/dev/null; then
   # We created the lock dir atomically — we own the lock.
@@ -74,15 +79,33 @@ else
   fi
 fi
 trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"' EXIT
-# SIGTERM/SIGINT handlers: clean up the lock dir, then re-raise the signal so
-# the parent process sees the correct exit status (death-by-signal, not 0).
+# SIGTERM/SIGINT handlers: kill the current background child (if any) so the
+# handler fires promptly even while a foreground sleep or gh api call is
+# running, then clean up the lock dir and re-raise the signal so the parent
+# process sees the correct exit status (death-by-signal, not 0).
 # The re-raise pattern (trap - SIG; kill -SIG $$) is required because bash
 # normally translates signal death to exit code 128+N, which callers rely on
 # to distinguish a killed process from a clean exit.
-trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"; trap - TERM; kill -TERM "$$"' TERM
-trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"; trap - INT;  kill -INT  "$$"' INT
+trap '[ -n "$CURRENT_CHILD_PID" ] && kill -TERM "$CURRENT_CHILD_PID" 2>/dev/null || true; [ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"; trap - TERM; kill -TERM "$$"' TERM
+trap '[ -n "$CURRENT_CHILD_PID" ] && kill -TERM "$CURRENT_CHILD_PID" 2>/dev/null || true; [ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"; trap - INT;  kill -INT  "$$"' INT
 
 fi  # end HARNESS_MODE guard (single-instance lock guard skipped in harness mode)
+
+# ---------------------------------------------------------------------------
+# _interruptible_sleep <seconds>
+#
+# Runs "sleep <seconds>" as a background job, records its PID in
+# CURRENT_CHILD_PID, then waits for it.  Bash's built-in `wait` IS
+# interruptible by signals (unlike a foreground `sleep`), so TERM/INT traps
+# fire promptly.  The trap handler kills CURRENT_CHILD_PID before removing
+# the lock, completing the prompt-cleanup chain.
+# ---------------------------------------------------------------------------
+_interruptible_sleep() {
+  sleep "$1" &
+  CURRENT_CHILD_PID=$!
+  wait "$CURRENT_CHILD_PID" 2>/dev/null || true
+  CURRENT_CHILD_PID=""
+}
 
 usage() {
   cat <<'EOF'
@@ -377,7 +400,7 @@ run_greptile_review() {
       return 2
     fi
 
-    sleep "$poll_interval"
+    _interruptible_sleep "$poll_interval"
     elapsed=$((elapsed + poll_interval))
   done
 
@@ -910,7 +933,7 @@ run_devin_review() {
       return 2
     fi
 
-    sleep "$poll_interval"
+    _interruptible_sleep "$poll_interval"
     elapsed=$((elapsed + poll_interval))
   done
 
@@ -1405,7 +1428,7 @@ _PR_AGENT_LABELS_
       return 0
     fi
 
-    sleep "$poll_interval"
+    _interruptible_sleep "$poll_interval"
     elapsed=$((elapsed + poll_interval))
   done
 
@@ -2031,7 +2054,7 @@ run_coderabbit_review() {
           echo "WARN: failed to post retrigger comment — will not reset timer" >&2
           coderabbit_retrigger_attempted=1
         fi
-        sleep "$poll_interval"
+        _interruptible_sleep "$poll_interval"
         elapsed=$((elapsed + poll_interval))
         continue
       fi
@@ -2075,7 +2098,7 @@ run_coderabbit_review() {
         fi
         # Reset the elapsed timer to give the retrigger a full polling window.
         elapsed=0
-        sleep "$poll_interval"
+        _interruptible_sleep "$poll_interval"
         elapsed=$((elapsed + poll_interval))
         continue
       fi
@@ -2140,7 +2163,7 @@ run_coderabbit_review() {
           fi
         fi
         echo "INFO: no SUCCESS commit status found — waiting ${coderabbit_rate_limit_wait}s before re-triggering" >&2
-        sleep "$coderabbit_rate_limit_wait"
+        _interruptible_sleep "$coderabbit_rate_limit_wait"
         # Do NOT reset since_iso — keep the original HEAD-commit timestamp so any review
         # posted by CodeRabbit during or after the wait is still within the detection window.
         elapsed=0
@@ -2149,7 +2172,7 @@ run_coderabbit_review() {
         else
           echo "WARN: failed to post @coderabbitai review trigger after rate-limit wait" >&2
         fi
-        sleep "$poll_interval"
+        _interruptible_sleep "$poll_interval"
         elapsed=$((elapsed + poll_interval))
         continue
       fi
@@ -2291,7 +2314,7 @@ run_coderabbit_review() {
       return 2
     fi
 
-    sleep "$poll_interval"
+    _interruptible_sleep "$poll_interval"
     elapsed=$((elapsed + poll_interval))
   done
 
