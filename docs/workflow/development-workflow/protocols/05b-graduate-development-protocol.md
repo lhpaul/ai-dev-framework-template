@@ -42,8 +42,7 @@ Accept `<slug>` as input. Derive the integration branch name: `develop-<slug>`.
 
    ```bash
    git fetch origin
-   git checkout develop-<slug>
-   git pull origin develop-<slug>
+   git checkout -B develop-<slug> origin/develop-<slug>
    ```
 
 2. Build the PR body: list each sub-item with its issue number, title, and implementation PR number.

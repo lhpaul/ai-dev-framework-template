@@ -308,7 +308,7 @@ This gate applies whenever the spec and plan are written in the same agent run (
 2. Open the spec PR and advance it to `ready-for-human-review` following the full PR readiness chain (Step 7a, Step 7, Step 8).
 3. Stop and report to the orchestrator with the following structured message:
 
-   > Spec PR #N is `ready-for-human-review`. Plan is written and staged locally on branch `implementation-plan/<slug>`, but the plan PR will not be opened until the spec PR is confirmed merged to `develop`. On the next dispatch (after spec merge is confirmed), push the plan branch and open the plan PR.
+   > Spec PR #N is `ready-for-human-review`. Plan is written and staged locally on branch `implementation-plan/<slug>`, but the plan PR will not be opened until the spec PR is confirmed merged to `develop` (or `develop-<slug>` when the integration-branch context applies). On the next dispatch (after spec merge is confirmed), push the plan branch and open the plan PR.
 
 4. On the next dispatch (after spec merge is confirmed via `gh pr view <spec_pr> --json state` returning `MERGED`), push the plan branch and open the plan PR. The plan content was written in the prior run; do not regenerate it.
 
@@ -360,6 +360,10 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 1. **Create a dedicated worktree** for this item before executing any stage work. This ensures complete isolation from other concurrent Work Item Runners in the batch.
 
 2. Determine the appropriate base branch for the worktree:
+
+   **If `BASE_BRANCH` is present in the handoff metadata** (set by the Portfolio Orchestrator when the item carries an `integration-branch:<slug>` label), use `origin/<BASE_BRANCH>` as the worktree base for all item types except `hotfix/*`. This overrides the default table below.
+
+   **If `BASE_BRANCH` is absent**, use the default table:
 
 | Item type                     | Base branch      |
 | ----------------------------- | ---------------- |

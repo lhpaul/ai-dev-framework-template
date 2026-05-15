@@ -466,6 +466,7 @@ For each item in the batch, prepare a short handoff:
 - Priority context
 - Parallelization notes or serialization reason
 - `BATCH_CONTEXT=true` — required for parallel batches so the Work Item Runner (protocol 91) activates worktree isolation
+- `BASE_BRANCH=develop-<slug>` — include this field when the item carries an `integration-branch:<slug>` label (see "Integration-branch base override" below). When `BASE_BRANCH` is present in the handoff, the Work Item Runner (protocol 91) **must** use it as the worktree base instead of the default `origin/develop` for all item types (feature, fix, refactor, spec, plan). The base-branch table in protocol 91 Step 3 applies only when `BASE_BRANCH` is absent from the handoff.
 - Each item adds its own CHANGELOG entry as normal (see Step 3.6 for conflict resolution strategy)
 
 ### Worktree isolation requirement
