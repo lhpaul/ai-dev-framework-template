@@ -317,17 +317,20 @@ This gate applies whenever the spec and plan are written in the same agent run (
 Before calling `gh pr create` for any `implementation-plan/*` branch, confirm the spec PR is merged:
 
 ```bash
-# Check whether the spec PR is merged (substitute the actual PR number)
-gh pr view <spec_pr_number> --json state --jq '.state'
-# Expected output: MERGED
-# If output is OPEN or CLOSED (without MERGED): do not open the plan PR
+# Check whether the spec PR is merged into the expected base branch.
+# EXPECTED_BASE is "develop" by default, or "develop-<slug>" when integration-branch:<slug> is present.
+# Substitute <spec_pr_number> and <expected-base> with actual values before running:
+gh pr view <spec_pr_number> --json state,baseRefName \
+  --jq 'select(.state=="MERGED" and .baseRefName=="<expected-base>") | "OK"'
+# Expected output: OK
+# If no output: the spec PR is not merged into the expected base branch — do not open the plan PR
 ```
 
 If the spec PR is still `OPEN`, apply the ordering gate above and stop. If the spec PR is `CLOSED` (rejected without merge), do **not** open the plan PR and do **not** apply the ordering gate — escalate to the human, because the spec was rejected and the plan cannot proceed without a merged spec.
 
 **Exception — Refactor items (no spec):** Items following the Refactor path (`02-generate-implementation-plan-protocol.md` without a preceding spec step) are exempt from this gate. There is no spec PR to wait for.
 
-(When the item carries an `integration-branch:<slug>` label, "spec PR merged to the integration branch" means merged to `develop-<slug>`, not to `develop`. The ordering gate applies identically; only the target branch changes.)
+(When the item carries an `integration-branch:<slug>` label, "spec PR merged to the integration branch" means merged to `develop-<slug>`, not to `develop`. The ordering gate applies identically; only the target branch changes. Use `develop-<slug>` as `<expected-base>` in the verification command above.)
 
 ### Dependency check
 

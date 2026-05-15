@@ -25,6 +25,7 @@ Accept `<slug>` as input. Derive the integration branch name: `develop-<slug>`.
 2. For each sub-item, confirm that its implementation PR is merged:
 
    ```bash
+   # Substitute <issue-number> and <slug> with actual values before running:
    gh pr list --state merged --search "<issue-number>" --json number,headRefName,baseRefName,mergedAt \
      --jq '[.[] | select((.headRefName | test("^(feature|fix|refactor)/<issue-number>(-|$)")) and .baseRefName=="develop-<slug>")]'
    ```

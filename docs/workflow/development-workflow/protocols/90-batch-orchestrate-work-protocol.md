@@ -497,6 +497,7 @@ If an `integration-branch:<slug>` label is found:
    git fetch origin develop
    git checkout -B develop-<slug> origin/develop
    git push -u origin develop-<slug>
+   git switch develop  # return to develop immediately after creation
    ```
 
    Log: `INFO: created integration branch develop-<slug> from origin/develop for epic sub-item #<issue-number>.`
