@@ -273,12 +273,17 @@ Determine the branch slug:
 - **With issue tracker**: `[issue-id]-[slug]` (e.g., `ENG-123-user-auth`)
 - **Without issue tracker**: `[slug]` (e.g., `user-auth`)
 
+**Integration-branch check**: Before creating the branch, check whether the work item carries an `integration-branch:<slug>` label (the orchestrator will have noted this in the handoff). If the label is present, use `develop-<slug>` as the base branch instead of `develop`:
+
 ```bash
-git fetch origin
-git checkout develop
-git pull origin develop
-git checkout -b feature/[branch-slug]
+# Standard:
+git checkout develop && git pull origin develop
+# If integration-branch:<slug> label is present, use develop-<slug> instead:
+# git checkout develop-<slug> && git pull origin develop-<slug>
+git checkout -b feature/[branch-slug]   # or fix/[branch-slug], refactor/[branch-slug]
 ```
+
+The PR opened at the end of this path must target `develop-<slug>` when the label is present. If the integration branch does not exist yet, the orchestrator should have created it before dispatching this protocol — do not create it here; instead, stop and inform the Work Item Runner.
 
 **Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout develop` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, confirm your working directory is inside the worktree path, not the main repo root (run `pwd` and compare). See the "Critical: Worktree Git Discipline" block in Protocol 91 Step 3 for the full pre-operation checklist.
 
@@ -798,12 +803,17 @@ If no blocking ambiguity remains, proceed without an extra approval pause; other
 
 Branch from `develop` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without):
 
+**Integration-branch check**: Before creating the branch, check whether the work item carries an `integration-branch:<slug>` label (the orchestrator will have noted this in the handoff). If the label is present, use `develop-<slug>` as the base branch instead of `develop`:
+
 ```bash
-git fetch origin
-git checkout develop
-git pull origin develop
+# Standard:
+git checkout develop && git pull origin develop
+# If integration-branch:<slug> label is present, use develop-<slug> instead:
+# git checkout develop-<slug> && git pull origin develop-<slug>
 git checkout -b fix/[branch-slug]
 ```
+
+The PR opened at the end of this path must target `develop-<slug>` when the label is present. If the integration branch does not exist yet, the orchestrator should have created it before dispatching this protocol — do not create it here; instead, stop and inform the Work Item Runner.
 
 **Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout develop` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, confirm your working directory is inside the worktree path, not the main repo root (run `pwd` and compare). See the "Critical: Worktree Git Discipline" block in Protocol 91 Step 3 for the full pre-operation checklist.
 

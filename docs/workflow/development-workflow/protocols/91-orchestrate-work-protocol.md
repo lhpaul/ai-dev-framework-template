@@ -140,6 +140,8 @@ When dispatching a subagent for this item, include a short "Tracker Work Item Su
 | PR labeled `needs-fixes`                                           | Human or automated systems requested changes                                                                                                        | Address feedback, push, then run Step 7a, Step 7, and Step 8                                                                                                                                                                                                                 |
 | PR labeled `ready-for-human-review`                                | —                                                                                                                                                   | Wait — human review / merge required                                                                                                                                                                                                                                         |
 
+> **Integration-branch note**: When the item carries an `integration-branch:<slug>` label, the plan PR targets `develop-<slug>` instead of `develop`. The ordering gate (spec PR merged before plan PR) still applies, but to `develop-<slug>` not `develop`.
+
 ### Cross-layer scope check (mandatory before fast-track dispatch)
 
 **When to run**: Before classifying a backlog item as Fast Track and dispatching it to `03-implement-development-protocol.md` Path 3, run this check. It applies to any item whose issue type, tracker label, or brief suggests a bug fix or simple change (i.e., not a feature requiring a spec).
@@ -262,6 +264,41 @@ git worktree list | grep "<branch-prefix>/<slug>"
 
 If any check returns a match: **do not re-dispatch**. Resume from the existing branch or PR with `workflow-next-action.sh`.
 
+### Integration-branch base override (sub-items with `integration-branch:<slug>` label)
+
+Before dispatching any creator-stage agent, check whether the item carries an `integration-branch:<slug>` label:
+
+```bash
+gh issue view <issue-number> --json labels --jq '.labels[].name | select(startswith("integration-branch:"))'
+```
+
+If the label is present:
+
+1. **Derive the integration branch name**: `develop-<slug>` (replace `<slug>` with the value after `integration-branch:`).
+2. **Verify the branch exists on the remote** (output `0` = does not exist, `1` = exists):
+
+   ```bash
+   BRANCH_EXISTS=$(set -o pipefail; git ls-remote origin "refs/heads/develop-<slug>" 2>/dev/null | wc -l | tr -d ' ') || {
+     echo "WARNING: failed to verify whether develop-<slug> exists on origin; skipping auto-create for this item."
+     continue  # or return 1 / exit 1 depending on surrounding loop/function context
+   }
+   ```
+
+3. **If the branch does not exist** (`BRANCH_EXISTS` is `0`), create and push it from `develop`:
+
+   ```bash
+   git fetch origin develop
+   git checkout -B develop-<slug> origin/develop
+   git push -u origin develop-<slug>
+   git switch develop  # return to develop immediately after creation
+   ```
+
+   Log: `INFO: created integration branch develop-<slug> from origin/develop for sub-item #<issue-number>.`
+
+4. **Record the base branch**: store `BASE_BRANCH=develop-<slug>` and pass it to every stage-agent dispatch for this item. All PRs opened for this sub-item (spec, plan, implementation, fix, refactor) must target `develop-<slug>`.
+
+**Single-item exemption**: When the item carries no `integration-branch:*` label, skip this check. The default base branch (`develop`) applies.
+
 ### Spec-Plan ordering gate
 
 **The plan PR must never be opened before the spec PR has been merged to the integration branch.**
@@ -274,7 +311,7 @@ This gate applies whenever the spec and plan are written in the same agent run (
 2. Open the spec PR and advance it to `ready-for-human-review` following the full PR readiness chain (Step 7a, Step 7, Step 8).
 3. Stop and report to the orchestrator with the following structured message:
 
-   > Spec PR #N is `ready-for-human-review`. Plan is written and staged locally on branch `implementation-plan/<slug>`, but the plan PR will not be opened until the spec PR is confirmed merged to `develop`. On the next dispatch (after spec merge is confirmed), push the plan branch and open the plan PR.
+   > Spec PR #N is `ready-for-human-review`. Plan is written and staged locally on branch `implementation-plan/<slug>`, but the plan PR will not be opened until the spec PR is confirmed merged to `develop` (or `develop-<slug>` when the integration-branch context applies). On the next dispatch (after spec merge is confirmed), push the plan branch and open the plan PR.
 
 4. On the next dispatch (after spec merge is confirmed via `gh pr view <spec_pr> --json state` returning `MERGED`), push the plan branch and open the plan PR. The plan content was written in the prior run; do not regenerate it.
 
@@ -283,15 +320,20 @@ This gate applies whenever the spec and plan are written in the same agent run (
 Before calling `gh pr create` for any `implementation-plan/*` branch, confirm the spec PR is merged:
 
 ```bash
-# Check whether the spec PR is merged (substitute the actual PR number)
-gh pr view <spec_pr_number> --json state --jq '.state'
-# Expected output: MERGED
-# If output is OPEN or CLOSED (without MERGED): do not open the plan PR
+# Check whether the spec PR is merged into the expected base branch.
+# EXPECTED_BASE is "develop" by default, or "develop-<slug>" when integration-branch:<slug> is present.
+# Substitute <spec_pr_number> and <expected-base> with actual values before running:
+gh pr view <spec_pr_number> --json state,baseRefName \
+  --jq 'select(.state=="MERGED" and .baseRefName=="<expected-base>") | "OK"'
+# Expected output: OK
+# If no output: the spec PR is not merged into the expected base branch — do not open the plan PR
 ```
 
 If the spec PR is still `OPEN`, apply the ordering gate above and stop. If the spec PR is `CLOSED` (rejected without merge), do **not** open the plan PR and do **not** apply the ordering gate — escalate to the human, because the spec was rejected and the plan cannot proceed without a merged spec.
 
 **Exception — Refactor items (no spec):** Items following the Refactor path (`02-generate-implementation-plan-protocol.md` without a preceding spec step) are exempt from this gate. There is no spec PR to wait for.
+
+(When the item carries an `integration-branch:<slug>` label, "spec PR merged to the integration branch" means merged to `develop-<slug>`, not to `develop`. The ordering gate applies identically; only the target branch changes. Use `develop-<slug>` as `<expected-base>` in the verification command above.)
 
 ### Dependency check
 
@@ -321,6 +363,10 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 1. **Create a dedicated worktree** for this item before executing any stage work. This ensures complete isolation from other concurrent Work Item Runners in the batch.
 
 2. Determine the appropriate base branch for the worktree:
+
+   **If `BASE_BRANCH` is present in the handoff metadata** (set by the Portfolio Orchestrator when the item carries an `integration-branch:<slug>` label), use `origin/<BASE_BRANCH>` as the worktree base for all item types except `hotfix/*`. This overrides the default table below.
+
+   **If `BASE_BRANCH` is absent**, use the default table:
 
 | Item type                     | Base branch      |
 | ----------------------------- | ---------------- |
@@ -1796,7 +1842,7 @@ Verify all of the following. If any check fails, **do not report ready** — tre
 
 | Check                                           | Pass condition                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Base branch                                     | `develop` for `feature/*`, `fix/*`, `refactor/*`; `main` for `hotfix/*`; `develop` for `spec/*`, `implementation-plan/*`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Base branch                                     | When `BASE_BRANCH` is present in the handoff metadata: `<BASE_BRANCH>` for all item types except `hotfix/*`. When `BASE_BRANCH` is absent: `develop` for `feature/*`, `fix/*`, `refactor/*`, `spec/*`, `implementation-plan/*`; `main` for `hotfix/*`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | PR is non-draft                                 | `isDraft: false`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `ready-for-human-review` label                  | Present in `labels[].name`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `ready-for-regression` label                    | Present in `labels[].name` for `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`; absent/ignored for `spec/*`, `implementation-plan/*`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
