@@ -196,7 +196,9 @@ git branch --list "feature/${ISSUE_NUMBER}-*"
 
 ### Additional patterns
 
-For the complete shell scripting checklist — including jq variable injection, `local` exit-code masking, timestamp sourcing, `gh` CLI error handling, and exit-code semantics under `set -e` — see [`../workflow/development-workflow/protocols/03-implement-development-protocol.md`](../workflow/development-workflow/protocols/03-implement-development-protocol.md) → "Shell Script Quality Checklist".
+For the complete shell scripting checklist — including jq variable injection, `local` exit-code masking, timestamp sourcing, `gh` CLI error handling, exit-code semantics under `set -e`, and the rules for shell snippets embedded in protocol `.md` files — see [`../workflow/development-workflow/protocols/03-implement-development-protocol.md`](../workflow/development-workflow/protocols/03-implement-development-protocol.md) → "Shell Script Quality Checklist".
+
+The checklist applies equally to `.sh` files and to shell code blocks (` ```bash ` / ` ```sh ` fenced blocks) embedded in protocol and documentation markdown files. Agents and humans copy those snippets verbatim, so the same error-handling and wrong-branch-guard standards apply.
 
 ---
 

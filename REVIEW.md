@@ -183,6 +183,7 @@ Additional checks for **documentation PRs** (when a PR adds or modifies document
 
 - **Intra-file content duplication**: when a new section is added to an existing file, verify that any tables or lists in the new section are not reproducing content already present elsewhere in the same file. If a duplicate is found, flag it as `important` with a recommendation to cross-reference the canonical location instead of duplicating.
 - **Wording consistency**: verify that procedural instructions in a new section (e.g., "push a commit", "apply a label", "run a script") are consistent with the existing flow described in sibling sections of the same file. Flag contradictions as `important`.
+- **Shell snippet safety in protocol files**: when a PR adds or modifies shell code blocks (`` ```bash `` / `` ```sh `` fenced blocks) inside a protocol or documentation `.md` file, apply the same quality bar as for `.sh` files (see the "Shell Script Quality Checklist" in `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md`). Specifically flag as `important` any multi-command state-mutating block that lacks `set -euo pipefail`, any block that commits or pushes without a wrong-branch guard, and any single-liner that can fail silently without an explicit `|| exit 1` or equivalent error guard. Read-only query snippets (e.g., `gh pr view`, `git log`) are exempt.
 
 Additional checks for **shell scripts** (`*.sh`):
 
