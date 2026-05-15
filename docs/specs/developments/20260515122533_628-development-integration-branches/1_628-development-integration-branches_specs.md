@@ -81,9 +81,8 @@ When a large development effort is split across multiple backlog items (spec, pl
 **Steps**:
 
 1. The human (or the orchestrator, when dispatching the first sub-item in the epic) verifies that no `develop-<slug>` branch exists yet.
-2. The integration branch is created from the tip of `develop`: `git checkout -b develop-<slug> develop` (or the equivalent from `origin/develop`).
-3. The branch is pushed to the remote.
-4. Subsequent sub-item PRs use `develop-<slug>` as their base.
+2. The integration branch `develop-<slug>` is created from the tip of `develop` and pushed to the remote.
+3. Subsequent sub-item PRs use `develop-<slug>` as their base.
 
 **Postconditions**: `develop-<slug>` exists on the remote and is ready to receive sub-item PRs.
 
@@ -112,7 +111,7 @@ When a large development effort is split across multiple backlog items (spec, pl
 1. The human runs `/graduate-development <slug>` (or the equivalent workflow command).
 2. The graduation agent verifies that all sub-items in the epic are in a terminal merged state on the integration branch.
 3. The agent opens a graduation PR: `develop-<slug>` → `develop`.
-4. The PR title follows the pattern: `feat(<slug>): graduate <slug> integration branch to develop`.
+4. The PR title clearly identifies the graduation target (e.g., "Graduate `<slug>` integration branch to develop").
 5. The PR description includes a summary of all sub-items included in the graduation and a brief description of what the feature delivers.
 6. The graduation PR goes through the standard review process (automated reviewers → CI → human review).
 7. The human merges the graduation PR using a **merge commit** (not squash) to preserve the full sub-item history on `develop`.
