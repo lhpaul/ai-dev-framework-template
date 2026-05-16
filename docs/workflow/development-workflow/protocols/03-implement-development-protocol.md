@@ -30,7 +30,7 @@ When your change creates or materially modifies `.github/workflows/*.yml`, compl
 
 ## Shell Script Quality Checklist
 
-When your change **creates or significantly modifies a `.sh` file**, complete this checklist before opening the development PR. These are the most common bash scripting anti-patterns that cause rework in the automated reviewer loop.
+When your change **creates or significantly modifies a `.sh` file**, or when your change **adds or edits shell code blocks (```` ```bash ```` / ```` ```sh ```` fenced blocks) inside a protocol or documentation `.md` file**, complete this checklist before opening the development PR. These are the most common bash scripting anti-patterns that cause rework in the automated reviewer loop.
 
 ### 1. jq variable injection
 
@@ -173,6 +173,32 @@ REPO="${3:?Usage: $0 <pr_number> <owner> <repo>}"
 ```
 
 The `${VAR:?message}` form causes the script to exit with an informative error if the variable is unset or empty. Use it for all required positional parameters.
+
+### 8. Shell snippets in protocol and documentation `.md` files
+
+Shell code blocks embedded in protocol and documentation markdown files are copied verbatim by agents and humans following the protocol. Apply the same quality bar as for `.sh` files — there is no separate "docs exception."
+
+**Multi-command state-mutating blocks** (blocks that create branches, push, write files, label PRs, or otherwise modify persistent state):
+
+- Begin with `set -euo pipefail` (or, when running inside a function/sub-shell context where `set` is already active, document the inherited error-handling assumption in an inline comment).
+- Capture `gh` / `git` exit codes explicitly; do not rely on a bare command that would silently swallow a failure.
+- Redirect error output to `stderr` (`2>/dev/null` only when failure is truly expected and the caller handles it; otherwise let errors surface).
+
+**Blocks that commit or push to a branch**:
+
+- Add a wrong-branch guard before the commit or push. Check that the current branch matches the expected pattern before proceeding:
+
+  ```bash
+  CURRENT=$(git rev-parse --abbrev-ref HEAD)
+  [[ "$CURRENT" == fix/* ]] || { echo "ERROR: expected fix/* branch, got $CURRENT" >&2; exit 1; }
+  ```
+
+**Single-liner examples** (illustrative commands shown without multi-step context):
+
+- If the snippet can fail silently in a way that corrupts downstream state (e.g., a silent `gh` call whose output is consumed by the next step), add an explicit `|| exit 1` or `|| { echo "ERROR: ..."; exit 1; }`.
+- Single-liner `read`-only queries (`gh pr view`, `git log`, etc.) that do not modify state are exempt.
+
+These rules apply equally to all protocol documents under `docs/workflow/development-workflow/protocols/` and to any other markdown file that embeds shell commands intended to be run by agents or humans.
 
 ---
 
