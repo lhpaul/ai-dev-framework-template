@@ -1191,7 +1191,7 @@ Interpret the result as follows:
 
 | Result                                  | Action                                                                                                                                                                                                                                                                                                                                                                                     |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `clean`                                 | Summary comment posted automatically by the script. If `ADVISORY_LABELS` is non-empty, document a disposition for each advisory finding and update the summary comment before proceeding — see "Advisory finding dispositions" in `93-automated-reviewer-loop-protocol.md`. Then re-issue the GraphQL `reviewThreads` query (Step 8c) — see "Re-query reviewThreads after each push" below |
+| `clean`                                 | Summary comment posted automatically by the script. If `ADVISORY_LABELS` is non-empty, document a disposition for each advisory finding and update the summary comment before proceeding — see "Advisory finding dispositions" in `93-automated-reviewer-loop-protocol.md`. Then continue to Step 7b (implementation PRs) → Step 8 → **Step 8a** (which contains the mandatory GraphQL `reviewThreads` pre-Check-4 gate). **Do NOT apply `ready-for-human-review` directly from this step** — `clean` from the script only means no blocking inline comments or `CHANGES_REQUESTED` reviews were found; it does NOT mean all review threads are resolved. The GraphQL check in Step 8a is the authoritative gate. |
 | `skipped`                               | Continue to Step 7b (implementation PRs) then Step 8 (no summary comment posted — Step 8c skips the check)                                                                                                                                                                                                                                                                                 |
 | `needs_fixes` and `cycle < max_cycles`  | Increment `cycle`, dispatch the matching fixer agent, wait for a push, then run Step 7 again                                                                                                                                                                                                                                                                                               |
 | `needs_fixes` and `cycle >= max_cycles` | Pass `--post-final-summary` to the final invocation — the script posts the summary automatically. Then escalate to human                                                                                                                                                                                                                                                                   |
@@ -1254,19 +1254,21 @@ full details see `93-automated-reviewer-loop-protocol.md`.
 
 ### Re-query reviewThreads after each push (mandatory)
 
-**After every push that addresses reviewer feedback — including the push that causes `pr-review-loop.sh` to return `clean` — you MUST re-issue the GraphQL `reviewThreads` query (Step 8c) before proceeding to Step 7b or Step 8.**
+**After every push that addresses reviewer feedback — including the push that causes `pr-review-loop.sh` to return `clean` — you MUST NOT apply `ready-for-human-review` before the GraphQL `reviewThreads` pre-Check-4 gate in Step 8a runs and passes.**
 
-Do not rely on thread state observed before the push. Bot reviewers (CodeRabbit, Devin, or any configured platform) may open new review threads within seconds of a push landing. Thread state cached from before the push will not include these new threads.
+Do not rely on thread state observed before the push, and do not rely on the reviewer loop script's exit code as a thread-resolution signal. Bot reviewers (CodeRabbit, Devin, or any configured platform) may open new review threads within seconds of a push landing. Thread state cached from before the push will not include these new threads.
 
 The required sequence after each fixer push is:
 
 1. Push the fix commit.
 2. Run `pr-review-loop.sh` (wait for bot response and poll for `clean` / `needs_fixes`).
-3. **Re-issue the GraphQL `reviewThreads` query** (as defined in Step 8c) to get the current thread state for the latest push.
+3. **Re-issue the GraphQL `reviewThreads` query** (the same query in Step 8a's pre-Check-4 gate) to get the current thread state for the latest push.
 4. If new unresolved threads are found: treat this as `needs_fixes` — handle them (dispatch a fixer or resolve via reply), then repeat from step 1.
 5. Only when the re-issued query returns no unresolved bot-authored threads: proceed to Step 7b (implementation PRs) then Step 8.
 
 **This check is not optional and cannot be skipped, even when the review loop script reported `clean`.** The script checks review state (blocking inline comments and `CHANGES_REQUESTED` reviews), not the resolved/unresolved state of `reviewThreads`. New threads created by a push may appear after the script's poll window closes. The GraphQL query is the only authoritative source for thread resolution state.
+
+> **Critical — `clean` does not mean threads are resolved**: The reviewer loop script (`pr-review-loop.sh`) classifies some CodeRabbit findings as advisory/non-blocking and exits `clean` without requiring those threads to be marked resolved. An agent that equates `RESULT=clean` with "all threads resolved" will apply `ready-for-human-review` while unresolved threads remain on the PR. Always treat the GraphQL `reviewThreads` query result as the sole authoritative signal for thread resolution state — never the script exit code.
 
 ### Blocking vs. suggestion classification
 
@@ -1465,6 +1467,8 @@ Interpret the result as follows:
 ## Step 8a: Label Readiness Checklist (Hard Gate)
 
 **Before applying `ready-for-human-review`**, verify all required readiness conditions are met. This is a hard gate — do not skip or defer.
+
+> **Warning — `pr-review-loop.sh clean` does NOT authorize applying `ready-for-human-review`**: A `clean` exit from the reviewer loop script means no blocking inline comments or `CHANGES_REQUESTED` reviews were detected. It does NOT mean all review threads are resolved. The GraphQL `reviewThreads` pre-Check-4 gate below (exit code 4) is the only authoritative check for thread resolution state. Agents that skip this gate and apply the label based solely on the script's `clean` result will leave unresolved bot-authored threads on the PR. Run this checklist in full every time — including the GraphQL pre-Check-4 gate — regardless of what Step 7 reported.
 
 ### Exit code contract
 
