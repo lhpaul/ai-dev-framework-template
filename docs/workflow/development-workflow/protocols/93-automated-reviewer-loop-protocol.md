@@ -315,8 +315,8 @@ what to check when diagnosing a stalled loop.
 CodeRabbit posts a "Reviews paused" issue comment on the PR and does not post a new review.
 The push appears to complete normally but no review follows.
 
-**Script behavior** (lines ~2027–2060): After half the max-wait window has elapsed with no
-activity (`elapsed >= max_wait / 2`), the script checks for a "Reviews paused" issue
+**Script behavior**: After half the max-wait window has elapsed with no activity
+(`elapsed >= max_wait / 2`), `pr-review-loop.sh` checks for a "Reviews paused" issue
 comment from `coderabbitai[bot]` posted after the current HEAD's `since_iso` timestamp. If
 found, the script posts `@coderabbitai review` to resume, sets the `coderabbit_retrigger_attempted`
 flag (so the auto-resume is only attempted once per HEAD cycle), and resets the elapsed
@@ -332,13 +332,12 @@ elapses, the loop times out and exits `escalate`.
 no "Reviews paused" comment, and no rate-limit comment. CodeRabbit stays silent with no
 visible signal.
 
-**Script behavior** (lines ~2063–2105): After `CODERABBIT_NO_TRIGGER_TIMEOUT` seconds of
-silence (default: 600 s) with no activity, no "Reviews paused" comment, and no rate-limit
-comment, the script posts `@coderabbitai review` to force a fresh review. The
-`coderabbit_no_trigger_retriggers` counter is incremented; `CODERABBIT_RATE_LIMIT_MAX_RETRIES`
-is the combined cap for total retrigger attempts across both this mechanism and the
-rate-limit retry path. The elapsed timer resets after posting so the triggered review has a
-full polling window.
+**Script behavior**: After `CODERABBIT_NO_TRIGGER_TIMEOUT` seconds of silence (default: 600 s)
+with no activity, no "Reviews paused" comment, and no rate-limit comment, `pr-review-loop.sh`
+posts `@coderabbitai review` to force a fresh review. The `coderabbit_no_trigger_retriggers`
+counter is incremented; `CODERABBIT_RATE_LIMIT_MAX_RETRIES` is the combined cap for total
+retrigger attempts across both this mechanism and the rate-limit retry path. The elapsed
+timer resets after posting so the triggered review has a full polling window.
 
 **Trigger condition**: Allowed up to `CODERABBIT_RATE_LIMIT_MAX_RETRIES` times total. If
 the cap is reached and CodeRabbit still has not responded, the loop exits `escalate`.
@@ -348,9 +347,14 @@ the cap is reached and CodeRabbit still has not responded, the loop exits `escal
 When an agent is polling manually — or when `pr-review-loop.sh` has been running for more
 than 10 minutes with no CodeRabbit activity — check these markers before escalating:
 
-1. **Check for a "Reviews paused" comment**: run
-   `gh api repos/{owner}/{repo}/issues/{pr_number}/comments --jq '[.[] | select(.user.login == "coderabbitai[bot]") | .body] | last'`
-   and look for "Reviews paused" text. If present, Pattern 1 applies.
+1. **Check for a "Reviews paused" comment**: run:
+
+   ```bash
+   gh api repos/{owner}/{repo}/issues/{pr_number}/comments \
+     --jq '[.[] | select(.user.login == "coderabbitai[bot]") | .body] | last'
+   ```
+
+   Look for "Reviews paused" text. If present, Pattern 1 applies.
 
 2. **Check whether the script has already posted `@coderabbitai review`**: look for an
    issue comment with body `@coderabbitai review` posted by the workflow bot after the
