@@ -376,6 +376,34 @@ auto-retrigger was just posted. Escalate only when **both** of the following are
 If you are running the script, it handles escalation automatically. If you are polling
 manually, apply this rule before concluding the loop is stuck and escalating to human.
 
+### CodeRabbit summary comment update-in-place pattern
+
+CodeRabbit edits its single summary/walkthrough issue comment in-place after each review
+cycle — it does **not** post a new comment per cycle. This has a critical implication for
+agents trying to infer whether CodeRabbit has reviewed the current HEAD:
+
+- The comment's **timestamp** reflects when it was **first created**, not when the most
+  recent review cycle completed. A "stale-looking" timestamp does not mean CodeRabbit has
+  not yet reviewed the latest push.
+- An agent reading the PR timeline may observe a comment that appears old and incorrectly
+  conclude that CodeRabbit has not yet reviewed the current HEAD commit.
+
+> **Note**: Do **not** use the CodeRabbit summary comment's age or timestamp to infer
+> whether a review of the current HEAD has completed. The timestamp is unreliable for
+> this purpose.
+
+The authoritative signals for review completion are:
+
+1. **GraphQL thread audit** (`isResolved` state per `check_unresolved_threads` / Step 8c):
+   the canonical cleanness check — if all CodeRabbit review threads report `isResolved: true`,
+   the review is clean for the current HEAD.
+2. **CodeRabbit SUCCESS commit status**: the machine-readable equivalent checked by
+   `pr-review-loop.sh` as part of its polling loop. A `SUCCESS` status on the current HEAD
+   SHA confirms CodeRabbit has reviewed that exact commit.
+
+When verifying CodeRabbit review completion manually, always check one of these two signals
+rather than inferring from comment age.
+
 ---
 
 ### Run the loops
