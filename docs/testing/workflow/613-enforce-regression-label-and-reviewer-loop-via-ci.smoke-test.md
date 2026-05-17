@@ -53,7 +53,11 @@ Before running this smoke test:
      --draft
    ```
 
-3. Note the PR number: `PR_NUM=$(gh pr view --json number --jq '.number')`.
+3. Note the PR number:
+
+   ```bash
+   PR_NUM=$(gh pr view --json number --jq '.number')
+   ```
 
 **Expected result after CI runs**:
 
@@ -140,16 +144,16 @@ Before running this smoke test:
 
 ---
 
-### Step 5: Verify a push resets the guard to failing
+### Step 5: Verify the guard re-evaluates on every push
 
-1. Push another empty commit (the `remove-regression-label-on-push.yml` workflow removes the label, and the guard re-evaluates):
+1. Push another empty commit to trigger `synchronize` and force guard re-evaluation:
 
    ```bash
-   git commit --allow-empty -m "chore: second push to verify guard reset"
+   git commit --allow-empty -m "chore: second push to verify guard re-evaluation"
    git push
    ```
 
-2. Wait for both the `remove-regression-label-on-push` and `reviewer-loop-guard` workflows to complete.
+2. Wait for the `reviewer-loop-guard` workflow to complete.
 
 3. Check the guard status on the new SHA:
 
@@ -161,7 +165,8 @@ Before running this smoke test:
 
 **Expected result**:
 
-- `state` is `"failure"` (guard re-evaluated after the push and the new SHA has no summary comment yet).
+- A new status is posted for the new `HEAD_SHA` under context `Reviewer-loop completion guard`.
+- `state` reflects whether the canonical summary comment is present on the PR at evaluation time.
 - **Maps to**: Acceptance Criterion #7 (guard re-evaluates on every push).
 
 ---
@@ -187,7 +192,11 @@ Before running this smoke test:
      --draft
    ```
 
-3. Note this PR number as `PR_NUM_2`.
+3. Note this PR number:
+
+   ```bash
+   PR_NUM_2=$(gh pr view --json number --jq '.number')
+   ```
 
 4. After CI runs:
 
@@ -263,7 +272,7 @@ Each checkbox maps to an acceptance criterion from the spec.
 - [ ] **AC #4**: Re-running the label workflow when the label was already present completed without failure and without duplicating the label.
 - [ ] **AC #5**: The implementation PR with no reviewer-loop summary comment showed a failing `Reviewer-loop completion guard` check.
 - [ ] **AC #6**: After posting the canonical summary comment, the guard check transitioned to passing.
-- [ ] **AC #7**: A subsequent push caused the guard to re-evaluate and fail again (no summary on the new SHA).
+- [ ] **AC #7**: A subsequent push caused the guard to re-evaluate and post a fresh status on the new SHA.
 - [ ] **AC #9** (defer to CI): Both workflow files pass `actionlint` with no new warnings (verified in the implementation PR's CI run).
 - [ ] **AC #10** (defer to CI): Each workflow declares only the minimum permissions required (`pull-requests: write` for the label workflow; `pull-requests: read` + `statuses: write` for the guard).
 
@@ -272,10 +281,6 @@ Each checkbox maps to an acceptance criterion from the spec.
 ## Seed Data Reference
 
 No seed data is required. The smoke test uses fixture branches and PRs created inline.
-
-| Entity | Scenario | How to load |
-| --- | --- | --- |
-| — | — | — |
 
 ---
 

@@ -26,7 +26,7 @@
 | Reviewer-loop summary marker (exact string) | `grep "Automated Reviewer Loop Summary" scripts/development-workflow/pr-review-loop.sh` | Present at lines 123, 3151, 3155, 3304, 3321, 3335 |
 | Secondary marker (unique to script-posted comments) | `grep "Posted automatically by" scripts/development-workflow/pr-review-loop.sh` | Present; combined with `### Automated Reviewer Loop Summary` to uniquely identify script-posted summaries |
 | Existing action pin (checkout) | `grep "actions/checkout" .github/workflows/remove-regression-label-on-push.yml` | `actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1` |
-| Existing in-scope branch prefixes in template | `grep -h "feature/\|fix/\|refactor/\|hotfix/" .github/workflows/remove-regression-label-on-push.yml` | Not listed in that file — prefixes are documented in spec; workflow defines them as a configurable variable |
+| Existing in-scope branch prefixes in template | `grep -h "feature/\|fix/\|refactor/\|hotfix/" .github/workflows/remove-regression-label-on-push.yml` | Not present (prefixes defined as env var in workflow) |
 
 ---
 
@@ -67,10 +67,6 @@ No database, backend, shared package, or frontend layers are affected.
 
 No seed data is required. The feature operates entirely on GitHub Actions events and PR metadata.
 
-| Entity | Values / Scenario | File |
-| --- | --- | --- |
-| — | — | — |
-
 ---
 
 ## Documentation Updates
@@ -101,6 +97,10 @@ name: Apply ready-for-regression label
 on:
   pull_request:
     types: [opened, reopened, ready_for_review, synchronize]
+
+concurrency:
+  group: apply-regression-label-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   apply-label:
@@ -150,6 +150,10 @@ on:
   pull_request:
     types: [opened, reopened, ready_for_review, synchronize]
 
+concurrency:
+  group: reviewer-loop-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   guard:
     runs-on: ubuntu-latest
@@ -163,7 +167,28 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BRANCH: ${{ github.head_ref }}
+          IN_SCOPE_PREFIXES: "feature/ fix/ refactor/ hotfix/"
         run: |
+          # Check whether the branch matches any in-scope prefix
+          in_scope=false
+          for prefix in $IN_SCOPE_PREFIXES; do
+            if [[ "$BRANCH" == "${prefix}"* ]]; then
+              in_scope=true
+              break
+            fi
+          done
+          if [ "$in_scope" = "false" ]; then
+            echo "Branch '$BRANCH' is not in scope — skipping guard check (pass)."
+            gh api \
+              --method POST \
+              "repos/$REPO/statuses/$HEAD_SHA" \
+              -f state="success" \
+              -f description="Not an implementation branch; check skipped." \
+              -f context="Reviewer-loop completion guard"
+            exit 0
+          fi
+
           MARKER1="### Automated Reviewer Loop Summary"
           MARKER2="*Posted automatically by \`pr-review-loop.sh\`.*"
 
@@ -246,11 +271,10 @@ jobs:
 
    Fix any reported issues before committing.
 
-8. **Commit and push**: stage all four new/modified files:
+8. **Commit and push**: stage the three new implementation files:
    - `.github/workflows/apply-regression-label.yml`
    - `.github/workflows/reviewer-loop-guard.yml`
    - `docs/workflow/development-workflow/integrations/ci-enforcement.md`
-   - `docs/specs/developments/20260515162721_613-enforce-regression-label-and-reviewer-loop-via-ci/2_613-enforce-regression-label-and-reviewer-loop-via-ci_implementation-plan.md` (plan — already on the plan branch; the impl branch will carry the actual workflow files)
 
 9. **Verify smoke test runbook**: execute the runbook steps against a test PR (or fixture PR in this repo) to confirm:
    - A `feature/*` PR receives the `ready-for-regression` label automatically.
