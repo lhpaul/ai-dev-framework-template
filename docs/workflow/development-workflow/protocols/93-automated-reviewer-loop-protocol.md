@@ -302,6 +302,82 @@ that script still shows the old value), treat it as **in-scope**. The test is wh
 _this PR's changes_ created the inconsistency, not whether the file was originally in the
 diff. When in doubt, fix the consistency issue inline rather than deferring it.
 
+### CodeRabbit silence patterns
+
+`pr-review-loop.sh` handles two situations where CodeRabbit produces no review after a push
+and would otherwise stall the loop indefinitely. Both are automatic — agents running the
+script do not need to intervene. This section documents what each pattern looks like and
+what to check when diagnosing a stalled loop.
+
+#### Pattern 1: "Reviews paused"
+
+**What happens**: CodeRabbit auto-pauses reviews after many commits on a PR. When paused,
+CodeRabbit posts a "Reviews paused" issue comment on the PR and does not post a new review.
+The push appears to complete normally but no review follows.
+
+**Script behavior**: After half the max-wait window has elapsed with no activity
+(`elapsed >= max_wait / 2`), `pr-review-loop.sh` checks for a "Reviews paused" issue
+comment from `coderabbitai[bot]` posted after the current HEAD's `since_iso` timestamp. If
+found, the script posts `@coderabbitai review` to resume, sets the `coderabbit_retrigger_attempted`
+flag (so the auto-resume is only attempted once per HEAD cycle), and resets the elapsed
+timer to give the resumed review a full polling window.
+
+**Trigger condition**: Only attempted once per HEAD cycle (`coderabbit_retrigger_attempted`
+flag). If CodeRabbit remains unresponsive after the retrigger and the max-wait window
+elapses, the loop times out and exits `escalate`.
+
+#### Pattern 2: Silent non-trigger
+
+**What happens**: CodeRabbit simply does not auto-trigger after a push — no review appears,
+no "Reviews paused" comment, and no rate-limit comment. CodeRabbit stays silent with no
+visible signal.
+
+**Script behavior**: After `CODERABBIT_NO_TRIGGER_TIMEOUT` seconds of silence (default: 600 s)
+with no activity, no "Reviews paused" comment, and no rate-limit comment, `pr-review-loop.sh`
+posts `@coderabbitai review` to force a fresh review. The `coderabbit_no_trigger_retriggers`
+counter is incremented; `CODERABBIT_RATE_LIMIT_MAX_RETRIES` is the combined cap for total
+retrigger attempts across both this mechanism and the rate-limit retry path. The elapsed
+timer resets after posting so the triggered review has a full polling window.
+
+**Trigger condition**: Allowed up to `CODERABBIT_RATE_LIMIT_MAX_RETRIES` times total. If
+the cap is reached and CodeRabbit still has not responded, the loop exits `escalate`.
+
+#### Diagnosing a stalled loop (manual polling)
+
+When an agent is polling manually — or when `pr-review-loop.sh` has been running for more
+than 10 minutes with no CodeRabbit activity — check these markers before escalating:
+
+1. **Check for a "Reviews paused" comment**: run:
+
+   ```bash
+   gh api repos/{owner}/{repo}/issues/{pr_number}/comments \
+     --jq '[.[] | select(.user.login == "coderabbitai[bot]") | .body] | last'
+   ```
+
+   Look for "Reviews paused" text. If present, Pattern 1 applies.
+
+2. **Check whether the script has already posted `@coderabbitai review`**: look for an
+   issue comment with body `@coderabbitai review` posted by the workflow bot after the
+   current HEAD push. If the script already posted the retrigger, wait for the full
+   `max_wait` window before concluding CodeRabbit is unresponsive.
+
+3. **If neither marker is present and >10 min have elapsed with no activity**, Pattern 2
+   (silent non-trigger) is likely. The script will post the retrigger automatically once
+   `CODERABBIT_NO_TRIGGER_TIMEOUT` (default: 600 s) elapses.
+
+#### When to escalate vs. wait
+
+Do **not** escalate while the script is still within its wait window or while an
+auto-retrigger was just posted. Escalate only when **both** of the following are true:
+
+- The script has posted `@coderabbitai review` (auto-retrigger for either pattern), AND
+- A full `max_wait` window has elapsed after the retrigger with still no CodeRabbit review.
+
+If you are running the script, it handles escalation automatically. If you are polling
+manually, apply this rule before concluding the loop is stuck and escalating to human.
+
+---
+
 ### Run the loops
 
 Execute **Step 7a: Internal Review Gate**, **Step 7: Automated Reviewer Loop**, **Step 8: CI Loop**, **Step 8a: Label Readiness Checklist**, **Step 8b: Update Tracker Status**, and **Step 8c: Post-Label Independent Verification** exactly as defined in `91-orchestrate-work-protocol.md` (scripts, result interpretation, sequential platform policy, fixer mapping, parameters, and labels). Do not duplicate that logic here — follow 91.
