@@ -75,7 +75,7 @@ Before running this smoke test:
    ```bash
    HEAD_SHA=$(gh pr view "$PR_NUM" --json headRefOid --jq '.headRefOid')
    gh api "repos/$(gh repo view --json nameWithOwner --jq '.nameWithOwner')/commits/$HEAD_SHA/statuses" \
-     --jq '[.[] | select(.context == "Reviewer-loop completion guard")] | last | {state, description}'
+     --jq '[.[] | select(.context == "Reviewer-loop completion guard")] | first | {state, description}'
    ```
 
 **Expected result**:
@@ -133,7 +133,7 @@ Before running this smoke test:
    ```bash
    HEAD_SHA=$(gh pr view "$PR_NUM" --json headRefOid --jq '.headRefOid')
    gh api "repos/$(gh repo view --json nameWithOwner --jq '.nameWithOwner')/commits/$HEAD_SHA/statuses" \
-     --jq '[.[] | select(.context == "Reviewer-loop completion guard")] | last | {state, description}'
+     --jq '[.[] | select(.context == "Reviewer-loop completion guard")] | first | {state, description}'
    ```
 
 **Expected result**:
@@ -160,7 +160,7 @@ Before running this smoke test:
    ```bash
    HEAD_SHA=$(gh pr view "$PR_NUM" --json headRefOid --jq '.headRefOid')
    gh api "repos/$(gh repo view --json nameWithOwner --jq '.nameWithOwner')/commits/$HEAD_SHA/statuses" \
-     --jq '[.[] | select(.context == "Reviewer-loop completion guard")] | last | {state, description}'
+     --jq '[.[] | select(.context == "Reviewer-loop completion guard")] | first | {state, description}'
    ```
 
 **Expected result**:

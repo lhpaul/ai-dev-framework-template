@@ -242,7 +242,7 @@ jobs:
 4. **Create `docs/workflow/development-workflow/integrations/ci-enforcement.md`**: write a new integration doc that covers:
    - What the two CI workflows do and when they run.
    - Default in-scope branch prefixes (`feature/`, `fix/`, `refactor/`, `hotfix/`).
-   - How downstream repos override the prefix list (override the `IN_SCOPE_PREFIXES` environment variable in the workflow file, or fork and edit the `push` filter).
+   - How downstream repos override the prefix list (override the `IN_SCOPE_PREFIXES` environment variable in the workflow file, or fork and edit the `pull_request` trigger/scope logic).
    - How to add `"Reviewer-loop completion guard"` to branch protection as a required status check (Settings → Branches → Branch protection rules → Require status checks to pass → search for the check name).
    - A note that `ready-for-regression` label auto-creation is idempotent; no manual label setup is required.
 
