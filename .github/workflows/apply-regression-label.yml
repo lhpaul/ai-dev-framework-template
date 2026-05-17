@@ -60,13 +60,16 @@ jobs:
 
           echo "Branch '${BRANCH}' is in scope — ensuring label exists and applying it."
 
-          # Ensure the label exists in the repo (idempotent: --force is a no-op when
-          # the label already exists with a different description or color).
-          gh label create "ready-for-regression" \
-            --repo "$REPO" \
-            --color "e4e669" \
-            --description "PR is ready for regression testing" \
-            --force || true
+          # Ensure the label exists in the repo without overwriting downstream
+          # customisations. --force updates color/description on every run, so
+          # we only create the label when it is genuinely absent.
+          if ! gh label list --repo "$REPO" --search "ready-for-regression" --json name \
+              | jq -e '.[] | select(.name=="ready-for-regression")' > /dev/null 2>&1; then
+            gh label create "ready-for-regression" \
+              --repo "$REPO" \
+              --color "e4e669" \
+              --description "PR is ready for regression testing"
+          fi
 
           # Apply the label to the PR (idempotent: --add-label does not duplicate).
           gh pr edit "$PR_NUMBER" \
