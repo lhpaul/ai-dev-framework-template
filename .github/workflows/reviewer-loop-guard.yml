@@ -1,0 +1,126 @@
+# Asserts that the automated reviewer-loop summary comment is present on an
+# implementation PR before the PR may be treated as merge-eligible. Posts a
+# GitHub commit status (success/failure) after inspecting the PR's comment
+# timeline for the canonical two-marker combination produced by pr-review-loop.sh.
+#
+# Markers checked (both must be present in the same comment):
+#   ### Automated Reviewer Loop Summary
+#   *Posted automatically by `pr-review-loop.sh`.*
+#
+# In-scope branch prefixes (configurable via IN_SCOPE_PREFIXES env var):
+#   feature/  fix/  refactor/  hotfix/
+#
+# Branches outside the in-scope list always pass (status set to success).
+#
+# The commit-status context name "Reviewer-loop completion guard" can be added
+# to branch-protection required checks so the guard is enforced at merge time.
+# See docs/workflow/development-workflow/integrations/ci-enforcement.md for setup.
+#
+# Downstream override: edit IN_SCOPE_PREFIXES to change the in-scope prefix list.
+name: Reviewer-loop completion guard
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+
+concurrency:
+  group: reviewer-loop-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+      statuses: write
+
+    steps:
+      - name: Check for Automated Reviewer Loop Summary comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BRANCH: ${{ github.head_ref }}
+          # Override IN_SCOPE_PREFIXES in your repository to customise which branches
+          # are subject to this guard. Default covers the four standard implementation
+          # prefixes. Branches outside this list always pass.
+          IN_SCOPE_PREFIXES: "feature/ fix/ refactor/ hotfix/"
+        run: |
+          echo "PR #${PR_NUMBER}: evaluating branch '${BRANCH}' against in-scope prefixes: ${IN_SCOPE_PREFIXES}"
+
+          # Check whether the branch matches any in-scope prefix
+          in_scope=false
+          for prefix in $IN_SCOPE_PREFIXES; do
+            if [[ "$BRANCH" == "${prefix}"* ]]; then
+              in_scope=true
+              break
+            fi
+          done
+
+          if [ "$in_scope" = "false" ]; then
+            echo "Branch '${BRANCH}' is not in scope — posting success status (guard skipped)."
+            gh api \
+              --method POST \
+              "repos/$REPO/statuses/$HEAD_SHA" \
+              -f state="success" \
+              -f description="Not an implementation branch; guard skipped." \
+              -f context="Reviewer-loop completion guard"
+            exit 0
+          fi
+
+          echo "Branch '${BRANCH}' is in scope — inspecting PR comments for reviewer-loop summary."
+
+          # Fetch all PR comments and check for the canonical two-marker combination.
+          # Both markers must be present in the same comment body.
+          # MARKER1: "### Automated Reviewer Loop Summary"
+          # MARKER2: the "Posted automatically by pr-review-loop.sh" attribution line
+          # (passed via jq --arg to avoid inline quoting of backtick characters).
+          MARKER1="### Automated Reviewer Loop Summary"
+          # shellcheck disable=SC2016
+          MARKER2='*Posted automatically by `pr-review-loop.sh`.*'
+          # gh api --paginate | jq -s produces [[page1_items], [page2_items], ...].
+          # Use 'add // []' to flatten pages before selecting comment objects.
+          FOUND=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
+            --paginate \
+            | jq -rs --arg m1 "$MARKER1" --arg m2 "$MARKER2" \
+            'add // []
+            | [.[] | select(
+              (.body // "" | contains($m1)) and
+              (.body // "" | contains($m2))
+            )] | length') || {
+            echo "ERROR: failed to fetch PR comments — treating as transient failure (posting failure status)."
+            gh api \
+              --method POST \
+              "repos/$REPO/statuses/$HEAD_SHA" \
+              -f state="failure" \
+              -f description="Could not fetch PR comments. Re-run the workflow to retry." \
+              -f context="Reviewer-loop completion guard"
+            exit 1
+          }
+
+          echo "Reviewer-loop summary comments found: ${FOUND}"
+
+          if [ "${FOUND:-0}" -gt 0 ]; then
+            STATE="success"
+            DESCRIPTION="Reviewer-loop summary present."
+          else
+            STATE="failure"
+            DESCRIPTION="No reviewer-loop summary found. Run the automated reviewer loop before merging."
+          fi
+
+          gh api \
+            --method POST \
+            "repos/$REPO/statuses/$HEAD_SHA" \
+            -f state="$STATE" \
+            -f description="$DESCRIPTION" \
+            -f context="Reviewer-loop completion guard"
+
+          echo "Posted commit status '${STATE}' for SHA ${HEAD_SHA}."
+
+          if [ "$STATE" = "failure" ]; then
+            echo "Guard FAILED: the automated reviewer loop must run to completion before this PR is treated as ready."
+            exit 1
+          fi
+
+          echo "Guard PASSED: reviewer-loop summary is present."

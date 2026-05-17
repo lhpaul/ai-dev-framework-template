@@ -1,0 +1,76 @@
+# Automatically applies the ready-for-regression label to implementation PRs
+# based on the branch prefix. Runs on every PR open, reopen, ready_for_review,
+# or synchronize event so the label is present regardless of whether the PR
+# was opened as a draft or converted to non-draft later.
+#
+# In-scope branch prefixes (configurable via IN_SCOPE_PREFIXES env var):
+#   feature/  fix/  refactor/  hotfix/
+#
+# Non-implementation branches (spec/, implementation-plan/, docs/, chore/, etc.)
+# never receive the label.
+#
+# Idempotent: re-runs on an already-labeled PR complete without error and without
+# duplicating the label.
+#
+# Downstream override: to change the in-scope prefix list, edit the
+# IN_SCOPE_PREFIXES env var in the apply-label step below. No other changes
+# are required.
+name: Apply ready-for-regression label
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+
+concurrency:
+  group: apply-regression-label-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  apply-label:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Apply ready-for-regression label for implementation branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.head_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          # Override IN_SCOPE_PREFIXES in your repository to customise which branches
+          # receive the label. Default covers the four standard implementation prefixes.
+          IN_SCOPE_PREFIXES: "feature/ fix/ refactor/ hotfix/"
+        run: |
+          echo "PR #${PR_NUMBER}: evaluating branch '${BRANCH}' against in-scope prefixes: ${IN_SCOPE_PREFIXES}"
+
+          # Check whether the branch matches any in-scope prefix
+          in_scope=false
+          for prefix in $IN_SCOPE_PREFIXES; do
+            if [[ "$BRANCH" == "${prefix}"* ]]; then
+              in_scope=true
+              break
+            fi
+          done
+
+          if [ "$in_scope" = "false" ]; then
+            echo "Branch '${BRANCH}' is not in scope — skipping label application."
+            exit 0
+          fi
+
+          echo "Branch '${BRANCH}' is in scope — ensuring label exists and applying it."
+
+          # Ensure the label exists in the repo (idempotent: --force is a no-op when
+          # the label already exists with a different description or color).
+          gh label create "ready-for-regression" \
+            --repo "$REPO" \
+            --color "e4e669" \
+            --description "PR is ready for regression testing" \
+            --force || true
+
+          # Apply the label to the PR (idempotent: --add-label does not duplicate).
+          gh pr edit "$PR_NUMBER" \
+            --repo "$REPO" \
+            --add-label "ready-for-regression"
+
+          echo "Label 'ready-for-regression' applied to PR #${PR_NUMBER}."
