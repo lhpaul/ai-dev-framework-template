@@ -98,21 +98,25 @@ From the tracker, collect for each open item:
 
 **Recommended approach — query open issues directly**:
 
-Instead of paginating the full project board, query the repository's open issues and look up each item's project status individually. This approach scales with the number of open issues rather than the total board size:
+Instead of paginating the full project board to discover candidates, first fetch all open issues
+from the repository (which is state-filtered at the GitHub Issues API level and therefore fast),
+then make a single `item-list` call to fetch all project board items and cross-reference them
+against the open-issue list client-side:
 
 ```bash
 # Step 1: list all open issues (only open issues are eligible for advancement)
-gh issue list --state open --limit 1000 --json number,title,labels,createdAt \
-  | jq -r '.[] | [.number, .title] | @tsv'
+OPEN_ISSUES=$(gh issue list --state open --limit 1000 --json number,title,labels,createdAt)
 
-# Step 2: for each candidate issue, look up its project status
-# (replace PROJECT_NUMBER and OWNER with your values)
-ISSUE_NUMBER=<N>
-gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json \
-  | jq -r --argjson n "$ISSUE_NUMBER" '.items[] | select(.content.number == $n) | .status'
+# Step 2: fetch all project board items once and filter to only open-issue candidates
+gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --limit 10000 --format json \
+  | jq --argjson open "$OPEN_ISSUES" \
+    '[.items[] | . as $item | ($open[] | select(.number == $item.content.number)) // empty | {number: .number, title: .title, status: $item.status}]'
 ```
 
-This pattern eliminates closed-item pagination entirely: only open issues are fetched from the repository, so the project board query runs only for the small set of open candidates rather than all 300+ board entries.
+This pattern avoids the need to call `item-list` once per open issue. A single `item-list` fetch
+is unavoidable (GitHub Projects v2 has no server-side open-issue filter on the items node), but
+by pre-filtering the candidate set to open GitHub Issues first, the downstream processing only
+touches relevant items and the orchestrator does not spend query points scoring closed board entries.
 
 **Alternative — client-side post-filter when item-list is unavoidable**:
 

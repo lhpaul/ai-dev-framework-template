@@ -178,31 +178,32 @@ When the **Portfolio Orchestrator** has `gh` CLI access, it should:
 ones. On boards with 300+ items this exhausts the 5 000-point GraphQL rate limit, causing a
 ~3.5-minute pause that grows as more items accumulate. Prefer the open-issue approach below.
 
-**Recommended: query open issues first, then look up project status per issue**
+**Recommended: query open issues first, then cross-reference with a single item-list call**
+
+GitHub Projects v2 has no server-side open-issue filter on the items node, so a full `item-list`
+fetch is unavoidable. The key optimisation is to fetch open issues from the GitHub Issues API
+(which supports state filtering) and then cross-reference them against the project board items
+client-side — this ensures downstream processing only touches open candidates:
 
 ```bash
 # Step 1: list open issues only (the only candidates for orchestrator advancement)
-gh issue list --state open --limit 1000 --json number,title,labels,createdAt
+OPEN_ISSUES=$(gh issue list --state open --limit 1000 --json number,title,labels,createdAt)
 
-# Step 2: for each open issue, look up its project status individually
-ISSUE_NUMBER=<N>
-gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json \
-  | jq -r --argjson n "$ISSUE_NUMBER" '.items[] | select(.content.number == $n) | .status'
+# Step 2: fetch all project board items once and filter to only open-issue candidates
+gh project item-list <PROJECT_NUMBER> --owner <OWNER> --limit 10000 --format json \
+  | jq --argjson open "$OPEN_ISSUES" \
+    '[.items[] | . as $item | ($open[] | select(.number == $item.content.number)) // empty | {number: .number, title: .title, status: $item.status}]'
 ```
 
-**Alternative: full item-list with client-side terminal-status filter**
+**Alternative: client-side terminal-status filter (simpler, same single item-list call)**
 
-When project-specific field values (e.g., Priority, Due date) are needed and cannot be obtained
-from `gh issue list`, fetch all items but immediately discard terminal-status entries:
+When you want a simpler filter without loading the open-issue list separately, fetch all items
+and immediately discard terminal-status entries client-side:
 
 ```bash
 # Fetch all items and filter out terminal statuses client-side
 gh project item-list <PROJECT_NUMBER> --owner <OWNER> --limit 10000 --format json \
   | jq '[.items[] | select(.status != null and (.status | IN("Done","Merged","Released","Cancelled")) | not)]'
-
-# Get a specific issue's project fields (using filtered result)
-gh project item-list <PROJECT_NUMBER> --owner <OWNER> --format json \
-  | jq '.items[] | select(.content.number == <ISSUE_NUMBER>)'
 ```
 
 **Rate-limit check**: check remaining GraphQL quota before and after large pagination:
