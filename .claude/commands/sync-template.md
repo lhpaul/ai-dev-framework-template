@@ -675,7 +675,14 @@ Stage the updated `last_synced_version` field:
 git add .ai-dev-workflow.yaml
 ```
 
-If the user explicitly approved additional paths in Step 4, stage those paths too.
+If the user explicitly approved additional paths in Step 4 (via the manual-review, optional-additive, or rename-cleanup sections), stage them now. Track approved additional paths in an `APPROVED_ADDITIONAL_PATHS` list during Step 4 as each item is approved, then apply them here:
+
+```bash
+# Stage any additional paths approved interactively in Step 4:
+if [ -n "$APPROVED_ADDITIONAL_PATHS" ]; then
+  git add $APPROVED_ADDITIONAL_PATHS
+fi
+```
 
 Run:
 
@@ -692,36 +699,52 @@ Execute:
 git push -u origin feature/sync-template-v{TEMPLATE_VERSION}
 ```
 
-Then immediately create the PR (do not print instructions for the user to run manually — execute this step directly). Before calling `gh pr create`, compose the PR body by interpolating `TEMPLATE_VERSION` and inserting the relevant section of the template's `CHANGELOG.md` (the changes introduced since the project's last-synced version) where the changelog placeholder appears. Use the `BASE_BRANCH` value captured in Step 1 (either `develop` or `main`):
+Then immediately create the PR (do not print instructions for the user to run manually — execute this step directly).
+
+First, extract the relevant CHANGELOG section from the template's `CHANGELOG.md` and compose the PR body. Use `TEMPLATE_DIR` (the resolved template source path from Step 0) and `TEMPLATE_VERSION`:
+
+```bash
+# Extract the last-synced version from the project (used to bound the CHANGELOG extraction)
+LAST_VERSION=$(grep -E 'last_synced_version:' .ai-dev-workflow.yaml | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+
+# Extract the CHANGELOG section for changes since LAST_VERSION
+if [ -n "$LAST_VERSION" ]; then
+  CHANGELOG_SECTION=$(awk "/^## \[${TEMPLATE_VERSION#v}\]/,/^## \[${LAST_VERSION#v}\]/" \
+    "${TEMPLATE_DIR}/CHANGELOG.md" | head -n -1)
+else
+  # No previous version — extract from the TEMPLATE_VERSION header to the next versioned section
+  CHANGELOG_SECTION=$(awk "/^## \[${TEMPLATE_VERSION#v}\]/,/^## \[[0-9]/" \
+    "${TEMPLATE_DIR}/CHANGELOG.md" | head -n -1)
+fi
+
+# Compose the PR body
+PR_BODY="## Template sync: ${TEMPLATE_VERSION}
+
+Sync framework-level files from the upstream template ${TEMPLATE_VERSION}.
+
+### Changes included
+
+${CHANGELOG_SECTION}
+
+### What was NOT overwritten
+
+Project-specific files (AGENTS.md, README.md, CHANGELOG.md, docs/project/, etc.)
+were not overwritten; optional additive updates from the template may have been applied where you approved them, with project-specific content preserved."
+```
+
+Then create the PR using `BASE_BRANCH` from Step 1:
 
 ```bash
 PR_URL=$(gh pr create \
-  --title "chore(template): sync framework updates from template v{TEMPLATE_VERSION}" \
-  --body "<COMPOSED_BODY>" \
+  --title "chore(template): sync framework updates from template ${TEMPLATE_VERSION}" \
+  --body "$PR_BODY" \
   --base "$BASE_BRANCH" \
   --draft)
 PR_NUMBER=$(gh pr view "$PR_URL" --json number --jq '.number')
 echo "PR created: $PR_URL (#$PR_NUMBER)"
 ```
 
-Where `<COMPOSED_BODY>` is the full PR body text with `TEMPLATE_VERSION` and the CHANGELOG section already substituted in. Example PR body structure:
-
-```
-## Template sync: v{TEMPLATE_VERSION}
-
-Sync framework-level files from the upstream template v{TEMPLATE_VERSION}.
-
-### Changes included
-
-[Relevant section from the template's CHANGELOG.md — changes since last-synced version]
-
-### What was NOT overwritten
-
-Project-specific files (AGENTS.md, README.md, CHANGELOG.md, docs/project/, etc.)
-were not overwritten; optional additive updates from the template may have been applied where you approved them, with project-specific content preserved.
-```
-
-The `--draft` flag opens the PR as a draft so automated reviewers do not trigger prematurely; Step 6 will convert it to non-draft after the reviewer gate clears. Store `$PR_NUMBER` for use in Step 6.
+The `--draft` flag opens the PR as a draft so automated reviewers do not trigger prematurely; Step 6 will convert it to non-draft after the reviewer gate clears. Store `$PR_NUMBER` and `$PR_URL` for use in Step 6.
 
 ---
 
