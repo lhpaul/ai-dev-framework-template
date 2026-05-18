@@ -692,8 +692,8 @@ if [ -n "$PREV_LAST_VERSION" ]; then
 else
   # No previous version — extract content after the TEMPLATE_VERSION header up to the next versioned section
   CHANGELOG_SECTION=$(awk -v tv="${TEMPLATE_VERSION#v}" '
-    $0 ~ ("^## \\[" tv "\\]") { in_range=1; next }
-    in_range && /^## \[/ { exit }
+    $0 == "## [" tv "]" { in_range=1; next }
+    in_range && $0 ~ /^## \[/ { exit }
     in_range { print }
   ' "${TEMPLATE_DIR}/CHANGELOG.md")
 fi
