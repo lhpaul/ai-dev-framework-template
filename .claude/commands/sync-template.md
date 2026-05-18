@@ -640,8 +640,14 @@ This check is **advisory for the project-specific category** (e.g., `.github/wor
 ### 5.1 — Record last-synced template version
 
 1. Read `.ai-dev-workflow.yaml` from the project root.
-2. Set (or update) `template.last_synced_version` to `v{TEMPLATE_VERSION}` under the `template:` key. If the `template:` key does not exist yet, append the section after the `browser_automation:` block.
-3. Print: `Recorded last-synced template version: v{TEMPLATE_VERSION}`
+2. Capture the existing `template.last_synced_version` value into `PREV_LAST_VERSION` **before** writing the new value (this is used in Step 5.4 to bound the CHANGELOG extraction to changes since the previous sync):
+
+   ```bash
+   PREV_LAST_VERSION=$(grep -E 'last_synced_version:' .ai-dev-workflow.yaml | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+   ```
+
+3. Set (or update) `template.last_synced_version` to `v{TEMPLATE_VERSION}` under the `template:` key. If the `template:` key does not exist yet, append the section after the `browser_automation:` block.
+4. Print: `Recorded last-synced template version: v{TEMPLATE_VERSION}`
 
 ### 5.2 — Create sync branch
 
@@ -704,12 +710,11 @@ Then immediately create the PR (do not print instructions for the user to run ma
 First, extract the relevant CHANGELOG section from the template's `CHANGELOG.md` and compose the PR body. Use `TEMPLATE_DIR` (the resolved template source path from Step 0) and `TEMPLATE_VERSION`:
 
 ```bash
-# Extract the last-synced version from the project (used to bound the CHANGELOG extraction)
-LAST_VERSION=$(grep -E 'last_synced_version:' .ai-dev-workflow.yaml | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
-
-# Extract the CHANGELOG section for changes since LAST_VERSION
-if [ -n "$LAST_VERSION" ]; then
-  CHANGELOG_SECTION=$(awk "/^## \[${TEMPLATE_VERSION#v}\]/,/^## \[${LAST_VERSION#v}\]/" \
+# PREV_LAST_VERSION was captured in Step 5.1 before updating .ai-dev-workflow.yaml.
+# Use it here to bound the CHANGELOG extraction to only changes since the previous sync.
+# Extract the CHANGELOG section for changes since PREV_LAST_VERSION
+if [ -n "$PREV_LAST_VERSION" ]; then
+  CHANGELOG_SECTION=$(awk "/^## \[${TEMPLATE_VERSION#v}\]/,/^## \[${PREV_LAST_VERSION#v}\]/" \
     "${TEMPLATE_DIR}/CHANGELOG.md" | head -n -1)
 else
   # No previous version — extract from the TEMPLATE_VERSION header to the next versioned section
