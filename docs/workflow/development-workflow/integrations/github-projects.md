@@ -174,13 +174,45 @@ When the **Portfolio Orchestrator** has `gh` CLI access, it should:
 
 ### Reading Project Items
 
-```bash
-# List all items in the project with their fields
-gh project item-list <PROJECT_NUMBER> --owner <OWNER> --format json
+**Performance note**: `gh project item-list` paginates all board items, including closed and merged
+ones. On boards with 300+ items this exhausts the 5 000-point GraphQL rate limit, causing a
+~3.5-minute pause that grows as more items accumulate. Prefer the open-issue approach below.
 
-# Get a specific issue's project fields
-gh project item-list <PROJECT_NUMBER> --owner <OWNER> --format json | jq '.items[] | select(.content.number == <ISSUE_NUMBER>)'
+**Recommended: query open issues first, then look up project status per issue**
+
+```bash
+# Step 1: list open issues only (the only candidates for orchestrator advancement)
+gh issue list --state open --limit 1000 --json number,title,labels,createdAt
+
+# Step 2: for each open issue, look up its project status individually
+ISSUE_NUMBER=<N>
+gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json \
+  | jq -r --argjson n "$ISSUE_NUMBER" '.items[] | select(.content.number == $n) | .status'
 ```
+
+**Alternative: full item-list with client-side terminal-status filter**
+
+When project-specific field values (e.g., Priority, Due date) are needed and cannot be obtained
+from `gh issue list`, fetch all items but immediately discard terminal-status entries:
+
+```bash
+# Fetch all items and filter out terminal statuses client-side
+gh project item-list <PROJECT_NUMBER> --owner <OWNER> --limit 10000 --format json \
+  | jq '[.items[] | select(.status != null and (.status | IN("Done","Merged","Released","Cancelled")) | not)]'
+
+# Get a specific issue's project fields (using filtered result)
+gh project item-list <PROJECT_NUMBER> --owner <OWNER> --format json \
+  | jq '.items[] | select(.content.number == <ISSUE_NUMBER>)'
+```
+
+**Rate-limit check**: check remaining GraphQL quota before and after large pagination:
+
+```bash
+gh api rate_limit --jq '.resources.graphql | {limit, remaining, used, reset: (.reset | todate)}'
+```
+
+Warn the human when `remaining` falls below 1 000 points. Pause dispatch when below 200 points
+and report the reset time. See Protocol 90 Step 1a for the full rate-limit guidance.
 
 ### Updating Status via GraphQL
 
