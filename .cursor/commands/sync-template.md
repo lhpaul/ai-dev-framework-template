@@ -599,52 +599,141 @@ This check is **advisory for the project-specific category** (e.g., `.github/wor
 
 ---
 
-## Step 5 — Generate git instructions
+## Step 5 — Commit, push, and open PR
 
-Before printing the git instructions, record the last-synced template version:
+### 5.1 — Record last-synced template version
 
 1. Read `.ai-dev-workflow.yaml` from the project root.
 2. Set (or update) `template.last_synced_version` to `v{TEMPLATE_VERSION}` under the `template:` key. If the `template:` key does not exist yet, append the section after the `browser_automation:` block.
 3. Print: `Recorded last-synced template version: v{TEMPLATE_VERSION}`
 
-Then print ready-to-use git instructions (do not execute them — let the user run them after reviewing the changes):
+### 5.2 — Create sync branch
+
+Execute:
 
 ```bash
-# 1. Create a sync branch
 git checkout -b feature/sync-template-v{TEMPLATE_VERSION}
+```
 
-# 2. Review the changes
-git diff --stat
+### 5.3 — Stage and commit
 
-# 3. Stage and commit (only after you've reviewed the changes)
+Stage only approved paths — avoid `git add .` so unapproved files never enter the commit:
+
+```bash
 git add REVIEW.md docs/workflow/ .claude/agents/ .claude/commands/ .claude/skills/ .codex/skills/ .cursor/ \
   scripts/development-workflow/ scripts/README.md \
   docs/best-practices/1-general.md \
   docs/best-practices/2-version-control.md \
   docs/best-practices/3-testing.md
-# If sync-manifest.yaml was updated, stage it as well:
-git add sync-manifest.yaml
-# Stage the updated last_synced_version field:
-git add .ai-dev-workflow.yaml
-git commit -m "chore(template): sync framework updates from template v{TEMPLATE_VERSION}"
+```
 
-# 4. Push and open PR
+If `sync-manifest.yaml` was updated, stage it as well:
+
+```bash
+git add sync-manifest.yaml
+```
+
+Stage the updated `last_synced_version` field:
+
+```bash
+git add .ai-dev-workflow.yaml
+```
+
+If the user explicitly approved additional paths in Step 4, stage those paths too.
+
+Run:
+
+```bash
+git diff --stat --cached
+git commit -m "chore(template): sync framework updates from template v{TEMPLATE_VERSION}"
+```
+
+### 5.4 — Push and open PR
+
+Execute:
+
+```bash
 git push -u origin feature/sync-template-v{TEMPLATE_VERSION}
 ```
 
-**Suggested PR description:**
+Then immediately create the PR using `gh pr create` (do not print instructions for the user to run manually — execute this step directly):
 
-```
+```bash
+gh pr create \
+  --title "chore(template): sync framework updates from template v{TEMPLATE_VERSION}" \
+  --body "$(cat <<'PRBODY'
 ## Template sync: v{TEMPLATE_VERSION}
 
-Sync framework-level files from [ai-dev-framework-template](TEMPLATE_URL) v{TEMPLATE_VERSION}.
+Sync framework-level files from the upstream template v{TEMPLATE_VERSION}.
 
 ### Changes included
-[Paste the relevant section from the template's CHANGELOG.md here]
+
+{PASTE_TEMPLATE_CHANGELOG_SECTION_HERE}
 
 ### What was NOT overwritten
+
 Project-specific files (AGENTS.md, README.md, CHANGELOG.md, docs/project/, etc.)
 were not overwritten; optional additive updates from the template may have been applied where you approved them, with project-specific content preserved.
+PRBODY
+  )" \
+  --base develop \
+  --draft
 ```
 
-Paste the relevant section from the template's `CHANGELOG.md` into the PR description placeholder.
+Before running `gh pr create`, replace `{PASTE_TEMPLATE_CHANGELOG_SECTION_HERE}` in the body with the relevant section from the template's `CHANGELOG.md` (the changes introduced since the project's last-synced version). The `--draft` flag opens the PR as a draft so automated reviewers do not trigger prematurely; Step 6 will convert it to non-draft after the reviewer gate clears.
+
+Print the PR URL once it is created.
+
+---
+
+## Step 6 — Start the reviewer loop
+
+After the PR is open, run the reviewer loop immediately — do not ask the user to start it manually.
+
+### 6.1 — Run the internal review gate (Step 7a)
+
+Read the `review.internal_reviewers` list from `.ai-dev-workflow.yaml`. For each configured reviewer:
+
+- **`claude`**: perform a native code review of the diff (the sync-applied changes) against `REVIEW.md`. For a template sync PR the focus areas are: (a) no project-specific content accidentally overwritten; (b) always-sync files match what was approved in Step 3; (c) CHANGELOG entry (if any) is correctly formatted; (d) `.ai-dev-workflow.yaml` was updated with `last_synced_version`. Apply any blocking fixes, commit, and push before proceeding.
+- **`codex-github`**: invoke `scripts/development-workflow/codex-github-reviewer.sh <pr_number> <owner> <repo>`. Exit 0 = APPROVED, exit 1 = NEEDS_REVISION (apply fixes, push, re-run), exit 2 = TIMED_OUT (treat per `internal_reviewers_unavailable_policy`).
+- **`coderabbit`** (and other platform reviewers): CodeRabbit triggers on non-draft PRs. Convert the PR to non-draft first:
+
+  ```bash
+  gh pr ready <pr_number>
+  ```
+
+  Then wait for CodeRabbit to post its review (poll `gh pr view <pr_number> --json reviews` or check PR comments). Resolve any blocking findings, push fixes, and repeat until CodeRabbit approves or marks no blocking issues. Use the GraphQL `isResolved` check to confirm all threads are resolved before proceeding.
+
+Once all configured internal reviewers have approved (or are unavailable under the configured policy), ensure the PR is non-draft:
+
+```bash
+gh pr ready <pr_number>
+```
+
+### 6.2 — Run the automated reviewer loop (Step 7)
+
+Run `scripts/development-workflow/pr-review-loop.sh` against the PR:
+
+```bash
+bash scripts/development-workflow/pr-review-loop.sh <pr_number>
+```
+
+Monitor the output. If the script reports unresolved findings, apply the required fixes, push, and re-run until the loop exits clean or escalates.
+
+### 6.3 — Apply readiness labels
+
+Once the reviewer loop exits clean:
+
+```bash
+gh pr edit <pr_number> --add-label "ready-for-regression"
+gh pr edit <pr_number> --add-label "ready-for-human-review"
+```
+
+Update the tracker status to `Development in Review` if an issue tracker is configured.
+
+Print a final summary:
+
+```
+Sync complete. PR #<number> is open and ready for human review.
+URL: <pr_url>
+```
