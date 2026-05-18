@@ -797,7 +797,7 @@ grep -E '^\s*drafts:\s*false' .coderabbit.yaml
 
 If the file is absent or the key is not present, CodeRabbit defaults to `drafts: false` — treat it as draft-restricting.
 
-**Important**: The pre-check converts the PR to non-draft solely to enable reviewer coverage. This does not change the Step 7a → Step 7 flow: the PR still goes through the full internal review gate before external reviewers run. After `gh pr ready` is called here, do **not** call `gh pr ready` again later in the flow — it has already been done.
+**Important**: The pre-check converts the PR to non-draft solely to enable reviewer coverage. This does not change the Step 7a → Step 7 flow: the PR still goes through the full internal review gate before external reviewers run. The `gh pr ready` calls in the outcome tables at the end of Step 7a (after all reviewers approve) are idempotent — if the pre-check has already converted the PR, those calls are safe no-ops.
 
 If the PR is **not** in draft state, skip this pre-check entirely and proceed to the Design Review Gate.
 
