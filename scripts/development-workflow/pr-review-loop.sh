@@ -2062,10 +2062,14 @@ run_coderabbit_review() {
   # own pause-detection block and does not double-post.
   local coderabbit_phase0_retrigger=0
   local phase0_most_recent_body
+  # Use -rs with add // [] to flatten all paginated pages into a single array
+  # before sorting, so the "most recent" selection spans the entire comment history
+  # rather than being limited to the last item on whichever page arrived last.
   phase0_most_recent_body="$(
     gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-      | jq -r --arg bot "$bot_login" '
-          [ .[] | select(.user.login == $bot) ]
+      | jq -rs --arg bot "$bot_login" '
+          add // []
+          | map(select(.user.login == $bot))
           | sort_by(.created_at)
           | last
           | .body // ""
@@ -2073,10 +2077,13 @@ run_coderabbit_review() {
   )"
   if printf '%s\n' "$phase0_most_recent_body" | grep -qi "reviews\? paused"; then
     echo "INFO: CodeRabbit is in auto-pause state (most recent CR comment is a pause banner) — posting @coderabbitai resume before entering poll loop" >&2
+    local phase0_resume_since_iso
+    # Capture the timestamp BEFORE posting so any same-second CodeRabbit response
+    # is still within the detection window (queries use strict > $since_iso).
+    phase0_resume_since_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
     if gh pr comment "$pr_number" --body "@coderabbitai resume" >/dev/null 2>&1; then
       coderabbit_phase0_retrigger=1
-      # Reset since_iso to now so the review triggered by the resume command is captured.
-      since_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+      since_iso="$phase0_resume_since_iso"
       echo "INFO: @coderabbitai resume posted; since_iso reset to $since_iso" >&2
     else
       echo "WARN: failed to post @coderabbitai resume — will rely on Phase 2 detection" >&2
