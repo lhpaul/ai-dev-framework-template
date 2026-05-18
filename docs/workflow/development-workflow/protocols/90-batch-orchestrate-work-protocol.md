@@ -512,7 +512,7 @@ If an `integration-branch:<slug>` label is found:
 
 ## Step 3.3: Pre-Dispatch Environment Validation (Parallel Batches Only)
 
-Before building the worktree per-item pre-flight (Step 3.5), run two portfolio-wide environment checks. Both checks must pass before any Work Item Runner is dispatched.
+Before building the worktree per-item pre-flight (Step 3.5), run three portfolio-wide environment checks. Check 1 and Check 2 must both pass (or be explicitly acknowledged by the human) before any Work Item Runner is dispatched. Check 3 is non-blocking — surface its findings alongside the others but do not hold dispatch waiting on stale local branch cleanup.
 
 ### Check 1: Stale orphaned worktrees
 
@@ -630,11 +630,71 @@ echo "Integration branch '${INTEGRATION_BRANCH}': ${AHEAD} commit(s) ahead of or
 
 **Safe condition**: `AHEAD=0, BEHIND=0` — the integration branch is fully in sync with `origin`. Proceed to Step 3.5.
 
+### Check 3: Stale local branches
+
+Scan local branches for two categories of stale / orphaned entries that clutter `git branch` output and can cause worktree conflicts on re-use:
+
+**Category A — Workflow-prefix branches whose upstream PR has been merged**
+
+Workflow branches (`feature/`, `fix/`, `refactor/`, `hotfix/`, `spec/`, `implementation-plan/`) that were used for a PR which has since merged are safe to delete but are not cleaned up automatically by `post-merge-cleanup.sh` when other PRs in the same batch merge later.
+
+```bash
+# List all local branches matching workflow prefixes
+git branch --list \
+  'feature/*' 'fix/*' 'refactor/*' 'hotfix/*' 'spec/*' 'implementation-plan/*' \
+  | sed 's/^[* ]*//'
+```
+
+For each branch found, check whether its upstream PR has been merged:
+
+```bash
+# For each candidate branch <branch>:
+gh pr list --state merged --head <branch> --json number,mergedAt \
+  --jq '.[0] | "PR #\(.number) merged at \(.mergedAt)"'
+# Non-empty output → merged; the local branch is stale and safe to delete
+```
+
+**Category B — `worktree-agent-*` branches with no remote counterpart and no open/merged PR**
+
+Agents create `worktree-agent-*` branches when spinning up git worktrees. These branches accumulate without a corresponding remote branch or open/merged PR and are never cleaned up automatically.
+
+```bash
+# Detect local branches with no upstream tracking ref or a gone upstream
+git branch -vv | grep -E 'worktree-agent-' \
+  | grep -E '(\[gone\]|^[^[]*$)' \
+  | sed 's/^[* ]*//' | awk '{print $1}'
+```
+
+For each candidate `worktree-agent-*` branch, confirm no associated PR exists (open or merged):
+
+```bash
+# For each candidate branch <branch>:
+gh pr list --state all --head <branch> --json number,state --jq '.[0] | .number'
+# Empty output → no PR exists; branch is orphaned and safe to delete
+```
+
+**Action when stale or orphaned branches are found:**
+
+1. List every stale / orphaned branch with its category and a suggested cleanup command:
+
+   ```bash
+   # Category A — stale workflow branch (upstream PR merged):
+   git branch -D <branch>
+
+   # Category B — orphaned worktree-agent branch (no remote, no PR):
+   git branch -D <branch>
+   ```
+
+2. Report the list to the human **before** proceeding to Step 3.5 — do not auto-delete without confirmation.
+3. This check is **non-blocking**: if no stale branches are found, or after the human reviews and acts (or explicitly chooses to defer cleanup), continue to the next check and batch dispatch. Unlike Check 1 (stale worktrees) and Check 2 (integration branch sync), stale local branches do not block new worktree creation or corrupt PR diffs — they are operational noise only. Surface the list and let the human decide.
+
+**Branches that belong to the current batch**: Do not flag as stale any branch that is one of the branches about to be dispatched in the current batch.
+
 ### Check ordering and gating
 
-Run Check 1 and Check 2 in parallel. Both must pass (or be explicitly acknowledged by the human) before proceeding to the per-item Step 3.5 checks and batch dispatch.
+Run Check 1, Check 2, and Check 3 in parallel. Check 1 and Check 2 must both pass (or be explicitly acknowledged by the human) before proceeding to the per-item Step 3.5 checks and batch dispatch. Check 3 is non-blocking — surface its findings alongside Check 1 and Check 2 but do not hold batch dispatch waiting for the human to act on stale local branches.
 
-If either check identifies a blocking condition, report **both** results together so the human can resolve all issues in a single interaction rather than being interrupted twice.
+If Check 1 or Check 2 identifies a blocking condition, report **all three** results together so the human can resolve all issues in a single interaction rather than being interrupted multiple times.
 
 ---
 
