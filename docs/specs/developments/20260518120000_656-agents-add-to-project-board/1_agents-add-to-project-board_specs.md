@@ -98,7 +98,7 @@ Workflow agents (spec-writer, plan-writer, and developer) do not currently ensur
 ### Use Case 4: Portfolio orchestrator guarantees board membership before dispatching any item
 
 **Actor**: Portfolio orchestrator agent (automated)
-**Preconditions**: The portfolio orchestrator has elected one or more items for dispatch during Step 2.5 (pre-dispatch validation).
+**Preconditions**: The portfolio orchestrator has scanned the backlog, identified one or more eligible items for dispatch, and is about to update their tracker status and dispatch them to the appropriate stage agents.
 
 **Steps**:
 
