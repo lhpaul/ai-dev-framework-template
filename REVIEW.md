@@ -185,6 +185,13 @@ Additional checks for **documentation PRs** (when a PR adds or modifies document
 - **Wording consistency**: verify that procedural instructions in a new section (e.g., "push a commit", "apply a label", "run a script") are consistent with the existing flow described in sibling sections of the same file. Flag contradictions as `important`.
 - **Shell snippet safety in protocol files**: when a PR adds or modifies shell code blocks (`` ```bash `` / `` ```sh `` fenced blocks) inside a protocol or documentation `.md` file, apply the same quality bar as for `.sh` files (see the "Shell Script Quality Checklist" in `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md`). Specifically flag as `important` any multi-command state-mutating block that lacks `set -euo pipefail`, any block that commits or pushes without a wrong-branch guard, and any single-liner that can fail silently without an explicit `|| exit 1` or equivalent error guard. Read-only query snippets (e.g., `gh pr view`, `git log`) are exempt.
 
+Additional checks for **PRs that add new filter parameters to a tool schema** (Zod, JSON Schema, Joi, Pydantic, OpenAPI, or any equivalent contract-declaration mechanism):
+
+- **Filter-wiring verification**: confirm the new filter is wired to the query builder's WHERE clause or equivalent filter-application function — not only declared in the schema.
+- **Canary test presence** (blocking): confirm a canary test is present that calls the tool with the new filter set to a value that narrows results, calls the tool again without the filter (or with a meaningfully different value), and asserts the two result sets differ. A canary test that produces identical results for both invocations does not satisfy this requirement.
+- **Same-PR inclusion** (blocking): confirm the canary test is part of this PR, not deferred to a follow-up.
+- **Exemption**: this check applies to new filter parameters only. Modifications to existing filter parameters that do not change the schema contract are exempt.
+
 Additional checks for **shell scripts** (`*.sh`):
 
 - Option parsing validates that required values are present before `shift`

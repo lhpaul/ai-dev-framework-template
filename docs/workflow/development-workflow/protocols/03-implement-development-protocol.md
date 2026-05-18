@@ -230,6 +230,25 @@ If any item is unchecked after honest review: add the missing test cases before 
 
 ---
 
+## Filter-Schema Canary Test Checklist
+
+**When to apply**: Conditional — applies **only when this PR adds one or more new filter parameters to a tool schema** (Zod, JSON Schema, Joi, Pydantic, OpenAPI, or any equivalent contract-declaration mechanism). If your PR does not add new filter parameters, skip this section entirely. Modifying or removing an existing filter parameter without changing the schema contract does not trigger this obligation.
+
+**Why this checklist exists**: A filter added to a schema is accepted by the API but may not be wired to the query builder's WHERE clause or equivalent filter-application function. Without a canary test, this silent no-op reaches production undetected — the filter appears to work (no error is thrown), but the result set is never narrowed.
+
+Complete every item below for each newly added filter parameter before opening the PR:
+
+- [ ] **Canary test present**: a canary test exists for each newly added filter.
+- [ ] **Two-invocation pattern**: the canary test calls the tool with the new filter set to a value that narrows or alters the result set, and calls the tool again with the filter absent or set to a meaningfully different value.
+- [ ] **Result-set assertion**: the canary test asserts that the two result sets differ.
+- [ ] **Observable effect**: the test data is designed so the filter has a visible effect — identical results for both invocations do not satisfy this requirement.
+- [ ] **Same-PR inclusion**: the canary test is included in this PR, not deferred to a follow-up.
+- [ ] **Impracticality documented**: if a canary test is impractical (e.g., no test fixtures, no in-memory DB), the constraint is documented explicitly in the PR and an alternative verification approach is proposed — silence is not acceptable.
+
+This requirement applies to **new** filter parameters only. Modifications to existing filter parameters that do not change the schema contract are exempt.
+
+---
+
 ## Path 1: Full Pipeline
 
 ### Step 1: Non-Negotiable Prep
@@ -339,6 +358,8 @@ Execute each step from the implementation plan in order.
 Before committing, verify:
 
 **Test Harness Coverage Checklist (if the implementation includes any test script, test function, or validation harness)**: Complete the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) before self-approving. Do not open the PR with known coverage gaps.
+
+**Filter-Schema Canary Test Checklist (if this PR adds new filter parameters to a tool schema)**: Complete the [Filter-Schema Canary Test Checklist](#filter-schema-canary-test-checklist) before opening the PR. A missing canary test is a blocking code-review finding.
 
 **ShellCheck (if any `.sh` files were modified)**:
 
@@ -660,6 +681,8 @@ git checkout -b refactor/[branch-slug]
 
    **Test Harness Coverage Checklist (if the implementation includes any test script, test function, or validation harness)**: Complete the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) before self-approving. Do not open the PR with known coverage gaps.
 
+   **Filter-Schema Canary Test Checklist (if this PR adds new filter parameters to a tool schema)**: Complete the [Filter-Schema Canary Test Checklist](#filter-schema-canary-test-checklist) before opening the PR. A missing canary test is a blocking code-review finding.
+
    If any `.sh` files were modified, run ShellCheck before committing:
 
    ```bash
@@ -852,6 +875,8 @@ Implement the fix.
 Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area.
 
 **Test Harness Coverage Checklist (if the implementation includes any test script, test function, or validation harness)**: Complete the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) before self-approving. Do not open the PR with known coverage gaps.
+
+**Filter-Schema Canary Test Checklist (if this PR adds new filter parameters to a tool schema)**: Complete the [Filter-Schema Canary Test Checklist](#filter-schema-canary-test-checklist) before opening the PR. A missing canary test is a blocking code-review finding.
 
 **ShellCheck (if any `.sh` files were modified)**:
 
@@ -1072,6 +1097,8 @@ Implement the minimal fix (do not bundle unrelated changes).
 Verify: build, lint, tests pass.
 
 **Test Harness Coverage Checklist (if the implementation includes any test script, test function, or validation harness)**: Complete the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) before self-approving. Do not open the PR with known coverage gaps.
+
+**Filter-Schema Canary Test Checklist (if this PR adds new filter parameters to a tool schema)**: Complete the [Filter-Schema Canary Test Checklist](#filter-schema-canary-test-checklist) before opening the PR. A missing canary test is a blocking code-review finding.
 
 **ShellCheck (if any `.sh` files were modified)**:
 
