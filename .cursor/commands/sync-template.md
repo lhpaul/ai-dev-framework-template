@@ -281,10 +281,10 @@ Run these checks **before touching anything**. If any check fails, report the pr
    git branch --show-current
    ```
 
-   - If `develop` branch exists → must be on `develop`
-   - If `develop` does not exist → must be on `main`
+   - If `develop` branch exists → must be on `develop`; set `BASE_BRANCH=develop`
+   - If `develop` does not exist → must be on `main`; set `BASE_BRANCH=main`
 
-   If on the wrong branch, abort with:
+   Store `BASE_BRANCH` for use in Step 5.4. If on the wrong branch, abort with:
 
    > "You must be on the `develop` branch (or `main` if `develop` doesn't exist) before syncing. Please switch branches and try again."
 
@@ -656,33 +656,36 @@ Execute:
 git push -u origin feature/sync-template-v{TEMPLATE_VERSION}
 ```
 
-Then immediately create the PR using `gh pr create` (do not print instructions for the user to run manually — execute this step directly):
+Then immediately create the PR (do not print instructions for the user to run manually — execute this step directly). Before calling `gh pr create`, compose the PR body by interpolating `TEMPLATE_VERSION` and inserting the relevant section of the template's `CHANGELOG.md` (the changes introduced since the project's last-synced version) where the changelog placeholder appears. Use the `BASE_BRANCH` value captured in Step 1 (either `develop` or `main`):
 
 ```bash
-gh pr create \
+PR_URL=$(gh pr create \
   --title "chore(template): sync framework updates from template v{TEMPLATE_VERSION}" \
-  --body "$(cat <<'PRBODY'
+  --body "<COMPOSED_BODY>" \
+  --base "$BASE_BRANCH" \
+  --draft)
+PR_NUMBER=$(gh pr view "$PR_URL" --json number --jq '.number')
+echo "PR created: $PR_URL (#$PR_NUMBER)"
+```
+
+Where `<COMPOSED_BODY>` is the full PR body text with `TEMPLATE_VERSION` and the CHANGELOG section already substituted in. Example PR body structure:
+
+```
 ## Template sync: v{TEMPLATE_VERSION}
 
 Sync framework-level files from the upstream template v{TEMPLATE_VERSION}.
 
 ### Changes included
 
-{PASTE_TEMPLATE_CHANGELOG_SECTION_HERE}
+[Relevant section from the template's CHANGELOG.md — changes since last-synced version]
 
 ### What was NOT overwritten
 
 Project-specific files (AGENTS.md, README.md, CHANGELOG.md, docs/project/, etc.)
 were not overwritten; optional additive updates from the template may have been applied where you approved them, with project-specific content preserved.
-PRBODY
-  )" \
-  --base develop \
-  --draft
 ```
 
-Before running `gh pr create`, replace `{PASTE_TEMPLATE_CHANGELOG_SECTION_HERE}` in the body with the relevant section from the template's `CHANGELOG.md` (the changes introduced since the project's last-synced version). The `--draft` flag opens the PR as a draft so automated reviewers do not trigger prematurely; Step 6 will convert it to non-draft after the reviewer gate clears.
-
-Print the PR URL once it is created.
+The `--draft` flag opens the PR as a draft so automated reviewers do not trigger prematurely; Step 6 will convert it to non-draft after the reviewer gate clears. Store `$PR_NUMBER` for use in Step 6.
 
 ---
 
@@ -706,7 +709,7 @@ Apply any blocking fixes, commit, and push before proceeding. Continue until all
 Once the Step 7a gate passes, ensure the PR is non-draft:
 
 ```bash
-gh pr ready <pr_number>
+gh pr ready "$PR_NUMBER"
 ```
 
 ### 6.2 — Run the automated reviewer loop (Step 7)
@@ -714,7 +717,7 @@ gh pr ready <pr_number>
 Run `scripts/development-workflow/pr-review-loop.sh` against the PR:
 
 ```bash
-bash scripts/development-workflow/pr-review-loop.sh <pr_number>
+bash scripts/development-workflow/pr-review-loop.sh "$PR_NUMBER"
 ```
 
 Monitor the output. If the script reports unresolved findings, apply the required fixes, push, and re-run until the loop exits clean or escalates.
@@ -724,8 +727,8 @@ Monitor the output. If the script reports unresolved findings, apply the require
 Once the reviewer loop exits clean:
 
 ```bash
-gh pr edit <pr_number> --add-label "ready-for-regression"
-gh pr edit <pr_number> --add-label "ready-for-human-review"
+gh pr edit "$PR_NUMBER" --add-label "ready-for-regression"
+gh pr edit "$PR_NUMBER" --add-label "ready-for-human-review"
 ```
 
 Update the tracker status to `Development in Review` if an issue tracker is configured.
@@ -733,6 +736,6 @@ Update the tracker status to `Development in Review` if an issue tracker is conf
 Print a final summary:
 
 ```
-Sync complete. PR #<number> is open and ready for human review.
-URL: <pr_url>
+Sync complete. PR #$PR_NUMBER is open and ready for human review.
+URL: $PR_URL
 ```
