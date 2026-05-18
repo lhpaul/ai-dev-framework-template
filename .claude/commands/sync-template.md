@@ -466,7 +466,14 @@ Always-sync disposition:
 
 Then ask:
 
-> "Ready to apply the changes above? For paths listed under **New files** and **Modified files** in the **always-sync** section only, I can apply them in one batch when you confirm. Special-handling and optional additive-update sections always need explicit per-path approval — bulk phrases like \"apply all\" never include those categories."
+> "Ready to apply the changes above? You have two options:
+>
+> - **"apply all"** — Apply the always-sync files in one batch, then walk through each manual-review and optional-additive item inline, presenting the diff and asking you to confirm or skip before moving on.
+> - **"apply always-sync only"** — Apply only the always-sync files now; skip manual-review and optional-additive items entirely.
+>
+> Special-handling paths (`.github/workflows/deploy.yml`, `e2e-regression.yml`, `e2e/`, `.claude/settings.json`, etc.) are never included in "apply all" — those require you to name each approved path explicitly.
+>
+> Which would you like?"
 
 **Do not modify any files until you have explicit confirmation.**
 
@@ -476,9 +483,34 @@ Then ask:
 
 Apply approved changes:
 
-- Copy/overwrite all **Add** and **Update** files **from the always-sync Step 3 section only** when the user confirms that batch. Phrases such as "apply all", "apply everything", or "yes to all" mean **always-sync files only** — they **never** authorize applying **special-handling** paths (`.github/workflows/deploy.yml`, `e2e-regression.yml`, `e2e/`, `.claude/settings.json`, etc.) or **optional additive updates**; those require the user to name each approved path (or `none`).
+### Always-sync files
+
+Copy/overwrite all **Add** and **Update** files from the always-sync section whenever the user confirms that batch — regardless of whether they said "apply all" or "apply always-sync only".
+
+### Manual-review and optional-additive items ("apply all" path)
+
+When the user chooses **"apply all"**, after the always-sync batch is applied, walk through **every** item in the manual-review section and every item in the optional-additive section, **one item at a time**:
+
+1. Show the item's diff (or proposed addition) inline.
+2. State a recommendation (e.g., "I recommend applying this because …" or "This is optional — your project already has equivalent content").
+3. Ask: "Apply this item? (yes / skip)"
+4. Apply immediately if the user answers "yes"; skip if "skip" (or any non-yes answer).
+5. Proceed to the next item.
+
+Continue until all manual-review and optional-additive items have been presented. This ensures "apply all" genuinely means "walk me through everything and apply what I approve."
+
+### Always-sync only path
+
+When the user chooses **"apply always-sync only"**, skip the manual-review and optional-additive walkthrough entirely. Special-handling items are also skipped unless named explicitly.
+
+### Special-handling paths
+
+Phrases such as "apply all", "apply everything", or "yes to all" **never** authorize applying **special-handling** paths (`.github/workflows/deploy.yml`, `e2e-regression.yml`, `e2e/`, `.claude/settings.json`, etc.). Those require the user to name each approved path explicitly.
+
 - **Placeholder guard for workflow YAML** (`.github/workflows/deploy.yml`, `.github/workflows/e2e-regression.yml`): Before overwriting the project copy with the template, compare line counts. If the **project** file has **more lines** than the template and the template has **fewer than 70%** of the project's line count, treat this as likely "real implementation → template placeholder" and **refuse** unless the user sends a **second** explicit confirmation naming that exact file.
-- For files requiring manual review: apply only those the user explicitly approved (including any optional additive updates to project-specific files — merge or add only, never remove project-specific content)
+
+### General rules
+
 - Do **not** delete any file from the always-sync, special-handling, or project-specific categories without explicit approval
 - Do **not** overwrite project-specific files; for those paths only additive/merge changes are allowed, and only with explicit approval
 
