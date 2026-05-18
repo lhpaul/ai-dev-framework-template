@@ -4,7 +4,9 @@
 
 ## Overview
 
-This feature adds a mandatory workflow rule requiring a canary test whenever a new filter is added to a tool schema. The rule targets a recurring silent-failure bug class: a filter added to a schema (Zod, JSON Schema, or equivalent) is accepted by the API but never wired to the query builder's WHERE clause, causing it to no-op without any error or warning. Three confirmed instances of this bug class were observed in downstream projects (RAD-118, RAD-130, RAD-143) before this rule existed. The rule will be embedded in the developer-agent implementation checklist, the code-reviewer review contract (`REVIEW.md`), and the general testing best-practices document so every downstream project benefits from this protection at all three enforcement points.
+This feature adds a mandatory workflow rule requiring a canary test whenever a new filter is added to a tool schema. The rule targets a recurring silent-failure bug class: a filter added to a schema (Zod, JSON Schema, or equivalent) is accepted by the API but never wired to the query builder's WHERE clause, causing it to no-op without any error or warning.
+
+Three confirmed instances of this bug class were observed in downstream projects (RAD-118, RAD-130, RAD-143) before this rule existed. The rule will be embedded in the developer-agent implementation checklist, the code-reviewer review contract (`REVIEW.md`), and the general testing best-practices document so every downstream project benefits from this protection at all three enforcement points.
 
 ---
 
