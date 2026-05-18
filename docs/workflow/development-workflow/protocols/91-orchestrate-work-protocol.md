@@ -761,6 +761,46 @@ If the human agrees, follow `docs/workflow/development-workflow/protocols/06-ret
 
 Run this step immediately after opening a draft PR, and again after any push that addresses internal-review findings.
 
+### Draft-state pre-check (mandatory, before any reviewer is dispatched)
+
+Before dispatching any reviewer, check whether the PR is currently in draft state:
+
+```bash
+gh pr view <pr_number> --json isDraft --jq '.isDraft'
+```
+
+If the result is `true` (PR is a draft), inspect the resolved `internal_reviewers` list from `.ai-dev-workflow.yaml` (after any `.tmp/template-config.json` override). If **any** listed reviewer is known to skip draft PRs, convert the PR to non-draft **before** triggering any reviewer:
+
+```bash
+gh pr ready <pr_number>
+```
+
+Post a comment on the PR explaining the action:
+
+> `INFO: PR converted from draft to non-draft before Step 7a internal review. Reason: CodeRabbit is configured as an internal reviewer and '.coderabbit.yaml' sets 'auto_review.drafts: false' — CodeRabbit silently skips draft PRs. Converting now to ensure full reviewer coverage.`
+
+**Why this matters**: CodeRabbit (and similar tools) configured with `auto_review.drafts: false` do not post any skip notice when they bypass a draft PR — the absence is silent. If the PR remains in draft state when the reviewer loop fires, CodeRabbit's review is simply missing, the internal review gate passes with reduced coverage, and no warning reaches the agent or the human.
+
+**Reviewer-to-draft-restriction mapping**:
+
+| Reviewer     | Skips draft PRs when...                                                     |
+| ------------ | --------------------------------------------------------------------------- |
+| `coderabbit` | `.coderabbit.yaml` has `reviews.auto_review.drafts: false` (the default)    |
+| `claude`     | Never — Claude Code agents always review regardless of draft state          |
+| `codex`      | Never — Codex skill reviewers always review regardless of draft state       |
+
+To check whether `.coderabbit.yaml` restricts draft PRs:
+
+```bash
+grep -E '^\s*drafts:\s*false' .coderabbit.yaml
+```
+
+If the file is absent or the key is not present, CodeRabbit defaults to `drafts: false` — treat it as draft-restricting.
+
+**Important**: The pre-check converts the PR to non-draft solely to enable reviewer coverage. This does not change the Step 7a → Step 7 flow: the PR still goes through the full internal review gate before external reviewers run. After `gh pr ready` is called here, do **not** call `gh pr ready` again later in the flow — it has already been done.
+
+If the PR is **not** in draft state, skip this pre-check entirely and proceed to the Design Review Gate.
+
 ### Design Review Gate (implementation PRs only)
 
 This gate applies only to PRs on `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches (BR-1). It is skipped entirely for `spec/*` and `implementation-plan/*` branches — proceed directly to "Determining which reviewers to run" for those PR types.
@@ -859,7 +899,9 @@ Before dispatching any reviewer, classify each entry in the resolved list as `re
 | Codex runner / Codex skill                        | Yes                 | Yes                | Determined at runtime (App check) |
 | Direct human (shell / CI with `gh`)               | Yes                 | Yes                | Determined at runtime (App check) |
 
-To determine `coderabbit` reachability, the runner checks whether `coderabbitai[bot]` has any prior activity on the repository (App installation signal — via `gh api repos/{owner}/{repo}/installation` or by checking the PR for a prior CodeRabbit comment), **and** confirms that `.coderabbit.yaml` does not disable auto-review or restrict reviews to non-draft PRs (`reviews.auto_review.enabled: true` required). If either check fails, classify `coderabbit` as `unreachable` — the draft-PR restriction in `.coderabbit.yaml` is treated as equivalent to the App not being installed (BR-5 consequence).
+To determine `coderabbit` reachability, the runner checks whether `coderabbitai[bot]` has any prior activity on the repository (App installation signal — via `gh api repos/{owner}/{repo}/installation` or by checking the PR for a prior CodeRabbit comment), **and** confirms that `.coderabbit.yaml` does not disable auto-review (`reviews.auto_review.enabled: true` required). If either check fails, classify `coderabbit` as `unreachable`.
+
+Note: the `auto_review.drafts: false` restriction is **not** treated as an unreachability condition here — it is handled upstream by the "Draft-state pre-check" at the top of Step 7a, which converts any draft PR to non-draft before this reachability check runs. By the time the reachability check executes, the PR is guaranteed to be non-draft (if the pre-check determined that a draft-restricting reviewer was in the list).
 
 #### Policy resolution
 

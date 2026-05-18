@@ -29,6 +29,28 @@ If no PR can be determined, ask the user to specify a PR number or to run from a
 
 ## Procedure (per PR)
 
+### Pre-flight: draft-state check
+
+Before running any scripts, verify the PR is not in draft state:
+
+```bash
+gh pr view <number> --json isDraft --jq '.isDraft'
+```
+
+If the result is `true`, check whether CodeRabbit (or any reviewer configured in `.ai-dev-workflow.yaml` `review.platforms`) restricts reviews to non-draft PRs. For CodeRabbit, check `.coderabbit.yaml`:
+
+```bash
+grep -E '^\s*drafts:\s*false' .coderabbit.yaml
+```
+
+If the PR is draft **and** a configured external reviewer skips drafts, convert the PR to non-draft before running the reviewer loop:
+
+```bash
+gh pr ready <number>
+```
+
+This prevents silent reviewer skip — CodeRabbit configured with `auto_review.drafts: false` produces no comment when it bypasses a draft PR, making the omission invisible to the agent. Note: when Protocol 93 is invoked via Protocol 91 (the normal orchestrated path), the "Draft-state pre-check" in Step 7a has already converted the PR before this point; this pre-flight check is a safety net for standalone invocations.
+
 ### Pre-flight: check for existing unresolved review findings
 
 Before running any scripts, inspect the PR's current review state:
