@@ -692,19 +692,18 @@ After the PR is open, run the reviewer loop immediately — do not ask the user 
 
 ### 6.1 — Run the internal review gate (Step 7a)
 
-Read the `review.internal_reviewers` list from `.ai-dev-workflow.yaml`. For each configured reviewer:
+Follow the full Step 7a procedure defined in `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` Step 7a ("Internal reviewer gate"), using the PR opened in Step 5.4 as the target.
 
-- **`claude`**: perform a native code review of the diff (the sync-applied changes) against `REVIEW.md`. For a template sync PR the focus areas are: (a) no project-specific content accidentally overwritten; (b) always-sync files match what was approved in Step 3; (c) CHANGELOG entry (if any) is correctly formatted; (d) `.ai-dev-workflow.yaml` was updated with `last_synced_version`. Apply any blocking fixes, commit, and push before proceeding.
-- **`codex-github`**: invoke `scripts/development-workflow/codex-github-reviewer.sh <pr_number> <owner> <repo>`. Exit 0 = APPROVED, exit 1 = NEEDS_REVISION (apply fixes, push, re-run), exit 2 = TIMED_OUT (treat per `internal_reviewers_unavailable_policy`).
-- **`coderabbit`** (and other platform reviewers): CodeRabbit triggers on non-draft PRs. Convert the PR to non-draft first:
+The sync-template PR is a `feature/*` branch, so the two-pass code review procedure applies. Key focus areas for the `claude` reviewer pass on a sync PR:
 
-  ```bash
-  gh pr ready <pr_number>
-  ```
+- No project-specific content was accidentally overwritten by the sync.
+- Always-sync files match what was approved in Step 3.
+- CHANGELOG entry (if any) is correctly formatted under `[Unreleased]`.
+- `.ai-dev-workflow.yaml` was updated with `last_synced_version`.
 
-  Then wait for CodeRabbit to post its review (poll `gh pr view <pr_number> --json reviews` or check PR comments). Resolve any blocking findings, push fixes, and repeat until CodeRabbit approves or marks no blocking issues. Use the GraphQL `isResolved` check to confirm all threads are resolved before proceeding.
+Apply any blocking fixes, commit, and push before proceeding. Continue until all configured internal reviewers have approved (or are unavailable under the configured policy).
 
-Once all configured internal reviewers have approved (or are unavailable under the configured policy), ensure the PR is non-draft:
+Once the Step 7a gate passes, ensure the PR is non-draft:
 
 ```bash
 gh pr ready <pr_number>
