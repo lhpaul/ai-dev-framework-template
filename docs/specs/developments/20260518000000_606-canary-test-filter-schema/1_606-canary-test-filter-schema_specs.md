@@ -80,6 +80,17 @@ This feature adds a mandatory workflow rule requiring a canary test whenever a n
 
 ---
 
+## Acceptance Criteria
+
+- [ ] The developer-agent implementation checklist (in `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` or the pre-PR checklist section) includes a mandatory item: when a PR adds a new filter to a tool schema, a canary test must be present that confirms the filter changes results between two distinct invocations.
+- [ ] The code-reviewer review contract (`REVIEW.md`) includes a blocking check: for any PR that adds a new filter parameter to a tool schema, the reviewer must verify that a canary test is present demonstrating the filter alters the result set.
+- [ ] The general testing best-practices document (`docs/best-practices/3-testing.md` or equivalent) includes the canary test rule: any accepted query filter must have a test proving it affects results.
+- [ ] A developer who writes a canary test following the two-invocation-plus-assertion pattern defined in BR-2 satisfies the requirement regardless of language or test framework.
+- [ ] A developer who adds a filter without a canary test, or with a canary test that cannot demonstrate the filter changes results, is blocked from merging by the code-review gate.
+- [ ] The rule explicitly exempts modifications to existing filters that do not change the schema contract (BR-7).
+
+---
+
 ## Out of Scope (MVP)
 
 - Automated static analysis or CI tooling that detects unwired filter parameters at build time — this is a testing-convention rule enforced by review, not a lint-time check.
