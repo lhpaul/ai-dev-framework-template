@@ -662,7 +662,8 @@ git checkout -b feature/sync-template-v{TEMPLATE_VERSION}
 Stage only approved paths — avoid `git add .` so unapproved files never enter the commit:
 
 ```bash
-git add REVIEW.md docs/workflow/ .claude/agents/ .claude/commands/ .claude/skills/ .codex/skills/ .cursor/ \
+git add REVIEW.md docs/workflow/ .claude/agents/ .claude/commands/ .claude/skills/ .codex/skills/ \
+  .cursor/commands/ .cursor/agents/ .cursor/rules/ \
   scripts/development-workflow/ scripts/README.md \
   docs/best-practices/1-general.md \
   docs/best-practices/2-version-control.md \
@@ -717,9 +718,12 @@ if [ -n "$PREV_LAST_VERSION" ]; then
   CHANGELOG_SECTION=$(awk "/^## \[${TEMPLATE_VERSION#v}\]/,/^## \[${PREV_LAST_VERSION#v}\]/" \
     "${TEMPLATE_DIR}/CHANGELOG.md" | head -n -1)
 else
-  # No previous version — extract from the TEMPLATE_VERSION header to the next versioned section
-  CHANGELOG_SECTION=$(awk "/^## \[${TEMPLATE_VERSION#v}\]/,/^## \[[0-9]/" \
-    "${TEMPLATE_DIR}/CHANGELOG.md" | head -n -1)
+  # No previous version — extract content after the TEMPLATE_VERSION header up to the next versioned section
+  CHANGELOG_SECTION=$(awk -v tv="${TEMPLATE_VERSION#v}" '
+    $0 ~ ("^## \\[" tv "\\]") { in_range=1; next }
+    in_range && /^## \[/ { exit }
+    in_range { print }
+  ' "${TEMPLATE_DIR}/CHANGELOG.md")
 fi
 
 # Compose the PR body
