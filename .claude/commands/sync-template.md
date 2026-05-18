@@ -687,7 +687,10 @@ If the user explicitly approved additional paths in Step 4 (via the manual-revie
 ```bash
 # Stage any additional paths approved interactively in Step 4:
 if [ -n "$APPROVED_ADDITIONAL_PATHS" ]; then
-  git add $APPROVED_ADDITIONAL_PATHS
+  printf '%s\n' "$APPROVED_ADDITIONAL_PATHS" \
+    | while IFS= read -r p; do
+        [ -n "$p" ] && git add -- "$p"
+      done
 fi
 ```
 
@@ -715,8 +718,13 @@ First, extract the relevant CHANGELOG section from the template's `CHANGELOG.md`
 # Use it here to bound the CHANGELOG extraction to only changes since the previous sync.
 # Extract the CHANGELOG section for changes since PREV_LAST_VERSION
 if [ -n "$PREV_LAST_VERSION" ]; then
-  CHANGELOG_SECTION=$(awk "/^## \[${TEMPLATE_VERSION#v}\]/,/^## \[${PREV_LAST_VERSION#v}\]/" \
-    "${TEMPLATE_DIR}/CHANGELOG.md" | head -n -1)
+  CHANGELOG_SECTION=$(awk -v start="${TEMPLATE_VERSION#v}" -v stop="${PREV_LAST_VERSION#v}" '
+    $0 == "## [" start "]" { in_range=1 }
+    in_range {
+      if ($0 == "## [" stop "]") exit
+      print
+    }
+  ' "${TEMPLATE_DIR}/CHANGELOG.md")
 else
   # No previous version — extract content after the TEMPLATE_VERSION header up to the next versioned section
   CHANGELOG_SECTION=$(awk -v tv="${TEMPLATE_VERSION#v}" '
