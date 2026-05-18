@@ -46,10 +46,28 @@ _harness_exit() {
 trap _harness_exit EXIT
 
 # Mock gh: prints $MOCK_GH_OUTPUT and exits with $MOCK_GH_EXIT (default 0).
+# When MOCK_GH_CALL_LOG is set to a file path, each invocation appends its
+# arguments to that file (one line per call, space-separated).
+# When MOCK_GH_POST_EXIT is set, POST calls exit with that code instead of
+# MOCK_GH_EXIT.  This allows tests to simulate reply-post failures independently
+# of the initial comment-list read.
 cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
-printf '%s\n' "${MOCK_GH_OUTPUT:-[]}"
-exit "${MOCK_GH_EXIT:-0}"
+# Log call arguments when requested.
+if [ -n "${MOCK_GH_CALL_LOG:-}" ]; then
+  printf '%s\n' "$*" >> "$MOCK_GH_CALL_LOG"
+fi
+# Differentiate POST calls from read calls.
+case "$*" in
+  *"--method POST"*)
+    printf '%s\n' "${MOCK_GH_POST_OUTPUT:-{}}"
+    exit "${MOCK_GH_POST_EXIT:-${MOCK_GH_EXIT:-0}}"
+    ;;
+  *)
+    printf '%s\n' "${MOCK_GH_OUTPUT:-[]}"
+    exit "${MOCK_GH_EXIT:-0}"
+    ;;
+esac
 MOCK_GH
 chmod +x "$MOCK_BIN/gh"
 
@@ -416,6 +434,71 @@ if [ "${int_trap_present:-0}" -gt 0 ]; then
 else
   run_test "sigint_trap_registered" "present" "absent"
 fi
+
+# ---------------------------------------------------------------------------
+# Area 5: auto_reply_unreplied_rest_comments
+#
+# Tests that the function posts replies to unreplied CodeRabbit REST comments
+# and returns the correct count / exit code.
+# Uses MOCK_GH_CALL_LOG to verify the POST endpoint is called for each
+# unreplied comment, and MOCK_GH_POST_EXIT to simulate API failures.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 5: auto_reply_unreplied_rest_comments ==="
+
+# Reset POST-related mock vars between tests.
+unset MOCK_GH_POST_EXIT MOCK_GH_POST_OUTPUT MOCK_GH_CALL_LOG
+
+# test: no unreplied comments — nothing to reply to, exit 0, count 0
+export MOCK_GH_OUTPUT='[]'
+actual="$(auto_reply_unreplied_rest_comments "1" "owner/repo" "coderabbitai[bot]" "[]")"
+run_test "auto_reply_no_comments" "0" "$actual"
+
+# test: one unreplied bot comment — should post one reply, return count 1
+_call_log="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log"
+export MOCK_GH_OUTPUT='[{"id":10,"in_reply_to_id":null,"user":{"login":"coderabbitai[bot]"},"body":"Finding X"}]'
+actual="$(auto_reply_unreplied_rest_comments "1" "owner/repo" "coderabbitai[bot]" "[]")"
+run_test "auto_reply_single_comment_count" "1" "$actual"
+post_calls="$(grep -c -- '--method POST' "$_call_log" 2>/dev/null || true)"
+run_test "auto_reply_single_comment_post_called" "1" "$post_calls"
+rm -f "$_call_log"
+unset MOCK_GH_CALL_LOG
+
+# test: two unreplied bot comments — should post two replies, return count 2
+_call_log="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log"
+export MOCK_GH_OUTPUT='[
+  {"id":10,"in_reply_to_id":null,"user":{"login":"coderabbitai[bot]"},"body":"Finding A"},
+  {"id":11,"in_reply_to_id":null,"user":{"login":"coderabbitai[bot]"},"body":"Finding B"}
+]'
+actual="$(auto_reply_unreplied_rest_comments "1" "owner/repo" "coderabbitai[bot]" "[]")"
+run_test "auto_reply_two_comments_count" "2" "$actual"
+post_calls="$(grep -c -- '--method POST' "$_call_log" 2>/dev/null || true)"
+run_test "auto_reply_two_comments_posts" "2" "$post_calls"
+rm -f "$_call_log"
+unset MOCK_GH_CALL_LOG
+
+# test: unreplied comment already in resolved_ids — should be skipped, count 0
+export MOCK_GH_OUTPUT='[{"id":10,"in_reply_to_id":null,"user":{"login":"coderabbitai[bot]"},"body":"Finding X"}]'
+actual="$(auto_reply_unreplied_rest_comments "1" "owner/repo" "coderabbitai[bot]" "[10]")"
+run_test "auto_reply_resolved_id_skipped" "0" "$actual"
+
+# test: comment already replied to by a human — should be skipped, count 0
+export MOCK_GH_OUTPUT='[
+  {"id":10,"in_reply_to_id":null,"user":{"login":"coderabbitai[bot]"},"body":"Finding X"},
+  {"id":11,"in_reply_to_id":10,"user":{"login":"humanuser"},"body":"Ack"}
+]'
+actual="$(auto_reply_unreplied_rest_comments "1" "owner/repo" "coderabbitai[bot]" "[]")"
+run_test "auto_reply_already_replied_skipped" "0" "$actual"
+
+# test: POST API failure — function should return exit code 1
+export MOCK_GH_OUTPUT='[{"id":10,"in_reply_to_id":null,"user":{"login":"coderabbitai[bot]"},"body":"Finding X"}]'
+export MOCK_GH_POST_EXIT=1
+actual_exit=0
+auto_reply_unreplied_rest_comments "1" "owner/repo" "coderabbitai[bot]" "[]" > /dev/null 2>&1 || actual_exit=$?
+run_test "auto_reply_post_failure_exit_code" "1" "$actual_exit"
+unset MOCK_GH_POST_EXIT
 
 # ---------------------------------------------------------------------------
 # Summary
