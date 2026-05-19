@@ -92,6 +92,60 @@ From the tracker, collect for each open item:
 
 **Exclude** items whose tracker status is already `Done`, `Merged`, `Cancelled`, or equivalent — these are not candidates for advancement.
 
+#### Rate-limit awareness for GitHub Projects pagination (Step 1a)
+
+**Problem**: `gh project item-list --limit 10000` fetches all project board items — including closed and merged ones — in paginated GraphQL requests. Repositories with 300+ board items exhaust the 5 000-point GraphQL rate limit, causing a ~3.5-minute hard pause that grows worse as more items accumulate.
+
+**Recommended approach — query open issues directly**:
+
+Instead of paginating the full project board to discover candidates, first fetch all open issues
+from the repository (which is state-filtered at the GitHub Issues API level and therefore fast),
+then make a single `item-list` call to fetch all project board items and cross-reference them
+against the open-issue list client-side:
+
+```bash
+# Step 1: list all open issues (only open issues are eligible for advancement)
+OPEN_ISSUES=$(gh issue list --state open --limit 1000 --json number,title,labels,createdAt)
+
+# Step 2: fetch all project board items once and filter to only open-issue candidates
+gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --limit 10000 --format json \
+  | jq --argjson open "$OPEN_ISSUES" \
+    '[.items[] | . as $item | ($open[] | select(.number == $item.content.number)) // empty | {number: .number, title: .title, status: $item.status}]'
+```
+
+This pattern avoids the need to call `item-list` once per open issue. A single `item-list` fetch
+is unavoidable (GitHub Projects v2 has no server-side open-issue filter on the items node), but
+by pre-filtering the candidate set to open GitHub Issues first, the downstream processing only
+touches relevant items and the orchestrator does not spend query points scoring closed board entries.
+
+**Alternative — client-side post-filter when item-list is unavoidable**:
+
+If a full `item-list` call is unavoidable (e.g., to obtain project-specific field values not available from `gh issue list`), add a client-side filter to exclude terminal-status items immediately after fetching:
+
+```bash
+# Fetch all items but filter out terminal statuses client-side
+gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --limit 10000 --format json \
+  | jq '[.items[] | select(.status != null and (.status | IN("Done","Merged","Released","Cancelled")) | not)]'
+```
+
+This does not reduce the number of GraphQL pages fetched, but it reduces the size of the result set that downstream processing operates on. Prefer the open-issue query approach (above) to avoid the page-count problem entirely.
+
+**Rate-limit check**: Before and after any large pagination operation, check remaining GraphQL quota:
+
+```bash
+gh api rate_limit --jq '.resources.graphql | {limit, remaining, used, reset: (.reset | todate)}'
+```
+
+If `remaining` falls below 1 000 points after Step 1a, warn the human before dispatching Work Item Runners:
+
+```text
+WARNING: GraphQL rate limit low after portfolio discovery — <N> points remaining (limit: 5000).
+Further GraphQL calls (tracker updates, PR queries) may hit the limit and block for up to <reset-time>.
+Consider waiting until the rate limit resets before dispatching the batch.
+```
+
+The rate limit resets once per hour. When `remaining` is critically low (< 200 points), pause dispatch and report the reset time to the human.
+
 **Cross-check merged PRs**: Tracker statuses can be stale (e.g., a prior batch merged PRs but never updated the tracker). Before accepting a tracker status as authoritative, cross-check each candidate item against merged PRs:
 
 ```bash
