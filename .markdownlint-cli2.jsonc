@@ -1,13 +1,16 @@
 // markdownlint-cli2 configuration for spec, plan, and CHANGELOG documents.
 //
-// This file registers the markdownlint-rule-relative-links custom rule plugin
-// and configures the rule set. The rule settings are also mirrored in
-// .markdownlint.jsonc for editor integrations that read that file directly.
+// The rule settings are also mirrored in .markdownlint.jsonc for editor
+// integrations that read that file directly.
 //
 // Rules enabled:
 //   MD009 — Trailing spaces (hard-break exception: two trailing spaces allowed)
 //   MD047 — Files should end with a single newline
-//   relative-links — Relative links must resolve to existing files (custom plugin)
+//
+// Rules disabled:
+//   relative-links — Disabled because implementation plans intentionally
+//                    reference smoke test runbooks that are created later in the
+//                    workflow (forward references are the expected pattern here).
 //
 // All other default rules are disabled so future markdownlint upgrades do not
 // silently break existing documents.
@@ -16,8 +19,6 @@
 //   <!-- markdownlint-disable MD009 -->
 //   <!-- markdownlint-disable-next-line MD009 -->
 {
-  "customRules": ["markdownlint-rule-relative-links"],
-
   "config": {
     "default": false,
 
@@ -27,8 +28,6 @@
       "strict": false
     },
 
-    "MD047": true,
-
-    "relative-links": true
+    "MD047": true
   }
 }
