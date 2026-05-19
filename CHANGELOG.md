@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.1] - 2026-05-19
+
+### Fixed
+
+- **`markdown-lint.yml`: disable `relative-links` rule in CI** (hotfix): implementation plans intentionally reference smoke test runbooks that are created later in the workflow — those forward references caused CI failures for any downstream project with plans. `markdownlint-rule-relative-links` is removed from `.markdownlint-cli2.jsonc` (the CI/runner config); `.markdownlint.jsonc` retains the rule for editor integrations.
+
 ## [0.27.0] - 2026-05-19
 
 ### Added
@@ -17,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CI enforcement: auto-apply `ready-for-regression` and assert reviewer-loop summary** (#613): two new GitHub Actions workflows — `apply-regression-label.yml` (auto-labels implementation PRs by branch prefix) and `reviewer-loop-guard.yml` (blocks merge-eligibility when the reviewer-loop summary comment is absent).
 - **Auto-remove `ready-for-regression` label on push** (#612): `remove-regression-label-on-push.yml` removes the label when new commits are pushed, preventing stale regression-readiness signals.
 - **Canary test requirement for filter-schema additions** (#606): developer and code-reviewer protocols now require a two-invocation canary test for every new filter parameter; absence is a blocking review finding.
-- **Mandatory advisory finding dispositions in reviewer loop summary**: Protocol 93 requires runners to evaluate each non-blocking advisory finding and record a disposition (Addressed / Accepted / Deferred / Rejected) in the summary comment on clean exits.
+- **Mandatory advisory finding dispositions in reviewer loop summary**: Protocol 93 requires runners to evaluate each non-breaking advisory finding and record a disposition (Addressed / Accepted / Deferred / Rejected) in the summary comment on clean exits.
 - **Script quality gates and test harness for `pr-review-loop.sh`** (#585): adds `scripts/development-workflow/tests/test-pr-review-loop.sh` and a path-triggered CI workflow; prepare-release and retrospective protocols gain script-coverage and downstream bug-review checklist items.
 - **Prettier for markdown formatting** (#584): adds `prettier` v3.8.3 and formats all `.md` files so downstream `/sync-template` runs see no spurious diffs.
 
@@ -707,7 +713,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.1...HEAD
+[0.27.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.26.1...v0.27.0
 [0.26.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.25.1...v0.26.0
