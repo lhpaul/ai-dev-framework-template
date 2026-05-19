@@ -1935,7 +1935,24 @@ coderabbit_thread_gate_clean() {
     recheck_raw="$(check_unreplied_rest_comments "$pr_number" "$repo" "$bot_login" "$resolved_ids_json")"
     recheck_st=$?
     eval "$prev_errexit"
-    if [ "$recheck_st" -eq 0 ] && [ "${recheck_raw:-0}" -gt 0 ]; then
+    if [ "$recheck_st" -ne 0 ]; then
+      # Re-check REST query failed — cannot confirm gate is clean; treat as
+      # needs_fixes so the agent re-inspects rather than claiming false clean.
+      echo "WARN: REST re-check failed (exit $recheck_st) after auto-reply on PR #$pr_number — returning needs_fixes" >&2
+      print_kv RESULT needs_fixes
+      print_kv REASON coderabbit_unreplied_rest_comments
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      print_kv UNRESOLVED_THREAD_COUNT 0
+      return 1
+    fi
+    if [ "${recheck_raw:-0}" -gt 0 ]; then
       echo "WARN: ${recheck_raw} unreplied REST comment(s) remain after auto-reply on PR #$pr_number — returning needs_fixes" >&2
       print_kv RESULT needs_fixes
       print_kv REASON coderabbit_unreplied_rest_comments
