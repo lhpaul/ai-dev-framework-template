@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.2] - 2026-05-19
+
+### Fixed
+
+- **`markdown-lint.yml`: disable `relative-links` rule in CI** (hotfix): implementation plans intentionally reference smoke test runbooks that are created later in the workflow — those forward references caused CI failures for any downstream project with plans. `markdownlint-rule-relative-links` is removed from `.markdownlint-cli2.jsonc` (the CI/runner config); `.markdownlint.jsonc` retains the rule for editor integrations.
+
 ## [0.26.1] - 2026-05-11
 
 ### Fixed
