@@ -1,7 +1,7 @@
 # Agents Add to Project Board — Implementation Plan
 
 **Spec**: [1_agents-add-to-project-board_specs.md](./1_agents-add-to-project-board_specs.md)
-**Smoke test runbook**: [docs/testing/workflow/656-agents-add-to-project-board.smoke-test.md](../../../../docs/testing/workflow/656-agents-add-to-project-board.smoke-test.md)
+**Smoke test runbook**: [docs/testing/workflow/656-agents-add-to-project-board.smoke-test.md](../../../testing/workflow/656-agents-add-to-project-board.smoke-test.md)
 
 ---
 
