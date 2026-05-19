@@ -67,7 +67,7 @@ Model settings live in two places:
 - [`.pr_agent.toml`](../../../../.pr_agent.toml) — `model`, `fallback_models`, `model_weak`
 - [`.github/workflows/pr-agent.yml`](../../../../.github/workflows/pr-agent.yml) — the same three keys are also pinned as `config.model`, `config.fallback_models`, `config.model_weak` GHA env vars
 
-The env vars are the **load-bearing** pin: PR-Agent merges TOML settings _after_ its initial fallback check, so a TOML-only configuration falls back to the built-in default (OpenAI's `gpt-5.4` / `gpt-5.4-mini`) on every run and fails with `dummy_key` auth errors. The TOML values serve as defense-in-depth and documentation.
+A local `.pr_agent.toml` has higher precedence than GitHub Actions env vars — TOML values override env-based settings, not the other way around. Both are set here as defense-in-depth: the TOML file is the authoritative source, and the GHA env vars ensure the same values are active during the action startup phase before TOML is fully merged.
 
 To switch models: update **all three keys** (`model`, `fallback_models`, `model_weak`) in **both** the TOML file and the workflow env vars, then swap the API key secret in the workflow. The `model_weak` key controls ancillary tasks (PR description generation, classification, file summaries) and must use the same provider as `model` so only one API key needs to be configured.
 

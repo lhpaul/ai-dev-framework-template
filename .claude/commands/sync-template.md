@@ -719,16 +719,16 @@ First, extract the relevant CHANGELOG section from the template's `CHANGELOG.md`
 # Extract the CHANGELOG section for changes since PREV_LAST_VERSION
 if [ -n "$PREV_LAST_VERSION" ]; then
   CHANGELOG_SECTION=$(awk -v start="${TEMPLATE_VERSION#v}" -v stop="${PREV_LAST_VERSION#v}" '
-    $0 == "## [" start "]" { in_range=1 }
+    $0 ~ ("^## \\[" start "\\]") { in_range=1; next }
     in_range {
-      if ($0 == "## [" stop "]") exit
+      if ($0 ~ ("^## \\[" stop "\\]")) exit
       print
     }
   ' "${TEMPLATE_DIR}/CHANGELOG.md")
 else
   # No previous version — extract content after the TEMPLATE_VERSION header up to the next versioned section
   CHANGELOG_SECTION=$(awk -v tv="${TEMPLATE_VERSION#v}" '
-    $0 == "## [" tv "]" { in_range=1; next }
+    $0 ~ ("^## \\[" tv "\\]") { in_range=1; next }
     in_range && $0 ~ /^## \[/ { exit }
     in_range { print }
   ' "${TEMPLATE_DIR}/CHANGELOG.md")

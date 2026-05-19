@@ -32,10 +32,13 @@ jobs:
         run: |
           # Check whether the label is currently applied.
           # --jq returns an empty string when the label is absent.
-          LABEL=$(gh pr view "$PR_NUMBER" \
+          if ! LABEL=$(gh pr view "$PR_NUMBER" \
             --repo "$REPO" \
             --json labels \
-            --jq '.labels[].name | select(. == "ready-for-regression")' 2>/dev/null) || true
+            --jq '.labels[].name | select(. == "ready-for-regression")'); then
+            echo "ERROR: Failed to read labels for PR #${PR_NUMBER}." >&2
+            exit 1
+          fi
 
           if [ -z "$LABEL" ]; then
             echo "Label 'ready-for-regression' is not present on PR #${PR_NUMBER} — nothing to do."

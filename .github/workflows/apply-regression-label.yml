@@ -33,6 +33,7 @@ jobs:
 
     steps:
       - name: Apply ready-for-regression label for implementation branches
+        if: github.event.pull_request.head.repo.full_name == github.repository
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ github.head_ref }}
