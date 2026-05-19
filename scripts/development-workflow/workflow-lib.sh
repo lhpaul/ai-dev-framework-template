@@ -530,6 +530,64 @@ print(item.get('status') or '', end='')
   printf '%s' "${current_status:-}"
 }
 
+# ensure_on_project_board <issue_number> <initial_status>
+#
+# Idempotently ensures a GitHub issue is registered on the configured project board.
+# - If the issue is already on the board, logs "already present" and returns 0.
+# - If the issue is not on the board, adds it and sets its status to <initial_status>.
+# - On any API or permissions failure, logs a warning and returns 0 (fail-open).
+# - Must be called before update_tracker_status_best_effort in each agent completion
+#   sequence so that the issue is board-registered before a status update is attempted.
+ensure_on_project_board() {
+  local issue_number="$1"
+  local initial_status="$2"
+  local owner project_number item_json repo_url
+
+  project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
+  if [ -z "$project_number" ]; then
+    echo "Warning: GITHUB_PROJECT_NUMBER not set and no project_number in .ai-dev-workflow.yaml; skipping board-membership check for issue #${issue_number}."
+    return 0
+  fi
+  owner="$(workflow_resolve_github_project_owner)"
+  if [ -z "$owner" ]; then
+    # workflow_resolve_github_project_owner already emitted a warning.
+    return 0
+  fi
+
+  # Check whether issue is already on the board using Python3 for control-character
+  # robustness (same pattern as update_tracker_status_best_effort).
+  item_json=$(gh project item-list "$project_number" --owner "$owner" --limit 10000 --format json 2>/dev/null \
+    | python3 -c "
+import json, sys
+num = int(sys.argv[1])
+data = json.loads(sys.stdin.read(), strict=False)
+for item in data.get('items', []):
+    if item.get('content', {}).get('number') == num:
+        print(json.dumps(item))
+        break
+" "$issue_number" || true)
+
+  if [ -n "$item_json" ]; then
+    echo "Board membership check: issue #${issue_number} already on project board."
+    return 0
+  fi
+
+  # Issue is not on the board — add it.
+  repo_url=$(gh repo view --json url --jq '.url' 2>/dev/null || true)
+  if [ -z "$repo_url" ]; then
+    echo "Warning: could not resolve repo URL; skipping board-add for issue #${issue_number}."
+    return 0
+  fi
+  gh project item-add "$project_number" --owner "$owner" \
+    --url "${repo_url}/issues/${issue_number}" 2>/dev/null \
+    || { echo "Warning: gh project item-add failed for issue #${issue_number}; continuing."; return 0; }
+
+  echo "Board membership check: issue #${issue_number} added to project board."
+
+  # Set initial status for the newly added item.
+  update_tracker_status_best_effort "$issue_number" "$initial_status"
+}
+
 # update_tracker_status_best_effort <issue_number> <status_label> [required_current_status]
 #
 # Best-effort update for the configured issue tracker's Status field.

@@ -327,7 +327,16 @@ Without this step, items remain in a stale tracker status (e.g., `Backlog`, `Spe
 
 For each item that passed the Step 2 eligibility check:
 
-1. **Ensure the item is on the project board**: check whether the item already exists in the configured project board. If it is missing, add it. Log the result (`already present` / `added to board`).
+1. **Ensure the item is on the project board**: check whether the item already exists in the configured project board. If it is missing, add it. Log the result (`already present` / `added to board`). Use `ensure_on_project_board` from `scripts/development-workflow/workflow-lib.sh`:
+
+   ```bash
+   # Source workflow-lib.sh to get ensure_on_project_board
+   # shellcheck source=scripts/development-workflow/workflow-lib.sh
+   source scripts/development-workflow/workflow-lib.sh
+   ensure_on_project_board "$ISSUE_NUMBER" "$INITIAL_STATUS"
+   ```
+
+   Where `$INITIAL_STATUS` is the in-flight status appropriate to the next action (e.g., `"Writing Spec"`, `"Writing Plan"`, or `"In Development"`). For resume items the call is still idempotent — the function detects the item is already on the board and returns without modifying the existing status.
 
 2. **Update tracker status to the appropriate in-flight value** based on the next action that will be dispatched:
 

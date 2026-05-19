@@ -22,4 +22,6 @@ When the spec language implies pattern-based completeness, follow protocol 02's 
 
 Before committing in Step 5, run the cross-section consistency self-check defined in protocol 02 Step 5.5. Check every item that appears more than once across plan sections: function/method names, constant names, decision index labels, file paths, directory names, and route/URL structures. Fix all inconsistencies before proceeding to the lint check — contradictions between sections (e.g., a file path described one way in "Files to modify" and a different way in "Implementation Order") cause avoidable implementation review passes.
 
+Before updating tracker status as part of a standalone plan completion sequence, call `ensure_on_project_board <issue_number> 'Writing Plan'` (from `scripts/development-workflow/workflow-lib.sh`) to register the issue on the project board if it is not already present.
+
 **Note**: This agent handles premium-tier reasoning tasks (architecture decisions). For best results, ensure your Cursor Composer is using a high-reasoning model (e.g., Claude Opus, GPT-4, or equivalent) when invoking this subagent, or edit this file to set `model:` to a specific premium model ID.
