@@ -2044,13 +2044,60 @@ run_coderabbit_review() {
 
   rm -f "$existing_blocking_file"
 
+  # --- Phase 0: Detect and auto-resume CodeRabbit auto-pause before entering the poll loop ---
+  # CodeRabbit auto-pauses after 3+ rapid pushes in quick succession and posts a
+  # "Reviews paused" issue comment. When paused, it posts no review for the current HEAD,
+  # so Phase 1 finds 0 blocking findings (trivially true) and Phase 2 times out with
+  # RESULT=skipped/REASON=no_review (exit 0 — treated as clean by callers).
+  #
+  # Root cause of the Batch 52 incident (PR #650): the pause comment was posted BEFORE
+  # the HEAD commit timestamp (since_iso), so the Phase 2 detection (which filters by
+  # since_iso) never matched it. The script returned clean with CodeRabbit having not
+  # reviewed the latest commit.
+  #
+  # Fix: inspect the MOST RECENT CodeRabbit issue comment on the PR without a since_iso
+  # filter. If that latest comment contains a "Reviews paused" marker, CodeRabbit is still
+  # in a paused state — post "@coderabbitai resume" immediately and reset since_iso so the
+  # resulting review is captured. Set coderabbit_phase0_retrigger=1 so Phase 2 skips its
+  # own pause-detection block and does not double-post.
+  local coderabbit_phase0_retrigger=0
+  local phase0_most_recent_body
+  # Use -rs with add // [] to flatten all paginated pages into a single array
+  # before sorting, so the "most recent" selection spans the entire comment history
+  # rather than being limited to the last item on whichever page arrived last.
+  phase0_most_recent_body="$(
+    gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+      | jq -rs --arg bot "$bot_login" '
+          add // []
+          | map(select(.user.login == $bot))
+          | sort_by(.created_at)
+          | last
+          | .body // ""
+        '
+  )"
+  if printf '%s\n' "$phase0_most_recent_body" | grep -qi "reviews\? paused"; then
+    echo "INFO: CodeRabbit is in auto-pause state (most recent CR comment is a pause banner) — posting @coderabbitai resume before entering poll loop" >&2
+    local phase0_resume_since_iso
+    # Capture the timestamp BEFORE posting so any same-second CodeRabbit response
+    # is still within the detection window (queries use strict > $since_iso).
+    phase0_resume_since_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    if gh pr comment "$pr_number" --body "@coderabbitai resume" >/dev/null 2>&1; then
+      coderabbit_phase0_retrigger=1
+      since_iso="$phase0_resume_since_iso"
+      echo "INFO: @coderabbitai resume posted; since_iso reset to $since_iso" >&2
+    else
+      echo "WARN: failed to post @coderabbitai resume — will rely on Phase 2 detection" >&2
+    fi
+  fi
+
   # --- Phase 2: Poll for CodeRabbit review completion ---
   # CodeRabbit signals completion by posting a COMMENTED review after the HEAD commit.
   # Unlike Devin, there are no check runs to monitor — we rely solely on the review.
   #
   local coderabbit_review_count=0
   local coderabbit_any_activity=0
-  local coderabbit_retrigger_attempted=0
+  # Initialize retrigger flag from Phase 0 so Phase 2 does not double-post a resume.
+  local coderabbit_retrigger_attempted=$coderabbit_phase0_retrigger
   local coderabbit_rate_limit_retries=0
   local coderabbit_rate_limit_max_retries="${CODERABBIT_RATE_LIMIT_MAX_RETRIES:-2}"
   local coderabbit_rate_limit_wait="${CODERABBIT_RATE_LIMIT_WAIT:-180}"
