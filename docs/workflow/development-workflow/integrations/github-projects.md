@@ -102,6 +102,22 @@ When `gh` is available, the script detects merged PRs via `gh pr list --state me
 
 GitHub Projects status updates can be performed entirely via `gh` CLI and Bash — no MCP server is required. This means subagent Work Item Runners dispatched from parallel batch runs can update tracker status directly at Step 8b without deferring to the orchestrator.
 
+### Board membership check (ensure_on_project_board)
+
+Before updating tracker status, each stage agent (spec-writer, plan-writer, developer) must ensure the issue is registered on the project board. The `ensure_on_project_board` function in `scripts/development-workflow/workflow-lib.sh` handles this idempotently:
+
+```bash
+# Source workflow-lib.sh to get ensure_on_project_board
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source scripts/development-workflow/workflow-lib.sh
+
+# Call before tracker status update in the agent completion sequence.
+# initial_status: "Writing Spec" (spec agent), "Writing Plan" (plan agent), "In Development" (developer agent)
+ensure_on_project_board "$ISSUE_NUMBER" "$INITIAL_STATUS"
+```
+
+The function is **fail-open**: if the issue is already on the board it returns 0 immediately without modifying the existing status; if the board-add API call fails for any reason (rate limit, permissions error) it logs a warning and returns 0 so the agent can continue to open the PR. The initial status is only applied when the issue is newly added to the board — the subsequent `update_tracker_status_best_effort` call handles the normal stage-progression update independently.
+
 ### One-shot status update (recommended pattern)
 
 Use the following script pattern when a stage completes and the tracker status must advance. Replace the placeholder values below with your project owner and number, or set `GITHUB_PROJECT_OWNER` and `GITHUB_PROJECT_NUMBER` environment variables if preferred.

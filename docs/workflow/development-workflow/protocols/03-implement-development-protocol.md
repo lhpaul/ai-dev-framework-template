@@ -456,6 +456,8 @@ Use Conventional Commits (see `docs/best-practices/2-version-control.md`).
 
 ### Step 8: Open PR (Draft)
 
+**Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
+
 Open a **draft** PR targeting `develop` with:
 
 - **Title**: `feat([scope]): [feature-name]`
@@ -731,14 +733,15 @@ git checkout -b refactor/[branch-slug]
 
 7. Commit: `refactor([scope]): [description]`
 8. Push branch to remote
-9. Open a **draft** PR targeting `develop` with refactor-appropriate metadata (do **not** reuse Path 1 Step 8 verbatim — that path uses `feat(...)` and a spec link):
-   - **Title**: `refactor([scope]): [short description]`
-   - **Description**:
-     - What was refactored and why
-     - Link to the **implementation plan** only (no spec)
-     - Test plan (how to validate)
-     - Any deviations from the plan (with justification)
-     - CHANGELOG entry preview
+9. **Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
+10. Open a **draft** PR targeting `develop` with refactor-appropriate metadata (do **not** reuse Path 1 Step 8 verbatim — that path uses `feat(...)` and a spec link):
+    - **Title**: `refactor([scope]): [short description]`
+    - **Description**:
+      - What was refactored and why
+      - Link to the **implementation plan** only (no spec)
+      - Test plan (how to validate)
+      - Any deviations from the plan (with justification)
+      - CHANGELOG entry preview
 
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
 
@@ -769,7 +772,7 @@ echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
 
 **Important**: Always use `--base develop` to explicitly target the `develop` branch. The pre-create guard and post-create assertion above are the enforcement mechanism — do not skip them.
 
-10. Hand off to the Work Item Runner with the same lifecycle expectations as Path 1 Step 9 (internal review gate, automated reviewer loop, CI, labels). **Label derivation rule**: `refactor/*` branches always require `ready-for-regression` based on branch prefix, not content type. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table. See `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
+11. Hand off to the Work Item Runner with the same lifecycle expectations as Path 1 Step 9 (internal review gate, automated reviewer loop, CI, labels). **Label derivation rule**: `refactor/*` branches always require `ready-for-regression` based on branch prefix, not content type. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table. See `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
 
 ---
 
@@ -936,6 +939,8 @@ git push -u origin fix/[branch-slug]
 ```
 
 ### Step 8: Open PR (Draft)
+
+**Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
 
 Open a **draft** PR targeting `develop` using the same structure as Path 1 `### Step 8: Open PR (Draft)`, but with a **`fix(...)`** title and a fix-focused description (omit spec/plan links when none exist):
 
@@ -1179,6 +1184,8 @@ git push -u origin hotfix/[branch-slug]
 ```
 
 ### Step 8: Open PR (Draft)
+
+**Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
 
 Open a **draft** PR targeting `main` by adapting Path 1 `### Step 8: Open PR (Draft)` for hotfix (`fix(...)` title with `(hotfix)` as needed, incident-focused body, target branch `main`):
 
