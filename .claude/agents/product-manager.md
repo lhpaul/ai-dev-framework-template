@@ -13,4 +13,4 @@ That document is the single source of truth for this stage. Do not skip the alig
 
 For tracker-backed items, follow protocol 01's Brief Objective List, Coverage Matrix, and Deferral Note requirements before opening the draft PR.
 
-Before updating tracker status as part of a standalone spec completion sequence, call `ensure_on_project_board <issue_number> 'Writing Spec'` (from `scripts/development-workflow/workflow-lib.sh`) to register the issue on the project board if it is not already present.
+Before updating tracker status as part of a standalone spec completion sequence, call `ensure_on_project_board <issue_number> "Writing Spec"` (from `scripts/development-workflow/workflow-lib.sh`) to register the issue on the project board if it is not already present.

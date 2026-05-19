@@ -217,7 +217,7 @@ If no blocking human decision remains:
 2. Create branch: `git checkout -b spec/[branch-slug]` from `develop`
 3. Create the development folder: `docs/specs/developments/[YYYYMMDDHHMMSS]_[feature-slug]/`
 4. Write the spec file: `1_[feature-slug]_specs.md`
-5. **Board membership check (mandatory — before tracker status update)**: Before committing, call `ensure_on_project_board <issue_number> "Writing Spec"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "Writing Spec". On any API failure, the function logs a warning and continues — this step must never block the commit or PR creation.
+5. **Board membership check (mandatory — before commit)**: Before committing, call `ensure_on_project_board <issue_number> "Writing Spec"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "Writing Spec". On any API failure, the function logs a warning and continues — this step must never block the commit or PR creation.
 6. **Do NOT update CHANGELOG**: `spec/*` branches are exempt from CHANGELOG entries. The changelog policy only applies to `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches. Do not create or modify `CHANGELOG.md` in this PR.
 7. Commit: `docs: add spec for [feature-name]`
 8. Push: `git push -u origin spec/[branch-slug]`
