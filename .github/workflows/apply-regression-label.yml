@@ -33,6 +33,7 @@ jobs:
 
     steps:
       - name: Apply ready-for-regression label for implementation branches
+        if: github.event.pull_request.head.repo.full_name == github.repository
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ github.head_ref }}
@@ -65,10 +66,17 @@ jobs:
           # we only create the label when it is genuinely absent.
           if ! gh label list --repo "$REPO" --search "ready-for-regression" --json name \
               | jq -e '.[] | select(.name=="ready-for-regression")' > /dev/null 2>&1; then
-            gh label create "ready-for-regression" \
+            if ! gh label create "ready-for-regression" \
               --repo "$REPO" \
               --color "e4e669" \
-              --description "PR is ready for regression testing"
+              --description "PR is ready for regression testing"; then
+              # Concurrent creator race: accept if the label now exists, fail otherwise.
+              if ! gh label list --repo "$REPO" --search "ready-for-regression" --json name \
+                  | jq -e '.[] | select(.name=="ready-for-regression")' > /dev/null 2>&1; then
+                echo "ERROR: Failed to create ready-for-regression label." >&2
+                exit 1
+              fi
+            fi
           fi
 
           # Apply the label to the PR (idempotent: --add-label does not duplicate).

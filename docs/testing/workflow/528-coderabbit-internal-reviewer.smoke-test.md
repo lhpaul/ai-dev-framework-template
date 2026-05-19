@@ -171,10 +171,6 @@ Each checkbox maps to an acceptance criterion from the spec.
 
 None. This feature affects only protocol documentation and configuration comments.
 
-| Entity | Scenario | How to load |
-| ------ | -------- | ----------- |
-| —      | —        | —           |
-
 ---
 
 ## Troubleshooting

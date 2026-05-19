@@ -255,6 +255,7 @@ Before running this smoke test:
 2. If branches were not deleted automatically:
 
    ```bash
+   git switch develop
    git push origin --delete fix/613-smoke-test-fixture
    git push origin --delete spec/613-smoke-test-fixture
    git branch -d fix/613-smoke-test-fixture spec/613-smoke-test-fixture

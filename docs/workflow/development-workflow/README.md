@@ -358,7 +358,7 @@ Use the following labels consistently when label tooling is available:
 | Label                    | Meaning                                                                                                                               |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `ready-for-human-review` | Internal review is clean, configured automated reviewers are clean or skipped, CI is green, and the PR is ready for a human reviewer. |
-| `needs-fixes`            | CI is failing, blocking automated feedback exists, or human requested changes are still unresolved.                                   |
+| `needs-fixes`            | CI is failing, blocking automated feedback exists, or human-requested changes are still unresolved.                                   |
 
 Opening a PR is not a terminal condition. A workflow run should continue until the PR is ready for a human checkpoint or the process escalates.
 

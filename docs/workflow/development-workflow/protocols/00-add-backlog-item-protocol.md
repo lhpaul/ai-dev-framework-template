@@ -81,13 +81,17 @@ When a human requests the creation of two or more related backlog items that tog
 
 2. **Choose a slug** — derive a human-readable kebab-case slug from the shared feature name (e.g., `multi-tenant-billing`). The slug must be unique among existing `integration-branch:*` labels.
 
-3. **Create an epic** — create a GitHub issue with the `epic` label as the grouping container. The title should reflect the overall feature. Record the epic's issue number.
+3. **Create an epic (GitHub providers only)** — when `issue_tracker.provider` is `github_issues` or `github_projects`, create a GitHub issue with the `epic` label as the grouping container. The title should reflect the overall feature. Record the epic's issue number.
 
-4. **Label each sub-item** — apply the label `integration-branch:<slug>` to each sub-item issue created in Step 3. If the label does not exist in the repository, create it:
+   For non-GitHub providers (e.g., Linear), do not run `gh` commands. Ask the human for the equivalent parent/initiative container and linking convention, then proceed using that tracker's integration guide.
+
+4. **Label each sub-item (GitHub providers only)** — apply the label `integration-branch:<slug>` to each sub-item issue created in Step 3. If the label does not exist in the repository, create it:
 
    ```bash
    gh label create "integration-branch:<slug>" --color "#0075ca" --description "Sub-item of the <slug> integration branch"
    ```
+
+   For non-GitHub providers, use the tracker's native grouping or tagging mechanism to associate sub-items with the parent initiative.
 
 5. **Confirm to the user** — include in the Step 4 confirmation:
    - The epic issue number and URL

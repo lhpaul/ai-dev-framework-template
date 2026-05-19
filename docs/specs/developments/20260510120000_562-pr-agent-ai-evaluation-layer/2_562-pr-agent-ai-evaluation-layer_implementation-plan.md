@@ -40,7 +40,7 @@ introduced; the fallback path (advisory-only) is a trivial `return 0`.
 | Advisory label extraction function                   | `grep -n "_pr_agent_extract_advisory_labels" scripts/development-workflow/pr-review-loop.sh` | Lines 1114–1139 (function body), 1206, 1284 (call sites)                                   |
 | Clean result paths in run_pr_agent_review            | Lines 1203–1223 (Phase 1 clean path) and 1281–1301 (Phase 3 clean path)                      | Two symmetric `clean` case blocks; both emit `ADVISORY_LABELS`                             |
 | Aggregate clean exit                                 | Line 2651–2657                                                                               | Final `case "$aggregate_result" in clean)` block calls `_post_review_summary` and `exit 0` |
-| Smoke test directory                                 | `ls docs/testing/workflow/ \| head -5`                                                       | Confirmed path exists; naming pattern is `<issue>-<slug>.smoke-test.md`                    |
+| Smoke test directory                                 | `ls docs/testing/workflow/`                                                                   | Confirmed path exists; naming pattern is `<issue>-<slug>.smoke-test.md`                    |
 
 ---
 

@@ -298,7 +298,7 @@ If no blocking human decision remains:
 2. Create branch: `git checkout -b implementation-plan/[branch-slug]` from `develop`
 3. Write the plan file
 4. Write the smoke test runbook
-5. **Board membership check (mandatory — before commit)**: Before committing, call `ensure_on_project_board <issue_number> "Writing Plan"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "Writing Plan". On any API failure, the function logs a warning and continues — this step must never block the commit or PR creation.
+5. **Board membership check (when a tracker issue ID is present)**: If an issue number is available, call `ensure_on_project_board <issue_number> "Writing Plan"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "Writing Plan". On any API failure, the function logs a warning and continues — this step must never block the commit or PR creation. Skip this step entirely when no issue ID is present (no-tracker workflows).
 6. **Cross-section consistency self-check (mandatory — do not skip)**:
 
    Before committing, verify that every symbol and structural decision that appears more than once in the plan has a consistent definition across all occurrences. Contradictory definitions discovered during implementation waste implementation cycles and cause agent confusion.

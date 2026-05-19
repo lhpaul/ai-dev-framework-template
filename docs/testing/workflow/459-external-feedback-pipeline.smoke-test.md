@@ -174,6 +174,7 @@ All test data for this smoke test is created manually via GitHub UI or `gh` CLI.
 | Sample Discussion A         | Promote path (≥ 3 upvotes or ≥ 2 distinct comments) | Create manually in "Feedback & Ideas" via GitHub UI; add upvote reactions or comments                                         |
 | Sample Discussion B         | Duplicate path                                      | Create manually; ensure title/body shares ≥ 3 keywords with an existing open issue                                            |
 | Sample Discussion C         | Out-of-scope path                                   | Create manually with a support question or downstream-specific request                                                        |
+| Sample Discussion D         | Below-threshold path                                | Create manually with 0–2 upvotes and 0–1 comments to validate skip behavior                                                   |
 
 ---
 

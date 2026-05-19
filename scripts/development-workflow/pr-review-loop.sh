@@ -1717,6 +1717,10 @@ get_resolved_thread_comment_ids() {
 
     has_next_page="$(printf '%s\n' "$result" | jq -r '.pageInfo.hasNextPage')"
     cursor="$(printf '%s\n' "$result" | jq -r '.pageInfo.endCursor // empty')"
+    if [ "$has_next_page" = "true" ] && [ -z "$cursor" ]; then
+      echo "WARN: get_resolved_thread_comment_ids: hasNextPage=true but endCursor is empty for PR #$pr_number — returning partial results" >&2
+      break
+    fi
 
     # Accumulate databaseIds of root comments from resolved bot-authored threads.
     local page_ids
