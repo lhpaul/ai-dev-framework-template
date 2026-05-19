@@ -2653,10 +2653,6 @@ check_unresolved_threads() {
     # (caught above) for real API failures; use jq -r only for data extraction.
     has_next_page="$(printf '%s\n' "$result" | jq -r '.pageInfo.hasNextPage')"
     cursor="$(printf '%s\n' "$result" | jq -r '.pageInfo.endCursor // empty')"
-    if [ "$has_next_page" = "true" ] && [ -z "$cursor" ]; then
-      echo "WARN: check_unresolved_threads: hasNextPage=true but endCursor is empty for PR #$pr_number — returning partial results" >&2
-      break
-    fi
 
     local thread_json
     while IFS= read -r thread_json; do
@@ -2682,6 +2678,11 @@ check_unresolved_threads() {
 
       unresolved_count=$((unresolved_count + 1))
     done < <(printf '%s\n' "$result" | jq -c '.nodes[]')
+
+    if [ "$has_next_page" = "true" ] && [ -z "$cursor" ]; then
+      echo "WARN: check_unresolved_threads: hasNextPage=true but endCursor is empty for PR #$pr_number — returning partial results" >&2
+      break
+    fi
   done
 
   printf '%d\n' "$unresolved_count"
