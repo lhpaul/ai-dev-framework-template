@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.2] - 2026-05-19
+
+### Fixed
+
+- **`pr-review-loop.sh`: scope `HARNESS_MODE` bypass to sourced loads only** (hotfix): the single-instance lock guard was bypassed whenever `HARNESS_MODE=1` was set, even for direct executions against real PRs. A new `_HARNESS_MODE_EFFECTIVE` flag is only set when the script is sourced (`BASH_SOURCE[0] != $0`), so normal runs always retain the lock guard and signal traps.
+- **`pr-review-loop.sh`: re-validate REST gate after auto-reply** (hotfix): after posting auto-replies to unreplied outside-diff comments, `coderabbit_thread_gate_clean` now re-calls `check_unreplied_rest_comments` to confirm the count is zero before returning `clean`. Prevents a false-clean result when one or more auto-replies silently fail to post.
+- **`pr-review-loop.sh`: fix misleading docstring on `auto_reply_unreplied_rest_comments`** (hotfix): the function comment incorrectly described the target as "comments whose GraphQL thread is already resolved"; corrected to "outside-diff comments with no corresponding GraphQL thread".
+- **`.claude/skills/sync-template.md`: restore `yaml_parse_failed` tracking in YAML validation loop** (hotfix): the CI workflow YAML validation loop was missing the `yaml_parse_failed=0` initializer and `|| { ...; yaml_parse_failed=1; }` compound commands, so parse errors were printed but never blocked the commit. Restored to match the `.claude/commands/sync-template.md` reference implementation.
+
 ## [0.27.1] - 2026-05-19
 
 ### Fixed
@@ -713,7 +722,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.1...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.2...HEAD
+[0.27.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.1...v0.27.2
 [0.27.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.26.1...v0.27.0
 [0.26.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.26.0...v0.26.1
