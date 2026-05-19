@@ -41,7 +41,7 @@
 
 - [ ] `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md` — insert a "Board Membership Check" paragraph in Step 5 (Git Execution), before the tracker status note. The step runs after the spec file is written and before `git push` / draft PR creation.
 - [ ] `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` — insert a "Board Membership Check" paragraph in Step 5 (Git Execution), in the same position relative to the push/draft-PR steps.
-- [ ] `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` — insert a "Board Membership Check" paragraph in Path 1 Step 8 (Open PR Draft), Path 2 (Refactor Step 8), Path 3 (Fast Track Step 8), and Path 4 (Hotfix Step) — immediately before the `gh pr create` command. The same text block serves all four paths; each path already has its own "Open PR (Draft)" step.
+- [ ] `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` — insert a "Board Membership Check" paragraph in the "Open PR (Draft)" section of each path: Path 1 Step 8, Path 2 (Refactor) numbered step 9 "Open a draft PR targeting develop", Path 3 (Fast Track) Step 8, and Path 4 (Hotfix) "Open PR (Draft)" — immediately before the `gh pr create` command in each location.
 - [ ] `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — verify Step 2.5 sub-step 1 already documents the board-add check. If the prose lacks a concrete `ensure_on_project_board` call example, add a shell snippet showing how to invoke the new function.
 - [ ] `.claude/agents/product-manager.md` — add one sentence after the protocol reference: call `ensure_on_project_board` on the issue before updating tracker status when running the spec completion sequence standalone.
 - [ ] `.cursor/agents/product-manager.md` — same addition as the Claude agent.
@@ -189,9 +189,14 @@ for item in data.get('items', []):
 
 4. **Update `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md`**
 
-   In each of the four paths (Full Pipeline Step 8, Refactor Step 8, Fast Track Step 8, Hotfix path) that contains an "Open PR (Draft)" step, add the board membership check immediately before the `gh pr create` call, with initial status `"In Development"`.
+   In each of the four paths that contains a PR-open step, add the board membership check immediately before the `gh pr create` call, with initial status `"In Development"`:
 
-   Because the same protocol serves all four paths and the board-add step text is identical for all implementation paths, use a single shared prose block. Confirm it appears in each path by verifying each "Open PR (Draft)" heading is followed by the board-add text before the `gh pr create` command.
+   - Path 1 (Full Pipeline): `### Step 8: Open PR (Draft)` heading
+   - Path 2 (Refactor): numbered step 9 — "Open a draft PR targeting `develop`" (this path uses in-text numbered steps rather than separate `### Step N` headings for most steps)
+   - Path 3 (Fast Track): `### Step 8: Open PR (Draft)` heading
+   - Path 4 (Hotfix): the "Open PR (Draft)" step in the hotfix path
+
+   Because the board-add step text is identical for all implementation paths, use consistent wording in each location.
 
    Verify:
    ```bash
