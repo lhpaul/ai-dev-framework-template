@@ -1610,7 +1610,13 @@ auto_reply_unreplied_rest_comments() {
   local repo="$2"
   local bot_login="$3"
   local resolved_ids_json="${4:-[]}"
-  local reply_body="Resolved — addressed in this PR."
+  # This reply is an automated acknowledgement only — it does not assert that the
+  # specific comment content was addressed. It is posted solely to satisfy the
+  # check_unreplied_rest_comments gate for outside-diff comments that have no
+  # corresponding GraphQL review thread and therefore cannot be resolved via the
+  # normal thread-resolution mechanism. All GraphQL review threads have already
+  # been verified resolved before this function is called.
+  local reply_body="Acknowledged — outside-diff comment noted. All review threads for this PR have been resolved via the standard review process."
 
   # Fetch IDs of root CodeRabbit comments that need a reply (same filter logic
   # as check_unreplied_rest_comments, but returns IDs instead of a count).
@@ -1647,10 +1653,13 @@ auto_reply_unreplied_rest_comments() {
   local comment_id
   while IFS= read -r comment_id; do
     [ -z "$comment_id" ] && continue
-    if gh api "repos/$repo/pulls/$pr_number/comments/$comment_id/replies" \
-         --method POST \
-         --raw-field body="$reply_body" \
-         --silent > /dev/null 2>&1; then
+    local reply_json
+    reply_json="$(jq -n --arg body "$reply_body" '{"body": $body}')"
+    if printf '%s' "$reply_json" \
+         | gh api "repos/$repo/pulls/$pr_number/comments/$comment_id/replies" \
+             --method POST \
+             --input - \
+             --silent > /dev/null 2>&1; then
       reply_count=$((reply_count + 1))
       echo "INFO: auto-replied to REST comment $comment_id on PR #$pr_number" >&2
     else
@@ -2269,8 +2278,8 @@ run_coderabbit_review() {
       local silent_no_paused_count
       silent_no_paused_count="$(
         gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-          | jq --arg bot "$bot_login" --arg since "$since_iso" '
-              [.[] | select(
+          | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
+              [.[].[] | select(
                   .user.login == $bot and
                   .created_at > $since and
                   (

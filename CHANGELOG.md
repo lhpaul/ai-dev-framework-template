@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.3] - 2026-05-19
+
+### Fixed
+
+- **`pr-review-loop.sh`: slurp paginated pages in `silent_no_paused_count`** (hotfix): `gh api --paginate` emits one JSON array per page; without `-s`/`--slurp` the `jq` filter iterated over pages rather than comments, producing a multi-line count that caused integer-expression errors in the silent non-trigger retrigger path. Added `-s` and changed `.[]` to `.[].[]`.
+- **`pr-review-loop.sh`: use jq-encoded JSON body in `auto_reply_unreplied_rest_comments`** (hotfix): replaced `--raw-field body=` with a `jq -n --arg body` pipe and `--input -` so special characters in the reply body are correctly JSON-escaped before being sent to the GitHub API.
+- **`pr-review-loop.sh`: clarify auto-reply body and comment** (hotfix): the reply message now reads "Acknowledged — outside-diff comment noted…" (was "Resolved — addressed in this PR.") to make clear it is an automated gate acknowledgement, not a claim that the comment content was addressed. Added an explanatory code comment.
+
 ## [0.27.2] - 2026-05-19
 
 ### Fixed
@@ -722,7 +730,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.2...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.3...HEAD
+[0.27.3]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.2...v0.27.3
 [0.27.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.1...v0.27.2
 [0.27.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.26.1...v0.27.0
