@@ -19,14 +19,14 @@
 
 ## Verification Log
 
-| Check | Command / query | Result |
-|---|---|---|
-| Repo revision | `git rev-parse --short HEAD` | `1ab1488` |
-| `design-reviewer` agent in `.claude/agents/` | `ls .claude/agents/ \| grep -i design` | No match — agent does not exist yet |
-| `design-reviewer` agent in `.cursor/agents/` | `ls .cursor/agents/ \| grep -i design` | No match — agent does not exist yet |
-| `browser_automation` references in Protocol 91 | `grep -n "browser_automation\|playwright\|design.review" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | No matches — feature is entirely new |
-| Smoke test runbooks count | `ls docs/testing/workflow/*.smoke-test.md \| wc -l` | 17 runbooks; no `450-playwright-design-review.smoke-test.md` yet |
-| Spec PR merged | `gh pr view 475 --json state --jq '.state'` | `MERGED` |
+| Check                                          | Command / query                                                                                                                        | Result                                                           |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Repo revision                                  | `git rev-parse --short HEAD`                                                                                                           | `1ab1488`                                                        |
+| `design-reviewer` agent in `.claude/agents/`   | `ls .claude/agents/ \| grep -i design`                                                                                                 | No match — agent does not exist yet                              |
+| `design-reviewer` agent in `.cursor/agents/`   | `ls .cursor/agents/ \| grep -i design`                                                                                                 | No match — agent does not exist yet                              |
+| `browser_automation` references in Protocol 91 | `grep -n "browser_automation\|playwright\|design.review" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | No matches — feature is entirely new                             |
+| Smoke test runbooks count                      | `ls docs/testing/workflow/*.smoke-test.md \| wc -l`                                                                                    | 17 runbooks; no `450-playwright-design-review.smoke-test.md` yet |
+| Spec PR merged                                 | `gh pr view 475 --json state --jq '.state'`                                                                                            | `MERGED`                                                         |
 
 ---
 
@@ -97,13 +97,13 @@ No other project docs in `docs/project/`, `docs/best-practices/`, or `AGENTS.md`
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| Agent prose is ambiguous about the `Needs Revision` verdict format, causing the orchestrator to fail to parse it | Med | Med | Define the verdict line format explicitly in both the agent file and the Protocol 91 sub-section: the PR comment must begin with a `## Design Review Summary` header and the verdict must appear as `**Verdict**: Approved`, `**Verdict**: Needs Revision`, or `**Verdict**: Skipped` (BR-9) |
-| `playwright_cli` is not installed in the runner environment | Med | Low | BR-3 and BR-4 require graceful skip; the agent must detect unavailability and post a `Skipped` notice rather than failing the review gate |
-| Frontend-file detection produces false positives or negatives for unusual path layouts | Low | Low | Detection rules are documented and extensible (BR-2); the rules in Protocol 91 Step 7a are the canonical list; teams needing extensions update that list |
-| Preview URL is not set and no dev server startup command is available | Med | Low | BR-11 defines the three-step resolution order; the agent falls back to skipping preview navigation and posts a note; the PR is not blocked |
-| axe-core is not available in the runner environment | Low | Low | Agent handles tool unavailability as a skip condition at the accessibility-check sub-step; the overall design review may still report screenshot and console-error findings even if accessibility cannot run |
+| Risk                                                                                                             | Likelihood | Impact | Mitigation                                                                                                                                                                                                                                                                                   |
+| ---------------------------------------------------------------------------------------------------------------- | ---------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Agent prose is ambiguous about the `Needs Revision` verdict format, causing the orchestrator to fail to parse it | Med        | Med    | Define the verdict line format explicitly in both the agent file and the Protocol 91 sub-section: the PR comment must begin with a `## Design Review Summary` header and the verdict must appear as `**Verdict**: Approved`, `**Verdict**: Needs Revision`, or `**Verdict**: Skipped` (BR-9) |
+| `playwright_cli` is not installed in the runner environment                                                      | Med        | Low    | BR-3 and BR-4 require graceful skip; the agent must detect unavailability and post a `Skipped` notice rather than failing the review gate                                                                                                                                                    |
+| Frontend-file detection produces false positives or negatives for unusual path layouts                           | Low        | Low    | Detection rules are documented and extensible (BR-2); the rules in Protocol 91 Step 7a are the canonical list; teams needing extensions update that list                                                                                                                                     |
+| Preview URL is not set and no dev server startup command is available                                            | Med        | Low    | BR-11 defines the three-step resolution order; the agent falls back to skipping preview navigation and posts a note; the PR is not blocked                                                                                                                                                   |
+| axe-core is not available in the runner environment                                                              | Low        | Low    | Agent handles tool unavailability as a skip condition at the accessibility-check sub-step; the overall design review may still report screenshot and console-error findings even if accessibility cannot run                                                                                 |
 
 ---
 

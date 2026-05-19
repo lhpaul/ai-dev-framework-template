@@ -22,11 +22,11 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Value |
-|---|---|
-| Example version | `0.99.0` (replace with a non-production test version when using a fork) |
-| Release branch | `release/v0.99.0` |
-| Script path | `./scripts/development-workflow/prepare-release-post-merge-cleanup.sh` (adjust if final name differs) |
+| Item            | Value                                                                                                 |
+| --------------- | ----------------------------------------------------------------------------------------------------- |
+| Example version | `0.99.0` (replace with a non-production test version when using a fork)                               |
+| Release branch  | `release/v0.99.0`                                                                                     |
+| Script path     | `./scripts/development-workflow/prepare-release-post-merge-cleanup.sh` (adjust if final name differs) |
 
 ---
 
@@ -86,7 +86,7 @@ Before running this smoke test:
 1. Pick a test issue on the board in **Merged** that is in scope for the fake release (per implementation’s scoping rules).
 2. Run the script’s tracker mode per implementation (flags as documented).
 3. In GitHub Projects UI, confirm the issue Status is now **Released** (or configured equivalent).
-4. Confirm another **Merged** issue *not* in scope remains **Merged**.
+4. Confirm another **Merged** issue _not_ in scope remains **Merged**.
 
 **Expected result**: Scoped transition only; console logs show success or skip with reason.
 
@@ -116,11 +116,11 @@ Not applicable (no DB seeds). GitHub test issues and project board state are the
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `Warning: GITHUB_PROJECT_NUMBER not set` | Env not exported | Export vars or skip tracker steps |
-| `cannot delete branch` checked out | Current branch is release branch | `git switch develop` then rerun |
-| Script says PR not merged | Query mismatch / wrong version | Re-check `gh pr list --head release/vX.Y.Z` |
+| Symptom                                  | Likely cause                     | Fix                                         |
+| ---------------------------------------- | -------------------------------- | ------------------------------------------- |
+| `Warning: GITHUB_PROJECT_NUMBER not set` | Env not exported                 | Export vars or skip tracker steps           |
+| `cannot delete branch` checked out       | Current branch is release branch | `git switch develop` then rerun             |
+| Script says PR not merged                | Query mismatch / wrong version   | Re-check `gh pr list --head release/vX.Y.Z` |
 
 ---
 

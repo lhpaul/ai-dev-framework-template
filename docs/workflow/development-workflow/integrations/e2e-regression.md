@@ -56,6 +56,7 @@ Replace the placeholder e2e project with project-specific tests:
 4. Update the workflow steps in `.github/workflows/e2e-regression.yml` if your test runner differs (e.g. different install commands, environment variables, artifact uploads).
 
 You may also:
+
 - Add the `E2E regression (placeholder)` check as a required status check in branch protection rules.
 - Split into multiple workflow files for different test suites (each gated on `ready-for-regression`).
 - Add environment variables or secrets for test infrastructure.

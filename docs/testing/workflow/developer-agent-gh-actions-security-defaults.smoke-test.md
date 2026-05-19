@@ -18,10 +18,10 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Value |
-|---|---|
+| Item               | Value                                                                               |
+| ------------------ | ----------------------------------------------------------------------------------- |
 | Canonical protocol | `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` |
-| Workflow glob | `.github/workflows/*.yml` |
+| Workflow glob      | `.github/workflows/*.yml`                                                           |
 
 ---
 
@@ -93,10 +93,10 @@ Not applicable.
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| Cannot find the new section | Implementation used a different heading | Search the file for `permissions` and `GITHUB_TOKEN`; align heading with spec. |
-| Only Path 1 mentions workflows | Missing cross-refs | Add pointers from other paths per implementation plan. |
+| Symptom                        | Likely cause                            | Fix                                                                            |
+| ------------------------------ | --------------------------------------- | ------------------------------------------------------------------------------ |
+| Cannot find the new section    | Implementation used a different heading | Search the file for `permissions` and `GITHUB_TOKEN`; align heading with spec. |
+| Only Path 1 mentions workflows | Missing cross-refs                      | Add pointers from other paths per implementation plan.                         |
 
 ---
 

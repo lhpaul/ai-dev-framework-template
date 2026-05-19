@@ -21,10 +21,10 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Description |
-|---|---|
-| Test repo | The `ai-dev-framework-template` repository |
-| Target branch | `develop` |
+| Item              | Description                                   |
+| ----------------- | --------------------------------------------- |
+| Test repo         | The `ai-dev-framework-template` repository    |
+| Target branch     | `develop`                                     |
 | Script under test | `scripts/development-workflow/batch-merge.sh` |
 
 ---
@@ -154,11 +154,11 @@ N/A — no database or application seed data required. All test scenarios exerci
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
+| Symptom                                                     | Likely cause                                        | Fix                                                                        |
+| ----------------------------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------- |
 | `shellcheck` reports `SC2064` or similar on the retry block | Quoting or expansion issue in the retry conditional | Wrap variables with double quotes; use `"$TARGET_BASE"` not `$TARGET_BASE` |
-| `grep` finds no retry message on stderr | Diagnostic was written to stdout instead | Confirm `>&2` redirect is present on the diagnostic `echo` |
-| Discovery returns unexpected output | Unintended change leaked into `cmd_discover` | Re-check the diff; revert any changes outside `cmd_merge` |
+| `grep` finds no retry message on stderr                     | Diagnostic was written to stdout instead            | Confirm `>&2` redirect is present on the diagnostic `echo`                 |
+| Discovery returns unexpected output                         | Unintended change leaked into `cmd_discover`        | Re-check the diff; revert any changes outside `cmd_merge`                  |
 
 ---
 

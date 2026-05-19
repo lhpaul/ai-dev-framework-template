@@ -7,6 +7,7 @@ Follow the git conventions defined in:
 `docs/best-practices/2-version-control.md`
 
 Steps:
+
 1. Run `git diff --staged` to see what is staged
 2. If nothing is staged, run `git status` and ask which files to stage
 3. Review the staged diff for any issues (lint, secrets, unrelated changes)

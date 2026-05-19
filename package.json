@@ -3,8 +3,12 @@
   "version": "0.0.1",
   "private": true,
   "description": "Root package for markdown lint tooling",
+  "scripts": {
+    "format": "prettier --write \"**/*.md\""
+  },
   "devDependencies": {
     "markdownlint-cli2": "0.22.0",
-    "markdownlint-rule-relative-links": "5.1.0"
+    "markdownlint-rule-relative-links": "5.1.0",
+    "prettier": "^3.8.3"
   }
 }

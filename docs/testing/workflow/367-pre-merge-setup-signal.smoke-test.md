@@ -20,12 +20,12 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Value |
-|---|---|
-| Test repo | The current repository (`ai-dev-framework-template` or the downstream project under test) |
-| PR with env var in diff | A PR whose diff adds a new environment variable reference (see Prerequisites) |
-| PR without infrastructure signals | A PR whose diff contains only documentation or logic changes |
-| `needs-setup` label | Must exist in repo label settings before running TC-1 |
+| Item                              | Value                                                                                     |
+| --------------------------------- | ----------------------------------------------------------------------------------------- |
+| Test repo                         | The current repository (`ai-dev-framework-template` or the downstream project under test) |
+| PR with env var in diff           | A PR whose diff adds a new environment variable reference (see Prerequisites)             |
+| PR without infrastructure signals | A PR whose diff contains only documentation or logic changes                              |
+| `needs-setup` label               | Must exist in repo label settings before running TC-1                                     |
 
 ---
 
@@ -189,12 +189,12 @@ Not applicable — this feature has no database seed data requirements. The smok
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `needs-setup` label cannot be applied (error from `gh pr edit`) | Label does not exist in the repository's label settings | Create the `needs-setup` label in **Issues → Labels** in the GitHub repository UI, then retry |
-| `## Pre-merge Setup` section not appearing in PR body | The diff-scan heuristic did not match the pattern used in the test PR | Verify the diff contains a pattern explicitly listed in the detection heuristics (e.g., `+NEW_VAR=` in `.env.example`, or `+${{ secrets.SECRET_NAME }}` in a workflow file). Check the protocol 91 heuristics subsection for the exact patterns. |
-| `needs-setup` not removed after fixer push | The fixer commit did not remove all lines matching the detection heuristics | Inspect the PR diff after the fixer push (`gh pr diff <pr_number>`) and confirm no added lines match any heuristic pattern |
-| Both `needs-setup` and `needs-fixes` are on the PR simultaneously | Expected transitional state — both conditions apply | No fix needed; the spec explicitly allows this combination. Address `needs-fixes` first (code changes), then the `needs-setup` scan will re-run during the next Step 8a pass |
+| Symptom                                                           | Likely cause                                                                | Fix                                                                                                                                                                                                                                              |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `needs-setup` label cannot be applied (error from `gh pr edit`)   | Label does not exist in the repository's label settings                     | Create the `needs-setup` label in **Issues → Labels** in the GitHub repository UI, then retry                                                                                                                                                    |
+| `## Pre-merge Setup` section not appearing in PR body             | The diff-scan heuristic did not match the pattern used in the test PR       | Verify the diff contains a pattern explicitly listed in the detection heuristics (e.g., `+NEW_VAR=` in `.env.example`, or `+${{ secrets.SECRET_NAME }}` in a workflow file). Check the protocol 91 heuristics subsection for the exact patterns. |
+| `needs-setup` not removed after fixer push                        | The fixer commit did not remove all lines matching the detection heuristics | Inspect the PR diff after the fixer push (`gh pr diff <pr_number>`) and confirm no added lines match any heuristic pattern                                                                                                                       |
+| Both `needs-setup` and `needs-fixes` are on the PR simultaneously | Expected transitional state — both conditions apply                         | No fix needed; the spec explicitly allows this combination. Address `needs-fixes` first (code changes), then the `needs-setup` scan will re-run during the next Step 8a pass                                                                     |
 
 ---
 

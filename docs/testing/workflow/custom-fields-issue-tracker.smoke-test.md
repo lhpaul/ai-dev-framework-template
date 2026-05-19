@@ -19,12 +19,12 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Value |
-|---|---|
-| Repo root | `/path/to/repo` |
-| Temp config A (no `custom_fields`) | `.tmp/smoke-test-no-cf.yaml` (created in Step 1) |
-| Temp config B (with `custom_fields`) | `.tmp/smoke-test-with-cf.yaml` (created in Step 2) |
-| Temp config C (key absent) | `.tmp/smoke-test-missing-key.yaml` (created in Step 3) |
+| Item                                 | Value                                                  |
+| ------------------------------------ | ------------------------------------------------------ |
+| Repo root                            | `/path/to/repo`                                        |
+| Temp config A (no `custom_fields`)   | `.tmp/smoke-test-no-cf.yaml` (created in Step 1)       |
+| Temp config B (with `custom_fields`) | `.tmp/smoke-test-with-cf.yaml` (created in Step 2)     |
+| Temp config C (key absent)           | `.tmp/smoke-test-missing-key.yaml` (created in Step 3) |
 
 ---
 
@@ -175,19 +175,19 @@ rm -f .tmp/smoke-test-no-cf.yaml .tmp/smoke-test-with-cf.yaml .tmp/smoke-test-mi
 None — this feature is configuration-driven and requires no database or seed-data.
 
 | Entity | Scenario | How to load |
-|---|---|---|
-| N/A | — | — |
+| ------ | -------- | ----------- |
+| N/A    | —        | —           |
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| Function not found after sourcing | `workflow-lib.sh` not updated yet | Verify the `workflow_issue_tracker_custom_field` function is present in the file |
-| Returns value when `custom_fields` is absent | AWK parser exiting too early | Check the `in_custom` flag logic; ensure it only activates after the `custom_fields:` line |
-| Returns empty when key is present | Indentation mismatch | Confirm the YAML uses four-space indentation under `custom_fields:`; the AWK parser expects exactly four spaces |
-| Reads value from wrong section | Parser not scoped to `issue_tracker` | Verify the `^issue_tracker:` anchor fires before `in_custom` is set |
+| Symptom                                      | Likely cause                         | Fix                                                                                                             |
+| -------------------------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| Function not found after sourcing            | `workflow-lib.sh` not updated yet    | Verify the `workflow_issue_tracker_custom_field` function is present in the file                                |
+| Returns value when `custom_fields` is absent | AWK parser exiting too early         | Check the `in_custom` flag logic; ensure it only activates after the `custom_fields:` line                      |
+| Returns empty when key is present            | Indentation mismatch                 | Confirm the YAML uses four-space indentation under `custom_fields:`; the AWK parser expects exactly four spaces |
+| Reads value from wrong section               | Parser not scoped to `issue_tracker` | Verify the `^issue_tracker:` anchor fires before `in_custom` is set                                             |
 
 ---
 

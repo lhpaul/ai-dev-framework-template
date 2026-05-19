@@ -122,6 +122,7 @@ Using the template at `docs/workflow/development-workflow/templates/spec-templat
 
 **Output location**:
 
+<!-- prettier-ignore -->
 ```markdown
 docs/specs/developments/[YYYYMMDDHHMMSS]_[feature-slug]/1_[feature-slug]_specs.md
 ```
@@ -142,6 +143,33 @@ Use the current timestamp for `YYYYMMDDHHMMSS`.
 
 Skim the spec body once more for: accidental **Open Questions** sections when forbidden, **copy/paste character corruption**, mixed terminology for the same concept, and acceptance criteria that cannot be verified without guessing environment or data setup.
 
+**Template placeholder removal (mandatory — run before every spec PR)**:
+
+After writing the spec, verify that no template placeholder content remains in the output file. These are the most common artifacts that trigger CodeRabbit findings on spec PRs:
+
+1. **`Depends on` line**: If the feature has no dependencies, the `**Depends on**:` line must be removed entirely. If dependencies exist, replace the placeholder slugs with the actual feature slugs. Never leave the line with bracketed placeholders (e.g., `[feature-slug-1, feature-slug-2]`) or the original HTML comment form.
+
+2. **`Language` instruction block**: The `**Language**: ...` block in the Overview is a template instruction, not spec content. Remove it entirely before committing. Replace it with actual spec prose (2–4 sentences describing what the feature does and why it exists).
+
+3. **Unfilled section placeholders**: Every section that remains in the spec must contain real content. Remove or fill:
+   - `<!-- Replace this comment with ... -->` comments (replace with real content)
+   - `[Step 1]`, `[Step 2]`, `[What data the user sees]`, and similar bracketed placeholder lines in use cases
+   - `[Rule 1: an invariant...]`, `[UX rule 1: ...]`, and similar bracketed placeholder items in lists
+   - `[Out of scope item 1]`, `[Out of scope item 2]` lines under Out of Scope
+   - `[Question 1]`, `[Question 2]` lines under Open Questions (fill with real questions or delete the section)
+   - `[Code value]`, `[Display label]`, `[Description]` cells in the Statuses table
+
+4. **Optional sections left with only placeholder content**: Sections such as `## UX Rules`, `## Statuses / Enum Values`, and `## Operational Visibility` include a delete instruction in the template (`<!-- Delete this section if... -->`). If a section is not applicable, delete the entire section including its heading. Never leave a section containing only the placeholder comment or example rows.
+
+Run this grep to catch the most common unfilled placeholder patterns before committing:
+
+```bash
+grep -n "\[Step [0-9]\]\|\[Who initiates\|\[What must be\|\[Rule [0-9]\|\[UX rule\|\[Out of scope item\|\[Question [0-9]\|\[Code value\|\[Display label\|\[Description\]\|\[feature-slug-[0-9]\|<!-- Delete this section\|<!-- Replace this comment\|<!-- Depends on:\|\*\*Language\*\*:" \
+  docs/specs/developments/<timestamp>_<slug>/1_<slug>_specs.md
+```
+
+If this grep returns any output, address each match before opening the PR.
+
 ### Brief Coverage Requirements (mandatory when a tracker brief exists)
 
 When a tracker issue or work-item brief exists, add these artifacts before opening the draft PR:
@@ -161,6 +189,7 @@ No objective may be silently dropped. If an objective is not mapped in the matri
 
 ```markdown
 # Spec: [feature-name]
+
 ...
 ```
 
@@ -188,14 +217,15 @@ If no blocking human decision remains:
 2. Create branch: `git checkout -b spec/[branch-slug]` from `develop`
 3. Create the development folder: `docs/specs/developments/[YYYYMMDDHHMMSS]_[feature-slug]/`
 4. Write the spec file: `1_[feature-slug]_specs.md`
-5. **Do NOT update CHANGELOG**: `spec/*` branches are exempt from CHANGELOG entries. The changelog policy only applies to `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches. Do not create or modify `CHANGELOG.md` in this PR.
-6. Commit: `docs: add spec for [feature-name]`
-7. Push: `git push -u origin spec/[branch-slug]`
-8. Open a **draft** PR targeting `develop` with:
+5. **Board membership check (when a tracker issue ID is present)**: If an issue number is available (i.e., the workflow uses a configured issue tracker and an issue ID was provided or created), call `ensure_on_project_board <issue_number> "Writing Spec"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "Writing Spec". On any API failure, the function logs a warning and continues — this step must never block the commit or PR creation. Skip this step entirely when no issue ID is present (no-tracker workflows).
+6. **Do NOT update CHANGELOG**: `spec/*` branches are exempt from CHANGELOG entries. The changelog policy only applies to `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches. Do not create or modify `CHANGELOG.md` in this PR.
+7. Commit: `docs: add spec for [feature-name]`
+8. Push: `git push -u origin spec/[branch-slug]`
+9. Open a **draft** PR targeting `develop` with:
    - Title: `docs(spec): [feature-name]`
    - Body: summary of the feature, link to the spec file, list of open questions (if any)
    - When a tracker brief exists: Coverage Matrix summary (each brief objective mapped to AC reference(s) or Out-of-Scope entry) and Deferral Notes for each objective intentionally moved to Out of Scope
-9. Return the branch + PR details to the **Work Item Runner**
+10. Return the branch + PR details to the **Work Item Runner**
 
 ---
 

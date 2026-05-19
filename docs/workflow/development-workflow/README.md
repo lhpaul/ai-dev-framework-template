@@ -29,14 +29,14 @@ Comments, review threads, automated findings, and failing checks on a pull reque
 
 The process moves through the stages below in order. The point of this section is not automation yet; it is to explain what each stage does and why it exists.
 
-| Stage | What this stage does | Why it matters |
-| --- | --- | --- |
-| **Backlog** | Collects candidate work items, priorities, dependencies, and deadlines. | Keeps the team from starting work without context or priority. |
-| **Spec** | Defines the user-facing or business-facing outcome: behavior, rules, acceptance criteria, and scope. | Prevents building the wrong thing or solving the wrong problem. |
-| **Implementation plan** | Converts the spec into a technical approach for this repository: files, sequencing, risks, migrations, rollout details, the edge cases and test approach the implementation must cover, and any observability or analytics work needed to operate and understand the feature. | Prevents costly implementation churn and keeps design decisions explicit. |
-| **Implementation** | Produces the actual code, supporting automated tests, and documentation changes. | Turns approved intent into a concrete change set while keeping developer-facing verification close to the work. |
-| **Merge** | Moves the approved change into `develop`. | Creates a stable integration point for completed work. |
-| **Release** | Ships integrated work from `develop` to `main` using the release flow. | Separates "merged" from "in production" and keeps release discipline explicit. |
+| Stage                   | What this stage does                                                                                                                                                                                                                                                          | Why it matters                                                                                                  |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| **Backlog**             | Collects candidate work items, priorities, dependencies, and deadlines.                                                                                                                                                                                                       | Keeps the team from starting work without context or priority.                                                  |
+| **Spec**                | Defines the user-facing or business-facing outcome: behavior, rules, acceptance criteria, and scope.                                                                                                                                                                          | Prevents building the wrong thing or solving the wrong problem.                                                 |
+| **Implementation plan** | Converts the spec into a technical approach for this repository: files, sequencing, risks, migrations, rollout details, the edge cases and test approach the implementation must cover, and any observability or analytics work needed to operate and understand the feature. | Prevents costly implementation churn and keeps design decisions explicit.                                       |
+| **Implementation**      | Produces the actual code, supporting automated tests, and documentation changes.                                                                                                                                                                                              | Turns approved intent into a concrete change set while keeping developer-facing verification close to the work. |
+| **Merge**               | Moves the approved change into `develop`.                                                                                                                                                                                                                                     | Creates a stable integration point for completed work.                                                          |
+| **Release**             | Ships integrated work from `develop` to `main` using the release flow.                                                                                                                                                                                                        | Separates "merged" from "in production" and keeps release discipline explicit.                                  |
 
 ### Backlog
 
@@ -123,26 +123,26 @@ Stage agents such as `product-manager`, `tech-lead`, and `developer` do not deci
 
 ### Agent Layers
 
-| Layer | Role in the workflow |
-| --- | --- |
-| **Portfolio Orchestrator** | Scans the portfolio, selects safe work, and dispatches item-level runs. |
-| **Work Item Runner** | Resolves exactly one item and drives it through the next deterministic steps without stopping early. |
-| **Stage agent** | Produces the stage output itself, such as a spec, plan, or implementation. |
-| **Internal review agent** | Reviews the draft output against the repository's review contract before the PR is handed to external systems or humans. |
-| **Automated reviewer loop** | Resolves third-party PR review findings until the PR is clean or escalated. |
-| **CI loop** | Waits for required checks to pass and handles fix cycles when they fail. |
-| **Human reviewer** | Reviews the final PR when the automated work is already clean. |
+| Layer                       | Role in the workflow                                                                                                     |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| **Portfolio Orchestrator**  | Scans the portfolio, selects safe work, and dispatches item-level runs.                                                  |
+| **Work Item Runner**        | Resolves exactly one item and drives it through the next deterministic steps without stopping early.                     |
+| **Stage agent**             | Produces the stage output itself, such as a spec, plan, or implementation.                                               |
+| **Internal review agent**   | Reviews the draft output against the repository's review contract before the PR is handed to external systems or humans. |
+| **Automated reviewer loop** | Resolves third-party PR review findings until the PR is clean or escalated.                                              |
+| **CI loop**                 | Waits for required checks to pass and handles fix cycles when they fail.                                                 |
+| **Human reviewer**          | Reviews the final PR when the automated work is already clean.                                                           |
 
 ### Stage Agents
 
 The main stage agents map to the authored stages and the final validation checkpoint:
 
-| Stage | Primary agent | Purpose |
-| --- | --- | --- |
-| **Spec** | `product-manager` | Produces the spec PR. |
-| **Implementation plan** | `tech-lead` | Produces the plan PR. |
-| **Implementation** | `developer` | Produces the implementation PR. |
-| **Smoke test** | `smoke-tester` | Executes the smoke test runbook and reports pass/fail. |
+| Stage                   | Primary agent     | Purpose                                                |
+| ----------------------- | ----------------- | ------------------------------------------------------ |
+| **Spec**                | `product-manager` | Produces the spec PR.                                  |
+| **Implementation plan** | `tech-lead`       | Produces the plan PR.                                  |
+| **Implementation**      | `developer`       | Produces the implementation PR.                        |
+| **Smoke test**          | `smoke-tester`    | Executes the smoke test runbook and reports pass/fail. |
 
 ### Internal Review And External Review
 
@@ -191,22 +191,23 @@ The sections below keep this document usable as a master reference after the nar
 
 ### Commands By Stage
 
-| Stage | Claude Code | Cursor | Codex | Any AI tool |
-| --- | --- | --- | --- | --- |
-| Add backlog item | `/add-backlog-item` | `/add-backlog-item` | — | `docs/workflow/development-workflow/protocols/00-add-backlog-item-protocol.md` |
-| Write spec | `product-manager` agent | `/generate-new-feature` | `workflow-spec-writer` skill | `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md` |
-| Write plan | `tech-lead` agent | `/generate-implementation-plan` | `workflow-plan-writer` skill | `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
-| Implement | `developer` agent | `/implement-development` | `workflow-implementer` skill | `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` |
-| Review gate (spec / plan / code) | Native review against `REVIEW.md` | `/review-spec`, `/review-implementation-plan`, `/review-code` | Native review against `REVIEW.md` | `REVIEW.md` plus compatibility wrappers in `docs/workflow/development-workflow/protocols/` |
-| Smoke test | `smoke-tester` agent | `/smoke-tester` | — | `docs/workflow/development-workflow/protocols/04-smoke-test-protocol.md` |
-| Run reviewer loop | `/run-reviewer-loop` command (or `automated-reviewer-loop` agent) | `/run-reviewer-loop` | `workflow-reviewer-loop` skill | `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` |
-| Advance one item | `/run-item-work` command (or `item-orchestrator` agent) | `/run-item-work` | `workflow-item-orchestrator` skill | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` |
-| Orchestrate portfolio | `/run-work` command (or `orchestrator` agent) | `/run-work` | `workflow-orchestrator` skill | `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
-| Batch merge | `/batch-merge` | `/batch-merge` | `batch-merge` skill | `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md` |
-| Prepare release | `/prepare-release` | `/prepare-release` | — | `docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md` |
-| Retrospective | `/retrospective` command | `/retrospective` | `workflow-retrospective` skill | `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md` |
-| Meta-Retrospective | `/retrospective` (invoke with meta scope, or run directly) | `/retrospective` (meta scope) | `workflow-retrospective` skill | `docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md` — periodic verification of prior improvement effectiveness; recommended every 5 batches |
-| Feedback triage | — | — | — | `docs/workflow/development-workflow/protocols/07-feedback-triage-protocol.md` — periodically review GitHub Discussions in the "Feedback & Ideas" category and promote high-signal items to backlog issues |
+| Stage                            | Claude Code                                                       | Cursor                                                        | Codex                              | Any AI tool                                                                                                                                                                                               |
+| -------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Add backlog item                 | `/add-backlog-item`                                               | `/add-backlog-item`                                           | —                                  | `docs/workflow/development-workflow/protocols/00-add-backlog-item-protocol.md`                                                                                                                            |
+| Write spec                       | `product-manager` agent                                           | `/generate-new-feature`                                       | `workflow-spec-writer` skill       | `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md`                                                                                                                               |
+| Write plan                       | `tech-lead` agent                                                 | `/generate-implementation-plan`                               | `workflow-plan-writer` skill       | `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md`                                                                                                                |
+| Implement                        | `developer` agent                                                 | `/implement-development`                                      | `workflow-implementer` skill       | `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md`                                                                                                                       |
+| Review gate (spec / plan / code) | Native review against `REVIEW.md`                                 | `/review-spec`, `/review-implementation-plan`, `/review-code` | Native review against `REVIEW.md`  | `REVIEW.md` plus compatibility wrappers in `docs/workflow/development-workflow/protocols/`                                                                                                                |
+| Smoke test                       | `smoke-tester` agent                                              | `/smoke-tester`                                               | —                                  | `docs/workflow/development-workflow/protocols/04-smoke-test-protocol.md`                                                                                                                                  |
+| Run reviewer loop                | `/run-reviewer-loop` command (or `automated-reviewer-loop` agent) | `/run-reviewer-loop`                                          | `workflow-reviewer-loop` skill     | `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`                                                                                                                     |
+| Advance one item                 | `/run-item-work` command (or `item-orchestrator` agent)           | `/run-item-work`                                              | `workflow-item-orchestrator` skill | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`                                                                                                                            |
+| Orchestrate portfolio            | `/run-work` command (or `orchestrator` agent)                     | `/run-work`                                                   | `workflow-orchestrator` skill      | `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`                                                                                                                      |
+| Batch merge                      | `/batch-merge`                                                    | `/batch-merge`                                                | `batch-merge` skill                | `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md`                                                                                                                                 |
+| Graduate integration branch      | `/graduate-development <slug>`                                    | —                                                             | —                                  | Follow `docs/workflow/development-workflow/protocols/05b-graduate-development-protocol.md`                                                                                                                |
+| Prepare release                  | `/prepare-release`                                                | `/prepare-release`                                            | —                                  | `docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md`                                                                                                                             |
+| Retrospective                    | `/retrospective` command                                          | `/retrospective`                                              | `workflow-retrospective` skill     | `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md`                                                                                                                               |
+| Meta-Retrospective               | `/retrospective` (invoke with meta scope, or run directly)        | `/retrospective` (meta scope)                                 | `workflow-retrospective` skill     | `docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md` — periodic verification of prior improvement effectiveness; recommended every 5 batches                                 |
+| Feedback triage                  | —                                                                 | —                                                             | —                                  | `docs/workflow/development-workflow/protocols/07-feedback-triage-protocol.md` — periodically review GitHub Discussions in the "Feedback & Ideas" category and promote high-signal items to backlog issues |
 
 After opening release PRs, protocol `05` runs the automated reviewer loop, applies `ready-for-regression` on the **PR targeting `main`**, and runs the CI loop until checks are green (or escalation) — same persistence contract as other PR readiness work.
 
@@ -231,15 +232,18 @@ This workflow depends on a few capabilities more than on any specific vendor or 
 
 ### Branch Naming
 
-| Branch type | Pattern | Base branch |
-| --- | --- | --- |
-| Spec | `spec/[slug]` | `develop` |
-| Implementation plan | `implementation-plan/[slug]` | `develop` |
-| Feature | `feature/[slug]` | `develop` |
-| Refactor | `refactor/[slug]` | `develop` |
-| Bug or simple fix | `fix/[slug]` | `develop` |
-| Hotfix | `hotfix/[slug]` | `main` |
-| Release | `release/v[X.Y.Z]` | `develop` |
+| Branch type         | Pattern                      | Base branch |
+| ------------------- | ---------------------------- | ----------- |
+| Spec                | `spec/[slug]`                | `develop`   |
+| Implementation plan | `implementation-plan/[slug]` | `develop`   |
+| Feature             | `feature/[slug]`             | `develop`   |
+| Refactor            | `refactor/[slug]`            | `develop`   |
+| Bug or simple fix   | `fix/[slug]`                 | `develop`   |
+| Hotfix              | `hotfix/[slug]`              | `main`      |
+| Release             | `release/v[X.Y.Z]`           | `develop`   |
+| Development integration | `develop-<slug>`         | `develop`   |
+
+**Development integration branches** (`develop-<slug>`) are staging branches that collect all sub-item PRs for a multi-item grouped development. They are created by the orchestrator and deleted after the graduation PR merges to `develop`. Single-item developments do not use integration branches. See `docs/workflow/development-workflow/protocols/05b-graduate-development-protocol.md`.
 
 Slug format:
 
@@ -325,10 +329,11 @@ Use it only when all of the following are true:
 - No new architectural pattern is being introduced.
 - No database migration is involved.
 - The human brief is self-contained.
+- No multi-layer scope signals are present — the issue title, body, and any linked spec/plan do not contain concrete signals that the change spans more than one architectural layer (e.g., database schema + API endpoint + UI component, or data pipeline + storage + mapper + presentation). See the cross-layer scope check in `91-orchestrate-work-protocol.md` Step 2 for the decision rule.
 
 Path: `fix/[slug]` from `develop` -> implement -> review gate -> smoke test as needed -> merge.
 
-If the change turns out to be larger than expected, stop and expand back into the normal staged workflow instead of silently widening scope.
+If the change turns out to be larger than expected, or if multi-layer scope signals are discovered during implementation, stop and expand back into the normal staged workflow instead of silently widening scope.
 
 #### Hotfix
 
@@ -350,10 +355,10 @@ See `docs/workflow/development-workflow/protocols/03-implement-development-proto
 
 Use the following labels consistently when label tooling is available:
 
-| Label | Meaning |
-| --- | --- |
+| Label                    | Meaning                                                                                                                               |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `ready-for-human-review` | Internal review is clean, configured automated reviewers are clean or skipped, CI is green, and the PR is ready for a human reviewer. |
-| `needs-fixes` | CI is failing, blocking automated feedback exists, or human requested changes are still unresolved. |
+| `needs-fixes`            | CI is failing, blocking automated feedback exists, or human-requested changes are still unresolved.                                   |
 
 Opening a PR is not a terminal condition. A workflow run should continue until the PR is ready for a human checkpoint or the process escalates.
 

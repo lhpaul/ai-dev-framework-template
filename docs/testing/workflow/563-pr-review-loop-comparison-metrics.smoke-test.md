@@ -21,14 +21,14 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Value |
-|---|---|
-| Script under test | `scripts/development-workflow/pr-review-loop.sh` |
-| Metrics log file | `docs/workflow/retro-metrics-platforms.md` |
+| Item                        | Value                                                                             |
+| --------------------------- | --------------------------------------------------------------------------------- |
+| Script under test           | `scripts/development-workflow/pr-review-loop.sh`                                  |
+| Metrics log file            | `docs/workflow/retro-metrics-platforms.md`                                        |
 | Meta-retrospective protocol | `docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md` |
-| Agent file (Claude Code) | `.claude/agents/retrospective.md` |
-| Agent file (Cursor) | `.cursor/agents/retrospective.md` |
-| Skill file (Codex) | `.codex/skills/workflow-retrospective/SKILL.md` |
+| Agent file (Claude Code)    | `.claude/agents/retrospective.md`                                                 |
+| Agent file (Cursor)         | `.cursor/agents/retrospective.md`                                                 |
+| Skill file (Codex)          | `.codex/skills/workflow-retrospective/SKILL.md`                                   |
 
 ---
 
@@ -186,21 +186,21 @@ Each checkbox maps to an acceptance criterion from the spec.
 
 No seed data is required for this feature.
 
-| Entity | Scenario | How to load |
-|---|---|---|
+| Entity                 | Scenario                 | How to load                            |
+| ---------------------- | ------------------------ | -------------------------------------- |
 | Real or recent open PR | Compare-mode test target | Use an existing PR from the repository |
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `Unknown option: --compare` error | `--compare` not added to argument parser | Verify implementation Step 1 |
-| Metrics row not appended | `append_compare_metrics_row` not called after loop | Verify implementation Step 5d |
-| Only one platform runs in compare mode | `break` still present unconditionally in loop | Verify implementation Step 2 |
-| `RESULT` differs between compare and normal mode | Overall result not recomputed from collected verdicts | Verify implementation Step 4 |
-| File not created on first compare run | Path resolution in `append_compare_metrics_row` wrong | Check `cd_workflow_repo_root_path` or equivalent path derivation |
+| Symptom                                          | Likely cause                                          | Fix                                                              |
+| ------------------------------------------------ | ----------------------------------------------------- | ---------------------------------------------------------------- |
+| `Unknown option: --compare` error                | `--compare` not added to argument parser              | Verify implementation Step 1                                     |
+| Metrics row not appended                         | `append_compare_metrics_row` not called after loop    | Verify implementation Step 5d                                    |
+| Only one platform runs in compare mode           | `break` still present unconditionally in loop         | Verify implementation Step 2                                     |
+| `RESULT` differs between compare and normal mode | Overall result not recomputed from collected verdicts | Verify implementation Step 4                                     |
+| File not created on first compare run            | Path resolution in `append_compare_metrics_row` wrong | Check `cd_workflow_repo_root_path` or equivalent path derivation |
 
 ---
 

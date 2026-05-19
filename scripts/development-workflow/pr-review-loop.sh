@@ -2,9 +2,17 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+# Use BASH_SOURCE[0] so that SCRIPT_DIR resolves correctly even when this
+# script is sourced by the test harness (in HARNESS_MODE=1).  When executed
+# directly, BASH_SOURCE[0] is identical to $0.
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
+
+# In HARNESS_MODE, skip the single-instance lock guard entirely.
+# The guard is irrelevant when the script is sourced by the test harness
+# (no real PR is being processed and no lock directory should be created).
+if [ "${HARNESS_MODE:-0}" -ne 1 ]; then
 
 # --- Single-instance guard ---
 # Prevent two simultaneous invocations for the same PR. Uses an atomic mkdir
@@ -28,6 +36,11 @@ done
 unset _skip_next
 _LOCK_DIR="/tmp/pr-review-loop-${_PR_ARG:-unknown}.lockdir"
 _OWN_LOCK=0
+# PID of the current background child (sleep or gh api) started by
+# _interruptible_sleep / _interruptible_gh.  The TERM/INT handlers kill this
+# child before removing the lock so the signal fires promptly instead of waiting
+# for the foreground command to return on its own.
+CURRENT_CHILD_PID=""
 
 if mkdir "$_LOCK_DIR" 2>/dev/null; then
   # We created the lock dir atomically — we own the lock.
@@ -66,6 +79,33 @@ else
   fi
 fi
 trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"' EXIT
+# SIGTERM/SIGINT handlers: kill the current background child (if any) so the
+# handler fires promptly even while a foreground sleep or gh api call is
+# running, then clean up the lock dir and re-raise the signal so the parent
+# process sees the correct exit status (death-by-signal, not 0).
+# The re-raise pattern (trap - SIG; kill -SIG $$) is required because bash
+# normally translates signal death to exit code 128+N, which callers rely on
+# to distinguish a killed process from a clean exit.
+trap '[ -n "$CURRENT_CHILD_PID" ] && kill -TERM "$CURRENT_CHILD_PID" 2>/dev/null || true; [ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"; trap - TERM; kill -TERM "$$"' TERM
+trap '[ -n "$CURRENT_CHILD_PID" ] && kill -TERM "$CURRENT_CHILD_PID" 2>/dev/null || true; [ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"; trap - INT;  kill -INT  "$$"' INT
+
+fi  # end HARNESS_MODE guard (single-instance lock guard skipped in harness mode)
+
+# ---------------------------------------------------------------------------
+# _interruptible_sleep <seconds>
+#
+# Runs "sleep <seconds>" as a background job, records its PID in
+# CURRENT_CHILD_PID, then waits for it.  Bash's built-in `wait` IS
+# interruptible by signals (unlike a foreground `sleep`), so TERM/INT traps
+# fire promptly.  The trap handler kills CURRENT_CHILD_PID before removing
+# the lock, completing the prompt-cleanup chain.
+# ---------------------------------------------------------------------------
+_interruptible_sleep() {
+  sleep "$1" &
+  CURRENT_CHILD_PID=$!
+  wait "$CURRENT_CHILD_PID" 2>/dev/null || true
+  CURRENT_CHILD_PID=""
+}
 
 usage() {
   cat <<'EOF'
@@ -360,7 +400,7 @@ run_greptile_review() {
       return 2
     fi
 
-    sleep "$poll_interval"
+    _interruptible_sleep "$poll_interval"
     elapsed=$((elapsed + poll_interval))
   done
 
@@ -893,7 +933,7 @@ run_devin_review() {
       return 2
     fi
 
-    sleep "$poll_interval"
+    _interruptible_sleep "$poll_interval"
     elapsed=$((elapsed + poll_interval))
   done
 
@@ -1388,7 +1428,7 @@ _PR_AGENT_LABELS_
       return 0
     fi
 
-    sleep "$poll_interval"
+    _interruptible_sleep "$poll_interval"
     elapsed=$((elapsed + poll_interval))
   done
 
@@ -1477,34 +1517,48 @@ check_unreplied_rest_comments() {
   # CodeRabbit's own auto-acknowledgment replies do not count.
   # Comments containing "✅ Addressed" in the body are also excluded (self-resolved).
   #
+  # Root REST comments whose corresponding GraphQL review thread is already resolved
+  # (isResolved=true) are also excluded. This prevents false-positive "unreplied"
+  # counts when a reviewer resolves a thread via the GitHub UI without adding a reply:
+  # the GraphQL isResolved flag reflects the true resolved state, so any REST comment
+  # that belongs to an already-resolved thread must not block the review loop.
+  # The caller supplies the set of resolved root comment database IDs via $4.
+  #
   # Arguments:
-  #   $1  pr_number  - PR number (integer)
-  #   $2  repo       - "owner/repo" slug
-  #   $3  bot_login  - Full bot login including [bot] suffix (e.g. "coderabbitai[bot]")
-  #                    REST API returns the full login; unlike GraphQL, no stripping needed.
+  #   $1  pr_number              - PR number (integer)
+  #   $2  repo                   - "owner/repo" slug
+  #   $3  bot_login              - Full bot login including [bot] suffix (e.g. "coderabbitai[bot]")
+  #                                REST API returns the full login; unlike GraphQL, no stripping needed.
+  #   $4  resolved_ids_json      - (optional) JSON array of integer database IDs for root comments
+  #                                whose GraphQL thread is already resolved (isResolved=true).
+  #                                Pass "[]" or omit to skip this filter.
   #
   # Prints the count of unreplied root CodeRabbit comments on stdout.
   # Exit codes: 0 = success, 3 = REST API failure.
   local pr_number="$1"
   local repo="$2"
   local bot_login="$3"
+  local resolved_ids_json="${4:-[]}"
 
   local result
   result="$(
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
-    | jq -s --arg bot "$bot_login" '
+    | jq -s --arg bot "$bot_login" --argjson resolved_ids "$resolved_ids_json" '
         # gh api --paginate | jq -s produces [[page1_items], [page2_items], ...].
         # Use .[][] to flatten pages before selecting individual comment objects.
         #
         # Build the set of root-comment IDs that have received a human (non-bot) reply.
+        # Exclude the primary bot login AND any other GitHub bot accounts (login ends with "[bot]").
         (
           [.[][] | select(
             .in_reply_to_id != null and
-            .user.login != $bot
+            .user.login != $bot and
+            (.user.login | test("\\[bot\\]$") | not)
           ) | .in_reply_to_id] | unique
         ) as $human_replied_ids
-        # Count root CR comments that have NOT been acknowledged by a human reply
-        # and whose body does not self-resolve with "✅ Addressed".
+        # Count root CR comments that have NOT been acknowledged by a human reply,
+        # whose body does not self-resolve with "✅ Addressed", and whose GraphQL
+        # review thread has not already been resolved (isResolved=true).
         | [.[][] | select(
             .user.login == $bot and
             .in_reply_to_id == null and
@@ -1512,6 +1566,9 @@ check_unreplied_rest_comments() {
           ) | select(
             .id as $id |
             ($human_replied_ids | index($id)) == null
+          ) | select(
+            .id as $id |
+            ($resolved_ids | index($id)) == null
           )] | length
       '
   )" || {
@@ -1520,6 +1577,167 @@ check_unreplied_rest_comments() {
   }
 
   printf '%d\n' "${result:-0}"
+}
+
+auto_reply_unreplied_rest_comments() {
+  # Post a brief acknowledgement reply to each unreplied CodeRabbit REST review
+  # comment whose GraphQL thread is already resolved.  Called by
+  # coderabbit_thread_gate_clean after the GraphQL thread audit passes but the
+  # REST supplement still reports unreplied comments.  Replying satisfies the
+  # check_unreplied_rest_comments gate so the loop can advance to RESULT=clean
+  # without requiring manual intervention.
+  #
+  # Arguments:
+  #   $1  pr_number              - PR number (integer)
+  #   $2  repo                   - "owner/repo" slug
+  #   $3  bot_login              - Full bot login including [bot] suffix
+  #   $4  resolved_ids_json      - JSON array of already-resolved root comment IDs
+  #
+  # Prints the number of replies successfully posted on stdout.
+  # Exit codes: 0 = all replies posted (or nothing to reply to),
+  #             1 = one or more replies failed (partial — some may have been posted).
+  local pr_number="$1"
+  local repo="$2"
+  local bot_login="$3"
+  local resolved_ids_json="${4:-[]}"
+  local reply_body="Resolved — addressed in this PR."
+
+  # Fetch IDs of root CodeRabbit comments that need a reply (same filter logic
+  # as check_unreplied_rest_comments, but returns IDs instead of a count).
+  local unreplied_ids
+  unreplied_ids="$(
+    gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
+    | jq -s --arg bot "$bot_login" --argjson resolved_ids "$resolved_ids_json" '
+        (
+          [.[][] | select(
+            .in_reply_to_id != null and
+            .user.login != $bot and
+            (.user.login | test("\\[bot\\]$") | not)
+          ) | .in_reply_to_id] | unique
+        ) as $human_replied_ids
+        | [.[][] | select(
+            .user.login == $bot and
+            .in_reply_to_id == null and
+            ((.body // "") | test("✅ Addressed") | not)
+          ) | select(
+            .id as $id |
+            ($human_replied_ids | index($id)) == null
+          ) | select(
+            .id as $id |
+            ($resolved_ids | index($id)) == null
+          ) | .id]
+      '
+  )" || {
+    echo "WARN: auto_reply_unreplied_rest_comments: REST query failed for PR #$pr_number" >&2
+    return 1
+  }
+
+  local reply_count=0
+  local fail_count=0
+  local comment_id
+  while IFS= read -r comment_id; do
+    [ -z "$comment_id" ] && continue
+    if gh api "repos/$repo/pulls/$pr_number/comments/$comment_id/replies" \
+         --method POST \
+         --raw-field body="$reply_body" \
+         --silent > /dev/null 2>&1; then
+      reply_count=$((reply_count + 1))
+      echo "INFO: auto-replied to REST comment $comment_id on PR #$pr_number" >&2
+    else
+      fail_count=$((fail_count + 1))
+      echo "WARN: auto_reply_unreplied_rest_comments: failed to reply to comment $comment_id on PR #$pr_number" >&2
+    fi
+  done < <(printf '%s\n' "$unreplied_ids" | jq -r '.[]')
+
+  printf '%d\n' "$reply_count"
+  [ "$fail_count" -eq 0 ]
+}
+
+get_resolved_thread_comment_ids() {
+  # Fetch the database IDs of root comments from already-resolved GraphQL review
+  # threads on a PR. These IDs are used by check_unreplied_rest_comments to skip
+  # REST comments whose corresponding thread was resolved via the GitHub UI
+  # (isResolved=true), even when no non-bot reply exists on that thread.
+  #
+  # A thread's "root comment" is its first comment; its databaseId matches the
+  # REST pulls-comments API .id field, enabling cross-API correlation.
+  #
+  # Arguments:
+  #   $1  pr_number      - PR number (integer)
+  #   $2  repo           - "owner/repo" slug
+  #   $3  graphql_bot_login - Bot login WITHOUT [bot] suffix (as returned by GraphQL API)
+  #
+  # Prints a compact JSON array of integer IDs on stdout, e.g. [123456, 789012].
+  # Prints "[]" when no resolved threads exist or on any API failure (non-fatal).
+  # Exit codes: always 0 (failures are non-fatal; caller receives "[]").
+  local pr_number="$1"
+  local repo="$2"
+  local graphql_bot_login="$3"
+
+  local owner repo_name
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  # GraphQL query: paginate reviewThreads, fetch first comment databaseId per thread.
+  # Select only resolved threads whose first comment was authored by the bot.
+  local graphql_query
+  graphql_query='query($owner:String!,$repo:String!,$pr:Int!,$cursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor}nodes{isResolved comments(first:1){nodes{databaseId author{login}}}}}}}}'
+
+  local all_ids="[]"
+  local cursor=""
+  local has_next_page="true"
+  local page=0
+  local max_pages=10
+
+  while [ "$has_next_page" = "true" ]; do
+    page=$((page + 1))
+    if [ "$page" -gt "$max_pages" ]; then
+      echo "WARN: get_resolved_thread_comment_ids: exceeded $max_pages pages for PR #$pr_number — returning partial results" >&2
+      break
+    fi
+
+    local result
+    if [ -n "$cursor" ]; then
+      result="$(gh api graphql \
+        -f query="$graphql_query" \
+        -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" -f cursor="$cursor" \
+        --jq '.data.repository.pullRequest.reviewThreads' 2>/dev/null)" || {
+        echo "WARN: get_resolved_thread_comment_ids: GraphQL query failed for PR #$pr_number — returning partial results" >&2
+        break
+      }
+    else
+      result="$(gh api graphql \
+        -f query="$graphql_query" \
+        -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" \
+        --jq '.data.repository.pullRequest.reviewThreads' 2>/dev/null)" || {
+        echo "WARN: get_resolved_thread_comment_ids: GraphQL query failed for PR #$pr_number — returning partial results" >&2
+        break
+      }
+    fi
+
+    has_next_page="$(printf '%s\n' "$result" | jq -r '.pageInfo.hasNextPage')"
+    cursor="$(printf '%s\n' "$result" | jq -r '.pageInfo.endCursor // empty')"
+    if [ "$has_next_page" = "true" ] && [ -z "$cursor" ]; then
+      echo "WARN: get_resolved_thread_comment_ids: hasNextPage=true but endCursor is empty for PR #$pr_number — returning partial results" >&2
+      break
+    fi
+
+    # Accumulate databaseIds of root comments from resolved bot-authored threads.
+    local page_ids
+    page_ids="$(printf '%s\n' "$result" \
+      | jq --arg bot "$graphql_bot_login" '
+          [.nodes[] |
+            select(.isResolved == true) |
+            select(.comments.nodes[0].author.login == $bot) |
+            .comments.nodes[0].databaseId
+          ]
+        ')" || continue
+
+    all_ids="$(printf '%s\n%s\n' "$all_ids" "$page_ids" \
+      | jq -s 'add | unique')" || continue
+  done
+
+  printf '%s\n' "$all_ids"
 }
 
 is_coderabbit_blocking() {
@@ -1653,25 +1871,53 @@ coderabbit_thread_gate_clean() {
   # query above, but they ARE visible in the GitHub PR UI as unresolved findings.
   # Detect them via the REST pulls-comments endpoint and require a human reply
   # before allowing RESULT=clean.
+  #
+  # Fetch the database IDs of root comments from already-resolved GraphQL threads
+  # so that check_unreplied_rest_comments can skip them. When a reviewer resolves
+  # a thread via the GitHub UI (isResolved=true), the REST comment is still present
+  # but the thread is already resolved — it must not block the review loop.
+  local resolved_ids_json
+  set +e
+  resolved_ids_json="$(get_resolved_thread_comment_ids "$pr_number" "$repo" "$graphql_bot_login")"
+  eval "$prev_errexit"
+  resolved_ids_json="${resolved_ids_json:-[]}"
+
   local rest_unreplied_raw rest_check_st
   set +e
-  rest_unreplied_raw="$(check_unreplied_rest_comments "$pr_number" "$repo" "$bot_login")"
+  rest_unreplied_raw="$(check_unreplied_rest_comments "$pr_number" "$repo" "$bot_login" "$resolved_ids_json")"
   rest_check_st=$?
   eval "$prev_errexit"
 
   if [ "$rest_check_st" -eq 0 ] && [ "${rest_unreplied_raw:-0}" -gt 0 ]; then
-    print_kv RESULT needs_fixes
-    print_kv REASON coderabbit_unreplied_rest_comments
-    print_kv PLATFORM "$platform"
-    print_kv PR_NUMBER "$pr_number"
-    print_kv BRANCH "$branch_name"
-    print_kv REVIEW_COMMENT_ID ""
-    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-    print_kv COMMENT_COUNT "${rest_unreplied_raw:-0}"
-    print_kv BLOCKING_COUNT "${rest_unreplied_raw:-0}"
-    print_kv SUGGESTION_COUNT 0
-    print_kv UNRESOLVED_THREAD_COUNT "${rest_unreplied_raw:-0}"
-    return 1
+    # All GraphQL threads are resolved, but the REST supplement still sees
+    # unreplied outside-diff comments.  Auto-reply to each one so the gate
+    # can advance without requiring manual intervention.
+    echo "INFO: ${rest_unreplied_raw} unreplied CodeRabbit REST comment(s) on PR #$pr_number — auto-replying" >&2
+    local auto_reply_st auto_replied_count
+    set +e
+    auto_replied_count="$(auto_reply_unreplied_rest_comments "$pr_number" "$repo" "$bot_login" "$resolved_ids_json")"
+    auto_reply_st=$?
+    eval "$prev_errexit"
+    echo "INFO: auto-replied to ${auto_replied_count:-0} REST comment(s) on PR #$pr_number" >&2
+
+    if [ "$auto_reply_st" -ne 0 ]; then
+      # One or more replies failed; fall back to needs_fixes so the agent can
+      # address the remaining comments manually.
+      echo "WARN: auto-reply failed for one or more REST comments on PR #$pr_number — returning needs_fixes" >&2
+      print_kv RESULT needs_fixes
+      print_kv REASON coderabbit_unreplied_rest_comments
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT "${rest_unreplied_raw:-0}"
+      print_kv BLOCKING_COUNT "${rest_unreplied_raw:-0}"
+      print_kv SUGGESTION_COUNT 0
+      print_kv UNRESOLVED_THREAD_COUNT "${rest_unreplied_raw:-0}"
+      return 1
+    fi
+    # Replies posted successfully — fall through to return 0 (RESULT=clean).
   fi
   if [ "$rest_check_st" -ne 0 ]; then
     # REST failure is non-fatal: the GraphQL thread check already passed.
@@ -1802,16 +2048,65 @@ run_coderabbit_review() {
 
   rm -f "$existing_blocking_file"
 
+  # --- Phase 0: Detect and auto-resume CodeRabbit auto-pause before entering the poll loop ---
+  # CodeRabbit auto-pauses after 3+ rapid pushes in quick succession and posts a
+  # "Reviews paused" issue comment. When paused, it posts no review for the current HEAD,
+  # so Phase 1 finds 0 blocking findings (trivially true) and Phase 2 times out with
+  # RESULT=skipped/REASON=no_review (exit 0 — treated as clean by callers).
+  #
+  # Root cause of the Batch 52 incident (PR #650): the pause comment was posted BEFORE
+  # the HEAD commit timestamp (since_iso), so the Phase 2 detection (which filters by
+  # since_iso) never matched it. The script returned clean with CodeRabbit having not
+  # reviewed the latest commit.
+  #
+  # Fix: inspect the MOST RECENT CodeRabbit issue comment on the PR without a since_iso
+  # filter. If that latest comment contains a "Reviews paused" marker, CodeRabbit is still
+  # in a paused state — post "@coderabbitai resume" immediately and reset since_iso so the
+  # resulting review is captured. Set coderabbit_phase0_retrigger=1 so Phase 2 skips its
+  # own pause-detection block and does not double-post.
+  local coderabbit_phase0_retrigger=0
+  local phase0_most_recent_body
+  # Use -rs with add // [] to flatten all paginated pages into a single array
+  # before sorting, so the "most recent" selection spans the entire comment history
+  # rather than being limited to the last item on whichever page arrived last.
+  phase0_most_recent_body="$(
+    gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+      | jq -rs --arg bot "$bot_login" '
+          add // []
+          | map(select(.user.login == $bot))
+          | sort_by(.created_at)
+          | last
+          | .body // ""
+        '
+  )"
+  if printf '%s\n' "$phase0_most_recent_body" | grep -qi "reviews\? paused"; then
+    echo "INFO: CodeRabbit is in auto-pause state (most recent CR comment is a pause banner) — posting @coderabbitai resume before entering poll loop" >&2
+    local phase0_resume_since_iso
+    # Capture the timestamp BEFORE posting so any same-second CodeRabbit response
+    # is still within the detection window (queries use strict > $since_iso).
+    phase0_resume_since_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    if gh pr comment "$pr_number" --body "@coderabbitai resume" >/dev/null 2>&1; then
+      coderabbit_phase0_retrigger=1
+      since_iso="$phase0_resume_since_iso"
+      echo "INFO: @coderabbitai resume posted; since_iso reset to $since_iso" >&2
+    else
+      echo "WARN: failed to post @coderabbitai resume — will rely on Phase 2 detection" >&2
+    fi
+  fi
+
   # --- Phase 2: Poll for CodeRabbit review completion ---
   # CodeRabbit signals completion by posting a COMMENTED review after the HEAD commit.
   # Unlike Devin, there are no check runs to monitor — we rely solely on the review.
   #
   local coderabbit_review_count=0
   local coderabbit_any_activity=0
-  local coderabbit_retrigger_attempted=0
+  # Initialize retrigger flag from Phase 0 so Phase 2 does not double-post a resume.
+  local coderabbit_retrigger_attempted=$coderabbit_phase0_retrigger
   local coderabbit_rate_limit_retries=0
   local coderabbit_rate_limit_max_retries="${CODERABBIT_RATE_LIMIT_MAX_RETRIES:-2}"
   local coderabbit_rate_limit_wait="${CODERABBIT_RATE_LIMIT_WAIT:-180}"
+  local coderabbit_no_trigger_timeout="${CODERABBIT_NO_TRIGGER_TIMEOUT:-600}"
+  local coderabbit_no_trigger_retriggers=0
   if ! [[ "$coderabbit_rate_limit_max_retries" =~ ^[0-9]+$ ]]; then
     echo "WARN: CODERABBIT_RATE_LIMIT_MAX_RETRIES must be a non-negative integer; defaulting to 2" >&2
     coderabbit_rate_limit_max_retries=2
@@ -1819,6 +2114,10 @@ run_coderabbit_review() {
   if ! [[ "$coderabbit_rate_limit_wait" =~ ^[0-9]+$ ]] || [ "$coderabbit_rate_limit_wait" -le 0 ]; then
     echo "WARN: CODERABBIT_RATE_LIMIT_WAIT must be a positive integer; defaulting to 180" >&2
     coderabbit_rate_limit_wait=180
+  fi
+  if ! [[ "$coderabbit_no_trigger_timeout" =~ ^[0-9]+$ ]] || [ "$coderabbit_no_trigger_timeout" -le 0 ]; then
+    echo "WARN: CODERABBIT_NO_TRIGGER_TIMEOUT must be a positive integer; defaulting to 600" >&2
+    coderabbit_no_trigger_timeout=600
   fi
 
   while :; do
@@ -1897,7 +2196,51 @@ run_coderabbit_review() {
           echo "WARN: failed to post retrigger comment — will not reset timer" >&2
           coderabbit_retrigger_attempted=1
         fi
-        sleep "$poll_interval"
+        _interruptible_sleep "$poll_interval"
+        elapsed=$((elapsed + poll_interval))
+        continue
+      fi
+    fi
+
+    # --- Auto-retrigger: detect CodeRabbit silent non-trigger after push ---
+    # CodeRabbit sometimes does not auto-trigger after a push commit: no review
+    # appears, no "Reviews paused" comment, and no rate-limit comment — CodeRabbit
+    # simply stays silent. When no activity has been seen after
+    # CODERABBIT_NO_TRIGGER_TIMEOUT seconds (default 600 s), post
+    # "@coderabbitai review" to force a fresh review. Uses
+    # CODERABBIT_RATE_LIMIT_MAX_RETRIES as the combined retrigger cap so callers
+    # have a single knob for total retrigger attempts across both mechanisms.
+    if [ "$coderabbit_any_activity" -eq 0 ] \
+        && [ "$coderabbit_retrigger_attempted" -eq 0 ] \
+        && [ "$coderabbit_no_trigger_retriggers" -lt "$coderabbit_rate_limit_max_retries" ] \
+        && [ "$elapsed" -ge "$coderabbit_no_trigger_timeout" ]; then
+      # Confirm neither the "paused" nor the "rate limit" comment is present —
+      # those are handled by their own dedicated blocks above/below.
+      local silent_no_paused_count
+      silent_no_paused_count="$(
+        gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+          | jq --arg bot "$bot_login" --arg since "$since_iso" '
+              [.[] | select(
+                  .user.login == $bot and
+                  .created_at > $since and
+                  (
+                    ((.body // "") | test("Reviews paused|review paused"; "i")) or
+                    ((.body // "") | test("rate.?limit"; "i"))
+                  )
+              )] | length
+            '
+      )"
+      if [ "${silent_no_paused_count:-0}" -eq 0 ]; then
+        coderabbit_no_trigger_retriggers=$((coderabbit_no_trigger_retriggers + 1))
+        echo "INFO: CodeRabbit has not auto-triggered after ${elapsed}s (silent non-trigger, attempt ${coderabbit_no_trigger_retriggers}/${coderabbit_rate_limit_max_retries}) — posting @coderabbitai review" >&2
+        if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
+          echo "INFO: @coderabbitai review trigger posted" >&2
+        else
+          echo "WARN: failed to post @coderabbitai review trigger for silent non-trigger" >&2
+        fi
+        # Reset the elapsed timer to give the retrigger a full polling window.
+        elapsed=0
+        _interruptible_sleep "$poll_interval"
         elapsed=$((elapsed + poll_interval))
         continue
       fi
@@ -1962,7 +2305,7 @@ run_coderabbit_review() {
           fi
         fi
         echo "INFO: no SUCCESS commit status found — waiting ${coderabbit_rate_limit_wait}s before re-triggering" >&2
-        sleep "$coderabbit_rate_limit_wait"
+        _interruptible_sleep "$coderabbit_rate_limit_wait"
         # Do NOT reset since_iso — keep the original HEAD-commit timestamp so any review
         # posted by CodeRabbit during or after the wait is still within the detection window.
         elapsed=0
@@ -1971,7 +2314,7 @@ run_coderabbit_review() {
         else
           echo "WARN: failed to post @coderabbitai review trigger after rate-limit wait" >&2
         fi
-        sleep "$poll_interval"
+        _interruptible_sleep "$poll_interval"
         elapsed=$((elapsed + poll_interval))
         continue
       fi
@@ -2113,7 +2456,7 @@ run_coderabbit_review() {
       return 2
     fi
 
-    sleep "$poll_interval"
+    _interruptible_sleep "$poll_interval"
     elapsed=$((elapsed + poll_interval))
   done
 
@@ -2378,6 +2721,193 @@ run_platform_review() {
   esac
 }
 
+# --- Compare-mode helpers ---
+# These functions are defined here (before the main execution block) so that
+# the test harness can load them via HARNESS_MODE=1 sourcing without executing
+# the argument-parsing and main-loop sections below.
+
+# normalize_platform_verdict: map a raw platform result token to one of the five
+# canonical compare-mode verdict values: clean, blocking, advisory, timed out, unavailable.
+# $1 = platform_result token (e.g. clean, needs_fixes, skipped, escalate, needs_rerun)
+# $2 = full platform output (key=value block; used to inspect REASON for timeout detection)
+normalize_platform_verdict() {
+  local result="$1"
+  local output="${2:-}"
+  local reason
+  reason="$(kv_value_default REASON "$output" "")"
+  case "$result" in
+    clean)       printf 'clean' ;;
+    needs_fixes) printf 'blocking' ;;
+    advisory)    printf 'advisory' ;;
+    skipped)     printf 'unavailable' ;;
+    needs_rerun) printf 'blocking' ;;
+    escalate)
+      # Distinguish timeout from service-unavailable via REASON.
+      case "$reason" in
+        timeout|timed_out|max_wait_exceeded|no_response)
+          printf 'timed out' ;;
+        *)
+          printf 'unavailable' ;;
+      esac
+      ;;
+    *)           printf 'unavailable' ;;
+  esac
+}
+
+# append_compare_metrics_row: append one structured row to the platform metrics log.
+# Called at the end of the platform loop when compare_mode=1.
+# $1 = pr_number
+# $2 = branch_name
+# $3 = overall_result (the aggregate after all platforms ran)
+# Remaining args: pairs of platform_name verdict_token (e.g. coderabbit blocking greptile clean)
+append_compare_metrics_row() {
+  local pr_number_arg="$1"
+  local branch_name_arg="$2"
+  local overall_result_arg="$3"
+  shift 3
+
+  local metrics_file
+  metrics_file="$(workflow_repo_root)/docs/workflow/retro-metrics-platforms.md"
+
+  # Derive branch type from the branch name prefix.
+  local branch_type
+  case "$branch_name_arg" in
+    feature/*)            branch_type="feature" ;;
+    fix/*)                branch_type="fix" ;;
+    refactor/*)           branch_type="refactor" ;;
+    hotfix/*)             branch_type="hotfix" ;;
+    spec/*)               branch_type="spec" ;;
+    implementation-plan/*) branch_type="plan" ;;
+    *)                    branch_type="other" ;;
+  esac
+
+  # Collect pairs: platform_names and verdict_tokens in order.
+  local -a platform_names=()
+  local -a verdict_tokens=()
+  while [ "$#" -ge 2 ]; do
+    platform_names+=("$1")
+    verdict_tokens+=("$2")
+    shift 2
+  done
+
+  # Build dynamic platform-column headers from the current run's platform list.
+  local header_platform_cols=""
+  for _pname in "${platform_names[@]}"; do
+    header_platform_cols="${header_platform_cols} ${_pname} |"
+  done
+  local separator_platform_cols=""
+  for _pname in "${platform_names[@]}"; do
+    separator_platform_cols="${separator_platform_cols}---|"
+  done
+
+  # Create the file with the full header when it does not yet exist.
+  # If the file exists (e.g. pre-created with prose only) but has no table header
+  # row yet (detected by absence of the "|---|" separator line), append the table
+  # header rows so the Markdown table is valid before the first data row.
+  if [ ! -f "$metrics_file" ]; then
+    cat > "$metrics_file" <<METRICS_HEADER
+# Platform Comparison Metrics Log
+
+This file is append-only. One row is appended per compare-mode reviewer loop run.
+Do not delete or rewrite existing rows. The "Block Was Real Bug?" column may be
+filled in manually after a run when post-hoc analysis determines whether a
+platform-exclusive blocking finding corresponded to a real code defect.
+
+## Graduation Criteria
+
+A platform may be considered safe for removal when, across 30 or more consecutive
+compare-mode runs covering at least one run each of \`fix\`, \`feature\`, and \`refactor\`
+branch types, it has zero platform-exclusive blocking findings (runs where that
+platform blocked but at least one other configured platform was clean).
+
+Fewer than 30 runs is always insufficient data for a graduation decision.
+
+## Metrics Table
+
+| PR | Branch Type |${header_platform_cols} Overall Result | Block Was Real Bug? |
+|---|---|${separator_platform_cols}---|---|
+METRICS_HEADER
+  elif ! grep -q '^|---|' "$metrics_file" 2>/dev/null; then
+    # File exists but has no table separator row — append the table header now.
+    # Ensure there is a blank line before the table if the file has content.
+    if [ -s "$metrics_file" ]; then
+      printf '\n' >> "$metrics_file"
+    fi
+    printf '| PR | Branch Type |%s Overall Result | Block Was Real Bug? |\n' \
+      "$header_platform_cols" >> "$metrics_file"
+    printf '|---|---|%s---|---|\n' \
+      "$separator_platform_cols" >> "$metrics_file"
+  else
+    # File exists and already has a table. Check whether the current platform
+    # set matches the existing header. If not, insert a separator comment row
+    # before appending the data row so human readers can see the config changed.
+    # Detection: compare platform names (and order) by parsing the header row
+    # above the last separator row. A count-only check misses platform renames
+    # or reordering with the same count.
+    # Column order: PR, Branch Type, <platforms...>, Overall Result, Block Was Real Bug?
+    # Fixed columns = 4 (PR, Branch Type, Overall Result, Block Was Real Bug?)
+    existing_sep_row="$(grep '^|---|' "$metrics_file" | tail -1)"
+    existing_platform_col_count=$(printf '%s' "$existing_sep_row" | tr -cd '|' | wc -c | tr -d ' ')
+    # pipe count = platform_cols + 4 fixed cols + 1 leading pipe → total pipes = platform_cols + 5
+    existing_platform_count=$(( existing_platform_col_count - 5 ))
+    current_platform_count="${#platform_names[@]}"
+    # Parse platform names from the header row above the last separator row.
+    existing_sep_line_num="$(grep -n '^|---|' "$metrics_file" | tail -1 | cut -d: -f1)"
+    existing_header_row="$(sed -n "$(( existing_sep_line_num - 1 ))p" "$metrics_file")"
+    # awk splits by |: field 1=empty, 2=PR, 3=Branch Type, 4..NF-3=platforms, NF-2=Overall Result, NF-1=Block Was Real Bug?, NF=empty
+    existing_platform_str="$(printf '%s' "$existing_header_row" | awk -F'|' '{
+      sep=""
+      for (i = 4; i <= NF - 3; i++) {
+        gsub(/^[ \t]+|[ \t]+$/, "", $i)
+        printf "%s%s", sep, $i
+        sep = ","
+      }
+    }')"
+    current_platform_str="$(IFS=,; printf '%s' "${platform_names[*]}")"
+    if [ "$current_platform_count" -ne "$existing_platform_count" ] || [ "$existing_platform_str" != "$current_platform_str" ]; then
+      # Platform configuration changed: insert an annotation row (in the OLD layout
+      # so it is a valid row for that table) then write a new header block for the
+      # new layout so subsequent rows are correctly labeled.
+      # Build blank cells matching the EXISTING header's column count.
+      _sep_blank_cols=""
+      _sep_i=0
+      while [ "$_sep_i" -lt $(( existing_platform_count + 3 )) ]; do
+        _sep_blank_cols="${_sep_blank_cols} |"
+        _sep_i=$(( _sep_i + 1 ))
+      done
+      printf '| *(platforms changed: %s)* |%s\n' \
+        "$(IFS=,; printf '%s' "${platform_names[*]}")" \
+        "$_sep_blank_cols" \
+        >> "$metrics_file"
+      # New header block for the updated platform layout.
+      printf '\n| PR | Branch Type |%s Overall Result | Block Was Real Bug? |\n' \
+        "$header_platform_cols" >> "$metrics_file"
+      printf '|---|---|%s---|---|\n' \
+        "$separator_platform_cols" >> "$metrics_file"
+    fi
+  fi
+
+  # Build the verdict columns for this row.
+  local row_verdict_cols=""
+  for _vtoken in "${verdict_tokens[@]}"; do
+    row_verdict_cols="${row_verdict_cols} ${_vtoken} |"
+  done
+
+  # Append one row.
+  printf '| #%s | %s |%s %s | |\n' \
+    "$pr_number_arg" \
+    "$branch_type" \
+    "$row_verdict_cols" \
+    "$overall_result_arg" \
+    >> "$metrics_file"
+}
+
+# Skip the main execution block when sourced in test-harness mode.
+# All function definitions above (including normalize_platform_verdict and
+# append_compare_metrics_row) are loaded; only the argument-parsing and
+# execution sections below are skipped.
+[ "${HARNESS_MODE:-0}" -eq 1 ] && return 0 2>/dev/null || true
+
 if [ "$#" -lt 1 ]; then
   usage >&2
   exit 64
@@ -2480,173 +3010,6 @@ if [ "$max_wait_explicit" -eq 0 ]; then
       ;;
   esac
 fi
-
-# --- Compare-mode helpers ---
-
-# normalize_platform_verdict: map a raw platform result token to one of the five
-# canonical compare-mode verdict values: clean, blocking, advisory, timed out, unavailable.
-# $1 = platform_result token (e.g. clean, needs_fixes, skipped, escalate, needs_rerun)
-# $2 = full platform output (key=value block; used to inspect REASON for timeout detection)
-normalize_platform_verdict() {
-  local result="$1"
-  local output="${2:-}"
-  local reason
-  reason="$(kv_value_default REASON "$output" "")"
-  case "$result" in
-    clean)       printf 'clean' ;;
-    needs_fixes) printf 'blocking' ;;
-    advisory)    printf 'advisory' ;;
-    skipped)     printf 'clean' ;;
-    needs_rerun) printf 'blocking' ;;
-    escalate)
-      # Distinguish timeout from service-unavailable via REASON.
-      case "$reason" in
-        timeout|timed_out|max_wait_exceeded|no_response)
-          printf 'timed out' ;;
-        *)
-          printf 'unavailable' ;;
-      esac
-      ;;
-    *)           printf 'unavailable' ;;
-  esac
-}
-
-# append_compare_metrics_row: append one structured row to the platform metrics log.
-# Called at the end of the platform loop when compare_mode=1.
-# $1 = pr_number
-# $2 = branch_name
-# $3 = overall_result (the aggregate after all platforms ran)
-# Remaining args: pairs of platform_name verdict_token (e.g. coderabbit blocking greptile clean)
-append_compare_metrics_row() {
-  local pr_number_arg="$1"
-  local branch_name_arg="$2"
-  local overall_result_arg="$3"
-  shift 3
-
-  local metrics_file
-  metrics_file="$(workflow_repo_root)/docs/workflow/retro-metrics-platforms.md"
-
-  # Derive branch type from the branch name prefix.
-  local branch_type
-  case "$branch_name_arg" in
-    feature/*)            branch_type="feature" ;;
-    fix/*)                branch_type="fix" ;;
-    refactor/*)           branch_type="refactor" ;;
-    hotfix/*)             branch_type="hotfix" ;;
-    spec/*)               branch_type="spec" ;;
-    implementation-plan/*) branch_type="plan" ;;
-    *)                    branch_type="other" ;;
-  esac
-
-  # Collect pairs: platform_names and verdict_tokens in order.
-  local -a platform_names=()
-  local -a verdict_tokens=()
-  while [ "$#" -ge 2 ]; do
-    platform_names+=("$1")
-    verdict_tokens+=("$2")
-    shift 2
-  done
-
-  # Build dynamic platform-column headers from the current run's platform list.
-  local header_platform_cols=""
-  for _pname in "${platform_names[@]}"; do
-    header_platform_cols="${header_platform_cols} ${_pname} |"
-  done
-  local separator_platform_cols=""
-  for _pname in "${platform_names[@]}"; do
-    separator_platform_cols="${separator_platform_cols}---|"
-  done
-
-  # Create the file with the full header when it does not yet exist.
-  # If the file exists (e.g. pre-created with prose only) but has no table header
-  # row yet (detected by absence of the "|---|" separator line), append the table
-  # header rows so the Markdown table is valid before the first data row.
-  if [ ! -f "$metrics_file" ]; then
-    cat > "$metrics_file" <<METRICS_HEADER
-# Platform Comparison Metrics Log
-
-This file is append-only. One row is appended per compare-mode reviewer loop run.
-Do not delete or rewrite existing rows. The "Block Was Real Bug?" column may be
-filled in manually after a run when post-hoc analysis determines whether a
-platform-exclusive blocking finding corresponded to a real code defect.
-
-## Graduation Criteria
-
-A platform may be considered safe for removal when, across 30 or more consecutive
-compare-mode runs covering at least one run each of \`fix\`, \`feature\`, and \`refactor\`
-branch types, it has zero platform-exclusive blocking findings (runs where that
-platform blocked but at least one other configured platform was clean).
-
-Fewer than 30 runs is always insufficient data for a graduation decision.
-
-## Metrics Table
-
-| PR | Branch Type |${header_platform_cols} Overall Result | Block Was Real Bug? |
-|---|---|${separator_platform_cols}---|---|
-METRICS_HEADER
-  elif ! grep -q '^|---|' "$metrics_file" 2>/dev/null; then
-    # File exists but has no table separator row — append the table header now.
-    # Ensure there is a blank line before the table if the file has content.
-    if [ -s "$metrics_file" ]; then
-      printf '\n' >> "$metrics_file"
-    fi
-    printf '| PR | Branch Type |%s Overall Result | Block Was Real Bug? |\n' \
-      "$header_platform_cols" >> "$metrics_file"
-    printf '|---|---|%s---|---|\n' \
-      "$separator_platform_cols" >> "$metrics_file"
-  else
-    # File exists and already has a table. Check whether the current platform
-    # set matches the existing header. If not, insert a separator comment row
-    # before appending the data row so human readers can see the config changed.
-    # Detection: count the platform columns in the existing header by looking at
-    # the separator row (each "---|" token corresponds to one column).
-    # Column order: PR, Branch Type, <platforms...>, Overall Result, Block Was Real Bug?
-    # Fixed columns = 4 (PR, Branch Type, Overall Result, Block Was Real Bug?)
-    # Platform columns = total separator tokens - 4
-    # Use tail -1 to get the most recent separator row (handles multiple layout changes).
-    existing_sep_row="$(grep '^|---|' "$metrics_file" | tail -1)"
-    existing_platform_col_count=$(printf '%s' "$existing_sep_row" | tr -cd '|' | wc -c | tr -d ' ')
-    # pipe count = platform_cols + 4 fixed cols + 1 leading pipe → total pipes = platform_cols + 5
-    # Solve: existing_platform_col_count (pipes) = existing_platform_cols + 5
-    existing_platform_count=$(( existing_platform_col_count - 5 ))
-    current_platform_count="${#platform_names[@]}"
-    if [ "$current_platform_count" -ne "$existing_platform_count" ]; then
-      # Platform configuration changed: insert an annotation row (in the OLD layout
-      # so it is a valid row for that table) then write a new header block for the
-      # new layout so subsequent rows are correctly labeled.
-      # Build blank cells matching the EXISTING header's column count.
-      _sep_blank_cols=""
-      _sep_i=0
-      while [ "$_sep_i" -lt $(( existing_platform_count + 3 )) ]; do
-        _sep_blank_cols="${_sep_blank_cols} |"
-        _sep_i=$(( _sep_i + 1 ))
-      done
-      printf '| *(platforms changed: %s)* |%s\n' \
-        "$(IFS=,; printf '%s' "${platform_names[*]}")" \
-        "$_sep_blank_cols" \
-        >> "$metrics_file"
-      # New header block for the updated platform layout.
-      printf '\n| PR | Branch Type |%s Overall Result | Block Was Real Bug? |\n' \
-        "$header_platform_cols" >> "$metrics_file"
-      printf '|---|---|%s---|---|\n' \
-        "$separator_platform_cols" >> "$metrics_file"
-    fi
-  fi
-
-  # Build the verdict columns for this row.
-  local row_verdict_cols=""
-  for _vtoken in "${verdict_tokens[@]}"; do
-    row_verdict_cols="${row_verdict_cols} ${_vtoken} |"
-  done
-
-  # Append one row.
-  printf '| #%s | %s |%s %s | |\n' \
-    "$pr_number_arg" \
-    "$branch_type" \
-    "$row_verdict_cols" \
-    "$overall_result_arg" \
-    >> "$metrics_file"
-}
 
 aggregate_result="skipped"
 aggregate_reason=""
@@ -2900,6 +3263,7 @@ fi
 # Append compare-mode metrics row after the thread gate so the recorded
 # aggregate_result reflects the final settled value (thread audit may flip
 # a platform-clean run to needs_fixes or escalate).
+_compare_metrics_appended=0
 if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
   set +e
   _metrics_args=("$pr_number" "$branch_name" "$aggregate_result")
@@ -2908,7 +3272,8 @@ if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
     _metrics_args+=("${compare_verdicts[$_idx]}" "${compare_verdicts[$((_idx + 1))]}")
     _idx=$((_idx + 2))
   done
-  append_compare_metrics_row "${_metrics_args[@]}" 2>/dev/null || \
+  append_compare_metrics_row "${_metrics_args[@]}" 2>/dev/null && \
+    _compare_metrics_appended=1 || \
     echo "WARN: append_compare_metrics_row failed — metrics row not written" >&2
   set -e
 fi
@@ -3069,9 +3434,11 @@ Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs afte
 - ${_cvname}: ${_cvtoken}"
       _idx=$((_idx + 2))
     done
-    compare_section="${compare_section}
+    if [ "${_compare_metrics_appended:-0}" -eq 1 ]; then
+      compare_section="${compare_section}
 
 *Metrics row appended to \`docs/workflow/retro-metrics-platforms.md\`.*"
+    fi
   fi
 
   local comment_body

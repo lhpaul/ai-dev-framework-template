@@ -22,11 +22,11 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Value |
-|---|---|
-| Feature | Agent timeout handling documentation |
-| Files under review | See Prerequisites |
-| No seed data required | N/A |
+| Item                  | Value                                |
+| --------------------- | ------------------------------------ |
+| Feature               | Agent timeout handling documentation |
+| Files under review    | See Prerequisites                    |
+| No seed data required | N/A                                  |
 
 ---
 
@@ -130,11 +130,11 @@ None required — documentation-only feature.
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| Section not found in `agent-model-config.md` | Implementation missed an acceptance criterion | Re-run implementation for the missing criterion |
-| Step 8c check row present but wording is vague | Implementation confirmed existence without strengthening clarity | Update the row wording to be explicit |
-| Stale PR heuristic is described but has no detection command | Implementation incomplete | Add the detection command/approach to the subsection |
+| Symptom                                                      | Likely cause                                                     | Fix                                                  |
+| ------------------------------------------------------------ | ---------------------------------------------------------------- | ---------------------------------------------------- |
+| Section not found in `agent-model-config.md`                 | Implementation missed an acceptance criterion                    | Re-run implementation for the missing criterion      |
+| Step 8c check row present but wording is vague               | Implementation confirmed existence without strengthening clarity | Update the row wording to be explicit                |
+| Stale PR heuristic is described but has no detection command | Implementation incomplete                                        | Add the detection command/approach to the subsection |
 
 ---
 

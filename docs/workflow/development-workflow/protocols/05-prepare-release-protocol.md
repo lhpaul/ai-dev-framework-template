@@ -87,10 +87,10 @@ git push -u origin release/v[X.Y.Z]
 
 Open **two** PRs from the release branch using `gh pr create`:
 
-| PR | Target | Purpose |
-|---|---|---|
-| Production release | `main` | Ships to production |
-| Backport | `develop` | Keeps develop in sync — **mandatory**, prevents branch drift |
+| PR                 | Target    | Purpose                                                      |
+| ------------------ | --------- | ------------------------------------------------------------ |
+| Production release | `main`    | Ships to production                                          |
+| Backport           | `develop` | Keeps develop in sync — **mandatory**, prevents branch drift |
 
 Use title `chore(release): v[X.Y.Z]` for both. Include the CHANGELOG entries for this version in the PR body.
 
@@ -137,14 +137,31 @@ Per `93-automated-reviewer-loop-protocol.md`, check for existing unresolved bloc
 
 Run `pr-review-loop.sh` to completion **before** starting the CI loop. Do not run reviewer and CI in parallel.
 
+**Script-coverage requirement**: Before running the reviewer loop, confirm that
+CodeRabbit (when available) is configured to review all files in
+`scripts/development-workflow/` that were modified since the last release. If
+CodeRabbit is not installed, manually review changed workflow scripts for logic
+bugs before labeling the production PR `ready-for-human-review`.
+
+**Downstream script-bug review**: Before labeling the production PR
+`ready-for-human-review`, search for open GitHub issues labeled `workflow` that
+were filed from downstream sync retrospectives:
+
+```bash
+gh issue list --label workflow --state open --limit 200
+```
+
+If any known script bugs remain open and affect code in this release, address them
+in the release branch or document the decision to defer with a comment on the issue.
+
 Interpret `RESULT` from the script output:
 
-| Result | Action |
-|---|---|
-| `clean` | Continue to Step 7.4 (regression label). |
-| `skipped` | No review platforms configured in `.ai-dev-workflow.yaml`; continue to Step 7.4 and document that external review was skipped. |
+| Result        | Action                                                                                                                                                                                                                       |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `clean`       | Continue to Step 7.4 (regression label).                                                                                                                                                                                     |
+| `skipped`     | No review platforms configured in `.ai-dev-workflow.yaml`; continue to Step 7.4 and document that external review was skipped.                                                                                               |
 | `needs_fixes` | Address blocking findings (commit and push to the release branch), then re-run Step 7.3 from the top. Follow fixer guidance in `91` (e.g. `code-reviewer` for code changes). Do not hand off while blocking findings remain. |
-| `escalate` | Stop and escalate to a human; do not mark the release as merge-ready. |
+| `escalate`    | Stop and escalate to a human; do not mark the release as merge-ready.                                                                                                                                                        |
 
 ### 7.4 Regression label (release / `main` PR only)
 
@@ -160,11 +177,11 @@ This mirrors Step 7b in `91` for implementation PRs, but scoped here to the rele
 
 Run `pr-ci-loop.sh` and wait until required checks settle (including the e2e/regression check when configured).
 
-| Result | Action |
-|---|---|
-| `green` | Apply `ready-for-human-review` per [`92-pr-readiness-signal-protocol.md`](92-pr-readiness-signal-protocol.md); the production PR is ready for human merge review. |
-| `red` | Apply `needs-fixes`, fix, push, then return to Step 7.3 (reviewer) and repeat through Step 7.5. |
-| `timeout` | Escalate to a human; do not apply `ready-for-human-review`. |
+| Result    | Action                                                                                                                                                            |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `green`   | Apply `ready-for-human-review` per [`92-pr-readiness-signal-protocol.md`](92-pr-readiness-signal-protocol.md); the production PR is ready for human merge review. |
+| `red`     | Apply `needs-fixes`, fix, push, then return to Step 7.3 (reviewer) and repeat through Step 7.5.                                                                   |
+| `timeout` | Escalate to a human; do not apply `ready-for-human-review`.                                                                                                       |
 
 ### 7.6 Backport PR (`develop` target)
 

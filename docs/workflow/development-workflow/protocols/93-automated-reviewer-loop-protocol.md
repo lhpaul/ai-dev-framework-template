@@ -29,6 +29,32 @@ If no PR can be determined, ask the user to specify a PR number or to run from a
 
 ## Procedure (per PR)
 
+### Pre-flight: draft-state check
+
+Before running any scripts, verify the PR is not in draft state:
+
+```bash
+gh pr view <number> --json isDraft --jq '.isDraft'
+```
+
+If the result is `true`, determine whether any external reviewer configured in `review.platforms` in `.ai-dev-workflow.yaml` restricts reviews to non-draft PRs. Protocol 91 Step 7a is the source of truth for the reviewer-to-draft-restriction mapping; see its "Draft-state pre-check" section for the full table. For CodeRabbit specifically, check `.coderabbit.yaml`:
+
+```bash
+grep -E '^\s*drafts:\s*false' .coderabbit.yaml
+```
+
+If the file is absent or the key is not present, CodeRabbit defaults to `drafts: false` — treat it as draft-restricting.
+
+If the PR is draft **and** a configured external reviewer (`review.platforms`) skips drafts, convert the PR to non-draft before running the reviewer loop:
+
+```bash
+gh pr ready <number>
+```
+
+This prevents silent reviewer skip — CodeRabbit configured with `auto_review.drafts: false` produces no comment when it bypasses a draft PR, making the omission invisible to the agent.
+
+**Scope note**: This pre-flight checks `review.platforms` (external reviewers used by Protocol 93 / Step 7). The internal reviewer gate in Protocol 91 Step 7a separately checks `review.internal_reviewers` and performs its own draft-state pre-check before any internal reviewer is dispatched. When Protocol 93 is invoked via Protocol 91 (the normal orchestrated path), the Step 7a pre-check has already converted the PR before this point; this pre-flight check is a safety net for standalone invocations.
+
 ### Pre-flight: check for existing unresolved review findings
 
 Before running any scripts, inspect the PR's current review state:
@@ -46,6 +72,7 @@ Devin always uses `COMMENTED` as its review state regardless of finding severity
 - The review is accompanied by unresolved inline PR review comments from `devin-ai-integration[bot]` (the `COMMENTED` review is the umbrella review object for those inline findings)
 
 Only treat a `COMMENTED` Devin review as non-blocking when **both** of the following hold:
+
 - The body does NOT start with `**Devin Review**`, AND
 - There are NO unresolved inline PR review comments from Devin on the current HEAD
 
@@ -56,7 +83,7 @@ This behavior is implemented in `pr-review-loop.sh` (`run_devin_review`): the ex
 A **blocking** inline comment or review from a configured platform (see `.ai-dev-workflow.yaml` under `review.platforms`) counts as **unresolved** when:
 
 1. It applies to **any commit in this PR's history** (not only commits after the current `HEAD`). After merging the base branch (e.g. `develop`) into the PR branch, older bot comments are still open unless the **substantive issue** they describe is fixed in the codebase. A merge commit does not dismiss them.
-2. There is no later resolved confirmation **for that same finding** (match by `(platform, path, body_snippet)` or Devin's inline comment id in the body, not by "most recent comment on the PR"). A resolved comment from Devin about *one* issue does not resolve a different blocking finding. Devin's resolved comments start with `✅` and must be excluded from blocking counts.
+2. There is no later resolved confirmation **for that same finding** (match by `(platform, path, body_snippet)` or Devin's inline comment id in the body, not by "most recent comment on the PR"). A resolved comment from Devin about _one_ issue does not resolve a different blocking finding. Devin's resolved comments start with `✅` and must be excluded from blocking counts.
 
 #### Merge / rebase trap
 
@@ -114,11 +141,31 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
 
 1. Apply every blocking finding in one pass (follow the batching rule: all in one commit).
 2. Commit with a descriptive message (e.g., `fix: address [platform] findings inline ([brief description])`).
-3. Push the commit. *(Push before resolving threads — if push fails, threads must not be falsely marked resolved.)*
-4. Reply to each finding's review thread with the fix description and commit SHA.
-5. Resolve each addressed thread via the GraphQL `resolveReviewThread` mutation.
-6. **Increment `cycle`** (the same counter used in the sub-agent loop). Inline fix retries are bounded by `max_cycles` exactly like sub-agent retries — the inline path is a faster lane, not an unbounded one.
-7. Re-run the reviewer loop script from the top. If it returns `clean`, proceed normally. If the loop still reports unresolved blocking findings **and** `cycle >= max_cycles`, escalate to human (the just-pushed fix is always given a chance to be verified before escalating).
+3. Push the commit. _(Push before resolving threads — if push fails, threads must not be falsely marked resolved.)_
+4. **Mandatory post-push SHA verification** — immediately after the push, verify the commit has landed on the remote:
+
+   ```bash
+   LOCAL_SHA=$(git rev-parse HEAD)
+   REMOTE_SHA=$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')
+   if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+     echo "Push verification failed: local HEAD $LOCAL_SHA != remote HEAD $REMOTE_SHA — retrying push"
+     git push
+     REMOTE_SHA=$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')
+     if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+       echo "BLOCKED: push retry also failed (local $LOCAL_SHA != remote $REMOTE_SHA) — not marking fix complete"
+       # Do not resolve threads or declare the fix pass complete. Report BLOCKED to the human.
+       exit 1
+     fi
+   fi
+   echo "Push verified: remote HEAD matches local HEAD ($LOCAL_SHA)"
+   ```
+
+   If verification fails after one retry, report a BLOCKED state, do not resolve any threads, and do not apply any readiness labels. This is a hard stop — do not proceed past this point until the push is confirmed.
+
+5. Reply to each finding's review thread with the fix description and commit SHA.
+6. Resolve each addressed thread via the GraphQL `resolveReviewThread` mutation.
+7. **Increment `cycle`** (the same counter used in the sub-agent loop). Inline fix retries are bounded by `max_cycles` exactly like sub-agent retries — the inline path is a faster lane, not an unbounded one.
+8. Re-run the reviewer loop script from the top. If it returns `clean`, proceed normally. If the loop still reports unresolved blocking findings **and** `cycle >= max_cycles`, escalate to human (the just-pushed fix is always given a chance to be verified before escalating).
 
 **Do not dispatch a sub-agent for mechanical findings.** Sub-agent startup overhead (context loading, planning) typically costs 10–20 minutes for changes that take 30 seconds to apply directly.
 
@@ -143,6 +190,25 @@ Reviewer bots (e.g. Devin) start a new review cycle within 5–8 minutes of each
 1. **Read ALL blocking findings first** — before editing any file, collect the complete list of open blocking findings from the current review cycle. Do not start fixing until you have the full picture.
 2. **Apply ALL addressable fixes** — implement every fix you can address in this dispatch, across all files and findings.
 3. **One commit, then push** — bundle every fix into a single commit and push exactly once per dispatch. Do not push after each individual fix.
+4. **Mandatory post-push SHA verification** — immediately after the push, verify the commit has landed on the remote before replying to review threads or declaring the fix pass complete:
+
+   ```bash
+   LOCAL_SHA=$(git rev-parse HEAD)
+   REMOTE_SHA=$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')
+   if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+     echo "Push verification failed: local HEAD $LOCAL_SHA != remote HEAD $REMOTE_SHA — retrying push"
+     git push
+     REMOTE_SHA=$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')
+     if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+       echo "BLOCKED: push retry also failed (local $LOCAL_SHA != remote $REMOTE_SHA) — not marking fix complete"
+       # Do not resolve threads or declare the fix pass complete. Report BLOCKED to the human.
+       exit 1
+     fi
+   fi
+   echo "Push verified: remote HEAD matches local HEAD ($LOCAL_SHA)"
+   ```
+
+   If verification fails after one retry, report a BLOCKED state, do not resolve any threads, and do not apply any readiness labels. This is a hard stop — do not proceed past this point until the push is confirmed.
 
 Findings that cannot be addressed in this dispatch (e.g. require a human decision, are out of scope, or are genuinely contradictory) should be noted. Do not withhold the push for unresolvable findings — push all the fixes you can, then document what remains.
 
@@ -256,11 +322,115 @@ required to validate or use the change being reviewed.
    `ready-for-human-review`.
 
 **Important caveat — cross-cutting consistency fixes**: If a reviewer finding targets a
-file outside the diff but the finding is a *consistency issue* introduced by this PR (for
+file outside the diff but the finding is a _consistency issue_ introduced by this PR (for
 example, the PR adds a new signal value to a script but a protocol doc that references
 that script still shows the old value), treat it as **in-scope**. The test is whether
-*this PR's changes* created the inconsistency, not whether the file was originally in the
+_this PR's changes_ created the inconsistency, not whether the file was originally in the
 diff. When in doubt, fix the consistency issue inline rather than deferring it.
+
+### CodeRabbit silence patterns
+
+`pr-review-loop.sh` handles two situations where CodeRabbit produces no review after a push
+and would otherwise stall the loop indefinitely. Both are automatic — agents running the
+script do not need to intervene. This section documents what each pattern looks like and
+what to check when diagnosing a stalled loop.
+
+#### Pattern 1: "Reviews paused"
+
+**What happens**: CodeRabbit auto-pauses reviews after many commits on a PR. When paused,
+CodeRabbit posts a "Reviews paused" issue comment on the PR and does not post a new review.
+The push appears to complete normally but no review follows.
+
+**Script behavior**: After half the max-wait window has elapsed with no activity
+(`elapsed >= max_wait / 2`), `pr-review-loop.sh` checks for a "Reviews paused" issue
+comment from `coderabbitai[bot]` posted after the current HEAD's `since_iso` timestamp. If
+found, the script posts `@coderabbitai review` to resume, sets the `coderabbit_retrigger_attempted`
+flag (so the auto-resume is only attempted once per HEAD cycle), and resets the elapsed
+timer to give the resumed review a full polling window.
+
+**Trigger condition**: Only attempted once per HEAD cycle (`coderabbit_retrigger_attempted`
+flag). If CodeRabbit remains unresponsive after the retrigger and the max-wait window
+elapses, the loop times out and exits `escalate`.
+
+#### Pattern 2: Silent non-trigger
+
+**What happens**: CodeRabbit simply does not auto-trigger after a push — no review appears,
+no "Reviews paused" comment, and no rate-limit comment. CodeRabbit stays silent with no
+visible signal.
+
+**Script behavior**: After `CODERABBIT_NO_TRIGGER_TIMEOUT` seconds of silence (default: 600 s)
+with no activity, no "Reviews paused" comment, and no rate-limit comment, `pr-review-loop.sh`
+posts `@coderabbitai review` to force a fresh review. The `coderabbit_no_trigger_retriggers`
+counter is incremented; `CODERABBIT_RATE_LIMIT_MAX_RETRIES` is the combined cap for total
+retrigger attempts across both this mechanism and the rate-limit retry path. The elapsed
+timer resets after posting so the triggered review has a full polling window.
+
+**Trigger condition**: Allowed up to `CODERABBIT_RATE_LIMIT_MAX_RETRIES` times total. If
+the cap is reached and CodeRabbit still has not responded, the loop exits `escalate`.
+
+#### Diagnosing a stalled loop (manual polling)
+
+When an agent is polling manually — or when `pr-review-loop.sh` has been running for more
+than 10 minutes with no CodeRabbit activity — check these markers before escalating:
+
+1. **Check for a "Reviews paused" comment**: run:
+
+   ```bash
+   gh api repos/{owner}/{repo}/issues/{pr_number}/comments \
+     --jq '[.[] | select(.user.login == "coderabbitai[bot]") | .body] | last'
+   ```
+
+   Look for "Reviews paused" text. If present, Pattern 1 applies.
+
+2. **Check whether the script has already posted `@coderabbitai review`**: look for an
+   issue comment with body `@coderabbitai review` posted by the workflow bot after the
+   current HEAD push. If the script already posted the retrigger, wait for the full
+   `max_wait` window before concluding CodeRabbit is unresponsive.
+
+3. **If neither marker is present and >10 min have elapsed with no activity**, Pattern 2
+   (silent non-trigger) is likely. The script will post the retrigger automatically once
+   `CODERABBIT_NO_TRIGGER_TIMEOUT` (default: 600 s) elapses.
+
+#### When to escalate vs. wait
+
+Do **not** escalate while the script is still within its wait window or while an
+auto-retrigger was just posted. Escalate only when **both** of the following are true:
+
+- The script has posted `@coderabbitai review` (auto-retrigger for either pattern), AND
+- A full `max_wait` window has elapsed after the retrigger with still no CodeRabbit review.
+
+If you are running the script, it handles escalation automatically. If you are polling
+manually, apply this rule before concluding the loop is stuck and escalating to human.
+
+### CodeRabbit summary comment update-in-place pattern
+
+CodeRabbit edits its single summary/walkthrough issue comment in-place after each review
+cycle — it does **not** post a new comment per cycle. This has a critical implication for
+agents trying to infer whether CodeRabbit has reviewed the current HEAD:
+
+- The comment's **timestamp** reflects when it was **first created**, not when the most
+  recent review cycle completed. A "stale-looking" timestamp does not mean CodeRabbit has
+  not yet reviewed the latest push.
+- An agent reading the PR timeline may observe a comment that appears old and incorrectly
+  conclude that CodeRabbit has not yet reviewed the current HEAD commit.
+
+> **Note**: Do **not** use the CodeRabbit summary comment's age or timestamp to infer
+> whether a review of the current HEAD has completed. The timestamp is unreliable for
+> this purpose.
+
+The authoritative signals for review completion are:
+
+1. **GraphQL thread audit** (`isResolved` state per `check_unresolved_threads` / Step 8c):
+   the canonical cleanness check — if all CodeRabbit review threads report `isResolved: true`,
+   the review is clean for the current HEAD.
+2. **CodeRabbit SUCCESS commit status**: the machine-readable equivalent checked by
+   `pr-review-loop.sh` as part of its polling loop. A `SUCCESS` status on the current HEAD
+   SHA confirms CodeRabbit has reviewed that exact commit.
+
+When verifying CodeRabbit review completion manually, always check one of these two signals
+rather than inferring from comment age.
+
+---
 
 ### Run the loops
 
@@ -307,18 +477,19 @@ Stop the loop and escalate to human when any of the above conditions are met. In
 - A recommendation to the human (e.g., "Finding X appears unfixable by current fix agent; consider manual fix" or "Review cycle has not converged; recommend pausing to reassess root cause")
 
 Example escalation comment:
-````markdown
+
+```markdown
 ### Automated Reviewer Loop Escalation
 
 **Reason:** No progress detected — 3 consecutive cycles with 2 unresolved findings.
 
-| # | Platform | File | Status | Cycles open | Resolved in | Reappeared in |
-|---|----------|------|--------|-------------|-------------|---------------|
-| 1 | greptile | `src/foo.ts` | Open | 4 | -- | -- |
-| 2 | devin | `src/bar.ts` | Open | 3 | `abc1234` | `def5678` |
+| #   | Platform | File         | Status | Cycles open | Resolved in | Reappeared in |
+| --- | -------- | ------------ | ------ | ----------- | ----------- | ------------- |
+| 1   | greptile | `src/foo.ts` | Open   | 4           | --          | --            |
+| 2   | devin    | `src/bar.ts` | Open   | 3           | `abc1234`   | `def5678`     |
 
 **Recommendation:** Finding #2 reappeared after fix in cycle 4. This may indicate a fundamental issue that the automated fixer cannot resolve; consider manual review and fix.
-````
+```
 
 ### After fixing findings: cross-reference check
 
@@ -448,13 +619,117 @@ loop summary output. The loop does not block indefinitely on agent unavailabilit
 
 ---
 
+### Advisory finding dispositions (post-clean)
+
+When `pr-review-loop.sh` exits `clean` and the output contains a non-empty `ADVISORY_LABELS` value (advisory findings from any configured platform), the runner must document the disposition of each advisory finding and update the summary comment before marking the PR ready. This closes the gap between "we saw this finding" and "here is why it was or was not addressed."
+
+#### When this step triggers
+
+Any clean exit where the script output includes one or more advisory label entries in the `ADVISORY_LABELS` key (comma-separated names, e.g. `Possible Issue,Logic Issue`).
+
+#### Procedure
+
+1. **For each advisory finding** listed in the "Advisory findings" section of the Automated Reviewer Loop Summary comment, read the full finding text from the linked PR comment.
+
+2. **Determine the disposition** — choose one per finding:
+   - **Addressed** — the finding describes a real issue that was fixed in this PR. Cite the commit SHA.
+   - **Accepted** — the finding is technically valid but intentionally not fixed. Provide a one-line rationale (e.g., "edge case that cannot occur in practice because platform names are always set programmatically").
+   - **Deferred** — the finding will be tracked separately. Note the issue or backlog reference.
+   - **Rejected** — the finding is a false positive. Explain why (e.g., "regex verified correct via manual test — pattern correctly excludes `[bot]`-suffixed logins").
+
+3. **Update the Automated Reviewer Loop Summary comment** to append an "Advisory dispositions" subsection immediately after the advisory findings list:
+
+   ```
+   **Advisory dispositions:**
+   - *Finding Name*: [Addressed in `<sha>` | Accepted | Deferred | Rejected] — one-line reason.
+   ```
+
+4. **Edit the comment in place** using `gh api PATCH`:
+
+   ```bash
+   # Find the summary comment ID (last match in case of multiple).
+   # Use the same multi-marker pattern as Step 8c to cover all accepted summary forms.
+   comment_id=$(gh api repos/{owner}/{repo}/issues/{pr_number}/comments \
+     --jq '[.[] | select(.body | test("Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"))] | last | .id')
+
+   # Patch with the updated body (include dispositions section at the end, before the script footer)
+   gh api repos/{owner}/{repo}/issues/comments/$comment_id \
+     -X PATCH -f body="<updated body>"
+   ```
+
+This step is mandatory when advisory findings are present. A summary comment that only lists finding names and links without dispositions leaves human reviewers and future retrospectives without visibility into whether findings were considered and why.
+
+---
+
+### Pre-post verification guard (mandatory before every `gh pr comment` / `gh pr review` call)
+
+Before executing any `gh pr comment` or `gh pr review` command that summarises or
+characterises platform results (approval, pass, clean, or any equivalent verdict claim),
+the agent **must** complete this three-step guard. This applies equally to inline fix-pass
+summaries and to the final reviewer-loop summary comment.
+
+**Step 1 — Re-read the platform transcript.**
+
+Retrieve the raw platform response immediately before composing the comment body. Do not
+rely on in-session memory of what a platform said earlier in the loop. For each platform
+whose result will be cited, run a fresh fetch:
+
+```bash
+# Fetch the most recent review comment from a bot (adjust login pattern as needed)
+gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
+  --jq '[.[] | select(.user.login | test("coderabbit|devin|greptile|pr-agent"))] | last'
+
+# Or fetch the most recent issue comment
+gh api repos/{owner}/{repo}/issues/{pr_number}/comments \
+  --jq '[.[] | select(.user.login | test("coderabbit|devin|greptile|pr-agent"))] | last'
+```
+
+For script-posted summaries (`pr-review-loop.sh --post-final-summary` or auto-posted by the
+script on `clean`/`escalate` exits), the script itself is the authoritative transcript
+source — this guard applies to agent-composed comments, not script-composed output.
+
+**Step 2 — Cross-check every claim against the transcript.**
+
+For every claim of approval, pass, or clean status in the draft comment body:
+
+1. Identify the exact excerpt in the freshly fetched transcript that supports the claim.
+2. If no excerpt supports the claim, remove or reword the claim before posting.
+
+Examples of claims that must be directly supported:
+
+- "CodeRabbit APPROVED" — requires a review event with `state: APPROVED` or a transcript
+  excerpt such as "All discussions resolved" or an explicit approval statement.
+- "Devin found no issues" — requires a Devin comment body confirming no findings, not
+  merely the absence of a `CHANGES_REQUESTED` review.
+- "All platforms passed" — requires at least one supporting excerpt per platform cited.
+
+**Step 3 — Apply the conservative fallback when the transcript is absent or ambiguous.**
+
+If the transcript is unavailable (fetch returned empty, rate-limited, or timed out) or
+ambiguous (the platform comment does not clearly indicate approval or pass), **do not
+fabricate a result**. Use the following conservative fallback message instead of a
+fabricated summary:
+
+> "Review completed — see individual platform comments for details."
+
+This fallback is always safe to post. It does not make a false claim and does not block
+the PR from proceeding; human reviewers can read the platform comments directly.
+
+**Escalation on repeated transcript unavailability.**
+
+If the transcript fetch fails on two or more consecutive attempts for the same platform,
+log a warning in the fix commit comment and escalate to human review rather than continuing
+to compose summary comments without transcript support.
+
+---
+
 ### PR feedback tracking and comments
 
 Follow the "PR feedback tracking and comments" subsection of Step 7 in `91-orchestrate-work-protocol.md`:
 
 - **Ledger bootstrap:** Before starting Step 7, seed the PR feedback ledger with **all** open blocking findings visible on the PR across its full history (not only comments timestamped after the current `HEAD`). That way a fresh run does not declare clean while a code bug from an earlier commit on the branch is still open. Align with the pre-flight rules above. Note: `pr-review-loop.sh` performs a **stale findings recovery** for Devin — when Devin does not review the current HEAD (no check run), the script scans the full PR history for unresolved findings and reports `needs_fixes` with reason `stale_findings`.
 - Maintain a PR feedback ledger tracking all blocking findings across cycles (keyed by `(platform, path, body_snippet)`).
-- After each fixer push, post a **fix commit comment** on the PR listing which findings that commit resolved and any remaining open findings.
+- After each fixer push, post a **fix commit comment** on the PR listing which findings that commit resolved and any remaining open findings. Apply the [Pre-post verification guard](#pre-post-verification-guard-mandatory-before-every-gh-pr-comment--gh-pr-review-call) before composing each fix commit comment.
 - After each fixer push, **reply to each addressed inline review comment** on the PR to mark it as resolved. This is mandatory. Follow Protocol 91 ("Resolve inline review comments") for the exact `gh api` command format and delegation requirements for fixer subagents.
 - When the loop terminates with `clean` or `escalate`, **`pr-review-loop.sh` automatically posts the "Automated Reviewer Loop Summary" comment** — you do not need to post it manually for those exits. For `needs_fixes` at `cycle >= max_cycles`, pass `--post-final-summary` to the final script invocation and the summary is posted automatically. The script-posted comment satisfies the Step 8c `hasReviewSummary` check in all three cases.
 - If the result is `skipped` (no platforms configured), do not post a summary comment.

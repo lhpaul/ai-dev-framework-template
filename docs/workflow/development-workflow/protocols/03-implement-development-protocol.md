@@ -8,12 +8,12 @@
 
 ## Which Path to Use?
 
-| Path | Branch | Use when |
-|---|---|---|
-| **Full Pipeline** | `feature/[slug]` from `develop` | Feature with approved spec + plan |
-| **Refactor** | `refactor/[slug]` from `develop` | Code restructuring with approved plan (no spec) |
-| **Fast Track** | `fix/[slug]` from `develop` | Bug or simple change — clear scope, ≤3 files, no schema changes, no new patterns |
-| **Hotfix** | `hotfix/[slug]` from `main` | Critical production bug requiring immediate deployment |
+| Path              | Branch                           | Use when                                                                         |
+| ----------------- | -------------------------------- | -------------------------------------------------------------------------------- |
+| **Full Pipeline** | `feature/[slug]` from `develop`  | Feature with approved spec + plan                                                |
+| **Refactor**      | `refactor/[slug]` from `develop` | Code restructuring with approved plan (no spec)                                  |
+| **Fast Track**    | `fix/[slug]` from `develop`      | Bug or simple change — clear scope, ≤3 files, no schema changes, no new patterns |
+| **Hotfix**        | `hotfix/[slug]` from `main`      | Critical production bug requiring immediate deployment                           |
 
 ---
 
@@ -30,7 +30,7 @@ When your change creates or materially modifies `.github/workflows/*.yml`, compl
 
 ## Shell Script Quality Checklist
 
-When your change **creates or significantly modifies a `.sh` file**, complete this checklist before opening the development PR. These are the most common bash scripting anti-patterns that cause rework in the automated reviewer loop.
+When your change **creates or significantly modifies a `.sh` file**, or when your change **adds or edits shell code blocks (```` ```bash ```` / ```` ```sh ```` fenced blocks) inside a protocol or documentation `.md` file**, complete this checklist before opening the development PR. These are the most common bash scripting anti-patterns that cause rework in the automated reviewer loop.
 
 ### 1. jq variable injection
 
@@ -51,7 +51,7 @@ result=$(echo "$json" | jq --argjson count "$COUNT" '.items | .[:$count]')
 
 When using `set -o pipefail` (or `set -eo pipefail`), commands like `head`, `grep -m`, and others that close a pipe early will cause the writing process to receive SIGPIPE (exit code 141). Under `pipefail`, the parent shell observes the 141 exit code from the child process and (combined with `set -e`) exits the script. This looks like an error even when the behavior is intentional.
 
-**Note**: `trap ... PIPE` does **not** fire for pipeline SIGPIPE. SIGPIPE is delivered to the *child subprocess* writing to the closed pipe, not to the parent shell. The parent shell only observes the 141 exit code via `waitpid`. To catch this at the script level, use `trap ... EXIT` — it fires when `set -e` causes the shell to exit due to the pipefail-detected 141 status.
+**Note**: `trap ... PIPE` does **not** fire for pipeline SIGPIPE. SIGPIPE is delivered to the _child subprocess_ writing to the closed pipe, not to the parent shell. The parent shell only observes the 141 exit code via `waitpid`. To catch this at the script level, use `trap ... EXIT` — it fires when `set -e` causes the shell to exit due to the pipefail-detected 141 status.
 
 Guard against SIGPIPE false-positives on pipelines that may close early:
 
@@ -75,13 +75,13 @@ Choose the option that matches your script's error-handling strategy. Option A i
 
 Under `set -e`, any command that exits non-zero causes the script to abort — **including commands inside compound expressions**. The rules for compound expressions are counter-intuitive:
 
-| Expression | `set -e` behavior |
-|---|---|
-| `cmd` (bare) | Abort on non-zero |
-| `if cmd; then` | Safe — exit code is tested by `if`, never propagated |
+| Expression      | `set -e` behavior                                         |
+| --------------- | --------------------------------------------------------- |
+| `cmd` (bare)    | Abort on non-zero                                         |
+| `if cmd; then`  | Safe — exit code is tested by `if`, never propagated      |
 | `cmd \|\| true` | Safe — `true` always exits 0, so the `\|\|` chain exits 0 |
-| `cmd && other` | Safe — `set -e` does not abort on the left side of `&&` |
-| `result=$(cmd)` | **Abort on non-zero** — same as bare command |
+| `cmd && other`  | Safe — `set -e` does not abort on the left side of `&&`   |
+| `result=$(cmd)` | **Abort on non-zero** — same as bare command              |
 
 Capture exit codes explicitly when the command can legitimately fail:
 
@@ -174,6 +174,79 @@ REPO="${3:?Usage: $0 <pr_number> <owner> <repo>}"
 
 The `${VAR:?message}` form causes the script to exit with an informative error if the variable is unset or empty. Use it for all required positional parameters.
 
+### 8. Shell snippets in protocol and documentation `.md` files
+
+Shell code blocks embedded in protocol and documentation markdown files are copied verbatim by agents and humans following the protocol. Apply the same quality bar as for `.sh` files — there is no separate "docs exception."
+
+**Multi-command state-mutating blocks** (blocks that create branches, push, write files, label PRs, or otherwise modify persistent state):
+
+- Begin with `set -euo pipefail` (or, when running inside a function/sub-shell context where `set` is already active, document the inherited error-handling assumption in an inline comment).
+- Capture `gh` / `git` exit codes explicitly; do not rely on a bare command that would silently swallow a failure.
+- Redirect error output to `stderr` (`2>/dev/null` only when failure is truly expected and the caller handles it; otherwise let errors surface).
+
+**Blocks that commit or push to a branch**:
+
+- Add a wrong-branch guard before the commit or push. Check that the current branch matches the expected pattern before proceeding:
+
+  ```bash
+  CURRENT=$(git rev-parse --abbrev-ref HEAD)
+  [[ "$CURRENT" == fix/* ]] || { echo "ERROR: expected fix/* branch, got $CURRENT" >&2; exit 1; }
+  ```
+
+**Single-liner examples** (illustrative commands shown without multi-step context):
+
+- If the snippet can fail silently in a way that corrupts downstream state (e.g., a silent `gh` call whose output is consumed by the next step), add an explicit `|| exit 1` or `|| { echo "ERROR: ..."; exit 1; }`.
+- Single-liner `read`-only queries (`gh pr view`, `git log`, etc.) that do not modify state are exempt.
+
+These rules apply equally to all protocol documents under `docs/workflow/development-workflow/protocols/` and to any other markdown file that embeds shell commands intended to be run by agents or humans.
+
+---
+
+## Test Harness Coverage Checklist
+
+When your implementation includes **any test script, test function, or validation harness** (a script, function, or workflow that validates other scripts or logic), complete this checklist before self-approving at the verify/pre-commit step.
+
+**Why this checklist exists**: Agents naturally optimize for the happy path — writing tests that verify the code works under normal inputs. Edge cases (empty input, missing environment variables, concurrent invocations) are consistently missed during self-review and surface only in the external automated review phase (CodeRabbit, PR-Agent), causing multiple fix rounds. This checklist prompts deliberate coverage of boundary conditions before the PR is opened.
+
+**When to apply**: Mandatory for any implementation that ships or modifies a test script, test function, CI workflow step that runs tests, or any other harness that validates script or function behavior. Not required for non-test implementation files (application logic, documentation, configuration) that happen to be covered by existing tests.
+
+Complete every item below. If an item is not applicable, state why before skipping it — do not silently skip.
+
+- [ ] **Empty / zero-length input**: does the harness include at least one test where the primary input (string, array, file) is empty or zero-length, and the assertion verifies the correct behavior (error, warning, or defined default)?
+- [ ] **Whitespace-only input**: does the harness test input that is non-empty but contains only whitespace characters (spaces, tabs, newlines), where the expected behavior differs from a non-blank string?
+- [ ] **Boundary values**: does the harness test the minimum and maximum expected values (e.g., count = 0, count = 1, count = max, thresholds at the boundary, off-by-one positions)?
+- [ ] **Missing / absent environment variables**: does the harness test behavior when required environment variables (`GITHUB_TOKEN`, `OWNER`, `REPO`, custom vars) are unset or empty, and assert that the script exits with a clear error rather than silently proceeding?
+- [ ] **Concurrent / parallel execution**: for scripts that write shared state (files, git objects, GitHub API rate-limited resources), does the harness include at least one scenario that considers what happens under concurrent invocation, or explicitly document why isolation makes this safe?
+- [ ] **Negative assertions**: for every positive assertion ("output equals X when input is Y"), is there at least one corresponding negative assertion ("assertion fails when the code is broken") — for example, testing that a function returns non-zero on bad input, or that a mock captures the call that would be skipped on the wrong branch?
+
+**Additional items for Bash test harnesses** (apply when the harness is a `.sh` script that sources or invokes other shell scripts):
+
+- [ ] **Single EXIT trap**: does the harness register at most one `trap ... EXIT` handler? Multiple `trap` registrations silently overwrite the previous handler; verify the harness does not lose cleanup logic by checking that any additional cleanup is chained inside a single trap.
+- [ ] **Variable-length quoting safety**: does the harness include at least one test with variable-length or path-like input (filenames with spaces, tabs, glob characters, or newlines) and verify that variables are consistently quoted (`"$var"`, `"${arr[@]}"`) so word-splitting and globbing do not alter behavior?
+- [ ] **`BASH_SOURCE` / `HARNESS_MODE` guard placement**: if the harness uses `[[ "${BASH_SOURCE[0]}" == "${0}" ]]` or a `HARNESS_MODE` guard to distinguish sourced vs. executed contexts, verify the guard is top-level and evaluated before side effects/main execution, while keeping required function definitions and source statements available for sourced mode; tests must exercise both sourced and executed paths.
+- [ ] **Sourced-function ordering**: when the harness sources other scripts to expose functions under test, verify the source order matches the dependency order — a function sourced after the file that calls it will silently use the caller's stale definition rather than the updated one.
+
+If any item is unchecked after honest review: add the missing test cases before committing. Do not open the PR with known coverage gaps — the automated external reviewers (CodeRabbit) will catch them and require a fix round.
+
+---
+
+## Filter-Schema Canary Test Checklist
+
+**When to apply**: Conditional — applies **only when this PR adds one or more new filter parameters to a tool schema** (Zod, JSON Schema, Joi, Pydantic, OpenAPI, or any equivalent contract-declaration mechanism). If your PR does not add new filter parameters, skip this section entirely. Modifying or removing an existing filter parameter without changing the schema contract does not trigger this obligation.
+
+**Why this checklist exists**: A filter added to a schema is accepted by the API but may not be wired to the query builder's WHERE clause or equivalent filter-application function. Without a canary test, this silent no-op reaches production undetected — the filter appears to work (no error is thrown), but the result set is never narrowed.
+
+Complete every item below for each newly added filter parameter before opening the PR:
+
+- [ ] **Canary test present**: a canary test exists for each newly added filter.
+- [ ] **Two-invocation pattern**: the canary test calls the tool with the new filter set to a value that narrows or alters the result set, and calls the tool again with the filter absent or set to a meaningfully different value.
+- [ ] **Result-set assertion**: the canary test asserts that the two result sets differ.
+- [ ] **Observable effect**: the test data is designed so the filter has a visible effect — identical results for both invocations do not satisfy this requirement.
+- [ ] **Same-PR inclusion**: the canary test is included in this PR, not deferred to a follow-up.
+- [ ] **Impracticality documented**: if a canary test is impractical (e.g., no test fixtures, no in-memory DB), the constraint is documented explicitly in the PR and an alternative verification approach is proposed — silence is not acceptable.
+
+This requirement applies to **new** filter parameters only. Modifications to existing filter parameters that do not change the schema contract are exempt.
+
 ---
 
 ## Path 1: Full Pipeline
@@ -245,12 +318,17 @@ Determine the branch slug:
 - **With issue tracker**: `[issue-id]-[slug]` (e.g., `ENG-123-user-auth`)
 - **Without issue tracker**: `[slug]` (e.g., `user-auth`)
 
+**Integration-branch check**: Before creating the branch, check whether the work item carries an `integration-branch:<slug>` label (the orchestrator will have noted this in the handoff). If the label is present, use `develop-<slug>` as the base branch instead of `develop`:
+
 ```bash
-git fetch origin
-git checkout develop
-git pull origin develop
-git checkout -b feature/[branch-slug]
+# Standard:
+git checkout develop && git pull origin develop
+# If integration-branch:<slug> label is present, use develop-<slug> instead:
+# git checkout develop-<slug> && git pull origin develop-<slug>
+git checkout -b feature/[branch-slug]   # or fix/[branch-slug], refactor/[branch-slug]
 ```
+
+The PR opened at the end of this path must target `develop-<slug>` when the label is present. If the integration branch does not exist yet, the orchestrator should have created it before dispatching this protocol — do not create it here; instead, stop and inform the Work Item Runner.
 
 **Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout develop` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, confirm your working directory is inside the worktree path, not the main repo root (run `pwd` and compare). See the "Critical: Worktree Git Discipline" block in Protocol 91 Step 3 for the full pre-operation checklist.
 
@@ -278,6 +356,10 @@ Execute each step from the implementation plan in order.
 ### Step 5: Pre-Commit Verification
 
 Before committing, verify:
+
+**Test Harness Coverage Checklist (if the implementation includes any test script, test function, or validation harness)**: Complete the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) before self-approving. Do not open the PR with known coverage gaps.
+
+**Filter-Schema Canary Test Checklist (if this PR adds new filter parameters to a tool schema)**: Complete the [Filter-Schema Canary Test Checklist](#filter-schema-canary-test-checklist) before opening the PR. A missing canary test is a blocking code-review finding.
 
 **ShellCheck (if any `.sh` files were modified)**:
 
@@ -373,6 +455,8 @@ git push -u origin feature/[slug]
 Use Conventional Commits (see `docs/best-practices/2-version-control.md`).
 
 ### Step 8: Open PR (Draft)
+
+**Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
 
 Open a **draft** PR targeting `develop` with:
 
@@ -572,11 +656,11 @@ git checkout -b refactor/[branch-slug]
 
    After performing any global substitution (find-and-replace, `sed`, `git mv`, or IDE rename), verify all three reference categories before committing:
 
-   | Category | What to check | Example pattern |
-   |---|---|---|
-   | **Link targets** | `[text](old-path)` — both the link target and `text` when text mirrors the old path | `[docs/ai/old](docs/ai/old)` |
+   | Category                  | What to check                                                                                         | Example pattern                    |
+   | ------------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------- |
+   | **Link targets**          | `[text](old-path)` — both the link target and `text` when text mirrors the old path                   | `[docs/ai/old](docs/ai/old)`       |
    | **Display text in links** | `[old-path-text](new-path)` — link target already updated but display text still shows the old string | `[docs/ai/old](docs/workflow/new)` |
-   | **Non-link occurrences** | Bare old-string in prose, code blocks, directory trees, YAML values, and shell scripts | `docs/ai/old` inside a code fence |
+   | **Non-link occurrences**  | Bare old-string in prose, code blocks, directory trees, YAML values, and shell scripts                | `docs/ai/old` inside a code fence  |
 
    Run a residual-occurrence check immediately after the substitution and before staging:
 
@@ -595,7 +679,13 @@ git checkout -b refactor/[branch-slug]
    3. Re-run the check until the output contains only intentional occurrences.
 
 4. If scope is larger than the plan described, **stop and report**
-5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area. If any `.sh` files were modified, run ShellCheck before committing:
+5. Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area.
+
+   **Test Harness Coverage Checklist (if the implementation includes any test script, test function, or validation harness)**: Complete the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) before self-approving. Do not open the PR with known coverage gaps.
+
+   **Filter-Schema Canary Test Checklist (if this PR adds new filter parameters to a tool schema)**: Complete the [Filter-Schema Canary Test Checklist](#filter-schema-canary-test-checklist) before opening the PR. A missing canary test is a blocking code-review finding.
+
+   If any `.sh` files were modified, run ShellCheck before committing:
 
    ```bash
    CHANGED_SH=$({ git diff --name-only --diff-filter=d; git ls-files --others --exclude-standard; } | grep '\.sh$' | sort -u || true)
@@ -613,7 +703,6 @@ git checkout -b refactor/[branch-slug]
    **Duplicate-section prevention (check before writing)**: Before writing the CHANGELOG entry, read the existing `[Unreleased]` block and check whether a `### Changed` section header already exists. If it does, append your bullet(s) to the existing section — do **not** create a new `### Changed` header. If `### Changed` does not yet exist under `[Unreleased]`, create it. After writing, verify that the header appears exactly once within the `[Unreleased]` block: `awk '/^## \[Unreleased\]/{found=1} /^## \[/{if(found && !/Unreleased/) exit} found' CHANGELOG.md | grep -c "^### Changed"` — expected output: 1; if greater than 1, merge the duplicate sections before staging.
 
    **CHANGELOG format verification (before staging)**: After writing the CHANGELOG entry, verify the entry for the following defects and fix them in-place before staging:
-
    1. **Trailing whitespace**: No line in the written entry should end with one or more whitespace characters. Note: intentional two-space Markdown hard line breaks (`<text>  ` with exactly two trailing spaces followed by a newline) are not trailing whitespace and must not be removed.
    2. **Trailing blank lines**: The entry must not end with two or more consecutive blank lines.
    3. **Link reference definitions**: If you renamed `[Unreleased]` to a versioned section (e.g., `## [1.2.3] - 2026-01-01`), verify that a corresponding link reference definition exists at the bottom of the file (e.g., `[1.2.3]: https://github.com/owner/repo/compare/v1.2.2...v1.2.3`). Run the check to catch any missing definitions:
@@ -644,14 +733,15 @@ git checkout -b refactor/[branch-slug]
 
 7. Commit: `refactor([scope]): [description]`
 8. Push branch to remote
-9. Open a **draft** PR targeting `develop` with refactor-appropriate metadata (do **not** reuse Path 1 Step 8 verbatim — that path uses `feat(...)` and a spec link):
-   - **Title**: `refactor([scope]): [short description]`
-   - **Description**:
-     - What was refactored and why
-     - Link to the **implementation plan** only (no spec)
-     - Test plan (how to validate)
-     - Any deviations from the plan (with justification)
-     - CHANGELOG entry preview
+9. **Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
+10. Open a **draft** PR targeting `develop` with refactor-appropriate metadata (do **not** reuse Path 1 Step 8 verbatim — that path uses `feat(...)` and a spec link):
+    - **Title**: `refactor([scope]): [short description]`
+    - **Description**:
+      - What was refactored and why
+      - Link to the **implementation plan** only (no spec)
+      - Test plan (how to validate)
+      - Any deviations from the plan (with justification)
+      - CHANGELOG entry preview
 
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
 
@@ -682,7 +772,7 @@ echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
 
 **Important**: Always use `--base develop` to explicitly target the `develop` branch. The pre-create guard and post-create assertion above are the enforcement mechanism — do not skip them.
 
-10. Hand off to the Work Item Runner with the same lifecycle expectations as Path 1 Step 9 (internal review gate, automated reviewer loop, CI, labels). **Label derivation rule**: `refactor/*` branches always require `ready-for-regression` based on branch prefix, not content type. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table. See `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
+11. Hand off to the Work Item Runner with the same lifecycle expectations as Path 1 Step 9 (internal review gate, automated reviewer loop, CI, labels). **Label derivation rule**: `refactor/*` branches always require `ready-for-regression` based on branch prefix, not content type. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table. See `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
 
 ---
 
@@ -695,6 +785,11 @@ echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
 - [ ] No new database schema migrations
 - [ ] No new architectural patterns
 - [ ] Human provided a clear, self-contained brief
+- [ ] **No multi-layer scope signals** — the issue title, body, and any linked spec/plan do not contain concrete signals that the change spans more than one architectural layer (see "Cross-layer scope check" below)
+
+**Cross-layer scope check**: Apply the deterministic decision rule in
+[`91-orchestrate-work-protocol.md` Step 2 — Cross-layer scope check](./91-orchestrate-work-protocol.md)
+before selecting Fast Track. That section is the authoritative definition of multi-layer signals, the inspection scope, and the routing decision.
 
 **If any criterion fails**: Use the Full Pipeline instead.
 
@@ -705,6 +800,27 @@ echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
 Read the brief. If the work item exists in an issue tracker, follow `docs/workflow/development-workflow/integrations/issue-tracker.md` for `In Development (Fast Track)` expectations.
 
 If your changes touch `.github/workflows/*.yml`, apply `## GitHub Actions Workflow Security Checklist` before opening the PR.
+
+#### Verify-Before-Add (mandatory for tickets claiming a feature is missing or unavailable)
+
+When the issue claims that a feature, field, or capability is "missing," "unavailable," or "not working" — but does not include a stack trace, failing test, or other reproducible artifact — you must verify the gap exists before writing any code.
+
+**Apply this check when the ticket uses language such as:**
+
+- "X is not available in Y"
+- "Y does not return X"
+- "X is missing from the response"
+- "X is not supported"
+
+**Do not apply this check to:** confirmed bugs with stack traces, failing automated tests, or issues with explicit reproduction steps that you have already verified independently.
+
+**Verification steps (run before Step 1b):**
+
+1. **Reproduce the reported gap independently** using the exact steps described in the ticket — do not assume the reporter's description is complete or correct.
+2. **If the gap cannot be reproduced** (the feature already exists or works as described): cancel the ticket, post a comment explaining the finding, and stop. Do not implement anything.
+3. **If the gap is confirmed reproducible**: continue to Step 1b and proceed with implementation.
+
+> **Example**: A ticket claims "`qualificationDate` is not available in `search_projects`." Before writing any code, call `search_projects` with a `fields` projection that includes `qualificationDate`. If the field is returned, the feature already exists — the ticket is based on a misreading of the API description. Cancel the ticket and document the finding. Only proceed if `qualificationDate` is genuinely absent and cannot be obtained via any supported projection.
 
 ### Step 1b: Pre-Implementation Scope Checklist
 
@@ -739,12 +855,17 @@ If no blocking ambiguity remains, proceed without an extra approval pause; other
 
 Branch from `develop` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without):
 
+**Integration-branch check**: Before creating the branch, check whether the work item carries an `integration-branch:<slug>` label (the orchestrator will have noted this in the handoff). If the label is present, use `develop-<slug>` as the base branch instead of `develop`:
+
 ```bash
-git fetch origin
-git checkout develop
-git pull origin develop
+# Standard:
+git checkout develop && git pull origin develop
+# If integration-branch:<slug> label is present, use develop-<slug> instead:
+# git checkout develop-<slug> && git pull origin develop-<slug>
 git checkout -b fix/[branch-slug]
 ```
+
+The PR opened at the end of this path must target `develop-<slug>` when the label is present. If the integration branch does not exist yet, the orchestrator should have created it before dispatching this protocol — do not create it here; instead, stop and inform the Work Item Runner.
 
 **Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout develop` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, confirm your working directory is inside the worktree path, not the main repo root (run `pwd` and compare). See the "Critical: Worktree Git Discipline" block in Protocol 91 Step 3 for the full pre-operation checklist.
 
@@ -755,6 +876,10 @@ Implement the fix.
 ### Step 5: Verify
 
 Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected area.
+
+**Test Harness Coverage Checklist (if the implementation includes any test script, test function, or validation harness)**: Complete the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) before self-approving. Do not open the PR with known coverage gaps.
+
+**Filter-Schema Canary Test Checklist (if this PR adds new filter parameters to a tool schema)**: Complete the [Filter-Schema Canary Test Checklist](#filter-schema-canary-test-checklist) before opening the PR. A missing canary test is a blocking code-review finding.
 
 **ShellCheck (if any `.sh` files were modified)**:
 
@@ -814,6 +939,8 @@ git push -u origin fix/[branch-slug]
 ```
 
 ### Step 8: Open PR (Draft)
+
+**Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
 
 Open a **draft** PR targeting `develop` using the same structure as Path 1 `### Step 8: Open PR (Draft)`, but with a **`fix(...)`** title and a fix-focused description (omit spec/plan links when none exist):
 
@@ -974,6 +1101,10 @@ Implement the minimal fix (do not bundle unrelated changes).
 
 Verify: build, lint, tests pass.
 
+**Test Harness Coverage Checklist (if the implementation includes any test script, test function, or validation harness)**: Complete the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) before self-approving. Do not open the PR with known coverage gaps.
+
+**Filter-Schema Canary Test Checklist (if this PR adds new filter parameters to a tool schema)**: Complete the [Filter-Schema Canary Test Checklist](#filter-schema-canary-test-checklist) before opening the PR. A missing canary test is a blocking code-review finding.
+
 **ShellCheck (if any `.sh` files were modified)**:
 
 ```bash
@@ -1053,6 +1184,8 @@ git push -u origin hotfix/[branch-slug]
 ```
 
 ### Step 8: Open PR (Draft)
+
+**Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
 
 Open a **draft** PR targeting `main` by adapting Path 1 `### Step 8: Open PR (Draft)` for hotfix (`fix(...)` title with `(hotfix)` as needed, incident-focused body, target branch `main`):
 
@@ -1141,10 +1274,10 @@ Apply `ready-for-regression` and `ready-for-human-review` labels when the PR is 
 
 **Branch lifecycle summary**:
 
-| Branch | Created from | Merges into | Reused for backport? |
-|---|---|---|---|
-| `hotfix/[slug]` | `main` | `main` | No |
-| `backport/hotfix/[slug]` | `origin/main` (post-merge) | `develop` | — |
+| Branch                   | Created from               | Merges into | Reused for backport? |
+| ------------------------ | -------------------------- | ----------- | -------------------- |
+| `hotfix/[slug]`          | `main`                     | `main`      | No                   |
+| `backport/hotfix/[slug]` | `origin/main` (post-merge) | `develop`   | —                    |
 
 **CHANGELOG on backport PR**: Do **not** add a new CHANGELOG entry on the backport branch. The versioned entry written in Step 6 already exists in `main` and will flow into `develop` via the merge.
 
@@ -1186,6 +1319,7 @@ When you encounter something the spec or plan doesn't cover:
   3. **Move on** without implementing the out-of-scope fix
 
   This prevents merge conflicts, scope creep, and wasted review cycles. Scope boundaries are especially critical in parallel batch orchestration where multiple agents work simultaneously.
+
 - Follow all best practices in `docs/best-practices/`
 - Never expose raw internal values (enum codes, IDs) directly in user-facing output — use display labels
 - Extract duplication only when the same logic appears 3+ times and the abstraction is clear

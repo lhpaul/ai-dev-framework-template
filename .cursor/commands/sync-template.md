@@ -21,15 +21,19 @@ Parse the user's arguments:
 - No arguments → check `.tmp/template-config.json` in the current project
 
 **If `.tmp/template-config.json` exists**, read it and use the saved source:
+
 ```json
 { "templatePath": "../ai-dev-framework-template" }
 ```
+
 or
+
 ```json
 { "templateUrl": "https://github.com/org/repo" }
 ```
 
 **If no arguments and no config file**, ask the user:
+
 > "I need to know where to find the upstream template. Do you want to use a local path (e.g., `../ai-dev-framework-template`) or a remote GitHub URL? I'll save your answer to `.tmp/template-config.json` for future runs."
 
 Save the user's answer to `.tmp/template-config.json` before continuing (create the `.tmp` directory if needed; it is gitignored).
@@ -54,6 +58,7 @@ Once the template source is resolved, read its `CHANGELOG.md` and extract the la
 **Migration notes check**: If `SYNC_MANIFEST` is loaded, read `migration_notes` from it. Read `template.last_synced_version` from the project's `.ai-dev-workflow.yaml` (if the file or field is absent, treat it as unknown — show all notes).
 
 For each entry in `migration_notes`: compare `entry.applies_if_syncing_from_before` against `last_synced_version` using semver. Show the entry if:
+
 - `last_synced_version` is unknown/absent, **or**
 - `last_synced_version` is strictly less than `entry.applies_if_syncing_from_before`
 
@@ -98,6 +103,7 @@ If the user invokes sync-template with `--dry-run`, run only this step (Step 0.5
 ```
 
 When `--dry-run` is active, the final output should end with:
+
 ```
 Dry-run complete. No changes were applied. Re-run without --dry-run to apply changes.
 ```
@@ -124,7 +130,8 @@ Check for known CI/CD configuration mismatches between the template and the proj
 
 1. **Workflow file presence**: compare the set of `.github/workflows/` files in the template (under `categories.special_handling` if manifest is loaded, otherwise the embedded special-handling list) against the project. List any files that are in the template but absent from the project — these may be needed for full CI coverage after the sync.
 
-2. **Workflow YAML parse test** (pre-apply): for each workflow file that *would be updated* based on the Category 1 diff, verify the *template* version parses correctly before applying:
+2. **Workflow YAML parse test** (pre-apply): for each workflow file that _would be updated_ based on the Category 1 diff, verify the _template_ version parses correctly before applying:
+
    ```bash
    if command -v yamllint >/dev/null 2>&1; then
      yamllint -d "{extends: relaxed, rules: {line-length: disable}}" "<template_workflow_file>" \
@@ -134,7 +141,8 @@ Check for known CI/CD configuration mismatches between the template and the proj
        || echo "YAML PARSE ISSUE (template source): <template_workflow_file>"
    fi
    ```
-   A parse failure in the *template* source is unusual but must be surfaced before applying.
+
+   A parse failure in the _template_ source is unusual but must be surfaced before applying.
 
 3. **Script reference gaps**: scan all template workflow files for `scripts/` references and check whether those paths exist in the project:
    ```bash
@@ -153,22 +161,28 @@ Check for known CI/CD configuration mismatches between the template and the proj
 Compare the project's `CHANGELOG.md` against the template's `CHANGELOG.md` for structural compatibility:
 
 1. **`[Unreleased]` section presence**: verify the project's CHANGELOG has an `[Unreleased]` section:
+
    ```bash
    grep -c '^\#\# \[Unreleased\]' CHANGELOG.md
    ```
+
    If the count is 0, flag: "CHANGELOG missing [Unreleased] section — the sync commit's CHANGELOG entry cannot be placed correctly."
 
 2. **Link reference definitions**: scan the project's CHANGELOG for any `[Unreleased]:` link reference definition line (typically at the bottom of the file):
+
    ```bash
    grep -n '^\[Unreleased\]:' CHANGELOG.md
    ```
+
    If absent, flag: "CHANGELOG missing [Unreleased] link reference — PR automation tools that render comparison links will produce broken links."
 
 3. **Duplicate section headers**: check for duplicate `### Category` headers within the `[Unreleased]` block (a pre-existing structural defect that would cause problems when a CHANGELOG entry is added):
+
    ```bash
    awk '/^\#\# \[Unreleased\]/{found=1} /^\#\# \[/{if(found && !/Unreleased/) exit} found && /^\#\#\# /' CHANGELOG.md \
      | sort | uniq -d
    ```
+
    Any output means duplicate headers exist; flag them for pre-sync consolidation.
 
 4. **Trailing whitespace or blank-line defects**: run a quick check on the `[Unreleased]` block for trailing whitespace:
@@ -185,10 +199,12 @@ Check for known patterns where the template's protocol files reference tooling o
 1. **`sync-manifest.yaml` presence**: if the template has a `sync-manifest.yaml` but the project does not, note this as expected behavior (manifest-driven sync vs. fallback mode). No action needed, but document it in the report.
 
 2. **`.ai-dev-workflow.yaml` presence and validity**: the sync Step 5 writes to this file; verify it exists and parses as valid YAML:
+
    ```bash
    python3 -c "import sys, yaml; yaml.safe_load(open('.ai-dev-workflow.yaml'))" \
      && echo "OK" || echo "PARSE ERROR: .ai-dev-workflow.yaml"
    ```
+
    If missing or malformed, flag: "Step 5 will fail to record the last-synced version — fix `.ai-dev-workflow.yaml` before applying."
 
 3. **Issue tracker integration references**: if the template's always-sync files contain references to issue tracker integrations (e.g., Linear, GitHub Projects), check that the project's `.ai-dev-workflow.yaml` has a matching `issue_tracker` section. List any referenced integration that the project has not configured as an informational note (non-blocking).
@@ -243,26 +259,33 @@ After printing the report, continue to Step 1 (unless `--dry-run` was specified)
 Run these checks **before touching anything**. If any check fails, report the problem clearly and abort.
 
 1. **Is this a git repository?**
+
    ```bash
    git rev-parse --is-inside-work-tree
    ```
 
 2. **Is the working directory clean?**
+
    ```bash
    git status --porcelain
    ```
+
    Must return empty output. If there are staged, unstaged, or untracked changes, abort with:
+
    > "Your working directory has uncommitted changes. Please commit or stash them before syncing."
 
 3. **Is the project on the correct base branch?**
+
    ```bash
    git branch --list develop
    git branch --show-current
    ```
-   - If `develop` branch exists → must be on `develop`
-   - If `develop` does not exist → must be on `main`
 
-   If on the wrong branch, abort with:
+   - If `develop` branch exists → must be on `develop`; set `BASE_BRANCH=develop`
+   - If `develop` does not exist → must be on `main`; set `BASE_BRANCH=main`
+
+   Store `BASE_BRANCH` for use in Step 5.4. If on the wrong branch, abort with:
+
    > "You must be on the `develop` branch (or `main` if `develop` doesn't exist) before syncing. Please switch branches and try again."
 
 ---
@@ -299,6 +322,7 @@ docs/best-practices/3-testing.md
 **Comparison method:** For each path in the always-sync list, enumerate files with `find` (or equivalent) and compare each path to the template using `cmp` or `diff -q`. Do not rely on ad-hoc agent inspection alone — a missed directory is a silent sync gap.
 
 For each file in these paths:
+
 - **Exists in template, not in project** → classify as ✅ **Add**
 - **Exists in both, content differs** → classify as 📝 **Update** (prepare a concise diff summary)
 - **Exists in both, content identical** → classify as ⏭ **No change** (list but don't highlight)
@@ -440,6 +464,7 @@ Always-sync disposition:
 ```
 
 Then ask:
+
 > "Ready to apply the changes above? For the files listed under ✅ **New files** and 📝 **Modified files** in the **always-sync** section only, I can apply them in one batch when you confirm. Special-handling and optional additive-update paths always need explicit per-path approval — bulk phrases like \"apply all\" never include those categories."
 
 **Do not modify any files until you have explicit confirmation.**
@@ -466,7 +491,7 @@ For each file that was added or updated in this step:
    ls <path>   # or: test -f <path> && echo "OK" || echo "MISSING: <path>"
    ```
 3. If any path does not resolve, **do not commit**. Instead, surface it as a manual review item:
-   > "⚠️  Cross-reference path not found after sync: `<path>` (in `<file>`). The path prefix was updated but the filename may have changed. Please verify the correct path and update the reference manually before committing."
+   > "⚠️ Cross-reference path not found after sync: `<path>` (in `<file>`). The path prefix was updated but the filename may have changed. Please verify the correct path and update the reference manually before committing."
 
 Collect all broken paths and report them together before asking the user to confirm or fix them. Only proceed to Step 5 once either (a) all paths resolve, or (b) the user has explicitly acknowledged each broken path and confirmed they will fix it manually after the commit.
 
@@ -485,6 +510,7 @@ Do not use `rm -rf` — use `git rm -r` so the removal is tracked by git. After 
 **Action 2 — Update cross-references in project-specific files** (only if the maintainer approved "update cross-references"):
 
 For each project-specific file that contained references to `old_path` (identified during Step 2 rename detection):
+
 - Replace every occurrence of `old_path` with `new_path` in that file (exact string substitution, preserving surrounding context)
 - Show a brief diff of each change before writing
 - Apply only after the maintainer does not object
@@ -500,6 +526,7 @@ If any references remain, list them and ask the maintainer whether to update the
 **Bulk phrases do not cover rename cleanup**: "apply all", "apply everything", or "yes to all" never authorize rename cleanup actions. Each rename cleanup action (delete directory, update cross-references) requires the maintainer to name it explicitly.
 
 If the template source was a remote clone, clean it up now:
+
 ```bash
 rm -rf "$TEMPLATE_TEMP_DIR"   # use the exact path, not a wildcard
 ```
@@ -561,6 +588,7 @@ grep -nHE 'scripts/[A-Za-z0-9_/.-]+' .github/workflows/*.yml .github/workflows/*
 ```
 
 Collect all missing script paths. If any are reported:
+
 - If the missing path was introduced by the template sync (i.e., the file is listed under `scripts/development-workflow/` in the always-sync list but does not exist in the project), note it as a template sync gap and offer to copy the missing script from the template source if it exists there.
 - Otherwise, surface it as a manual fix required:
   > "WARNING: Workflow file references `<path>` which does not exist in this project. The sync may have introduced a broken workflow reference. Please verify and fix before committing."
@@ -571,51 +599,183 @@ This check is **advisory for the project-specific category** (e.g., `.github/wor
 
 ---
 
-## Step 5 — Generate git instructions
+## Step 5 — Commit, push, and open PR
 
-Before printing the git instructions, record the last-synced template version:
+### 5.1 — Record last-synced template version
 
 1. Read `.ai-dev-workflow.yaml` from the project root.
-2. Set (or update) `template.last_synced_version` to `v{TEMPLATE_VERSION}` under the `template:` key. If the `template:` key does not exist yet, append the section after the `browser_automation:` block.
-3. Print: `Recorded last-synced template version: v{TEMPLATE_VERSION}`
+2. Capture the existing `template.last_synced_version` value into `PREV_LAST_VERSION` **before** writing the new value (this is used in Step 5.4 to bound the CHANGELOG extraction to changes since the previous sync):
 
-Then print ready-to-use git instructions (do not execute them — let the user run them after reviewing the changes):
+   ```bash
+   PREV_LAST_VERSION=$(grep -E 'last_synced_version:' .ai-dev-workflow.yaml | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+   ```
+
+3. Set (or update) `template.last_synced_version` to `v{TEMPLATE_VERSION}` under the `template:` key. If the `template:` key does not exist yet, append the section after the `browser_automation:` block.
+4. Print: `Recorded last-synced template version: v{TEMPLATE_VERSION}`
+
+### 5.2 — Create sync branch
+
+Execute:
 
 ```bash
-# 1. Create a sync branch
 git checkout -b feature/sync-template-v{TEMPLATE_VERSION}
+```
 
-# 2. Review the changes
-git diff --stat
+### 5.3 — Stage and commit
 
-# 3. Stage and commit (only after you've reviewed the changes)
-git add REVIEW.md docs/workflow/ .claude/agents/ .claude/commands/ .claude/skills/ .codex/skills/ .cursor/ \
+Stage only approved paths — avoid `git add .` so unapproved files never enter the commit:
+
+```bash
+git add REVIEW.md docs/workflow/ .claude/agents/ .claude/commands/ .claude/skills/ .codex/skills/ \
+  .cursor/commands/ .cursor/agents/ .cursor/rules/ \
   scripts/development-workflow/ scripts/README.md \
   docs/best-practices/1-general.md \
   docs/best-practices/2-version-control.md \
   docs/best-practices/3-testing.md
-# If sync-manifest.yaml was updated, stage it as well:
-git add sync-manifest.yaml
-# Stage the updated last_synced_version field:
-git add .ai-dev-workflow.yaml
-git commit -m "chore(template): sync framework updates from template v{TEMPLATE_VERSION}"
+```
 
-# 4. Push and open PR
+If `sync-manifest.yaml` was updated, stage it as well:
+
+```bash
+git add sync-manifest.yaml
+```
+
+Stage the updated `last_synced_version` field:
+
+```bash
+git add .ai-dev-workflow.yaml
+```
+
+If the user explicitly approved additional paths in Step 4 (via the manual-review, optional-additive, or rename-cleanup sections), stage them now. Track approved additional paths in an `APPROVED_ADDITIONAL_PATHS` list during Step 4 as each item is approved, then apply them here:
+
+```bash
+# Stage any additional paths approved interactively in Step 4:
+if [ -n "$APPROVED_ADDITIONAL_PATHS" ]; then
+  printf '%s\n' "$APPROVED_ADDITIONAL_PATHS" \
+    | while IFS= read -r p; do
+        [ -n "$p" ] && git add -- "$p"
+      done
+fi
+```
+
+Run:
+
+```bash
+git diff --stat --cached
+git commit -m "chore(template): sync framework updates from template v{TEMPLATE_VERSION}"
+```
+
+### 5.4 — Push and open PR
+
+Execute:
+
+```bash
 git push -u origin feature/sync-template-v{TEMPLATE_VERSION}
 ```
 
-**Suggested PR description:**
-```
-## Template sync: v{TEMPLATE_VERSION}
+Then immediately create the PR (do not print instructions for the user to run manually — execute this step directly).
 
-Sync framework-level files from [ai-dev-framework-template](TEMPLATE_URL) v{TEMPLATE_VERSION}.
+First, extract the relevant CHANGELOG section from the template's `CHANGELOG.md` and compose the PR body. Use `TEMPLATE_DIR` (the resolved template source path from Step 0) and `TEMPLATE_VERSION`:
+
+```bash
+# PREV_LAST_VERSION was captured in Step 5.1 before updating .ai-dev-workflow.yaml.
+# Use it here to bound the CHANGELOG extraction to only changes since the previous sync.
+# Extract the CHANGELOG section for changes since PREV_LAST_VERSION
+if [ -n "$PREV_LAST_VERSION" ]; then
+  CHANGELOG_SECTION=$(awk -v start="${TEMPLATE_VERSION#v}" -v stop="${PREV_LAST_VERSION#v}" '
+    $0 == "## [" start "]" { in_range=1 }
+    in_range {
+      if ($0 == "## [" stop "]") exit
+      print
+    }
+  ' "${TEMPLATE_DIR}/CHANGELOG.md")
+else
+  # No previous version — extract content after the TEMPLATE_VERSION header up to the next versioned section
+  CHANGELOG_SECTION=$(awk -v tv="${TEMPLATE_VERSION#v}" '
+    $0 == "## [" tv "]" { in_range=1; next }
+    in_range && $0 ~ /^## \[/ { exit }
+    in_range { print }
+  ' "${TEMPLATE_DIR}/CHANGELOG.md")
+fi
+
+# Compose the PR body
+PR_BODY="## Template sync: ${TEMPLATE_VERSION}
+
+Sync framework-level files from the upstream template ${TEMPLATE_VERSION}.
 
 ### Changes included
-[Paste the relevant section from the template's CHANGELOG.md here]
+
+${CHANGELOG_SECTION}
 
 ### What was NOT overwritten
+
 Project-specific files (AGENTS.md, README.md, CHANGELOG.md, docs/project/, etc.)
-were not overwritten; optional additive updates from the template may have been applied where you approved them, with project-specific content preserved.
+were not overwritten; optional additive updates from the template may have been applied where you approved them, with project-specific content preserved."
 ```
 
-Paste the relevant section from the template's `CHANGELOG.md` into the PR description placeholder.
+Then create the PR using `BASE_BRANCH` from Step 1:
+
+```bash
+PR_URL=$(gh pr create \
+  --title "chore(template): sync framework updates from template ${TEMPLATE_VERSION}" \
+  --body "$PR_BODY" \
+  --base "$BASE_BRANCH" \
+  --draft)
+PR_NUMBER=$(gh pr view "$PR_URL" --json number --jq '.number')
+echo "PR created: $PR_URL (#$PR_NUMBER)"
+```
+
+The `--draft` flag opens the PR as a draft so automated reviewers do not trigger prematurely; Step 6 will convert it to non-draft after the reviewer gate clears. Store `$PR_NUMBER` and `$PR_URL` for use in Step 6.
+
+---
+
+## Step 6 — Start the reviewer loop
+
+After the PR is open, run the reviewer loop immediately — do not ask the user to start it manually.
+
+### 6.1 — Run the internal review gate (Step 7a)
+
+Follow the full Step 7a procedure defined in `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` Step 7a ("Internal reviewer gate"), using the PR opened in Step 5.4 as the target.
+
+The sync-template PR is a `feature/*` branch, so the two-pass code review procedure applies. Key focus areas for the `claude` reviewer pass on a sync PR:
+
+- No project-specific content was accidentally overwritten by the sync.
+- Always-sync files match what was approved in Step 3.
+- CHANGELOG entry (if any) is correctly formatted under `[Unreleased]`.
+- `.ai-dev-workflow.yaml` was updated with `last_synced_version`.
+
+Apply any blocking fixes, commit, and push before proceeding. Continue until all configured internal reviewers have approved (or are unavailable under the configured policy).
+
+Once the Step 7a gate passes, ensure the PR is non-draft:
+
+```bash
+gh pr ready "$PR_NUMBER"
+```
+
+### 6.2 — Run the automated reviewer loop (Step 7)
+
+Run `scripts/development-workflow/pr-review-loop.sh` against the PR:
+
+```bash
+bash scripts/development-workflow/pr-review-loop.sh "$PR_NUMBER"
+```
+
+Monitor the output. If the script reports unresolved findings, apply the required fixes, push, and re-run until the loop exits clean or escalates.
+
+### 6.3 — Apply readiness labels
+
+Once the reviewer loop exits clean:
+
+```bash
+gh pr edit "$PR_NUMBER" --add-label "ready-for-regression"
+gh pr edit "$PR_NUMBER" --add-label "ready-for-human-review"
+```
+
+Update the tracker status to `Development in Review` if an issue tracker is configured.
+
+Print a final summary:
+
+```
+Sync complete. PR #$PR_NUMBER is open and ready for human review.
+URL: $PR_URL
+```

@@ -11,14 +11,14 @@
 
 > List the main technologies used, with a brief rationale for each choice.
 
-| Layer | Technology | Notes |
-|---|---|---|
+| Layer    | Technology          | Notes |
+| -------- | ------------------- | ----- |
 | Frontend | [Framework/Library] | [Why] |
-| Backend | [Framework/Runtime] | [Why] |
-| Database | [DB engine] | [Why] |
-| Auth | [Auth solution] | [Why] |
-| Hosting | [Platform] | [Why] |
-| CI/CD | [Tool] | [Why] |
+| Backend  | [Framework/Runtime] | [Why] |
+| Database | [DB engine]         | [Why] |
+| Auth     | [Auth solution]     | [Why] |
+| Hosting  | [Platform]          | [Why] |
+| CI/CD    | [Tool]              | [Why] |
 
 ## Key Architectural Decisions
 
@@ -50,11 +50,11 @@
 
 > How are environments structured (local / staging / production)? What varies per environment?
 
-| Environment | Purpose | URL / Endpoint |
-|---|---|---|
-| Local | Development | localhost |
-| Staging / Dev | Team testing | [URL] |
-| Production | Live users | [URL] |
+| Environment   | Purpose      | URL / Endpoint |
+| ------------- | ------------ | -------------- |
+| Local         | Development  | localhost      |
+| Staging / Dev | Team testing | [URL]          |
+| Production    | Live users   | [URL]          |
 
 ### Deployment Mapping (Template Convention)
 
@@ -64,10 +64,10 @@
 > - `develop` -> `develop` (non-production)
 > - `main` -> `production`
 
-| Branch | Target environment | Deployment workflow | Approval / protections |
-|---|---|---|---|
-| develop | develop | `.github/workflows/deploy.yml` (customized downstream) | [e.g. required checks only] |
-| main | production | `.github/workflows/deploy.yml` (customized downstream) | [e.g. required reviewers + environment protection rules] |
+| Branch  | Target environment | Deployment workflow                                    | Approval / protections                                   |
+| ------- | ------------------ | ------------------------------------------------------ | -------------------------------------------------------- |
+| develop | develop            | `.github/workflows/deploy.yml` (customized downstream) | [e.g. required checks only]                              |
+| main    | production         | `.github/workflows/deploy.yml` (customized downstream) | [e.g. required reviewers + environment protection rules] |
 
 > Also list environment-specific variables/secrets by **name only** (never values).
 
@@ -75,8 +75,8 @@
 
 > List third-party services integrated with the product.
 
-| Service | Purpose | Notes |
-|---|---|---|
+| Service   | Purpose   | Notes   |
+| --------- | --------- | ------- |
 | [Service] | [Purpose] | [Notes] |
 
 ## Testing Strategy
@@ -85,10 +85,10 @@
 
 ### Overview
 
-| Tier | Tool | Location | When to use |
-|---|---|---|---|
-| **[Automated Suite]** | [e.g. Playwright, Cypress, Jest] | `[path]` | Preferred — run committed specs whenever they exist |
-| **[Ad-hoc Scripts]** | [tool] | [ephemeral path] | Fallback when no spec exists yet for the feature |
+| Tier                  | Tool                             | Location         | When to use                                         |
+| --------------------- | -------------------------------- | ---------------- | --------------------------------------------------- |
+| **[Automated Suite]** | [e.g. Playwright, Cypress, Jest] | `[path]`         | Preferred — run committed specs whenever they exist |
+| **[Ad-hoc Scripts]**  | [tool]                           | [ephemeral path] | Fallback when no spec exists yet for the feature    |
 
 The automated suite is the canonical record of what works. Ad-hoc scripts are exploratory and temporary — they are the precursor to a committed spec.
 

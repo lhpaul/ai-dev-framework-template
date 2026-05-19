@@ -8,12 +8,12 @@ This is a **repo-wide definition**. All agents apply these labels consistently.
 
 ## Labels
 
-| Label | Meaning |
-| --- | --- |
-| `ready-for-human-review` | The PR is ready for a human reviewer. CI is green. The `REVIEW.md` gate is satisfied. Every configured automated reviewer is clean or skipped. |
-| `needs-fixes` | The PR still needs fixes before it is ready for human review. This may be due to human-requested changes, failing CI, or blocking automated PR feedback. |
-| `ready-for-regression` | Automated code reviews are clean (or skipped). E2e/regression tests should now run. Applied by the orchestrator (Step 7b) on implementation PRs (`feature/*`, `fix/*`, `hotfix/*`, `refactor/*`), and by the prepare-release flow (protocol `05`) on **production** release PRs (`release/*` → `main`) only. |
-| `needs-setup` | PR introduces one or more infrastructure dependencies (env vars, secrets, DNS records, service account tokens, etc.) that require human setup steps before the feature can be safely enabled. Co-exists with `ready-for-human-review`; the human removes this label after completing (or intentionally deferring) setup. |
+| Label                    | Meaning                                                                                                                                                                                                                                                                                                                  |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ready-for-human-review` | The PR is ready for a human reviewer. CI is green. The `REVIEW.md` gate is satisfied. Every configured automated reviewer is clean or skipped.                                                                                                                                                                           |
+| `needs-fixes`            | The PR still needs fixes before it is ready for human review. This may be due to human-requested changes, failing CI, or blocking automated PR feedback.                                                                                                                                                                 |
+| `ready-for-regression`   | Automated code reviews are clean (or skipped). E2e/regression tests should now run. Applied by the orchestrator (Step 7b) on implementation PRs (`feature/*`, `fix/*`, `hotfix/*`, `refactor/*`), and by the prepare-release flow (protocol `05`) on **production** release PRs (`release/*` → `main`) only.             |
+| `needs-setup`            | PR introduces one or more infrastructure dependencies (env vars, secrets, DNS records, service account tokens, etc.) that require human setup steps before the feature can be safely enabled. Co-exists with `ready-for-human-review`; the human removes this label after completing (or intentionally deferring) setup. |
 
 ---
 
@@ -71,11 +71,11 @@ Apply this label when the agent's infrastructure dependency scan (Protocol 91 St
 
 **Valid label combinations**:
 
-| Combination | Meaning |
-|---|---|
-| `ready-for-human-review` only | No setup requirements detected — standard ready state |
-| `ready-for-human-review` + `needs-setup` | PR is technically ready but has unmet setup requirements; human must perform setup and then remove `needs-setup` before or after merge |
-| `needs-fixes` + `needs-setup` | Transitional state — PR has both code changes requested by reviewers and setup requirements; `needs-fixes` must be addressed first, at which point `needs-setup` persists alongside `ready-for-human-review` |
+| Combination                              | Meaning                                                                                                                                                                                                      |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ready-for-human-review` only            | No setup requirements detected — standard ready state                                                                                                                                                        |
+| `ready-for-human-review` + `needs-setup` | PR is technically ready but has unmet setup requirements; human must perform setup and then remove `needs-setup` before or after merge                                                                       |
+| `needs-fixes` + `needs-setup`            | Transitional state — PR has both code changes requested by reviewers and setup requirements; `needs-fixes` must be addressed first, at which point `needs-setup` persists alongside `ready-for-human-review` |
 
 **Invariants**:
 

@@ -26,16 +26,16 @@
 
 > List each deployable unit (app, service, function) with its purpose, tech stack, and entry point.
 
-| Name | Purpose | Stack | Entry point |
-|---|---|---|---|
-| [App 1] | [Description] | [Tech] | [Path] |
+| Name    | Purpose       | Stack  | Entry point |
+| ------- | ------------- | ------ | ----------- |
+| [App 1] | [Description] | [Tech] | [Path]      |
 
 ## Shared Packages / Libraries
 
 > List shared packages/libraries with their purpose and consumers.
 
-| Package | Purpose | Consumed by |
-|---|---|---|
+| Package     | Purpose       | Consumed by    |
+| ----------- | ------------- | -------------- |
 | [Package 1] | [Description] | [App 1, App 2] |
 
 ## Dependency Graph

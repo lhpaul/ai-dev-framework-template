@@ -19,12 +19,12 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Value |
-|---|---|
-| Protocol 91 | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` |
-| Protocol 93 | `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` |
-| Target section in 91 | Between `### Fixer agent batching rule (mandatory)` and `### Loop parameters` |
-| Target section in 93 | After `### Fixer agent batching rule (mandatory)` |
+| Item                 | Value                                                                                 |
+| -------------------- | ------------------------------------------------------------------------------------- |
+| Protocol 91          | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`        |
+| Protocol 93          | `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` |
+| Target section in 91 | Between `### Fixer agent batching rule (mandatory)` and `### Loop parameters`         |
+| Target section in 93 | After `### Fixer agent batching rule (mandatory)`                                     |
 
 ---
 
@@ -153,18 +153,18 @@ Each checkbox maps to an acceptance criterion from the spec.
 None — this is a documentation-only feature with no application data requirements.
 
 | Entity | Scenario | How to load |
-|---|---|---|
-| N/A | N/A | N/A |
+| ------ | -------- | ----------- |
+| N/A    | N/A      | N/A         |
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `### Attempt-context injection rule` subsection missing from Protocol 91 | Implementation step 2 was not completed | Re-run the implementation and add the subsection after `### Fixer agent batching rule (mandatory)` |
-| `### Attempt-context injection rule` subsection missing from Protocol 93 | Implementation step 3 was not completed | Add the subsection in the matching position in Protocol 93 |
-| N or M in the prompt format definition does not match cycle / max_cycles | Cross-section inconsistency during authoring | Re-read both subsections and align variable names with the existing loop parameters table |
+| Symptom                                                                  | Likely cause                                 | Fix                                                                                                |
+| ------------------------------------------------------------------------ | -------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `### Attempt-context injection rule` subsection missing from Protocol 91 | Implementation step 2 was not completed      | Re-run the implementation and add the subsection after `### Fixer agent batching rule (mandatory)` |
+| `### Attempt-context injection rule` subsection missing from Protocol 93 | Implementation step 3 was not completed      | Add the subsection in the matching position in Protocol 93                                         |
+| N or M in the prompt format definition does not match cycle / max_cycles | Cross-section inconsistency during authoring | Re-read both subsections and align variable names with the existing loop parameters table          |
 
 ---
 

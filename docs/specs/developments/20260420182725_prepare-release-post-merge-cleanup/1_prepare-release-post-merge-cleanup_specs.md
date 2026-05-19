@@ -78,10 +78,10 @@ When a versioned release finishes, maintainers follow the prepare-release workfl
 
 ## Statuses / Enum Values
 
-| Code value (template default) | Display label | Description |
-|---|---|---|
-| `merged` | Merged | Work merged to the integration branch; not necessarily in production yet. |
-| `released` | Released | Work has shipped via the production release for the relevant version. |
+| Code value (template default) | Display label | Description                                                               |
+| ----------------------------- | ------------- | ------------------------------------------------------------------------- |
+| `merged`                      | Merged        | Work merged to the integration branch; not necessarily in production yet. |
+| `released`                    | Released      | Work has shipped via the production release for the relevant version.     |
 
 **Valid transitions**:
 

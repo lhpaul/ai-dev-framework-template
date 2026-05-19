@@ -20,6 +20,7 @@ The fix adds a one-shot retry (fetch + ff-pull) before surfacing the failure, so
 **Preconditions**: A previous PR in the batch was merged and pushed to `develop` in the same orchestration run within the last few seconds.
 
 **Steps**:
+
 1. `batch-merge.sh merge` is called for the next PR in the batch.
 2. The script runs `git pull --ff-only origin develop`.
 3. The command fails transiently (local ref state is momentarily stale after the previous push).
@@ -29,11 +30,13 @@ The fix adds a one-shot retry (fetch + ff-pull) before surfacing the failure, so
 **Postconditions**: The merge continues normally; `MERGE_RESULT=clean` is emitted. No human intervention required.
 
 **Information shown**:
+
 - On retry: a diagnostic message is written to stderr indicating that the first attempt failed and a retry is being attempted.
 
 **Actions available**: N/A (fully automated)
 
 **Considerations**:
+
 - If the retry also fails (e.g., a genuine divergence), the existing `merge_die` path is taken and `MERGE_RESULT=failed` is emitted as before.
 - The retry must not mask real divergence — only a transient condition where the ff-pull succeeds on the second attempt is silently recovered.
 
@@ -45,6 +48,7 @@ The fix adds a one-shot retry (fetch + ff-pull) before surfacing the failure, so
 **Preconditions**: Local `develop` has genuinely diverged from `origin/develop` (e.g., a force-push or uncommitted local commits).
 
 **Steps**:
+
 1. `batch-merge.sh merge` is called.
 2. The first `git pull --ff-only` fails.
 3. The retry after 2 seconds also fails.
@@ -52,11 +56,13 @@ The fix adds a one-shot retry (fetch + ff-pull) before surfacing the failure, so
 **Postconditions**: `MERGE_RESULT=failed` with the original error message is emitted, same as the current behavior. The orchestrator is not misled.
 
 **Information shown**:
+
 - The same structured `MERGE_RESULT=failed` and `ERROR_MESSAGE` output as the current behavior.
 
 **Actions available**: N/A (fully automated; existing manual remediation applies)
 
 **Considerations**:
+
 - The retry adds at most a 2-second delay before surfacing a genuine failure.
 
 ---

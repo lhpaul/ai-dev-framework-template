@@ -19,12 +19,14 @@ This fix adds a fallback path: if the CodeRabbit review-loop retry budget is exh
 **Actor**: Automated orchestrator agent running `pr-review-loop.sh` against a PR that is one of several opened in a parallel batch.
 
 **Preconditions**:
+
 - CodeRabbit is configured as a review platform in `.ai-dev-workflow.yaml`.
 - The current HEAD SHA has a CodeRabbit commit-status context with `state: SUCCESS`.
 - The CodeRabbit retry budget (poll cycles) has been exhausted without a new CodeRabbit review comment appearing.
 - There are no existing blocking CodeRabbit findings (Critical or Major inline comments) on the current HEAD.
 
 **Steps**:
+
 1. The script exhausts the retry budget waiting for CodeRabbit to post a review.
 2. Before running stale-findings recovery or returning `escalate`, the script queries the commit-status contexts for the current HEAD SHA.
 3. The script finds a CodeRabbit status context with `state: SUCCESS`.
@@ -32,20 +34,24 @@ This fix adds a fallback path: if the CodeRabbit review-loop retry budget is exh
 5. The script returns `clean` (with `REASON=coderabbit_status_success_fallback`) instead of `escalate`.
 
 **Postconditions**:
+
 - `pr-review-loop.sh` exits with `RESULT=clean`.
 - The orchestrator agent proceeds to the CI loop without human intervention.
 - The fallback reason is recorded in the script output and surfaced in the automated reviewer loop summary comment.
 
 **Information shown**:
+
 - `RESULT=clean`
 - `REASON=coderabbit_status_success_fallback`
 - The reviewer loop summary comment on the PR notes that CodeRabbit's inline review was not re-posted but a `SUCCESS` commit-status was present, and the PR was treated as clean.
 
 **Actions available**:
+
 - The orchestrator proceeds to Step 8 (CI loop) normally.
 - A human reviewer may optionally post `@coderabbitai review` on the PR after the rate-limit window resets for a full inline review.
 
 **Considerations**:
+
 - The fallback only applies when the commit-status `state` is exactly `SUCCESS`. A `pending`, `failure`, or `error` state does not trigger the fallback.
 - The fallback only applies after the retry budget is exhausted, not on the first timeout.
 - If existing blocking inline comments are present for the current HEAD, the fallback does not apply — the script must return `needs_fixes` as usual.
@@ -57,20 +63,24 @@ This fix adds a fallback path: if the CodeRabbit review-loop retry budget is exh
 **Actor**: Automated orchestrator agent running `pr-review-loop.sh`.
 
 **Preconditions**:
+
 - CodeRabbit is configured as a review platform.
 - The current HEAD SHA does NOT have a CodeRabbit commit-status context with `state: SUCCESS`.
 - The CodeRabbit retry budget has been exhausted.
 
 **Steps**:
+
 1. The script exhausts the retry budget waiting for CodeRabbit to post a review.
 2. The script queries the commit-status contexts for the current HEAD SHA.
 3. No CodeRabbit `SUCCESS` status context is found.
 4. The script falls through to its existing stale-findings recovery path and then returns `needs_fixes (stale_findings)`, `skipped (no_review)`, or `escalate (timeout)` per existing logic.
 
 **Postconditions**:
+
 - Behavior is unchanged from the current implementation for this case.
 
 **Considerations**:
+
 - No change to escalation behavior when CodeRabbit has not signaled SUCCESS.
 
 ---

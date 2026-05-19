@@ -18,12 +18,14 @@ This spec defines an AI evaluation sub-step that is inserted into the reviewer l
 
 **Actor**: Automated reviewer loop (running on a pull request)
 **Preconditions**:
+
 - A PR is open and the automated reviewer loop is running
 - PR-Agent has posted a summary comment for the current HEAD commit
 - The PR-Agent summary classifies as `clean` (no hard-blocker labels)
 - The summary includes at least one "Possible Issue" label in the "Recommended focus areas for review" section
 
 **Steps**:
+
 1. The reviewer loop detects the `clean` result from PR-Agent and inspects advisory labels
 2. The loop finds one or more "Possible Issue" labels
 3. The loop dispatches a code-reviewer agent with:
@@ -36,17 +38,21 @@ This spec defines an AI evaluation sub-step that is inserted into the reviewer l
 5. In both scenarios the reviewer loop waits for the agent's verdict before emitting a final result
 
 **Postconditions**:
+
 - If a real bug was found: the PR branch has a new fix commit, and the loop re-runs on the updated HEAD
 - If the finding is acceptable: an acknowledgment comment is visible on the PR, and the loop result is `clean`
 
 **Information shown**:
+
 - (No interactive UI — this is an automated workflow step)
 - The reviewer loop summary includes a note indicating that the "Possible Issue" finding was evaluated and the outcome (fix pushed or acknowledged)
 
 **Actions available**:
+
 - (Automated — no manual action required during the loop)
 
 **Considerations**:
+
 - If the code-reviewer agent cannot be dispatched (runtime unavailable, timeout), the loop should fall back to the current advisory-only behavior (log a warning and proceed `clean`) rather than blocking indefinitely
 - The acknowledgment comment must be substantive — it must explain the reasoning, not just say "acknowledged"
 - If the agent posts an acknowledgment and the loop later re-runs (e.g., due to a new push), the finding will not be re-evaluated (evaluation is scoped to the current HEAD — see Business Rules)
@@ -57,11 +63,13 @@ This spec defines an AI evaluation sub-step that is inserted into the reviewer l
 
 **Actor**: Automated reviewer loop
 **Preconditions**:
+
 - A PR is open and the automated reviewer loop is running
 - PR-Agent summary classifies as `clean`
 - Advisory labels are present but none is "Possible Issue" (e.g., "Edge Case", "Logic Gap", "Documentation Inconsistency", "Performance Concern", etc.)
 
 **Steps**:
+
 1. The reviewer loop detects the `clean` result from PR-Agent
 2. The advisory labels are recorded in the loop's output (existing behavior)
 3. No code-reviewer agent is dispatched
@@ -70,12 +78,15 @@ This spec defines an AI evaluation sub-step that is inserted into the reviewer l
 **Postconditions**: Loop result is `clean`; advisory labels are surfaced in the summary without triggering evaluation
 
 **Information shown**:
+
 - (No additional information — existing loop summary behavior)
 
 **Actions available**:
+
 - (No actions — no evaluation step triggered)
 
 **Considerations**:
+
 - This use case defines the explicit boundary of the feature: only "Possible Issue" triggers AI evaluation; all other advisory labels remain non-blocking and unevaluated
 
 ---
@@ -84,9 +95,11 @@ This spec defines an AI evaluation sub-step that is inserted into the reviewer l
 
 **Actor**: Automated reviewer loop
 **Preconditions**:
+
 - PR-Agent summary classifies as `clean` with no advisory labels (or the "No major issues detected" message)
 
 **Steps**:
+
 1. The reviewer loop detects the `clean` result
 2. No evaluation step is triggered
 3. Loop proceeds to `clean` immediately
@@ -94,12 +107,15 @@ This spec defines an AI evaluation sub-step that is inserted into the reviewer l
 **Postconditions**: Loop result is `clean` — no change from current behavior
 
 **Information shown**:
+
 - (No additional information — standard clean result)
 
 **Actions available**:
+
 - (No actions — loop proceeds normally)
 
 **Considerations**:
+
 - (None — this is the baseline happy path)
 
 ---

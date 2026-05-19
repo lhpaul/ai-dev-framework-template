@@ -30,14 +30,14 @@ policy integration. No new tooling is introduced.
 
 ## Verification Log
 
-| Check | Command / query | Result |
-|---|---|---|
-| Repo revision | `git rev-parse --short HEAD` | `0795642` |
-| Current supported `internal_reviewers` values in Protocol 91 | `grep -n "Supported reviewer values" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | Line 745: `` `claude`, `codex`. `` — `coderabbit` not present |
-| Reachability classification table columns in Protocol 91 | `grep -n "Runner context" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | Line 761: table header lists only `claude` reachable? and `codex` reachable? — no `coderabbit` column |
-| `coderabbit.md` sections present | `grep -n "^##" docs/workflow/development-workflow/integrations/coderabbit.md` | Lines 9, 18, 22, 27, 48, 79 — no "Step 7a" section |
-| `.ai-dev-workflow.yaml` internal_reviewers comment block | `grep -n "Supported values" .ai-dev-workflow.yaml` | Line 46 — comment lists `claude` and `codex` only; no `coderabbit` entry |
-| `coderabbit` in `internal_reviewers` list | `grep -n "coderabbit" .ai-dev-workflow.yaml` | Lines 29, 31 in `review.platforms` section only — not in `internal_reviewers` |
+| Check                                                        | Command / query                                                                                                    | Result                                                                                                |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| Repo revision                                                | `git rev-parse --short HEAD`                                                                                       | `0795642`                                                                                             |
+| Current supported `internal_reviewers` values in Protocol 91 | `grep -n "Supported reviewer values" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | Line 745: `` `claude`, `codex`. `` — `coderabbit` not present                                         |
+| Reachability classification table columns in Protocol 91     | `grep -n "Runner context" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`            | Line 761: table header lists only `claude` reachable? and `codex` reachable? — no `coderabbit` column |
+| `coderabbit.md` sections present                             | `grep -n "^##" docs/workflow/development-workflow/integrations/coderabbit.md`                                      | Lines 9, 18, 22, 27, 48, 79 — no "Step 7a" section                                                    |
+| `.ai-dev-workflow.yaml` internal_reviewers comment block     | `grep -n "Supported values" .ai-dev-workflow.yaml`                                                                 | Line 46 — comment lists `claude` and `codex` only; no `coderabbit` entry                              |
+| `coderabbit` in `internal_reviewers` list                    | `grep -n "coderabbit" .ai-dev-workflow.yaml`                                                                       | Lines 29, 31 in `review.platforms` section only — not in `internal_reviewers`                         |
 
 ---
 
@@ -46,8 +46,7 @@ policy integration. No new tooling is introduced.
 ### Protocol Documents
 
 - [ ] **`docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`** —
-  Three targeted edits:
-
+      Three targeted edits:
   1. **"Supported reviewer values" sentence** (line 745): Extend from `` `claude`, `codex`. ``
      to `` `claude`, `codex`, `coderabbit`. ``
 
@@ -75,18 +74,17 @@ policy integration. No new tooling is introduced.
 
   3. **"Reviewer dispatch map" table** (lines 820–827): Add three new rows for `coderabbit`:
 
-     | Reviewer | PR branch prefix | Agent / protocol to dispatch |
-     |---|---|---|
-     | `coderabbit` | `spec/*` | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
-     | `coderabbit` | `implementation-plan/*` | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
+     | Reviewer     | PR branch prefix                                  | Agent / protocol to dispatch                                                                                           |
+     | ------------ | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+     | `coderabbit` | `spec/*`                                          | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
+     | `coderabbit` | `implementation-plan/*`                           | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
      | `coderabbit` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
 
 ### Integration Documentation
 
 - [ ] **`docs/workflow/development-workflow/integrations/coderabbit.md`** — Add a new top-level
-  section **"Step 7a — Internal Reviewer (Draft PRs)"** after the existing "Usage Modes"
-  section (before "Setup"). This section must cover:
-
+      section **"Step 7a — Internal Reviewer (Draft PRs)"** after the existing "Usage Modes"
+      section (before "Setup"). This section must cover:
   - **Configuration**: Set `coderabbit` in `review.internal_reviewers` in
     `.ai-dev-workflow.yaml`.
   - **Draft-PR requirement**: `reviews.auto_review.enabled: true` in `.coderabbit.yaml` is
@@ -113,7 +111,7 @@ policy integration. No new tooling is introduced.
 ### Configuration / YAML
 
 - [ ] **`.ai-dev-workflow.yaml`** — Update the `review.internal_reviewers` comment block to
-  add a `coderabbit` entry describing its invocation behaviour (BR-10):
+      add a `coderabbit` entry describing its invocation behaviour (BR-10):
 
   ```yaml
   #   coderabbit  — triggers CodeRabbit GitHub App auto-review on the draft PR
@@ -162,22 +160,22 @@ None. This feature affects only protocol documentation and configuration comment
 ## Documentation Updates
 
 - [ ] `docs/workflow/development-workflow/integrations/coderabbit.md` — This file is itself
-  one of the primary change targets (see Layer-by-Layer). The "Step 7a — Internal Reviewer"
-  section is added as part of implementation. No separate post-implementation update needed
-  beyond what is described in the Layer-by-Layer section.
+      one of the primary change targets (see Layer-by-Layer). The "Step 7a — Internal Reviewer"
+      section is added as part of implementation. No separate post-implementation update needed
+      beyond what is described in the Layer-by-Layer section.
 - [ ] `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — This
-  file is itself one of the primary change targets. No separate post-implementation update
-  needed beyond what is described in the Layer-by-Layer section.
+      file is itself one of the primary change targets. No separate post-implementation update
+      needed beyond what is described in the Layer-by-Layer section.
 
 ---
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| Protocol 91 reachability table becomes inconsistent if a fourth reviewer is added later | Low | Low | The new `coderabbit` row uses a clearly distinct pattern ("Determined at runtime (App check)") that future authors can extend without breaking existing rows |
-| Draft-PR requirement (BR-5) not obvious to operators | Low | Med | The `coderabbit.md` troubleshooting section explicitly lists "draft PRs not enabled" as a common unavailability reason |
-| Backward-compatibility regression: `review.platforms: [coderabbit]` repos treated as `internal_reviewers: [coderabbit]` | Low | Med | No change is made to Step 7 path logic; the new rows in the reviewer dispatch map are only consulted when `coderabbit` appears in `review.internal_reviewers` |
+| Risk                                                                                                                    | Likelihood | Impact | Mitigation                                                                                                                                                    |
+| ----------------------------------------------------------------------------------------------------------------------- | ---------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Protocol 91 reachability table becomes inconsistent if a fourth reviewer is added later                                 | Low        | Low    | The new `coderabbit` row uses a clearly distinct pattern ("Determined at runtime (App check)") that future authors can extend without breaking existing rows  |
+| Draft-PR requirement (BR-5) not obvious to operators                                                                    | Low        | Med    | The `coderabbit.md` troubleshooting section explicitly lists "draft PRs not enabled" as a common unavailability reason                                        |
+| Backward-compatibility regression: `review.platforms: [coderabbit]` repos treated as `internal_reviewers: [coderabbit]` | Low        | Med    | No change is made to Step 7 path logic; the new rows in the reviewer dispatch map are only consulted when `coderabbit` appears in `review.internal_reviewers` |
 
 ---
 
@@ -187,7 +185,7 @@ None. This feature affects only protocol documentation and configuration comment
    `` `claude`, `codex`. `` to `` `claude`, `codex`, `coderabbit`. `` in
    `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`.
 
-   *Verification*: Run `grep "Supported reviewer values" -A1 docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` and confirm the line immediately after includes `coderabbit`.
+   _Verification_: Run `grep "Supported reviewer values" -A1 docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` and confirm the line immediately after includes `coderabbit`.
 
 2. **Update Protocol 91 Step 7a — "Reachability classification table"**: Add a
    `coderabbit` reachable? column to the table at line 761. Add the "Determined at runtime
@@ -195,7 +193,7 @@ None. This feature affects only protocol documentation and configuration comment
    table describing the runtime App check mechanism and the draft-PR restriction check
    (BR-5).
 
-   *Verification*: Open the file at the reachability table and confirm the table has three
+   _Verification_: Open the file at the reachability table and confirm the table has three
    data columns (claude, codex, coderabbit) and the paragraph immediately after describes
    the App installation check.
 
@@ -204,7 +202,7 @@ None. This feature affects only protocol documentation and configuration comment
    `implementation-plan/*`, and `feature/*/refactor/*/fix/*/hotfix/*`). Each row references
    the `coderabbit.md` Step 7a section.
 
-   *Verification*: Confirm three `coderabbit` rows appear in the reviewer dispatch map table
+   _Verification_: Confirm three `coderabbit` rows appear in the reviewer dispatch map table
    and each references `coderabbit.md`.
 
 4. **Add "Step 7a — Internal Reviewer (Draft PRs)" section to `coderabbit.md`**: Insert
@@ -212,7 +210,7 @@ None. This feature affects only protocol documentation and configuration comment
    severity classification, fix-cycle limit, availability check, and troubleshooting
    subsection.
 
-   *Verification*: Run `grep "^## " docs/workflow/development-workflow/integrations/coderabbit.md`
+   _Verification_: Run `grep "^## " docs/workflow/development-workflow/integrations/coderabbit.md`
    and confirm "Step 7a" appears as a top-level section heading. Open the section and verify
    it contains "draft", "auto_review", "Critical", "Major", and "troubleshooting" content.
 
@@ -220,7 +218,7 @@ None. This feature affects only protocol documentation and configuration comment
    after the `codex` block comment and before the "Runner-context constraint" paragraph in
    the `internal_reviewers` comment block.
 
-   *Verification*: Run `grep -A3 "coderabbit" .ai-dev-workflow.yaml` and confirm the new
+   _Verification_: Run `grep -A3 "coderabbit" .ai-dev-workflow.yaml` and confirm the new
    comment block appears under `internal_reviewers` (not under `review.platforms`).
 
 6. **Run markdownlint-cli2 pre-commit check**:

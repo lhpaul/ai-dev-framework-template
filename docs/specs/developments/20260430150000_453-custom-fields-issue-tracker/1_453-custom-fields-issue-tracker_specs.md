@@ -12,13 +12,13 @@ Different issue trackers support provider-specific fields beyond the basic ident
 
 ## Brief Coverage
 
-| Brief Objective | Spec Trace |
-|---|---|
-| Schema change in `.ai-dev-workflow.yaml` to add `custom_fields` map | AC-1, AC-6, Use Case 1 |
-| Update `workflow-lib.sh` to read and expose custom fields | AC-2, Use Case 3 |
-| Update Linear integration docs with supported custom fields | AC-3 |
-| Update scripts that create issues to use project field when present | AC-5, Use Case 1 |
-| Integration docs define which fields are supported per tracker | AC-3, AC-4, Business Rules |
+| Brief Objective                                                     | Spec Trace                 |
+| ------------------------------------------------------------------- | -------------------------- |
+| Schema change in `.ai-dev-workflow.yaml` to add `custom_fields` map | AC-1, AC-6, Use Case 1     |
+| Update `workflow-lib.sh` to read and expose custom fields           | AC-2, Use Case 3           |
+| Update Linear integration docs with supported custom fields         | AC-3                       |
+| Update scripts that create issues to use project field when present | AC-5, Use Case 1           |
+| Integration docs define which fields are supported per tracker      | AC-3, AC-4, Business Rules |
 
 ---
 
@@ -30,6 +30,7 @@ Different issue trackers support provider-specific fields beyond the basic ident
 **Preconditions**: The repository uses Linear as its issue tracker (declared in `.ai-dev-workflow.yaml`)
 
 **Steps**:
+
 1. The maintainer opens `.ai-dev-workflow.yaml`
 2. Under `issue_tracker`, the maintainer adds a `custom_fields` map with a `project` key set to the Linear project identifier
 3. Workflow scripts that create or query issues use the project field when interacting with the Linear API
@@ -37,6 +38,7 @@ Different issue trackers support provider-specific fields beyond the basic ident
 **Postconditions**: New issues created by workflow scripts are associated with the specified Linear project
 
 **Considerations**:
+
 - If `custom_fields.project` is omitted, issue creation proceeds without a project association (current behavior preserved)
 - The project identifier format depends on the tracker provider (Linear uses a project slug or ID)
 
@@ -48,6 +50,7 @@ Different issue trackers support provider-specific fields beyond the basic ident
 **Preconditions**: The repository uses any supported issue tracker
 
 **Steps**:
+
 1. The maintainer adds a new key under `custom_fields` (e.g., `cycle`, `label_prefix`, or a provider-specific concept)
 2. The field is stored in the configuration and accessible via the helper function
 3. No existing script behavior changes until a script is updated to read the new field
@@ -55,6 +58,7 @@ Different issue trackers support provider-specific fields beyond the basic ident
 **Postconditions**: The custom field value is available for scripts and agents to query. Unrecognized fields are ignored by scripts that do not consume them.
 
 **Considerations**:
+
 - The configuration is a flat key-value map — nested structures are out of scope for the initial version
 - Each integration document defines which keys are recognized and what they do
 
@@ -66,6 +70,7 @@ Different issue trackers support provider-specific fields beyond the basic ident
 **Preconditions**: A custom field is declared in `.ai-dev-workflow.yaml`
 
 **Steps**:
+
 1. The script calls a helper function (e.g., `workflow_issue_tracker_custom_field <field_name>`) from `workflow-lib.sh`
 2. The function reads the value from the YAML configuration
 3. The script uses the value in its API call or logic
@@ -73,6 +78,7 @@ Different issue trackers support provider-specific fields beyond the basic ident
 **Postconditions**: The script has the configured value, or an empty string if the field is not set
 
 **Considerations**:
+
 - The helper function must handle missing `custom_fields` section gracefully (return empty string)
 - The helper function must handle missing individual keys gracefully (return empty string)
 

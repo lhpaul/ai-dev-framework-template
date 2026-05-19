@@ -9,6 +9,7 @@ Follow the batch orchestration protocol exactly as defined in:
 `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
 
 That document is the single source of truth for this supporting role. Key responsibilities:
+
 - Read current state from the issue tracker (if configured) and/or `docs/specs/developments/`
 - Determine what can safely advance, respecting dependencies
 - Prioritize by due date (within 2 weeks) → priority → creation date

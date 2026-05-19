@@ -71,9 +71,9 @@
 
 ## Seed Data
 
-| Entity | Values / Scenario | File |
-|---|---|---|
-| N/A — shell script change; no application seed data required | — | — |
+| Entity                                                       | Values / Scenario | File |
+| ------------------------------------------------------------ | ----------------- | ---- |
+| N/A — shell script change; no application seed data required | —                 | —    |
 
 ---
 
@@ -87,12 +87,12 @@ No other project docs (`docs/project/`, `AGENTS.md`, `docs/best-practices/`) are
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| GitHub commit-statuses API returns paginated results and the CodeRabbit entry is on a later page | Low | Medium | Use `--paginate` flag on `gh api` to fetch all pages before filtering |
-| Context name for CodeRabbit commit-status changes over time | Low | Medium | Filter with case-insensitive substring match (`coderabbit`) rather than exact context name; document the assumption in an inline comment |
-| `state: success` is returned for a stale status from a prior HEAD (not the current HEAD) | Low | High | The API call is scoped to `head_sha` — GitHub statuses endpoint is keyed by commit SHA, so only statuses for that exact SHA are returned; no additional time filter is needed |
-| New fallback bypasses stale-findings detection | Low | High | The fallback only activates when `coderabbit_any_activity -eq 0`; when activity was detected (Phase 2 loop exited normally), Phase 3 runs as-is. The stale-findings block is only skipped when the SUCCESS status fallback fires. |
+| Risk                                                                                             | Likelihood | Impact | Mitigation                                                                                                                                                                                                                        |
+| ------------------------------------------------------------------------------------------------ | ---------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GitHub commit-statuses API returns paginated results and the CodeRabbit entry is on a later page | Low        | Medium | Use `--paginate` flag on `gh api` to fetch all pages before filtering                                                                                                                                                             |
+| Context name for CodeRabbit commit-status changes over time                                      | Low        | Medium | Filter with case-insensitive substring match (`coderabbit`) rather than exact context name; document the assumption in an inline comment                                                                                          |
+| `state: success` is returned for a stale status from a prior HEAD (not the current HEAD)         | Low        | High   | The API call is scoped to `head_sha` — GitHub statuses endpoint is keyed by commit SHA, so only statuses for that exact SHA are returned; no additional time filter is needed                                                     |
+| New fallback bypasses stale-findings detection                                                   | Low        | High   | The fallback only activates when `coderabbit_any_activity -eq 0`; when activity was detected (Phase 2 loop exited normally), Phase 3 runs as-is. The stale-findings block is only skipped when the SUCCESS status fallback fires. |
 
 ---
 

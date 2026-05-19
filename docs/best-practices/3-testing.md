@@ -19,15 +19,18 @@ Define it there during project setup. This file covers principles and convention
 ## What to Test
 
 ### Always test:
+
 - Business logic and domain rules
 - Edge cases (empty lists, null values, boundary conditions)
 - Error handling paths (what happens when a dependency fails)
 
 ### Test selectively:
+
 - Integration with external services (use mocks/stubs at the boundary)
 - UI components (test interaction, not styling)
 
 ### Don't over-test:
+
 - Simple getters/setters with no logic
 - Framework code or third-party library internals
 - Implementation details that may change during refactoring
@@ -43,11 +46,28 @@ docs/testing/[app-or-section]/[feature-slug].smoke-test.md
 See the [smoke test runbook template](../workflow/development-workflow/templates/smoke-test-runbook-template.md) for the standard format, and [docs/testing/README.md](../testing/README.md) for how to execute them in this repo.
 
 Smoke tests should be run:
+
 - Before every release
 - After deploying to staging
 - When investigating a reported production issue
 
 The recommended approach is a **two-tier execution model**: a committed automated test suite (preferred) with ad-hoc scripts as a fallback when no spec exists yet. See `docs/project/3-software-architecture.md` → Testing Strategy.
+
+## Filter-Schema Canary Tests
+
+Any PR that adds a new filter parameter to a tool schema (Zod, JSON Schema, Joi, Pydantic, OpenAPI, or any equivalent contract-declaration mechanism) **must include a canary test** for each added filter before it may be merged.
+
+**What a canary test must do**:
+
+1. Call the tool with the new filter set to a value that narrows or alters the result set.
+2. Call the tool again with the filter absent or set to a meaningfully different value.
+3. Assert that the two result sets differ.
+
+**Why**: A filter added to a schema is accepted by the API but may not be wired to the query builder's WHERE clause. Without a canary test, this silent no-op reaches production undetected.
+
+**Exemption**: Modifying or removing an existing filter parameter without changing the schema contract does not trigger the canary obligation, though confirming existing tests still pass is encouraged.
+
+**Framework-agnostic**: The requirement is satisfied regardless of language or test framework. The substance — two invocations, differing results — is what matters.
 
 ## Test Data and Seed Data
 
@@ -71,5 +91,6 @@ The recommended approach is a **two-tier execution model**: a committed automate
 ## CI Integration
 
 All tests run automatically on every pull request. A PR cannot be merged if:
+
 - Any test fails
 - Test coverage drops below the configured threshold (if applicable)

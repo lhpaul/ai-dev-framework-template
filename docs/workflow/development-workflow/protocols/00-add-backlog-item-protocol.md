@@ -73,6 +73,35 @@ Return a short confirmation including:
 
 ---
 
+## Step 5: Multi-Item Epic Detection (Optional — when two or more related items are requested)
+
+When a human requests the creation of two or more related backlog items that together form a single coherent feature, the agent must also:
+
+1. **Identify the multi-item nature** — confirm that the requested items form a coherent unit where partial delivery would be incomplete or misleading. When in doubt, ask: "Do you want these items to land on `develop` independently as each one completes, or as a group only when all are done?"
+
+2. **Choose a slug** — derive a human-readable kebab-case slug from the shared feature name (e.g., `multi-tenant-billing`). The slug must be unique among existing `integration-branch:*` labels.
+
+3. **Create an epic (GitHub providers only)** — when `issue_tracker.provider` is `github_issues` or `github_projects`, create a GitHub issue with the `epic` label as the grouping container. The title should reflect the overall feature. Record the epic's issue number.
+
+   For non-GitHub providers (e.g., Linear), do not run `gh` commands. Ask the human for the equivalent parent/initiative container and linking convention, then proceed using that tracker's integration guide.
+
+4. **Label each sub-item (GitHub providers only)** — apply the label `integration-branch:<slug>` to each sub-item issue created in Step 3. If the label does not exist in the repository, create it:
+
+   ```bash
+   gh label create "integration-branch:<slug>" --color "#0075ca" --description "Sub-item of the <slug> integration branch"
+   ```
+
+   For non-GitHub providers, use the tracker's native grouping or tagging mechanism to associate sub-items with the parent initiative.
+
+5. **Confirm to the user** — include in the Step 4 confirmation:
+   - The epic issue number and URL
+   - The shared label `integration-branch:<slug>` applied to each sub-item
+   - The note that sub-item PRs will target `develop-<slug>` (to be created by the orchestrator before the first PR)
+
+**Single-item exemption**: When only a single item is requested, skip this step entirely. Single-item developments target `develop` directly and are not subject to the integration-branch workflow.
+
+---
+
 ## Non-goals
 
 - Do not silently pick a tracker when uncertain.

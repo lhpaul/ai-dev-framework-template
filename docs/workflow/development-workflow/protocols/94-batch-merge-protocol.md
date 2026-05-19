@@ -76,8 +76,9 @@ For each candidate PR:
 
 2. If `PR_READY_LABEL=false` — display a warning:
 
-   > **Warning**: PR #N — *title* — is missing the `ready-for-human-review` label.
+   > **Warning**: PR #N — _title_ — is missing the `ready-for-human-review` label.
    > Include it anyway or skip it?
+   >
    > - Type **include** to proceed with a "not fully reviewed" notation.
    > - Type **skip** to exclude it from this run (outcome: `skipped_not_ready`).
 
@@ -156,7 +157,7 @@ For each PR in the approved order:
 
 **a. Announce the merge attempt:**
 
-> Merging PR #N: *title* (branch: *branch*)...
+> Merging PR #N: _title_ (branch: _branch_)...
 
 **b. Run the merge script:**
 
@@ -170,7 +171,7 @@ Parse the output:
 - `MERGE_RESULT=conflict` → conflicts detected. Proceed to **4.3 Conflict classification**.
 - `MERGE_RESULT=failed` → unexpected failure. Report:
 
-  > Failed to merge PR #N: *ERROR_MESSAGE*. Skipping.
+  > Failed to merge PR #N: _ERROR_MESSAGE_. Skipping.
 
   Record outcome as `failed`. Continue with the next PR.
 
@@ -204,7 +205,6 @@ After a clean or resolved merge, in order:
    ```
 
    Expected output: `MERGED`.
-
    - If the state is not `MERGED` after up to 30 seconds (poll every 5 s): report `failed` for this PR, do not delete the remote branch or run cleanup, and continue with the next PR.
    - If the script emitted a `WARNING: gh pr merge failed` line to stderr, that is a signal that this MERGED-state check is especially important — the push succeeded but the GitHub merge-mark may have failed.
 
@@ -224,15 +224,14 @@ After a clean or resolved merge, in order:
    ```
 
    Parse the output:
-
    - `DELETE_RESULT=deleted` → branch was deleted successfully.
    - `DELETE_RESULT=not_found` → branch was already gone (auto-delete or prior run). No action needed.
    - `DELETE_RESULT=skipped` → branch was NOT deleted. The `ERROR_MESSAGE` field contains
      the reason, which falls into one of two sub-cases:
-     - *PR not in MERGED state*: Do **not** delete the branch manually. Investigate why
+     - _PR not in MERGED state_: Do **not** delete the branch manually. Investigate why
        GitHub has not yet recognised the merge (e.g., push failed silently, network error)
        before retrying.
-     - *Push failure* (network/auth/permissions): Retry after resolving the underlying
+     - _Push failure_ (network/auth/permissions): Retry after resolving the underlying
        issue. The branch still exists on the remote.
 
 4. **Run `post-merge-cleanup` for the merged branch.**
@@ -302,7 +301,7 @@ Check whether the changes are in **non-overlapping line ranges**:
 
 Report auto-resolved files:
 
-> Auto-resolved *file*: non-overlapping changes from `develop` and PR #N combined.
+> Auto-resolved _file_: non-overlapping changes from `develop` and PR #N combined.
 
 #### Non-trivial conflicts
 
@@ -313,6 +312,7 @@ Any conflict that is not in the above categories, or a documentation file with o
    > **Non-trivial conflict detected in PR #N**
    >
    > Conflicting files:
+   >
    > - `path/to/file.sh`
    >
    > Conflict excerpt:
@@ -326,13 +326,13 @@ Any conflict that is not in the above categories, or a documentation file with o
    > ```
    >
    > Please resolve the conflict in your editor, stage the resolved files, and then reply with:
+   >
    > - **`resolved`** to complete the merge and continue.
    > - **`abort`** to cancel this PR's merge (develop will be returned to its pre-merge state).
 
 2. **Wait for human response.**
 
 3. If the human replies **`resolved`**:
-
    - Verify resolution: `git diff --check` must succeed (no conflict markers).
    - Complete the merge:
 
@@ -344,7 +344,6 @@ Any conflict that is not in the above categories, or a documentation file with o
    - Proceed to **4.2 Post-merge steps**.
 
 4. If the human replies **`abort`**:
-
    - Abort the merge to return `develop` to its pre-merge state:
 
      ```bash
@@ -392,15 +391,15 @@ Merged: 3  |  Skipped: 2  |  Failed: 0  |  Not attempted: 0
 
 **Outcome codes**:
 
-| Code | Meaning |
-|---|---|
-| `merged_clean` | Merged without any conflicts |
-| `merged_auto` | Merged with auto-resolved trivial conflicts (CHANGELOG or non-overlapping doc files) |
-| `merged_human` | Merged after human resolved non-trivial conflict(s) |
-| `skipped_not_ready` | Skipped because PR lacked `ready-for-human-review` and human chose to exclude it |
-| `skipped_conflict` | Skipped because human aborted conflict resolution; `develop` returned to pre-merge state |
-| `failed` | Merge failed for an unexpected reason |
-| `not_attempted` | PR was not processed when human aborted the entire batch |
+| Code                | Meaning                                                                                  |
+| ------------------- | ---------------------------------------------------------------------------------------- |
+| `merged_clean`      | Merged without any conflicts                                                             |
+| `merged_auto`       | Merged with auto-resolved trivial conflicts (CHANGELOG or non-overlapping doc files)     |
+| `merged_human`      | Merged after human resolved non-trivial conflict(s)                                      |
+| `skipped_not_ready` | Skipped because PR lacked `ready-for-human-review` and human chose to exclude it         |
+| `skipped_conflict`  | Skipped because human aborted conflict resolution; `develop` returned to pre-merge state |
+| `failed`            | Merge failed for an unexpected reason                                                    |
+| `not_attempted`     | PR was not processed when human aborted the entire batch                                 |
 
 Include details of any auto-resolved conflicts in the summary (which files, what entries were combined).
 

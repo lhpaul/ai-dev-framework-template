@@ -1,6 +1,6 @@
 # External Feedback Pipeline: GitHub Discussions Staging and Triage Protocol — Implementation Plan
 
-**Spec**: [1\_459-external-feedback-pipeline\_specs.md](1_459-external-feedback-pipeline_specs.md)
+**Spec**: [1_459-external-feedback-pipeline_specs.md](1_459-external-feedback-pipeline_specs.md)
 **Smoke test runbook**: [../../../testing/workflow/459-external-feedback-pipeline.smoke-test.md](../../../testing/workflow/459-external-feedback-pipeline.smoke-test.md)
 
 ---
@@ -18,16 +18,16 @@
 
 ## Verification Log
 
-| Check | Command / query | Result |
-|---|---|---|
-| Repo revision | `git rev-parse --short HEAD` | `1ab1488` |
-| 07-feedback-triage-protocol.md exists? | `ls docs/workflow/development-workflow/protocols/07-feedback-triage-protocol.md` | NOT FOUND — must be created |
-| CONTRIBUTING.md at repo root? | `ls CONTRIBUTING.md` | NOT FOUND — must be created |
-| `feedback-staging` label exists? | `gh label list \| grep feedback-staging` | NOT FOUND — must be created as setup step |
-| `template-feedback` label (existing, distinct) | `gh label list \| grep template-feedback` | EXISTS (`#0075ca`) — not the same label; `feedback-staging` is a separate label for issues promoted from Discussions |
-| GitHub Discussions enabled on repo? | `gh repo view --json hasDiscussionsEnabled` | `true` — Discussions already enabled |
-| Existing protocol count (0x-series) | `ls docs/workflow/development-workflow/protocols/ \| grep -E '^0[0-9]-' \| wc -l` | 10 files (00 through 06, plus review wrappers); 07-feedback-triage-protocol.md is the next slot |
-| Testing/workflow directory | `ls docs/testing/workflow/` | Exists; smoke test runbook will be placed here |
+| Check                                          | Command / query                                                                   | Result                                                                                                               |
+| ---------------------------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Repo revision                                  | `git rev-parse --short HEAD`                                                      | `1ab1488`                                                                                                            |
+| 07-feedback-triage-protocol.md exists?         | `ls docs/workflow/development-workflow/protocols/07-feedback-triage-protocol.md`  | NOT FOUND — must be created                                                                                          |
+| CONTRIBUTING.md at repo root?                  | `ls CONTRIBUTING.md`                                                              | NOT FOUND — must be created                                                                                          |
+| `feedback-staging` label exists?               | `gh label list \| grep feedback-staging`                                          | NOT FOUND — must be created as setup step                                                                            |
+| `template-feedback` label (existing, distinct) | `gh label list \| grep template-feedback`                                         | EXISTS (`#0075ca`) — not the same label; `feedback-staging` is a separate label for issues promoted from Discussions |
+| GitHub Discussions enabled on repo?            | `gh repo view --json hasDiscussionsEnabled`                                       | `true` — Discussions already enabled                                                                                 |
+| Existing protocol count (0x-series)            | `ls docs/workflow/development-workflow/protocols/ \| grep -E '^0[0-9]-' \| wc -l` | 10 files (00 through 06, plus review wrappers); 07-feedback-triage-protocol.md is the next slot                      |
+| Testing/workflow directory                     | `ls docs/testing/workflow/`                                                       | Exists; smoke test runbook will be placed here                                                                       |
 
 ---
 
@@ -68,12 +68,12 @@
 
 ## Seed Data
 
-| Entity | Values / Scenario | File |
-|---|---|---|
-| GitHub Discussion (signal threshold met, no duplicate) | A discussion in "Feedback & Ideas" with ≥ 3 upvotes or ≥ 2 comments from distinct users | Manual setup step in smoke test; no seed file |
-| GitHub Discussion (duplicate of existing issue) | A discussion whose title/body matches an existing open issue by ≥ 3 significant keywords | Manual setup step in smoke test; no seed file |
-| GitHub Discussion (out of scope) | A discussion asking a support question unrelated to template workflow improvement | Manual setup step in smoke test; no seed file |
-| GitHub label: `feedback-staging` | Label color `#0e8a16` (green), description "Issue promoted from a GitHub Discussions feedback entry" | Created via `gh label create` during setup steps |
+| Entity                                                 | Values / Scenario                                                                                    | File                                             |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| GitHub Discussion (signal threshold met, no duplicate) | A discussion in "Feedback & Ideas" with ≥ 3 upvotes or ≥ 2 comments from distinct users              | Manual setup step in smoke test; no seed file    |
+| GitHub Discussion (duplicate of existing issue)        | A discussion whose title/body matches an existing open issue by ≥ 3 significant keywords             | Manual setup step in smoke test; no seed file    |
+| GitHub Discussion (out of scope)                       | A discussion asking a support question unrelated to template workflow improvement                    | Manual setup step in smoke test; no seed file    |
+| GitHub label: `feedback-staging`                       | Label color `#0e8a16` (green), description "Issue promoted from a GitHub Discussions feedback entry" | Created via `gh label create` during setup steps |
 
 ---
 
@@ -86,13 +86,13 @@
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| Triage runner creates duplicate issues if run twice without checking prior results | Low | Med | Protocol must include a step to check whether a Discussion was already processed (look for a closing comment from a prior run) before creating issues |
-| "Feedback & Ideas" Discussions category not created before the protocol is used | Med | Med | Document the category creation as a mandatory prerequisite in `07-feedback-triage-protocol.md` and in `CONTRIBUTING.md` |
-| `feedback-staging` label not created before a triage run | Med | Low | Document label creation as a mandatory setup step; provide the exact `gh label create` command in the protocol |
-| External users open Issues instead of Discussions despite `CONTRIBUTING.md` | Med | Low | `CONTRIBUTING.md` should set expectations that Issues opened by non-maintainers for feature requests will be redirected to Discussions |
-| Keyword-based duplicate detection produces false positives | Med | Low | Protocol instructs the triage runner to present matches to the maintainer for confirmation before acting (interactive mode default) |
+| Risk                                                                               | Likelihood | Impact | Mitigation                                                                                                                                            |
+| ---------------------------------------------------------------------------------- | ---------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Triage runner creates duplicate issues if run twice without checking prior results | Low        | Med    | Protocol must include a step to check whether a Discussion was already processed (look for a closing comment from a prior run) before creating issues |
+| "Feedback & Ideas" Discussions category not created before the protocol is used    | Med        | Med    | Document the category creation as a mandatory prerequisite in `07-feedback-triage-protocol.md` and in `CONTRIBUTING.md`                               |
+| `feedback-staging` label not created before a triage run                           | Med        | Low    | Document label creation as a mandatory setup step; provide the exact `gh label create` command in the protocol                                        |
+| External users open Issues instead of Discussions despite `CONTRIBUTING.md`        | Med        | Low    | `CONTRIBUTING.md` should set expectations that Issues opened by non-maintainers for feature requests will be redirected to Discussions                |
+| Keyword-based duplicate detection produces false positives                         | Med        | Low    | Protocol instructs the triage runner to present matches to the maintainer for confirmation before acting (interactive mode default)                   |
 
 ---
 
@@ -193,6 +193,7 @@
    - Title: derived from the Discussion title (verbatim or lightly edited for clarity)
    - Label: `feedback-staging`
    - Body template:
+
      ```
      ## Community feedback source
 
@@ -234,9 +235,9 @@
 
    In the Workflow Commands table, add a new row after the `Retrospective` row:
 
-   | Stage | Claude Code | Cursor | Codex | Any other tool |
-   |---|---|---|---|---|
-   | Run feedback triage | — | — | — | Follow `docs/workflow/development-workflow/protocols/07-feedback-triage-protocol.md` |
+   | Stage               | Claude Code | Cursor | Codex | Any other tool                                                                       |
+   | ------------------- | ----------- | ------ | ----- | ------------------------------------------------------------------------------------ |
+   | Run feedback triage | —           | —      | —     | Follow `docs/workflow/development-workflow/protocols/07-feedback-triage-protocol.md` |
 
    Note: `AGENTS.md` and `CLAUDE.md` are the same physical file (symlink). Only one file needs to be edited; the other reflects the change automatically.
 
