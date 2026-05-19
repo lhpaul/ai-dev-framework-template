@@ -6,7 +6,7 @@
 
 **Audience**: AI agents running smoke tests (smoke-tester agent, Cursor run-smoke-test command, or equivalent).
 
-The smoke test *process* (inputs, output format, pass criteria, fail handling) is defined in the [Smoke Test Protocol](../workflow/development-workflow/protocols/04-smoke-test-protocol.md). This guide covers **how** to execute tests in this specific repo.
+The smoke test _process_ (inputs, output format, pass criteria, fail handling) is defined in the [Smoke Test Protocol](../workflow/development-workflow/protocols/04-smoke-test-protocol.md). This guide covers **how** to execute tests in this specific repo.
 
 If this repository has a preferred browser automation provider, declare it in `.ai-dev-workflow.yaml` under `browser_automation.provider`.
 
@@ -88,18 +88,18 @@ node /tmp/smoke-test.mjs
 
 ```js
 // Example using Node.js + Playwright
-import { chromium } from 'playwright';
+import { chromium } from "playwright";
 
-const BASE_URL = 'http://localhost:[port]';
+const BASE_URL = "http://localhost:[port]";
 const results = [];
 
 function pass(step) {
-  results.push({ step, status: 'PASS' });
+  results.push({ step, status: "PASS" });
   console.log(`✅ PASS — ${step}`);
 }
 
 function fail(step, error) {
-  results.push({ step, status: 'FAIL', error: String(error) });
+  results.push({ step, status: "FAIL", error: String(error) });
   console.error(`❌ FAIL — ${step}: ${error}`);
 }
 
@@ -112,13 +112,15 @@ function fail(step, error) {
     // Step 1 — Login
     await page.goto(`${BASE_URL}/[login-path]`);
     // ... authentication
-    pass('Step 1: Login');
+    pass("Step 1: Login");
   } catch (e) {
-    fail('Step 1: Login', e);
+    fail("Step 1: Login", e);
   }
 
-  console.log('\n--- RESULTS ---');
-  results.forEach(r => console.log(`${r.status} — ${r.step}${r.error ? ': ' + r.error : ''}`));
+  console.log("\n--- RESULTS ---");
+  results.forEach((r) =>
+    console.log(`${r.status} — ${r.step}${r.error ? ": " + r.error : ""}`),
+  );
   await browser.close();
 })();
 ```
@@ -137,7 +139,7 @@ function fail(step, error) {
 await page.waitForSelector('[data-testid="my-element"]');
 
 // ✅ Wait for navigation
-await page.waitForURL('**/expected-path');
+await page.waitForURL("**/expected-path");
 
 // ⚠️ Last resort only — document why no observable signal exists
 await page.waitForTimeout(500);

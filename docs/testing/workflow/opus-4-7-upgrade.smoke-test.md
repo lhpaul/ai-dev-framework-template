@@ -18,11 +18,11 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Value |
-|---|---|
-| Files to check | `.claude/agents/tech-lead.md`, `docs/workflow/development-workflow/agent-model-config.md` |
-| Old Opus model IDs | `claude-opus-4-6`, `claude-opus-4-5-20251101` |
-| New Opus model ID | `claude-opus-4-7` |
+| Item               | Value                                                                                     |
+| ------------------ | ----------------------------------------------------------------------------------------- |
+| Files to check     | `.claude/agents/tech-lead.md`, `docs/workflow/development-workflow/agent-model-config.md` |
+| Old Opus model IDs | `claude-opus-4-6`, `claude-opus-4-5-20251101`                                             |
+| New Opus model ID  | `claude-opus-4-7`                                                                         |
 
 ---
 
@@ -92,10 +92,10 @@ None required.
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| grep still returns hits in `.claude/agents/` | Edit was not saved or committed | Re-apply the change and verify with `git diff` |
-| grep returns hits in `.claude/worktrees/` | Transient worktree directories | Exclude `.claude/worktrees/` from the search; worktrees are not tracked |
+| Symptom                                      | Likely cause                    | Fix                                                                     |
+| -------------------------------------------- | ------------------------------- | ----------------------------------------------------------------------- |
+| grep still returns hits in `.claude/agents/` | Edit was not saved or committed | Re-apply the change and verify with `git diff`                          |
+| grep returns hits in `.claude/worktrees/`    | Transient worktree directories  | Exclude `.claude/worktrees/` from the search; worktrees are not tracked |
 
 ---
 

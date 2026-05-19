@@ -20,22 +20,27 @@ The key principle: **protocols live in `docs/`** and are tool-agnostic. Tool-spe
 When you first clone this template into a new project, run the **Project Setup** workflow to generate your project-specific documentation:
 
 ### With Claude Code
+
 ```
 Use the project-setup agent: Task the agent with "Initialize this project using the setup protocol"
 ```
 
 ### With Cursor
+
 ```
 /setup-project
 ```
 
 ### With any other AI tool
+
 Ask your AI assistant to:
+
 ```
 Follow the project setup protocol at docs/workflow/setup/protocol.md
 ```
 
 The setup agent will have a structured conversation with you to understand your project, then generate:
+
 - `docs/project/1-business-domain.md` — Domain model, entities, business rules
 - `docs/project/2-repo-architecture.md` — Monorepo/repository structure
 - `docs/project/3-software-architecture.md` — Tech stack, design patterns, architectural decisions
@@ -162,6 +167,7 @@ Released
 ```
 
 **Special paths:**
+
 - **Refactor** (`refactor/[slug]` from develop): code restructuring or tech-debt cleanup with a plan but no spec
 - **Fast Track** (`fix/[slug]` from develop): bugs and simple changes that don't need a spec or plan
 - **Hotfix** (`hotfix/[slug]` from main): critical production bugs that need immediate deployment
@@ -173,6 +179,7 @@ See [`docs/workflow/development-workflow/README.md`](docs/workflow/development-w
 ## Using With Different AI Tools
 
 ### Claude Code
+
 - Agents are defined in `.claude/agents/`
 - `CLAUDE.md` (symlink to `AGENTS.md`) is auto-loaded
 - Invoke agents via the Task tool or by mentioning the agent name
@@ -192,6 +199,7 @@ Use the item-orchestrator agent to start and advance work for [feature or issue 
 ```
 
 ### Cursor
+
 - Rules in `.cursor/rules/` provide automatic context
 - Commands in `.cursor/commands/` are invoked with `/command-name`
 - Workflow agents in `.cursor/agents/` (e.g. `/developer`, `/orchestrator`, `/item-orchestrator`) run stage-specific protocols; see `docs/workflow/development-workflow/agent-model-config.md` for model config
@@ -216,6 +224,7 @@ Example commands:
 ```
 
 ### Codex
+
 - Install the bundled skills with `./scripts/development-workflow/install-codex-skills.sh`
 - Start with `workflow-orchestrator` as the default portfolio-wide entrypoint for the workflow
 - Run `workflow-orchestrator` on an `economy` tier by default; only escalate when the stage-specific skill recommends it
@@ -239,6 +248,7 @@ Use $workflow-item-orchestrator to start and advance work for [feature or issue 
 ```
 
 ### Other AI Tools (Gemini CLI, etc.)
+
 - Point your tool at `AGENTS.md` for project context
 - Ask it to follow protocols in `docs/workflow/development-workflow/protocols/`
 - The protocols are plain markdown — any AI can follow them
@@ -315,10 +325,10 @@ Project-specific paths to avoid overwriting:
 
 If your project has the `.claude/skills/sync-template.md` skill, you can automate this process:
 
-| Tool | Command |
-|---|---|
+| Tool        | Command          |
+| ----------- | ---------------- |
 | Claude Code | `/sync-template` |
-| Cursor | `/sync-template` |
+| Cursor      | `/sync-template` |
 
 The skill compares your project against the template, shows exactly what changed (categorized by auto-apply vs. manual review vs. skipped), and applies updates only after your explicit approval. It also generates ready-to-use git instructions for branching, committing, and opening a PR.
 

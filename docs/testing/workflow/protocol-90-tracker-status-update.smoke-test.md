@@ -22,11 +22,11 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Value |
-|---|---|
-| Test Backlog issue (not on board) | A fresh GitHub issue with Status = Backlog, not added to the project board |
-| Test in-progress issue | A GitHub issue already on the board with Status = Writing Spec or Writing Plan |
-| Project number | Obtain via `gh project list --owner <OWNER>` |
+| Item                              | Value                                                                          |
+| --------------------------------- | ------------------------------------------------------------------------------ |
+| Test Backlog issue (not on board) | A fresh GitHub issue with Status = Backlog, not added to the project board     |
+| Test in-progress issue            | A GitHub issue already on the board with Status = Writing Spec or Writing Plan |
+| Project number                    | Obtain via `gh project list --owner <OWNER>`                                   |
 
 ---
 
@@ -108,11 +108,11 @@ Not applicable — this smoke test validates protocol documentation only; no see
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| Step 2.5 heading not found in Protocol 90 | Implementation not yet merged | Confirm the `refactor/159-protocol-90-tracker-status-update` branch is merged into the branch under test |
-| Protocol 91 note missing | Step 2 of Protocol 91 not updated during implementation | Re-read issue #159 scope and apply the missing edit |
-| Step numbering in Protocol 90 changed | Editor renumbered steps | Restore original step numbers (3–6) and use "2.5" for the new step |
+| Symptom                                   | Likely cause                                            | Fix                                                                                                      |
+| ----------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Step 2.5 heading not found in Protocol 90 | Implementation not yet merged                           | Confirm the `refactor/159-protocol-90-tracker-status-update` branch is merged into the branch under test |
+| Protocol 91 note missing                  | Step 2 of Protocol 91 not updated during implementation | Re-read issue #159 scope and apply the missing edit                                                      |
+| Step numbering in Protocol 90 changed     | Editor renumbered steps                                 | Restore original step numbers (3–6) and use "2.5" for the new step                                       |
 
 ---
 

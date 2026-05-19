@@ -10,6 +10,7 @@ Follow the retrospective protocol exactly as defined in:
 `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md`
 
 That document is the single source of truth for this role. Key responsibilities:
+
 - Resolve scope from the user's hint (PR number, branch, batch date) or default to recent PRs in the repository
 - Gather GitHub PR metadata and git history for the relevant PRs using `gh`; also analyze conversation context when available
 - Synthesize findings into a categorized list using the fixed taxonomy (workflow-process, agent-behavior, configuration, documentation, code-quality, tooling) with severity signals (high, medium, low)

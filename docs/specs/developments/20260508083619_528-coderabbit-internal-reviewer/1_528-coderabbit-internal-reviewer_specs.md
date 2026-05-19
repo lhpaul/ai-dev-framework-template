@@ -18,12 +18,14 @@ The goal is to let teams use CodeRabbit as an early-draft reviewer alongside or 
 
 **Actor**: Work Item Runner (orchestrator agent or human-delegated CI run)
 **Preconditions**:
+
 - `.ai-dev-workflow.yaml` includes `coderabbit` in `review.internal_reviewers` (e.g., `[claude, coderabbit]`).
 - A draft PR is open on a spec, plan, or implementation branch.
 - The CodeRabbit GitHub App is installed on the repository and auto-review is enabled.
 - The runner context can reach the CodeRabbit GitHub App (i.e., can push to the branch and observe PR comments via `gh`).
 
 **Steps**:
+
 1. The Work Item Runner enters Step 7a for the draft PR.
 2. The runner reads the `review.internal_reviewers` list and performs a runtime-availability check for `coderabbit`.
 3. `coderabbit` passes the availability check (see Business Rules BR-2).
@@ -36,18 +38,22 @@ The goal is to let teams use CodeRabbit as an early-draft reviewer alongside or 
 10. Step 7 (external automated reviewer loop) then runs as normal.
 
 **Postconditions**:
+
 - The draft PR is converted to non-draft.
 - The Step 7a summary comment lists CodeRabbit as an effective reviewer that approved.
 - The PR is ready to enter Step 7 (external review loop).
 
 **Information shown**:
+
 - Step 7a summary comment: effective reviewer set (including `coderabbit`), final verdict `APPROVED`.
 
 **Actions available**:
+
 - The runner proceeds to Step 7.
 - Human reviewers can inspect the Step 7a summary comment to see that CodeRabbit ran internally.
 
 **Considerations**:
+
 - CodeRabbit's invocation in Step 7a reuses the same auto-review mechanism as Step 7, but the context is a draft PR. CodeRabbit may behave differently on draft PRs depending on its configuration (e.g., the `draft_pr_reviews` setting in `.coderabbit.yaml`). The spec requires the integration work correctly for draft PRs (see BR-5). Specific invocation details — auto-trigger vs. explicit trigger comment — are an implementation decision for the plan stage.
 - If `coderabbit` also appears in `review.platforms` (Step 7), both gates are distinct: Step 7a runs on the draft PR before non-draft conversion, and Step 7 runs after conversion. The same CodeRabbit finding may surface in both stages if not resolved between the two (see BR-7).
 
@@ -57,11 +63,13 @@ The goal is to let teams use CodeRabbit as an early-draft reviewer alongside or 
 
 **Actor**: Work Item Runner
 **Preconditions**:
+
 - `.ai-dev-workflow.yaml` includes `coderabbit` in `review.internal_reviewers`.
 - A draft PR is open. The CodeRabbit GitHub App is installed and reachable.
 - CodeRabbit finds one or more `Critical` or `Major` issues in the draft PR.
 
 **Steps**:
+
 1. The Work Item Runner enters Step 7a.
 2. CodeRabbit is triggered on the draft PR. It responds with one or more `Critical` or `Major` findings.
 3. The runner classifies these findings as blocking (per the existing severity classification table).
@@ -72,16 +80,20 @@ The goal is to let teams use CodeRabbit as an early-draft reviewer alongside or 
 8. The runner posts the Step 7a summary comment and calls `gh pr ready`.
 
 **Postconditions**:
+
 - Blocking issues surfaced by CodeRabbit in the draft stage are resolved before the PR is made non-draft.
 - The Step 7a summary comment records the number of fix cycles and the final verdict.
 
 **Information shown**:
+
 - Step 7a summary comment: effective reviewer set, fix cycles taken, final verdict `APPROVED`.
 
 **Actions available**:
+
 - If the fix cycle limit is reached before approval, the runner escalates to the human.
 
 **Considerations**:
+
 - The maximum fix-cycle count for Step 7a (currently 5) applies to CodeRabbit the same way it does to other reviewers; CodeRabbit blocking findings do not get unlimited cycles.
 
 ---
@@ -90,11 +102,13 @@ The goal is to let teams use CodeRabbit as an early-draft reviewer alongside or 
 
 **Actor**: Work Item Runner
 **Preconditions**:
+
 - `review.internal_reviewers` includes `coderabbit` (and at least one other reachable reviewer such as `claude`).
 - CodeRabbit is unreachable (e.g., GitHub App is not installed, or the runner cannot post PR comments).
 - The configured `internal_reviewers_unavailable_policy` is `warn` (default).
 
 **Steps**:
+
 1. The Work Item Runner performs the runtime-availability check for `coderabbit`.
 2. The check determines `coderabbit` is unreachable (per the availability classification table, BR-2).
 3. The runner posts a warning comment to the draft PR:
@@ -103,17 +117,21 @@ The goal is to let teams use CodeRabbit as an early-draft reviewer alongside or 
 5. Remaining reachable reviewers run normally. If all approve, the runner posts the Step 7a summary comment (listing `coderabbit` as skipped) and calls `gh pr ready`.
 
 **Postconditions**:
+
 - The draft PR is converted to non-draft once all reachable reviewers approve.
 - A warning comment and the Step 7a summary comment are posted, both noting `coderabbit` was skipped.
 
 **Information shown**:
+
 - Warning comment: which reviewer was skipped and why.
 - Step 7a summary comment: effective reviewer set, skipped reviewers with reason, final verdict.
 
 **Actions available**:
+
 - Human reviewers can inspect the PR and choose not to merge if reduced reviewer coverage is unacceptable.
 
 **Considerations**:
+
 - If ALL reviewers including `coderabbit` are unreachable, the existing hard-fail rule applies: the draft PR is not converted and the item is escalated.
 
 ---
@@ -122,23 +140,28 @@ The goal is to let teams use CodeRabbit as an early-draft reviewer alongside or 
 
 **Actor**: Work Item Runner
 **Preconditions**:
+
 - `.ai-dev-workflow.yaml` includes `coderabbit` in `review.internal_reviewers` but NOT in `review.platforms`.
 - A draft PR is open.
 
 **Steps**:
+
 1. Step 7a runs, triggers CodeRabbit on the draft PR, and awaits a verdict.
 2. CodeRabbit approves. The PR is converted to non-draft.
 3. Step 7 runs. Since `coderabbit` is not listed in `review.platforms`, the external reviewer loop does not re-trigger CodeRabbit.
 4. Step 7 completes with only the other configured platforms (or is skipped if none are configured).
 
 **Postconditions**:
+
 - CodeRabbit runs exactly once (in Step 7a). No duplicate trigger occurs in Step 7.
 
 **Information shown**:
+
 - Step 7a summary comment notes CodeRabbit ran and approved.
 - Step 7 summary notes CodeRabbit was not in the external platforms list.
 
 **Considerations**:
+
 - This is the expected configuration when a team wants CodeRabbit only as an early draft gate without a second post-non-draft review.
 
 ---
@@ -147,24 +170,29 @@ The goal is to let teams use CodeRabbit as an early-draft reviewer alongside or 
 
 **Actor**: Work Item Runner
 **Preconditions**:
+
 - `.ai-dev-workflow.yaml` includes `coderabbit` in both `review.internal_reviewers` AND `review.platforms`.
 - A draft PR is open.
 
 **Steps**:
+
 1. Step 7a runs. CodeRabbit is triggered on the draft PR. Findings addressed and resolved.
 2. PR is converted to non-draft (after all internal reviewers approve).
 3. Step 7 runs. CodeRabbit is triggered again (per the external review loop contract) on the non-draft PR.
 4. Since fixes were already applied in Step 7a, CodeRabbit may find no new issues in Step 7 and report clean.
 
 **Postconditions**:
+
 - CodeRabbit runs twice: once in Step 7a (draft stage), once in Step 7 (external reviewer loop).
 - This is a valid and explicitly supported configuration; the two runs are independent and complement each other.
 
 **Information shown**:
+
 - Step 7a summary: CodeRabbit internal review verdict.
 - Step 7 summary: CodeRabbit external reviewer verdict.
 
 **Considerations**:
+
 - This is an intentional choice for teams that want coverage at both the draft stage and the post-non-draft stage. The two runs are not redundant in general: new pushes between Step 7a and Step 7 may introduce new issues.
 - Both runs count against their respective loop limits (Step 7a fix-cycle limit and Step 7 cycle limit). They do not share a cycle counter.
 

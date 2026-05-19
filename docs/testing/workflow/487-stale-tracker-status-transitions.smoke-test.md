@@ -20,13 +20,13 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Value |
-|---|---|
-| Workflow file | `.github/workflows/update-tracker-on-merge.yml` |
-| New verification script | `scripts/development-workflow/check-tracker-merge-mapping.sh` |
-| Protocol 90 | `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
-| Protocol 91 | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` |
-| Simulated issue number (Case B) | Any non-existent issue number, e.g. `99999` |
+| Item                            | Value                                                                                |
+| ------------------------------- | ------------------------------------------------------------------------------------ |
+| Workflow file                   | `.github/workflows/update-tracker-on-merge.yml`                                      |
+| New verification script         | `scripts/development-workflow/check-tracker-merge-mapping.sh`                        |
+| Protocol 90                     | `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` |
+| Protocol 91                     | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`       |
+| Simulated issue number (Case B) | Any non-existent issue number, e.g. `99999`                                          |
 
 ---
 
@@ -170,25 +170,25 @@ spec/plan PRs must not be set to "Merged".
 ## Assertions Checklist
 
 - [ ] **AC-1**: `update-tracker-on-merge.yml` maps `spec/*` → `Spec Ready`. Confirmed by
-  `check-tracker-merge-mapping.sh` exit 0 (Step 1) and manual review (Step 3).
+      `check-tracker-merge-mapping.sh` exit 0 (Step 1) and manual review (Step 3).
 - [ ] **AC-2**: `update-tracker-on-merge.yml` maps `implementation-plan/*` → `Plan Ready`.
-  Confirmed by `check-tracker-merge-mapping.sh` exit 0 (Step 1) and manual review (Step 3).
+      Confirmed by `check-tracker-merge-mapping.sh` exit 0 (Step 1) and manual review (Step 3).
 - [ ] **AC-3**: `update-tracker-on-merge.yml` maps implementation branches → `Merged`. Confirmed
-  by `check-tracker-merge-mapping.sh` exit 0 (Step 1).
+      by `check-tracker-merge-mapping.sh` exit 0 (Step 1).
 - [ ] **AC-4**: `post-merge-cleanup.sh` uses Spec Ready / Plan Ready / Merged consistently with
-  the workflow. Confirmed by manual review (Step 4).
+      the workflow. Confirmed by manual review (Step 4).
 - [ ] **AC-5**: Protocol 91 Step 10 explicitly states the branch-type → status table and
-  prohibits "Merged" for spec/plan merges. Confirmed by manual review (Step 5).
+      prohibits "Merged" for spec/plan merges. Confirmed by manual review (Step 5).
 - [ ] **AC-6**: Protocol 90 and Protocol 91 both contain stale "In Development" detection and
-  correction rules. Confirmed by manual review (Steps 6–7).
+      correction rules. Confirmed by manual review (Steps 6–7).
 - [ ] **AC-7**: The correction rule notes the item is dispatched at most once. Confirmed by
-  manual review (Steps 6–7).
+      manual review (Steps 6–7).
 - [ ] **AC-8**: The correction rule invalidates when a branch or PR is present. Confirmed by
-  manual review (Steps 6–7).
+      manual review (Steps 6–7).
 - [ ] **AC-9**: `check-tracker-merge-mapping.sh` exits 0 on correct mapping and exits 1 on
-  incorrect mapping. Confirmed by Steps 1–2.
+      incorrect mapping. Confirmed by Steps 1–2.
 - [ ] **AC-10**: Both protocol rules emit a `STALE_STATUS_CORRECTION:` log line when a correction
-  is made. Confirmed by manual review (Steps 6–7).
+      is made. Confirmed by manual review (Steps 6–7).
 
 ---
 
@@ -197,18 +197,18 @@ spec/plan PRs must not be set to "Merged".
 Not applicable — this feature operates on tracker state and VCS state, not application data.
 
 | Entity | Scenario | How to load |
-|---|---|---|
-| (none) | — | — |
+| ------ | -------- | ----------- |
+| (none) | —        | —           |
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `check-tracker-merge-mapping.sh` exits 1 on an unmodified repo | The YAML structure of the detect step changed after the plan was written | Re-read the `detect` step in `update-tracker-on-merge.yml` and update the script's parsing pattern to match the current YAML layout |
-| Step 6 or Step 7 sub-step not found in protocol | The plan edits were partially applied | Re-read the affected section header and apply the remaining text |
-| The mapping-summary log step is absent from the Actions log | The workflow step was not committed or the test PR targeted the wrong branch | Confirm the implementation commit includes the new step in `.github/workflows/update-tracker-on-merge.yml` |
+| Symptom                                                        | Likely cause                                                                 | Fix                                                                                                                                 |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `check-tracker-merge-mapping.sh` exits 1 on an unmodified repo | The YAML structure of the detect step changed after the plan was written     | Re-read the `detect` step in `update-tracker-on-merge.yml` and update the script's parsing pattern to match the current YAML layout |
+| Step 6 or Step 7 sub-step not found in protocol                | The plan edits were partially applied                                        | Re-read the affected section header and apply the remaining text                                                                    |
+| The mapping-summary log step is absent from the Actions log    | The workflow step was not committed or the test PR targeted the wrong branch | Confirm the implementation commit includes the new step in `.github/workflows/update-tracker-on-merge.yml`                          |
 
 ---
 

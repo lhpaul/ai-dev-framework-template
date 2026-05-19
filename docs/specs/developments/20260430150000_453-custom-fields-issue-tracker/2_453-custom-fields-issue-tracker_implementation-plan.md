@@ -19,14 +19,14 @@
 
 ## Verification Log
 
-| Check | Command / query | Result |
-|---|---|---|
-| Repo revision | `git rev-parse --short HEAD` | `efdc8e6` |
+| Check                                             | Command / query                                                                                        | Result                                                                                                                                                              |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Repo revision                                     | `git rev-parse --short HEAD`                                                                           | `efdc8e6`                                                                                                                                                           |
 | Existing issue-tracker helpers in workflow-lib.sh | `grep -n "workflow_issue_tracker\|workflow_config_field" scripts/development-workflow/workflow-lib.sh` | Lines 215–258: `workflow_config_field`, `workflow_issue_tracker_project_number`, `workflow_issue_tracker_provider_raw`, `workflow_normalize_issue_tracker_provider` |
-| Scripts importing workflow-lib.sh | `grep -rl "workflow-lib.sh" scripts/development-workflow/` | `workflow-batch-plan.sh`, `workflow-lib.sh`, `workflow-next-action.sh`, `add-backlog-item.sh` |
-| Any existing `custom_fields` references | `grep -rn "custom_fields" .ai-dev-workflow.yaml scripts/ docs/` | Only in the spec file (no prior implementation) |
-| Linear issue-creation scripts | `grep -rn "linear" scripts/ --include="*.sh"` | `add-backlog-item.sh` lines 37, 111–113: Linear creation exits non-zero with guidance; no project-field logic present |
-| Issue-tracker integration docs | `ls docs/workflow/development-workflow/integrations/` | `github-projects.md`, `linear.md` both confirmed present |
+| Scripts importing workflow-lib.sh                 | `grep -rl "workflow-lib.sh" scripts/development-workflow/`                                             | `workflow-batch-plan.sh`, `workflow-lib.sh`, `workflow-next-action.sh`, `add-backlog-item.sh`                                                                       |
+| Any existing `custom_fields` references           | `grep -rn "custom_fields" .ai-dev-workflow.yaml scripts/ docs/`                                        | Only in the spec file (no prior implementation)                                                                                                                     |
+| Linear issue-creation scripts                     | `grep -rn "linear" scripts/ --include="*.sh"`                                                          | `add-backlog-item.sh` lines 37, 111–113: Linear creation exits non-zero with guidance; no project-field logic present                                               |
+| Issue-tracker integration docs                    | `ls docs/workflow/development-workflow/integrations/`                                                  | `github-projects.md`, `linear.md` both confirmed present                                                                                                            |
 
 ---
 
@@ -82,11 +82,11 @@ No changes required to `docs/project/`, `docs/best-practices/`, or `AGENTS.md` �
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| AWK parser misreads indented `custom_fields` key as a subsection exit signal | Low | Med | Test parser with config file containing `custom_fields` at two-space indent below `issue_tracker`; validate against the exit condition `^[^[:space:]#].*:[[:space:]]*$` which only fires at zero indent |
-| Trailing comment on a `custom_fields` value line stripped incorrectly | Low | Low | Follow same `sub(/[[:space:]]+#.*$/, "", line)` pattern already used in `workflow_config_field`; all four existing callers rely on this and work correctly |
-| New helper not sourced by callers that need it | Low | Low | The helper lives in `workflow-lib.sh`, which is already sourced by every relevant script; no additional sourcing required |
+| Risk                                                                         | Likelihood | Impact | Mitigation                                                                                                                                                                                              |
+| ---------------------------------------------------------------------------- | ---------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AWK parser misreads indented `custom_fields` key as a subsection exit signal | Low        | Med    | Test parser with config file containing `custom_fields` at two-space indent below `issue_tracker`; validate against the exit condition `^[^[:space:]#].*:[[:space:]]*$` which only fires at zero indent |
+| Trailing comment on a `custom_fields` value line stripped incorrectly        | Low        | Low    | Follow same `sub(/[[:space:]]+#.*$/, "", line)` pattern already used in `workflow_config_field`; all four existing callers rely on this and work correctly                                              |
+| New helper not sourced by callers that need it                               | Low        | Low    | The helper lives in `workflow-lib.sh`, which is already sourced by every relevant script; no additional sourcing required                                                                               |
 
 ---
 

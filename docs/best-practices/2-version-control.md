@@ -16,17 +16,17 @@ This project follows the [Conventional Commits](https://www.conventionalcommits.
 
 ### Types
 
-| Type | When to use |
-|---|---|
-| `feat` | A new feature |
-| `fix` | A bug fix |
-| `docs` | Documentation changes only |
-| `style` | Formatting, whitespace — no logic change |
+| Type       | When to use                                |
+| ---------- | ------------------------------------------ |
+| `feat`     | A new feature                              |
+| `fix`      | A bug fix                                  |
+| `docs`     | Documentation changes only                 |
+| `style`    | Formatting, whitespace — no logic change   |
 | `refactor` | Code restructuring — no feature or bug fix |
-| `perf` | Performance improvements |
-| `test` | Adding or correcting tests |
-| `chore` | Build process, tooling, dependencies |
-| `revert` | Reverting a previous commit |
+| `perf`     | Performance improvements                   |
+| `test`     | Adding or correcting tests                 |
+| `chore`    | Build process, tooling, dependencies       |
+| `revert`   | Reverting a previous commit                |
 
 ### Examples
 
@@ -46,15 +46,15 @@ chore(deps): upgrade eslint to v9
 
 ## Branching
 
-| Branch type | Naming | Branch from | Merges into |
-|---|---|---|---|
-| Feature (full pipeline) | `feature/[slug]` | `develop` | `develop` |
-| Refactor | `refactor/[slug]` | `develop` | `develop` |
-| Bug / simple fix | `fix/[slug]` | `develop` | `develop` |
-| Hotfix (critical prod) | `hotfix/[slug]` | `main` | `main` + `develop` |
-| Spec | `spec/[slug]` | `develop` | `develop` |
-| Implementation plan | `implementation-plan/[slug]` | `develop` | `develop` |
-| Release | `release/v[X.Y.Z]` | `develop` | `main` + `develop` |
+| Branch type             | Naming                       | Branch from | Merges into        |
+| ----------------------- | ---------------------------- | ----------- | ------------------ |
+| Feature (full pipeline) | `feature/[slug]`             | `develop`   | `develop`          |
+| Refactor                | `refactor/[slug]`            | `develop`   | `develop`          |
+| Bug / simple fix        | `fix/[slug]`                 | `develop`   | `develop`          |
+| Hotfix (critical prod)  | `hotfix/[slug]`              | `main`      | `main` + `develop` |
+| Spec                    | `spec/[slug]`                | `develop`   | `develop`          |
+| Implementation plan     | `implementation-plan/[slug]` | `develop`   | `develop`          |
+| Release                 | `release/v[X.Y.Z]`           | `develop`   | `main` + `develop` |
 
 ### Branch Slug Convention
 

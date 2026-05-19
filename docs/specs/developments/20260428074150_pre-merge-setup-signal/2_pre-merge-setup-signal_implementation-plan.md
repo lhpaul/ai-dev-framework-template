@@ -19,15 +19,15 @@
 
 ## Verification Log
 
-| Check | Command / query | Result |
-|---|---|---|
-| Repo revision | `git rev-parse --short HEAD` | `b5b3937` |
-| `needs-setup` in protocol 91 | `grep -n "needs-setup" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | No matches — label not yet defined or referenced |
-| `needs-setup` in protocol 92 | `grep -n "needs-setup" docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md` | No matches — label not yet defined or referenced |
-| `Pre-merge Setup` section referenced anywhere | `grep -rn "Pre-merge Setup" docs/workflow/` | No matches — section pattern is new |
-| Existing smoke test runbooks in `docs/testing/workflow/` | `ls docs/testing/workflow/*.smoke-test.md \| wc -l` | 28 runbooks; no `367-pre-merge-setup-signal.smoke-test.md` yet |
-| Step 8a location in protocol 91 | `grep -n "^## Step 8a" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | Line 948 — "Step 8a: Label Readiness Checklist (Hard Gate)" |
-| Labels section in protocol 92 | `grep -n "^## Labels" docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md` | Line 9 — "## Labels" table |
+| Check                                                    | Command / query                                                                                         | Result                                                         |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Repo revision                                            | `git rev-parse --short HEAD`                                                                            | `b5b3937`                                                      |
+| `needs-setup` in protocol 91                             | `grep -n "needs-setup" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`    | No matches — label not yet defined or referenced               |
+| `needs-setup` in protocol 92                             | `grep -n "needs-setup" docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md` | No matches — label not yet defined or referenced               |
+| `Pre-merge Setup` section referenced anywhere            | `grep -rn "Pre-merge Setup" docs/workflow/`                                                             | No matches — section pattern is new                            |
+| Existing smoke test runbooks in `docs/testing/workflow/` | `ls docs/testing/workflow/*.smoke-test.md \| wc -l`                                                     | 28 runbooks; no `367-pre-merge-setup-signal.smoke-test.md` yet |
+| Step 8a location in protocol 91                          | `grep -n "^## Step 8a" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`    | Line 948 — "Step 8a: Label Readiness Checklist (Hard Gate)"    |
+| Labels section in protocol 92                            | `grep -n "^## Labels" docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md`  | Line 9 — "## Labels" table                                     |
 
 ---
 
@@ -108,12 +108,12 @@ No other project docs in `docs/project/`, `docs/best-practices/`, or `AGENTS.md`
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| Diff-scan heuristics produce false positives on spec/plan PRs (which touch markdown, not code) | Low | Low | Detection heuristics target code-level patterns (env references in source files, secrets in workflow YAML). Markdown-only diffs will not match these patterns. No mitigation required beyond heuristic design. |
-| PR body edit (`gh pr edit --body`) overwrites an existing custom body | Low | Low | Read the existing PR body first, append the section, then write the full updated body. Implementation note in Step 8a makes this explicit. |
-| `needs-setup` label does not exist in the GitHub repo's label set | Low | Medium | Document in the smoke test that the label must be created in the repo's label settings before first use. The developer implementing this step should also add a note in the heuristics subsection. |
-| Human forgets to remove `needs-setup` before merge | Low | Low | The label is a signal only (BR-3); it does not block merge. The human's responsibility is documented in the spec (Use Case 3) and in protocol 92. |
+| Risk                                                                                           | Likelihood | Impact | Mitigation                                                                                                                                                                                                     |
+| ---------------------------------------------------------------------------------------------- | ---------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Diff-scan heuristics produce false positives on spec/plan PRs (which touch markdown, not code) | Low        | Low    | Detection heuristics target code-level patterns (env references in source files, secrets in workflow YAML). Markdown-only diffs will not match these patterns. No mitigation required beyond heuristic design. |
+| PR body edit (`gh pr edit --body`) overwrites an existing custom body                          | Low        | Low    | Read the existing PR body first, append the section, then write the full updated body. Implementation note in Step 8a makes this explicit.                                                                     |
+| `needs-setup` label does not exist in the GitHub repo's label set                              | Low        | Medium | Document in the smoke test that the label must be created in the repo's label settings before first use. The developer implementing this step should also add a note in the heuristics subsection.             |
+| Human forgets to remove `needs-setup` before merge                                             | Low        | Low    | The label is a signal only (BR-3); it does not block merge. The human's responsibility is documented in the spec (Use Case 3) and in protocol 92.                                                              |
 
 ---
 

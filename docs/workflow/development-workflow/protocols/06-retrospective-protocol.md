@@ -15,12 +15,15 @@ This protocol may be entered in two ways:
 Determine which PRs to analyze.
 
 **With a scope hint** (e.g., PR number, branch name, or batch date provided by the human):
+
 - Use the hint directly. Query the specified PR(s) via `gh pr view` and `gh pr list`.
 
 **Without a scope hint, same-session mode** (triggered from Protocol 90 or 91):
+
 - Use the PRs processed during the current session. These are already known from the conversation context.
 
 **Without a scope hint, on-demand mode** (fresh session, `/retrospective` with no argument):
+
 - Default to recent PRs in the current repository:
   ```bash
   gh pr list --state all --limit 10 --json number,title,headRefName,baseRefName,mergedAt,createdAt,labels,reviews
@@ -137,9 +140,33 @@ Record:
 
 Carry this mapping into Step 4 (presentation) and Step 5 (action execution).
 
+**Downstream script-bug tracking prompt**: Were any template workflow script bugs
+fixed in a downstream sync PR during this retrospective's cycle? If yes, treat the
+bug as a finding and classify it as `contribute-upstream` in Step 3b so that Step 3e
+automatically files exactly one upstream issue (labelled `workflow`) with a link to
+the downstream fix commit. This prevents the same bug from shipping to future
+downstream syncs without creating duplicate issues.
+
 ### 3b. Template cross-reference (runs when `template.repository` is configured; skipped otherwise)
 
-Read `template.repository` from `.ai-dev-workflow.yaml`.
+**Subagent context note**: Step 3b uses `gh` CLI exclusively — it does not require MCP tools. When the retrospective agent is dispatched as a subagent (i.e., without an interactive system prompt that lists available MCP tools), it must still execute Step 3b if `template.repository` is configured. The agent must read `.ai-dev-workflow.yaml` directly from the filesystem (`cat .ai-dev-workflow.yaml` or equivalent) to obtain the `template.repository` value — do not rely on memory or assume the field is empty. Failure to read the YAML (e.g., file not found, parse error) is treated as `check-unavailable` with `check_status: warning` — mark all findings accordingly and continue.
+
+Read `template.repository` from `.ai-dev-workflow.yaml`:
+
+```bash
+# Read template.repository from the config file (works without yq)
+# Scans only the template: block; stops at the next top-level key to avoid
+# picking up unrelated repository: keys from other YAML blocks (e.g. vcs:).
+awk '
+/^[[:space:]]*template:[[:space:]]*$/ { in_template=1; next }
+in_template && /^[^[:space:]]/ { in_template=0 }
+in_template && /^[[:space:]]*repository:[[:space:]]*/ {
+  val=$0; sub(/^[[:space:]]*repository:[[:space:]]*/, "", val); gsub(/"/, "", val); print val; exit
+}
+' .ai-dev-workflow.yaml
+# Or use yq if available:
+# yq '.template.repository' .ai-dev-workflow.yaml
+```
 
 - **If absent or empty**: skip this substep silently. Do not mention it in output.
 - **If present but malformed** (not `owner/repo` format): mark all findings as `check-unavailable` with `check_status: error` and continue. Report the error inline with each finding in Step 4 output.
@@ -169,18 +196,18 @@ If the repository is unreachable (network error, auth failure, or `gh` reports t
 
 **Classify each finding into exactly one bucket:**
 
-| Bucket | Label | Condition |
-|---|---|---|
-| `already-tracked` | Already in template backlog | Finding matches an **open** template issue (see matching heuristic below) |
-| `already-fixed` | Already fixed upstream | Finding matches a **closed** template issue AND the fix version is newer than `template.last_synced_version` |
+| Bucket                | Label                         | Condition                                                                                                                                                                                                                                                                                    |
+| --------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `already-tracked`     | Already in template backlog   | Finding matches an **open** template issue (see matching heuristic below)                                                                                                                                                                                                                    |
+| `already-fixed`       | Already fixed upstream        | Finding matches a **closed** template issue AND the fix version is newer than `template.last_synced_version`                                                                                                                                                                                 |
 | `contribute-upstream` | Contribute upstream candidate | Finding does not match any template issue, matches a closed issue but version comparison is inconclusive, or matches a closed issue whose fix version is older than or equal to `template.last_synced_version` (fix already synced — may be a different issue or an incomplete upstream fix) |
-| `check-unavailable` | Template check unavailable | Template repository was unreachable (warning) or malformed (error); classification could not be performed |
+| `check-unavailable`   | Template check unavailable    | Template repository was unreachable (warning) or malformed (error); classification could not be performed                                                                                                                                                                                    |
 
 **Matching heuristic** (apply in priority order — first criterion that matches wins):
 
 1. **Exact path match**: The finding's affected file path appears verbatim in the template issue's title or body.
 2. **Keyword overlap**: Three or more significant keywords (excluding stopwords like "the", "a", "is") appear in both the finding description and the issue title/body.
-3. **Category label match** *(second-pass only — apply after Step 3c taxonomy assignment is complete)*: The finding and the template issue share the same categorization taxonomy label (e.g., both are `workflow-process`) and describe overlapping symptoms. Skip this criterion on the first pass if taxonomy labels have not yet been assigned; re-run matching after Step 3c completes.
+3. **Category label match** _(second-pass only — apply after Step 3c taxonomy assignment is complete)_: The finding and the template issue share the same categorization taxonomy label (e.g., both are `workflow-process`) and describe overlapping symptoms. Skip this criterion on the first pass if taxonomy labels have not yet been assigned; re-run matching after Step 3c completes.
 
 When a finding matches multiple template issues, prefer the most recently updated open issue (for `already-tracked`) or the most recently updated closed issue (for `already-fixed`) using the `updatedAt` field.
 
@@ -192,16 +219,19 @@ When a finding matches multiple template issues, prefer the most recently update
 **Carry classification into Step 4 output:**
 
 Show the bucket label inline with each finding in the presentation. For `already-tracked` findings, also include:
+
 - The matching template issue number and title
 - The suggestion: "Consider **Skip** (already tracked upstream) or **Expand existing** (add downstream context to the template issue) as alternatives to creating a new upstream issue."
 
 For `already-fixed` findings, also include:
+
 - The matching template issue number and title
 - The fix version (if determinable) and the downstream's `last_synced_version`
 
 For `contribute-upstream` findings, no extra annotation is required beyond the label.
 
 For `check-unavailable` findings, also include:
+
 - The reason classification was unavailable (e.g., "Template repository unreachable" or "Malformed template repository configuration")
 - The suggestion: "Fix configuration or network access and re-run the retrospective to enable template cross-reference."
 
@@ -209,9 +239,11 @@ For `check-unavailable` findings, also include:
 
 Before proceeding to Step 3c (classification) and Step 4, verify that Step 3b was completed when it was required:
 
-- Read `template.repository` from `.ai-dev-workflow.yaml`.
-- **If `template.repository` is set (non-empty)** and Step 3b was skipped or not completed during this session: stop here, return to Step 3b, and complete it before classifying any findings. Step 3b handles both the well-formed case (full cross-reference) and the malformed case (`check-unavailable`); the gate fires for both.
+- Read `template.repository` from `.ai-dev-workflow.yaml` using the filesystem command shown in Step 3b (do not rely on memory).
+- **If `template.repository` is set (non-empty)** and Step 3b was skipped or not completed during this session: stop here, return to Step 3b, and complete it before classifying any findings. Step 3b handles the well-formed case (full cross-reference), the malformed case (`check-unavailable`), and the subagent / YAML-unreadable case (`check-unavailable` with `check_status: warning`) — the gate is satisfied for all three outcomes. The gate fires only when Step 3b was entirely omitted.
 - **If `template.repository` is absent or empty**: the gate is satisfied — proceed to Step 3c.
+
+**Subagent-specific guidance**: When this gate runs in a subagent context and Step 3b was skipped because the agent assumed `template.repository` was empty without reading the YAML, the gate is **not** satisfied. The agent must read the YAML (even in a subagent shell with no MCP tools), run Step 3b using `gh` CLI, and return. If the YAML is unreadable, mark all findings `check-unavailable` — that satisfies the gate and allows the retrospective to continue.
 
 This gate prevents premature classification of findings (e.g., marking a finding as "Add to backlog" instead of `already-tracked` or `already-fixed`) when the template cross-reference data would have changed the outcome.
 
@@ -219,14 +251,14 @@ This gate prevents premature classification of findings (e.g., marking a finding
 
 Assign each opportunity exactly one category:
 
-| Category | Display label | Description |
-|---|---|---|
+| Category           | Display label      | Description                                                                                                 |
+| ------------------ | ------------------ | ----------------------------------------------------------------------------------------------------------- |
 | `workflow-process` | Workflow & Process | Deviation from or friction in the defined workflow protocols (e.g., wrong base branch, skipped review step) |
-| `agent-behavior` | Agent Behavior | Unexpected or incorrect agent action, model mischoice, or protocol misread |
-| `configuration` | Configuration | Missing or incorrect repo/workflow configuration (e.g., labels, YAML files, `.gitignore`) |
-| `documentation` | Documentation | Gap or inaccuracy in a protocol, spec, or guideline document |
-| `code-quality` | Code Quality | Recurring reviewer findings that suggest a systemic pattern rather than a one-off issue |
-| `tooling` | Tooling | External tool integration issue (e.g., CodeRabbit misconfiguration, `gh` CLI usage gap) |
+| `agent-behavior`   | Agent Behavior     | Unexpected or incorrect agent action, model mischoice, or protocol misread                                  |
+| `configuration`    | Configuration      | Missing or incorrect repo/workflow configuration (e.g., labels, YAML files, `.gitignore`)                   |
+| `documentation`    | Documentation      | Gap or inaccuracy in a protocol, spec, or guideline document                                                |
+| `code-quality`     | Code Quality       | Recurring reviewer findings that suggest a systemic pattern rather than a one-off issue                     |
+| `tooling`          | Tooling            | External tool integration issue (e.g., CodeRabbit misconfiguration, `gh` CLI usage gap)                     |
 
 ### 3d. Populate Metrics Block
 
@@ -234,14 +266,14 @@ After completing Steps 3a–3c (backlog query, template cross-reference, and cat
 
 **Required fields**:
 
-| Field | Definition | Source |
-|---|---|---|
-| **Batch identifier** | The PR numbers or batch date used as the scope in Step 1 (e.g., "PRs #301–#315" or "2026-04-24") | Step 1 scope resolution |
-| **Human interventions count** | Number of moments where the human had to correct the agent's direction mid-run (not counting routine choices like approving a retrospective output) | Step 2c conversation context, or PR event history |
-| **Step 5.2 violations count** | Number of instances where the automated reviewer found a Step 5.2 (PR-readiness) violation during the batch | PR comments and review cycles |
-| **Automated-reviewer retry loops count** | Number of additional `pr-review-loop.sh` iterations beyond the first pass (i.e., how many re-runs were needed after findings were addressed) | PR comment timestamps and review rounds |
-| **Escalations count** | Number of items that escalated past the automated reviewer retry limit (source: PR labels or conversation notes indicating escalation) | PR labels, conversation notes |
-| **Prior action item recurrence assessment** | For each open action item from prior retrospectives whose targeted failure mode was observable in this batch, record whether it "recurred" or "did not recur". If no prior action items are relevant to this batch, record "none applicable". | Comparison with prior retrospective output |
+| Field                                       | Definition                                                                                                                                                                                                                                    | Source                                            |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| **Batch identifier**                        | The PR numbers or batch date used as the scope in Step 1 (e.g., "PRs #301–#315" or "2026-04-24")                                                                                                                                              | Step 1 scope resolution                           |
+| **Human interventions count**               | Number of moments where the human had to correct the agent's direction mid-run (not counting routine choices like approving a retrospective output)                                                                                           | Step 2c conversation context, or PR event history |
+| **Step 5.2 violations count**               | Number of instances where the automated reviewer found a Step 5.2 (PR-readiness) violation during the batch                                                                                                                                   | PR comments and review cycles                     |
+| **Automated-reviewer retry loops count**    | Number of additional `pr-review-loop.sh` iterations beyond the first pass (i.e., how many re-runs were needed after findings were addressed)                                                                                                  | PR comment timestamps and review rounds           |
+| **Escalations count**                       | Number of items that escalated past the automated reviewer retry limit (source: PR labels or conversation notes indicating escalation)                                                                                                        | PR labels, conversation notes                     |
+| **Prior action item recurrence assessment** | For each open action item from prior retrospectives whose targeted failure mode was observable in this batch, record whether it "recurred" or "did not recur". If no prior action items are relevant to this batch, record "none applicable". | Comparison with prior retrospective output        |
 
 **Rules**:
 
@@ -253,11 +285,11 @@ After completing Steps 3a–3c (backlog query, template cross-reference, and cat
 
 Assign each opportunity a severity level:
 
-| Code | Display label | Description |
-|---|---|---|
-| `high` | High | The issue caused rework, required human intervention, or has high likelihood of recurring and significantly disrupting future runs |
-| `medium` | Medium | The issue caused friction or delay but did not require human intervention; likely to recur without a fix |
-| `low` | Low | The issue is a minor deviation or a one-off occurrence with low likelihood of recurring or causing meaningful disruption |
+| Code     | Display label | Description                                                                                                                        |
+| -------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `high`   | High          | The issue caused rework, required human intervention, or has high likelihood of recurring and significantly disrupting future runs |
+| `medium` | Medium        | The issue caused friction or delay but did not require human intervention; likely to recur without a fix                           |
+| `low`    | Low           | The issue is a minor deviation or a one-off occurrence with low likelihood of recurring or causing meaningful disruption           |
 
 **Bias toward `high`** when an issue required direct human correction.
 
@@ -348,33 +380,34 @@ Present the categorized findings to the human in a structured format:
 **Recommended action**: Address now | Add to backlog
 **Related existing item**: #NNN — [title] | No existing backlog item found
 **Template cross-reference**: `already-tracked` | `already-fixed` | `contribute-upstream` | `check-unavailable`
-  *(Only include this field if Step 3b was executed — i.e., if `template.repository` was configured)*
+_(Only include this field if Step 3b was executed — i.e., if `template.repository` was configured)_
 **Upstream issue filed**: <url> | filing failed: <reason>
-  *(Only include this field for `contribute-upstream` findings; show the URL when Step 3e succeeded, or "filing failed: &lt;reason&gt;" when it did not)*
+_(Only include this field for `contribute-upstream` findings; show the URL when Step 3e succeeded, or "filing failed: &lt;reason&gt;" when it did not)_
 
 ---
 
 #### 2. [Short title] — [Display label] | [Severity display label]
+
 ...
 
 ---
 
 ### Metrics Block
 
-| Field | Value |
-|---|---|
-| Batch identifier | [PR numbers or batch date] |
-| Human interventions count | [count or `unavailable`] |
-| Step 5.2 violations count | [count or `unavailable`] |
-| Automated-reviewer retry loops count | [count or `unavailable`] |
-| Escalations count | [count or `unavailable`] |
+| Field                                   | Value                                      |
+| --------------------------------------- | ------------------------------------------ |
+| Batch identifier                        | [PR numbers or batch date]                 |
+| Human interventions count               | [count or `unavailable`]                   |
+| Step 5.2 violations count               | [count or `unavailable`]                   |
+| Automated-reviewer retry loops count    | [count or `unavailable`]                   |
+| Escalations count                       | [count or `unavailable`]                   |
 | Prior action item recurrence assessment | [per-item assessment or "none applicable"] |
 ```
 
 Then ask the human to choose an action for each opportunity:
 
 > For each finding above, please choose: **Address now**, **Add to backlog**, or **Skip**.
-> *(Findings classified `contribute-upstream` have already been filed as upstream issues in Step 3e — no additional action is needed unless you want to expand the filed issue with more context.)*
+> _(Findings classified `contribute-upstream` have already been filed as upstream issues in Step 3e — no additional action is needed unless you want to expand the filed issue with more context.)_
 
 Wait for the human's choices before executing any action.
 
@@ -395,6 +428,7 @@ Execute each chosen action in the order the human specified (or in the order the
    - Report what changed with a short diff or summary
 
 **Constraints**:
+
 - Do **not** push retrospective code changes directly to shared branches (`develop`/`main`)
 - If the fix requires changes to multiple files, a schema migration, or introduces a new pattern, stop and recommend "Add to backlog" instead
 
@@ -406,6 +440,7 @@ First, check whether a related existing item was found in Step 3a for this findi
 
 > Finding #N has a related existing item: **#NNN — [title]**.
 > Would you like to:
+>
 > - **Expand existing**: add the new observation to the existing issue's body
 > - **Create new**: create a separate issue (use when the scope is distinct enough to warrant tracking separately)
 
@@ -476,6 +511,7 @@ Retrospective analysis of [PR number(s) or batch/session identifier] on [date]
 Report the created issue with its URL.
 
 **Constraints**:
+
 - Do **not** run the full `00-add-backlog-item-protocol.md` flow — that would disrupt the retrospective with its own alignment conversation
 - The issue body must contain enough context that someone picking it up later can understand what was observed without needing the original conversation
 
@@ -525,10 +561,10 @@ After all opportunities have been acted on (or skipped):
 ```markdown
 ## Retrospective Complete
 
-| # | Title | Category | Severity | Action taken |
-|---|-------|----------|----------|--------------|
-| 1 | [title] | [label] | [severity] | Fixed in commit `abc1234` / Issue #42 / Skipped |
-| 2 | ... | ... | ... | ... |
+| #   | Title   | Category | Severity   | Action taken                                    |
+| --- | ------- | -------- | ---------- | ----------------------------------------------- |
+| 1   | [title] | [label]  | [severity] | Fixed in commit `abc1234` / Issue #42 / Skipped |
+| 2   | ...     | ...      | ...        | ...                                             |
 
 **Metrics block appended and committed to `docs/workflow/retro-metrics.md` on `develop`.**
 ```

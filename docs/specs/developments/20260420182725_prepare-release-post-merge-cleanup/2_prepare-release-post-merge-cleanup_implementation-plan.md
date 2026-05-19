@@ -48,12 +48,12 @@
 
 ### Scripts
 
-- [ ] **`scripts/development-workflow/prepare-release-post-merge-cleanup.sh`** (name illustrative — adapt during implementation):  
-  - Arguments: release version `X.Y.Z` or `vX.Y.Z` normalized to `release/vX.Y.Z`.  
-  - Preconditions: both PRs from that head merged (`main` and `develop` targets) — exit non-zero with clear message if not (**BR**: branch deletion only after both merged).  
-  - Remote delete: `git push origin --delete release/vX.Y.Z` with error handling if already absent (log and success exit 0 or distinct code — document choice).  
-  - Local delete: `git branch -d release/vX.Y.Z` when ref exists; if “checked out” error, print remediation from spec (**UC1** considerations).  
-  - Tracker: for each issue in scope, call shared logic equivalent to `update_tracker_status` in `post-merge-cleanup.sh` but targeting the **Released** option (or configured name). Respect rollback-prevention (do not move from a status more advanced than target).  
+- [ ] **`scripts/development-workflow/prepare-release-post-merge-cleanup.sh`** (name illustrative — adapt during implementation):
+  - Arguments: release version `X.Y.Z` or `vX.Y.Z` normalized to `release/vX.Y.Z`.
+  - Preconditions: both PRs from that head merged (`main` and `develop` targets) — exit non-zero with clear message if not (**BR**: branch deletion only after both merged).
+  - Remote delete: `git push origin --delete release/vX.Y.Z` with error handling if already absent (log and success exit 0 or distinct code — document choice).
+  - Local delete: `git branch -d release/vX.Y.Z` when ref exists; if “checked out” error, print remediation from spec (**UC1** considerations).
+  - Tracker: for each issue in scope, call shared logic equivalent to `update_tracker_status` in `post-merge-cleanup.sh` but targeting the **Released** option (or configured name). Respect rollback-prevention (do not move from a status more advanced than target).
   - Logging: each major action emits one clear line (**Operational visibility**).
 - [ ] **Refactor consideration**: extract `update_tracker_status` from `post-merge-cleanup.sh` into `workflow-lib.sh` if duplication would otherwise copy the GraphQL mutation; keep `post-merge-cleanup.sh` behavior unchanged for existing callers (**AC** same class of mechanism).
 
@@ -78,9 +78,9 @@
 
 ## Seed Data
 
-| Entity | Values / Scenario | File |
-|---|---|---|
-| Not applicable | No database seed; use real or sandbox GitHub project for optional tracker steps | — |
+| Entity         | Values / Scenario                                                               | File |
+| -------------- | ------------------------------------------------------------------------------- | ---- |
+| Not applicable | No database seed; use real or sandbox GitHub project for optional tracker steps | —    |
 
 ---
 
@@ -98,12 +98,12 @@ Post-implementation edits (not done in this plan PR):
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| Bulk transition moves wrong issues | Med | High | Default to explicit issue list or human-confirmed input; document dangerous vs safe modes; never auto-select “all Merged” without opt-in flag. |
-| Branch delete while backport pending | Low | High | Hard gate in script + protocol: query both PR merge state before any `git push --delete`. |
-| Divergence from `post-merge-cleanup.sh` mutation | Med | Med | Share one helper for GraphQL update; add ShellCheck and a short comment block pointing to protocol. |
-| Local branch checked out | Med | Low | Document `git switch develop` then retry; script prints exact commands. |
+| Risk                                             | Likelihood | Impact | Mitigation                                                                                                                                     |
+| ------------------------------------------------ | ---------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Bulk transition moves wrong issues               | Med        | High   | Default to explicit issue list or human-confirmed input; document dangerous vs safe modes; never auto-select “all Merged” without opt-in flag. |
+| Branch delete while backport pending             | Low        | High   | Hard gate in script + protocol: query both PR merge state before any `git push --delete`.                                                      |
+| Divergence from `post-merge-cleanup.sh` mutation | Med        | Med    | Share one helper for GraphQL update; add ShellCheck and a short comment block pointing to protocol.                                            |
+| Local branch checked out                         | Med        | Low    | Document `git switch develop` then retry; script prints exact commands.                                                                        |
 
 ---
 

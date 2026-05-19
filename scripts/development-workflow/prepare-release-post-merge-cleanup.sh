@@ -35,6 +35,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd_workflow_repo_root
 require_gh
 
+# Detect tracker provider early so that issue-ID validation can accept
+# Linear-style identifiers (e.g. LH-57) when the provider is "linear".
+TRACKER_PROVIDER="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+
 MERGED_LABEL="${GITHUB_PROJECT_STATUS_MERGED:-Merged}"
 RELEASED_LABEL="${GITHUB_PROJECT_STATUS_RELEASED:-Released}"
 RELEASE_INPUT=""
@@ -56,6 +60,22 @@ normalize_release_branch() {
   esac
 }
 
+# Returns 0 (true) if the token is a valid issue identifier for the current
+# tracker provider, 1 (false) otherwise.
+#   - Numeric-only IDs are accepted for any provider.
+#   - Linear-style alphanumeric IDs (e.g. LH-57, PROJ-123) are accepted when
+#     TRACKER_PROVIDER is "linear".
+is_valid_issue_token() {
+  local token="$1"
+  if [[ "$token" =~ ^[0-9]+$ ]]; then
+    return 0
+  fi
+  if [[ "$TRACKER_PROVIDER" = "linear" && "$token" =~ ^[A-Za-z][A-Za-z0-9_]*-[0-9]+$ ]]; then
+    return 0
+  fi
+  return 1
+}
+
 parse_issue_csv() {
   local csv="$1"
   local old_ifs="$IFS"
@@ -65,7 +85,7 @@ parse_issue_csv() {
   for part in $csv; do
     part="${part//[[:space:]]/}"
     [ -z "$part" ] && continue
-    if [[ ! "$part" =~ ^[0-9]+$ ]]; then
+    if ! is_valid_issue_token "$part"; then
       echo "Invalid issue number '$part' in --issues list." >&2
       exit 2
     fi
@@ -81,7 +101,7 @@ while [ $# -gt 0 ]; do
         usage
         exit 2
       fi
-      if [[ ! "$2" =~ ^[0-9]+$ ]]; then
+      if ! is_valid_issue_token "$2"; then
         echo "Invalid issue number for --issue: $2" >&2
         exit 2
       fi
@@ -179,6 +199,20 @@ fi
 
 if [ "${#ISSUE_NUMBERS[@]}" -eq 0 ]; then
   echo "No issues supplied; skipping tracker release transitions."
+  echo "Release post-merge cleanup complete."
+  exit 0
+fi
+
+# Linear status transitions cannot be performed automatically by this script
+# (they require MCP/API access). Emit per-issue manual action guidance and
+# exit cleanly rather than silently skipping or failing with UPDATED=0.
+if [ "$TRACKER_PROVIDER" = "linear" ]; then
+  echo "Linear tracker detected: automatic '$MERGED_LABEL' -> '$RELEASED_LABEL' transitions are not supported by this script."
+  echo "Manually transition the following issue(s) to '$RELEASED_LABEL' in Linear (via MCP server or API):"
+  for issue in "${ISSUE_NUMBERS[@]}"; do
+    echo "  - Issue $issue: set status to '$RELEASED_LABEL'"
+  done
+  echo "See docs/workflow/development-workflow/integrations/linear.md for guidance."
   echo "Release post-merge cleanup complete."
   exit 0
 fi

@@ -58,3 +58,14 @@ num_code_suggestions = 0
 # Context-specific workarounds (e.g. ShellCheck SC2188 false-positives, intentional
 # pipefail suppressions) are typically emitted under "Possible Issue" and are therefore
 # non-blocking. The reviewer loop will classify them as clean and will not loop.
+#
+# Ticket compliance check disabled: PR-Agent's ticket compliance analysis is disabled
+# because it generates false positives. When a PR description or branch name contains
+# issue numbers from cross-repository references (e.g. "ported from other-repo#145"),
+# PR-Agent incorrectly treats those numbers as the PR's own linked tickets and checks
+# requirements from the wrong issue. The check does not affect the automated reviewer
+# loop's clean/needs_fixes classification (which relies on "No major issues detected"
+# vs "Recommended focus areas for review" markers), but it creates confusing noise in
+# the review comment and can mislead agents into treating the false positive as a
+# finding that needs to be fixed. See issue #569.
+require_ticket_analysis_review = false

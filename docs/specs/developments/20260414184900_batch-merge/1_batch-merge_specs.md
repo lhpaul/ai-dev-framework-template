@@ -19,10 +19,12 @@ When the orchestrator produces a batch of parallel PRs targeting `develop`, merg
 **Trigger**: The human decides that one or more PRs targeting `develop` are ready to merge and starts the batch-merge command.
 
 **Preconditions**:
+
 - At least one PR in the repository is labeled `ready-for-human-review` (required for auto-discovery mode; when explicit PR numbers are provided, the command proceeds to per-PR readiness checks regardless of label status)
 - The human is on or has access to the repository's `develop` branch
 
 **Steps**:
+
 1. The human invokes `/batch-merge` (or the equivalent Cursor command or Codex skill), optionally specifying a batch identifier, a list of PR numbers, or allowing the command to auto-discover all `ready-for-human-review` PRs.
 2. The command discovers all candidate PRs and displays a summary table (PR number, title, branch, current labels) so the human can confirm the set before proceeding.
 3. The command checks each PR for the `ready-for-human-review` label.
@@ -39,23 +41,27 @@ When the orchestrator produces a batch of parallel PRs targeting `develop`, merg
 6. When all PRs have been processed (or the batch is aborted), the command reports the outcome for each PR (`merged_clean`, `merged_auto`, `merged_human`, `skipped_not_ready`, `skipped_conflict`, `failed`, or `not_attempted`).
 
 **Postconditions**:
+
 - All PRs the human approved for merging are merged into `develop` (or explicitly noted as skipped or pending human resolution).
 - `post-merge-cleanup` has been run for every successfully merged PR.
 - The issue tracker status is updated for each merged branch (per the branch-type-to-status table).
 
 **Information shown**:
+
 - Pre-merge summary table: PR number, title, branch, labels, readiness status
 - Per-PR merge result: clean merge / auto-resolved trivial conflicts / paused (non-trivial conflict) / skipped / failed
 - List of auto-resolved trivial conflicts with a brief description of what was combined
 - Post-run summary: how many PRs merged, how many skipped, how many need human action
 
 **Actions available**:
+
 - Confirm or adjust the candidate PR list before merging
 - Approve or skip a PR flagged as missing `ready-for-human-review`
 - Resolve non-trivial conflicts manually and signal the command to resume
 - Abort the entire batch merge at any time
 
 **Considerations**:
+
 - If `/batch-merge` is invoked in auto-discovery mode (no explicit PR numbers provided) and no `ready-for-human-review` PRs exist in the repository, the command exits immediately with an informational message and no side effects. When the user provides an explicit PR list, the command always proceeds to the per-PR readiness check (Step 3) regardless of label status.
 - If only a single PR is in the candidate set, the command proceeds as normal (not a no-op).
 - A PR that fails to merge (e.g., unresolvable conflict after human gives up) is noted in the final summary and skipped; remaining PRs continue.
@@ -69,9 +75,11 @@ When the orchestrator produces a batch of parallel PRs targeting `develop`, merg
 **Trigger**: The orchestrator detects that every PR in a batch has reached `ready-for-human-review` and initiates the batch-merge validation flow.
 
 **Preconditions**:
+
 - All PRs in the current batch are expected to be labeled `ready-for-human-review`
 
 **Steps**:
+
 1. The orchestrator detects all batch PRs have `ready-for-human-review` and prepares the batch-merge flow (discovers candidates, determines merge order, validates readiness).
 2. If any PR in the batch is missing `ready-for-human-review`, the orchestrator warns the human and requires an explicit decision for each unready PR (exclude or include). The orchestrator must not proceed silently with any unready PR.
 3. The orchestrator presents the validated merge plan to the human and requests explicit approval to execute the merges. The human must confirm before any merge occurs.
@@ -80,15 +88,19 @@ When the orchestrator produces a batch of parallel PRs targeting `develop`, merg
 6. For non-trivial conflicts, the orchestrator pauses and escalates to the human.
 
 **Postconditions**:
+
 - Same as Use Case 1.
 
 **Information shown**:
+
 - Same as Use Case 1 (reported in the orchestrator's summary).
 
 **Actions available**:
+
 - Same as Use Case 1 (confirm or adjust the candidate PR list, approve or skip unready PRs, resolve non-trivial conflicts, abort the entire batch merge at any time).
 
 **Considerations**:
+
 - The orchestrator-invoked path is a stretch goal; the human-invoked path (Use Case 1) is the primary deliverable.
 - The orchestrator prepares and validates the batch but does not merge autonomously — the human must explicitly approve the merge execution. This aligns with the repository governance rule that humans perform merges.
 - The orchestrator must not silently skip the readiness check — if any PR is not `ready-for-human-review`, the command must warn and require human confirmation.
@@ -179,15 +191,15 @@ When a non-trivial conflict is encountered during a merge:
 
 This feature does not introduce new tracker statuses. Per-PR outcomes within the command's own output are:
 
-| Code value | Display label | Description |
-|---|---|---|
-| `merged_clean` | Merged (clean) | PR merged without any conflicts |
-| `merged_auto` | Merged (auto-resolved) | PR merged with auto-resolved trivial conflicts |
-| `merged_human` | Merged (human-resolved) | PR merged after human resolved non-trivial conflict(s) |
-| `skipped_not_ready` | Skipped (not ready) | PR skipped because it lacked `ready-for-human-review` and human chose to exclude it |
-| `skipped_conflict` | Skipped (conflict aborted) | PR skipped because human could not resolve conflict and chose to abort the merge |
-| `failed` | Failed | PR merge failed for an unexpected reason |
-| `not_attempted` | Not attempted | PR was not yet processed when the human aborted the batch |
+| Code value          | Display label              | Description                                                                         |
+| ------------------- | -------------------------- | ----------------------------------------------------------------------------------- |
+| `merged_clean`      | Merged (clean)             | PR merged without any conflicts                                                     |
+| `merged_auto`       | Merged (auto-resolved)     | PR merged with auto-resolved trivial conflicts                                      |
+| `merged_human`      | Merged (human-resolved)    | PR merged after human resolved non-trivial conflict(s)                              |
+| `skipped_not_ready` | Skipped (not ready)        | PR skipped because it lacked `ready-for-human-review` and human chose to exclude it |
+| `skipped_conflict`  | Skipped (conflict aborted) | PR skipped because human could not resolve conflict and chose to abort the merge    |
+| `failed`            | Failed                     | PR merge failed for an unexpected reason                                            |
+| `not_attempted`     | Not attempted              | PR was not yet processed when the human aborted the batch                           |
 
 ---
 
@@ -241,16 +253,19 @@ This feature does not introduce new tracker statuses. Per-PR outcomes within the
 Three approaches were evaluated for solving the cascading-conflict problem:
 
 **Option A — Rebase each PR on top of the latest `develop` before merging**
+
 - Rewrites the PR branch's commit history to sit on top of `develop` after previous merges.
 - Pro: each subsequent merge is always a fast-forward; no conflict possible.
 - Con: rewrites commits, changes SHAs, breaks PR conversation threads, and requires force-push. Disruptive in collaborative workflows.
 
 **Option B — Sequential merge commit with automated conflict resolution**
+
 - Merges PRs in order using merge commits. After the first merge updates `develop`, each subsequent PR's branch diverges. The command detects and auto-resolves trivial conflicts; pauses on non-trivial ones.
 - Pro: preserves full commit history; PR conversation threads intact. Merge commits are explicit and auditable.
 - Con: non-trivial conflicts still require human intervention (unavoidable in any approach).
 
 **Option C — Temporary integration branch**
+
 - Create a temporary branch from `develop`, merge all PRs into it sequentially, then merge the integration branch into `develop` as a single commit.
 - Pro: `develop`'s history gets a clean single-merge-commit.
 - Con: hides individual PR contributions; does not pair naturally with per-PR `post-merge-cleanup`; more complex.

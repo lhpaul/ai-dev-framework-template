@@ -7,12 +7,14 @@ Scripts used by the staged AI development workflow. Referenced by `docs/workflow
 Installs the repository's bundled Codex skills into the local Codex skill directory by creating symlinks.
 
 What it does:
+
 - Reads skills from `.codex/skills/`
 - Uses `CODEX_HOME/skills` if `CODEX_HOME` is set
 - Otherwise uses `~/.codex/skills`
 - Skips an existing destination if it is not a symlink
 
 Use this when:
+
 - You want to make the template's bundled Codex skills available in your local Codex environment
 - You are testing the workflow skills in a downstream repository created from this template
 
@@ -44,6 +46,7 @@ Use this when:
 Prints a compact snapshot of the repository's workflow-related state.
 
 What it does:
+
 - Shows `git status --short --branch`
 - Lists workflow branches (`spec/`, `implementation-plan/`, `feature/`, `refactor/`, `fix/`, `hotfix/`, `release/`)
 - Lists active git worktrees
@@ -51,6 +54,7 @@ What it does:
 - Lists open pull requests, labels, and check summaries when `gh` is available
 
 Use this when:
+
 - You want a quick view of what work is already in progress
 - The orchestrator needs a deterministic summary before choosing the next stage
 
@@ -65,6 +69,7 @@ Usage:
 ```
 
 What it does:
+
 - Reports matching local branches
 - Reports matching remote branches
 - Reports matching worktrees
@@ -72,6 +77,7 @@ What it does:
 - Exits with status `1` if the branch is missing
 
 Use this when:
+
 - The orchestrator needs to verify whether a workflow item has already been started
 - You want to avoid re-dispatching work for an item that already has a branch or worktree
 
@@ -86,11 +92,13 @@ Usage:
 ```
 
 What it does:
+
 - Reads the PR's `statusCheckRollup` via `gh`
 - Reports a stable `RESULT=green|red|timeout`
 - Emits parseable `key=value` lines for failing and pending checks
 
 Use this when:
+
 - A stage has opened a PR and needs to wait for CI before signaling readiness
 - The orchestrator is resuming a partially completed PR
 
@@ -105,6 +113,7 @@ Usage:
 ```
 
 What it does:
+
 - Evaluates configured review platforms sequentially
 - Runs the platform adapter for each supported platform
 - Stops on the first platform that reports blocking findings or escalation
@@ -113,6 +122,7 @@ What it does:
 - If no platforms are configured, reports `RESULT=skipped`
 
 Use this when:
+
 - A stage has pushed to a PR branch and must resolve automated review before requesting human review
 - The orchestrator is resuming a PR after a prior push or interruption
 - More than one automated reviewer is configured for a repository
@@ -130,11 +140,13 @@ Usage:
 ```
 
 What it does:
+
 - Detects whether a branch still needs reviewer-gate work or PR readiness work
 - Detects whether a PR is waiting on fixes or on human review
 - For `--development`: derives workflow status from repo state (presence of implementation plan file, feature branch) so the **issue tracker remains the source of truth**; no `**Status**` line in the spec is required. Outputs `LINEAR_ISSUE` when the spec has `**Linear Issue**: <id>` (note the space after the colon) for orchestrator use. Runs `git fetch --prune origin` unless `WORKFLOW_SKIP_FETCH` is set (e.g. run one fetch before looping over many development folders); if fetch fails, a warning is printed to stderr and refs may be stale. Without an issue tracker, items that were merged and had their branch deleted can appear as Plan Ready; prefer filtering by tracker status when available. The `--development` branch-detection logic has no automated tests; edge cases (slugs with regex metacharacters, Linear-prefixed branch names) should be validated manually when changing that path.
 
 Use this when:
+
 - The orchestrator needs to resume work after an interrupted run
 - A stage-specific agent needs to determine whether work is still in-progress or already waiting on a human
 
@@ -152,11 +164,13 @@ Usage:
 ```
 
 What it does:
+
 - Scans one or more development folders
 - Uses `workflow-next-action.sh --development` to derive the next deterministic action
 - Emits stable `key=value` records including `BATCH_HINT` and `PARALLEL_SAFE`
 
 Use this when:
+
 - The batch orchestrator needs a deterministic first-pass list of development-folder candidates
 - You want to separate portfolio-level batch planning from single-item orchestration
 
@@ -174,6 +188,7 @@ Usage:
 - With `BRANCH`: branch name to delete (e.g. `feature/my-feature`).
 
 Use this when:
+
 - You have merged a feature/plan/spec PR and deleted the remote branch, and want to clean up the local branch and update develop.
 
 ### `prepare-release-post-merge-cleanup.sh`
@@ -194,6 +209,7 @@ Examples:
 ```
 
 Use this when:
+
 - Both release PRs are already merged and you need deterministic release-branch cleanup.
 - You want explicit, scoped tracker transitions to the terminal shipped status.
 
@@ -217,6 +233,7 @@ Usage:
 Outputs structured `KEY=VALUE` lines. See the script header for the full output format.
 
 Use this when:
+
 - The agent protocol `94-batch-merge-protocol.md` is running a batch merge.
 - You want to inspect the merge ordering for a set of PRs before invoking the agent command.
 - Called by the `/batch-merge` Claude Code command, `/batch-merge` Cursor command, or the `batch-merge` Codex skill.

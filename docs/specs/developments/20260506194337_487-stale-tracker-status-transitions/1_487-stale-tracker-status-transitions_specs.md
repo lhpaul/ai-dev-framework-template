@@ -17,10 +17,12 @@ The workflow orchestrator and its supporting scripts sometimes set the wrong tra
 **Actor**: Automated system (GitHub Actions workflow, post-merge-cleanup script, or orchestrator protocol rule) triggered immediately after a spec or plan PR is merged to the integration branch.
 
 **Preconditions**:
+
 - A spec PR (branch type `spec/*`) or plan PR (branch type `implementation-plan/*`) has just been merged to the integration branch.
 - The linked work item exists in the project tracker.
 
 **Steps**:
+
 1. The automated system detects the merge event.
 2. The system identifies the branch type (spec or plan) from the merged branch name.
 3. The system maps the branch type to the correct "Ready" status:
@@ -29,16 +31,20 @@ The workflow orchestrator and its supporting scripts sometimes set the wrong tra
 4. The system updates the tracker item to the mapped status.
 
 **Postconditions**:
+
 - The tracker item reflects "Spec Ready" (for spec merges) or "Plan Ready" (for plan merges).
 - The tracker item is **not** set to "Merged" for spec or plan merges.
 
 **Information shown**:
+
 - The project tracker displays the updated status immediately after the merge is processed.
 
 **Actions available**:
+
 - The next orchestrator run can safely read the tracker status and advance the item to the next pipeline stage without manual correction.
 
 **Considerations**:
+
 - If the tracker item is already in a further-advanced status (e.g., already "In Development" when the spec PR merges), the system must not roll the status back — leave it as-is.
 - The automated system applies the correction regardless of whether it is triggered by the GitHub Actions workflow, the post-merge-cleanup script, or the orchestrator protocol rule. All three must agree on the same branch-type → status mapping.
 
@@ -49,11 +55,13 @@ The workflow orchestrator and its supporting scripts sometimes set the wrong tra
 **Actor**: Orchestrator (portfolio orchestrator or work item runner) at the start of a new batch or item run.
 
 **Preconditions**:
+
 - A work item's tracker status is "In Development".
 - No implementation PR exists for that item (it was never created, or the branch does not exist).
 - A prior orchestrator run set "In Development" before dispatching, but the dispatch was abandoned (e.g., a blocker was hit, or the batch was held by a human) without ever creating a PR.
 
 **Steps**:
+
 1. The orchestrator reads the tracker status for the item and sees "In Development".
 2. The orchestrator checks whether an implementation PR (or branch) exists for that item.
 3. No PR and no branch are found.
@@ -62,19 +70,23 @@ The workflow orchestrator and its supporting scripts sometimes set the wrong tra
 6. The orchestrator proceeds to dispatch the item from the implementation stage as normal.
 
 **Postconditions**:
+
 - The tracker item reflects "Plan Ready" (corrected from the stale "In Development").
 - The orchestrator dispatches the implementation work as if the item had been in "Plan Ready" all along.
 - A log entry or comment notes the correction so it is visible in retrospective analysis.
 
 **Information shown**:
+
 - The project tracker shows "Plan Ready" for the item (corrected).
 - The orchestrator's run log shows a note about the stale status correction.
 
 **Actions available**:
+
 - The item proceeds normally to implementation dispatch.
 - Human reviewers can verify the correction in the run log if needed.
 
 **Considerations**:
+
 - The check must be performed at the start of the batch run (portfolio orchestrator, Step 2.5) and at the start of any single-item run (work item runner, Step 2 pre-dispatch check).
 - If a branch (even without a PR) exists for the item, the status is not stale — the item is genuinely in progress and should not be reset.
 - This correction applies only to items orchestrated through protocol 90 (batch portfolio orchestrator) or protocol 91 (work item runner dispatched from it). Direct manual runner invocations outside this orchestration path are out of scope.
@@ -86,11 +98,13 @@ The workflow orchestrator and its supporting scripts sometimes set the wrong tra
 **Actor**: Orchestrator initiating a new batch or item run.
 
 **Preconditions**:
+
 - An item's tracker status is "In Development" (potentially stale from a prior abandoned dispatch).
 - No implementation PR or branch exists for the item.
 - The orchestrator considers dispatching the item.
 
 **Steps**:
+
 1. The orchestrator checks the tracker status and sees "In Development".
 2. The orchestrator runs the branch/PR existence check (same check as in Use Case 2).
 3. No PR and no branch are found — the "In Development" status is confirmed stale.
@@ -98,10 +112,12 @@ The workflow orchestrator and its supporting scripts sometimes set the wrong tra
 5. The orchestrator marks the item as dispatched for this run and does not enqueue it a second time.
 
 **Postconditions**:
+
 - The item is dispatched exactly once in the run, not twice.
 - The tracker reflects the corrected status before dispatch begins.
 
 **Considerations**:
+
 - This rule applies both when the orchestrator discovers the stale status during the initial batch scan and when a single-item runner encounters it.
 - If a second item in the same batch also resolves to the same corrected-from-stale state, each is dispatched independently; the rule prevents one item from being dispatched twice, not from dispatching two separate items.
 
@@ -126,14 +142,15 @@ The workflow orchestrator and its supporting scripts sometimes set the wrong tra
 
 Existing workflow tracker statuses (no new values introduced by this fix):
 
-| Status label | Description |
-|---|---|
-| Spec Ready | Spec PR has been merged; item is waiting for implementation plan to be written |
-| Plan Ready | Plan PR has been merged; item is waiting for implementation to begin |
-| In Development | Implementation dispatch is active — an implementation branch or PR exists |
-| Merged | Implementation PR has been merged; the work item is complete |
+| Status label   | Description                                                                    |
+| -------------- | ------------------------------------------------------------------------------ |
+| Spec Ready     | Spec PR has been merged; item is waiting for implementation plan to be written |
+| Plan Ready     | Plan PR has been merged; item is waiting for implementation to begin           |
+| In Development | Implementation dispatch is active — an implementation branch or PR exists      |
+| Merged         | Implementation PR has been merged; the work item is complete                   |
 
 **Relevant transitions corrected by this fix**:
+
 - Spec PR merged → "Spec Ready" (not "Merged")
 - Plan PR merged → "Plan Ready" (not "Merged")
 - Stale "In Development" (no branch/PR) detected at dispatch time → corrected to "Plan Ready"
@@ -174,14 +191,14 @@ Existing workflow tracker statuses (no new values introduced by this fix):
 
 ## Brief Coverage Matrix
 
-| Brief objective | Covered by |
-|---|---|
-| Case A: Plan PR merge incorrectly advances tracker to "Merged" | AC-1, AC-2, AC-3, AC-4, AC-5; BR-1, BR-2, BR-9 |
-| Case A root cause: Step 10 rule or post-merge-cleanup applies wrong status | AC-4, AC-5; BR-9 |
-| Case A fix scope: protocol rule + script + GitHub Actions workflow | AC-1–AC-5; BR-9 (all three surfaces) |
-| Case B: Pre-dispatch "In Development" left stale after abandoned dispatch | AC-6, AC-7, AC-8; BR-5, BR-6, BR-7 |
-| Case B mechanism: re-validate at next dispatch | Use Case 2; BR-5, BR-6 |
-| Case B detection owner: both protocol 90 (portfolio) and protocol 91 (item runner) | Use Case 2, BR-7 |
-| Duplicate dispatch risk | Use Case 3; AC-7; BR-8 |
-| Automated acceptance test for `update-tracker-on-merge.yml` mapping | AC-9 |
-| Log / operational visibility for stale corrections | AC-10; BR-10 |
+| Brief objective                                                                    | Covered by                                     |
+| ---------------------------------------------------------------------------------- | ---------------------------------------------- |
+| Case A: Plan PR merge incorrectly advances tracker to "Merged"                     | AC-1, AC-2, AC-3, AC-4, AC-5; BR-1, BR-2, BR-9 |
+| Case A root cause: Step 10 rule or post-merge-cleanup applies wrong status         | AC-4, AC-5; BR-9                               |
+| Case A fix scope: protocol rule + script + GitHub Actions workflow                 | AC-1–AC-5; BR-9 (all three surfaces)           |
+| Case B: Pre-dispatch "In Development" left stale after abandoned dispatch          | AC-6, AC-7, AC-8; BR-5, BR-6, BR-7             |
+| Case B mechanism: re-validate at next dispatch                                     | Use Case 2; BR-5, BR-6                         |
+| Case B detection owner: both protocol 90 (portfolio) and protocol 91 (item runner) | Use Case 2, BR-7                               |
+| Duplicate dispatch risk                                                            | Use Case 3; AC-7; BR-8                         |
+| Automated acceptance test for `update-tracker-on-merge.yml` mapping                | AC-9                                           |
+| Log / operational visibility for stale corrections                                 | AC-10; BR-10                                   |

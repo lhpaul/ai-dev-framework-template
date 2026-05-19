@@ -20,23 +20,28 @@ This feature defines a **mandatory pre-PR checklist** for any implementation wor
 **Preconditions**: The planned change set includes a new file under `.github/workflows/*.yml` or edits that materially change job behavior, triggers, or security posture of an existing workflow (not a typo-only or comment-only tweak).
 
 **Steps**:
+
 1. Agent drafts the workflow YAML locally following repository conventions.
 2. Before opening or updating the development PR, the agent walks the **GitHub Actions workflow security checklist** defined in the implementation protocol (see Business Rules).
 3. The agent adjusts the workflow so every checklist item is satisfied or explicitly justified in the PR description when an exception is unavoidable.
 4. Agent opens or updates the PR with the workflow changes.
 
 **Postconditions**:
+
 - The workflow declares explicit `permissions` scoped to the minimum required for the job (read-only work defaults to `contents: read` unless a broader permission is justified).
 - Every `uses:` reference for third-party actions points to a full commit SHA, with the human-readable version called out in an adjacent comment.
 - Where applicable, triggers are scoped with `paths` / `paths-ignore`, and concurrent runs are controlled with `concurrency`, matching the checklist guidance.
 
 **Information shown**:
+
 - Reviewers see a workflow that already meets the checklist, reducing Major automated-review findings for missing permissions or floating tags.
 
 **Actions available**:
+
 - If the checklist cannot be met without a product decision (e.g., workflow must write packages), the agent escalates with rationale before opening the PR.
 
 **Considerations**:
+
 - Trivial edits (spelling in comments, renaming a step title) do not trigger the full checklist; material changes do.
 
 ---
@@ -47,9 +52,11 @@ This feature defines a **mandatory pre-PR checklist** for any implementation wor
 **Preconditions**: No changes under `.github/workflows/` are part of the branch.
 
 **Steps**:
+
 1. Agent completes implementation per protocol without applying the workflow checklist.
 
 **Postconditions**:
+
 - No requirement to apply the GitHub Actions workflow checklist for that PR.
 
 ---
@@ -60,11 +67,13 @@ This feature defines a **mandatory pre-PR checklist** for any implementation wor
 **Preconditions**: Spec is approved; subsequent plan/implementation will embed the checklist in documentation.
 
 **Steps**:
+
 1. Maintainer opens the implementation-development protocol (or linked canonical section).
 2. Maintainer confirms the checklist is present, readable, and matches this spec’s Business Rules.
 3. During review of a PR that adds or changes workflows, maintainer spot-checks that the checklist was followed.
 
 **Postconditions**:
+
 - Documentation is the source of truth for what “done” means before PR open for workflow changes.
 
 ---

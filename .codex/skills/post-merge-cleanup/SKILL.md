@@ -14,11 +14,11 @@ description: After a development PR is merged and the remote branch deleted, syn
 4. **Update the issue tracker (if configured)**
    The merged branch name often contains an issue identifier (e.g. `feature/ENG-123-user-auth` → `ENG-123`, `fix/PROJ-456-login` → `PROJ-456`, `feature/42-user-auth` → `#42`). After the script succeeds, update the corresponding issue using the branch-type-based status table from Step 10 of `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`:
 
-   | Merged branch type | Set tracker status to |
-   |---|---|
-   | `spec/*` | Spec Ready |
-   | `implementation-plan/*` | Plan Ready |
-   | `feature/*` / `fix/*` / `refactor/*` / `hotfix/*` | Merged |
+   | Merged branch type                                | Set tracker status to |
+   | ------------------------------------------------- | --------------------- |
+   | `spec/*`                                          | Spec Ready            |
+   | `implementation-plan/*`                           | Plan Ready            |
+   | `feature/*` / `fix/*` / `refactor/*` / `hotfix/*` | Merged                |
 
    If the item’s tracker status is already in a further-advanced state (e.g., already `In Development` when a spec branch merges), do not roll it back — leave it as-is.
    - **Linear**: Use the Linear MCP/skill to get the issue by ID and set its status (per `docs/workflow/development-workflow/integrations/linear.md`).

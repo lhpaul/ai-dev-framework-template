@@ -1,0 +1,53 @@
+# Removes the ready-for-regression label from a PR whenever new commits are pushed
+# to the PR branch (pull_request: synchronize). This prevents stale regression-readiness
+# signals from persisting after code changes that have not yet been re-reviewed.
+#
+# Behavior:
+#   - Runs only when the PR has the ready-for-regression label.
+#   - Removes the label so the automated reviewer loop must be re-run before
+#     ready-for-regression can be reapplied.
+#   - Idempotent: if the label is absent, the job exits cleanly with no action.
+name: Remove ready-for-regression label on push
+
+on:
+  pull_request:
+    types: [synchronize]
+
+concurrency:
+  group: remove-regression-label-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  remove-label:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Remove ready-for-regression label if present
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Check whether the label is currently applied.
+          # --jq returns an empty string when the label is absent.
+          if ! LABEL=$(gh pr view "$PR_NUMBER" \
+            --repo "$REPO" \
+            --json labels \
+            --jq '.labels[].name | select(. == "ready-for-regression")'); then
+            echo "ERROR: Failed to read labels for PR #${PR_NUMBER}." >&2
+            exit 1
+          fi
+
+          if [ -z "$LABEL" ]; then
+            echo "Label 'ready-for-regression' is not present on PR #${PR_NUMBER} — nothing to do."
+            exit 0
+          fi
+
+          echo "Label 'ready-for-regression' found on PR #${PR_NUMBER}. Removing it."
+          gh pr edit "$PR_NUMBER" \
+            --repo "$REPO" \
+            --remove-label "ready-for-regression"
+          echo "Label removed successfully."

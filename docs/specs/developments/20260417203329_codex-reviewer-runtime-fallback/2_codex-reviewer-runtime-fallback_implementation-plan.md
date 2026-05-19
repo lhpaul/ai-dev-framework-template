@@ -73,11 +73,11 @@ Not applicable — this feature is a protocol/documentation change with no runti
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| Protocol wording is ambiguous for edge cases (e.g., partial reachability with `fail-if-any-unavailable`) | Low | Med | Use decision tables and worked examples in the protocol text; reviewer will catch ambiguity before merge |
-| YAML comment annotation for the new policy key is misread as required | Low | Low | Mark it clearly as `# optional, default: warn` in the comment |
-| Step 7a summary comment requirement conflicts with Step 8c "Automated Reviewer Loop Summary" check | Low | Low | Add a parenthetical in Step 8c clarifying they are separate requirements (Step 7a summary ≠ Step 7 summary) |
+| Risk                                                                                                     | Likelihood | Impact | Mitigation                                                                                                  |
+| -------------------------------------------------------------------------------------------------------- | ---------- | ------ | ----------------------------------------------------------------------------------------------------------- |
+| Protocol wording is ambiguous for edge cases (e.g., partial reachability with `fail-if-any-unavailable`) | Low        | Med    | Use decision tables and worked examples in the protocol text; reviewer will catch ambiguity before merge    |
+| YAML comment annotation for the new policy key is misread as required                                    | Low        | Low    | Mark it clearly as `# optional, default: warn` in the comment                                               |
+| Step 7a summary comment requirement conflicts with Step 8c "Automated Reviewer Loop Summary" check       | Low        | Low    | Add a parenthetical in Step 8c clarifying they are separate requirements (Step 7a summary ≠ Step 7 summary) |
 
 ---
 

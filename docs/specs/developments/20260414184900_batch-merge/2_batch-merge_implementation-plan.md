@@ -36,36 +36,36 @@
   - **Output format**: structured key-value lines consumable by the agent (e.g., `PR_NUMBER=123`, `MERGE_RESULT=clean`, `CONFLICTED_FILES=CHANGELOG.md,docs/foo.md`, `PR_READY_LABEL=true`)
   - The script processes one PR per invocation (called in a loop by the agent protocol). This keeps git state transitions deterministic and lets the protocol own human-interaction steps.
 
-  *Maps to: AC 4 (merge ordering), AC 5 (merge requirements)*
+  _Maps to: AC 4 (merge ordering), AC 5 (merge requirements)_
 
 ### Protocols / Agent Docs
 
 - [ ] **`docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md`** — New agent protocol that orchestrates the full batch-merge flow:
-  - **Step 1: Discovery & candidate list** — invoke `batch-merge.sh` in discovery mode (or accept explicit PR numbers from the human), display the candidate summary table (PR number, title, branch, labels, readiness status); if the script reports no auto-discovered candidates, exit immediately with an informational message and no side effects. *Maps to: AC 1, AC 13*
-  - **Step 2: Readiness gate** — for each candidate PR, check for `ready-for-human-review` label. Any PR missing the label triggers a warning; the agent asks the human to confirm include or skip. Record each decision. *Maps to: AC 3, AC 14*
-  - **Step 3: Human confirmation** — display the final merge plan (ordered list of PRs that will be merged, any skipped PRs) and require explicit human approval before proceeding. *Maps to: AC 2*
+  - **Step 1: Discovery & candidate list** — invoke `batch-merge.sh` in discovery mode (or accept explicit PR numbers from the human), display the candidate summary table (PR number, title, branch, labels, readiness status); if the script reports no auto-discovered candidates, exit immediately with an informational message and no side effects. _Maps to: AC 1, AC 13_
+  - **Step 2: Readiness gate** — for each candidate PR, check for `ready-for-human-review` label. Any PR missing the label triggers a warning; the agent asks the human to confirm include or skip. Record each decision. _Maps to: AC 3, AC 14_
+  - **Step 3: Human confirmation** — display the final merge plan (ordered list of PRs that will be merged, any skipped PRs) and require explicit human approval before proceeding. _Maps to: AC 2_
   - **Step 4: Sequential merge loop** — for each PR in the approved order:
     1. Report "Merging PR #N: <title>..."
     2. Invoke `batch-merge.sh` to attempt the merge
     3. If clean: report `merged_clean`, proceed to next PR
     4. If conflicts detected: classify each conflicted file:
-       - **CHANGELOG.md `[Unreleased]` section**: auto-resolve by reading both sides of the conflict markers, combining all unique entries (entries from the already-merged side first, then entries from the incoming PR), writing the resolved content, staging, and completing the merge commit. Report `merged_auto` with details of what was combined. *Maps to: AC 6*
-       - **Documentation/protocol files** (files under `docs/`, `.cursor/`, `.codex/`): if changes are in non-overlapping line ranges, auto-resolve by accepting both changes. If overlapping, treat as non-trivial. *Maps to: AC 7*
-       - **Non-trivial conflicts**: display the conflicting file paths and a short excerpt of the conflict markers. Ask the human to resolve in their editor and signal when done. After human signals, verify resolution (`git diff --check`), complete the merge, and report `merged_human`. If the human chooses to abort, run `git merge --abort` to return `develop` to pre-merge state, report `skipped_conflict`, and continue with remaining PRs. *Maps to: AC 8, AC 9, AC 10*
-    5. After each successful merge (`merged_clean`, `merged_auto`, or `merged_human`): push `develop`, verify via `gh pr view` that GitHub now reports the PR as merged, delete the remote branch if it still exists, then run post-merge cleanup and report the result. **Cleanup approach**: the batch-merge flow merges via `origin/<branch>` without creating a local branch, but `post-merge-cleanup.sh` requires one. Before invoking the script, create a temporary local branch (`git branch <branch> origin/<branch>`) so the script can run unchanged and delete it. The script also handles issue tracker status updates per the branch-type-to-status table. Do not use `gh pr close` because the PR must remain a merged PR, not a closed-unmerged PR. *Maps to: AC 5, AC 11*
-    6. At any point, if the human requests abort: stop processing remaining PRs, mark them `not_attempted`. *Maps to: AC 15*
-  - **Step 5: Final summary** — display a structured summary table listing every candidate PR with its outcome code (`merged_clean`, `merged_auto`, `merged_human`, `skipped_not_ready`, `skipped_conflict`, `failed`, `not_attempted`). Include details of any auto-resolved conflicts. *Maps to: AC 12*
-  - **Orchestrator-invoked mode**: a note that when called from the orchestrator (protocol 90), the same flow applies — the orchestrator passes the PR list, and the protocol still requires human confirmation at Step 3 and human resolution at Step 4. *Maps to: AC 14*
+       - **CHANGELOG.md `[Unreleased]` section**: auto-resolve by reading both sides of the conflict markers, combining all unique entries (entries from the already-merged side first, then entries from the incoming PR), writing the resolved content, staging, and completing the merge commit. Report `merged_auto` with details of what was combined. _Maps to: AC 6_
+       - **Documentation/protocol files** (files under `docs/`, `.cursor/`, `.codex/`): if changes are in non-overlapping line ranges, auto-resolve by accepting both changes. If overlapping, treat as non-trivial. _Maps to: AC 7_
+       - **Non-trivial conflicts**: display the conflicting file paths and a short excerpt of the conflict markers. Ask the human to resolve in their editor and signal when done. After human signals, verify resolution (`git diff --check`), complete the merge, and report `merged_human`. If the human chooses to abort, run `git merge --abort` to return `develop` to pre-merge state, report `skipped_conflict`, and continue with remaining PRs. _Maps to: AC 8, AC 9, AC 10_
+    5. After each successful merge (`merged_clean`, `merged_auto`, or `merged_human`): push `develop`, verify via `gh pr view` that GitHub now reports the PR as merged, delete the remote branch if it still exists, then run post-merge cleanup and report the result. **Cleanup approach**: the batch-merge flow merges via `origin/<branch>` without creating a local branch, but `post-merge-cleanup.sh` requires one. Before invoking the script, create a temporary local branch (`git branch <branch> origin/<branch>`) so the script can run unchanged and delete it. The script also handles issue tracker status updates per the branch-type-to-status table. Do not use `gh pr close` because the PR must remain a merged PR, not a closed-unmerged PR. _Maps to: AC 5, AC 11_
+    6. At any point, if the human requests abort: stop processing remaining PRs, mark them `not_attempted`. _Maps to: AC 15_
+  - **Step 5: Final summary** — display a structured summary table listing every candidate PR with its outcome code (`merged_clean`, `merged_auto`, `merged_human`, `skipped_not_ready`, `skipped_conflict`, `failed`, `not_attempted`). Include details of any auto-resolved conflicts. _Maps to: AC 12_
+  - **Orchestrator-invoked mode**: a note that when called from the orchestrator (protocol 90), the same flow applies — the orchestrator passes the PR list, and the protocol still requires human confirmation at Step 3 and human resolution at Step 4. _Maps to: AC 14_
 
-- [ ] **`docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`** — Update the portfolio orchestrator protocol so that when a parallel-safe batch reaches the human-merge stage, it can hand the eligible PR list to `94-batch-merge-protocol.md` instead of stopping at "wait for human merge". Document that the orchestrator prepares the batch, presents the plan, and still requires explicit human approval before any merge starts. *Maps to: Use Case 2, AC 14*
+- [ ] **`docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`** — Update the portfolio orchestrator protocol so that when a parallel-safe batch reaches the human-merge stage, it can hand the eligible PR list to `94-batch-merge-protocol.md` instead of stopping at "wait for human merge". Document that the orchestrator prepares the batch, presents the plan, and still requires explicit human approval before any merge starts. _Maps to: Use Case 2, AC 14_
 
 ### Agent Entry Points
 
-- [ ] **`.claude/commands/batch-merge.md`** — Claude Code `/batch-merge` command. Points to `94-batch-merge-protocol.md`. Allowed tools: `Bash(./scripts/development-workflow/batch-merge.sh:*)`, `Bash(./scripts/development-workflow/post-merge-cleanup.sh:*)`, `Bash(git:*)`, `Bash(gh:*)`, plus issue tracker MCP tools (same pattern as `post-merge-cleanup.md`). Accepts optional arguments: explicit PR numbers or no arguments for auto-discovery. *Maps to: AC 1, AC 13*
+- [ ] **`.claude/commands/batch-merge.md`** — Claude Code `/batch-merge` command. Points to `94-batch-merge-protocol.md`. Allowed tools: `Bash(./scripts/development-workflow/batch-merge.sh:*)`, `Bash(./scripts/development-workflow/post-merge-cleanup.sh:*)`, `Bash(git:*)`, `Bash(gh:*)`, plus issue tracker MCP tools (same pattern as `post-merge-cleanup.md`). Accepts optional arguments: explicit PR numbers or no arguments for auto-discovery. _Maps to: AC 1, AC 13_
 
-- [ ] **`.cursor/commands/batch-merge.md`** — Cursor command equivalent. Same content as the Claude Code command but with Cursor frontmatter format (no `allowed-tools`). *Maps to: AC 13*
+- [ ] **`.cursor/commands/batch-merge.md`** — Cursor command equivalent. Same content as the Claude Code command but with Cursor frontmatter format (no `allowed-tools`). _Maps to: AC 13_
 
-- [ ] **`.codex/skills/batch-merge/SKILL.md`** — Codex skill. Same instructions, Codex frontmatter format. *Maps to: AC 13*
+- [ ] **`.codex/skills/batch-merge/SKILL.md`** — Codex skill. Same instructions, Codex frontmatter format. _Maps to: AC 13_
 
 ### Documentation Updates
 
@@ -82,6 +82,7 @@
 **Test types**: Smoke (manual runbook)
 
 **Key scenarios to test**:
+
 1. Auto-discovery mode with ready PRs (AC 1, AC 2)
 2. Auto-discovery mode with no ready PRs — exits cleanly (AC 13)
 3. Explicit PR list mode (AC 1, AC 13)
@@ -106,11 +107,11 @@
 
 No database seed data required. Testing requires:
 
-| Entity | Values / Scenario | File |
-|---|---|---|
-| Test PRs | 2-3 open PRs targeting `develop` with `ready-for-human-review` label, at least one modifying `CHANGELOG.md` | Created manually in the test repository |
-| Test PR (no label) | 1 open PR targeting `develop` without `ready-for-human-review` label | Created manually in the test repository |
-| Orchestrator batch context | A batch of PRs identified by protocol 90 as ready for merge handoff | Created manually in the test repository / orchestration state |
+| Entity                     | Values / Scenario                                                                                           | File                                                          |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Test PRs                   | 2-3 open PRs targeting `develop` with `ready-for-human-review` label, at least one modifying `CHANGELOG.md` | Created manually in the test repository                       |
+| Test PR (no label)         | 1 open PR targeting `develop` without `ready-for-human-review` label                                        | Created manually in the test repository                       |
+| Orchestrator batch context | A batch of PRs identified by protocol 90 as ready for merge handoff                                         | Created manually in the test repository / orchestration state |
 
 ---
 
@@ -125,13 +126,13 @@ No database seed data required. Testing requires:
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| GitHub may not mark a PR as merged immediately after pushing the local merge commit | Low | Med | Protocol verifies merged state with `gh pr view` before deleting the remote branch or starting cleanup; if GitHub has not recognized the merge yet, report `failed` and stop cleanup for that PR. |
-| CHANGELOG auto-resolution produces incorrect merge (duplicate entries, wrong ordering) | Low | Med | Agent reads both sides of conflict markers carefully; combined entries are always reported to the human for verification in the summary. |
-| `develop` left in conflicted state after unexpected failure | Low | High | Every conflict-detection path includes `git merge --abort` fallback. Protocol explicitly requires `develop` to never be left in conflicted state. |
-| `post-merge-cleanup.sh` fails for a merged PR | Low | Low | Failure is reported but does not halt remaining merges (per spec). Human can re-run cleanup manually. |
-| Race condition: another merge to `develop` between our merges | Low | Med | Each merge iteration does `git pull --ff-only` before attempting the next merge, ensuring the local `develop` is current. |
+| Risk                                                                                   | Likelihood | Impact | Mitigation                                                                                                                                                                                        |
+| -------------------------------------------------------------------------------------- | ---------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GitHub may not mark a PR as merged immediately after pushing the local merge commit    | Low        | Med    | Protocol verifies merged state with `gh pr view` before deleting the remote branch or starting cleanup; if GitHub has not recognized the merge yet, report `failed` and stop cleanup for that PR. |
+| CHANGELOG auto-resolution produces incorrect merge (duplicate entries, wrong ordering) | Low        | Med    | Agent reads both sides of conflict markers carefully; combined entries are always reported to the human for verification in the summary.                                                          |
+| `develop` left in conflicted state after unexpected failure                            | Low        | High   | Every conflict-detection path includes `git merge --abort` fallback. Protocol explicitly requires `develop` to never be left in conflicted state.                                                 |
+| `post-merge-cleanup.sh` fails for a merged PR                                          | Low        | Low    | Failure is reported but does not halt remaining merges (per spec). Human can re-run cleanup manually.                                                                                             |
+| Race condition: another merge to `develop` between our merges                          | Low        | Med    | Each merge iteration does `git pull --ff-only` before attempting the next merge, ensuring the local `develop` is current.                                                                         |
 
 ---
 

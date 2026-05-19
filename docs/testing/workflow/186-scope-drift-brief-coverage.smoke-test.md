@@ -19,12 +19,12 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Value |
-|---|---|
-| Spec protocol | `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md` |
-| Plan protocol | `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
-| Review contract | `REVIEW.md` |
-| AC5 fixture | `docs/testing/workflow/fixtures/186-scope-drift-pattern-enumeration-mismatch.md` (created during implementation) |
+| Item            | Value                                                                                                            |
+| --------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Spec protocol   | `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md`                                      |
+| Plan protocol   | `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md`                       |
+| Review contract | `REVIEW.md`                                                                                                      |
+| AC5 fixture     | `docs/testing/workflow/fixtures/186-scope-drift-pattern-enumeration-mismatch.md` (created during implementation) |
 
 ---
 
@@ -108,18 +108,18 @@ Before running this smoke test:
 
 ## Seed Data Reference
 
-| Entity | Scenario | How to load |
-|---|---|---|
+| Entity           | Scenario              | How to load                                                                           |
+| ---------------- | --------------------- | ------------------------------------------------------------------------------------- |
 | Fixture markdown | Stale list vs pattern | Read `docs/testing/workflow/fixtures/186-scope-drift-pattern-enumeration-mismatch.md` |
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
+| Symptom                       | Likely cause                       | Fix                                                                            |
+| ----------------------------- | ---------------------------------- | ------------------------------------------------------------------------------ |
 | `rg` count matches stale list | Fixture path or pattern too narrow | Widen pattern in fixture to a stable directory as defined in implementation PR |
-| Cannot find new headings | Implementation on different branch | Check out the feature branch that merged #186 |
+| Cannot find new headings      | Implementation on different branch | Check out the feature branch that merged #186                                  |
 
 ---
 

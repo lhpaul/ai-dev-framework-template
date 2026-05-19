@@ -16,11 +16,13 @@ When a downstream project runs a retrospective, the analyst currently has no way
 
 **Actor**: Retrospective Analyst (the AI agent running the retrospective protocol, or a human following it)
 **Preconditions**:
+
 - A retrospective is in progress and Step 3 findings have been categorized
 - The downstream project's workflow configuration includes an upstream template repository reference
 - The analyst has network access to query the template repository's issue tracker
 
 **Steps**:
+
 1. The analyst reads the workflow configuration and detects the template repository reference
 2. The analyst queries the template repository for open issues
 3. For each retrospective finding, the analyst compares it against the open template issues
@@ -31,13 +33,16 @@ When a downstream project runs a retrospective, the analyst currently has no way
 **Postconditions**: Every retrospective finding carries a template cross-reference classification label
 
 **Information shown**:
+
 - For each finding: its classification label and the relevant template issue number or version, if applicable
 - A summary line indicating how many findings were cross-referenced and what tool was used
 
 **Actions available**:
+
 - The human can accept or override any classification during the review step
 
 **Considerations**:
+
 - If the template repository is unreachable at analysis time, the analyst records a warning and marks each finding as "Template check unavailable" (graceful degradation per BR-5)
 - If the configured template repository reference is malformed, the analyst reports an error and marks all findings as "Template check unavailable" (same outcome as an unreachable repository)
 
@@ -47,10 +52,12 @@ When a downstream project runs a retrospective, the analyst currently has no way
 
 **Actor**: Retrospective Analyst
 **Preconditions**:
+
 - A retrospective is in progress
 - The downstream project's workflow configuration does not include a template repository reference
 
 **Steps**:
+
 1. The analyst reads the workflow configuration
 2. The template repository reference is absent or empty
 3. The analyst silently skips the template cross-reference step
@@ -62,6 +69,7 @@ When a downstream project runs a retrospective, the analyst currently has no way
 **Actions available**: None — the step is skipped entirely
 
 **Considerations**:
+
 - This use case covers all existing downstream projects that have not yet added the new configuration fields
 
 ---
@@ -70,10 +78,12 @@ When a downstream project runs a retrospective, the analyst currently has no way
 
 **Actor**: Developer (human running the sync-template skill)
 **Preconditions**:
+
 - The developer has successfully completed a template sync operation using the sync-template skill
 - The downstream project's workflow configuration file is writable
 
 **Steps**:
+
 1. The sync-template skill determines the template version it just synced from
 2. After all changes are applied and before generating git instructions, the skill records the version in the workflow configuration file (under the recorded last-synced template version field)
 3. The git instructions shown to the developer include staging the updated workflow configuration file
@@ -81,12 +91,14 @@ When a downstream project runs a retrospective, the analyst currently has no way
 **Postconditions**: The workflow configuration file contains an up-to-date recorded last-synced template version that reflects the template version just applied
 
 **Information shown**:
+
 - A confirmation line in the sync summary: "Recorded last-synced template version: vX.Y.Z"
 - The git stage instructions include the workflow configuration file
 
 **Actions available**: None — the version recording is automatic as part of the sync operation
 
 **Considerations**:
+
 - If the workflow configuration file does not yet contain a template configuration section, the skill creates it
 - If the last-synced version field already exists with a different value, the skill overwrites it with the new version
 
@@ -113,12 +125,12 @@ When a downstream project runs a retrospective, the analyst currently has no way
 
 The template cross-reference step assigns exactly one classification label to each retrospective finding when the template repository check runs. These are not status transitions — each label is assigned once during classification and does not change.
 
-| Label | Display text | Description |
-|---|---|---|
-| `already-tracked` | Already in template backlog | A matching open issue exists in the template repository |
-| `already-fixed` | Already fixed upstream | A matching closed issue exists whose fix shipped in a newer template version than the downstream's recorded last-synced template version |
-| `contribute-upstream` | Contribute upstream candidate | No matching open or relevant closed issue found; the finding appears new and is a candidate for upstream contribution |
-| `check-unavailable` | Template check unavailable | The template repository was unreachable (warning) or the repository reference was malformed (error); classification could not be performed |
+| Label                 | Display text                  | Description                                                                                                                                |
+| --------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `already-tracked`     | Already in template backlog   | A matching open issue exists in the template repository                                                                                    |
+| `already-fixed`       | Already fixed upstream        | A matching closed issue exists whose fix shipped in a newer template version than the downstream's recorded last-synced template version   |
+| `contribute-upstream` | Contribute upstream candidate | No matching open or relevant closed issue found; the finding appears new and is a candidate for upstream contribution                      |
+| `check-unavailable`   | Template check unavailable    | The template repository was unreachable (warning) or the repository reference was malformed (error); classification could not be performed |
 
 **Label assignment**: No transitions — each finding receives one label during the cross-reference step and retains it through presentation.
 

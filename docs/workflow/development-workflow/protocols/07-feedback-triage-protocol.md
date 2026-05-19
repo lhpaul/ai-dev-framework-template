@@ -41,7 +41,7 @@ Use the GitHub UI:
 2. Click **New category**.
 3. Name: `Feedback & Ideas`
 4. Description: `Share your feedback, ideas, or feature requests. Read CONTRIBUTING.md
-   for details on how feedback is reviewed.`
+for details on how feedback is reviewed.`
 5. Format: **Open-ended discussion** (not Q&A or Poll).
 6. Save.
 
@@ -245,7 +245,6 @@ Do not execute any action without maintainer confirmation.
 1. Close the Discussion with a polite, specific comment. **A generic "out of scope"
    comment without a brief explanation is not acceptable.** Use plain language explaining
    why the feedback is not being promoted. Examples:
-
    - "This appears to be a support question rather than a workflow template improvement
      request. For help configuring the template for your project, ..."
    - "This request is specific to a downstream project customisation rather than a

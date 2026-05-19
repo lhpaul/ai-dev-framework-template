@@ -18,6 +18,7 @@ Long-running item-orchestrator agents can time out mid-run (observed as "API Err
 **Preconditions**: An item-orchestrator agent has opened a draft PR, run the internal review gate, and is mid-way through the external automated reviewer loop or CI loop when the API stream idles out.
 
 **Steps**:
+
 1. The agent run is interrupted (stream idle timeout, context-window exhaustion, or API error).
 2. The PR may have labels partially applied (e.g., `ready-for-regression` present but `ready-for-human-review` absent).
 3. The automated reviewer loop summary comment is absent from the PR.
@@ -28,15 +29,18 @@ Long-running item-orchestrator agents can time out mid-run (observed as "API Err
 **Postconditions**: The PR reaches a consistent, verifiable ready state, with no step skipped and no step double-executed.
 
 **Information shown**:
+
 - The PR comment history clearly indicates which steps ran and which did not.
 - Labels accurately reflect the current review state.
 - The automated reviewer loop summary comment is present and complete.
 
 **Actions available**:
+
 - Operator can trigger a resumed agent with a known resume point.
 - Orchestrator can detect incomplete state via heuristic checks (presence/absence of expected comments and labels).
 
 **Considerations**:
+
 - The timed-out agent may have applied some labels before stopping. The resumed agent must not assume all labels reflect a completed step.
 - The review loop summary comment is a reliable completion signal for Step 7 — its absence means Step 7 did not finish.
 - If the PR already has `ready-for-human-review` but lacks the review summary comment, the label must be removed and the review loop re-run.
@@ -49,6 +53,7 @@ Long-running item-orchestrator agents can time out mid-run (observed as "API Err
 **Preconditions**: A PR exists with some readiness labels but without the expected automated reviewer loop summary comment. The PR is non-draft and not labeled `needs-fixes`.
 
 **Steps**:
+
 1. The portfolio orchestrator scans open PRs.
 2. It finds a PR that has labels consistent with "ready" (e.g., non-draft, `ready-for-regression`) but no reviewer loop summary comment.
 3. The orchestrator classifies the PR as "incomplete — review loop not run" rather than "ready".
@@ -57,12 +62,15 @@ Long-running item-orchestrator agents can time out mid-run (observed as "API Err
 **Postconditions**: The PR is advanced through the review loop and reaches a verified ready state.
 
 **Information shown**:
+
 - The orchestrator's dispatch log notes the reason for re-dispatch (incomplete review loop detected).
 
 **Actions available**:
+
 - Orchestrator dispatches a resumed item-orchestrator agent.
 
 **Considerations**:
+
 - The orchestrator must not re-dispatch a PR that is genuinely `ready-for-human-review` and has a complete review summary comment — this would waste cycles and confuse reviewers.
 - The detection heuristic (labels present, summary comment absent) should be documented so operators can run it manually.
 
@@ -74,6 +82,7 @@ Long-running item-orchestrator agents can time out mid-run (observed as "API Err
 **Preconditions**: An agent run timed out. The operator knows the PR number and wants to resume from the incomplete step.
 
 **Steps**:
+
 1. The operator inspects the PR state: labels, comments, CI checks.
 2. The operator consults the documented resume guide to identify the correct resume point.
 3. The operator invokes the item-orchestrator (or automated-reviewer-loop agent) with the PR number and a resume hint.
@@ -82,12 +91,15 @@ Long-running item-orchestrator agents can time out mid-run (observed as "API Err
 **Postconditions**: PR is fully ready for human review.
 
 **Information shown**:
+
 - The resume guide documents the signals to look for and the command to run for each scenario.
 
 **Actions available**:
+
 - Invoke the item-orchestrator or automated-reviewer-loop agent with the PR number.
 
 **Considerations**:
+
 - The operator must not manually apply `ready-for-human-review` without completing the review loop — doing so reintroduces the original problem.
 
 ---

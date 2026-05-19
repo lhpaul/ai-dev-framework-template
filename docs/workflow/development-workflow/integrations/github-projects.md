@@ -44,19 +44,19 @@ Note the **project number** returned — you will use it in all `gh project` com
 
 GitHub Projects v2 creates a default **Status** single-select field. Configure it with the following options to match workflow stages:
 
-| Status Option | Workflow Stage |
-|---|---|
-| Backlog | Backlog |
-| Writing Spec | Spec is being drafted |
-| Spec in Review | Spec PR is ready for human review / merge |
-| Spec Ready | Spec approved and merged. Implementation plan pending |
-| Writing Plan | Implementation plan is being drafted |
-| Plan in Review | Plan PR is ready for human review / merge |
-| Plan Ready | Implementation plan approved and merged. Development pending |
-| In Development | Development in progress |
-| Development in Review | Development PR is ready for human review / merge |
-| Merged | Development PR merged to `develop` |
-| Released | Released to production |
+| Status Option         | Workflow Stage                                               |
+| --------------------- | ------------------------------------------------------------ |
+| Backlog               | Backlog                                                      |
+| Writing Spec          | Spec is being drafted                                        |
+| Spec in Review        | Spec PR is ready for human review / merge                    |
+| Spec Ready            | Spec approved and merged. Implementation plan pending        |
+| Writing Plan          | Implementation plan is being drafted                         |
+| Plan in Review        | Plan PR is ready for human review / merge                    |
+| Plan Ready            | Implementation plan approved and merged. Development pending |
+| In Development        | Development in progress                                      |
+| Development in Review | Development PR is ready for human review / merge             |
+| Merged                | Development PR merged to `develop`                           |
+| Released              | Released to production                                       |
 
 To add or rename status options, use the project settings UI at `https://github.com/users/<OWNER>/projects/<NUMBER>/settings` (or the equivalent org URL).
 
@@ -64,11 +64,11 @@ To add or rename status options, use the project settings UI at `https://github.
 
 Add these custom fields to the project (via project settings UI or GraphQL):
 
-| Field | Type | Purpose |
-|---|---|---|
-| Priority | Single select: `Urgent`, `High`, `Normal`, `Low` | Drives orchestrator prioritization |
-| Due date | Date | Items due within 2 weeks get priority boost |
-| Type | Single select: `Feature`, `Bug`, `Refactor` | Maps to workflow path (Full Pipeline, Refactor, or Fast Track) |
+| Field    | Type                                             | Purpose                                                        |
+| -------- | ------------------------------------------------ | -------------------------------------------------------------- |
+| Priority | Single select: `Urgent`, `High`, `Normal`, `Low` | Drives orchestrator prioritization                             |
+| Due date | Date                                             | Items due within 2 weeks get priority boost                    |
+| Type     | Single select: `Feature`, `Bug`, `Refactor`      | Maps to workflow path (Full Pipeline, Refactor, or Fast Track) |
 
 ### 4. Issue Labels (on the Repository)
 
@@ -101,6 +101,22 @@ When `gh` is available, the script detects merged PRs via `gh pr list --state me
 ## CLI Update Patterns for Agents and Subagents
 
 GitHub Projects status updates can be performed entirely via `gh` CLI and Bash — no MCP server is required. This means subagent Work Item Runners dispatched from parallel batch runs can update tracker status directly at Step 8b without deferring to the orchestrator.
+
+### Board membership check (ensure_on_project_board)
+
+Before updating tracker status, each stage agent (spec-writer, plan-writer, developer) must ensure the issue is registered on the project board. The `ensure_on_project_board` function in `scripts/development-workflow/workflow-lib.sh` handles this idempotently:
+
+```bash
+# Source workflow-lib.sh to get ensure_on_project_board
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source scripts/development-workflow/workflow-lib.sh
+
+# Call before tracker status update in the agent completion sequence.
+# initial_status: "Writing Spec" (spec agent), "Writing Plan" (plan agent), "In Development" (developer agent)
+ensure_on_project_board "$ISSUE_NUMBER" "$INITIAL_STATUS"
+```
+
+The function is **fail-open**: if the issue is already on the board it returns 0 immediately without modifying the existing status; if the board-add API call fails for any reason (rate limit, permissions error) it logs a warning and returns 0 so the agent can continue to open the PR. The initial status is only applied when the issue is newly added to the board — the subsequent `update_tracker_status_best_effort` call handles the normal stage-progression update independently.
 
 ### One-shot status update (recommended pattern)
 
@@ -145,10 +161,10 @@ gh api graphql -f query="
 
 ### Status values by workflow stage (Step 8b targets)
 
-| PR type | Target status string |
-|---|---|
-| `spec/*` PR ready for human review | `Spec in Review` |
-| `implementation-plan/*` PR ready for human review | `Plan in Review` |
+| PR type                                                                  | Target status string    |
+| ------------------------------------------------------------------------ | ----------------------- |
+| `spec/*` PR ready for human review                                       | `Spec in Review`        |
+| `implementation-plan/*` PR ready for human review                        | `Plan in Review`        |
 | `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PR ready for human review | `Development in Review` |
 
 ### Caching field and option IDs
@@ -174,13 +190,46 @@ When the **Portfolio Orchestrator** has `gh` CLI access, it should:
 
 ### Reading Project Items
 
-```bash
-# List all items in the project with their fields
-gh project item-list <PROJECT_NUMBER> --owner <OWNER> --format json
+**Performance note**: `gh project item-list` paginates all board items, including closed and merged
+ones. On boards with 300+ items this exhausts the 5 000-point GraphQL rate limit, causing a
+~3.5-minute pause that grows as more items accumulate. Prefer the open-issue approach below.
 
-# Get a specific issue's project fields
-gh project item-list <PROJECT_NUMBER> --owner <OWNER> --format json | jq '.items[] | select(.content.number == <ISSUE_NUMBER>)'
+**Recommended: query open issues first, then cross-reference with a single item-list call**
+
+GitHub Projects v2 has no server-side open-issue filter on the items node, so a full `item-list`
+fetch is unavoidable. The key optimisation is to fetch open issues from the GitHub Issues API
+(which supports state filtering) and then cross-reference them against the project board items
+client-side — this ensures downstream processing only touches open candidates:
+
+```bash
+# Step 1: list open issues only (the only candidates for orchestrator advancement)
+OPEN_ISSUES=$(gh issue list --state open --limit 1000 --json number,title,labels,createdAt)
+
+# Step 2: fetch all project board items once and filter to only open-issue candidates
+gh project item-list <PROJECT_NUMBER> --owner <OWNER> --limit 10000 --format json \
+  | jq --argjson open "$OPEN_ISSUES" \
+    '[.items[] | . as $item | ($open[] | select(.number == $item.content.number)) // empty | {number: .number, title: .title, status: $item.status}]'
 ```
+
+**Alternative: client-side terminal-status filter (simpler, same single item-list call)**
+
+When you want a simpler filter without loading the open-issue list separately, fetch all items
+and immediately discard terminal-status entries client-side:
+
+```bash
+# Fetch all items and filter out terminal statuses client-side
+gh project item-list <PROJECT_NUMBER> --owner <OWNER> --limit 10000 --format json \
+  | jq '[.items[] | select(.status != null and (.status | IN("Done","Merged","Released","Cancelled")) | not)]'
+```
+
+**Rate-limit check**: check remaining GraphQL quota before and after large pagination:
+
+```bash
+gh api rate_limit --jq '.resources.graphql | {limit, remaining, used, reset: (.reset | todate)}'
+```
+
+Warn the human when `remaining` falls below 1 000 points. Pause dispatch when below 200 points
+and report the reset time. See Protocol 90 Step 1a for the full rate-limit guidance.
 
 ### Updating Status via GraphQL
 
@@ -225,14 +274,14 @@ gh issue close <ISSUE_NUMBER>
 
 When a GitHub issue exists, use the issue number as the branch slug prefix:
 
-| Branch type | Pattern | Example |
-|---|---|---|
-| Spec | `spec/<issue-number>-<slug>` | `spec/42-user-auth` |
+| Branch type         | Pattern                                     | Example                            |
+| ------------------- | ------------------------------------------- | ---------------------------------- |
+| Spec                | `spec/<issue-number>-<slug>`                | `spec/42-user-auth`                |
 | Implementation plan | `implementation-plan/<issue-number>-<slug>` | `implementation-plan/42-user-auth` |
-| Feature | `feature/<issue-number>-<slug>` | `feature/42-user-auth` |
-| Refactor | `refactor/<issue-number>-<slug>` | `refactor/33-extract-auth-service` |
-| Bug fix | `fix/<issue-number>-<slug>` | `fix/56-login-redirect` |
-| Hotfix | `hotfix/<issue-number>-<slug>` | `hotfix/89-payment-crash` |
+| Feature             | `feature/<issue-number>-<slug>`             | `feature/42-user-auth`             |
+| Refactor            | `refactor/<issue-number>-<slug>`            | `refactor/33-extract-auth-service` |
+| Bug fix             | `fix/<issue-number>-<slug>`                 | `fix/56-login-redirect`            |
+| Hotfix              | `hotfix/<issue-number>-<slug>`              | `hotfix/89-payment-crash`          |
 
 The `<slug>` is a short kebab-case description derived from the issue title.
 
@@ -242,18 +291,18 @@ The `<slug>` is a short kebab-case description derived from the issue title.
 
 The **Portfolio Orchestrator**, **Work Item Runner**, or stage agent updates the project item Status at each stage transition:
 
-| Action | Status transition |
-|---|---|
-| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `product-manager` | -> Writing Spec |
-| Spec PR is human-ready (automation clean; ready for humans) | -> Spec in Review |
-| Spec PR merged | -> Spec Ready |
-| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `tech-lead` | -> Writing Plan (Refactor items skip directly here from Backlog) |
-| Plan PR is human-ready (automation clean) | -> Plan in Review |
-| Plan PR merged | -> Plan Ready |
-| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `developer` | -> In Development |
-| Feature/fix PR is human-ready (automation clean) | -> Development in Review |
-| Feature/fix PR merged to develop | -> Merged |
-| Release deployed to production | -> Released |
+| Action                                                                                          | Status transition                                                |
+| ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `product-manager` | -> Writing Spec                                                  |
+| Spec PR is human-ready (automation clean; ready for humans)                                     | -> Spec in Review                                                |
+| Spec PR merged                                                                                  | -> Spec Ready                                                    |
+| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `tech-lead`       | -> Writing Plan (Refactor items skip directly here from Backlog) |
+| Plan PR is human-ready (automation clean)                                                       | -> Plan in Review                                                |
+| Plan PR merged                                                                                  | -> Plan Ready                                                    |
+| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `developer`       | -> In Development                                                |
+| Feature/fix PR is human-ready (automation clean)                                                | -> Development in Review                                         |
+| Feature/fix PR merged to develop                                                                | -> Merged                                                        |
+| Release deployed to production                                                                  | -> Released                                                      |
 
 ---
 
@@ -265,14 +314,14 @@ This eliminates the stale-status problem that occurs between orchestrator runs.
 
 ### Branch-to-status mapping
 
-| Branch prefix | Status after merge | Issue closed? |
-|---|---|---|
-| `spec/*` | Spec Ready | No |
-| `implementation-plan/*` | Plan Ready | No |
-| `feature/*` | Merged | Yes |
-| `fix/*` | Merged | Yes |
-| `refactor/*` | Merged | Yes |
-| `hotfix/*` | Merged | Yes |
+| Branch prefix           | Status after merge | Issue closed? |
+| ----------------------- | ------------------ | ------------- |
+| `spec/*`                | Spec Ready         | No            |
+| `implementation-plan/*` | Plan Ready         | No            |
+| `feature/*`             | Merged             | Yes           |
+| `fix/*`                 | Merged             | Yes           |
+| `refactor/*`            | Merged             | Yes           |
+| `hotfix/*`              | Merged             | Yes           |
 
 ### How it works
 
@@ -287,10 +336,10 @@ This eliminates the stale-status problem that occurs between orchestrator runs.
 
 Set the following as **repository variables** (not secrets — these are not sensitive):
 
-| Variable | Description |
-|---|---|
-| `GITHUB_PROJECT_NUMBER` | The integer project number (e.g. `1`) |
-| `GITHUB_PROJECT_OWNER` | The GitHub user or org owning the project (falls back to `github.repository_owner` when unset) |
+| Variable                | Description                                                                                    |
+| ----------------------- | ---------------------------------------------------------------------------------------------- |
+| `GITHUB_PROJECT_NUMBER` | The integer project number (e.g. `1`)                                                          |
+| `GITHUB_PROJECT_OWNER`  | The GitHub user or org owning the project (falls back to `github.repository_owner` when unset) |
 
 To set them via CLI:
 
@@ -386,6 +435,7 @@ Read the `workflow_issue_tracker_custom_field` helper documentation in `scripts/
 If you don't use GitHub Projects, the **Portfolio Orchestrator** asks the human:
 
 > "What should I work on next? Please provide:
+>
 > - Feature name and slug
 > - Path: Full Pipeline / Refactor / Fast Track / Hotfix
 > - Priority context (if any)

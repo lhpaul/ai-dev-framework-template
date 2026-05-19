@@ -14,15 +14,15 @@ This feature defines **mandatory coverage and verification behaviors** for the s
 
 ## Brief Coverage (issue #186)
 
-| Brief objective (from tracker) | Spec trace |
-|---|---|
-| Spec-writer: extract discrete objectives / acceptance-style items from the issue brief | UC1, BR-1–BR-3, AC1, AC3 |
-| Match each brief item to an AC or explicit Out of Scope entry | UC1, BR-1, AC1 |
-| If in Out of Scope, surface deferral during alignment **or** in PR description with rationale | UC2, BR-3, AC2 |
-| Internal spec-reviewer runs the same coverage verification | UC3, BR-6, AC6 |
-| Plan-writer: do not treat stale spec enumerations as authoritative when intent is pattern/repo-current; run live search at plan-write time | UC4, BR-4–BR-5, AC4–AC5 |
-| Internal plan reviewer checks enumeration vs verification log | UC5, BR-6, AC7 |
-| MVP excludes automated NLP extraction, retroactive rewrites, CI merge-blocking bots, full parity for non-GitHub trackers | Out of Scope (MVP) |
+| Brief objective (from tracker)                                                                                                             | Spec trace               |
+| ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------ |
+| Spec-writer: extract discrete objectives / acceptance-style items from the issue brief                                                     | UC1, BR-1–BR-3, AC1, AC3 |
+| Match each brief item to an AC or explicit Out of Scope entry                                                                              | UC1, BR-1, AC1           |
+| If in Out of Scope, surface deferral during alignment **or** in PR description with rationale                                              | UC2, BR-3, AC2           |
+| Internal spec-reviewer runs the same coverage verification                                                                                 | UC3, BR-6, AC6           |
+| Plan-writer: do not treat stale spec enumerations as authoritative when intent is pattern/repo-current; run live search at plan-write time | UC4, BR-4–BR-5, AC4–AC5  |
+| Internal plan reviewer checks enumeration vs verification log                                                                              | UC5, BR-6, AC7           |
+| MVP excludes automated NLP extraction, retroactive rewrites, CI merge-blocking bots, full parity for non-GitHub trackers                   | Out of Scope (MVP)       |
 
 ---
 
@@ -34,6 +34,7 @@ This feature defines **mandatory coverage and verification behaviors** for the s
 **Preconditions**: A GitHub-tracked feature issue exists with a body that lists multiple discrete objectives, acceptance-style bullets, or explicitly numbered requirements.
 
 **Steps**:
+
 1. The spec writer reads the full issue brief (title, body, and recent comments material to scope).
 2. The spec writer extracts a **Brief Objective List** — each discrete item the brief treats as in-scope work (bullets, numbered lists, checklist items that are requirements rather than background narrative).
 3. While drafting the spec, the writer maintains a **Coverage Matrix** mapping each brief objective to exactly one of:
@@ -43,17 +44,21 @@ This feature defines **mandatory coverage and verification behaviors** for the s
 5. The draft PR body (or a dedicated section the human will read first) includes the **Coverage Matrix summary**: brief objective → AC id(s) or Out-of-Scope row reference.
 
 **Postconditions**:
+
 - A human reviewer can verify in under five minutes that nothing from the brief disappeared without an explicit AC or Out-of-Scope rationale.
 - Silent deferral (“moved to out of scope without calling it out”) is structurally prevented by the required summary artifact.
 
 **Information shown**:
+
 - PR description: Coverage Matrix summary (or link to a section inside the spec that contains the full matrix).
 
 **Actions available**:
+
 - Human can reject a deferral before merge because the rationale is visible up front.
 - Human can request scope expansion without rediscovering missing objectives via external review.
 
 **Considerations**:
+
 - Narrative prose in the brief that does not state a requirement is not forced into the matrix; the writer uses judgment but must not use that ambiguity to hide dropped requirements.
 
 ---
@@ -64,20 +69,25 @@ This feature defines **mandatory coverage and verification behaviors** for the s
 **Preconditions**: At least one brief objective is placed under **`## Out of Scope (MVP)`** rather than covered by an AC.
 
 **Steps**:
+
 1. For each such objective, the writer records a **Deferral Note** containing: the brief wording (or stable paraphrase), the rationale for deferral, and whether the human should confirm the deferral as acceptable.
 2. The Deferral Note appears in **both** the spec’s Out-of-Scope section **and** the draft PR description (or a clearly labeled subsection), not only in hidden agent reasoning.
 3. During the alignment conversation (per `01-generate-spec-protocol.md`), if the run is orchestrated with a pasted brief and no live human, the writer **surfaces deferrals explicitly in the PR description** as the human-facing stand-in for synchronous alignment.
 
 **Postconditions**:
+
 - No brief objective lands in Out of Scope without a human-visible Deferral Note tied to that objective.
 
 **Information shown**:
+
 - PR description lists each deferred brief objective with rationale.
 
 **Actions available**:
+
 - Human requests scope expansion before merge without relying on CodeRabbit or other external tools to notice the contradiction first.
 
 **Considerations**:
+
 - Rationales must be product- or risk-framed (“requires human judgment on NLP boundary”) rather than vague (“too hard”).
 
 ---
@@ -88,20 +98,25 @@ This feature defines **mandatory coverage and verification behaviors** for the s
 **Preconditions**: Draft spec PR exists for a tracked issue with a non-trivial brief.
 
 **Steps**:
+
 1. The reviewer reconstructs or imports the **Brief Objective List** from the linked issue.
 2. The reviewer confirms the Coverage Matrix in the PR description (or spec) accounts for **every** objective.
 3. If any objective is missing, the reviewer returns **NEEDS REVISION** with the specific gap.
 
 **Postconditions**:
+
 - Internal gate can catch the same drift pattern that previously relied on external Major findings.
 
 **Information shown**:
+
 - Review comment references missing objective IDs or brief bullet text.
 
 **Actions available**:
+
 - Work Item Runner re-runs spec fixes and Step 7a until clean.
 
 **Considerations**:
+
 - Reviewer does not renegotiate product scope; they enforce traceability between brief and spec.
 
 ---
@@ -112,20 +127,25 @@ This feature defines **mandatory coverage and verification behaviors** for the s
 **Preconditions**: The approved spec describes a set of files, modules, or artifacts using an **enumerated list** that may become stale (e.g., “these four spec files contain section X”), or uses language equivalent to “all files matching pattern Y.”
 
 **Steps**:
+
 1. When the spec’s intent is **pattern- or query-based coverage** (e.g., “every file under `docs/specs/` containing `Guiding principle`”), the plan writer runs a **live repository search** at plan-write time (e.g., `grep` / `rg` / documented equivalent) and treats that result as authoritative for the plan’s file list and counts.
 2. When the spec provides a **fixed enumeration** for a reason other than pattern coverage (e.g., explicitly named integration partners), the plan documents that the list is **spec-frozen** and not re-derived — but if the brief or spec language implies completeness via a pattern, the writer must not copy the enumeration without verification.
 3. The implementation plan’s **Summary** and **Documentation Updates** sections reflect the **verified** counts and paths, not the stale numbers from an older spec revision.
 
 **Postconditions**:
+
 - Plans do not ship with “4 files” when seven match the pattern at plan-write time unless the human explicitly chose a subset in an updated spec.
 
 **Information shown**:
+
 - Plan includes a short **Verification Log**: command or search used, timestamp or commit SHA of repo state checked, and resulting count/list.
 
 **Actions available**:
+
 - Human sees why the plan’s scope matches current repo reality.
 
 **Considerations**:
+
 - Verification must be reproducible by a human following the plan (exact command recorded).
 
 ---
@@ -136,19 +156,24 @@ This feature defines **mandatory coverage and verification behaviors** for the s
 **Preconditions**: Plan PR references spec ACs that imply pattern-based completeness.
 
 **Steps**:
+
 1. The reviewer repeats or spot-checks the Verification Log commands from the plan.
 2. If counts or paths disagree with the plan body, the reviewer returns **NEEDS REVISION**.
 
 **Postconditions**:
+
 - Stale counts cannot pass the internal plan gate when they contradict a live search.
 
 **Information shown**:
+
 - Review comment cites mismatch between plan text and verification output.
 
 **Actions available**:
+
 - Same fix loop as other internal review failures.
 
 **Considerations**:
+
 - Spot-check strategy may be defined in the implementation plan stage protocol to balance thoroughness and time.
 
 ---

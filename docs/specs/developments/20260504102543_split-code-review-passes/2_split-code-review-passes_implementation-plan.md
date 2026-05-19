@@ -19,11 +19,11 @@
 
 ## Verification Log
 
-| Check | Command / query | Result |
-|---|---|---|
-| Repo revision | `git rev-parse --short HEAD` | `ff2a19c` |
+| Check                                      | Command / query                                                                                                                          | Result                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Repo revision                              | `git rev-parse --short HEAD`                                                                                                             | `ff2a19c`                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | Files referencing Step 7a in agents/skills | `grep -rl "Step 7a\|internal.*review.*gate\|code-reviewer\|implementation-plan-reviewer" .claude/agents/ .cursor/agents/ .codex/skills/` | `.claude/agents/automated-reviewer-loop.md`, `.claude/agents/code-reviewer.md`, `.claude/agents/implementation-plan-reviewer.md`, `.cursor/agents/automated-reviewer-loop.md`, `.cursor/agents/code-reviewer.md`, `.cursor/agents/implementation-plan-reviewer.md`, `.codex/skills/workflow-code-reviewer/SKILL.md`, `.codex/skills/workflow-item-orchestrator/SKILL.md`, `.codex/skills/workflow-orchestrator/SKILL.md`, `.codex/skills/workflow-reviewer-loop/SKILL.md` |
-| Existing `Pass 1` / `Pass 2` mentions | `grep -c "Pass 1\|Pass 2\|two.pass" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | `0` — two-pass logic does not yet exist |
+| Existing `Pass 1` / `Pass 2` mentions      | `grep -c "Pass 1\|Pass 2\|two.pass" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`                        | `0` — two-pass logic does not yet exist                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 ---
 
@@ -71,10 +71,10 @@
 
 ## Seed Data
 
-| Entity | Values / Scenario | File |
-|---|---|---|
+| Entity                 | Values / Scenario                                       | File                            |
+| ---------------------- | ------------------------------------------------------- | ------------------------------- |
 | Test implementation PR | Any `fix/*` PR with a merged spec and plan on `develop` | n/a — created during smoke test |
-| Test spec PR | Any `spec/*` PR open as draft | n/a — created during smoke test |
+| Test spec PR           | Any `spec/*` PR open as draft                           | n/a — created during smoke test |
 
 ---
 
@@ -89,12 +89,12 @@ No other project docs (`docs/project/`, `AGENTS.md`) require updates — this ch
 
 ## Risks & Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| Pass identity context lost when orchestrator dispatches reviewer | Low | High | Protocol 91 must explicitly state that the orchestrator passes the active pass name (`Pass 1` or `Pass 2`) in the dispatch prompt; reviewer agents reference this to scope their checklist evaluation |
-| Trivial-fix skip rule applied incorrectly in two-pass context | Low | Med | Plan clearly states trivial-fix skip only suppresses Pass 1 re-run after Pass 2 fixer pushes; never applies to the initial full Step 7a run |
-| `max_internal_review_cycles` semantics misunderstood | Low | Med | Add an explicit clarifying sentence to the Step 7a loop-parameters table: the counter tracks full-restart cycles (Pass 1 → Pass 2), not individual pass runs |
-| Reviewer agent ignores pass-identity prompt | Low | Med | Document in the code-reviewer agent file that pass identity is a first-class instruction; reviewer must scope findings to the named pass |
+| Risk                                                             | Likelihood | Impact | Mitigation                                                                                                                                                                                            |
+| ---------------------------------------------------------------- | ---------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pass identity context lost when orchestrator dispatches reviewer | Low        | High   | Protocol 91 must explicitly state that the orchestrator passes the active pass name (`Pass 1` or `Pass 2`) in the dispatch prompt; reviewer agents reference this to scope their checklist evaluation |
+| Trivial-fix skip rule applied incorrectly in two-pass context    | Low        | Med    | Plan clearly states trivial-fix skip only suppresses Pass 1 re-run after Pass 2 fixer pushes; never applies to the initial full Step 7a run                                                           |
+| `max_internal_review_cycles` semantics misunderstood             | Low        | Med    | Add an explicit clarifying sentence to the Step 7a loop-parameters table: the counter tracks full-restart cycles (Pass 1 → Pass 2), not individual pass runs                                          |
+| Reviewer agent ignores pass-identity prompt                      | Low        | Med    | Document in the code-reviewer agent file that pass identity is a first-class instruction; reviewer must scope findings to the named pass                                                              |
 
 ---
 
@@ -133,6 +133,7 @@ else:
 
 ```markdown
 # Illustrative — adapt during implementation
+
 ### Step 7a Internal Review Gate Summary
 
 **PR type**: Implementation (two-pass)
@@ -140,9 +141,11 @@ else:
 **Skipped reviewers**: codex-github (timed out — treated as unavailable)
 
 **Pass 1 (Spec Compliance)**
+
 - claude: APPROVED (0 findings)
 
 **Pass 2 (Code Quality)**
+
 - claude: APPROVED after 1 fix cycle (1 finding resolved)
 
 **Verdict**: APPROVED
@@ -164,7 +167,6 @@ All passes approved at commit `abc1234`.
 2. **Update Protocol 91 — two-pass execution rules**
 
    Replace the existing single-pass "Multi-reviewer execution rules" table and surrounding prose with a two-pass description. The new rules must express:
-
    - Pass 1 (Spec Compliance) dispatches all configured reviewers; each reviewer evaluates only spec-compliance criteria from `REVIEW.md §Pass 1`.
    - Pass 2 (Code Quality) dispatches all configured reviewers; each reviewer evaluates only code-quality criteria from `REVIEW.md §Pass 2`.
    - Pass 2 is never dispatched until all Pass 1 runs for the current commit are `APPROVED`.

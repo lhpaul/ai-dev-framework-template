@@ -15,10 +15,12 @@
 **Actor**: Developer (or automated orchestrator) invoking `post-merge-cleanup.sh <branch>` where `<branch>` matches `spec/<number>-<slug>`
 
 **Preconditions**:
+
 - The spec branch has been merged on GitHub (PR merged, remote branch deleted)
 - The developer's local repo still has the local spec branch
 
 **Steps**:
+
 1. Developer (or orchestrator) runs `./scripts/development-workflow/post-merge-cleanup.sh spec/184-post-merge-cleanup-log-and-tracker`
 2. Script fetches origin, switches to `develop`, pulls, removes any linked worktree, deletes the local branch
 3. Script detects the branch prefix is `spec/*` and extracts the issue number `184`
@@ -27,18 +29,22 @@
 6. Script exits cleanly
 
 **Postconditions**:
+
 - Local branch is deleted; developer is on `develop`
 - GitHub Projects v2 Status for issue #184 is `Spec Ready`
 - No contradictory log lines appear in the output
 
 **Information shown**:
+
 - A single informational log line: issue number detected, issue stays open, status updated to `Spec Ready`
 - No "No issue number detected" message for this branch
 
 **Actions available**:
+
 - Developer can immediately begin the next workflow stage for issue #184 (write plan)
 
 **Considerations**:
+
 - If the GitHub Projects lookup fails (network error, missing project config), the script should log a warning and continue (exit 0) rather than silently skip the update
 - If the project item for the issue does not exist, log a warning and continue (do not abort cleanup)
 
@@ -49,10 +55,12 @@
 **Actor**: Developer (or automated orchestrator) invoking `post-merge-cleanup.sh <branch>` where `<branch>` matches `implementation-plan/<number>-<slug>`
 
 **Preconditions**:
+
 - The implementation-plan branch has been merged on GitHub
 - The developer's local repo still has the local implementation-plan branch
 
 **Steps**:
+
 1. Developer runs `./scripts/development-workflow/post-merge-cleanup.sh implementation-plan/184-post-merge-cleanup-log-and-tracker`
 2. Script fetches, switches to `develop`, pulls, removes worktree if any, deletes local branch
 3. Script detects the branch prefix is `implementation-plan/*` and extracts the issue number
@@ -61,18 +69,22 @@
 6. Script exits cleanly
 
 **Postconditions**:
+
 - Local branch is deleted; developer is on `develop`
 - GitHub Projects v2 Status is `Plan Ready`
 - No contradictory log lines appear
 
 **Information shown**:
+
 - A single informational log line: issue number detected, issue stays open, status updated to `Plan Ready`
 - No "No issue number detected" message for this branch
 
 **Actions available**:
+
 - Developer can immediately begin the next workflow stage for the issue (implement)
 
 **Considerations**:
+
 - Same GitHub Projects failure handling as Use Case 1
 
 ---
@@ -82,11 +94,13 @@
 **Actor**: Developer (or automated orchestrator) invoking `post-merge-cleanup.sh <branch>` where `<branch>` matches `feature/*`, `fix/*`, `refactor/*`, or `hotfix/*`
 
 **Preconditions**:
+
 - The implementation branch has been merged on GitHub
 - The developer's local repo still has the local implementation branch
 - A GitHub issue with the extracted issue number exists and is OPEN
 
 **Steps**:
+
 1. Developer runs `./scripts/development-workflow/post-merge-cleanup.sh feature/184-post-merge-cleanup-log-and-tracker`
 2. Script fetches, switches to `develop`, pulls, removes worktree if any, deletes local branch
 3. Script detects the branch prefix is `feature/*` and extracts the issue number
@@ -95,19 +109,23 @@
 6. Script exits cleanly
 
 **Postconditions**:
+
 - Local branch is deleted; developer is on `develop`
 - GitHub issue is closed
 - GitHub Projects v2 Status is `Merged`
 - No contradictory log lines appear
 
 **Information shown**:
+
 - A single informational log line: issue number detected, issue closed, status updated to `Merged`
 - No "No issue number detected" message for this branch
 
 **Actions available**:
+
 - Developer confirms the issue is closed and tracker status is `Merged`
 
 **Considerations**:
+
 - If the issue is already closed, the close step is skipped (existing behavior, preserved)
 - If no merged PR is found for the branch, issue close is skipped (existing behavior, preserved)
 - GitHub Projects update is attempted regardless of issue-close outcome
@@ -119,9 +137,11 @@
 **Actor**: Developer invoking `post-merge-cleanup.sh <branch>` on a branch that does not contain a numeric issue-number prefix (e.g., `feature/my-legacy-feature`)
 
 **Preconditions**:
+
 - The branch has been merged on GitHub
 
 **Steps**:
+
 1. Developer runs `./scripts/development-workflow/post-merge-cleanup.sh feature/my-legacy-feature`
 2. Script performs git cleanup (fetch, switch, pull, delete branch)
 3. Script detects no issue number in the branch name
@@ -129,16 +149,20 @@
 5. Script exits cleanly with no tracker update
 
 **Postconditions**:
+
 - Local branch is deleted; developer is on `develop`
 - No GitHub issue or tracker changes are made
 
 **Information shown**:
+
 - A single log line: "No issue number detected in branch name, skipping issue close and tracker update"
 
 **Actions available**:
+
 - Developer can confirm no tracker update was expected for this branch type
 
 **Considerations**:
+
 - This is a valid, non-error scenario for branches that predate the issue-number convention
 
 ---

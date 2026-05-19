@@ -81,11 +81,11 @@ thumbs_up=$(gh api repos/{owner}/{repo}/issues/comments/{review_comment_id}/reac
   --jq "[.[] | select(.content == \"+1\" and .user.login == \"greptile-apps[bot]\")] | length")
 ```
 
-| Result | Action |
-|---|---|
-| `thumbs_up > 0` | Review complete — proceed to Step 7.3 to check for inline comments |
-| `thumbs_up == 0` and `elapsed < max_wait` | Not finished yet — wait another `poll_interval` and poll again |
-| `thumbs_up == 0` and `elapsed >= max_wait` | Timeout — escalate to human |
+| Result                                     | Action                                                             |
+| ------------------------------------------ | ------------------------------------------------------------------ |
+| `thumbs_up > 0`                            | Review complete — proceed to Step 7.3 to check for inline comments |
+| `thumbs_up == 0` and `elapsed < max_wait`  | Not finished yet — wait another `poll_interval` and poll again     |
+| `thumbs_up == 0` and `elapsed >= max_wait` | Timeout — escalate to human                                        |
 
 ### Step 7.3 — Fetch inline comments
 

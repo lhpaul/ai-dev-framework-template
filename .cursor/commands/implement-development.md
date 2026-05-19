@@ -14,6 +14,7 @@ Follow the implementation protocol exactly as defined in:
 - **Hotfix**: prefix with "hotfix:" (e.g., "hotfix: users can't log in after password reset")
 
 Key rules:
+
 - Full Pipeline: read spec + plan + runbook BEFORE writing any code
 - Refactor: read plan + runbook BEFORE writing any code (no spec)
 - Fast Track: stop and report if scope expands beyond the brief

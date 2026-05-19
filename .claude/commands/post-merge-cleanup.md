@@ -23,11 +23,11 @@ Do not skip steps or change the order. If the script fails, show the error and s
 **After the script succeeds — update the issue tracker (if configured):**
 The merged branch name often contains an issue identifier (e.g. `feature/ENG-123-user-auth` → `ENG-123`, or `feature/42-user-auth` → `#42`). If so, update that issue in the project's issue tracker using the branch-type-based status table from Step 10 of `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`:
 
-| Merged branch type | Set tracker status to |
-|---|---|
-| `spec/*` | Spec Ready |
-| `implementation-plan/*` | Plan Ready |
-| `feature/*` / `fix/*` / `refactor/*` / `hotfix/*` | Merged |
+| Merged branch type                                | Set tracker status to |
+| ------------------------------------------------- | --------------------- |
+| `spec/*`                                          | Spec Ready            |
+| `implementation-plan/*`                           | Plan Ready            |
+| `feature/*` / `fix/*` / `refactor/*` / `hotfix/*` | Merged                |
 
 If the item's tracker status is already in a further-advanced state (e.g., already `In Development` when a spec branch merges), do not roll it back — leave it as-is.
 
