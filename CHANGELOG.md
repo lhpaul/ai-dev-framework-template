@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Developer protocol: mandatory fork-PR guard check for GitHub Actions workflow files** (#670): the "GitHub Actions Workflow Security Checklist" in `03-implement-development-protocol.md` gains a new mandatory bullet requiring every step that writes to the repository (adds/removes labels, posts comments, creates deployments or releases) in a `pull_request`-triggered workflow to include `if: github.event.pull_request.head.repo.full_name == github.repository` or an equivalent fork-origin check. Steps on `push` events or protected branches are exempt.
+
 ### Fixed
 
 - **`pr-review-loop.sh`: pagination guard for `check_unresolved_threads` on empty endCursor** (#667): adds the same `hasNextPage=true + empty endCursor` break guard to `check_unresolved_threads` that was already present in `get_resolved_thread_comment_ids`, preventing an infinite pagination loop when the GitHub GraphQL API returns a malformed page-info object.
