@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`pr-review-loop.sh`: extend poll window for large-diff PRs** (#669): when the caller does not pass `--max-wait` explicitly, the script now fetches the PR's changed-files count and extends `max_wait` to `LARGE_DIFF_MAX_WAIT` (default 2400 s / 40 min) when the count exceeds `LARGE_DIFF_THRESHOLD` (default 50 files). This prevents premature `RESULT=clean` exits before CodeRabbit finishes posting its review on release PRs and sync-template PRs. The emitted key=value output gains `CHANGED_FILES_COUNT` and `LARGE_DIFF_EXTENDED=1` for observability.
 - **`pr-review-loop.sh`: pagination guard for `check_unresolved_threads` on empty endCursor** (#667): adds the same `hasNextPage=true + empty endCursor` break guard to `check_unresolved_threads` that was already present in `get_resolved_thread_comment_ids`, preventing an infinite pagination loop when the GitHub GraphQL API returns a malformed page-info object.
 
 ## [0.27.4] - 2026-05-20
