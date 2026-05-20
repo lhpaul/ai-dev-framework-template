@@ -2208,8 +2208,8 @@ run_coderabbit_review() {
       local activity_count
       activity_count="$(
         gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-          | jq --arg bot "$bot_login" --arg since "$since_iso" '
-              [.[] | select(
+          | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
+              [.[].[] | select(
                   .user.login == $bot and
                   .created_at > $since and
                   ((.body // "") | test("Reviews paused|review paused"; "i") | not) and
@@ -2237,8 +2237,8 @@ run_coderabbit_review() {
       local paused_count
       paused_count="$(
         gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-          | jq --arg bot "$bot_login" --arg since "$since_iso" '
-              [.[] | select(
+          | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
+              [.[].[] | select(
                   .user.login == $bot and
                   .created_at > $since and
                   ((.body // "") | test("Reviews paused|review paused"; "i"))
@@ -2312,8 +2312,8 @@ run_coderabbit_review() {
       local rate_limit_comment_count
       rate_limit_comment_count="$(
         gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-          | jq --arg bot "$bot_login" --arg since "$since_iso" '
-              [.[] | select(
+          | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
+              [.[].[] | select(
                   .user.login == $bot and
                   .created_at > $since and
                   ((.body // "") | test("rate.?limit"; "i"))
