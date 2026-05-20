@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.4] - 2026-05-20
+
+### Fixed
+
+- **`pr-review-loop.sh`: slurp paginated pages in `activity_count`, `paused_count`, and `rate_limit_comment_count`** (hotfix): three additional paginated comment-count queries in `run_coderabbit_review` used `jq` without `-s`, producing multi-line counts on multi-page PRs and breaking integer comparisons. Applied the same `jq -s` / `.[].[]` fix as `silent_no_paused_count` (v0.27.3).
+
 ## [0.27.3] - 2026-05-19
 
 ### Fixed
@@ -730,7 +736,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.3...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.4...HEAD
+[0.27.4]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.3...v0.27.4
 [0.27.3]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.2...v0.27.3
 [0.27.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.1...v0.27.2
 [0.27.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.0...v0.27.1
