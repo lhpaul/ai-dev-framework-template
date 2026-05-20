@@ -3101,11 +3101,9 @@ fi
 #
 # When the caller did not pass --max-wait explicitly, fetch the PR's changed-files
 # count and extend max_wait to LARGE_DIFF_MAX_WAIT (default 2400 s) when the count
-# exceeds LARGE_DIFF_THRESHOLD (default 50 files). The spec/implementation-plan
-# short-circuit above takes precedence: those branches already set max_wait=60 and
-# are excluded by the max_wait_explicit guard below (which is still 0, but the
-# branch-type rule already set max_wait — we re-check the case to avoid overriding
-# the 60-second budget for spec branches). Use the case guard for safety.
+# exceeds LARGE_DIFF_THRESHOLD (default 50 files). A case guard excludes spec/* and
+# implementation-plan/* branches — those are already handled by the branch-type-aware
+# timeout block above and must not have their 60-second budget overridden.
 large_diff_threshold="${LARGE_DIFF_THRESHOLD:-50}"
 large_diff_max_wait="${LARGE_DIFF_MAX_WAIT:-2400}"
 if ! [[ "$large_diff_threshold" =~ ^[1-9][0-9]*$ ]]; then
