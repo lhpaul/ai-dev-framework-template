@@ -164,8 +164,16 @@ Outputs stable key=value lines including:
   RESULT=clean|needs_fixes|needs_rerun|escalate|skipped
   PLATFORM_<n>_NAME / PLATFORM_<n>_RESULT
   REASON=lock_contention (when exit code is 75)
+  REASON=late_review_threads (when post-clean recheck finds new unresolved threads)
   COMPARE_MODE=1 (when --compare is active)
   COMPARE_VERDICT_<n>_PLATFORM / COMPARE_VERDICT_<n>_RESULT (when --compare is active)
+  POST_CLEAN_RECHECK=0|1 (1 when the post-clean wait-and-recheck ran)
+  LATE_THREADS_FOUND=<N> (count of newly-found unresolved threads; -1 on audit failure; only when POST_CLEAN_RECHECK=1)
+
+Environment variables:
+  POST_CLEAN_WAIT=<seconds>     Override the post-clean recheck wait (default: 30). Set to 0 to run immediately.
+  SKIP_POST_CLEAN_RECHECK=1     Suppress the post-clean recheck. Set by callers re-dispatching after a prior
+                                late-thread fix cycle, so the corrective invocation does not recheck again.
 EOF
 }
 
@@ -3255,11 +3263,13 @@ fi
 # review threads remain unresolved before declaring the aggregate result clean.
 # This catches Nitpick/Trivial/Minor severity threads that individual platform
 # handlers do not classify as blocking but that still need explicit resolution.
+# unresolved_bot_logins is declared here (outside the if-block) so the
+# post-clean recheck below can safely reference it regardless of code path.
+declare -a unresolved_bot_logins=()
 if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; then
   # Build the array of bot logins from the configured platforms.
   # Using an array (not a space-separated string) prevents Bash glob expansion of
   # bracket characters in "[bot]" strings during iteration.
-  declare -a unresolved_bot_logins=()
   for _platform in "${platforms[@]}"; do
     _login="$(bot_login_for_platform "$_platform")"
     [ -n "$_login" ] && unresolved_bot_logins+=("$_login")
@@ -3322,6 +3332,71 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
   fi
 else
   print_kv UNRESOLVED_THREAD_COUNT 0
+fi
+
+# --- Post-clean recheck ---
+# After the reviewer loop exits clean and the immediate thread gate passes,
+# wait a short interval and re-query reviewThreads. This catches bot review
+# threads (e.g. CodeRabbit) that are posted asynchronously and arrive after
+# the platform handlers and thread gate have already completed. Without this
+# recheck, Step 5.1 must catch these late threads — at the cost of a full
+# reviewer-loop redispatch cycle. The recheck adds a single ~30-second wait
+# in exchange for avoiding that more expensive recovery path.
+#
+# The recheck only runs when:
+#   - aggregate_result is "clean" after the immediate thread gate
+#   - compare_mode is not active (recheck is not meaningful in evaluation mode)
+#   - SKIP_POST_CLEAN_RECHECK is not set to "1" (allows callers to suppress
+#     on re-dispatch after a prior late-thread fix cycle, so the recheck does
+#     not run again on the corrective invocation)
+#
+# Configurable via POST_CLEAN_WAIT env var (default: 30 seconds).
+# Emits POST_CLEAN_RECHECK=1 when the wait-and-recheck runs, and
+# LATE_THREADS_FOUND=<N> with the count of newly-discovered unresolved threads.
+post_clean_wait="${POST_CLEAN_WAIT:-30}"
+if [ "$aggregate_result" = "clean" ] \
+    && [ "$compare_mode" -eq 0 ] \
+    && [ "${SKIP_POST_CLEAN_RECHECK:-0}" != "1" ] \
+    && [ "${#unresolved_bot_logins[@]}" -gt 0 ] \
+    && [ -n "$pr_number" ]; then
+  print_kv POST_CLEAN_RECHECK 1
+  echo "INFO: post-clean recheck — waiting ${post_clean_wait}s for any late-arriving review threads" >&2
+  _interruptible_sleep "$post_clean_wait"
+
+  late_thread_count=0
+  late_thread_check_output=""
+  late_thread_check_status=0
+  set +e
+  late_thread_check_output="$(check_unresolved_threads "$pr_number" "$(repo_slug)" "${unresolved_bot_logins[@]}")"
+  late_thread_check_status=$?
+  set -e
+
+  if [ "$late_thread_check_status" -eq 2 ]; then
+    # Page-cap exceeded — cannot confirm all threads are resolved. Escalate.
+    echo "WARN: post-clean recheck: check_unresolved_threads exceeded page cap — escalating" >&2
+    aggregate_result="escalate"
+    aggregate_reason="post_clean_recheck_thread_check_incomplete"
+    late_thread_count=-1
+  elif [ "$late_thread_check_status" -ne 0 ]; then
+    # GraphQL failure — escalate rather than silently treating the recheck as clean.
+    echo "WARN: post-clean recheck: check_unresolved_threads failed (exit $late_thread_check_status) — escalating" >&2
+    aggregate_result="escalate"
+    aggregate_reason="post_clean_recheck_thread_audit_failed"
+    late_thread_count=-1
+  else
+    late_thread_count="$late_thread_check_output"
+    if [ "$late_thread_count" -gt 0 ]; then
+      echo "INFO: post-clean recheck — found $late_thread_count late unresolved thread(s); switching to needs_fixes" >&2
+      aggregate_result="needs_fixes"
+      aggregate_reason="late_review_threads"
+      total_blocking_count=$((total_blocking_count + late_thread_count))
+    else
+      echo "INFO: post-clean recheck — no late threads found; result remains clean" >&2
+    fi
+  fi
+  print_kv LATE_THREADS_FOUND "$late_thread_count"
+else
+  print_kv POST_CLEAN_RECHECK 0
 fi
 
 # Append compare-mode metrics row after the thread gate so the recorded

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`pr-review-loop.sh`: post-clean recheck for late-arriving review threads** (#672): after the reviewer loop exits clean and the immediate unresolved-thread gate passes, the script waits `POST_CLEAN_WAIT` seconds (default 30) then re-queries `reviewThreads` to catch bot comments (e.g. CodeRabbit) that arrive asynchronously after the gate ran. If late unresolved threads are found, `RESULT=needs_fixes` with `REASON=late_review_threads` is emitted instead of a false-clean exit, preventing the Step 5.1 redispatch cycle that was observed in 7+ batches. Set `SKIP_POST_CLEAN_RECHECK=1` to suppress the recheck on corrective re-invocations. Observability: `POST_CLEAN_RECHECK=0|1` and `LATE_THREADS_FOUND=<N>` are emitted in all execution paths.
 - **`pr-review-loop.sh`: pagination guard for `check_unresolved_threads` on empty endCursor** (#667): adds the same `hasNextPage=true + empty endCursor` break guard to `check_unresolved_threads` that was already present in `get_resolved_thread_comment_ids`, preventing an infinite pagination loop when the GitHub GraphQL API returns a malformed page-info object.
 
 ## [0.27.4] - 2026-05-20

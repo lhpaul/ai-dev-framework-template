@@ -501,6 +501,58 @@ run_test "auto_reply_post_failure_exit_code" "1" "$actual_exit"
 unset MOCK_GH_POST_EXIT
 
 # ---------------------------------------------------------------------------
+# Area 6: check_unresolved_threads
+#
+# Tests that the function counts unresolved bot-authored review threads correctly
+# via the GraphQL API mock. The mock gh command returns MOCK_GH_OUTPUT for all
+# non-POST calls. check_unresolved_threads calls `gh api graphql ... --jq ...`
+# which outputs the filtered JSON directly (not the raw gh output). Because the
+# mock gh does not run the --jq filter, we set MOCK_GH_OUTPUT to the pre-filtered
+# JSON that the real GraphQL query would return after --jq.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 6: check_unresolved_threads ==="
+
+unset MOCK_GH_POST_EXIT MOCK_GH_POST_OUTPUT MOCK_GH_CALL_LOG
+
+# test: no review threads — count should be 0
+export MOCK_GH_OUTPUT='{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}'
+actual="$(check_unresolved_threads "1" "owner/repo" "coderabbitai[bot]")"
+run_test "unresolved_threads_none" "0" "$actual"
+
+# test: one unresolved bot thread — count should be 1
+export MOCK_GH_OUTPUT='{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai[bot]"},"body":"Blocking issue"}]}}]}'
+actual="$(check_unresolved_threads "1" "owner/repo" "coderabbitai[bot]")"
+run_test "unresolved_threads_one_bot" "1" "$actual"
+
+# test: one resolved bot thread — count should be 0
+export MOCK_GH_OUTPUT='{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":true,"comments":{"nodes":[{"author":{"login":"coderabbitai[bot]"},"body":"Blocking issue"}]}}]}'
+actual="$(check_unresolved_threads "1" "owner/repo" "coderabbitai[bot]")"
+run_test "unresolved_threads_resolved_skipped" "0" "$actual"
+
+# test: bot thread with "✅ Addressed" in body — count should be 0
+export MOCK_GH_OUTPUT='{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai[bot]"},"body":"✅ Addressed — fixed in latest commit"}]}}]}'
+actual="$(check_unresolved_threads "1" "owner/repo" "coderabbitai[bot]")"
+run_test "unresolved_threads_addressed_body_skipped" "0" "$actual"
+
+# test: human-authored thread unresolved — count should be 0 (bot-only filter)
+export MOCK_GH_OUTPUT='{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":false,"comments":{"nodes":[{"author":{"login":"humanreview"},"body":"Please change this"}]}}]}'
+actual="$(check_unresolved_threads "1" "owner/repo" "coderabbitai[bot]")"
+run_test "unresolved_threads_human_ignored" "0" "$actual"
+
+# test: two bot threads, one resolved, one not — count should be 1
+export MOCK_GH_OUTPUT='{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":true,"comments":{"nodes":[{"author":{"login":"coderabbitai[bot]"},"body":"First finding"}]}},{"id":"RT2","isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai[bot]"},"body":"Second finding"}]}}]}'
+actual="$(check_unresolved_threads "1" "owner/repo" "coderabbitai[bot]")"
+run_test "unresolved_threads_mixed_resolved" "1" "$actual"
+
+# test: GraphQL API failure (exit 1 from gh) — function should return exit 3
+export MOCK_GH_EXIT=1
+actual_exit=0
+check_unresolved_threads "1" "owner/repo" "coderabbitai[bot]" > /dev/null 2>&1 || actual_exit=$?
+run_test "unresolved_threads_graphql_failure_exit3" "3" "$actual_exit"
+unset MOCK_GH_EXIT
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
