@@ -160,10 +160,27 @@ Branch-type-aware default timeout:
   poll_interval has elapsed. Pass --max-wait and/or --poll-interval explicitly to
   override either value.
 
+Large-diff poll-window extension:
+  CodeRabbit takes significantly longer to post its review on PRs with a large
+  number of changed files (e.g., release PRs or sync-template PRs). When the
+  caller did not pass --max-wait explicitly, the script fetches the PR's changed-
+  files count and extends max_wait when it exceeds a threshold.
+
+  Environment variables (both optional):
+    LARGE_DIFF_THRESHOLD  — changed-files count above which the extension applies
+                            (default: 50; must be a positive integer)
+    LARGE_DIFF_MAX_WAIT   — extended max_wait in seconds for large-diff PRs
+                            (default: 2400, i.e. 40 minutes; must be a positive integer)
+
+  The extension is suppressed when --max-wait is passed explicitly. The emitted
+  key=value output includes CHANGED_FILES_COUNT so callers can inspect the value.
+
 Outputs stable key=value lines including:
   RESULT=clean|needs_fixes|needs_rerun|escalate|skipped
   PLATFORM_<n>_NAME / PLATFORM_<n>_RESULT
   REASON=lock_contention (when exit code is 75)
+  CHANGED_FILES_COUNT=<n> (PR's changed-files count, or -1 when the fetch failed)
+  LARGE_DIFF_EXTENDED=1 (present and set to 1 when max_wait was extended for a large-diff PR)
   COMPARE_MODE=1 (when --compare is active)
   COMPARE_VERDICT_<n>_PLATFORM / COMPARE_VERDICT_<n>_RESULT (when --compare is active)
 EOF
@@ -3075,6 +3092,57 @@ if [ "$max_wait_explicit" -eq 0 ]; then
   esac
 fi
 
+# Large-diff poll-window extension.
+# CodeRabbit takes significantly longer to post its review on large-diff PRs
+# (e.g. release PRs with hundreds of changed files). The default max_wait=1200 s
+# was calibrated for typical feature PRs and is too short for large release diffs:
+# during release v0.27.0 (PR #665, 185-file diff), the loop returned RESULT=clean
+# before CodeRabbit finished posting 16 findings.
+#
+# When the caller did not pass --max-wait explicitly, fetch the PR's changed-files
+# count and extend max_wait to LARGE_DIFF_MAX_WAIT (default 2400 s) when the count
+# exceeds LARGE_DIFF_THRESHOLD (default 50 files). A case guard excludes spec/* and
+# implementation-plan/* branches — those are already handled by the branch-type-aware
+# timeout block above and must not have their 60-second budget overridden.
+large_diff_threshold="${LARGE_DIFF_THRESHOLD:-50}"
+large_diff_max_wait="${LARGE_DIFF_MAX_WAIT:-2400}"
+if ! [[ "$large_diff_threshold" =~ ^[1-9][0-9]*$ ]]; then
+  echo "WARN: LARGE_DIFF_THRESHOLD must be a positive integer; defaulting to 50" >&2
+  large_diff_threshold=50
+fi
+if ! [[ "$large_diff_max_wait" =~ ^[1-9][0-9]*$ ]]; then
+  echo "WARN: LARGE_DIFF_MAX_WAIT must be a positive integer; defaulting to 2400" >&2
+  large_diff_max_wait=2400
+fi
+changed_files_count=-1
+large_diff_extended=0
+if [ "$max_wait_explicit" -eq 0 ]; then
+  case "$branch_name" in
+    spec/*|implementation-plan/*)
+      # Already handled by the branch-type rule above — do not extend.
+      ;;
+    *)
+      if [ -n "$pr_number" ] && [ "${#platforms[@]}" -gt 0 ]; then
+        set +e
+        changed_files_count="$(gh api "repos/$(repo_slug)/pulls/$pr_number" \
+          --jq '.changed_files // -1' 2>/dev/null)"
+        set -e
+        if ! [[ "${changed_files_count:-}" =~ ^-?[0-9]+$ ]]; then
+          echo "WARN: failed to fetch changed_files count for PR #$pr_number — skipping large-diff extension" >&2
+          changed_files_count=-1
+        fi
+        if [ "$changed_files_count" -ge 0 ] && [ "$changed_files_count" -gt "$large_diff_threshold" ]; then
+          if [ "$large_diff_max_wait" -gt "$max_wait" ]; then
+            echo "INFO: PR #$pr_number has ${changed_files_count} changed files (threshold: ${large_diff_threshold}) — extending max_wait from ${max_wait}s to ${large_diff_max_wait}s for large-diff poll window" >&2
+            max_wait="$large_diff_max_wait"
+            large_diff_extended=1
+          fi
+        fi
+      fi
+      ;;
+  esac
+fi
+
 aggregate_result="skipped"
 aggregate_reason=""
 last_platform=""
@@ -3098,6 +3166,8 @@ print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
 print_kv PLATFORM_COUNT "${#platforms[@]}"
 # So callers can verify config was respected (e.g. no greptile when only devin is in .ai-dev-workflow.yaml)
 print_kv PLATFORM_LIST "$(IFS=,; printf '%s' "${platforms[*]}")"
+print_kv CHANGED_FILES_COUNT "${changed_files_count:--1}"
+[ "$large_diff_extended" -eq 1 ] && print_kv LARGE_DIFF_EXTENDED 1
 
 for index in "${!platforms[@]}"; do
   platform_index=$((index + 1))
