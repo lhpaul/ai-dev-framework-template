@@ -168,7 +168,7 @@ Outputs stable key=value lines including:
   COMPARE_MODE=1 (when --compare is active)
   COMPARE_VERDICT_<n>_PLATFORM / COMPARE_VERDICT_<n>_RESULT (when --compare is active)
   POST_CLEAN_RECHECK=0|1 (1 when the post-clean wait-and-recheck ran)
-  LATE_THREADS_FOUND=<N> (count of newly-found unresolved threads; -1 on audit failure; only when POST_CLEAN_RECHECK=1)
+  LATE_THREADS_FOUND=<N> (count of newly-found unresolved threads; -1 on audit failure; 0 when POST_CLEAN_RECHECK=0)
 
 Environment variables:
   POST_CLEAN_WAIT=<seconds>     Override the post-clean recheck wait (default: 30). Set to 0 to run immediately.
@@ -3272,6 +3272,10 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
   # bracket characters in "[bot]" strings during iteration.
   for _platform in "${platforms[@]}"; do
     _login="$(bot_login_for_platform "$_platform")"
+    # Strip the REST-style "[bot]" suffix — check_unresolved_threads compares
+    # against GraphQL author.login which does not include the "[bot]" suffix.
+    # (e.g. "chatgpt-codex-connector[bot]" → "chatgpt-codex-connector")
+    _login="${_login%\[bot\]}"
     [ -n "$_login" ] && unresolved_bot_logins+=("$_login")
   done
 
@@ -3397,6 +3401,9 @@ if [ "$aggregate_result" = "clean" ] \
   print_kv LATE_THREADS_FOUND "$late_thread_count"
 else
   print_kv POST_CLEAN_RECHECK 0
+  # Emit LATE_THREADS_FOUND=0 on skipped paths so consumers can always rely on
+  # the field being present, regardless of whether the recheck ran.
+  print_kv LATE_THREADS_FOUND 0
 fi
 
 # Append compare-mode metrics row after the thread gate so the recorded
