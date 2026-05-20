@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Developer protocol: mandatory fork-PR guard check for GitHub Actions workflow files** (#670): the "GitHub Actions Workflow Security Checklist" in `03-implement-development-protocol.md` gains a new mandatory bullet requiring every step that writes to the repository (adds/removes labels, posts comments, creates deployments or releases, writes status checks or check runs) in a `pull_request`-triggered workflow to include `if: github.event.pull_request.head.repo.full_name == github.repository` or an equivalent fork-origin check. Steps on `push` events or protected branches are exempt.
+
 ### Fixed
 
 - **`pr-review-loop.sh`: extend poll window for large-diff PRs** (#669): when the caller does not pass `--max-wait` explicitly, the script now fetches the PR's changed-files count and extends `max_wait` to `LARGE_DIFF_MAX_WAIT` (default 2400 s / 40 min) when the count exceeds `LARGE_DIFF_THRESHOLD` (default 50 files). This prevents premature `RESULT=clean` exits before CodeRabbit finishes posting its review on release PRs and sync-template PRs. The emitted key=value output gains `CHANGED_FILES_COUNT` and `LARGE_DIFF_EXTENDED=1` for observability.
