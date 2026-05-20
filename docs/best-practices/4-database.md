@@ -44,12 +44,15 @@ CREATE POLICY "users can read their own rows"
 
 When retrofitting RLS onto a table that already exists in production, follow these steps
 in order. Skipping Step 1 is a common security mistake: legacy `GRANT` statements survive
-the `ALTER TABLE` and can silently bypass every policy you create.
+the `ALTER TABLE` and can expose more rows than intended if policies are incomplete or
+overly permissive during rollout.
 
 1. **Revoke broad grants before enabling RLS.**
-   Pre-existing grants (e.g. `GRANT SELECT ON public.my_table TO public`) let any
-   authenticated — or even anonymous — caller read all rows, regardless of the policies
-   defined below. Revoke them first:
+   Pre-existing grants (e.g. `GRANT SELECT ON public.my_table TO public`) increase the
+   blast radius: if any RLS policy is incomplete or missing during rollout, more rows
+   than intended are exposed. Both table privileges and RLS policies are required to
+   restrict access — neither control bypasses the other. Revoke broad grants first to
+   limit that blast radius:
 
    ```sql
    -- Revoke from every role that should no longer have unrestricted access.
@@ -84,10 +87,15 @@ the `ALTER TABLE` and can silently bypass every policy you create.
    by user A is not visible to user B, and that service-role access still works if
    required.
 
-> **Why this order matters**: PostgreSQL evaluates grants before policies. A `GRANT SELECT
-> TO public` permits the `public` role to read rows unconditionally — the presence of an
-> RLS policy does not override a grant. The only safe order is REVOKE → ENABLE → CREATE
-> POLICY → re-GRANT.
+> **Why this order matters**: PostgreSQL access control combines table privileges (GRANT)
+> and RLS policies as layered, complementary controls — both must permit access for a
+> user to see rows. A `GRANT SELECT TO public` grants table-level access, but RLS
+> policies further restrict which rows are visible. The risk is not that grants override
+> policies; it is that a broad grant **expands the blast radius** if any policy is
+> incomplete or missing during a migration. The safe order is REVOKE → ENABLE → CREATE
+> POLICY → re-GRANT, so the blast radius is minimised throughout the transition.
+> See the [PostgreSQL Row Security Policies documentation](https://www.postgresql.org/docs/current/ddl-rowsecurity.html)
+> for the authoritative reference.
 
 ---
 
