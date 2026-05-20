@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Supabase best-practices doc: TypeScript type narrowing for CHECK-constrained columns** (#681): adds `docs/best-practices/stack/supabase.md` with guidance on narrowing Supabase-generated `string` types to union literals for `text` columns with `CHECK (...) IN (...)` constraints. Documents Option A (post-generation override file) and Option B (Zod schema as source of truth), with a migration review checklist. `STACK-SPECIFIC.md` gains a Quick Reference entry and a table row linking to the new file.
+
 ### Changed
 
 - **Developer protocol: mandatory fork-PR guard check for GitHub Actions workflow files** (#670): the "GitHub Actions Workflow Security Checklist" in `03-implement-development-protocol.md` gains a new mandatory bullet requiring every step that writes to the repository (adds/removes labels, posts comments, creates deployments or releases, writes status checks or check runs) in a `pull_request`-triggered workflow to include `if: github.event.pull_request.head.repo.full_name == github.repository` or an equivalent fork-origin check. Steps on `push` events or protected branches are exempt.
