@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Developer protocol: mandatory fork-PR guard check for GitHub Actions workflow files** (#670): the "GitHub Actions Workflow Security Checklist" in `03-implement-development-protocol.md` gains a new mandatory bullet requiring every step that writes to the repository (adds/removes labels, posts comments, creates deployments or releases) in a `pull_request`-triggered workflow to include `if: github.event.pull_request.head.repo.full_name == github.repository` or an equivalent fork-origin check. Steps on `push` events or protected branches are exempt.
+- **Developer protocol: mandatory fork-PR guard check for GitHub Actions workflow files** (#670): the "GitHub Actions Workflow Security Checklist" in `03-implement-development-protocol.md` gains a new mandatory bullet requiring every step that writes to the repository (adds/removes labels, posts comments, creates deployments or releases, writes status checks or check runs) in a `pull_request`-triggered workflow to include `if: github.event.pull_request.head.repo.full_name == github.repository` or an equivalent fork-origin check. Steps on `push` events or protected branches are exempt.
 
 ### Fixed
 
