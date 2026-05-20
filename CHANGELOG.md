@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`pr-review-loop.sh`: pagination guard for `check_unresolved_threads` on empty endCursor** (#667): adds the same `hasNextPage=true + empty endCursor` break guard to `check_unresolved_threads` that was already present in `get_resolved_thread_comment_ids`, preventing an infinite pagination loop when the GitHub GraphQL API returns a malformed page-info object.
+
 ## [0.27.4] - 2026-05-20
 
 ### Fixed
@@ -35,7 +39,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **`markdown-lint.yml`: disable `relative-links` rule in CI** (hotfix): implementation plans intentionally reference smoke test runbooks that are created later in the workflow — those forward references caused CI failures for any downstream project with plans. `markdownlint-rule-relative-links` is removed from `.markdownlint-cli2.jsonc` (the CI/runner config); `.markdownlint.jsonc` retains the rule for editor integrations.
-
 ## [0.27.0] - 2026-05-19
 
 ### Added

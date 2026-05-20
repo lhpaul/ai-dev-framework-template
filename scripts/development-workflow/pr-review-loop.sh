@@ -2737,6 +2737,11 @@ check_unresolved_threads() {
 
       unresolved_count=$((unresolved_count + 1))
     done < <(printf '%s\n' "$result" | jq -c '.nodes[]')
+
+    if [ "$has_next_page" = "true" ] && [ -z "$cursor" ]; then
+      echo "WARN: check_unresolved_threads: hasNextPage=true but endCursor is empty for PR #$pr_number — returning partial results" >&2
+      break
+    fi
   done
 
   printf '%d\n' "$unresolved_count"
