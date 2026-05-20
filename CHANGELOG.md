@@ -11,6 +11,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`pr-review-loop.sh`: pagination guard for `check_unresolved_threads` on empty endCursor** (#667): adds the same `hasNextPage=true + empty endCursor` break guard to `check_unresolved_threads` that was already present in `get_resolved_thread_comment_ids`, preventing an infinite pagination loop when the GitHub GraphQL API returns a malformed page-info object.
 
+## [0.27.4] - 2026-05-20
+
+### Fixed
+
+- **`pr-review-loop.sh`: slurp paginated pages in `activity_count`, `paused_count`, and `rate_limit_comment_count`** (hotfix): three additional paginated comment-count queries in `run_coderabbit_review` used `jq` without `-s`, producing multi-line counts on multi-page PRs and breaking integer comparisons. Applied the same `jq -s` / `.[].[]` fix as `silent_no_paused_count` (v0.27.3).
+
+## [0.27.3] - 2026-05-19
+
+### Fixed
+
+- **`pr-review-loop.sh`: slurp paginated pages in `silent_no_paused_count`** (hotfix): `gh api --paginate` emits one JSON array per page; without `-s`/`--slurp` the `jq` filter iterated over pages rather than comments, producing a multi-line count that caused integer-expression errors in the silent non-trigger retrigger path. Added `-s` and changed `.[]` to `.[].[]`.
+- **`pr-review-loop.sh`: use jq-encoded JSON body in `auto_reply_unreplied_rest_comments`** (hotfix): replaced `--raw-field body=` with a `jq -n --arg body` pipe and `--input -` so special characters in the reply body are correctly JSON-escaped before being sent to the GitHub API.
+- **`pr-review-loop.sh`: clarify auto-reply body and comment** (hotfix): the reply message now reads "Acknowledged — outside-diff comment noted…" (was "Resolved — addressed in this PR.") to make clear it is an automated gate acknowledgement, not a claim that the comment content was addressed. Added an explanatory code comment.
+
+## [0.27.2] - 2026-05-19
+
+### Fixed
+
+- **`pr-review-loop.sh`: scope `HARNESS_MODE` bypass to sourced loads only** (hotfix): the single-instance lock guard was bypassed whenever `HARNESS_MODE=1` was set, even for direct executions against real PRs. A new `_HARNESS_MODE_EFFECTIVE` flag is only set when the script is sourced (`BASH_SOURCE[0] != $0`), so normal runs always retain the lock guard and signal traps.
+- **`pr-review-loop.sh`: re-validate REST gate after auto-reply** (hotfix): after posting auto-replies to unreplied outside-diff comments, `coderabbit_thread_gate_clean` now re-calls `check_unreplied_rest_comments` to confirm the count is zero before returning `clean`. Prevents a false-clean result when one or more auto-replies silently fail to post.
+- **`pr-review-loop.sh`: fix misleading docstring on `auto_reply_unreplied_rest_comments`** (hotfix): the function comment incorrectly described the target as "comments whose GraphQL thread is already resolved"; corrected to "outside-diff comments with no corresponding GraphQL thread".
+- **`.claude/skills/sync-template.md`: restore `yaml_parse_failed` tracking in YAML validation loop** (hotfix): the CI workflow YAML validation loop was missing the `yaml_parse_failed=0` initializer and `|| { ...; yaml_parse_failed=1; }` compound commands, so parse errors were printed but never blocked the commit. Restored to match the `.claude/commands/sync-template.md` reference implementation.
+
+## [0.27.1] - 2026-05-19
+
+### Fixed
+
+- **`markdown-lint.yml`: disable `relative-links` rule in CI** (hotfix): implementation plans intentionally reference smoke test runbooks that are created later in the workflow — those forward references caused CI failures for any downstream project with plans. `markdownlint-rule-relative-links` is removed from `.markdownlint-cli2.jsonc` (the CI/runner config); `.markdownlint.jsonc` retains the rule for editor integrations.
 ## [0.27.0] - 2026-05-19
 
 ### Added
@@ -21,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CI enforcement: auto-apply `ready-for-regression` and assert reviewer-loop summary** (#613): two new GitHub Actions workflows — `apply-regression-label.yml` (auto-labels implementation PRs by branch prefix) and `reviewer-loop-guard.yml` (blocks merge-eligibility when the reviewer-loop summary comment is absent).
 - **Auto-remove `ready-for-regression` label on push** (#612): `remove-regression-label-on-push.yml` removes the label when new commits are pushed, preventing stale regression-readiness signals.
 - **Canary test requirement for filter-schema additions** (#606): developer and code-reviewer protocols now require a two-invocation canary test for every new filter parameter; absence is a blocking review finding.
-- **Mandatory advisory finding dispositions in reviewer loop summary**: Protocol 93 requires runners to evaluate each non-blocking advisory finding and record a disposition (Addressed / Accepted / Deferred / Rejected) in the summary comment on clean exits.
+- **Mandatory advisory finding dispositions in reviewer loop summary**: Protocol 93 requires runners to evaluate each non-breaking advisory finding and record a disposition (Addressed / Accepted / Deferred / Rejected) in the summary comment on clean exits.
 - **Script quality gates and test harness for `pr-review-loop.sh`** (#585): adds `scripts/development-workflow/tests/test-pr-review-loop.sh` and a path-triggered CI workflow; prepare-release and retrospective protocols gain script-coverage and downstream bug-review checklist items.
 - **Prettier for markdown formatting** (#584): adds `prettier` v3.8.3 and formats all `.md` files so downstream `/sync-template` runs see no spurious diffs.
 
@@ -711,7 +739,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.4...HEAD
+[0.27.4]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.3...v0.27.4
+[0.27.3]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.2...v0.27.3
+[0.27.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.1...v0.27.2
+[0.27.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.26.1...v0.27.0
 [0.26.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.25.1...v0.26.0

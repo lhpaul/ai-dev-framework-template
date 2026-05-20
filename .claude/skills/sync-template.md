@@ -552,19 +552,24 @@ fi
 For each `.yml` / `.yaml` file in `.github/workflows/`:
 
 ```bash
+yaml_parse_failed=0
 for f in .github/workflows/*.yml .github/workflows/*.yaml; do
   [ -f "$f" ] || continue
   if command -v yamllint >/dev/null 2>&1; then
     yamllint -d "{extends: relaxed, rules: {line-length: disable}}" "$f" \
-      || echo "YAML LINT ERROR: $f"
+      || { echo "YAML LINT ERROR: $f"; yaml_parse_failed=1; }
   else
     python3 -c "import sys, yaml; yaml.safe_load(open(sys.argv[1]))" "$f" \
-      || echo "YAML PARSE ERROR: $f"
+      || { echo "YAML PARSE ERROR: $f"; yaml_parse_failed=1; }
   fi
 done
+
+if [ "$yaml_parse_failed" -ne 0 ]; then
+  echo "ERROR: One or more workflow YAML files failed validation. Fix before committing."
+fi
 ```
 
-If any file fails to parse, **do not commit**. Report the broken file(s) and ask the maintainer to fix them before committing.
+If `yaml_parse_failed` is non-zero, **do not commit**. Report the broken file(s) and ask the maintainer to fix them before committing.
 
 ### 3. Validate that `scripts/` paths referenced in workflow `run:` steps exist
 

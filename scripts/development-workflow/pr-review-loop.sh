@@ -9,10 +9,19 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 
-# In HARNESS_MODE, skip the single-instance lock guard entirely.
+# Effective harness mode: only active when HARNESS_MODE=1 AND the script is
+# sourced (BASH_SOURCE[0] != $0). When executed directly with HARNESS_MODE=1
+# set in the environment, treat it as a normal run so the lock guard and all
+# signal traps remain active and protect the real PR.
+_HARNESS_MODE_EFFECTIVE=0
+if [ "${HARNESS_MODE:-0}" -eq 1 ] && [ "${BASH_SOURCE[0]}" != "$0" ]; then
+  _HARNESS_MODE_EFFECTIVE=1
+fi
+
+# In harness mode (sourced), skip the single-instance lock guard entirely.
 # The guard is irrelevant when the script is sourced by the test harness
 # (no real PR is being processed and no lock directory should be created).
-if [ "${HARNESS_MODE:-0}" -ne 1 ]; then
+if [ "$_HARNESS_MODE_EFFECTIVE" -ne 1 ]; then
 
 # --- Single-instance guard ---
 # Prevent two simultaneous invocations for the same PR. Uses an atomic mkdir
@@ -1581,11 +1590,12 @@ check_unreplied_rest_comments() {
 
 auto_reply_unreplied_rest_comments() {
   # Post a brief acknowledgement reply to each unreplied CodeRabbit REST review
-  # comment whose GraphQL thread is already resolved.  Called by
+  # comment that has no corresponding resolved GraphQL thread (i.e., outside-diff
+  # comments with no GraphQL thread representation).  Called by
   # coderabbit_thread_gate_clean after the GraphQL thread audit passes but the
-  # REST supplement still reports unreplied comments.  Replying satisfies the
-  # check_unreplied_rest_comments gate so the loop can advance to RESULT=clean
-  # without requiring manual intervention.
+  # REST supplement still reports unreplied outside-diff comments.  Replying
+  # satisfies the check_unreplied_rest_comments gate so the loop can advance to
+  # RESULT=clean without requiring manual intervention.
   #
   # Arguments:
   #   $1  pr_number              - PR number (integer)
@@ -1600,7 +1610,13 @@ auto_reply_unreplied_rest_comments() {
   local repo="$2"
   local bot_login="$3"
   local resolved_ids_json="${4:-[]}"
-  local reply_body="Resolved — addressed in this PR."
+  # This reply is an automated acknowledgement only — it does not assert that the
+  # specific comment content was addressed. It is posted solely to satisfy the
+  # check_unreplied_rest_comments gate for outside-diff comments that have no
+  # corresponding GraphQL review thread and therefore cannot be resolved via the
+  # normal thread-resolution mechanism. All GraphQL review threads have already
+  # been verified resolved before this function is called.
+  local reply_body="Acknowledged — outside-diff comment noted. All review threads for this PR have been resolved via the standard review process."
 
   # Fetch IDs of root CodeRabbit comments that need a reply (same filter logic
   # as check_unreplied_rest_comments, but returns IDs instead of a count).
@@ -1637,10 +1653,13 @@ auto_reply_unreplied_rest_comments() {
   local comment_id
   while IFS= read -r comment_id; do
     [ -z "$comment_id" ] && continue
-    if gh api "repos/$repo/pulls/$pr_number/comments/$comment_id/replies" \
-         --method POST \
-         --raw-field body="$reply_body" \
-         --silent > /dev/null 2>&1; then
+    local reply_json
+    reply_json="$(jq -n --arg body "$reply_body" '{"body": $body}')"
+    if printf '%s' "$reply_json" \
+         | gh api "repos/$repo/pulls/$pr_number/comments/$comment_id/replies" \
+             --method POST \
+             --input - \
+             --silent > /dev/null 2>&1; then
       reply_count=$((reply_count + 1))
       echo "INFO: auto-replied to REST comment $comment_id on PR #$pr_number" >&2
     else
@@ -1917,7 +1936,47 @@ coderabbit_thread_gate_clean() {
       print_kv UNRESOLVED_THREAD_COUNT "${rest_unreplied_raw:-0}"
       return 1
     fi
-    # Replies posted successfully — fall through to return 0 (RESULT=clean).
+    # Re-validate the gate after auto-replies to confirm the count is now zero.
+    # A partial success from auto_reply_unreplied_rest_comments (exit 0 but some
+    # replies silently dropped) would otherwise cause a false clean return.
+    local recheck_raw recheck_st
+    set +e
+    recheck_raw="$(check_unreplied_rest_comments "$pr_number" "$repo" "$bot_login" "$resolved_ids_json")"
+    recheck_st=$?
+    eval "$prev_errexit"
+    if [ "$recheck_st" -ne 0 ]; then
+      # Re-check REST query failed — cannot confirm gate is clean; treat as
+      # needs_fixes so the agent re-inspects rather than claiming false clean.
+      echo "WARN: REST re-check failed (exit $recheck_st) after auto-reply on PR #$pr_number — returning needs_fixes" >&2
+      print_kv RESULT needs_fixes
+      print_kv REASON coderabbit_unreplied_rest_comments
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      print_kv UNRESOLVED_THREAD_COUNT 0
+      return 1
+    fi
+    if [ "${recheck_raw:-0}" -gt 0 ]; then
+      echo "WARN: ${recheck_raw} unreplied REST comment(s) remain after auto-reply on PR #$pr_number — returning needs_fixes" >&2
+      print_kv RESULT needs_fixes
+      print_kv REASON coderabbit_unreplied_rest_comments
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT "${recheck_raw:-0}"
+      print_kv BLOCKING_COUNT "${recheck_raw:-0}"
+      print_kv SUGGESTION_COUNT 0
+      print_kv UNRESOLVED_THREAD_COUNT "${recheck_raw:-0}"
+      return 1
+    fi
+    # Gate confirmed clean after auto-replies — fall through to return 0.
   fi
   if [ "$rest_check_st" -ne 0 ]; then
     # REST failure is non-fatal: the GraphQL thread check already passed.
@@ -2149,8 +2208,8 @@ run_coderabbit_review() {
       local activity_count
       activity_count="$(
         gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-          | jq --arg bot "$bot_login" --arg since "$since_iso" '
-              [.[] | select(
+          | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
+              [.[].[] | select(
                   .user.login == $bot and
                   .created_at > $since and
                   ((.body // "") | test("Reviews paused|review paused"; "i") | not) and
@@ -2178,8 +2237,8 @@ run_coderabbit_review() {
       local paused_count
       paused_count="$(
         gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-          | jq --arg bot "$bot_login" --arg since "$since_iso" '
-              [.[] | select(
+          | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
+              [.[].[] | select(
                   .user.login == $bot and
                   .created_at > $since and
                   ((.body // "") | test("Reviews paused|review paused"; "i"))
@@ -2219,8 +2278,8 @@ run_coderabbit_review() {
       local silent_no_paused_count
       silent_no_paused_count="$(
         gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-          | jq --arg bot "$bot_login" --arg since "$since_iso" '
-              [.[] | select(
+          | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
+              [.[].[] | select(
                   .user.login == $bot and
                   .created_at > $since and
                   (
@@ -2253,8 +2312,8 @@ run_coderabbit_review() {
       local rate_limit_comment_count
       rate_limit_comment_count="$(
         gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-          | jq --arg bot "$bot_login" --arg since "$since_iso" '
-              [.[] | select(
+          | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
+              [.[].[] | select(
                   .user.login == $bot and
                   .created_at > $since and
                   ((.body // "") | test("rate.?limit"; "i"))
@@ -2911,7 +2970,7 @@ METRICS_HEADER
 # All function definitions above (including normalize_platform_verdict and
 # append_compare_metrics_row) are loaded; only the argument-parsing and
 # execution sections below are skipped.
-[ "${HARNESS_MODE:-0}" -eq 1 ] && return 0 2>/dev/null || true
+[ "$_HARNESS_MODE_EFFECTIVE" -eq 1 ] && return 0 2>/dev/null || true
 
 if [ "$#" -lt 1 ]; then
   usage >&2
