@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Database best practices: RLS migration safety checklist** (#680): adds `docs/best-practices/4-database.md` with a dedicated RLS section. The "Enabling RLS on an existing table" checklist requires revoking broad grants (`REVOKE ALL ON public.<table> FROM public, anon, authenticated`) before running `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`, preventing legacy grants from silently bypassing policies on pre-existing tables. Includes guidance on enabling RLS on new tables, re-granting narrowly scoped permissions after policies are in place, and a smoke-test verification step.
+- **Supabase best-practices doc: TypeScript type narrowing for CHECK-constrained columns** (#681): adds `docs/best-practices/stack/supabase.md` with guidance on narrowing Supabase-generated `string` types to union literals for `text` columns with `CHECK (...) IN (...)` constraints. Documents Option A (post-generation override file) and Option B (Zod schema as source of truth), with a migration review checklist. `STACK-SPECIFIC.md` gains a Quick Reference entry and a table row linking to the new file.
 
 ### Changed
 

@@ -22,6 +22,7 @@
 | Styling   | `stack/[technology].md` — if applicable |
 | Database  | `stack/[technology].md` — if applicable |
 | API       | `stack/[technology].md` — if applicable |
+| Supabase  | [stack/supabase.md](stack/supabase.md)  |
 
 > **Setup agent**: Replace each `stack/[technology].md` above with actual links to the
 > files generated under `docs/best-practices/stack/`. Remove rows that don't apply.
@@ -34,3 +35,8 @@
 <!-- The 5–10 most important cross-cutting rules for this stack.
      These should be the rules most likely to be violated — the "always remember" list.
      Detail and examples live in the individual stack/ files. -->
+
+- **Narrow Supabase-generated types for CHECK-constrained columns**: `gen-types` outputs `string` for
+  `text` columns with `CHECK (...) IN (...)` constraints. Maintain a hand-edited override file that
+  re-exports narrowed union literals for each constrained column. Import from the override, not from the
+  generated file. See [`stack/supabase.md`](stack/supabase.md) for the full pattern and checklist.
