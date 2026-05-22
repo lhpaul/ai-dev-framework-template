@@ -2880,8 +2880,8 @@ check_unresolved_threads() {
     done < <(printf '%s\n' "$result" | jq -c '.nodes[]')
 
     if [ "$has_next_page" = "true" ] && [ -z "$cursor" ]; then
-      echo "WARN: check_unresolved_threads: hasNextPage=true but endCursor is empty for PR #$pr_number — returning partial results" >&2
-      break
+      echo "WARN: check_unresolved_threads: hasNextPage=true but endCursor is empty for PR #$pr_number; cannot confirm all threads checked" >&2
+      return 2
     fi
   done
 
@@ -3731,6 +3731,7 @@ _post_review_summary() {
   local phase_started="${10:-0}"
   local phase_net_new_blocker="${11:-0}"
   local phase_blocking_platform="${12:-}"
+  local pre_after_clean_only_mode="${13:-0}"
 
   if [ -z "$pr_number" ]; then
     return 0
@@ -3873,6 +3874,8 @@ Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs afte
       else
         _phase_value_line="No net-new blocker was found after the PR-Agent-clean gate."
       fi
+    elif [ "$pre_after_clean_only_mode" -eq 1 ]; then
+      _phase_value_line="After-clean phase was not run — invoked in pre-after-clean-only mode."
     else
       _phase_value_line="After-clean phase was not reached because an earlier platform did not exit clean."
     fi
@@ -3956,7 +3959,7 @@ case "$aggregate_result" in
       "$aggregate_possible_issue_eval_outcome" \
       "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
       "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
-      "$phase_after_clean_blocking_platform"
+      "$phase_after_clean_blocking_platform" "$pre_after_clean_only"
     exit 0
     ;;
   skipped)
@@ -3971,7 +3974,7 @@ case "$aggregate_result" in
         "$aggregate_possible_issue_eval_outcome" \
         "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
         "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
-        "$phase_after_clean_blocking_platform"
+        "$phase_after_clean_blocking_platform" "$pre_after_clean_only"
     fi
     exit 1
     ;;
@@ -3990,7 +3993,7 @@ case "$aggregate_result" in
       "$aggregate_possible_issue_eval_outcome" \
       "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
       "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
-      "$phase_after_clean_blocking_platform"
+      "$phase_after_clean_blocking_platform" "$pre_after_clean_only"
     exit 2
     ;;
   *)

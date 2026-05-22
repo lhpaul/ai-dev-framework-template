@@ -31,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`prepare-release-post-merge-cleanup.sh`: treat pre-existing `Released` status as success** (#671): `UPDATED=0` from GitHub Projects automation is no longer flagged as a failure when the issue is already in `Released` state.
 - **`pr-review-loop.sh`: post-clean recheck for late bot review threads** (#672): waits `POST_CLEAN_WAIT` seconds (default 30) after a clean exit to catch asynchronous bot threads. Emits `RESULT=needs_fixes/REASON=late_review_threads` if late unresolved threads are found. Strips `[bot]` suffix from logins before GraphQL comparison. Set `SKIP_POST_CLEAN_RECHECK=1` to suppress on corrective reruns.
 - **`pr-review-loop.sh`: pagination guard in `check_unresolved_threads`** (#667): adds `hasNextPage=true + empty endCursor` break guard to prevent infinite pagination on malformed GitHub GraphQL responses.
+- **`pr-review-loop.sh`: treat empty `endCursor` as incomplete audit in `check_unresolved_threads`**: changes the malformed-page-info handler from `break` to `return 2` so a partial thread count never produces a false `clean` gate outcome.
+- **`pr-review-loop.sh`: mode-aware skip explanation in `--pre-after-clean-only` summary**: the "After-clean reviewer phase" line in the PR summary comment now distinguishes between "invoked in pre-after-clean-only mode" and "earlier platform did not exit clean".
+- **`pr-agent.yml`: add fork-PR guard to prevent write operations on fork PRs**: the job-level `if` now requires `github.event.pull_request.head.repo.full_name == github.repository` for `pull_request` events, consistent with the mandatory fork-PR guard policy.
+- **`docs/best-practices/4-database.md`: hyphenate "Row-Level Security" heading**: corrects "Row Level Security" to "Row-Level Security" for consistency.
+- **`docs/best-practices/stack/supabase.md`: use markdown link for cross-reference**: the `docs/project/4-database-model.md` path is now a clickable link.
+- **`docs/testing/workflow/batch-merge.smoke-test.md`: remove stale confirmation-step reference**: updates the expected-result line to reflect the no-confirmation flow.
+- **Protocol 91: remove duplicated phase-after-clean runbook**: the detailed draft-phase steps are replaced with a short summary and a link to the canonical runbook in Protocol 93, reducing drift risk.
 - **Retrospective protocol: remove `workflow` label from upstream issue filing** (#690): `gh issue create` in Step 3e no longer passes `--label "workflow"`, fixing permission errors for users without collaborator access.
 
 ## [0.27.4] - 2026-05-20

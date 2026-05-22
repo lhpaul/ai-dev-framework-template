@@ -1250,34 +1250,7 @@ _Posted automatically by `pr-review-loop.sh`._
 When `.ai-dev-workflow.yaml` contains `review.phase_after_clean` with
 `coderabbit`, run the external reviewer loop in two PR lifecycle phases:
 
-1. **Draft phase** — keep the PR as draft and run all configured
-   pre-after-clean platforms (`review.platforms` minus `review.phase_after_clean`):
-
-   ```bash
-   ./scripts/development-workflow/pr-review-loop.sh <pr_number> \
-     --branch <branch_name> \
-     --pre-after-clean-only
-   ```
-
-2. If the PR-Agent phase returns `needs_fixes`, fix and re-run the draft phase.
-   Do not convert the PR to non-draft and do not trigger CodeRabbit yet.
-3. When the PR-Agent phase returns `clean`, convert the PR to non-draft:
-
-   ```bash
-   gh pr ready <pr_number>
-   ```
-
-4. Run the configured full reviewer loop. Because CodeRabbit is listed in
-   `review.phase_after_clean`, `pr-review-loop.sh` emits
-   `PHASE_AFTER_CLEAN_*` keys and annotates the summary with whether CodeRabbit
-   found a net-new blocker after PR-Agent was already clean. If the after-clean
-   phase is not reached, the script emits `PHASE_AFTER_CLEAN_SKIP_REASON` rather
-   than a gate result.
-
-This sequence is the canonical way to evaluate whether CodeRabbit still adds
-review value. If CodeRabbit repeatedly returns clean after the PR-Agent-clean
-gate across enough implementation PRs, the team can remove it from the normal
-path with evidence rather than intuition.
+Run the reviewer loop in two phases: keep the PR as draft and run pre-after-clean platforms (`--pre-after-clean-only`) until they are clean, then convert to non-draft and run the full loop so CodeRabbit sees a clean-gated PR. For the full runbook and `PHASE_AFTER_CLEAN_*` telemetry details, see the **"PR-Agent-clean gate before CodeRabbit"** section in [`93-automated-reviewer-loop-protocol.md`](93-automated-reviewer-loop-protocol.md).
 
 After running the helper script (it reads `.ai-dev-workflow.yaml` for the platform list automatically):
 

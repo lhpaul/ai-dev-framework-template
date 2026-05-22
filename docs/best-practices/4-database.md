@@ -23,7 +23,7 @@
 
 ---
 
-## Row Level Security (RLS)
+## Row-Level Security (RLS)
 
 ### Enabling RLS on a new table
 
