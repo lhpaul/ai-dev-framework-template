@@ -243,6 +243,24 @@ is_phase_after_clean_platform() {
   return 1
 }
 
+filter_phase_after_clean_platforms() {
+  local phase_platform configured_platform
+  declare -a filtered=()
+  for phase_platform in "${phase_after_clean_platforms[@]:-}"; do
+    for configured_platform in "${platforms[@]:-}"; do
+      if [ "$phase_platform" = "$configured_platform" ]; then
+        filtered+=("$phase_platform")
+        break
+      fi
+    done
+  done
+  if [ "${#filtered[@]}" -gt 0 ]; then
+    phase_after_clean_platforms=("${filtered[@]}")
+  else
+    phase_after_clean_platforms=()
+  fi
+}
+
 kv_value() {
   local key="$1"
   local kv_output="$2"
@@ -3090,6 +3108,8 @@ if [ "${#phase_after_clean_platforms[@]}" -eq 0 ]; then
     done < <(workflow_config_review_phase_after_clean_platforms "$config_file")
   fi
 fi
+
+filter_phase_after_clean_platforms
 
 if [ "${#platforms[@]}" -gt 0 ]; then
   require_gh

@@ -173,6 +173,11 @@ else
 fi
 run_test "phase_after_clean_membership" "yes" "$phase_membership"
 
+declare -a phase_after_clean_platforms=("coderabbit")
+declare -a platforms=("pr-agent")
+filter_phase_after_clean_platforms
+run_test "phase_after_clean_filters_absent_platform" "0" "${#phase_after_clean_platforms[@]}"
+
 # ---------------------------------------------------------------------------
 # Area 1: normalize_platform_verdict
 # ---------------------------------------------------------------------------
