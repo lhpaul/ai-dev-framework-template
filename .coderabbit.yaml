@@ -39,3 +39,6 @@ reviews:
   # This prevents scope inflation where CodeRabbit flags unrelated files and
   # causes agents to make unintended edits that increase PR diff size and risk.
   changed_files_only: true
+  path_instructions:
+    - path: "**/*.sh"
+      instructions: "Do not report on docstring coverage. Bash and shell scripts have no formal docstring standard; skip any docstring-coverage warnings for these files."
