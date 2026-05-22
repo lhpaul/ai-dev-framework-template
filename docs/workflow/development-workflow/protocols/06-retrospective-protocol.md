@@ -143,7 +143,7 @@ Carry this mapping into Step 4 (presentation) and Step 5 (action execution).
 **Downstream script-bug tracking prompt**: Were any template workflow script bugs
 fixed in a downstream sync PR during this retrospective's cycle? If yes, treat the
 bug as a finding and classify it as `contribute-upstream` in Step 3b so that Step 3e
-automatically files exactly one upstream issue (labelled `workflow`) with a link to
+automatically files exactly one upstream issue with a link to
 the downstream fix commit. This prevents the same bug from shipping to future
 downstream syncs without creating duplicate issues.
 
@@ -339,7 +339,7 @@ Batch/date: [batch identifier or date from Step 1 scope]
 ```
 
 - Record the created issue URL for each filing. Print all filed URLs in the Step 4 output alongside the `contribute-upstream` label so the human has direct links for follow-up.
-- If `gh issue create` fails (e.g., auth error, label creation failure), record the failure inline in Step 4 rather than blocking the retrospective. The human can follow up manually using the printed command.
+- If `gh issue create` fails (e.g., auth error, network failure), record the failure inline in Step 4 rather than blocking the retrospective. The human can follow up manually using the printed command.
 - Do **not** automatically close any backlog items that may be created later in Step 5, and do not auto-close pre-existing downstream items identified in Step 3a — the upstream issue is additive visibility, not a replacement for local backlog tracking.
 
 ### Graceful exit
