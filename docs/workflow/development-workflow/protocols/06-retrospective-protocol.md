@@ -318,7 +318,6 @@ For every finding classified as `contribute-upstream` in Step 3b, create a GitHu
 gh issue create \
   --repo <template.repository> \
   --title "<finding title>" \
-  --label "workflow" \
   --body "<issue body — see format below>"
 ```
 
@@ -338,12 +337,6 @@ Batch/date: [batch identifier or date from Step 1 scope]
 
 [Proposed fix or change to the template protocol/tooling]
 ```
-
-- Use the `workflow` label. If it does not exist on the template repo, create it first:
-
-  ```bash
-  gh label create "workflow" --repo <template.repository> --color "0075ca" --description "Workflow improvement"
-  ```
 
 - Record the created issue URL for each filing. Print all filed URLs in the Step 4 output alongside the `contribute-upstream` label so the human has direct links for follow-up.
 - If `gh issue create` fails (e.g., auth error, label creation failure), record the failure inline in Step 4 rather than blocking the retrospective. The human can follow up manually using the printed command.
