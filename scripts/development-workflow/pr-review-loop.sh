@@ -2617,8 +2617,8 @@ run_coderabbit_review() {
                 )] | length
               '
         )"
-        if [ "${timeout_incomplete_count:-0}" -gt 0 ]; then
-          echo "INFO: CodeRabbit rate-limit or pause comment still active at timeout after $coderabbit_rate_limit_retries/$coderabbit_rate_limit_max_retries retries — escalating instead of returning clean" >&2
+        if [ "${timeout_incomplete_count:-0}" -gt 0 ] || [ "$coderabbit_phase0_retrigger" -eq 1 ]; then
+          echo "INFO: CodeRabbit rate-limit or pause still unresolved at timeout (incomplete_count=${timeout_incomplete_count:-0}, phase0_retrigger=$coderabbit_phase0_retrigger) — escalating instead of returning clean" >&2
           print_kv RESULT escalate
           print_kv REASON rate_limit_max_retries
           print_kv PLATFORM "$platform"
