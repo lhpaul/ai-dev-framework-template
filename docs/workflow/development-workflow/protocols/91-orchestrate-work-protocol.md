@@ -1270,7 +1270,9 @@ When `.ai-dev-workflow.yaml` contains `review.phase_after_clean` with
 4. Run the configured full reviewer loop. Because CodeRabbit is listed in
    `review.phase_after_clean`, `pr-review-loop.sh` emits
    `PHASE_AFTER_CLEAN_*` keys and annotates the summary with whether CodeRabbit
-   found a net-new blocker after PR-Agent was already clean.
+   found a net-new blocker after PR-Agent was already clean. If the after-clean
+   phase is not reached, the script emits `PHASE_AFTER_CLEAN_SKIP_REASON` rather
+   than a gate result.
 
 This sequence is the canonical way to evaluate whether CodeRabbit still adds
 review value. If CodeRabbit repeatedly returns clean after the PR-Agent-clean

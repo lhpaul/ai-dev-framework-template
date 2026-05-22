@@ -194,6 +194,8 @@ Outputs stable key=value lines including:
   PHASE_AFTER_CLEAN_ENABLED=0|1
   PHASE_AFTER_CLEAN_STARTED=0|1
   PHASE_AFTER_CLEAN_PLATFORM_LIST=<comma-separated platforms>
+  PHASE_AFTER_CLEAN_GATE_RESULT=<result> (emitted only after the phase starts)
+  PHASE_AFTER_CLEAN_SKIP_REASON=<result> (emitted when the phase never starts)
   PHASE_AFTER_CLEAN_NET_NEW_BLOCKER=0|1 (1 when a second-phase platform blocks)
   POST_CLEAN_RECHECK=0|1 (1 when the post-clean wait-and-recheck ran)
   LATE_THREADS_FOUND=<N> (count of newly-found unresolved threads; -1 on audit failure; 0 when POST_CLEAN_RECHECK=0)
@@ -3187,6 +3189,7 @@ phase_after_clean_started=0
 phase_after_clean_net_new_blocker=0
 phase_after_clean_blocking_platform=""
 phase_after_clean_gate_result="not_started"
+phase_after_clean_skip_reason=""
 if [ "${#phase_after_clean_platforms[@]}" -gt 0 ]; then
   phase_after_clean_enabled=1
 fi
@@ -3536,11 +3539,15 @@ else
 fi
 
 if [ "$phase_after_clean_enabled" -eq 1 ] && [ "$phase_after_clean_started" -eq 0 ]; then
-  phase_after_clean_gate_result="$aggregate_result"
+  phase_after_clean_skip_reason="$aggregate_result"
 fi
 print_kv PHASE_AFTER_CLEAN_STARTED "$phase_after_clean_started"
 if [ "$phase_after_clean_enabled" -eq 1 ]; then
-  print_kv PHASE_AFTER_CLEAN_GATE_RESULT "$phase_after_clean_gate_result"
+  if [ "$phase_after_clean_started" -eq 1 ]; then
+    print_kv PHASE_AFTER_CLEAN_GATE_RESULT "$phase_after_clean_gate_result"
+  else
+    print_kv PHASE_AFTER_CLEAN_SKIP_REASON "$phase_after_clean_skip_reason"
+  fi
   print_kv PHASE_AFTER_CLEAN_NET_NEW_BLOCKER "$phase_after_clean_net_new_blocker"
   [ -n "$phase_after_clean_blocking_platform" ] && \
     print_kv PHASE_AFTER_CLEAN_BLOCKING_PLATFORM "$phase_after_clean_blocking_platform"
@@ -3735,9 +3742,10 @@ Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs afte
   local phase_section=""
   if [ "$phase_enabled" -eq 1 ]; then
     local _phase_value_line
+    local _phase_subject="${phase_platform_list:-after-clean reviewer}"
     if [ "$phase_started" -eq 1 ]; then
       if [ "$phase_net_new_blocker" -eq 1 ]; then
-        _phase_value_line="CodeRabbit-after-PR-Agent-clean found a net-new blocker (${phase_blocking_platform:-unknown})."
+        _phase_value_line="${_phase_subject} found a net-new blocker after the clean gate (${phase_blocking_platform:-unknown})."
       else
         _phase_value_line="No net-new blocker was found after the PR-Agent-clean gate."
       fi

@@ -540,7 +540,8 @@ Repositories may list one or more platforms under `review.phase_after_clean` in
 - `PHASE_AFTER_CLEAN_ENABLED=1`
 - `PHASE_AFTER_CLEAN_PLATFORM_LIST=<platforms>`
 - `PHASE_AFTER_CLEAN_STARTED=0|1`
-- `PHASE_AFTER_CLEAN_GATE_RESULT=<result>`
+- `PHASE_AFTER_CLEAN_GATE_RESULT=<result>` when the after-clean phase starts
+- `PHASE_AFTER_CLEAN_SKIP_REASON=<result>` when the after-clean phase never starts
 - `PHASE_AFTER_CLEAN_NET_NEW_BLOCKER=0|1`
 - `PHASE_AFTER_CLEAN_BLOCKING_PLATFORM=<platform>` when applicable
 
