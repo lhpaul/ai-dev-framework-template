@@ -207,7 +207,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 
 1. Create 3 PRs (G, H, I) targeting `develop` with `ready-for-human-review`.
 2. Run `/batch-merge` with all three.
-3. After PR G merges successfully, abort the entire batch when prompted for PR H.
+3. After PR G merges successfully, type `abort` before PR H is processed to signal a batch abort.
 
 **Expected result**:
 
