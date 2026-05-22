@@ -219,6 +219,9 @@ run_test "verdict_escalate_max_wait" "timed out" "$actual"
 actual="$(normalize_platform_verdict "escalate" "REASON=no_response")"
 run_test "verdict_escalate_no_response" "timed out" "$actual"
 
+actual="$(normalize_platform_verdict "escalate" "REASON=rate_limit_max_retries")"
+run_test "verdict_escalate_rate_limit_max_retries" "timed out" "$actual"
+
 actual="$(normalize_platform_verdict "escalate" "REASON=service_error")"
 run_test "verdict_escalate_unknown" "unavailable" "$actual"
 
