@@ -16,7 +16,8 @@
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh release/v1.2.3 --issues 232,240 --best-effort
 #
 # Exit codes when --issues is supplied (unless --best-effort is passed):
-#   0  At least one issue was updated and no hard failures occurred (or no issues supplied)
+#   0  At least one issue was updated (or already in Released status) and no hard failures
+#      occurred (or no issues supplied). Issues already in Released status count as success.
 #   1  updated==0 after processing all issues, or at least one hard failure occurred
 #
 # Output (when --issues is supplied):
@@ -234,6 +235,10 @@ for issue in "${ISSUE_NUMBERS[@]}"; do
   #   "Updating tracker status..."  (followed by successful GraphQL JSON) -> updated
   #   "Warning: ... skipping ..."                                          -> skipped
   #   "Warning: GraphQL mutation failed ..."                               -> failed
+  # When the issue is already in the target status (set by GitHub project automation
+  # before this script runs), the helper emits a "does not match required source
+  # status" message because the current status is already 'Released' (not 'Merged').
+  # Treat that as a no-op success so that UPDATED=0 only signals a real failure.
   TRACKER_OUT=$(update_tracker_status_best_effort "$issue" "$RELEASED_LABEL" "$MERGED_LABEL" 2>&1)
   echo "$TRACKER_OUT"
   if echo "$TRACKER_OUT" | grep -q "^Updating tracker status"; then
@@ -242,6 +247,11 @@ for issue in "${ISSUE_NUMBERS[@]}"; do
     else
       TRACKER_UPDATED=$((TRACKER_UPDATED + 1))
     fi
+  elif echo "$TRACKER_OUT" | grep -q "current status '${RELEASED_LABEL}'"; then
+    # Issue is already in the target Released status (set by GitHub project automation).
+    # This is a no-op success — not a failure or a skip that warrants an error exit.
+    echo "Issue #$issue is already in '$RELEASED_LABEL' status; counting as success."
+    TRACKER_UPDATED=$((TRACKER_UPDATED + 1))
   elif echo "$TRACKER_OUT" | grep -q "Warning:"; then
     TRACKER_SKIPPED=$((TRACKER_SKIPPED + 1))
   else

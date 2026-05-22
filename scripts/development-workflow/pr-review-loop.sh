@@ -118,7 +118,7 @@ _interruptible_sleep() {
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github] [--phase-after-clean coderabbit] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
 triggering a new review, each platform checks for existing blocking findings. If
@@ -145,6 +145,18 @@ REASON=lock_contention and exits 75 (EX_TEMPFAIL).
   docs/workflow/retro-metrics-platforms.md. Intended for platform evaluation only —
   not for normal orchestration where early exit is desired.
 
+--phase-after-clean:
+  Mark one or more platforms as second-phase reviewers that should run only after
+  earlier platforms are clean. This does not override normal platform order; it
+  emits PHASE_AFTER_CLEAN_* key=value telemetry and annotates the summary so the
+  value of the second-phase reviewer can be measured. When omitted, the script
+  reads review.phase_after_clean from .ai-dev-workflow.yaml when present.
+
+--pre-after-clean-only:
+  Run only the configured platforms that are not listed in phase-after-clean.
+  Use this for draft PR gates that must clear all pre-after-clean reviewers before
+  converting the PR to non-draft and allowing after-clean reviewers to run.
+
 Platform selection (in priority order):
   1. --platform flag(s) passed on the command line
   2. review.platforms list in .ai-dev-workflow.yaml at the repo root
@@ -160,12 +172,48 @@ Branch-type-aware default timeout:
   poll_interval has elapsed. Pass --max-wait and/or --poll-interval explicitly to
   override either value.
 
+Large-diff poll-window extension:
+  CodeRabbit takes significantly longer to post its review on PRs with a large
+  number of changed files (e.g., release PRs or sync-template PRs). When the
+  caller did not pass --max-wait explicitly, the script fetches the PR's changed-
+  files count and extends max_wait when it exceeds a threshold.
+
+  Environment variables (both optional):
+    LARGE_DIFF_THRESHOLD  — changed-files count above which the extension applies
+                            (default: 50; must be a positive integer)
+    LARGE_DIFF_MAX_WAIT   — extended max_wait in seconds for large-diff PRs
+                            (default: 2400, i.e. 40 minutes; must be a positive integer)
+
+  The extension is suppressed when --max-wait is passed explicitly. The emitted
+  key=value output includes CHANGED_FILES_COUNT so callers can inspect the value.
+
 Outputs stable key=value lines including:
   RESULT=clean|needs_fixes|needs_rerun|escalate|skipped
   PLATFORM_<n>_NAME / PLATFORM_<n>_RESULT
   REASON=lock_contention (when exit code is 75)
+  CHANGED_FILES_COUNT=<n> (PR's changed-files count, or -1 when the fetch failed)
+  LARGE_DIFF_EXTENDED=1 (present and set to 1 when max_wait was extended for a large-diff PR)
+  REASON=late_review_threads (when post-clean recheck finds new unresolved threads)
   COMPARE_MODE=1 (when --compare is active)
   COMPARE_VERDICT_<n>_PLATFORM / COMPARE_VERDICT_<n>_RESULT (when --compare is active)
+  PHASE_AFTER_CLEAN_ENABLED=0|1
+  PHASE_AFTER_CLEAN_STARTED=0|1
+  PHASE_AFTER_CLEAN_PLATFORM_LIST=<comma-separated platforms>
+  PHASE_AFTER_CLEAN_FILTERED_OUT=<comma-separated platforms> (when configured phase platforms are absent from this invocation)
+  PHASE_AFTER_CLEAN_GATE_RESULT=<result> (emitted only after the phase starts)
+  PHASE_AFTER_CLEAN_SKIP_REASON=<result> (emitted when the phase never starts)
+  PHASE_AFTER_CLEAN_NET_NEW_BLOCKER=0|1 (1 when a second-phase platform blocks)
+  POST_CLEAN_RECHECK=0|1 (1 when the post-clean wait-and-recheck ran)
+  LATE_THREADS_FOUND=<N> (count of newly-found unresolved threads; -1 on audit failure; 0 when POST_CLEAN_RECHECK=0)
+
+Environment variables:
+  POST_CLEAN_WAIT=<seconds>          Override the post-clean recheck wait (default: 30). Set to 0 to run immediately.
+  SKIP_POST_CLEAN_RECHECK=1          Suppress the post-clean recheck. Set by callers re-dispatching after a prior
+                                     late-thread fix cycle, so the corrective invocation does not recheck again.
+  FALLBACK_THREAD_SETTLE_WAIT=<sec>  Seconds to wait before running the thread audit when using
+                                     coderabbit_status_success_fallback (default: 60). CodeRabbit can set a
+                                     SUCCESS commit status before finishing its async inline-thread posting; this
+                                     wait lets those threads arrive so the audit does not produce a false-clean.
 EOF
 }
 
@@ -184,6 +232,73 @@ append_platforms() {
     entry="$(trim "$entry")"
     [ -n "$entry" ] && platforms+=("$entry")
   done
+}
+
+append_phase_after_clean_platforms() {
+  local raw="$1"
+  local entry
+  IFS=',' read -r -a entries <<< "$raw"
+  for entry in "${entries[@]}"; do
+    entry="$(trim "$entry")"
+    [ -n "$entry" ] && phase_after_clean_platforms+=("$entry")
+  done
+}
+
+array_contains_value() {
+  local needle="$1"
+  shift
+  local value
+  for value in "$@"; do
+    [ "$needle" = "$value" ] && return 0
+  done
+  return 1
+}
+
+is_phase_after_clean_platform() {
+  local candidate="$1"
+  array_contains_value "$candidate" "${phase_after_clean_platforms[@]:-}"
+}
+
+filter_pre_after_clean_platforms() {
+  local configured_platform
+  declare -a filtered=()
+  for configured_platform in "${platforms[@]:-}"; do
+    if ! is_phase_after_clean_platform "$configured_platform"; then
+      filtered+=("$configured_platform")
+    fi
+  done
+  if [ "${#filtered[@]}" -gt 0 ]; then
+    platforms=("${filtered[@]}")
+  else
+    platforms=()
+  fi
+}
+
+filter_phase_after_clean_platforms() {
+  local phase_platform configured_platform matched
+  declare -a filtered=()
+  declare -a filtered_out=()
+  for phase_platform in "${phase_after_clean_platforms[@]:-}"; do
+    matched=0
+    for configured_platform in "${platforms[@]:-}"; do
+      if [ "$phase_platform" = "$configured_platform" ]; then
+        filtered+=("$phase_platform")
+        matched=1
+        break
+      fi
+    done
+    [ "$matched" -eq 0 ] && filtered_out+=("$phase_platform")
+  done
+  if [ "${#filtered[@]}" -gt 0 ]; then
+    phase_after_clean_platforms=("${filtered[@]}")
+  else
+    phase_after_clean_platforms=()
+  fi
+  if [ "${#filtered_out[@]}" -gt 0 ]; then
+    phase_after_clean_filtered_out="$(IFS=,; printf '%s' "${filtered_out[*]}")"
+  else
+    phase_after_clean_filtered_out=""
+  fi
 }
 
 kv_value() {
@@ -1232,57 +1347,27 @@ _EXTRACT_POSSIBLE_ISSUE_LABELS_
   }
 
   # Evaluate "Possible Issue" advisory labels found in a PR-Agent clean result.
-  # Reads POSSIBLE_ISSUE_EVAL_OUTCOME from environment (set by orchestrator caller).
+  # "Possible Issue" findings are always treated as acknowledged without dispatching
+  # a code-reviewer agent. In practice these findings have never been real blockers
+  # for this repo type; the dispatch loop caused fix-round spirals (issue #511 pattern).
   # Returns:
-  #   0  — no "Possible Issue" label found (short-circuit), OR
-  #         finding acknowledged, OR agent unavailable (advisory-only fallback)
-  #   3  — fix was pushed; caller must re-run the loop on the new HEAD
+  #   0  — always (no "Possible Issue" label found, or finding acknowledged immediately)
   run_pr_agent_possible_issue_evaluation() {
     local advisory_labels="$1"  # pipe-delimited, already extracted from comment
-    local comment_body="$2"     # full PR-Agent comment body (for agent context)
-    local pr_number_eval="$3"
-    local branch_name_eval="$4"
+    # comment_body ($2), pr_number_eval ($3), branch_name_eval ($4) unused — kept for
+    # signature compatibility with the call site.
 
     local possible_issue_labels
     possible_issue_labels="$(_extract_possible_issue_labels "$advisory_labels")"
 
-    # Short-circuit: no "Possible Issue" advisory labels present.
+    # Short-circuit: no "Possible Issue" label present.
     if [ -z "$possible_issue_labels" ]; then
       return 0
     fi
 
-    # Read the eval outcome set by the orchestrator after code-reviewer agent finishes.
-    local eval_outcome="${POSSIBLE_ISSUE_EVAL_OUTCOME:-}"
-
-    case "$eval_outcome" in
-      fix_pushed)
-        # A fix was pushed; the orchestrator must re-run the loop on the new HEAD
-        # to confirm the finding is resolved. Exit 3 signals this to the caller.
-        print_kv POSSIBLE_ISSUE_EVAL_OUTCOME "fix_pushed"
-        return 3  # sentinel: orchestrator must re-run the loop from the top
-        ;;
-      acknowledged)
-        print_kv POSSIBLE_ISSUE_EVAL_OUTCOME "acknowledged"
-        return 0
-        ;;
-      unavailable|"")
-        # No outcome set (first pass, before orchestrator dispatches code-reviewer)
-        # or agent is unavailable. Emit structured keys ONLY here so the orchestrator
-        # can read them and dispatch; fall back to advisory-only (clean) here.
-        # Keys are NOT emitted for fix_pushed/acknowledged re-invocations, which
-        # avoids ambiguous re-dispatch signals to the orchestrator.
-        print_kv PR_AGENT_POSSIBLE_ISSUE_EVAL "${pr_number_eval}@@@${branch_name_eval}"
-        print_kv_escaped PR_AGENT_POSSIBLE_ISSUE_BODY "$comment_body"
-        echo "WARN: code-reviewer agent unavailable or eval outcome not set for 'Possible Issue' finding — falling back to advisory-only (clean)" >&2
-        print_kv POSSIBLE_ISSUE_EVAL_OUTCOME "unavailable"
-        return 0
-        ;;
-      *)
-        echo "WARN: unknown POSSIBLE_ISSUE_EVAL_OUTCOME '${eval_outcome}' — falling back to advisory-only (clean)" >&2
-        print_kv POSSIBLE_ISSUE_EVAL_OUTCOME "unavailable"
-        return 0
-        ;;
-    esac
+    # Always acknowledge immediately — do not dispatch a code-reviewer agent.
+    print_kv POSSIBLE_ISSUE_EVAL_OUTCOME "acknowledged"
+    return 0
   }
 
   _pr_agent_classify() {
@@ -2149,7 +2234,22 @@ run_coderabbit_review() {
       since_iso="$phase0_resume_since_iso"
       echo "INFO: @coderabbitai resume posted; since_iso reset to $since_iso" >&2
     else
-      echo "WARN: failed to post @coderabbitai resume — will rely on Phase 2 detection" >&2
+      # The resume post failed while CodeRabbit is still paused. If we proceed without
+      # resetting since_iso, the timeout guard at the end of the poll loop may miss the
+      # old pause banner (its timestamp predates since_iso) and fall through to a false-
+      # clean RESULT=skipped/REASON=no_review. Escalate immediately instead.
+      echo "ERROR: failed to post @coderabbitai resume for pre-existing pause banner — escalating to avoid false-clean no_review exit" >&2
+      print_kv RESULT escalate
+      print_kv REASON rate_limit_max_retries
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 2
     fi
   fi
 
@@ -2202,8 +2302,9 @@ run_coderabbit_review() {
     # Also check for CodeRabbit issue comments (summary comment) as activity signal.
     # Filter by since_iso so historical comments from prior pushes do not incorrectly
     # mark this HEAD cycle as having activity (which would suppress stale-findings recovery).
-    # Exclude "Reviews paused" comments (pause marker) and "rate limit" comments (rate-limit
-    # marker) — neither represents a completed review and must not suppress rate-limit handling.
+    # Exclude "Reviews paused" comments (pause marker), "rate limit" comments (rate-limit
+    # marker), and "Reviews resumed" acknowledgement comments — none of these represent a
+    # completed review and must not trigger an early break from the poll loop.
     if [ "$coderabbit_any_activity" -eq 0 ]; then
       local activity_count
       activity_count="$(
@@ -2213,7 +2314,8 @@ run_coderabbit_review() {
                   .user.login == $bot and
                   .created_at > $since and
                   ((.body // "") | test("Reviews paused|review paused"; "i") | not) and
-                  ((.body // "") | test("rate.?limit"; "i") | not)
+                  ((.body // "") | test("rate.?limit"; "i") | not) and
+                  ((.body // "") | test("reviews resumed"; "i") | not)
               )] | length
             '
       )"
@@ -2229,7 +2331,7 @@ run_coderabbit_review() {
     # CodeRabbit auto-pauses reviews after many commits. When this happens, no
     # review is posted for the current HEAD, causing the loop to time out. Detect
     # the pause by checking for a "Reviews paused" issue comment and post
-    # "@coderabbitai review" to trigger a fresh review. Only attempt once.
+    # "@coderabbitai resume" to resume the paused review. Only attempt once.
     if [ "$coderabbit_any_activity" -eq 0 ] && [ "$coderabbit_retrigger_attempted" -eq 0 ] && [ "$elapsed" -ge "$((max_wait / 2))" ]; then
       # Check if the most recent CodeRabbit bot comment created after since_iso contains
       # a "Reviews paused" marker. Use since_iso filter to avoid false positives from
@@ -2246,13 +2348,13 @@ run_coderabbit_review() {
             '
       )"
       if [ "${paused_count:-0}" -gt 0 ]; then
-        echo "INFO: CodeRabbit reviews are paused — posting @coderabbitai review to trigger a fresh review" >&2
-        if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
+        echo "INFO: CodeRabbit reviews are paused — posting @coderabbitai resume to trigger a fresh review" >&2
+        if gh pr comment "$pr_number" --body "@coderabbitai resume" >/dev/null 2>&1; then
           coderabbit_retrigger_attempted=1
           # Reset the elapsed timer to give the retrigger time to complete.
           elapsed=0
         else
-          echo "WARN: failed to post retrigger comment — will not reset timer" >&2
+          echo "WARN: failed to post @coderabbitai resume — will not reset timer" >&2
           coderabbit_retrigger_attempted=1
         fi
         _interruptible_sleep "$poll_interval"
@@ -2307,7 +2409,10 @@ run_coderabbit_review() {
 
     # --- Rate-limit detection: CodeRabbit posts a comment when it cannot review yet ---
     # When CodeRabbit is rate-limited it posts an issue comment containing "rate limit"
-    # text. Detect this, wait, and retry up to coderabbit_rate_limit_max_retries times.
+    # text. Detect this, wait, then post "@coderabbitai resume" to request CodeRabbit
+    # to resume its review. Retried up to coderabbit_rate_limit_max_retries times.
+    # When retries are exhausted, the timeout block below escalates instead of returning
+    # a false-clean no_review result (see the incomplete-review guard before no_review exit).
     if [ "$coderabbit_any_activity" -eq 0 ] && [ "$coderabbit_rate_limit_retries" -lt "$coderabbit_rate_limit_max_retries" ]; then
       local rate_limit_comment_count
       rate_limit_comment_count="$(
@@ -2342,6 +2447,14 @@ run_coderabbit_review() {
           # SUCCESS status can appear while older CodeRabbit review threads stay unresolved
           # on the PR. Do not short-circuit to clean until GraphQL thread audit passes —
           # same pattern as the timeout SUCCESS fallback below.
+          # Wait before the audit: CodeRabbit may set SUCCESS while still posting inline
+          # threads asynchronously. FALLBACK_THREAD_SETTLE_WAIT (default 60s) gives those
+          # threads time to arrive so the audit does not return a false-clean count.
+          local fallback_settle_wait="${FALLBACK_THREAD_SETTLE_WAIT:-60}"
+          if [ "$fallback_settle_wait" -gt 0 ]; then
+            echo "INFO: coderabbit_status_success_fallback — waiting ${fallback_settle_wait}s for async threads to settle before thread audit" >&2
+            _interruptible_sleep "$fallback_settle_wait"
+          fi
           local cr_early_gate_rc
           coderabbit_thread_gate_clean "$pr_number" "$repo" "$bot_login" "$branch_name"
           cr_early_gate_rc=$?
@@ -2368,10 +2481,10 @@ run_coderabbit_review() {
         # Do NOT reset since_iso — keep the original HEAD-commit timestamp so any review
         # posted by CodeRabbit during or after the wait is still within the detection window.
         elapsed=0
-        if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
-          echo "INFO: posted @coderabbitai review trigger after rate-limit wait" >&2
+        if gh pr comment "$pr_number" --body "@coderabbitai resume" >/dev/null 2>&1; then
+          echo "INFO: posted @coderabbitai resume after rate-limit wait" >&2
         else
-          echo "WARN: failed to post @coderabbitai review trigger after rate-limit wait" >&2
+          echo "WARN: failed to post @coderabbitai resume after rate-limit wait" >&2
         fi
         _interruptible_sleep "$poll_interval"
         elapsed=$((elapsed + poll_interval))
@@ -2405,6 +2518,14 @@ run_coderabbit_review() {
         if [ "${coderabbit_success_status_count:-0}" -gt 0 ]; then
           # SUCCESS status can appear while older CodeRabbit review threads stay unresolved
           # on the PR. Do not short-circuit to clean until GraphQL thread audit passes.
+          # Wait before the audit: CodeRabbit may set SUCCESS while still posting inline
+          # threads asynchronously. FALLBACK_THREAD_SETTLE_WAIT (default 60s) gives those
+          # threads time to arrive so the audit does not return a false-clean count.
+          local fallback_settle_wait_timeout="${FALLBACK_THREAD_SETTLE_WAIT:-60}"
+          if [ "$fallback_settle_wait_timeout" -gt 0 ]; then
+            echo "INFO: coderabbit_status_success_fallback — waiting ${fallback_settle_wait_timeout}s for async threads to settle before thread audit" >&2
+            _interruptible_sleep "$fallback_settle_wait_timeout"
+          fi
           coderabbit_thread_gate_clean "$pr_number" "$repo" "$bot_login" "$branch_name"
           cr_success_gate_rc=$?
           if [ "$cr_success_gate_rc" -eq 0 ]; then
@@ -2492,6 +2613,46 @@ run_coderabbit_review() {
           return 1
         fi
         rm -f "$stale_file"
+
+        # --- Incomplete-review guard before no_review clean exit ---
+        # If a CodeRabbit rate-limit comment OR a "Reviews paused" banner is still
+        # active (posted or edited since since_iso), CodeRabbit has not completed
+        # its review. Returning clean here would be a false-clean. Instead, escalate
+        # so the caller knows CodeRabbit was still rate-limited or paused when the
+        # poll window ended. This covers both the case where retries were exhausted
+        # and the case where the poll window ended mid-retry (e.g. elapsed >= max_wait
+        # before the retry could fire), and the case where only a pause banner
+        # (without a rate-limit comment) caused the no-review outcome. Note: CodeRabbit
+        # sometimes signals rate-limits by editing its existing walkthrough comment
+        # rather than posting a new one, so we check both created_at and updated_at.
+        local timeout_incomplete_count
+        timeout_incomplete_count="$(
+          gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+            | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
+                [.[].[] | select(
+                    .user.login == $bot and
+                    (.created_at > $since or .updated_at > $since) and
+                    (
+                      ((.body // "") | test("rate.?limit"; "i")) or
+                      ((.body // "") | test("Reviews paused|review paused"; "i"))
+                    )
+                )] | length
+              '
+        )"
+        if [ "${timeout_incomplete_count:-0}" -gt 0 ] || [ "$coderabbit_phase0_retrigger" -eq 1 ]; then
+          echo "INFO: CodeRabbit rate-limit or pause still unresolved at timeout (incomplete_count=${timeout_incomplete_count:-0}, phase0_retrigger=$coderabbit_phase0_retrigger) — escalating instead of returning clean" >&2
+          print_kv RESULT escalate
+          print_kv REASON rate_limit_max_retries
+          print_kv PLATFORM "$platform"
+          print_kv PR_NUMBER "$pr_number"
+          print_kv BRANCH "$branch_name"
+          print_kv REVIEW_COMMENT_ID ""
+          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          print_kv COMMENT_COUNT 0
+          print_kv BLOCKING_COUNT 0
+          print_kv SUGGESTION_COUNT 0
+          return 2
+        fi
 
         print_kv RESULT skipped
         print_kv REASON no_review
@@ -2737,6 +2898,11 @@ check_unresolved_threads() {
 
       unresolved_count=$((unresolved_count + 1))
     done < <(printf '%s\n' "$result" | jq -c '.nodes[]')
+
+    if [ "$has_next_page" = "true" ] && [ -z "$cursor" ]; then
+      echo "WARN: check_unresolved_threads: hasNextPage=true but endCursor is empty for PR #$pr_number; cannot confirm all threads checked" >&2
+      return 2
+    fi
   done
 
   printf '%d\n' "$unresolved_count"
@@ -2803,7 +2969,7 @@ normalize_platform_verdict() {
     escalate)
       # Distinguish timeout from service-unavailable via REASON.
       case "$reason" in
-        timeout|timed_out|max_wait_exceeded|no_response)
+        timeout|timed_out|max_wait_exceeded|no_response|rate_limit_max_retries)
           printf 'timed out' ;;
         *)
           printf 'unavailable' ;;
@@ -2980,7 +3146,10 @@ max_wait=1200
 max_wait_explicit=0
 post_final_summary=0
 compare_mode=0
+pre_after_clean_only=0
 declare -a platforms=()
+declare -a phase_after_clean_platforms=()
+phase_after_clean_filtered_out=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -2991,6 +3160,14 @@ while [ "$#" -gt 0 ]; do
     --platform)
       append_platforms "$2"
       shift 2
+      ;;
+    --phase-after-clean)
+      append_phase_after_clean_platforms "$2"
+      shift 2
+      ;;
+    --pre-after-clean-only)
+      pre_after_clean_only=1
+      shift
       ;;
     --poll-interval)
       poll_interval="$2"
@@ -3044,6 +3221,27 @@ if [ "${#platforms[@]}" -eq 0 ]; then
   fi
 fi
 
+if [ "${#phase_after_clean_platforms[@]}" -eq 0 ]; then
+  config_file="${config_file:-$(workflow_config_file)}"
+  if workflow_config_exists; then
+    while IFS= read -r line; do
+      line="$(trim "$line")"
+      [ -n "$line" ] && phase_after_clean_platforms+=("$line")
+    done < <(workflow_config_review_phase_after_clean_platforms "$config_file")
+  fi
+fi
+
+if [ "$pre_after_clean_only" -eq 1 ]; then
+  filter_pre_after_clean_platforms
+  # Do NOT call filter_phase_after_clean_platforms here: filter_pre_after_clean_platforms
+  # already removed phase platforms from `platforms`, so a subsequent
+  # filter_phase_after_clean_platforms call would find no matching entries and empty
+  # phase_after_clean_platforms — losing the configured phase list and causing
+  # PHASE_AFTER_CLEAN_PLATFORM_LIST telemetry to be blank (issue #693).
+else
+  filter_phase_after_clean_platforms
+fi
+
 if [ "${#platforms[@]}" -gt 0 ]; then
   require_gh
   cd_workflow_repo_root
@@ -3070,6 +3268,57 @@ if [ "$max_wait_explicit" -eq 0 ]; then
   esac
 fi
 
+# Large-diff poll-window extension.
+# CodeRabbit takes significantly longer to post its review on large-diff PRs
+# (e.g. release PRs with hundreds of changed files). The default max_wait=1200 s
+# was calibrated for typical feature PRs and is too short for large release diffs:
+# during release v0.27.0 (PR #665, 185-file diff), the loop returned RESULT=clean
+# before CodeRabbit finished posting 16 findings.
+#
+# When the caller did not pass --max-wait explicitly, fetch the PR's changed-files
+# count and extend max_wait to LARGE_DIFF_MAX_WAIT (default 2400 s) when the count
+# exceeds LARGE_DIFF_THRESHOLD (default 50 files). A case guard excludes spec/* and
+# implementation-plan/* branches — those are already handled by the branch-type-aware
+# timeout block above and must not have their 60-second budget overridden.
+large_diff_threshold="${LARGE_DIFF_THRESHOLD:-50}"
+large_diff_max_wait="${LARGE_DIFF_MAX_WAIT:-2400}"
+if ! [[ "$large_diff_threshold" =~ ^[1-9][0-9]*$ ]]; then
+  echo "WARN: LARGE_DIFF_THRESHOLD must be a positive integer; defaulting to 50" >&2
+  large_diff_threshold=50
+fi
+if ! [[ "$large_diff_max_wait" =~ ^[1-9][0-9]*$ ]]; then
+  echo "WARN: LARGE_DIFF_MAX_WAIT must be a positive integer; defaulting to 2400" >&2
+  large_diff_max_wait=2400
+fi
+changed_files_count=-1
+large_diff_extended=0
+if [ "$max_wait_explicit" -eq 0 ]; then
+  case "$branch_name" in
+    spec/*|implementation-plan/*)
+      # Already handled by the branch-type rule above — do not extend.
+      ;;
+    *)
+      if [ -n "$pr_number" ] && [ "${#platforms[@]}" -gt 0 ]; then
+        set +e
+        changed_files_count="$(gh api "repos/$(repo_slug)/pulls/$pr_number" \
+          --jq '.changed_files // -1' 2>/dev/null)"
+        set -e
+        if ! [[ "${changed_files_count:-}" =~ ^-?[0-9]+$ ]]; then
+          echo "WARN: failed to fetch changed_files count for PR #$pr_number — skipping large-diff extension" >&2
+          changed_files_count=-1
+        fi
+        if [ "$changed_files_count" -ge 0 ] && [ "$changed_files_count" -gt "$large_diff_threshold" ]; then
+          if [ "$large_diff_max_wait" -gt "$max_wait" ]; then
+            echo "INFO: PR #$pr_number has ${changed_files_count} changed files (threshold: ${large_diff_threshold}) — extending max_wait from ${max_wait}s to ${large_diff_max_wait}s for large-diff poll window" >&2
+            max_wait="$large_diff_max_wait"
+            large_diff_extended=1
+          fi
+        fi
+      fi
+      ;;
+  esac
+fi
+
 aggregate_result="skipped"
 aggregate_reason=""
 last_platform=""
@@ -3086,6 +3335,15 @@ compare_first_blocking_result=""
 compare_first_blocking_reason=""
 compare_first_blocking_output=""
 compare_first_blocking_status=0
+phase_after_clean_enabled=0
+phase_after_clean_started=0
+phase_after_clean_net_new_blocker=0
+phase_after_clean_blocking_platform=""
+phase_after_clean_gate_result="not_started"
+phase_after_clean_skip_reason=""
+if [ "${#phase_after_clean_platforms[@]}" -gt 0 ]; then
+  phase_after_clean_enabled=1
+fi
 
 print_kv PR_NUMBER "$pr_number"
 print_kv BRANCH "$branch_name"
@@ -3093,10 +3351,27 @@ print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
 print_kv PLATFORM_COUNT "${#platforms[@]}"
 # So callers can verify config was respected (e.g. no greptile when only devin is in .ai-dev-workflow.yaml)
 print_kv PLATFORM_LIST "$(IFS=,; printf '%s' "${platforms[*]}")"
+print_kv PRE_AFTER_CLEAN_ONLY "$pre_after_clean_only"
+print_kv PHASE_AFTER_CLEAN_ENABLED "$phase_after_clean_enabled"
+[ -n "$phase_after_clean_filtered_out" ] && \
+  print_kv PHASE_AFTER_CLEAN_FILTERED_OUT "$phase_after_clean_filtered_out"
+[ "$phase_after_clean_enabled" -eq 1 ] && \
+  print_kv PHASE_AFTER_CLEAN_PLATFORM_LIST "$(IFS=,; printf '%s' "${phase_after_clean_platforms[*]}")"
+print_kv CHANGED_FILES_COUNT "${changed_files_count:--1}"
+[ "$large_diff_extended" -eq 1 ] && print_kv LARGE_DIFF_EXTENDED 1
 
 for index in "${!platforms[@]}"; do
   platform_index=$((index + 1))
   platform_name="${platforms[$index]}"
+
+  if [ "$phase_after_clean_enabled" -eq 1 ] \
+      && [ "$phase_after_clean_started" -eq 0 ] \
+      && is_phase_after_clean_platform "$platform_name"; then
+    if [ "$compare_mode" -eq 0 ] || [ -z "$compare_first_blocking_result" ]; then
+      phase_after_clean_started=1
+      phase_after_clean_gate_result="clean"
+    fi
+  fi
 
   set +e
   platform_output="$(run_platform_review "$platform_name" "$pr_number" "$branch_name" "$poll_interval" "$max_wait")"
@@ -3148,6 +3423,12 @@ for index in "${!platforms[@]}"; do
       aggregate_result="clean"
       ;;
     needs_fixes|escalate)
+      if [ "$phase_after_clean_enabled" -eq 1 ] \
+          && [ "$phase_after_clean_started" -eq 1 ] \
+          && is_phase_after_clean_platform "$platform_name"; then
+        phase_after_clean_net_new_blocker=1
+        phase_after_clean_blocking_platform="$platform_name"
+      fi
       aggregate_result="$platform_result"
       aggregate_reason="$(kv_value_default REASON "$platform_output" "")"
       aggregate_output="$platform_output"
@@ -3250,13 +3531,19 @@ fi
 # review threads remain unresolved before declaring the aggregate result clean.
 # This catches Nitpick/Trivial/Minor severity threads that individual platform
 # handlers do not classify as blocking but that still need explicit resolution.
+# unresolved_bot_logins is declared here (outside the if-block) so the
+# post-clean recheck below can safely reference it regardless of code path.
+declare -a unresolved_bot_logins=()
 if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; then
   # Build the array of bot logins from the configured platforms.
   # Using an array (not a space-separated string) prevents Bash glob expansion of
   # bracket characters in "[bot]" strings during iteration.
-  declare -a unresolved_bot_logins=()
   for _platform in "${platforms[@]}"; do
     _login="$(bot_login_for_platform "$_platform")"
+    # Strip the REST-style "[bot]" suffix — check_unresolved_threads compares
+    # against GraphQL author.login which does not include the "[bot]" suffix.
+    # (e.g. "chatgpt-codex-connector[bot]" → "chatgpt-codex-connector")
+    _login="${_login%\[bot\]}"
     [ -n "$_login" ] && unresolved_bot_logins+=("$_login")
   done
 
@@ -3310,6 +3597,10 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
   if [ "$unresolved_thread_count" -gt 0 ]; then
     aggregate_result="needs_fixes"
     aggregate_reason="unresolved_review_threads"
+    if [ "$phase_after_clean_enabled" -eq 1 ] && [ "$phase_after_clean_started" -eq 1 ]; then
+      phase_after_clean_net_new_blocker=1
+      phase_after_clean_blocking_platform="${phase_after_clean_blocking_platform:-review_threads}"
+    fi
     # Increment total_blocking_count so BLOCKING_COUNT reflects the unresolved threads.
     # No BLOCKING_N_* entries are emitted for thread findings — callers must use
     # REASON=unresolved_review_threads and UNRESOLVED_THREAD_COUNT to handle this case.
@@ -3317,6 +3608,93 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
   fi
 else
   print_kv UNRESOLVED_THREAD_COUNT 0
+fi
+
+# --- Post-clean recheck ---
+# After the reviewer loop exits clean and the immediate thread gate passes,
+# wait a short interval and re-query reviewThreads. This catches bot review
+# threads (e.g. CodeRabbit) that are posted asynchronously and arrive after
+# the platform handlers and thread gate have already completed. Without this
+# recheck, Step 5.1 must catch these late threads — at the cost of a full
+# reviewer-loop redispatch cycle. The recheck adds a single ~30-second wait
+# in exchange for avoiding that more expensive recovery path.
+#
+# The recheck only runs when:
+#   - aggregate_result is "clean" after the immediate thread gate
+#   - compare_mode is not active (recheck is not meaningful in evaluation mode)
+#   - SKIP_POST_CLEAN_RECHECK is not set to "1" (allows callers to suppress
+#     on re-dispatch after a prior late-thread fix cycle, so the recheck does
+#     not run again on the corrective invocation)
+#
+# Configurable via POST_CLEAN_WAIT env var (default: 30 seconds).
+# Emits POST_CLEAN_RECHECK=1 when the wait-and-recheck runs, and
+# LATE_THREADS_FOUND=<N> with the count of newly-discovered unresolved threads.
+post_clean_wait="${POST_CLEAN_WAIT:-30}"
+if [ "$aggregate_result" = "clean" ] \
+    && [ "$compare_mode" -eq 0 ] \
+    && [ "${SKIP_POST_CLEAN_RECHECK:-0}" != "1" ] \
+    && [ "${#unresolved_bot_logins[@]}" -gt 0 ] \
+    && [ -n "$pr_number" ]; then
+  print_kv POST_CLEAN_RECHECK 1
+  echo "INFO: post-clean recheck — waiting ${post_clean_wait}s for any late-arriving review threads" >&2
+  _interruptible_sleep "$post_clean_wait"
+
+  late_thread_count=0
+  late_thread_check_output=""
+  late_thread_check_status=0
+  set +e
+  late_thread_check_output="$(check_unresolved_threads "$pr_number" "$(repo_slug)" "${unresolved_bot_logins[@]}")"
+  late_thread_check_status=$?
+  set -e
+
+  if [ "$late_thread_check_status" -eq 2 ]; then
+    # Page-cap exceeded — cannot confirm all threads are resolved. Escalate.
+    echo "WARN: post-clean recheck: check_unresolved_threads exceeded page cap — escalating" >&2
+    aggregate_result="escalate"
+    aggregate_reason="post_clean_recheck_thread_check_incomplete"
+    late_thread_count=-1
+  elif [ "$late_thread_check_status" -ne 0 ]; then
+    # GraphQL failure — escalate rather than silently treating the recheck as clean.
+    echo "WARN: post-clean recheck: check_unresolved_threads failed (exit $late_thread_check_status) — escalating" >&2
+    aggregate_result="escalate"
+    aggregate_reason="post_clean_recheck_thread_audit_failed"
+    late_thread_count=-1
+  else
+    late_thread_count="$late_thread_check_output"
+    if [ "$late_thread_count" -gt 0 ]; then
+      echo "INFO: post-clean recheck — found $late_thread_count late unresolved thread(s); switching to needs_fixes" >&2
+      aggregate_result="needs_fixes"
+      aggregate_reason="late_review_threads"
+      if [ "$phase_after_clean_enabled" -eq 1 ] && [ "$phase_after_clean_started" -eq 1 ]; then
+        phase_after_clean_net_new_blocker=1
+        phase_after_clean_blocking_platform="${phase_after_clean_blocking_platform:-late_review_threads}"
+      fi
+      total_blocking_count=$((total_blocking_count + late_thread_count))
+    else
+      echo "INFO: post-clean recheck — no late threads found; result remains clean" >&2
+    fi
+  fi
+  print_kv LATE_THREADS_FOUND "$late_thread_count"
+else
+  print_kv POST_CLEAN_RECHECK 0
+  # Emit LATE_THREADS_FOUND=0 on skipped paths so consumers can always rely on
+  # the field being present, regardless of whether the recheck ran.
+  print_kv LATE_THREADS_FOUND 0
+fi
+
+if [ "$phase_after_clean_enabled" -eq 1 ] && [ "$phase_after_clean_started" -eq 0 ]; then
+  phase_after_clean_skip_reason="$aggregate_result"
+fi
+print_kv PHASE_AFTER_CLEAN_STARTED "$phase_after_clean_started"
+if [ "$phase_after_clean_enabled" -eq 1 ]; then
+  if [ "$phase_after_clean_started" -eq 1 ]; then
+    print_kv PHASE_AFTER_CLEAN_GATE_RESULT "$phase_after_clean_gate_result"
+  else
+    print_kv PHASE_AFTER_CLEAN_SKIP_REASON "$phase_after_clean_skip_reason"
+  fi
+  print_kv PHASE_AFTER_CLEAN_NET_NEW_BLOCKER "$phase_after_clean_net_new_blocker"
+  [ -n "$phase_after_clean_blocking_platform" ] && \
+    print_kv PHASE_AFTER_CLEAN_BLOCKING_PLATFORM "$phase_after_clean_blocking_platform"
 fi
 
 # Append compare-mode metrics row after the thread gate so the recorded
@@ -3368,6 +3746,12 @@ _post_review_summary() {
   local suggestions="$5"
   local advisory_labels="${6:-}"
   local possible_issue_eval_outcome="${7:-}"
+  local phase_enabled="${8:-0}"
+  local phase_platform_list="${9:-}"
+  local phase_started="${10:-0}"
+  local phase_net_new_blocker="${11:-0}"
+  local phase_blocking_platform="${12:-}"
+  local pre_after_clean_only_mode="${13:-0}"
 
   if [ -z "$pr_number" ]; then
     return 0
@@ -3434,7 +3818,7 @@ _ADVISORY_ENTRY_LINES_
       local _eval_note
       case "$possible_issue_eval_outcome" in
         acknowledged)
-          _eval_note="Evaluated by code-reviewer: acknowledged (finding is acceptable — loop proceeded clean)"
+          _eval_note="Auto-acknowledged: Possible Issue is advisory-only — loop proceeded clean"
           ;;
         fix_pushed)
           _eval_note="Evaluated by code-reviewer: fix pushed — loop re-ran on new HEAD"
@@ -3500,13 +3884,34 @@ Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs afte
     fi
   fi
 
+  local phase_section=""
+  if [ "$phase_enabled" -eq 1 ]; then
+    local _phase_value_line
+    local _phase_subject="${phase_platform_list:-after-clean reviewer}"
+    if [ "$phase_started" -eq 1 ]; then
+      if [ "$phase_net_new_blocker" -eq 1 ]; then
+        _phase_value_line="${_phase_subject} found a net-new blocker after the clean gate (${phase_blocking_platform:-unknown})."
+      else
+        _phase_value_line="No net-new blocker was found after the PR-Agent-clean gate."
+      fi
+    elif [ "$pre_after_clean_only_mode" -eq 1 ]; then
+      _phase_value_line="After-clean phase was not run — invoked in pre-after-clean-only mode."
+    else
+      _phase_value_line="After-clean phase was not reached because an earlier platform did not exit clean."
+    fi
+    phase_section="
+
+**After-clean reviewer phase:** ${_phase_value_line}
+**After-clean platforms:** ${phase_platform_list:-none}"
+  fi
+
   local comment_body
   comment_body="$(cat <<EOF
 ### Automated Reviewer Loop Summary
 
 **Result:** ${result_line}
 **Platforms:** ${platform_list:-none}
-**Findings:** ${blocking} blocking, ${suggestions} suggestions${compare_section}${advisory_section}${regression_label_section}
+**Findings:** ${blocking} blocking, ${suggestions} suggestions${phase_section}${compare_section}${advisory_section}${regression_label_section}
 
 *Posted automatically by \`pr-review-loop.sh\`.*
 EOF
@@ -3559,6 +3964,11 @@ EOF
 }
 
 aggregate_possible_issue_eval_outcome="$(kv_value_default POSSIBLE_ISSUE_EVAL_OUTCOME "$aggregate_output" "")"
+if [ "${#phase_after_clean_platforms[@]}" -gt 0 ]; then
+  phase_after_clean_platform_list="$(IFS=,; printf '%s' "${phase_after_clean_platforms[*]}")"
+else
+  phase_after_clean_platform_list=""
+fi
 
 case "$aggregate_result" in
   clean)
@@ -3566,7 +3976,10 @@ case "$aggregate_result" in
       "$(IFS=,; printf '%s' "${platforms[*]}")" \
       "$total_blocking_count" "$total_suggestion_count" \
       "$aggregate_advisory_labels" \
-      "$aggregate_possible_issue_eval_outcome"
+      "$aggregate_possible_issue_eval_outcome" \
+      "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
+      "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
+      "$phase_after_clean_blocking_platform" "$pre_after_clean_only"
     exit 0
     ;;
   skipped)
@@ -3578,7 +3991,10 @@ case "$aggregate_result" in
         "$(IFS=,; printf '%s' "${platforms[*]}")" \
         "$total_blocking_count" "$total_suggestion_count" \
         "$aggregate_advisory_labels" \
-        "$aggregate_possible_issue_eval_outcome"
+        "$aggregate_possible_issue_eval_outcome" \
+        "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
+        "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
+        "$phase_after_clean_blocking_platform" "$pre_after_clean_only"
     fi
     exit 1
     ;;
@@ -3594,7 +4010,10 @@ case "$aggregate_result" in
       "$(IFS=,; printf '%s' "${platforms[*]}")" \
       "$total_blocking_count" "$total_suggestion_count" \
       "$aggregate_advisory_labels" \
-      "$aggregate_possible_issue_eval_outcome"
+      "$aggregate_possible_issue_eval_outcome" \
+      "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
+      "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
+      "$phase_after_clean_blocking_platform" "$pre_after_clean_only"
     exit 2
     ;;
   *)

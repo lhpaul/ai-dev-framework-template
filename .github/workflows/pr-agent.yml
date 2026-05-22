@@ -8,10 +8,12 @@ on:
 
 jobs:
   pr_agent_job:
-    # For pull_request events: always run, including bot-authored PRs (Dependabot, Renovate).
+    # For pull_request events: only run for PRs from the same repository (not forks),
+    # including bot-authored PRs (Dependabot, Renovate). Fork PRs use read-only GITHUB_TOKEN
+    # that cannot post comments, so excluding them prevents spurious auth failures.
     # For issue_comment events: only run when a human comments on a PR (not an issue),
     # preventing PR-Agent from triggering itself when it posts its own review comment.
-    if: ${{ github.event_name == 'pull_request' || (github.event.sender.type != 'Bot' && github.event.issue.pull_request) }}
+    if: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event.sender.type != 'Bot' && github.event.issue.pull_request) }}
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -20,19 +22,19 @@ jobs:
     name: PR-Agent review
     steps:
       - name: PR-Agent
-        uses: the-pr-agent/pr-agent@009ba5a116c4d3273368a6dc53a4efdb7904d519 # v0.34.3
+        uses: the-pr-agent/pr-agent@0bd56c0508504c718cc03d504cd4ceb6725ba3c7 # v0.35.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # --- Model: DeepSeek (via LiteLLM) ---
           # Pinned as env vars in addition to .pr_agent.toml: PR-Agent can fall back
-          # to its Qodo-hosted GPT-5.4 default before TOML settings are fully merged,
+          # to its Qodo-hosted GPT-5.x default before TOML settings are fully merged,
           # causing AuthenticationError on every run when only DEEPSEEK_API_KEY is set.
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           config.model: "deepseek/deepseek-chat"
           config.fallback_models: '["deepseek/deepseek-chat"]'
           # config.model_weak controls ancillary tasks (PR description generation,
           # classification, file summaries). PR-Agent's built-in default is OpenAI's
-          # gpt-5.4 / gpt-5.4-mini, which fails with `dummy_key` 401 errors when only
+          # GPT-5.x family, which fails with `dummy_key` 401 errors when only
           # DEEPSEEK_API_KEY is configured. Pin it to DeepSeek too so all calls go
           # through one provider.
           config.model_weak: "deepseek/deepseek-chat"

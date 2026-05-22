@@ -5,7 +5,7 @@
 
 **Shell helper**: `scripts/development-workflow/batch-merge.sh`
 
-**Governance**: The agent assists with merge execution but does **not** merge autonomously. Every merge in this protocol requires explicit human confirmation of the merge plan (Step 3) before any `git merge` runs. This satisfies the repository's human-gate policy.
+**Governance**: The agent assists with merge execution. The merge plan is printed for visibility before execution, but no interactive approval is required — merges proceed immediately after the plan is displayed.
 
 ---
 
@@ -14,7 +14,7 @@
 - A human invokes `/batch-merge` directly (Use Case 1 — human-invoked).
 - The Portfolio Orchestrator detects that all PRs in a parallel batch have reached `ready-for-human-review` and routes to this protocol (Use Case 2 — orchestrator-invoked).
 
-In both cases, **no merge occurs until the human explicitly confirms the merge plan** (Step 3).
+In both cases, the merge plan is displayed before any `git merge` runs, but execution proceeds immediately without waiting for user input.
 
 ---
 
@@ -90,9 +90,9 @@ After Step 2, update the candidate list: remove any PRs the human chose to skip 
 
 ---
 
-## Step 3: Human Confirmation — Merge Plan
+## Step 3: Merge Plan Display
 
-Display the final merge plan (only PRs approved so far):
+Display the final merge plan (only PRs approved so far) and proceed immediately:
 
 ```text
 Merge plan (will be executed in this order)
@@ -102,11 +102,9 @@ Merge plan (will be executed in this order)
   3. PR #103  fix/103-docs-update    (may cause CHANGELOG conflict — will auto-resolve)
 
 Skipped (not ready): #104
-
-Proceed with the merge? [yes / no / abort]
 ```
 
-**No merge occurs until the human types `yes`.** If the human types `no` or `abort`, exit immediately with no side effects.
+After printing the plan, proceed directly to Step 3.5 without waiting for user input.
 
 ---
 
@@ -410,7 +408,7 @@ Include details of any auto-resolved conflicts in the summary (which files, what
 When called from the Portfolio Orchestrator (Protocol 90), the same flow applies:
 
 - The orchestrator passes the PR list discovered from the batch.
-- This protocol still requires explicit human confirmation at Step 3 before any merge occurs.
+- The merge plan is printed for visibility at Step 3, then execution proceeds immediately.
 - The orchestrator must NOT skip or auto-approve the readiness gate (Step 2) for any unready PR.
 - Non-trivial conflicts still require human resolution at Step 4.3.
 

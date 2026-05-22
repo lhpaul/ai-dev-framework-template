@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-05-22
+
+### Added
+
+- **Phased PR-Agent clean gate before CodeRabbit** (#691): `review.phase_after_clean` support in `.ai-dev-workflow.yaml` and `pr-review-loop.sh` runs CodeRabbit only after PR-Agent is already clean, with `PHASE_AFTER_CLEAN_*` telemetry to measure CodeRabbit's net-new blocker rate. Protocols 91 and 93 updated to document the draft-PR gate.
+- **Database best practices: RLS migration safety checklist** (#680): new `docs/best-practices/4-database.md` with an RLS section. Enabling RLS on an existing table requires revoking broad grants first to prevent legacy permissions from silently bypassing policies.
+- **Supabase: TypeScript type narrowing for CHECK-constrained columns** (#681): new `docs/best-practices/stack/supabase.md` covering how to narrow Supabase-generated `string` types to union literals for `text CHECK (...) IN (...)` columns (Option A: override file; Option B: Zod source of truth). `STACK-SPECIFIC.md` updated with a Quick Reference entry.
+
+### Changed
+
+- **`/batch-merge`: remove interactive approval prompt** (#689): batch-merge now proceeds immediately after printing the merge plan; no user confirmation required. Protocol 94, the Claude Code command, Cursor command, and Codex skill all updated.
+- **PR-Agent noise reduction** (#691): `.pr_agent.toml` instructions tightened to suppress speculative env-var, redundant shell-guard, and low-confidence style findings; PR-Agent Action pinned to `v0.35.0` (was `v0.34.3`); CodeRabbit removed from Step 7a default internal reviewer list.
+- **Mandatory fork-PR guard for write-step GitHub Actions workflows** (#670): `03-implement-development-protocol.md` now requires every write step in a `pull_request`-triggered workflow (label, comment, release, status) to include an `if: github.event.pull_request.head.repo.full_name == github.repository` guard.
+
+### Fixed
+
+- **`.coderabbit.yaml`: suppress shell-script docstring-coverage false positive** (#700): `path_instructions` entry for `**/*.sh` disables CodeRabbit's docstring-coverage warning on Bash/shell files, which have no docstring standard.
+- **`pr-review-loop.sh`: `timeout_incomplete_count` misses rate-limit edits to walkthrough** (#696): filter now uses `(.created_at > $since or .updated_at > $since)` so edited "Reviews paused" banners are detected and the guard escalates correctly.
+- **`pr-review-loop.sh`: escalate on CodeRabbit rate-limit/pause instead of false-clean** (#688): emits `RESULT=escalate/REASON=rate_limit_max_retries` (exit 2) when CodeRabbit is rate-limited or paused, replacing the previous `RESULT=skipped/REASON=no_review` (exit 0). Retrigger command corrected from `@coderabbitai review` to `@coderabbitai resume`.
+- **`pr-review-loop.sh`: preserve `phase_after_clean_platforms` in `--pre-after-clean-only` mode** (#693): `filter_phase_after_clean_platforms` is now skipped when `--pre-after-clean-only` is active, preventing it from clearing the list that `filter_pre_after_clean_platforms` had already set.
+- **`pr-review-loop.sh`: extend poll window for large-diff PRs** (#669): automatically raises `max_wait` to `LARGE_DIFF_MAX_WAIT` (2400 s) when changed-files count exceeds `LARGE_DIFF_THRESHOLD` (50), preventing premature clean exits on release and sync-template PRs.
+- **`prepare-release-post-merge-cleanup.sh`: treat pre-existing `Released` status as success** (#671): `UPDATED=0` from GitHub Projects automation is no longer flagged as a failure when the issue is already in `Released` state.
+- **`pr-review-loop.sh`: post-clean recheck for late bot review threads** (#672): waits `POST_CLEAN_WAIT` seconds (default 30) after a clean exit to catch asynchronous bot threads. Emits `RESULT=needs_fixes/REASON=late_review_threads` if late unresolved threads are found. Strips `[bot]` suffix from logins before GraphQL comparison. Set `SKIP_POST_CLEAN_RECHECK=1` to suppress on corrective reruns.
+- **`pr-review-loop.sh`: pagination guard in `check_unresolved_threads`** (#667): adds `hasNextPage=true + empty endCursor` break guard to prevent infinite pagination on malformed GitHub GraphQL responses.
+- **`pr-review-loop.sh`: treat empty `endCursor` as incomplete audit in `check_unresolved_threads`**: changes the malformed-page-info handler from `break` to `return 2` so a partial thread count never produces a false `clean` gate outcome.
+- **`pr-review-loop.sh`: add `FALLBACK_THREAD_SETTLE_WAIT` settle period before `coderabbit_status_success_fallback` thread audit**: CodeRabbit can set a `SUCCESS` commit status while still posting inline review threads asynchronously. Without a wait, `coderabbit_thread_gate_clean` runs before those threads arrive and returns a false-clean count. Both fallback paths (early-retry and timeout) now wait `FALLBACK_THREAD_SETTLE_WAIT` seconds (default 60) before the thread audit, giving CodeRabbit time to finish. Set to `0` to restore previous behaviour.
+- **`pr-review-loop.sh`: mode-aware skip explanation in `--pre-after-clean-only` summary**: the "After-clean reviewer phase" line in the PR summary comment now distinguishes between "invoked in pre-after-clean-only mode" and "earlier platform did not exit clean".
+- **`pr-agent.yml`: add fork-PR guard to prevent write operations on fork PRs**: the job-level `if` now requires `github.event.pull_request.head.repo.full_name == github.repository` for `pull_request` events, consistent with the mandatory fork-PR guard policy.
+- **`docs/best-practices/4-database.md`: hyphenate "Row-Level Security" heading**: corrects "Row Level Security" to "Row-Level Security" for consistency.
+- **`docs/best-practices/stack/supabase.md`: use markdown link for cross-reference**: the `docs/project/4-database-model.md` path is now a clickable link.
+- **`docs/testing/workflow/batch-merge.smoke-test.md`: remove stale confirmation-step reference**: updates the expected-result line to reflect the no-confirmation flow.
+- **Protocol 91: remove duplicated phase-after-clean runbook**: the detailed draft-phase steps are replaced with a short summary and a link to the canonical runbook in Protocol 93, reducing drift risk.
+- **Retrospective protocol: remove `workflow` label from upstream issue filing** (#690): `gh issue create` in Step 3e no longer passes `--label "workflow"`, fixing permission errors for users without collaborator access.
+
 ## [0.27.4] - 2026-05-20
 
 ### Fixed
@@ -35,7 +69,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **`markdown-lint.yml`: disable `relative-links` rule in CI** (hotfix): implementation plans intentionally reference smoke test runbooks that are created later in the workflow — those forward references caused CI failures for any downstream project with plans. `markdownlint-rule-relative-links` is removed from `.markdownlint-cli2.jsonc` (the CI/runner config); `.markdownlint.jsonc` retains the rule for editor integrations.
-
 ## [0.27.0] - 2026-05-19
 
 ### Added
@@ -46,7 +79,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CI enforcement: auto-apply `ready-for-regression` and assert reviewer-loop summary** (#613): two new GitHub Actions workflows — `apply-regression-label.yml` (auto-labels implementation PRs by branch prefix) and `reviewer-loop-guard.yml` (blocks merge-eligibility when the reviewer-loop summary comment is absent).
 - **Auto-remove `ready-for-regression` label on push** (#612): `remove-regression-label-on-push.yml` removes the label when new commits are pushed, preventing stale regression-readiness signals.
 - **Canary test requirement for filter-schema additions** (#606): developer and code-reviewer protocols now require a two-invocation canary test for every new filter parameter; absence is a blocking review finding.
-- **Mandatory advisory finding dispositions in reviewer loop summary**: Protocol 93 requires runners to evaluate each non-blocking advisory finding and record a disposition (Addressed / Accepted / Deferred / Rejected) in the summary comment on clean exits.
+- **Mandatory advisory finding dispositions in reviewer loop summary**: Protocol 93 requires runners to evaluate each non-breaking advisory finding and record a disposition (Addressed / Accepted / Deferred / Rejected) in the summary comment on clean exits.
 - **Script quality gates and test harness for `pr-review-loop.sh`** (#585): adds `scripts/development-workflow/tests/test-pr-review-loop.sh` and a path-triggered CI workflow; prepare-release and retrospective protocols gain script-coverage and downstream bug-review checklist items.
 - **Prettier for markdown formatting** (#584): adds `prettier` v3.8.3 and formats all `.md` files so downstream `/sync-template` runs see no spurious diffs.
 
@@ -736,7 +769,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.4...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.0...HEAD
+[0.28.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.4...v0.28.0
 [0.27.4]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.3...v0.27.4
 [0.27.3]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.2...v0.27.3
 [0.27.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.1...v0.27.2

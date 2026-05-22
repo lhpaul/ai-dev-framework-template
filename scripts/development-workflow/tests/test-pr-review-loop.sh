@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # test-pr-review-loop.sh — Self-contained test harness for pr-review-loop.sh.
 #
-# Exercises four highest-risk logic areas:
+# Exercises five highest-risk logic areas:
 #   1. normalize_platform_verdict (verdict normalization / mapping)
 #   2. check_unreplied_rest_comments (bot-account exclusion, reply detection)
 #   3. append_compare_metrics_row (compare-mode platform config change detection)
 #   4. Lock cleanup on SIGTERM (signal trap removes lockdir before exit)
+#   5. phase_after_clean config parsing and membership detection
 #
 # Usage: bash scripts/development-workflow/tests/test-pr-review-loop.sh
 # No external tooling required beyond bash and git (git is used only to locate
@@ -31,6 +32,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel)"
 MOCK_BIN="$(mktemp -d)"
 _METRICS_TMP=""
 _METRICS_DIR=""
+_CONFIG_DIR=""
 
 # Single EXIT trap: normalise SIGPIPE exit code (141 -> 0) and clean up temp
 # directories. A second trap would override this one, losing the 141 guard.
@@ -38,6 +40,7 @@ _harness_exit() {
   local status=$?
   rm -rf "$MOCK_BIN"
   [ -n "${_METRICS_DIR:-}" ] && rm -rf "$_METRICS_DIR"
+  [ -n "${_CONFIG_DIR:-}" ] && rm -rf "$_CONFIG_DIR"
   case "$status" in
     141) exit 0 ;;
     *)   exit "$status" ;;
@@ -141,6 +144,49 @@ run_test() {
 }
 
 # ---------------------------------------------------------------------------
+# Area 0: phase_after_clean config parsing
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 0: phase_after_clean config parsing ==="
+
+_CONFIG_DIR="$(mktemp -d)"
+cat > "$_CONFIG_DIR/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 1
+
+review:
+  platforms:
+    - pr-agent
+    - coderabbit
+  phase_after_clean:
+    - coderabbit
+YAML
+
+phase_after_clean_parsed="$(workflow_config_review_phase_after_clean_platforms "$_CONFIG_DIR/.ai-dev-workflow.yaml" | paste -sd ',' -)"
+run_test "phase_after_clean_parser" "coderabbit" "$phase_after_clean_parsed"
+
+declare -a phase_after_clean_platforms=()
+append_phase_after_clean_platforms "coderabbit, pr-agent"
+if is_phase_after_clean_platform "coderabbit" && is_phase_after_clean_platform "pr-agent"; then
+  phase_membership="yes"
+else
+  phase_membership="no"
+fi
+run_test "phase_after_clean_membership" "yes" "$phase_membership"
+
+declare -a phase_after_clean_platforms=("coderabbit")
+declare -a platforms=("pr-agent")
+phase_after_clean_filtered_out=""
+filter_phase_after_clean_platforms
+run_test "phase_after_clean_filters_absent_platform" "0" "${#phase_after_clean_platforms[@]}"
+run_test "phase_after_clean_filtered_out_records_absent_platform" "coderabbit" "$phase_after_clean_filtered_out"
+
+declare -a phase_after_clean_platforms=("coderabbit")
+declare -a platforms=("pr-agent" "coderabbit")
+filter_pre_after_clean_platforms
+run_test "pre_after_clean_only_filters_phase_platform" "pr-agent" "${platforms[0]}"
+run_test "pre_after_clean_only_platform_count" "1" "${#platforms[@]}"
+
+# ---------------------------------------------------------------------------
 # Area 1: normalize_platform_verdict
 # ---------------------------------------------------------------------------
 echo ""
@@ -172,6 +218,9 @@ run_test "verdict_escalate_max_wait" "timed out" "$actual"
 
 actual="$(normalize_platform_verdict "escalate" "REASON=no_response")"
 run_test "verdict_escalate_no_response" "timed out" "$actual"
+
+actual="$(normalize_platform_verdict "escalate" "REASON=rate_limit_max_retries")"
+run_test "verdict_escalate_rate_limit_max_retries" "timed out" "$actual"
 
 actual="$(normalize_platform_verdict "escalate" "REASON=service_error")"
 run_test "verdict_escalate_unknown" "unavailable" "$actual"
@@ -499,6 +548,77 @@ actual_exit=0
 auto_reply_unreplied_rest_comments "1" "owner/repo" "coderabbitai[bot]" "[]" > /dev/null 2>&1 || actual_exit=$?
 run_test "auto_reply_post_failure_exit_code" "1" "$actual_exit"
 unset MOCK_GH_POST_EXIT
+
+# ---------------------------------------------------------------------------
+# Area 6: check_unresolved_threads
+#
+# Tests that the function counts unresolved bot-authored review threads correctly
+# via the GraphQL API mock. The mock gh command returns MOCK_GH_OUTPUT for all
+# non-POST calls. check_unresolved_threads calls `gh api graphql ... --jq ...`
+# which outputs the filtered JSON directly (not the raw gh output). Because the
+# mock gh does not run the --jq filter, we set MOCK_GH_OUTPUT to the pre-filtered
+# JSON that the real GraphQL query would return after --jq.
+#
+# Important: GitHub's GraphQL API returns author.login WITHOUT the "[bot]" suffix
+# (e.g. "coderabbitai", not "coderabbitai[bot]"). The aggregate gate strips the
+# "[bot]" suffix from bot_login_for_platform() output before adding to
+# unresolved_bot_logins, so check_unresolved_threads always receives login strings
+# without the "[bot]" suffix. All test cases below use sanitized login strings.
+#
+# Note: the post-clean recheck logic (POST_CLEAN_RECHECK / LATE_THREADS_FOUND)
+# lives in the main execution block which is skipped by HARNESS_MODE=1. Those
+# code paths call check_unresolved_threads (tested here) and _interruptible_sleep
+# (a trivial sleep wrapper). Their integration is validated by the reviewer loop
+# end-to-end run in CI.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 6: check_unresolved_threads ==="
+
+unset MOCK_GH_POST_EXIT MOCK_GH_POST_OUTPUT MOCK_GH_CALL_LOG
+
+# test: no review threads — count should be 0
+export MOCK_GH_OUTPUT='{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}'
+actual="$(check_unresolved_threads "1" "owner/repo" "coderabbitai")"
+run_test "unresolved_threads_none" "0" "$actual"
+
+# test: one unresolved bot thread — count should be 1
+# GraphQL author.login is "coderabbitai" (no "[bot]" suffix — stripped by caller)
+export MOCK_GH_OUTPUT='{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"},"body":"Blocking issue"}]}}]}'
+actual="$(check_unresolved_threads "1" "owner/repo" "coderabbitai")"
+run_test "unresolved_threads_one_bot" "1" "$actual"
+
+# test: one resolved bot thread — count should be 0
+export MOCK_GH_OUTPUT='{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":true,"comments":{"nodes":[{"author":{"login":"coderabbitai"},"body":"Blocking issue"}]}}]}'
+actual="$(check_unresolved_threads "1" "owner/repo" "coderabbitai")"
+run_test "unresolved_threads_resolved_skipped" "0" "$actual"
+
+# test: bot thread with "✅ Addressed" in body — count should be 0
+export MOCK_GH_OUTPUT='{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"},"body":"✅ Addressed — fixed in latest commit"}]}}]}'
+actual="$(check_unresolved_threads "1" "owner/repo" "coderabbitai")"
+run_test "unresolved_threads_addressed_body_skipped" "0" "$actual"
+
+# test: human-authored thread unresolved — count should be 0 (bot-only filter)
+export MOCK_GH_OUTPUT='{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":false,"comments":{"nodes":[{"author":{"login":"humanreview"},"body":"Please change this"}]}}]}'
+actual="$(check_unresolved_threads "1" "owner/repo" "coderabbitai")"
+run_test "unresolved_threads_human_ignored" "0" "$actual"
+
+# test: two bot threads, one resolved, one not — count should be 1
+export MOCK_GH_OUTPUT='{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":true,"comments":{"nodes":[{"author":{"login":"coderabbitai"},"body":"First finding"}]}},{"id":"RT2","isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"},"body":"Second finding"}]}}]}'
+actual="$(check_unresolved_threads "1" "owner/repo" "coderabbitai")"
+run_test "unresolved_threads_mixed_resolved" "1" "$actual"
+
+# test: [bot]-suffix login NOT matched (gate strips suffix; bare login is required)
+# Passing "coderabbitai[bot]" should NOT match GraphQL "coderabbitai" — returns 0.
+export MOCK_GH_OUTPUT='{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"},"body":"Blocking issue"}]}}]}'
+actual="$(check_unresolved_threads "1" "owner/repo" "coderabbitai[bot]")"
+run_test "unresolved_threads_bot_suffix_no_match" "0" "$actual"
+
+# test: GraphQL API failure (exit 1 from gh) — function should return exit 3
+export MOCK_GH_EXIT=1
+actual_exit=0
+check_unresolved_threads "1" "owner/repo" "coderabbitai" > /dev/null 2>&1 || actual_exit=$?
+run_test "unresolved_threads_graphql_failure_exit3" "3" "$actual_exit"
+unset MOCK_GH_EXIT
 
 # ---------------------------------------------------------------------------
 # Summary

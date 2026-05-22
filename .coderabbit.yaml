@@ -5,7 +5,11 @@
 #
 # This repository is configured for External PR reviewer mode (Path B):
 # - review.platforms includes "coderabbit" in .ai-dev-workflow.yaml
+# - review.phase_after_clean marks CodeRabbit as the post-PR-Agent-clean
+#   measurement phase
 # - auto PR reviews are enabled below
+# - draft PR reviews remain disabled, so CodeRabbit starts only after the
+#   workflow converts a PR to non-draft
 #
 # To switch back to CLI-only mode (Path A):
 #   1. Set reviews.auto_review.enabled to false below
@@ -35,3 +39,6 @@ reviews:
   # This prevents scope inflation where CodeRabbit flags unrelated files and
   # causes agents to make unintended edits that increase PR diff size and risk.
   changed_files_only: true
+  path_instructions:
+    - path: "**/*.sh"
+      instructions: "Do not report on docstring coverage. Bash and shell scripts have no formal docstring standard; skip any docstring-coverage warnings for these files."

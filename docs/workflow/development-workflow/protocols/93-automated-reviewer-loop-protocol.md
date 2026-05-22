@@ -531,91 +531,49 @@ When a reviewer flags a specific literal value — a numeric constant, hex value
 
 This rule applies to any value type: version numbers, timeout values, port numbers, hex color codes, string constants, label names, section headers, or any other repeated literal. If a reviewer flags one instance, treat it as a signal to fix all instances — the reviewer will check all occurrences on the next cycle and finding any remaining instance resets the review loop.
 
-### PR-Agent "Possible Issue" evaluation step
+### After-clean reviewer phase
 
-When `pr-review-loop.sh` returns `RESULT=clean` and the output contains
-`PR_AGENT_POSSIBLE_ISSUE_EVAL`, PR-Agent classified the PR as `clean` but the review
-comment contained at least one "Possible Issue" advisory label. The orchestrator must
-dispatch a code-reviewer agent to evaluate the finding before declaring the loop result
-final. `RESULT=needs_rerun` (exit code 3) is a separate follow-up signal emitted only
-after the code-reviewer agent pushed a fix (i.e., `POSSIBLE_ISSUE_EVAL_OUTCOME=fix_pushed`
-is passed to a re-invocation).
+Repositories may list one or more platforms under `review.phase_after_clean` in
+`.ai-dev-workflow.yaml`. These platforms remain in `review.platforms`, but
+`pr-review-loop.sh` treats them as a measured second phase and emits:
 
-#### When this step triggers
+- `PHASE_AFTER_CLEAN_ENABLED=1`
+- `PHASE_AFTER_CLEAN_PLATFORM_LIST=<platforms>`
+- `PHASE_AFTER_CLEAN_FILTERED_OUT=<platforms>` when phase platforms are configured
+  but absent from the active invocation
+- `PHASE_AFTER_CLEAN_STARTED=0|1`
+- `PHASE_AFTER_CLEAN_GATE_RESULT=<result>` when the after-clean phase starts
+- `PHASE_AFTER_CLEAN_SKIP_REASON=<result>` when the after-clean phase never starts
+- `PHASE_AFTER_CLEAN_NET_NEW_BLOCKER=0|1`
+- `PHASE_AFTER_CLEAN_BLOCKING_PLATFORM=<platform>` when applicable
 
-`PR_AGENT_POSSIBLE_ISSUE_EVAL` is emitted (with `RESULT=clean`) when all of the
-following are true on the first pass:
+For this template, `coderabbit` is the after-clean platform. Keep implementation
+PRs as drafts while the PR-Agent-only gate runs, then convert the PR to non-draft
+and run the full configured loop. Because `.coderabbit.yaml` sets
+`reviews.auto_review.drafts: false`, this prevents CodeRabbit from starting
+before PR-Agent has reached `clean`.
 
-- The `pr-agent` platform is configured and ran for this PR.
-- PR-Agent's comment classified as `clean` (no hard-blocker labels).
-- The comment contained at least one `Possible Issue` advisory label (case-insensitive).
-- `POSSIBLE_ISSUE_EVAL_OUTCOME` is empty or `unavailable` (first-pass, before the
-  orchestrator sets an outcome).
+Use `PHASE_AFTER_CLEAN_NET_NEW_BLOCKER` as the primary value signal:
 
-`RESULT=needs_rerun` (exit code 3) is emitted on a re-invocation when
-`POSSIBLE_ISSUE_EVAL_OUTCOME=fix_pushed` is set in the environment.
+- `0` means the after-clean reviewer did not find a blocker after PR-Agent was
+  already clean.
+- `1` means the after-clean reviewer found net-new blocking feedback that the
+  pre-clean phase missed.
 
-#### Orchestrator dispatch contract
+This signal is for tool-evaluation and graduation decisions. It does not weaken
+the normal merge gates: any net-new blocker still follows the standard
+`needs_fixes` loop.
 
-When `pr-review-loop.sh` exits with `RESULT=clean` and includes `PR_AGENT_POSSIBLE_ISSUE_EVAL` in the output:
+### PR-Agent "Possible Issue" advisory labels
 
-1. **Read the structured keys** from the script output:
-   - `PR_AGENT_POSSIBLE_ISSUE_EVAL` — format: `<pr_number>@@@<branch_name>`
-   - `PR_AGENT_POSSIBLE_ISSUE_BODY` — the full PR-Agent comment body (newlines
-     escaped; use `kv_value` to extract, then unescape `\n` and `\t` before passing
-     to the agent)
+When `pr-review-loop.sh` returns `RESULT=clean` and the output contains an
+`ADVISORY_LABELS` key with `Possible Issue` entries, PR-Agent flagged advisory
+concerns but no hard-blocker labels. **No orchestrator action is required.**
 
-2. **Dispatch the `code-reviewer` agent** (or invoke inline if the finding is
-   mechanical) with:
-   - The PR number and branch
-   - The PR-Agent comment body (the full finding text)
-   - The PR diff (via `gh pr diff <pr_number>`) for context
-   - The following instruction:
-     > Determine whether the PR-Agent finding describes a real bug or an acceptable
-     > advisory concern. If it is a real bug, push a fix commit to the PR branch.
-     > If it is acceptable, post a substantive acknowledgment comment on the PR
-     > explaining the reasoning (do not just say "acknowledged"). Do not push a
-     > commit if the finding is not actionable.
-
-3. **After the agent finishes**, set `POSSIBLE_ISSUE_EVAL_OUTCOME` and re-invoke
-   `pr-review-loop.sh`:
-   - Agent pushed a fix commit → `POSSIBLE_ISSUE_EVAL_OUTCOME=fix_pushed`:
-     ```bash
-     POSSIBLE_ISSUE_EVAL_OUTCOME=fix_pushed \
-       ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>
-     ```
-     The script emits `RESULT=needs_rerun` and exits 3. The orchestrator then
-     does a full fresh re-run **without** `POSSIBLE_ISSUE_EVAL_OUTCOME` set, so
-     the new HEAD is checked from scratch.
-   - Agent posted an acknowledgment → `POSSIBLE_ISSUE_EVAL_OUTCOME=acknowledged`:
-     ```bash
-     POSSIBLE_ISSUE_EVAL_OUTCOME=acknowledged \
-       ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>
-     ```
-   - Agent is unavailable or timed out → `POSSIBLE_ISSUE_EVAL_OUTCOME=unavailable`:
-     ```bash
-     POSSIBLE_ISSUE_EVAL_OUTCOME=unavailable \
-       ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>
-     ```
-
-4. **On the re-invocation** with `acknowledged` or `unavailable`, the script reads
-   `POSSIBLE_ISSUE_EVAL_OUTCOME` from the environment, emits `RESULT=clean`, and
-   exits 0. For `unavailable`, it also logs a warning to stderr and preserves the
-   advisory label in the loop summary. For `fix_pushed`, the script exits 3
-   (`RESULT=needs_rerun`) — the orchestrator then re-runs the loop completely fresh.
-
-#### Retry limits
-
-The `needs_rerun` exit from `pr-review-loop.sh` is **not** counted against the
-orchestrator's `cycle` counter — it is a pre-`clean` evaluation step, not a
-`needs_fixes` fixer dispatch. However, if the agent evaluation itself finds a bug and
-pushes a fix (`fix_pushed`), that subsequent full loop re-run is counted normally.
-
-#### Fallback behavior
-
-If `POSSIBLE_ISSUE_EVAL_OUTCOME` is empty or `unavailable`, the script logs a warning
-to stderr and exits 0 with `RESULT=clean`. The advisory label is still present in the
-loop summary output. The loop does not block indefinitely on agent unavailability.
+`Possible Issue` findings are automatically acknowledged by the script and the loop
+exits clean. The advisory label is recorded in `ADVISORY_LABELS`. Do not dispatch a
+code-reviewer agent or re-invoke the loop because of these labels. Continue to record
+advisory dispositions in the post-clean summary flow defined below.
 
 ---
 

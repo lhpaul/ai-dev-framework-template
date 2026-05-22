@@ -25,6 +25,7 @@ When your change creates or materially modifies `.github/workflows/*.yml`, compl
 - Pin all `uses:` references to a full commit SHA, with the pinned version tag noted in an adjacent comment (for example: `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2`)
 - Add `paths:` / `paths-ignore:` filters when the workflow only needs to run for specific files or directories
 - Add a `concurrency` group when duplicate runs on the same ref should be prevented
+- **Fork-PR guard (mandatory for any step that writes to the repository)**: every step that mutates repository state — adding or removing labels, posting comments, creating deployments or releases, writing status checks or check runs, or triggering other workflows via `GITHUB_TOKEN` — must include an `if:` condition that restricts execution to PRs originating from the same repository. Use `if: github.event.pull_request.head.repo.full_name == github.repository` or an equivalent fork-origin check. Without this guard, a fork-originated PR can trigger label changes or other write operations on the base repository. Exception: jobs or steps that run on `push` (not `pull_request`) events, or that are already scoped to protected branches, are exempt because fork PRs cannot trigger `push` workflows on the base repo.
 
 ---
 
