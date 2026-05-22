@@ -2596,20 +2596,22 @@ run_coderabbit_review() {
 
         # --- Incomplete-review guard before no_review clean exit ---
         # If a CodeRabbit rate-limit comment OR a "Reviews paused" banner is still
-        # active (posted since since_iso), CodeRabbit has not completed its review.
-        # Returning clean here would be a false-clean. Instead, escalate so the
-        # caller knows CodeRabbit was still rate-limited or paused when the poll
-        # window ended. This covers both the case where retries were exhausted and
-        # the case where the poll window ended mid-retry (e.g. elapsed >= max_wait
+        # active (posted or edited since since_iso), CodeRabbit has not completed
+        # its review. Returning clean here would be a false-clean. Instead, escalate
+        # so the caller knows CodeRabbit was still rate-limited or paused when the
+        # poll window ended. This covers both the case where retries were exhausted
+        # and the case where the poll window ended mid-retry (e.g. elapsed >= max_wait
         # before the retry could fire), and the case where only a pause banner
-        # (without a rate-limit comment) caused the no-review outcome.
+        # (without a rate-limit comment) caused the no-review outcome. Note: CodeRabbit
+        # sometimes signals rate-limits by editing its existing walkthrough comment
+        # rather than posting a new one, so we check both created_at and updated_at.
         local timeout_incomplete_count
         timeout_incomplete_count="$(
           gh api "repos/$repo/issues/$pr_number/comments" --paginate \
             | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
                 [.[].[] | select(
                     .user.login == $bot and
-                    .created_at > $since and
+                    (.created_at > $since or .updated_at > $since) and
                     (
                       ((.body // "") | test("rate.?limit"; "i")) or
                       ((.body // "") | test("Reviews paused|review paused"; "i"))
