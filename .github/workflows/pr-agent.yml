@@ -8,10 +8,12 @@ on:
 
 jobs:
   pr_agent_job:
-    # For pull_request events: always run, including bot-authored PRs (Dependabot, Renovate).
+    # For pull_request events: only run for PRs from the same repository (not forks),
+    # including bot-authored PRs (Dependabot, Renovate). Fork PRs use read-only GITHUB_TOKEN
+    # that cannot post comments, so excluding them prevents spurious auth failures.
     # For issue_comment events: only run when a human comments on a PR (not an issue),
     # preventing PR-Agent from triggering itself when it posts its own review comment.
-    if: ${{ github.event_name == 'pull_request' || (github.event.sender.type != 'Bot' && github.event.issue.pull_request) }}
+    if: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event.sender.type != 'Bot' && github.event.issue.pull_request) }}
     runs-on: ubuntu-latest
     permissions:
       issues: write

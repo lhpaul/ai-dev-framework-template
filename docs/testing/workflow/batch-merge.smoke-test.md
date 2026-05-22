@@ -90,7 +90,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 **Expected result**:
 
 - PR D is included in the candidate list with a "not fully reviewed" notation.
-- The command proceeds to the confirmation step.
+- The command prints the merge plan and proceeds immediately without an interactive confirmation step.
 
 ---
 

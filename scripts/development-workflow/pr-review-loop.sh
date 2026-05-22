@@ -207,9 +207,13 @@ Outputs stable key=value lines including:
   LATE_THREADS_FOUND=<N> (count of newly-found unresolved threads; -1 on audit failure; 0 when POST_CLEAN_RECHECK=0)
 
 Environment variables:
-  POST_CLEAN_WAIT=<seconds>     Override the post-clean recheck wait (default: 30). Set to 0 to run immediately.
-  SKIP_POST_CLEAN_RECHECK=1     Suppress the post-clean recheck. Set by callers re-dispatching after a prior
-                                late-thread fix cycle, so the corrective invocation does not recheck again.
+  POST_CLEAN_WAIT=<seconds>          Override the post-clean recheck wait (default: 30). Set to 0 to run immediately.
+  SKIP_POST_CLEAN_RECHECK=1          Suppress the post-clean recheck. Set by callers re-dispatching after a prior
+                                     late-thread fix cycle, so the corrective invocation does not recheck again.
+  FALLBACK_THREAD_SETTLE_WAIT=<sec>  Seconds to wait before running the thread audit when using
+                                     coderabbit_status_success_fallback (default: 60). CodeRabbit can set a
+                                     SUCCESS commit status before finishing its async inline-thread posting; this
+                                     wait lets those threads arrive so the audit does not produce a false-clean.
 EOF
 }
 
@@ -2443,6 +2447,14 @@ run_coderabbit_review() {
           # SUCCESS status can appear while older CodeRabbit review threads stay unresolved
           # on the PR. Do not short-circuit to clean until GraphQL thread audit passes —
           # same pattern as the timeout SUCCESS fallback below.
+          # Wait before the audit: CodeRabbit may set SUCCESS while still posting inline
+          # threads asynchronously. FALLBACK_THREAD_SETTLE_WAIT (default 60s) gives those
+          # threads time to arrive so the audit does not return a false-clean count.
+          local fallback_settle_wait="${FALLBACK_THREAD_SETTLE_WAIT:-60}"
+          if [ "$fallback_settle_wait" -gt 0 ]; then
+            echo "INFO: coderabbit_status_success_fallback — waiting ${fallback_settle_wait}s for async threads to settle before thread audit" >&2
+            _interruptible_sleep "$fallback_settle_wait"
+          fi
           local cr_early_gate_rc
           coderabbit_thread_gate_clean "$pr_number" "$repo" "$bot_login" "$branch_name"
           cr_early_gate_rc=$?
@@ -2506,6 +2518,14 @@ run_coderabbit_review() {
         if [ "${coderabbit_success_status_count:-0}" -gt 0 ]; then
           # SUCCESS status can appear while older CodeRabbit review threads stay unresolved
           # on the PR. Do not short-circuit to clean until GraphQL thread audit passes.
+          # Wait before the audit: CodeRabbit may set SUCCESS while still posting inline
+          # threads asynchronously. FALLBACK_THREAD_SETTLE_WAIT (default 60s) gives those
+          # threads time to arrive so the audit does not return a false-clean count.
+          local fallback_settle_wait_timeout="${FALLBACK_THREAD_SETTLE_WAIT:-60}"
+          if [ "$fallback_settle_wait_timeout" -gt 0 ]; then
+            echo "INFO: coderabbit_status_success_fallback — waiting ${fallback_settle_wait_timeout}s for async threads to settle before thread audit" >&2
+            _interruptible_sleep "$fallback_settle_wait_timeout"
+          fi
           coderabbit_thread_gate_clean "$pr_number" "$repo" "$bot_login" "$branch_name"
           cr_success_gate_rc=$?
           if [ "$cr_success_gate_rc" -eq 0 ]; then
@@ -2880,8 +2900,8 @@ check_unresolved_threads() {
     done < <(printf '%s\n' "$result" | jq -c '.nodes[]')
 
     if [ "$has_next_page" = "true" ] && [ -z "$cursor" ]; then
-      echo "WARN: check_unresolved_threads: hasNextPage=true but endCursor is empty for PR #$pr_number — returning partial results" >&2
-      break
+      echo "WARN: check_unresolved_threads: hasNextPage=true but endCursor is empty for PR #$pr_number; cannot confirm all threads checked" >&2
+      return 2
     fi
   done
 
@@ -3731,6 +3751,7 @@ _post_review_summary() {
   local phase_started="${10:-0}"
   local phase_net_new_blocker="${11:-0}"
   local phase_blocking_platform="${12:-}"
+  local pre_after_clean_only_mode="${13:-0}"
 
   if [ -z "$pr_number" ]; then
     return 0
@@ -3873,6 +3894,8 @@ Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs afte
       else
         _phase_value_line="No net-new blocker was found after the PR-Agent-clean gate."
       fi
+    elif [ "$pre_after_clean_only_mode" -eq 1 ]; then
+      _phase_value_line="After-clean phase was not run — invoked in pre-after-clean-only mode."
     else
       _phase_value_line="After-clean phase was not reached because an earlier platform did not exit clean."
     fi
@@ -3956,7 +3979,7 @@ case "$aggregate_result" in
       "$aggregate_possible_issue_eval_outcome" \
       "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
       "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
-      "$phase_after_clean_blocking_platform"
+      "$phase_after_clean_blocking_platform" "$pre_after_clean_only"
     exit 0
     ;;
   skipped)
@@ -3971,7 +3994,7 @@ case "$aggregate_result" in
         "$aggregate_possible_issue_eval_outcome" \
         "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
         "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
-        "$phase_after_clean_blocking_platform"
+        "$phase_after_clean_blocking_platform" "$pre_after_clean_only"
     fi
     exit 1
     ;;
@@ -3990,7 +4013,7 @@ case "$aggregate_result" in
       "$aggregate_possible_issue_eval_outcome" \
       "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
       "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
-      "$phase_after_clean_blocking_platform"
+      "$phase_after_clean_blocking_platform" "$pre_after_clean_only"
     exit 2
     ;;
   *)

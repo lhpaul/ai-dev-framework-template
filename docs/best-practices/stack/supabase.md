@@ -112,7 +112,7 @@ This is the auditing step:
 - Cross-reference against the migration that introduced the column to check for a `CHECK` constraint.
 - If one is found, add the narrowing override before the PR is merged.
 
-Make this part of your migration review checklist — see `docs/project/4-database-model.md` for your
+Make this part of your migration review checklist — see [docs/project/4-database-model.md](../../project/4-database-model.md) for your
 project's migration process.
 
 ### Alternative: Zod Schema as Source of Truth (Option B)
