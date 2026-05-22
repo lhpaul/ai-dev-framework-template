@@ -2230,7 +2230,22 @@ run_coderabbit_review() {
       since_iso="$phase0_resume_since_iso"
       echo "INFO: @coderabbitai resume posted; since_iso reset to $since_iso" >&2
     else
-      echo "WARN: failed to post @coderabbitai resume — will rely on Phase 2 detection" >&2
+      # The resume post failed while CodeRabbit is still paused. If we proceed without
+      # resetting since_iso, the timeout guard at the end of the poll loop may miss the
+      # old pause banner (its timestamp predates since_iso) and fall through to a false-
+      # clean RESULT=skipped/REASON=no_review. Escalate immediately instead.
+      echo "ERROR: failed to post @coderabbitai resume for pre-existing pause banner — escalating to avoid false-clean no_review exit" >&2
+      print_kv RESULT escalate
+      print_kv REASON rate_limit_max_retries
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 2
     fi
   fi
 
@@ -2283,8 +2298,9 @@ run_coderabbit_review() {
     # Also check for CodeRabbit issue comments (summary comment) as activity signal.
     # Filter by since_iso so historical comments from prior pushes do not incorrectly
     # mark this HEAD cycle as having activity (which would suppress stale-findings recovery).
-    # Exclude "Reviews paused" comments (pause marker) and "rate limit" comments (rate-limit
-    # marker) — neither represents a completed review and must not suppress rate-limit handling.
+    # Exclude "Reviews paused" comments (pause marker), "rate limit" comments (rate-limit
+    # marker), and "Reviews resumed" acknowledgement comments — none of these represent a
+    # completed review and must not trigger an early break from the poll loop.
     if [ "$coderabbit_any_activity" -eq 0 ]; then
       local activity_count
       activity_count="$(
@@ -2294,7 +2310,8 @@ run_coderabbit_review() {
                   .user.login == $bot and
                   .created_at > $since and
                   ((.body // "") | test("Reviews paused|review paused"; "i") | not) and
-                  ((.body // "") | test("rate.?limit"; "i") | not)
+                  ((.body // "") | test("rate.?limit"; "i") | not) and
+                  ((.body // "") | test("reviews resumed"; "i") | not)
               )] | length
             '
       )"
