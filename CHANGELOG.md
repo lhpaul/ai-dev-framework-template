@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`.coderabbit.yaml`: suppress docstring-coverage false positive on shell scripts** (#700): adds a `path_instructions` entry for `**/*.sh` telling CodeRabbit to skip docstring-coverage warnings. Bash and shell scripts have no formal docstring standard, so the "Docstring Coverage 0% (threshold 80%)" warning was a persistent false positive on every `.sh`-touching PR.
+
 - **`pr-review-loop.sh`: fix `timeout_incomplete_count` missing rate-limit edits to walkthrough comment** (#696): the `timeout_incomplete_count` guard filtered CodeRabbit comments using only `created_at > $since`, missing the case where CodeRabbit signals a rate limit by editing its existing persistent walkthrough comment (whose `created_at` is old). The filter now uses `(.created_at > $since or .updated_at > $since)` so recently-edited rate-limit or "Reviews paused" banners are detected and the guard correctly escalates instead of falling through to a false-clean `RESULT=skipped/REASON=no_review` exit.
 
 - **Retrospective protocol: remove `workflow` label from upstream issue filing in Step 3e** (#690): `gh issue create` in Step 3e no longer passes `--label "workflow"`, and the preceding `gh label create "workflow"` step is removed. Both caused permission errors for users without collaborator access to the template repository.
