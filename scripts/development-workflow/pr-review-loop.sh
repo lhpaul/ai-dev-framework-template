@@ -118,7 +118,7 @@ _interruptible_sleep() {
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github] [--phase-after-clean coderabbit] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
 triggering a new review, each platform checks for existing blocking findings. If
@@ -144,6 +144,18 @@ REASON=lock_contention and exits 75 (EX_TEMPFAIL).
   COMPARE_VERDICT_<n>_RESULT key=value lines, and one row is appended to
   docs/workflow/retro-metrics-platforms.md. Intended for platform evaluation only —
   not for normal orchestration where early exit is desired.
+
+--phase-after-clean:
+  Mark one or more platforms as second-phase reviewers that should run only after
+  earlier platforms are clean. This does not override normal platform order; it
+  emits PHASE_AFTER_CLEAN_* key=value telemetry and annotates the summary so the
+  value of the second-phase reviewer can be measured. When omitted, the script
+  reads review.phase_after_clean from .ai-dev-workflow.yaml when present.
+
+--pre-after-clean-only:
+  Run only the configured platforms that are not listed in phase-after-clean.
+  Use this for draft PR gates that must clear all pre-after-clean reviewers before
+  converting the PR to non-draft and allowing after-clean reviewers to run.
 
 Platform selection (in priority order):
   1. --platform flag(s) passed on the command line
@@ -184,6 +196,13 @@ Outputs stable key=value lines including:
   REASON=late_review_threads (when post-clean recheck finds new unresolved threads)
   COMPARE_MODE=1 (when --compare is active)
   COMPARE_VERDICT_<n>_PLATFORM / COMPARE_VERDICT_<n>_RESULT (when --compare is active)
+  PHASE_AFTER_CLEAN_ENABLED=0|1
+  PHASE_AFTER_CLEAN_STARTED=0|1
+  PHASE_AFTER_CLEAN_PLATFORM_LIST=<comma-separated platforms>
+  PHASE_AFTER_CLEAN_FILTERED_OUT=<comma-separated platforms> (when configured phase platforms are absent from this invocation)
+  PHASE_AFTER_CLEAN_GATE_RESULT=<result> (emitted only after the phase starts)
+  PHASE_AFTER_CLEAN_SKIP_REASON=<result> (emitted when the phase never starts)
+  PHASE_AFTER_CLEAN_NET_NEW_BLOCKER=0|1 (1 when a second-phase platform blocks)
   POST_CLEAN_RECHECK=0|1 (1 when the post-clean wait-and-recheck ran)
   LATE_THREADS_FOUND=<N> (count of newly-found unresolved threads; -1 on audit failure; 0 when POST_CLEAN_RECHECK=0)
 
@@ -209,6 +228,73 @@ append_platforms() {
     entry="$(trim "$entry")"
     [ -n "$entry" ] && platforms+=("$entry")
   done
+}
+
+append_phase_after_clean_platforms() {
+  local raw="$1"
+  local entry
+  IFS=',' read -r -a entries <<< "$raw"
+  for entry in "${entries[@]}"; do
+    entry="$(trim "$entry")"
+    [ -n "$entry" ] && phase_after_clean_platforms+=("$entry")
+  done
+}
+
+array_contains_value() {
+  local needle="$1"
+  shift
+  local value
+  for value in "$@"; do
+    [ "$needle" = "$value" ] && return 0
+  done
+  return 1
+}
+
+is_phase_after_clean_platform() {
+  local candidate="$1"
+  array_contains_value "$candidate" "${phase_after_clean_platforms[@]:-}"
+}
+
+filter_pre_after_clean_platforms() {
+  local configured_platform
+  declare -a filtered=()
+  for configured_platform in "${platforms[@]:-}"; do
+    if ! is_phase_after_clean_platform "$configured_platform"; then
+      filtered+=("$configured_platform")
+    fi
+  done
+  if [ "${#filtered[@]}" -gt 0 ]; then
+    platforms=("${filtered[@]}")
+  else
+    platforms=()
+  fi
+}
+
+filter_phase_after_clean_platforms() {
+  local phase_platform configured_platform matched
+  declare -a filtered=()
+  declare -a filtered_out=()
+  for phase_platform in "${phase_after_clean_platforms[@]:-}"; do
+    matched=0
+    for configured_platform in "${platforms[@]:-}"; do
+      if [ "$phase_platform" = "$configured_platform" ]; then
+        filtered+=("$phase_platform")
+        matched=1
+        break
+      fi
+    done
+    [ "$matched" -eq 0 ] && filtered_out+=("$phase_platform")
+  done
+  if [ "${#filtered[@]}" -gt 0 ]; then
+    phase_after_clean_platforms=("${filtered[@]}")
+  else
+    phase_after_clean_platforms=()
+  fi
+  if [ "${#filtered_out[@]}" -gt 0 ]; then
+    phase_after_clean_filtered_out="$(IFS=,; printf '%s' "${filtered_out[*]}")"
+  else
+    phase_after_clean_filtered_out=""
+  fi
 }
 
 kv_value() {
@@ -1257,57 +1343,27 @@ _EXTRACT_POSSIBLE_ISSUE_LABELS_
   }
 
   # Evaluate "Possible Issue" advisory labels found in a PR-Agent clean result.
-  # Reads POSSIBLE_ISSUE_EVAL_OUTCOME from environment (set by orchestrator caller).
+  # "Possible Issue" findings are always treated as acknowledged without dispatching
+  # a code-reviewer agent. In practice these findings have never been real blockers
+  # for this repo type; the dispatch loop caused fix-round spirals (issue #511 pattern).
   # Returns:
-  #   0  — no "Possible Issue" label found (short-circuit), OR
-  #         finding acknowledged, OR agent unavailable (advisory-only fallback)
-  #   3  — fix was pushed; caller must re-run the loop on the new HEAD
+  #   0  — always (no "Possible Issue" label found, or finding acknowledged immediately)
   run_pr_agent_possible_issue_evaluation() {
     local advisory_labels="$1"  # pipe-delimited, already extracted from comment
-    local comment_body="$2"     # full PR-Agent comment body (for agent context)
-    local pr_number_eval="$3"
-    local branch_name_eval="$4"
+    # comment_body ($2), pr_number_eval ($3), branch_name_eval ($4) unused — kept for
+    # signature compatibility with the call site.
 
     local possible_issue_labels
     possible_issue_labels="$(_extract_possible_issue_labels "$advisory_labels")"
 
-    # Short-circuit: no "Possible Issue" advisory labels present.
+    # Short-circuit: no "Possible Issue" label present.
     if [ -z "$possible_issue_labels" ]; then
       return 0
     fi
 
-    # Read the eval outcome set by the orchestrator after code-reviewer agent finishes.
-    local eval_outcome="${POSSIBLE_ISSUE_EVAL_OUTCOME:-}"
-
-    case "$eval_outcome" in
-      fix_pushed)
-        # A fix was pushed; the orchestrator must re-run the loop on the new HEAD
-        # to confirm the finding is resolved. Exit 3 signals this to the caller.
-        print_kv POSSIBLE_ISSUE_EVAL_OUTCOME "fix_pushed"
-        return 3  # sentinel: orchestrator must re-run the loop from the top
-        ;;
-      acknowledged)
-        print_kv POSSIBLE_ISSUE_EVAL_OUTCOME "acknowledged"
-        return 0
-        ;;
-      unavailable|"")
-        # No outcome set (first pass, before orchestrator dispatches code-reviewer)
-        # or agent is unavailable. Emit structured keys ONLY here so the orchestrator
-        # can read them and dispatch; fall back to advisory-only (clean) here.
-        # Keys are NOT emitted for fix_pushed/acknowledged re-invocations, which
-        # avoids ambiguous re-dispatch signals to the orchestrator.
-        print_kv PR_AGENT_POSSIBLE_ISSUE_EVAL "${pr_number_eval}@@@${branch_name_eval}"
-        print_kv_escaped PR_AGENT_POSSIBLE_ISSUE_BODY "$comment_body"
-        echo "WARN: code-reviewer agent unavailable or eval outcome not set for 'Possible Issue' finding — falling back to advisory-only (clean)" >&2
-        print_kv POSSIBLE_ISSUE_EVAL_OUTCOME "unavailable"
-        return 0
-        ;;
-      *)
-        echo "WARN: unknown POSSIBLE_ISSUE_EVAL_OUTCOME '${eval_outcome}' — falling back to advisory-only (clean)" >&2
-        print_kv POSSIBLE_ISSUE_EVAL_OUTCOME "unavailable"
-        return 0
-        ;;
-    esac
+    # Always acknowledge immediately — do not dispatch a code-reviewer agent.
+    print_kv POSSIBLE_ISSUE_EVAL_OUTCOME "acknowledged"
+    return 0
   }
 
   _pr_agent_classify() {
@@ -3010,7 +3066,10 @@ max_wait=1200
 max_wait_explicit=0
 post_final_summary=0
 compare_mode=0
+pre_after_clean_only=0
 declare -a platforms=()
+declare -a phase_after_clean_platforms=()
+phase_after_clean_filtered_out=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -3021,6 +3080,14 @@ while [ "$#" -gt 0 ]; do
     --platform)
       append_platforms "$2"
       shift 2
+      ;;
+    --phase-after-clean)
+      append_phase_after_clean_platforms "$2"
+      shift 2
+      ;;
+    --pre-after-clean-only)
+      pre_after_clean_only=1
+      shift
       ;;
     --poll-interval)
       poll_interval="$2"
@@ -3073,6 +3140,21 @@ if [ "${#platforms[@]}" -eq 0 ]; then
     done < <(workflow_config_review_platforms "$config_file")
   fi
 fi
+
+if [ "${#phase_after_clean_platforms[@]}" -eq 0 ]; then
+  config_file="${config_file:-$(workflow_config_file)}"
+  if workflow_config_exists; then
+    while IFS= read -r line; do
+      line="$(trim "$line")"
+      [ -n "$line" ] && phase_after_clean_platforms+=("$line")
+    done < <(workflow_config_review_phase_after_clean_platforms "$config_file")
+  fi
+fi
+
+if [ "$pre_after_clean_only" -eq 1 ]; then
+  filter_pre_after_clean_platforms
+fi
+filter_phase_after_clean_platforms
 
 if [ "${#platforms[@]}" -gt 0 ]; then
   require_gh
@@ -3167,6 +3249,15 @@ compare_first_blocking_result=""
 compare_first_blocking_reason=""
 compare_first_blocking_output=""
 compare_first_blocking_status=0
+phase_after_clean_enabled=0
+phase_after_clean_started=0
+phase_after_clean_net_new_blocker=0
+phase_after_clean_blocking_platform=""
+phase_after_clean_gate_result="not_started"
+phase_after_clean_skip_reason=""
+if [ "${#phase_after_clean_platforms[@]}" -gt 0 ]; then
+  phase_after_clean_enabled=1
+fi
 
 print_kv PR_NUMBER "$pr_number"
 print_kv BRANCH "$branch_name"
@@ -3174,12 +3265,27 @@ print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
 print_kv PLATFORM_COUNT "${#platforms[@]}"
 # So callers can verify config was respected (e.g. no greptile when only devin is in .ai-dev-workflow.yaml)
 print_kv PLATFORM_LIST "$(IFS=,; printf '%s' "${platforms[*]}")"
+print_kv PRE_AFTER_CLEAN_ONLY "$pre_after_clean_only"
+print_kv PHASE_AFTER_CLEAN_ENABLED "$phase_after_clean_enabled"
+[ -n "$phase_after_clean_filtered_out" ] && \
+  print_kv PHASE_AFTER_CLEAN_FILTERED_OUT "$phase_after_clean_filtered_out"
+[ "$phase_after_clean_enabled" -eq 1 ] && \
+  print_kv PHASE_AFTER_CLEAN_PLATFORM_LIST "$(IFS=,; printf '%s' "${phase_after_clean_platforms[*]}")"
 print_kv CHANGED_FILES_COUNT "${changed_files_count:--1}"
 [ "$large_diff_extended" -eq 1 ] && print_kv LARGE_DIFF_EXTENDED 1
 
 for index in "${!platforms[@]}"; do
   platform_index=$((index + 1))
   platform_name="${platforms[$index]}"
+
+  if [ "$phase_after_clean_enabled" -eq 1 ] \
+      && [ "$phase_after_clean_started" -eq 0 ] \
+      && is_phase_after_clean_platform "$platform_name"; then
+    if [ "$compare_mode" -eq 0 ] || [ -z "$compare_first_blocking_result" ]; then
+      phase_after_clean_started=1
+      phase_after_clean_gate_result="clean"
+    fi
+  fi
 
   set +e
   platform_output="$(run_platform_review "$platform_name" "$pr_number" "$branch_name" "$poll_interval" "$max_wait")"
@@ -3231,6 +3337,12 @@ for index in "${!platforms[@]}"; do
       aggregate_result="clean"
       ;;
     needs_fixes|escalate)
+      if [ "$phase_after_clean_enabled" -eq 1 ] \
+          && [ "$phase_after_clean_started" -eq 1 ] \
+          && is_phase_after_clean_platform "$platform_name"; then
+        phase_after_clean_net_new_blocker=1
+        phase_after_clean_blocking_platform="$platform_name"
+      fi
       aggregate_result="$platform_result"
       aggregate_reason="$(kv_value_default REASON "$platform_output" "")"
       aggregate_output="$platform_output"
@@ -3399,6 +3511,10 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
   if [ "$unresolved_thread_count" -gt 0 ]; then
     aggregate_result="needs_fixes"
     aggregate_reason="unresolved_review_threads"
+    if [ "$phase_after_clean_enabled" -eq 1 ] && [ "$phase_after_clean_started" -eq 1 ]; then
+      phase_after_clean_net_new_blocker=1
+      phase_after_clean_blocking_platform="${phase_after_clean_blocking_platform:-review_threads}"
+    fi
     # Increment total_blocking_count so BLOCKING_COUNT reflects the unresolved threads.
     # No BLOCKING_N_* entries are emitted for thread findings — callers must use
     # REASON=unresolved_review_threads and UNRESOLVED_THREAD_COUNT to handle this case.
@@ -3463,6 +3579,10 @@ if [ "$aggregate_result" = "clean" ] \
       echo "INFO: post-clean recheck — found $late_thread_count late unresolved thread(s); switching to needs_fixes" >&2
       aggregate_result="needs_fixes"
       aggregate_reason="late_review_threads"
+      if [ "$phase_after_clean_enabled" -eq 1 ] && [ "$phase_after_clean_started" -eq 1 ]; then
+        phase_after_clean_net_new_blocker=1
+        phase_after_clean_blocking_platform="${phase_after_clean_blocking_platform:-late_review_threads}"
+      fi
       total_blocking_count=$((total_blocking_count + late_thread_count))
     else
       echo "INFO: post-clean recheck — no late threads found; result remains clean" >&2
@@ -3474,6 +3594,21 @@ else
   # Emit LATE_THREADS_FOUND=0 on skipped paths so consumers can always rely on
   # the field being present, regardless of whether the recheck ran.
   print_kv LATE_THREADS_FOUND 0
+fi
+
+if [ "$phase_after_clean_enabled" -eq 1 ] && [ "$phase_after_clean_started" -eq 0 ]; then
+  phase_after_clean_skip_reason="$aggregate_result"
+fi
+print_kv PHASE_AFTER_CLEAN_STARTED "$phase_after_clean_started"
+if [ "$phase_after_clean_enabled" -eq 1 ]; then
+  if [ "$phase_after_clean_started" -eq 1 ]; then
+    print_kv PHASE_AFTER_CLEAN_GATE_RESULT "$phase_after_clean_gate_result"
+  else
+    print_kv PHASE_AFTER_CLEAN_SKIP_REASON "$phase_after_clean_skip_reason"
+  fi
+  print_kv PHASE_AFTER_CLEAN_NET_NEW_BLOCKER "$phase_after_clean_net_new_blocker"
+  [ -n "$phase_after_clean_blocking_platform" ] && \
+    print_kv PHASE_AFTER_CLEAN_BLOCKING_PLATFORM "$phase_after_clean_blocking_platform"
 fi
 
 # Append compare-mode metrics row after the thread gate so the recorded
@@ -3525,6 +3660,11 @@ _post_review_summary() {
   local suggestions="$5"
   local advisory_labels="${6:-}"
   local possible_issue_eval_outcome="${7:-}"
+  local phase_enabled="${8:-0}"
+  local phase_platform_list="${9:-}"
+  local phase_started="${10:-0}"
+  local phase_net_new_blocker="${11:-0}"
+  local phase_blocking_platform="${12:-}"
 
   if [ -z "$pr_number" ]; then
     return 0
@@ -3591,7 +3731,7 @@ _ADVISORY_ENTRY_LINES_
       local _eval_note
       case "$possible_issue_eval_outcome" in
         acknowledged)
-          _eval_note="Evaluated by code-reviewer: acknowledged (finding is acceptable — loop proceeded clean)"
+          _eval_note="Auto-acknowledged: Possible Issue is advisory-only — loop proceeded clean"
           ;;
         fix_pushed)
           _eval_note="Evaluated by code-reviewer: fix pushed — loop re-ran on new HEAD"
@@ -3657,13 +3797,32 @@ Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs afte
     fi
   fi
 
+  local phase_section=""
+  if [ "$phase_enabled" -eq 1 ]; then
+    local _phase_value_line
+    local _phase_subject="${phase_platform_list:-after-clean reviewer}"
+    if [ "$phase_started" -eq 1 ]; then
+      if [ "$phase_net_new_blocker" -eq 1 ]; then
+        _phase_value_line="${_phase_subject} found a net-new blocker after the clean gate (${phase_blocking_platform:-unknown})."
+      else
+        _phase_value_line="No net-new blocker was found after the PR-Agent-clean gate."
+      fi
+    else
+      _phase_value_line="After-clean phase was not reached because an earlier platform did not exit clean."
+    fi
+    phase_section="
+
+**After-clean reviewer phase:** ${_phase_value_line}
+**After-clean platforms:** ${phase_platform_list:-none}"
+  fi
+
   local comment_body
   comment_body="$(cat <<EOF
 ### Automated Reviewer Loop Summary
 
 **Result:** ${result_line}
 **Platforms:** ${platform_list:-none}
-**Findings:** ${blocking} blocking, ${suggestions} suggestions${compare_section}${advisory_section}${regression_label_section}
+**Findings:** ${blocking} blocking, ${suggestions} suggestions${phase_section}${compare_section}${advisory_section}${regression_label_section}
 
 *Posted automatically by \`pr-review-loop.sh\`.*
 EOF
@@ -3716,6 +3875,11 @@ EOF
 }
 
 aggregate_possible_issue_eval_outcome="$(kv_value_default POSSIBLE_ISSUE_EVAL_OUTCOME "$aggregate_output" "")"
+if [ "${#phase_after_clean_platforms[@]}" -gt 0 ]; then
+  phase_after_clean_platform_list="$(IFS=,; printf '%s' "${phase_after_clean_platforms[*]}")"
+else
+  phase_after_clean_platform_list=""
+fi
 
 case "$aggregate_result" in
   clean)
@@ -3723,7 +3887,10 @@ case "$aggregate_result" in
       "$(IFS=,; printf '%s' "${platforms[*]}")" \
       "$total_blocking_count" "$total_suggestion_count" \
       "$aggregate_advisory_labels" \
-      "$aggregate_possible_issue_eval_outcome"
+      "$aggregate_possible_issue_eval_outcome" \
+      "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
+      "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
+      "$phase_after_clean_blocking_platform"
     exit 0
     ;;
   skipped)
@@ -3735,7 +3902,10 @@ case "$aggregate_result" in
         "$(IFS=,; printf '%s' "${platforms[*]}")" \
         "$total_blocking_count" "$total_suggestion_count" \
         "$aggregate_advisory_labels" \
-        "$aggregate_possible_issue_eval_outcome"
+        "$aggregate_possible_issue_eval_outcome" \
+        "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
+        "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
+        "$phase_after_clean_blocking_platform"
     fi
     exit 1
     ;;
@@ -3751,7 +3921,10 @@ case "$aggregate_result" in
       "$(IFS=,; printf '%s' "${platforms[*]}")" \
       "$total_blocking_count" "$total_suggestion_count" \
       "$aggregate_advisory_labels" \
-      "$aggregate_possible_issue_eval_outcome"
+      "$aggregate_possible_issue_eval_outcome" \
+      "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
+      "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
+      "$phase_after_clean_blocking_platform"
     exit 2
     ;;
   *)

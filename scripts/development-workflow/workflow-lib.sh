@@ -180,6 +180,52 @@ workflow_config_review_platforms() {
   ' "$config_file"
 }
 
+workflow_config_review_phase_after_clean_platforms() {
+  local config_file="${1:-$(workflow_config_file)}"
+
+  [ -f "$config_file" ] || return 0
+
+  awk '
+    function trim(value) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      gsub(/^["'"'"']|["'"'"']$/, "", value)
+      return value
+    }
+
+    /^review:[[:space:]]*(#.*)?$/ {
+      in_review = 1
+      in_phase = 0
+      next
+    }
+
+    in_review && /^[^[:space:]#].*:[[:space:]]*$/ {
+      in_review = 0
+      in_phase = 0
+    }
+
+    in_review && /^[[:space:]][[:space:]]phase_after_clean:[[:space:]]*(#.*)?$/ {
+      in_phase = 1
+      next
+    }
+
+    in_review && in_phase && /^[[:space:]][[:space:]][A-Za-z0-9_-]+:[[:space:]]*/ {
+      in_phase = 0
+    }
+
+    in_review && in_phase && /^[[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ {
+      line = $0
+      sub(/^[[:space:]]*-[[:space:]]*/, "", line)
+      sub(/[[:space:]]+#.*$/, "", line)
+      print trim(line)
+      next
+    }
+
+    in_review && in_phase && !/^[[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ && !/^[[:space:]]*#/ && !/^[[:space:]]*$/ {
+      in_phase = 0
+    }
+  ' "$config_file"
+}
+
 workflow_config_provider() {
   local section="$1"
   local config_file="${2:-$(workflow_config_file)}"

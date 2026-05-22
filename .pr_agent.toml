@@ -9,7 +9,7 @@
 model = "deepseek/deepseek-chat"
 fallback_models = ["deepseek/deepseek-chat"]
 # model_weak is used for ancillary tasks (PR description generation, classification,
-# file summaries). PR-Agent's built-in default is OpenAI's gpt-5.4 / gpt-5.4-mini,
+# file summaries). PR-Agent's built-in default is OpenAI's GPT-5.x family,
 # which causes auth failures on every PR when only DEEPSEEK_API_KEY is configured.
 # Must match the active provider. Also pinned as `config.model_weak` in
 # .github/workflows/pr-agent.yml because TOML settings are merged after PR-Agent's
@@ -69,3 +69,34 @@ num_code_suggestions = 0
 # the review comment and can mislead agents into treating the false positive as a
 # finding that needs to be fixed. See issue #569.
 require_ticket_analysis_review = false
+# Repo context for the reviewer model — reduces false positives from DeepSeek on
+# this repository's common content types.
+extra_instructions = """
+This is a workflow framework template repository. Adjust your review accordingly:
+
+- Shell scripts in scripts/ use intentional patterns: pipefail/errexit/nounset, complex
+  awk/sed pipelines, heredocs, and mktemp. Variables like ISSUE_NUMBER are validated
+  upstream; treat shell expansion/injection concerns as low-risk unless the variable
+  clearly comes from untrusted external input with no prior validation.
+- Files in docs/ are protocol/workflow documentation written in Markdown — not
+  application code. Do not flag missing tests, missing error handling, or code-quality
+  issues in Markdown files.
+- CHANGELOG.md and versioned docs follow Keep a Changelog format intentionally;
+  formatting and ordering choices are deliberate.
+- Issue numbers appearing in PR descriptions, branch names, or commit messages
+  (e.g. #123, "issue #456", "ported from other-repo#145") may reference
+  cross-repository or upstream template issues — do not infer linked ticket
+  requirements from them when performing ticket compliance analysis.
+- GitHub Actions workflows in .github/workflows/ use standard GitHub Actions expression
+  syntax. Flag only genuine script-injection risks (untrusted user input interpolated
+  directly into run: steps), not normal ${{ }} expression usage.
+- Do not flag theoretical misconfiguration risks for environment variables or workflow
+  tuning knobs unless the PR introduces an unbounded value that can be reached through
+  normal automated execution.
+- Do not flag intentionally redundant-looking shell guards when they are defensive
+  validation around external command output, API responses, or cross-platform shell
+  compatibility.
+- Prefer "No major issues detected" over low-confidence process, style, or
+  documentation-ordering comments. Only report a focus area when it identifies a
+  concrete failure mode introduced by the diff.
+"""
