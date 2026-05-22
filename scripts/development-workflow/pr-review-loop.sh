@@ -3837,7 +3837,11 @@ EOF
 }
 
 aggregate_possible_issue_eval_outcome="$(kv_value_default POSSIBLE_ISSUE_EVAL_OUTCOME "$aggregate_output" "")"
-phase_after_clean_platform_list="$(IFS=,; printf '%s' "${phase_after_clean_platforms[*]}")"
+if [ "${#phase_after_clean_platforms[@]}" -gt 0 ]; then
+  phase_after_clean_platform_list="$(IFS=,; printf '%s' "${phase_after_clean_platforms[*]}")"
+else
+  phase_after_clean_platform_list=""
+fi
 
 case "$aggregate_result" in
   clean)
