@@ -3153,8 +3153,14 @@ fi
 
 if [ "$pre_after_clean_only" -eq 1 ]; then
   filter_pre_after_clean_platforms
+  # Do NOT call filter_phase_after_clean_platforms here: filter_pre_after_clean_platforms
+  # already removed phase platforms from `platforms`, so a subsequent
+  # filter_phase_after_clean_platforms call would find no matching entries and empty
+  # phase_after_clean_platforms — losing the configured phase list and causing
+  # PHASE_AFTER_CLEAN_PLATFORM_LIST telemetry to be blank (issue #693).
+else
+  filter_phase_after_clean_platforms
 fi
-filter_phase_after_clean_platforms
 
 if [ "${#platforms[@]}" -gt 0 ]; then
   require_gh
