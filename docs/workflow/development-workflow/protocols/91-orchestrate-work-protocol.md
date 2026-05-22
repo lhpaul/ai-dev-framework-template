@@ -1250,13 +1250,13 @@ _Posted automatically by `pr-review-loop.sh`._
 When `.ai-dev-workflow.yaml` contains `review.phase_after_clean` with
 `coderabbit`, run the external reviewer loop in two PR lifecycle phases:
 
-1. **Draft phase** — keep the PR as draft and run only the pre-CodeRabbit
-   platforms, normally `pr-agent`:
+1. **Draft phase** — keep the PR as draft and run all configured
+   pre-after-clean platforms (`review.platforms` minus `review.phase_after_clean`):
 
    ```bash
    ./scripts/development-workflow/pr-review-loop.sh <pr_number> \
      --branch <branch_name> \
-     --platform pr-agent
+     --pre-after-clean-only
    ```
 
 2. If the PR-Agent phase returns `needs_fixes`, fix and re-run the draft phase.

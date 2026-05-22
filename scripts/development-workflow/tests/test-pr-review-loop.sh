@@ -175,8 +175,16 @@ run_test "phase_after_clean_membership" "yes" "$phase_membership"
 
 declare -a phase_after_clean_platforms=("coderabbit")
 declare -a platforms=("pr-agent")
+phase_after_clean_filtered_out=""
 filter_phase_after_clean_platforms
 run_test "phase_after_clean_filters_absent_platform" "0" "${#phase_after_clean_platforms[@]}"
+run_test "phase_after_clean_filtered_out_records_absent_platform" "coderabbit" "$phase_after_clean_filtered_out"
+
+declare -a phase_after_clean_platforms=("coderabbit")
+declare -a platforms=("pr-agent" "coderabbit")
+filter_pre_after_clean_platforms
+run_test "pre_after_clean_only_filters_phase_platform" "pr-agent" "${platforms[0]}"
+run_test "pre_after_clean_only_platform_count" "1" "${#platforms[@]}"
 
 # ---------------------------------------------------------------------------
 # Area 1: normalize_platform_verdict

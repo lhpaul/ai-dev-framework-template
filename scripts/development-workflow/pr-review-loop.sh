@@ -118,7 +118,7 @@ _interruptible_sleep() {
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github] [--phase-after-clean coderabbit] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github] [--phase-after-clean coderabbit] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
 triggering a new review, each platform checks for existing blocking findings. If
@@ -151,6 +151,11 @@ REASON=lock_contention and exits 75 (EX_TEMPFAIL).
   emits PHASE_AFTER_CLEAN_* key=value telemetry and annotates the summary so the
   value of the second-phase reviewer can be measured. When omitted, the script
   reads review.phase_after_clean from .ai-dev-workflow.yaml when present.
+
+--pre-after-clean-only:
+  Run only the configured platforms that are not listed in phase-after-clean.
+  Use this for draft PR gates that must clear all pre-after-clean reviewers before
+  converting the PR to non-draft and allowing after-clean reviewers to run.
 
 Platform selection (in priority order):
   1. --platform flag(s) passed on the command line
@@ -194,6 +199,7 @@ Outputs stable key=value lines including:
   PHASE_AFTER_CLEAN_ENABLED=0|1
   PHASE_AFTER_CLEAN_STARTED=0|1
   PHASE_AFTER_CLEAN_PLATFORM_LIST=<comma-separated platforms>
+  PHASE_AFTER_CLEAN_FILTERED_OUT=<comma-separated platforms> (when configured phase platforms are absent from this invocation)
   PHASE_AFTER_CLEAN_GATE_RESULT=<result> (emitted only after the phase starts)
   PHASE_AFTER_CLEAN_SKIP_REASON=<result> (emitted when the phase never starts)
   PHASE_AFTER_CLEAN_NET_NEW_BLOCKER=0|1 (1 when a second-phase platform blocks)
@@ -234,30 +240,60 @@ append_phase_after_clean_platforms() {
   done
 }
 
-is_phase_after_clean_platform() {
-  local candidate="$1"
-  local configured
-  for configured in "${phase_after_clean_platforms[@]:-}"; do
-    [ "$candidate" = "$configured" ] && return 0
+array_contains_value() {
+  local needle="$1"
+  shift
+  local value
+  for value in "$@"; do
+    [ "$needle" = "$value" ] && return 0
   done
   return 1
 }
 
-filter_phase_after_clean_platforms() {
-  local phase_platform configured_platform
+is_phase_after_clean_platform() {
+  local candidate="$1"
+  array_contains_value "$candidate" "${phase_after_clean_platforms[@]:-}"
+}
+
+filter_pre_after_clean_platforms() {
+  local configured_platform
   declare -a filtered=()
+  for configured_platform in "${platforms[@]:-}"; do
+    if ! is_phase_after_clean_platform "$configured_platform"; then
+      filtered+=("$configured_platform")
+    fi
+  done
+  if [ "${#filtered[@]}" -gt 0 ]; then
+    platforms=("${filtered[@]}")
+  else
+    platforms=()
+  fi
+}
+
+filter_phase_after_clean_platforms() {
+  local phase_platform configured_platform matched
+  declare -a filtered=()
+  declare -a filtered_out=()
   for phase_platform in "${phase_after_clean_platforms[@]:-}"; do
+    matched=0
     for configured_platform in "${platforms[@]:-}"; do
       if [ "$phase_platform" = "$configured_platform" ]; then
         filtered+=("$phase_platform")
+        matched=1
         break
       fi
     done
+    [ "$matched" -eq 0 ] && filtered_out+=("$phase_platform")
   done
   if [ "${#filtered[@]}" -gt 0 ]; then
     phase_after_clean_platforms=("${filtered[@]}")
   else
     phase_after_clean_platforms=()
+  fi
+  if [ "${#filtered_out[@]}" -gt 0 ]; then
+    phase_after_clean_filtered_out="$(IFS=,; printf '%s' "${filtered_out[*]}")"
+  else
+    phase_after_clean_filtered_out=""
   fi
 }
 
@@ -3030,8 +3066,10 @@ max_wait=1200
 max_wait_explicit=0
 post_final_summary=0
 compare_mode=0
+pre_after_clean_only=0
 declare -a platforms=()
 declare -a phase_after_clean_platforms=()
+phase_after_clean_filtered_out=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -3046,6 +3084,10 @@ while [ "$#" -gt 0 ]; do
     --phase-after-clean)
       append_phase_after_clean_platforms "$2"
       shift 2
+      ;;
+    --pre-after-clean-only)
+      pre_after_clean_only=1
+      shift
       ;;
     --poll-interval)
       poll_interval="$2"
@@ -3109,6 +3151,9 @@ if [ "${#phase_after_clean_platforms[@]}" -eq 0 ]; then
   fi
 fi
 
+if [ "$pre_after_clean_only" -eq 1 ]; then
+  filter_pre_after_clean_platforms
+fi
 filter_phase_after_clean_platforms
 
 if [ "${#platforms[@]}" -gt 0 ]; then
@@ -3220,7 +3265,10 @@ print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
 print_kv PLATFORM_COUNT "${#platforms[@]}"
 # So callers can verify config was respected (e.g. no greptile when only devin is in .ai-dev-workflow.yaml)
 print_kv PLATFORM_LIST "$(IFS=,; printf '%s' "${platforms[*]}")"
+print_kv PRE_AFTER_CLEAN_ONLY "$pre_after_clean_only"
 print_kv PHASE_AFTER_CLEAN_ENABLED "$phase_after_clean_enabled"
+[ -n "$phase_after_clean_filtered_out" ] && \
+  print_kv PHASE_AFTER_CLEAN_FILTERED_OUT "$phase_after_clean_filtered_out"
 [ "$phase_after_clean_enabled" -eq 1 ] && \
   print_kv PHASE_AFTER_CLEAN_PLATFORM_LIST "$(IFS=,; printf '%s' "${phase_after_clean_platforms[*]}")"
 print_kv CHANGED_FILES_COUNT "${changed_files_count:--1}"
@@ -3233,8 +3281,10 @@ for index in "${!platforms[@]}"; do
   if [ "$phase_after_clean_enabled" -eq 1 ] \
       && [ "$phase_after_clean_started" -eq 0 ] \
       && is_phase_after_clean_platform "$platform_name"; then
-    phase_after_clean_started=1
-    phase_after_clean_gate_result="clean"
+    if [ "$compare_mode" -eq 0 ] || [ -z "$compare_first_blocking_result" ]; then
+      phase_after_clean_started=1
+      phase_after_clean_gate_result="clean"
+    fi
   fi
 
   set +e
