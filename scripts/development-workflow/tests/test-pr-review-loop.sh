@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # test-pr-review-loop.sh — Self-contained test harness for pr-review-loop.sh.
 #
-# Exercises four highest-risk logic areas:
+# Exercises five highest-risk logic areas:
 #   1. normalize_platform_verdict (verdict normalization / mapping)
 #   2. check_unreplied_rest_comments (bot-account exclusion, reply detection)
 #   3. append_compare_metrics_row (compare-mode platform config change detection)
 #   4. Lock cleanup on SIGTERM (signal trap removes lockdir before exit)
+#   5. phase_after_clean config parsing and membership detection
 #
 # Usage: bash scripts/development-workflow/tests/test-pr-review-loop.sh
 # No external tooling required beyond bash and git (git is used only to locate
@@ -31,6 +32,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel)"
 MOCK_BIN="$(mktemp -d)"
 _METRICS_TMP=""
 _METRICS_DIR=""
+_CONFIG_DIR=""
 
 # Single EXIT trap: normalise SIGPIPE exit code (141 -> 0) and clean up temp
 # directories. A second trap would override this one, losing the 141 guard.
@@ -38,6 +40,7 @@ _harness_exit() {
   local status=$?
   rm -rf "$MOCK_BIN"
   [ -n "${_METRICS_DIR:-}" ] && rm -rf "$_METRICS_DIR"
+  [ -n "${_CONFIG_DIR:-}" ] && rm -rf "$_CONFIG_DIR"
   case "$status" in
     141) exit 0 ;;
     *)   exit "$status" ;;
@@ -139,6 +142,36 @@ run_test() {
     FAIL_COUNT=$(( FAIL_COUNT + 1 ))
   fi
 }
+
+# ---------------------------------------------------------------------------
+# Area 0: phase_after_clean config parsing
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 0: phase_after_clean config parsing ==="
+
+_CONFIG_DIR="$(mktemp -d)"
+cat > "$_CONFIG_DIR/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 1
+
+review:
+  platforms:
+    - pr-agent
+    - coderabbit
+  phase_after_clean:
+    - coderabbit
+YAML
+
+phase_after_clean_parsed="$(workflow_config_review_phase_after_clean_platforms "$_CONFIG_DIR/.ai-dev-workflow.yaml" | paste -sd ',' -)"
+run_test "phase_after_clean_parser" "coderabbit" "$phase_after_clean_parsed"
+
+declare -a phase_after_clean_platforms=()
+append_phase_after_clean_platforms "coderabbit, pr-agent"
+if is_phase_after_clean_platform "coderabbit" && is_phase_after_clean_platform "pr-agent"; then
+  phase_membership="yes"
+else
+  phase_membership="no"
+fi
+run_test "phase_after_clean_membership" "yes" "$phase_membership"
 
 # ---------------------------------------------------------------------------
 # Area 1: normalize_platform_verdict

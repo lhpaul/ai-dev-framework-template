@@ -69,9 +69,16 @@ review:
   platforms:
     - greptile
     - devin
+  phase_after_clean:
+    - coderabbit
 ```
 
 The helper script reads this file automatically when no `--platform` flag is passed. If the file is absent, or if `review.platforms` is omitted or the platform list is empty, no reviewer tool runs and the result is skipped. Explicit `--platform` flags always override the config file.
+
+`review.phase_after_clean` is optional. Platforms listed there remain normal
+review platforms, but `pr-review-loop.sh` emits extra telemetry showing whether
+those platforms found net-new blockers after earlier platforms were already
+clean. This is intended for measuring whether a second reviewer still adds value.
 
 Use the nested `review.platforms` form so `.ai-dev-workflow.yaml` can also declare other workflow integrations such as `issue_tracker`, `vcs`, and `browser_automation`.
 

@@ -703,7 +703,7 @@ Run the next deterministic action for the selected item, then immediately re-eva
 
 Expected chain:
 
-`creator -> draft PR opened -> internal review gate with all internal reviewers (Step 7a) -> gh pr ready -> automated reviewer loop (Step 7) -> regression label (Step 7b, implementation PRs only) -> CI loop (Step 8) -> label readiness checklist (Step 8a) -> tracker status update (Step 8b) -> independent PR verification (Step 8c) -> wait or escalation`
+`creator -> draft PR opened -> internal review gate with all internal reviewers (Step 7a) -> PR-Agent draft clean gate when CodeRabbit is configured in review.phase_after_clean -> gh pr ready -> after-clean automated reviewer phase (Step 7) -> regression label (Step 7b, implementation PRs only) -> CI loop (Step 8) -> label readiness checklist (Step 8a) -> tracker status update (Step 8b) -> independent PR verification (Step 8c) -> wait or escalation`
 
 After any subagent finishes, determine whether the item still has a deterministic next action:
 
@@ -769,7 +769,17 @@ Before dispatching any reviewer, check whether the PR is currently in draft stat
 gh pr view <pr_number> --json isDraft --jq '.isDraft'
 ```
 
-If the result is `true` (PR is a draft), inspect the resolved `internal_reviewers` list from `.ai-dev-workflow.yaml` (after any `.tmp/template-config.json` override). If **any** listed reviewer is known to skip draft PRs, convert the PR to non-draft **before** triggering any reviewer:
+If the result is `true` (PR is a draft), inspect the resolved `internal_reviewers`
+list from `.ai-dev-workflow.yaml` (after any `.tmp/template-config.json`
+override) and the `review.phase_after_clean` list.
+
+If `coderabbit` is **only** listed under `review.phase_after_clean`, keep the PR
+as a draft during Step 7a. This is intentional: `.coderabbit.yaml` has
+`reviews.auto_review.drafts: false`, so draft state prevents CodeRabbit from
+starting before the PR-Agent-clean gate.
+
+If `coderabbit` is listed as an **internal reviewer** and is therefore required
+inside Step 7a itself, convert the PR to non-draft before triggering reviewers:
 
 ```bash
 gh pr ready <pr_number>
@@ -779,7 +789,12 @@ Post a comment on the PR explaining the action:
 
 > `INFO: PR converted from draft to non-draft before Step 7a internal review. Reason: CodeRabbit is configured as an internal reviewer and '.coderabbit.yaml' sets 'auto_review.drafts: false' — CodeRabbit silently skips draft PRs. Converting now to ensure full reviewer coverage.`
 
-**Why this matters**: CodeRabbit (and similar tools) configured with `auto_review.drafts: false` do not post any skip notice when they bypass a draft PR — the absence is silent. If the PR remains in draft state when the reviewer loop fires, CodeRabbit's review is simply missing, the internal review gate passes with reduced coverage, and no warning reaches the agent or the human.
+**Why this matters**: CodeRabbit (and similar tools) configured with
+`auto_review.drafts: false` do not post any skip notice when they bypass a draft
+PR. That behavior is useful when CodeRabbit is intentionally configured as an
+after-clean reviewer, because it lets PR-Agent clear first. It is unsafe when
+CodeRabbit is configured as a Step 7a internal reviewer, because the internal
+review gate would silently pass with reduced coverage.
 
 **Reviewer-to-draft-restriction mapping**:
 
@@ -797,7 +812,10 @@ grep -E '^\s*drafts:\s*false' .coderabbit.yaml
 
 If the file is absent or the key is not present, CodeRabbit defaults to `drafts: false` — treat it as draft-restricting.
 
-**Important**: The pre-check converts the PR to non-draft solely to enable reviewer coverage. This does not change the Step 7a → Step 7 flow: the PR still goes through the full internal review gate before external reviewers run. The `gh pr ready` calls in the outcome tables at the end of Step 7a (after all reviewers approve) are idempotent — if the pre-check has already converted the PR, those calls are safe no-ops.
+**Important**: Do not convert a draft PR to non-draft merely because CodeRabbit
+appears in `review.platforms` or `review.phase_after_clean`. Convert early only
+when CodeRabbit is part of `internal_reviewers`. Otherwise, keep the draft state
+until the PR-Agent-clean gate below has passed.
 
 If the PR is **not** in draft state, skip this pre-check entirely and proceed to the Design Review Gate.
 
@@ -1221,9 +1239,43 @@ The script-posted comment format:
 **Result:** clean — no blocking findings | escalated (reason) | max cycles reached — N blocking finding(s) unresolved
 **Platforms:** greptile, devin
 **Findings:** N blocking, N suggestions
+**After-clean reviewer phase:** No net-new blocker was found after the PR-Agent-clean gate.
+**After-clean platforms:** coderabbit
 
 _Posted automatically by `pr-review-loop.sh`._
 ```
+
+### PR-Agent-clean gate before CodeRabbit
+
+When `.ai-dev-workflow.yaml` contains `review.phase_after_clean` with
+`coderabbit`, run the external reviewer loop in two PR lifecycle phases:
+
+1. **Draft phase** — keep the PR as draft and run only the pre-CodeRabbit
+   platforms, normally `pr-agent`:
+
+   ```bash
+   ./scripts/development-workflow/pr-review-loop.sh <pr_number> \
+     --branch <branch_name> \
+     --platform pr-agent
+   ```
+
+2. If the PR-Agent phase returns `needs_fixes`, fix and re-run the draft phase.
+   Do not convert the PR to non-draft and do not trigger CodeRabbit yet.
+3. When the PR-Agent phase returns `clean`, convert the PR to non-draft:
+
+   ```bash
+   gh pr ready <pr_number>
+   ```
+
+4. Run the configured full reviewer loop. Because CodeRabbit is listed in
+   `review.phase_after_clean`, `pr-review-loop.sh` emits
+   `PHASE_AFTER_CLEAN_*` keys and annotates the summary with whether CodeRabbit
+   found a net-new blocker after PR-Agent was already clean.
+
+This sequence is the canonical way to evaluate whether CodeRabbit still adds
+review value. If CodeRabbit repeatedly returns clean after the PR-Agent-clean
+gate across enough implementation PRs, the team can remove it from the normal
+path with evidence rather than intuition.
 
 After running the helper script (it reads `.ai-dev-workflow.yaml` for the platform list automatically):
 
@@ -1239,60 +1291,16 @@ Interpret the result as follows:
 | `skipped`                               | Continue to Step 7b (implementation PRs) then Step 8 (no summary comment posted — Step 8c skips the check)                                                                                                                                                                                                                                                                                 |
 | `needs_fixes` and `cycle < max_cycles`  | Increment `cycle`, dispatch the matching fixer agent, wait for a push, then run Step 7 again                                                                                                                                                                                                                                                                                               |
 | `needs_fixes` and `cycle >= max_cycles` | Pass `--post-final-summary` to the final invocation — the script posts the summary automatically. Then escalate to human                                                                                                                                                                                                                                                                   |
-| `needs_rerun` (exit code 3)             | PR-Agent returned clean with a "Possible Issue" advisory. See "PR-Agent 'Possible Issue' evaluation" below — dispatch the code-reviewer agent, set `POSSIBLE_ISSUE_EVAL_OUTCOME`, and re-invoke the loop                                                                                                                                                                                   |
+| `needs_rerun` (exit code 3)             | (Reserved — not currently emitted.) Treat as `escalate` if encountered unexpectedly.                                                                                                                                                                                                                                                                                                      |
 | `escalate`                              | Summary comment posted automatically by the script. Escalate to human                                                                                                                                                                                                                                                                                                                      |
 
-### PR-Agent "Possible Issue" evaluation
+### PR-Agent "Possible Issue" advisory labels
 
-When `pr-review-loop.sh` returns `RESULT=clean` AND the output contains
-`PR_AGENT_POSSIBLE_ISSUE_EVAL`, PR-Agent classified the PR as `clean` but included
-a "Possible Issue" advisory label. The script emits two structured keys so the
-orchestrator can dispatch a code-reviewer agent before declaring the result final:
-
-- `PR_AGENT_POSSIBLE_ISSUE_EVAL` — format: `<pr_number>@@@<branch_name>`
-- `PR_AGENT_POSSIBLE_ISSUE_BODY` — the full PR-Agent comment body (newlines escaped)
-
-Note: `RESULT=needs_rerun` (exit code 3) is only emitted on a **re-invocation** after
-the code-reviewer agent pushed a fix (i.e., when `POSSIBLE_ISSUE_EVAL_OUTCOME=fix_pushed`
-is set in the environment). The first-pass result is always `RESULT=clean` with
-`PR_AGENT_POSSIBLE_ISSUE_EVAL` in the output.
-
-**Required sequence:**
-
-1. After any `RESULT=clean` exit, check whether `PR_AGENT_POSSIBLE_ISSUE_EVAL` is
-   present in the script output. If present, do not declare the result clean yet.
-2. Read `PR_AGENT_POSSIBLE_ISSUE_BODY` from the script output and unescape it
-   (replace `\n` with real newlines).
-3. Dispatch the `code-reviewer` agent with the PR number, branch, PR-Agent comment
-   body, and the PR diff (`gh pr diff <pr_number>`). Instruct the agent: determine
-   whether the finding is a real bug or acceptable; if a real bug, push a fix commit;
-   if acceptable, post a substantive acknowledgment comment explaining the reasoning.
-4. After the agent finishes, set `POSSIBLE_ISSUE_EVAL_OUTCOME` and re-invoke the loop:
-
-   ```bash
-   # Agent acknowledged (finding is acceptable):
-   POSSIBLE_ISSUE_EVAL_OUTCOME=acknowledged \
-     ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>
-
-   # Agent unavailable / timed out:
-   POSSIBLE_ISSUE_EVAL_OUTCOME=unavailable \
-     ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>
-
-   # Agent pushed a fix — re-invoke with fix_pushed so the script signals needs_rerun:
-   POSSIBLE_ISSUE_EVAL_OUTCOME=fix_pushed \
-     ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch>
-   ```
-
-5. On re-invocation with `acknowledged` or `unavailable`, the script reads
-   `POSSIBLE_ISSUE_EVAL_OUTCOME` from the environment, exits 0, and emits `RESULT=clean`.
-   On re-invocation with `fix_pushed`, the script exits 3 with `RESULT=needs_rerun` —
-   the orchestrator then does a full fresh re-run (without any `POSSIBLE_ISSUE_EVAL_OUTCOME`)
-   on the new HEAD.
-
-This evaluation step is not counted against the orchestrator's `cycle` counter. If
-the agent is unavailable (`POSSIBLE_ISSUE_EVAL_OUTCOME=unavailable` or empty on first
-pass), the script falls back to advisory-only clean and logs a warning to stderr. For
-full details see `93-automated-reviewer-loop-protocol.md`.
+When `pr-review-loop.sh` returns `RESULT=clean` with `ADVISORY_LABELS` containing
+`Possible Issue` entries, PR-Agent flagged advisory concerns but no hard-blockers.
+**No orchestrator action is required.** The script auto-acknowledges these findings
+and exits clean. See `93-automated-reviewer-loop-protocol.md` for the full advisory
+label disposition rules.
 
 **Step 7a summary (Internal Review Gate) is still agent-owned.** The script-posted summary covers Step 7 (external automated reviewers) only. The Step 7a summary comment (`### Step 7a Internal Review Gate Summary`) must still be posted by the orchestrator/agent after the internal review gate completes. Do not conflate the two: they serve different verification purposes and are checked by different gates.
 

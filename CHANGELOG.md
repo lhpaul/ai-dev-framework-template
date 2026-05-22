@@ -9,11 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Reviewer loop: phased PR-Agent clean gate before CodeRabbit** (#691): adds `review.phase_after_clean` support to `.ai-dev-workflow.yaml` and `pr-review-loop.sh`, emitting `PHASE_AFTER_CLEAN_*` telemetry and summary text that records whether CodeRabbit found a net-new blocker after PR-Agent was already clean. Protocols 91 and 93 now document the draft-PR PR-Agent gate before converting to non-draft for CodeRabbit, making CodeRabbit's ongoing value measurable.
 - **Database best practices: RLS migration safety checklist** (#680): adds `docs/best-practices/4-database.md` with a dedicated RLS section. The "Enabling RLS on an existing table" checklist requires revoking broad grants (`REVOKE ALL ON public.<table> FROM public, anon, authenticated`) before running `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`, preventing legacy grants from silently bypassing policies on pre-existing tables. Includes guidance on enabling RLS on new tables, re-granting narrowly scoped permissions after policies are in place, and a smoke-test verification step.
 - **Supabase best-practices doc: TypeScript type narrowing for CHECK-constrained columns** (#681): adds `docs/best-practices/stack/supabase.md` with guidance on narrowing Supabase-generated `string` types to union literals for `text` columns with `CHECK (...) IN (...)` constraints. Documents Option A (post-generation override file) and Option B (Zod schema as source of truth), with a migration review checklist. `STACK-SPECIFIC.md` gains a Quick Reference entry and a table row linking to the new file.
 
 ### Changed
 
+- **PR-Agent review noise controls** (#691): tightens `.pr_agent.toml` repository instructions to suppress speculative environment-variable, redundant shell-guard, and low-confidence process/style findings; upgrades the pinned PR-Agent GitHub Action from `v0.34.3` to `v0.35.0`; and removes CodeRabbit from the default Step 7a internal reviewer list so it runs only in the measured after-clean phase.
 - **Developer protocol: mandatory fork-PR guard check for GitHub Actions workflow files** (#670): the "GitHub Actions Workflow Security Checklist" in `03-implement-development-protocol.md` gains a new mandatory bullet requiring every step that writes to the repository (adds/removes labels, posts comments, creates deployments or releases, writes status checks or check runs) in a `pull_request`-triggered workflow to include `if: github.event.pull_request.head.repo.full_name == github.repository` or an equivalent fork-origin check. Steps on `push` events or protected branches are exempt.
 
 ### Fixed
