@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`/batch-merge`: remove interactive approval prompt** (#689): the batch-merge command no longer pauses to ask for user confirmation after displaying the merge plan. The plan is still printed for visibility, but execution proceeds immediately. Protocol 94, the Claude Code command, Cursor command, and Codex skill are all updated to reflect the new non-interactive behavior.
 - **PR-Agent review noise controls** (#691): tightens `.pr_agent.toml` repository instructions to suppress speculative environment-variable, redundant shell-guard, and low-confidence process/style findings; upgrades the pinned PR-Agent GitHub Action from `v0.34.3` to `v0.35.0`; and removes CodeRabbit from the default Step 7a internal reviewer list so it runs only in the measured after-clean phase.
 - **Developer protocol: mandatory fork-PR guard check for GitHub Actions workflow files** (#670): the "GitHub Actions Workflow Security Checklist" in `03-implement-development-protocol.md` gains a new mandatory bullet requiring every step that writes to the repository (adds/removes labels, posts comments, creates deployments or releases, writes status checks or check runs) in a `pull_request`-triggered workflow to include `if: github.event.pull_request.head.repo.full_name == github.repository` or an equivalent fork-origin check. Steps on `push` events or protected branches are exempt.
 

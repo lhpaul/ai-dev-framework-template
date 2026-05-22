@@ -1,6 +1,6 @@
 ---
 name: batch-merge
-description: Merge all ready PRs in a parallel batch into develop sequentially, auto-resolving trivial CHANGELOG and documentation conflicts, pausing for human input on non-trivial ones, and running post-merge-cleanup for each successfully merged PR. Use when a parallel batch of PRs is ready for merge.
+description: Merge all ready PRs in a parallel batch into develop sequentially, auto-resolving trivial CHANGELOG and documentation conflicts, pausing for human input only on non-trivial conflicts, and running post-merge-cleanup for each successfully merged PR. Prints the merge plan for visibility but proceeds immediately without requiring confirmation. Use when a parallel batch of PRs is ready for merge.
 ---
 
 # Batch Merge
@@ -25,9 +25,9 @@ Follow `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md`
 
 4. **Readiness gate**: for each PR missing `ready-for-human-review`, warn the human and require an explicit include-or-skip decision. Never silently include or skip.
 
-5. **Human confirmation**: present the final ordered merge plan and require explicit approval before any merge.
+5. **Merge plan display**: present the final ordered merge plan, then proceed immediately without waiting for user confirmation.
 
-6. **Sequential merge loop (human-confirmed, agent-executed)**: after the human approves the merge plan in Step 5, for each PR in order:
+6. **Sequential merge loop**: for each PR in order:
    - Run `./scripts/development-workflow/batch-merge.sh merge --pr <number>`
    - On `MERGE_RESULT=clean`: proceed to post-merge steps.
    - On `MERGE_RESULT=conflict`: classify each conflicted file:

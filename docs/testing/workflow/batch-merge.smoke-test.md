@@ -56,8 +56,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 **Expected result**:
 
 - The command discovers PRs A, B, C, E, and F and displays a candidate summary table showing PR number, title, branch, labels, and readiness status.
-- The command asks for confirmation before proceeding. No merge has occurred yet.
-- Cancel/decline the confirmation to avoid merging (we will test merging in later steps).
+- The command prints the merge plan and proceeds immediately without prompting for confirmation.
 
 ---
 
@@ -70,8 +69,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 **Expected result**:
 
 - The command shows only PRs A and B in the candidate list (not C, D, or E).
-- The command asks for confirmation before proceeding.
-- Cancel the confirmation.
+- The command prints the merge plan and proceeds immediately.
 
 ---
 
@@ -101,12 +99,11 @@ Create the following test PRs before running the smoke test. Each PR should be a
 **Maps to**: AC 4
 
 1. Run `/batch-merge` with PRs A (no CHANGELOG), B (with CHANGELOG), C (with CHANGELOG), ensuring A has the lowest PR number.
-2. Confirm the merge plan.
 
 **Expected result**:
 
-- The merge order displayed is: PR A first (no CHANGELOG, lowest number), then PR B (CHANGELOG, lower number), then PR C (CHANGELOG, higher number).
-- Verify this order in the confirmation prompt before any merge occurs.
+- The merge order displayed in the plan is: PR A first (no CHANGELOG, lowest number), then PR B (CHANGELOG, lower number), then PR C (CHANGELOG, higher number).
+- Execution proceeds immediately after the plan is printed.
 
 ---
 
@@ -257,7 +254,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 Each checkbox maps to an acceptance criterion from the spec.
 
 - [ ] AC 1: Auto-discovery finds all `ready-for-human-review` PRs and displays candidate list before merging
-- [ ] AC 2: Human sees confirmation prompt; no merge occurs until confirmed
+- [ ] AC 2: Merge plan is printed for visibility; execution proceeds immediately without confirmation
 - [ ] AC 3: Missing `ready-for-human-review` label causes warning and requires explicit human decision
 - [ ] AC 4: PRs merge in correct order (non-CHANGELOG first by PR number, then CHANGELOG by PR number)
 - [ ] AC 5: Merge preserves individual PR history, PR threads intact, no force-push
