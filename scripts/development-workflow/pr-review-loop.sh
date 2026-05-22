@@ -3361,12 +3361,6 @@ for index in "${!platforms[@]}"; do
       fi
       ;;
     needs_rerun)
-      if [ "$phase_after_clean_enabled" -eq 1 ] \
-          && [ "$phase_after_clean_started" -eq 1 ] \
-          && is_phase_after_clean_platform "$platform_name"; then
-        phase_after_clean_net_new_blocker=1
-        phase_after_clean_blocking_platform="$platform_name"
-      fi
       # PR-Agent "Possible Issue" evaluation: a fix was pushed; re-run the loop.
       # Propagate as needs_rerun (exit 3) so orchestrator callers distinguish
       # this from needs_fixes (fixer dispatch) and re-invoke on the new HEAD.
@@ -3385,12 +3379,6 @@ for index in "${!platforms[@]}"; do
       fi
       ;;
     *)
-      if [ "$phase_after_clean_enabled" -eq 1 ] \
-          && [ "$phase_after_clean_started" -eq 1 ] \
-          && is_phase_after_clean_platform "$platform_name"; then
-        phase_after_clean_net_new_blocker=1
-        phase_after_clean_blocking_platform="$platform_name"
-      fi
       aggregate_result="escalate"
       aggregate_reason="unknown-platform-result"
       aggregate_output="$platform_output"

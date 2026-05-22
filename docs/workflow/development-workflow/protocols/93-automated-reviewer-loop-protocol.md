@@ -571,10 +571,9 @@ When `pr-review-loop.sh` returns `RESULT=clean` and the output contains an
 concerns but no hard-blocker labels. **No orchestrator action is required.**
 
 `Possible Issue` findings are automatically acknowledged by the script and the loop
-exits clean. The advisory label is recorded in `ADVISORY_LABELS` for informational
-purposes only. Do not dispatch a code-reviewer agent or re-invoke the loop on account
-of these labels — in practice they have never surfaced real bugs for this repository
-type and the dispatch loop caused more fix-round churn than it prevented.
+exits clean. The advisory label is recorded in `ADVISORY_LABELS`. Do not dispatch a
+code-reviewer agent or re-invoke the loop because of these labels. Continue to record
+advisory dispositions in the post-clean summary flow defined below.
 
 ---
 
