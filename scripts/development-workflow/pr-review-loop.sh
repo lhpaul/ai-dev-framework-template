@@ -2388,7 +2388,10 @@ run_coderabbit_review() {
 
     # --- Rate-limit detection: CodeRabbit posts a comment when it cannot review yet ---
     # When CodeRabbit is rate-limited it posts an issue comment containing "rate limit"
-    # text. Detect this, wait, and retry up to coderabbit_rate_limit_max_retries times.
+    # text. Detect this, wait, then post "@coderabbitai resume" to request CodeRabbit
+    # to resume its review. Retried up to coderabbit_rate_limit_max_retries times.
+    # When retries are exhausted, the timeout block below escalates instead of returning
+    # a false-clean no_review result (see the rate-limit guard before no_review exit).
     if [ "$coderabbit_any_activity" -eq 0 ] && [ "$coderabbit_rate_limit_retries" -lt "$coderabbit_rate_limit_max_retries" ]; then
       local rate_limit_comment_count
       rate_limit_comment_count="$(
@@ -2449,10 +2452,10 @@ run_coderabbit_review() {
         # Do NOT reset since_iso — keep the original HEAD-commit timestamp so any review
         # posted by CodeRabbit during or after the wait is still within the detection window.
         elapsed=0
-        if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
-          echo "INFO: posted @coderabbitai review trigger after rate-limit wait" >&2
+        if gh pr comment "$pr_number" --body "@coderabbitai resume" >/dev/null 2>&1; then
+          echo "INFO: posted @coderabbitai resume after rate-limit wait" >&2
         else
-          echo "WARN: failed to post @coderabbitai review trigger after rate-limit wait" >&2
+          echo "WARN: failed to post @coderabbitai resume after rate-limit wait" >&2
         fi
         _interruptible_sleep "$poll_interval"
         elapsed=$((elapsed + poll_interval))
@@ -2573,6 +2576,39 @@ run_coderabbit_review() {
           return 1
         fi
         rm -f "$stale_file"
+
+        # --- Rate-limit guard before no_review clean exit ---
+        # If a CodeRabbit rate-limit comment is still active (posted since since_iso),
+        # CodeRabbit has not completed its review. Returning clean here would be a
+        # false-clean. Instead, escalate so the caller knows CodeRabbit was still
+        # rate-limited when the poll window ended. This covers both the case where
+        # retries were exhausted and the case where the poll window ended mid-retry
+        # (e.g. elapsed >= max_wait before the retry could fire).
+        local timeout_rate_limit_count
+        timeout_rate_limit_count="$(
+          gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+            | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
+                [.[].[] | select(
+                    .user.login == $bot and
+                    .created_at > $since and
+                    ((.body // "") | test("rate.?limit"; "i"))
+                )] | length
+              '
+        )"
+        if [ "${timeout_rate_limit_count:-0}" -gt 0 ]; then
+          echo "INFO: CodeRabbit rate-limit comment still active at timeout after $coderabbit_rate_limit_retries/$coderabbit_rate_limit_max_retries retries — escalating instead of returning clean" >&2
+          print_kv RESULT escalate
+          print_kv REASON rate_limit_max_retries
+          print_kv PLATFORM "$platform"
+          print_kv PR_NUMBER "$pr_number"
+          print_kv BRANCH "$branch_name"
+          print_kv REVIEW_COMMENT_ID ""
+          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          print_kv COMMENT_COUNT 0
+          print_kv BLOCKING_COUNT 0
+          print_kv SUGGESTION_COUNT 0
+          return 2
+        fi
 
         print_kv RESULT skipped
         print_kv REASON no_review
@@ -2889,7 +2925,7 @@ normalize_platform_verdict() {
     escalate)
       # Distinguish timeout from service-unavailable via REASON.
       case "$reason" in
-        timeout|timed_out|max_wait_exceeded|no_response)
+        timeout|timed_out|max_wait_exceeded|no_response|rate_limit_max_retries)
           printf 'timed out' ;;
         *)
           printf 'unavailable' ;;
