@@ -112,7 +112,6 @@ Create the following test PRs before running the smoke test. Each PR should be a
 **Maps to**: AC 5, AC 11, AC 12
 
 1. Continue from Step 5 (or start a fresh batch with only PR A).
-2. Confirm the merge plan.
 
 **Expected result**:
 
@@ -153,7 +152,6 @@ Create the following test PRs before running the smoke test. Each PR should be a
 
 1. Set up PR F so it modifies a documentation file (e.g., `docs/some-doc.md`) in non-overlapping line ranges compared to changes already in `develop` (from a previously merged PR that also touched the same file in different sections).
 2. Run `/batch-merge` with PR F.
-3. Confirm the merge plan.
 
 **Expected result**:
 
@@ -170,7 +168,6 @@ Create the following test PRs before running the smoke test. Each PR should be a
 
 1. Set up PR E so it conflicts with a file already in `develop` (a non-doc, non-CHANGELOG file).
 2. Run `/batch-merge` with PR E.
-3. Confirm the merge plan.
 
 **Expected result**:
 
@@ -194,8 +191,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 
 1. Create a new PR (PR F2) that will conflict with `develop` on a non-doc file.
 2. Run `/batch-merge` with PR F2.
-3. Confirm the merge plan.
-4. When the conflict is detected and the command pauses, choose to abort the merge for this PR.
+3. When the conflict is detected and the command pauses, choose to abort the merge for this PR.
 
 **Expected result**:
 
@@ -211,8 +207,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 
 1. Create 3 PRs (G, H, I) targeting `develop` with `ready-for-human-review`.
 2. Run `/batch-merge` with all three.
-3. Confirm the merge plan.
-4. After PR G merges successfully, abort the entire batch when prompted for PR H.
+3. After PR G merges successfully, abort the entire batch when prompted for PR H.
 
 **Expected result**:
 
