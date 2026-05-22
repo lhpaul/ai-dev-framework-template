@@ -2310,7 +2310,7 @@ run_coderabbit_review() {
     # CodeRabbit auto-pauses reviews after many commits. When this happens, no
     # review is posted for the current HEAD, causing the loop to time out. Detect
     # the pause by checking for a "Reviews paused" issue comment and post
-    # "@coderabbitai review" to trigger a fresh review. Only attempt once.
+    # "@coderabbitai resume" to resume the paused review. Only attempt once.
     if [ "$coderabbit_any_activity" -eq 0 ] && [ "$coderabbit_retrigger_attempted" -eq 0 ] && [ "$elapsed" -ge "$((max_wait / 2))" ]; then
       # Check if the most recent CodeRabbit bot comment created after since_iso contains
       # a "Reviews paused" marker. Use since_iso filter to avoid false positives from
@@ -2327,13 +2327,13 @@ run_coderabbit_review() {
             '
       )"
       if [ "${paused_count:-0}" -gt 0 ]; then
-        echo "INFO: CodeRabbit reviews are paused — posting @coderabbitai review to trigger a fresh review" >&2
-        if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
+        echo "INFO: CodeRabbit reviews are paused — posting @coderabbitai resume to trigger a fresh review" >&2
+        if gh pr comment "$pr_number" --body "@coderabbitai resume" >/dev/null 2>&1; then
           coderabbit_retrigger_attempted=1
           # Reset the elapsed timer to give the retrigger time to complete.
           elapsed=0
         else
-          echo "WARN: failed to post retrigger comment — will not reset timer" >&2
+          echo "WARN: failed to post @coderabbitai resume — will not reset timer" >&2
           coderabbit_retrigger_attempted=1
         fi
         _interruptible_sleep "$poll_interval"
@@ -2391,7 +2391,7 @@ run_coderabbit_review() {
     # text. Detect this, wait, then post "@coderabbitai resume" to request CodeRabbit
     # to resume its review. Retried up to coderabbit_rate_limit_max_retries times.
     # When retries are exhausted, the timeout block below escalates instead of returning
-    # a false-clean no_review result (see the rate-limit guard before no_review exit).
+    # a false-clean no_review result (see the incomplete-review guard before no_review exit).
     if [ "$coderabbit_any_activity" -eq 0 ] && [ "$coderabbit_rate_limit_retries" -lt "$coderabbit_rate_limit_max_retries" ]; then
       local rate_limit_comment_count
       rate_limit_comment_count="$(
@@ -2577,26 +2577,31 @@ run_coderabbit_review() {
         fi
         rm -f "$stale_file"
 
-        # --- Rate-limit guard before no_review clean exit ---
-        # If a CodeRabbit rate-limit comment is still active (posted since since_iso),
-        # CodeRabbit has not completed its review. Returning clean here would be a
-        # false-clean. Instead, escalate so the caller knows CodeRabbit was still
-        # rate-limited when the poll window ended. This covers both the case where
-        # retries were exhausted and the case where the poll window ended mid-retry
-        # (e.g. elapsed >= max_wait before the retry could fire).
-        local timeout_rate_limit_count
-        timeout_rate_limit_count="$(
+        # --- Incomplete-review guard before no_review clean exit ---
+        # If a CodeRabbit rate-limit comment OR a "Reviews paused" banner is still
+        # active (posted since since_iso), CodeRabbit has not completed its review.
+        # Returning clean here would be a false-clean. Instead, escalate so the
+        # caller knows CodeRabbit was still rate-limited or paused when the poll
+        # window ended. This covers both the case where retries were exhausted and
+        # the case where the poll window ended mid-retry (e.g. elapsed >= max_wait
+        # before the retry could fire), and the case where only a pause banner
+        # (without a rate-limit comment) caused the no-review outcome.
+        local timeout_incomplete_count
+        timeout_incomplete_count="$(
           gh api "repos/$repo/issues/$pr_number/comments" --paginate \
             | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
                 [.[].[] | select(
                     .user.login == $bot and
                     .created_at > $since and
-                    ((.body // "") | test("rate.?limit"; "i"))
+                    (
+                      ((.body // "") | test("rate.?limit"; "i")) or
+                      ((.body // "") | test("Reviews paused|review paused"; "i"))
+                    )
                 )] | length
               '
         )"
-        if [ "${timeout_rate_limit_count:-0}" -gt 0 ]; then
-          echo "INFO: CodeRabbit rate-limit comment still active at timeout after $coderabbit_rate_limit_retries/$coderabbit_rate_limit_max_retries retries — escalating instead of returning clean" >&2
+        if [ "${timeout_incomplete_count:-0}" -gt 0 ]; then
+          echo "INFO: CodeRabbit rate-limit or pause comment still active at timeout after $coderabbit_rate_limit_retries/$coderabbit_rate_limit_max_retries retries — escalating instead of returning clean" >&2
           print_kv RESULT escalate
           print_kv REASON rate_limit_max_retries
           print_kv PLATFORM "$platform"
