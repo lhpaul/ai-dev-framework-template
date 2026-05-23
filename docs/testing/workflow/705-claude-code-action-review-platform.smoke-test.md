@@ -121,7 +121,22 @@ Before running this smoke test:
 
 **Expected result**: Loop exits with `RESULT=needs_fixes` without dispatching a new workflow run.
 
-### Step 6: Verify timeout result (AC-5)
+### Step 6: Verify new-blocking-threads result (AC-4)
+
+**Maps to**: AC-4 — `RESULT=needs_fixes` when Actions run completes and bot posts new blocking threads
+
+1. Ensure the Claude Code Action bot has no pre-existing unresolved threads on the test PR
+2. Configure the test workflow so the Claude Code Action bot will post at least one inline review comment
+3. Run:
+   ```bash
+   scripts/development-workflow/pr-review-loop.sh <pr_number>
+   ```
+4. Confirm the output contains `RESULT=needs_fixes` and `BLOCKING_COUNT` is at least `1`
+5. Confirm a new Actions run was dispatched (verify via `gh run list --workflow <workflow-file>`)
+
+**Expected result**: Loop emits `RESULT=needs_fixes` with a positive `BLOCKING_COUNT` after bot posts blocking threads.
+
+### Step 7: Verify timeout result (AC-5)
 
 **Maps to**: AC-5 — `RESULT=escalate`, `REASON=timeout` when run does not complete in time
 
@@ -135,23 +150,23 @@ Before running this smoke test:
 
 **Expected result**: Exit code 2; loop emits `RESULT=escalate`, `REASON=timeout`.
 
-### Step 7: Verify escalate result when workflow file is absent (AC-6)
+### Step 8: Verify escalate result when workflow file is absent (AC-6)
 
-**Maps to**: AC-6 — `RESULT=escalate`, `REASON=timeout` when workflow file cannot be dispatched
+**Maps to**: AC-6 — `RESULT=escalate`, `REASON=unavailable` when workflow file cannot be dispatched
 
-Both unavailable (workflow file absent, dispatch error) and actual run timeout map to exit code 2 from the reviewer script. `run_claude_code_action_review()` maps exit 2 to `RESULT=escalate, REASON=timeout` canonically.
+The companion script exits with code 3 (unavailable) when the dispatch itself fails (404, missing file, permissions error), distinct from exit code 2 (timeout). `run_claude_code_action_review()` maps exit 3 to `RESULT=escalate, REASON=unavailable`.
 
 1. Run against a repository that does NOT have the configured workflow file (or use a deliberate typo for `--workflow-file`):
    ```bash
    scripts/development-workflow/claude-code-action-reviewer.sh <pr_number> <owner> <repo> \
      --workflow-file nonexistent-workflow.yml
    ```
-2. Confirm exit code is 2 and `VERDICT: TIMED_OUT` appears in output
-3. When called via `pr-review-loop.sh`, confirm `RESULT=escalate` and `REASON=timeout` are emitted
+2. Confirm exit code is 3 and `VERDICT: UNAVAILABLE` appears in output
+3. When called via `pr-review-loop.sh`, confirm `RESULT=escalate` and `REASON=unavailable` are emitted
 
-**Expected result**: Exit code 2; loop emits `RESULT=escalate`, `REASON=timeout`.
+**Expected result**: Exit code 3; loop emits `RESULT=escalate`, `REASON=unavailable`.
 
-### Step 8: Verify configurable bot login (AC-7)
+### Step 9: Verify configurable bot login (AC-7)
 
 **Maps to**: AC-7 — `CLAUDE_CODE_ACTION_BOT_LOGIN` overrides default bot login
 
@@ -170,7 +185,7 @@ Both unavailable (workflow file absent, dispatch error) and actual run timeout m
 
 **Expected result**: The custom bot login is used throughout, not the default `claude[bot]`.
 
-### Step 9: Verify phase-after-clean behavior (AC-8)
+### Step 10: Verify phase-after-clean behavior (AC-8)
 
 **Maps to**: AC-8 — platform is skipped until pre-clean platforms report clean
 
@@ -189,7 +204,7 @@ Both unavailable (workflow file absent, dispatch error) and actual run timeout m
 
 **Expected result**: `claude-code-action` is not triggered until `pr-agent` clears.
 
-### Step 10: Verify kv output format matches codex-github (AC-9)
+### Step 11: Verify kv output format matches codex-github (AC-9)
 
 **Maps to**: AC-9 — key-value output format is identical to `codex-github`
 
@@ -214,7 +229,7 @@ Both unavailable (workflow file absent, dispatch error) and actual run timeout m
 - [ ] AC-3: When the bot has existing unresolved threads, `RESULT=needs_fixes` is emitted with correct `BLOCKING_COUNT` and no new dispatch is triggered
 - [ ] AC-4: When the Actions run completes and the bot posts new blocking threads, `RESULT=needs_fixes` and correct `BLOCKING_COUNT` are emitted
 - [ ] AC-5: When the Actions run times out, `RESULT=escalate` and `REASON=timeout` are emitted
-- [ ] AC-6: When the workflow cannot be dispatched (file absent), `RESULT=escalate` and `REASON=timeout` are emitted
+- [ ] AC-6: When the workflow cannot be dispatched (file absent), `RESULT=escalate` and `REASON=unavailable` are emitted
 - [ ] AC-7: `CLAUDE_CODE_ACTION_BOT_LOGIN` env var overrides the bot login used for thread identification
 - [ ] AC-8: When `claude-code-action` is in `phase_after_clean`, it is skipped until pre-clean platforms are clean
 - [ ] AC-9: Key-value output keys match those of the `codex-github` platform exactly

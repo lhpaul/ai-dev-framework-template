@@ -98,7 +98,8 @@ This function wraps the companion script with the same three-phase pattern used 
 3. **Map exit code to kv output**:
    - Exit 0 → `RESULT=clean` + standard kv block (no retrigger, no post-dispatch thread recheck needed — companion script already verified no blocking threads)
    - Exit 1 → `RESULT=needs_fixes` + re-run `check_unresolved_threads` to get accurate `BLOCKING_COUNT` (same pattern as codex-github)
-   - Exit 2 → `RESULT=escalate`, `REASON=timeout` (covers both true timeout and unavailable/dispatch-failed cases)
+   - Exit 2 → `RESULT=escalate`, `REASON=timeout` (true timeout: run started but did not complete within `MAX_WAIT`)
+   - Exit 3 → `RESULT=escalate`, `REASON=unavailable` (dispatch failure: workflow file absent, 404, or permissions error before the run could start)
 
 ---
 
@@ -112,7 +113,7 @@ This function wraps the companion script with the same three-phase pattern used 
 2. **Pre-existing threads (no dispatch)**: Bot has unresolved threads before the loop runs → `RESULT=needs_fixes`, `BLOCKING_COUNT` equals count of unresolved threads, no new Actions run dispatched (AC-3)
 3. **New blocking threads**: Actions run completes successfully; bot posts blocking review threads → `RESULT=needs_fixes`, `BLOCKING_COUNT` equals count of new threads (AC-4)
 4. **Timeout**: Actions run does not complete within `MAX_WAIT` → `RESULT=escalate`, `REASON=timeout` (AC-5)
-5. **Workflow file absent**: `gh workflow dispatch` receives 404 → `RESULT=escalate`, `REASON=timeout` (AC-6; both unavailable and actual timeout map to exit 2 and `REASON=timeout` per the canonical exit-code mapping)
+5. **Workflow file absent**: `gh workflow dispatch` receives 404 → `RESULT=escalate`, `REASON=unavailable` (AC-6; companion script exits 3, mapped to `REASON=unavailable` to distinguish from a true run timeout)
 6. **Configurable bot login**: `CLAUDE_CODE_ACTION_BOT_LOGIN` set to custom value; loop uses that login for thread identification (AC-7)
 7. **Phase after clean**: `claude-code-action` listed in `phase_after_clean`; loop skips it until pre-clean platforms report clean (AC-8)
 8. **kv output format**: Compare kv keys emitted for `claude-code-action` with those emitted for `codex-github`; confirm identical set (AC-9)
@@ -248,9 +249,18 @@ run_claude_code_action_review() {
       print_kv SUGGESTION_COUNT 0
       return 1
       ;;
-    *)
+    2)
       print_kv RESULT escalate
       print_kv REASON timeout
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      return 2
+      ;;
+    *)
+      print_kv RESULT escalate
+      print_kv REASON unavailable
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
