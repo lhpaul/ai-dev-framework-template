@@ -1,0 +1,10 @@
+{
+  "preferences": {
+    "auto_merge": true
+  },
+  "merge_queue": {
+    "merge_queue": true,
+    "auto_resolve_conflicts": true,
+    "auto_fix_ci_failures": true
+  }
+}
