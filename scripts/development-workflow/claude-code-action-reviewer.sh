@@ -165,7 +165,7 @@ DISPATCH_STDERR=$(mktemp)
 DISPATCH_STATUS=0
 gh api "repos/$OWNER/$REPO/actions/workflows/$WORKFLOW_FILE/dispatches" \
   --method POST \
-  --field "ref=$BASE_REF" \
+  --raw-field "ref=$BASE_REF" \
   --raw-field "inputs[pr_number]=$PR_NUMBER" \
   2>"$DISPATCH_STDERR" || DISPATCH_STATUS=$?
 
@@ -175,9 +175,9 @@ if [ "$DISPATCH_STATUS" -ne 0 ]; then
   echo "ERROR: workflow dispatch failed (exit $DISPATCH_STATUS): $DISPATCH_ERR" >&2
   # Distinguish 404 (workflow file absent / not found) from other errors
   if echo "$DISPATCH_ERR" | grep -qi "not found\|404\|workflow was not found"; then
-    echo "VERDICT: TIMED_OUT — workflow file '$WORKFLOW_FILE' not found on ref '$BASE_REF' (treated as unavailable)"
+    echo "VERDICT: UNAVAILABLE — workflow file '$WORKFLOW_FILE' not found on ref '$BASE_REF'"
   else
-    echo "VERDICT: TIMED_OUT — workflow dispatch failed: $DISPATCH_ERR (treated as unavailable)"
+    echo "VERDICT: UNAVAILABLE — workflow dispatch failed: $DISPATCH_ERR"
   fi
   exit 3
 fi
