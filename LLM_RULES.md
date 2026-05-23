@@ -1,28 +1,30 @@
 # LLM Rules
 
-These rules govern how LLM agents should interact with this codebase. They are enforced by a pre-commit hook.
+These rules govern how LLM agents should interact with this codebase. They are enforced by a pre-commit hook on **agent** commits (human commits pass through without this gate).
 
 ## Creating Pull Requests
 
-**Always use `haystack submit` instead of `gh pr create` or GitHub API.**
+Follow this repository's development workflow unless the human directs otherwise:
+
+1. **Open PRs with `gh pr create`** per [`docs/workflow/development-workflow/protocols/03-implement-development-protocol.md`](docs/workflow/development-workflow/protocols/03-implement-development-protocol.md) — typically `--draft`, with the correct `--base` (`develop` for features/fixes/refactors; `main` for hotfixes).
+2. Run guards documented in the protocol (board membership, base-branch checks) before and after create.
+3. After the PR exists, advance through the automated reviewer loop (protocol 93) when `review.platforms` are configured in [`.ai-dev-workflow.yaml`](.ai-dev-workflow.yaml).
+
+Do not skip CHANGELOG updates for feature/fix PRs. See [`AGENTS.md`](AGENTS.md) and [`docs/best-practices/2-version-control.md`](docs/best-practices/2-version-control.md).
+
+### Optional: Haystack submit
+
+If the human or team has adopted [Haystack Editor](https://haystackeditor.com/) for PR creation, you may use `haystack submit` when explicitly instructed. See [`docs/workflow/development-workflow/integrations/haystack.md`](docs/workflow/development-workflow/integrations/haystack.md).
 
 ```bash
-# Default submit - creates the PR from the current branch
 haystack submit
-
-# Request Haystack review - for complex/uncertain changes
-haystack submit --review
+haystack submit --review    # complex/uncertain changes
+haystack triage <pr-number> # analysis after submit (--json for scripts)
 ```
 
-This routes your PR through Haystack's submit workflow:
-1. Haystack runs pre-PR triage on your changes
-2. Pushes the current branch and creates the PR
-3. Waits for analysis results by default
-4. Auto-merges only if the repo has auto-merge enabled and the PR is approved
+When both workflows apply, prefer the human's stated choice. Default remains **`gh pr create`** + this framework's reviewer loop.
 
-Do NOT use `gh pr create` - it bypasses Haystack's submit workflow.
-
-After submitting, use `haystack triage <pr-number>` to check analysis results (rating, findings, agent fix prompts). Use `--json` for machine-readable output.
+## General Agent Behavior
 
 - When you write or edit LLM prompts in response to a failure running against some test data, be certain that your edit is not specific to the test data, and is actually addressing the more generic problem that caused the failure.
 - If the user specifies a model, follow it. Your understanding of current LLM models is outdated.
@@ -39,6 +41,7 @@ When writing or modifying agent code (tool calls, prompts, LLM pipelines):
 - **No silent length limits** - do not add code that silently cuts off text at N characters/lines/tokens.
 
 If truncation is technically necessary (e.g., context limits):
+
 1. **Disclose explicitly** that truncation will occur
 2. **State what and how much** will be omitted
 3. **Ask for user permission** before proceeding

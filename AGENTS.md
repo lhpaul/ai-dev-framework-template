@@ -41,6 +41,8 @@ Always refer to these docs for authoritative guidance:
 | [`docs/workflow/development-workflow/protocols/00-add-backlog-item-protocol.md`](docs/workflow/development-workflow/protocols/00-add-backlog-item-protocol.md) | Create backlog work items in a configured tracker (before spec/plan work)                       |
 | [`docs/workflow/development-workflow/agent-model-config.md`](docs/workflow/development-workflow/agent-model-config.md)                                         | Model assignments, tool restrictions, and override guide for all agents                         |
 | [`.ai-dev-workflow.yaml`](.ai-dev-workflow.yaml)                                                                                                               | Repo-level workflow integration manifest (review tools, issue tracker, VCS, browser automation) |
+| [`LLM_RULES.md`](LLM_RULES.md)                                                                                                                                 | Agent commit rules enforced by Haystack pre-commit hooks (when installed)                       |
+| [`docs/workflow/development-workflow/integrations/haystack.md`](docs/workflow/development-workflow/integrations/haystack.md)                                   | Optional Haystack Editor hooks and PR workflow                                                  |
 
 > **Note for Cursor users**: Workflow agents are also available as Cursor subagents in `.cursor/agents/`. Invoke them directly (e.g., `/developer`, `/orchestrator`, `/item-orchestrator`) or let Agent delegate to them. Each subagent's model is configured in its file — see [`docs/workflow/development-workflow/agent-model-config.md`](docs/workflow/development-workflow/agent-model-config.md) for how to set or override models.
 
@@ -153,6 +155,10 @@ This repository follows the default template workflow (documented in `docs/workf
 - **Feature and fix PRs** merged into `develop` add entries under `[Unreleased]` in `CHANGELOG.md`; do not convert to a version number on merge. Spec-only and plan-only PRs are exempt. Fixes or changes to unreleased work should update the existing entry rather than adding a new one. In parallel batches, each PR adds its own CHANGELOG entry as normal; merge conflicts are resolved by the batch-merge auto-resolution (protocol 94 Step 4.3).
 - **Hotfix PRs** (`hotfix/*`) are the exception: they write a **new versioned section** (e.g., `[1.0.1] - YYYY-MM-DD`) directly below `[Unreleased]` (above all prior versioned sections), not an `[Unreleased]` entry. A hotfix patches released code on `main` and is released immediately on merge — `auto-tag-release.yml` creates the corresponding tag automatically. The backport PR carries the versioned entry to `develop`.
 - **A new version is created when releasing or hotfixing**: for normal releases, run the Prepare Release workflow (`/prepare-release` or `docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md`) — that creates a `release/v[X.Y.Z]` branch, renames `[Unreleased]` to `[X.Y.Z]` in the CHANGELOG, opens PRs to `main` and backport to `develop`, then drives reviewer + regression + CI readiness on the **main** release PR before merge. For hotfixes, the developer writes the versioned section directly in Step 6 of Path 4 (`03-implement-development-protocol.md`) — no release branch is created.
+
+### Agent commit hooks (optional — Haystack)
+
+When `haystack hooks install` has been run, git uses `hooks/` for pre-commit enforcement on **AI agent** commits: truncation checks, `LLM_RULES.md` review, and Entire session tracking. Human commits are unaffected. See [`docs/workflow/development-workflow/integrations/haystack.md`](docs/workflow/development-workflow/integrations/haystack.md). Customize `LLM_RULES.md` for your project; the template keeps `gh pr create` + protocol 93 as the default PR path.
 
 ### Stack Conventions
 

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Haystack Editor git hooks (optional)** — `haystack hooks install` adds agent-aware pre-commit checks (`hooks/`), Entire session linkage (`.entire/`), and `LLM_RULES.md` aligned with the default `gh pr create` + reviewer-loop workflow. Integration guide: `docs/workflow/development-workflow/integrations/haystack.md`.
+
 ## [0.28.2] - 2026-05-23
 
 ### Fixed
