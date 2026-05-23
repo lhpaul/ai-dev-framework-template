@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.1] - 2026-05-22
+
+### Fixed
+
+- **`/sync-template` skill and Cursor command: hard-stop on YAML validation failure** (hotfix): the `yaml_parse_failed` check in both `.claude/skills/sync-template.md` and `.cursor/commands/sync-template.md` only echoed an error but did not exit, allowing the sync to proceed past a broken workflow YAML file. Added `exit 1` to match the reference implementation in `.claude/commands/sync-template.md`.
+- **`pr-review-platform.md`: fix `phase_after_clean` config example** (hotfix): the YAML example listed `coderabbit` only under `review.phase_after_clean` but not under `review.platforms`, contradicting the requirement that phase platforms must also appear in the platforms list. Added `- coderabbit` to the `platforms` array in the example.
+
 ## [0.28.0] - 2026-05-22
 
 ### Added
@@ -769,7 +776,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.1...HEAD
+[0.28.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.0...v0.28.1
 [0.28.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.4...v0.28.0
 [0.27.4]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.3...v0.27.4
 [0.27.3]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.2...v0.27.3

@@ -69,6 +69,7 @@ review:
   platforms:
     - greptile
     - devin
+    - coderabbit
   phase_after_clean:
     - coderabbit
 ```
