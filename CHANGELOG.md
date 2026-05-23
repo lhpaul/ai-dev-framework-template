@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Haystack Editor git hooks (optional)** — `haystack hooks install` adds agent-aware pre-commit checks (`hooks/`), Entire session linkage (`.entire/`), and `LLM_RULES.md` aligned with the default `gh pr create` + reviewer-loop workflow. Integration guide: `docs/workflow/development-workflow/integrations/haystack.md`.
 
+### Changed
+
+- **Register claude-code-action as recommended phase_after_clean reviewer** (#708): Updated `.ai-dev-workflow.yaml` inline comments to recommend `claude-code-action` as the `phase_after_clean` value in place of CodeRabbit for projects that want to avoid per-hour rate-limit stalls. Updated `README.md` Optional Integrations section to surface `claude-code-action` alongside existing options.
+
 ## [0.28.2] - 2026-05-23
 
 ### Fixed
