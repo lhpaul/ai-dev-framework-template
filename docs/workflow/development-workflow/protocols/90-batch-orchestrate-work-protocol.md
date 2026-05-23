@@ -625,7 +625,11 @@ gh pr list --state merged --head <branch> --json number,mergedAt --jq '.[0] | .n
 Before dispatching any Work Item Runner, verify that the local integration branch is in sync with `origin`. New feature/fix branches are cut from the local integration branch; if the local branch has commits that are not yet on `origin`, those commits will appear in every new implementation PR's diff, causing incorrect diffs and confusing reviewers. Conversely, if `origin` has commits that are not on the local branch, new branches will be cut from a stale base.
 
 ```bash
-INTEGRATION_BRANCH="develop"   # or read from .ai-dev-workflow.yaml if a config key exists
+# Derive the integration branch from the batch's BASE_BRANCH context if set.
+# When items in this batch carry integration-branch:<slug> labels, BASE_BRANCH will be
+# "develop-<slug>" and this check verifies that branch (not always "develop").
+# Fall back to "develop" when no integration-branch override is present.
+INTEGRATION_BRANCH="${BASE_BRANCH:-develop}"  # BASE_BRANCH from batch handoff metadata; defaults to "develop"
 
 # Fetch latest remote state (idempotent, safe to run at the start of every batch)
 git fetch origin
@@ -944,7 +948,7 @@ Verify all of the following by querying artifact state directly. If any check fa
 
 | Check                                           | Pass condition                                                                                                                                                                                                                                                                                                                                                                                                            | Remediation if failing                                                                                                                                                                                                                                                                            |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Base branch                                     | `develop` for `feature/*`, `fix/*`, `refactor/*`, `spec/*`, `implementation-plan/*`; `main` for `hotfix/*`                                                                                                                                                                                                                                                                                                                | Redispatch agent to rebase onto the correct base                                                                                                                                                                                                                                                  |
+| Base branch                                     | `develop` (or `develop-<slug>` if the batch is targeting an integration branch) for `feature/*`, `fix/*`, `refactor/*`, `spec/*`, `implementation-plan/*`; `main` for `hotfix/*`                                                                                                                                                                                                                                          | Redispatch agent to rebase onto the correct base                                                                                                                                                                                                                                                  |
 | PR is non-draft                                 | `isDraft: false`                                                                                                                                                                                                                                                                                                                                                                                                          | Run `gh pr ready <pr_number>` directly; log as protocol deviation                                                                                                                                                                                                                                 |
 | `ready-for-human-review` label                  | Present in the `labels` array returned by `gh pr view`                                                                                                                                                                                                                                                                                                                                                                    | Apply directly: `gh pr edit <pr_number> --add-label "ready-for-human-review"` (after all other checks pass)                                                                                                                                                                                       |
 | `ready-for-regression` label                    | Present in the `labels` array on `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PRs; not required for `spec/*`, `implementation-plan/*`                                                                                                                                                                                                                                                                                   | **Apply directly** (primary enforcement point): `gh pr edit <pr_number> --add-label "ready-for-regression"`. Log as protocol deviation: `PROTOCOL_DEVIATION: ready-for-regression was missing on PR #<N> — applied by orchestrator Step 5.1`. **Do not redispatch the agent for this gap alone.** |
@@ -1050,7 +1054,11 @@ Store `MAIN_REPO_ROOT` before dispatching any Work Item Runner (while CWD is def
 After each Work Item Runner returns in a **parallel batch**, immediately check the main working tree's branch and cleanliness. Handle all four postcondition states:
 
 ```bash
-INTEGRATION_BRANCH="develop"  # or read from .ai-dev-workflow.yaml integration_branch field
+# Derive the integration branch from the batch's BASE_BRANCH context if set;
+# fall back to "develop" when no integration-branch override is in context.
+# When the batch was built with BASE_BRANCH=develop-<slug> in handoff metadata,
+# set INTEGRATION_BRANCH accordingly so this check validates against the correct branch.
+INTEGRATION_BRANCH="${BASE_BRANCH:-develop}"  # BASE_BRANCH comes from handoff metadata; defaults to "develop"
 # MAIN_REPO_ROOT must be an absolute path derived via --git-common-dir (see CWD safety note above)
 MAIN_BRANCH=$(git -C "$MAIN_REPO_ROOT" rev-parse --abbrev-ref HEAD)
 MAIN_STATUS=$(git -C "$MAIN_REPO_ROOT" status --porcelain)
@@ -1203,6 +1211,18 @@ If any PR is still in progress or labeled `needs-fixes`, continue supervising (S
    ```bash
    ./scripts/development-workflow/batch-merge.sh discover --prs <num1,num2,...>
    ```
+
+   **Integration-branch override**: When all PRs in the batch target an integration branch other
+   than `develop` (i.e., the batch was built with `BASE_BRANCH=develop-<slug>`), you **must** pass
+   `--base develop-<slug>` to `batch-merge.sh` so it queries and merges against the correct branch:
+
+   ```bash
+   ./scripts/development-workflow/batch-merge.sh --base develop-<slug> discover --prs <num1,num2,...>
+   ```
+
+   When auto-discovery is used (no explicit `--prs` list), `--base` also determines which branch
+   is queried for open ready PRs — omitting it would default to `develop` and miss PRs targeting
+   the integration branch.
 
 2. **Revalidate readiness from discovery output**:
    - If any PR returned `PR_READY_LABEL=false`, warn the human and require an explicit include-or-skip decision before proceeding. Remove any skipped PRs from the merge list and carry them forward as `skipped_not_ready` for the final summary. Do not proceed silently with any unready PR.

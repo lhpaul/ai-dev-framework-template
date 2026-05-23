@@ -1,7 +1,7 @@
 # Protocol: Batch Merge
 
 **Agent role**: Developer (or Portfolio Orchestrator when invoked from Protocol 90)
-**Purpose**: Merge all ready PRs in a parallel batch into `develop` sequentially, auto-resolving trivial CHANGELOG and documentation conflicts (including duplicate section headers introduced by clean merges), pausing for human input on non-trivial ones, and running `post-merge-cleanup` for each successfully merged PR.
+**Purpose**: Merge all ready PRs in a parallel batch into the target integration branch (`develop` by default, or any epic integration branch) sequentially, auto-resolving trivial CHANGELOG and documentation conflicts (including duplicate section headers introduced by clean merges), pausing for human input on non-trivial ones, and running `post-merge-cleanup` for each successfully merged PR.
 
 **Shell helper**: `scripts/development-workflow/batch-merge.sh`
 
@@ -26,13 +26,19 @@ In both cases, the merge plan is displayed before any `git merge` runs, but exec
 
 ```bash
 ./scripts/development-workflow/batch-merge.sh discover
+# Or, to merge into an epic integration branch instead of develop:
+./scripts/development-workflow/batch-merge.sh --base develop-<slug> discover
 ```
 
 **Explicit PR list** (user supplied `#101 #102 #103` or `--prs 101,102,103`):
 
 ```bash
 ./scripts/development-workflow/batch-merge.sh discover --prs 101,102,103
+# Or, with an integration branch override:
+./scripts/development-workflow/batch-merge.sh --base develop-<slug> discover --prs 101,102,103
 ```
+
+The `--base` flag is a global option placed **before** the subcommand name. It defaults to `develop` and must be passed consistently to `discover`, `merge`, and `delete-branch` when targeting an integration branch other than `develop`.
 
 ### 1b. Handle the discovery result
 
@@ -40,9 +46,9 @@ Parse the output. Each PR candidate is a block of `KEY=VALUE` lines terminated b
 
 - If `DISCOVERY_RESULT=none` (auto-discovery mode only): exit immediately with the message:
 
-  > No PRs labeled `ready-for-human-review` found targeting `develop`. Nothing to merge.
+  > No PRs labeled `ready-for-human-review` found targeting `<base>`. Nothing to merge.
 
-  Stop — no side effects.
+  where `<base>` is the value passed to `--base` (defaults to `develop`). Stop — no side effects.
 
 - If `DISCOVERY_RESULT=found`: collect all PR blocks into a candidate list.
 
@@ -113,9 +119,9 @@ After printing the plan, proceed directly to Step 3.5 without waiting for user i
 Before starting the sequential merge loop, verify that the main working tree (the checkout that will receive the merges) is clean and on the expected integration branch:
 
 ```bash
-# Verify branch
+# Verify branch — use the same --base value passed to batch-merge.sh
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-EXPECTED_BRANCH="develop"   # or the configured integration branch
+EXPECTED_BRANCH="${TARGET_BASE:-develop}"   # develop, or the --base override
 if [ "$CURRENT_BRANCH" != "$EXPECTED_BRANCH" ]; then
   echo "ERROR: main working tree is on '$CURRENT_BRANCH', expected '$EXPECTED_BRANCH'. Aborting batch merge."
   exit 1
@@ -131,7 +137,7 @@ if [ -n "$DIRTY" ]; then
 fi
 ```
 
-If either check fails, **stop immediately** and report to the human. Do not attempt any merges with a dirty or mis-branched working tree — leaked modifications may be incorporated into merge commits and corrupt `develop`.
+If either check fails, **stop immediately** and report to the human. Do not attempt any merges with a dirty or mis-branched working tree — leaked modifications may be incorporated into merge commits and corrupt the base branch.
 
 **Defense-in-depth note**: Protocol 90 Step 5.2 runs an equivalent check immediately after each Work Item Runner returns — before any orchestrator action, including batch-merge handoff. This Step 3.5 check is a second line of defense for cases where Step 5.2 was not run (e.g., manual invocation of batch-merge, or a non-parallel-batch context). Both checks are required; neither substitutes for the other.
 
@@ -186,14 +192,14 @@ This guard prevents the scenario where a clean git merge silently produces a str
 
 After a clean or resolved merge, in order:
 
-1. **Push `develop` to origin and mark the PR as merged on GitHub:**
+1. **Push the base branch to origin and mark the PR as merged on GitHub:**
 
    As of the fix for issue #412, `batch-merge.sh merge` now performs the push and the
    `gh pr merge` call internally before returning `MERGE_RESULT=clean`. You do **not**
-   need to run a separate `git push origin develop` step — the script already did it.
+   need to run a separate `git push origin <base>` step — the script already did it.
 
    If you are running a resolved-conflict merge (Step 4.3) and need to commit the
-   resolution before continuing, run `git push origin develop` after staging and
+   resolution before continuing, run `git push origin <base>` after staging and
    committing the resolved files. The script does not handle the post-conflict push.
 
 2. **Verify GitHub recognizes the PR as merged** (not just closed):
@@ -418,7 +424,7 @@ The orchestrator should include the batch-merge summary in its overall `Step 6: 
 
 ## Safety Rules
 
-- **`develop` must never be left in a conflicted state.** Every code path that encounters a conflict has either a resolution path or a `git merge --abort` fallback.
+- **The base branch must never be left in a conflicted state.** Every code path that encounters a conflict has either a resolution path or a `git merge --abort` fallback.
 - **Do not use `gh pr close`.** The merge must be recognized by GitHub as a real merge, not a closed-unmerged PR.
 - **Do not force-push** or rebase PR branches.
 - **Already-merged PRs stay merged** even if the human aborts the batch mid-run.
