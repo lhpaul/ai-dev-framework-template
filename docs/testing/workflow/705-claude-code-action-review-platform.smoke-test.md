@@ -38,8 +38,14 @@ Before running this smoke test:
 
 **Maps to**: AC-1 — platform recognized by the reviewer loop
 
-1. Run `bash -n scripts/development-workflow/claude-code-action-reviewer.sh`
-2. Run `bash -n scripts/development-workflow/pr-review-loop.sh`
+1. Run:
+   ```bash
+   bash -n scripts/development-workflow/claude-code-action-reviewer.sh
+   ```
+2. Run:
+   ```bash
+   bash -n scripts/development-workflow/pr-review-loop.sh
+   ```
 
 **Expected result**: Both commands exit 0 with no output (no syntax errors).
 
@@ -79,7 +85,10 @@ Before running this smoke test:
 **Maps to**: AC-1 and AC-2
 
 1. With `claude-code-action` in `.ai-dev-workflow.yaml` `platforms`
-2. Run `scripts/development-workflow/pr-review-loop.sh <pr_number>` against the test PR
+2. Run against the test PR:
+   ```bash
+   scripts/development-workflow/pr-review-loop.sh <pr_number>
+   ```
 3. Confirm the output contains:
    ```
    RESULT=clean
@@ -99,8 +108,15 @@ Before running this smoke test:
 **Maps to**: AC-3 — `RESULT=needs_fixes` without new dispatch when bot already has unresolved threads
 
 1. Using the GitHub API or test fixture, ensure the Claude Code Action bot has at least one unresolved review thread on the test PR
-2. Run `scripts/development-workflow/pr-review-loop.sh <pr_number> --platform claude-code-action`
-3. Confirm no new Actions workflow run is triggered (verify by checking `gh api repos/.../actions/runs` — no new run should appear after the loop call)
+2. Run:
+   ```bash
+   scripts/development-workflow/pr-review-loop.sh <pr_number> --platform claude-code-action
+   ```
+3. Confirm no new Actions workflow run is triggered (verify by checking:
+   ```bash
+   gh api repos/<owner>/<repo>/actions/runs
+   ```
+   No new run should appear after the loop call)
 4. Confirm the output contains `RESULT=needs_fixes`, `REASON=existing_findings`, and `BLOCKING_COUNT` equal to the count of pre-existing unresolved threads
 
 **Expected result**: Loop exits with `RESULT=needs_fixes` without dispatching a new workflow run.
@@ -109,21 +125,31 @@ Before running this smoke test:
 
 **Maps to**: AC-5 — `RESULT=escalate`, `REASON=timeout` when run does not complete in time
 
-1. Run `claude-code-action-reviewer.sh` against a test PR with `--max-wait 1 --poll-interval 1` (intentionally too short to complete)
+1. Run against a test PR with intentionally too short timeout:
+   ```bash
+   scripts/development-workflow/claude-code-action-reviewer.sh <pr_number> <owner> <repo> \
+     --max-wait 1 --poll-interval 1
+   ```
 2. Confirm exit code is 2 and `VERDICT: TIMED_OUT` appears in output
 3. When called via `pr-review-loop.sh`, confirm `RESULT=escalate` and `REASON=timeout` are emitted
 
 **Expected result**: Exit code 2; loop emits `RESULT=escalate`, `REASON=timeout`.
 
-### Step 7: Verify unavailable result when workflow file is absent (AC-6)
+### Step 7: Verify escalate result when workflow file is absent (AC-6)
 
-**Maps to**: AC-6 — `RESULT=escalate`, `REASON=unavailable` when workflow file cannot be dispatched
+**Maps to**: AC-6 — `RESULT=escalate`, `REASON=timeout` when workflow file cannot be dispatched
 
-1. Run `claude-code-action-reviewer.sh` against a repository that does NOT have the configured workflow file (or use a deliberate typo for `--workflow-file`)
-2. Confirm exit code is 2 and `VERDICT: TIMED_OUT` (with reason indicating unavailable/dispatch-error) appears in output
-3. When called via `pr-review-loop.sh`, confirm `RESULT=escalate` and `REASON=timeout` are emitted (the script maps both unavailable and actual timeout to exit 2)
+Both unavailable (workflow file absent, dispatch error) and actual run timeout map to exit code 2 from the reviewer script. `run_claude_code_action_review()` maps exit 2 to `RESULT=escalate, REASON=timeout` canonically.
 
-**Expected result**: Exit code 2; loop emits `RESULT=escalate`.
+1. Run against a repository that does NOT have the configured workflow file (or use a deliberate typo for `--workflow-file`):
+   ```bash
+   scripts/development-workflow/claude-code-action-reviewer.sh <pr_number> <owner> <repo> \
+     --workflow-file nonexistent-workflow.yml
+   ```
+2. Confirm exit code is 2 and `VERDICT: TIMED_OUT` appears in output
+3. When called via `pr-review-loop.sh`, confirm `RESULT=escalate` and `REASON=timeout` are emitted
+
+**Expected result**: Exit code 2; loop emits `RESULT=escalate`, `REASON=timeout`.
 
 ### Step 8: Verify configurable bot login (AC-7)
 
@@ -135,7 +161,12 @@ Before running this smoke test:
      scripts/development-workflow/pr-review-loop.sh <pr_number> --platform claude-code-action
    ```
 2. Confirm the thread check uses `my-custom-claude-bot` (without `[bot]` suffix) for GraphQL matching
-3. Confirm `HARNESS_MODE=1 source ...; bot_login_for_platform claude-code-action` returns `my-custom-claude-bot[bot]`
+3. Confirm in a shell:
+   ```bash
+   HARNESS_MODE=1 source scripts/development-workflow/pr-review-loop.sh
+   bot_login_for_platform claude-code-action
+   ```
+   Returns `my-custom-claude-bot[bot]`
 
 **Expected result**: The custom bot login is used throughout, not the default `claude[bot]`.
 
@@ -150,7 +181,10 @@ Before running this smoke test:
    phase_after_clean:
      - claude-code-action
    ```
-2. Run `pr-review-loop.sh` against a PR where `pr-agent` is still reporting `needs_fixes`
+2. Run against a PR where `pr-agent` is still reporting `needs_fixes`:
+   ```bash
+   scripts/development-workflow/pr-review-loop.sh <pr_number>
+   ```
 3. Confirm `PHASE_AFTER_CLEAN_STARTED=0` appears in output and `claude-code-action` is not invoked
 
 **Expected result**: `claude-code-action` is not triggered until `pr-agent` clears.
@@ -159,8 +193,14 @@ Before running this smoke test:
 
 **Maps to**: AC-9 — key-value output format is identical to `codex-github`
 
-1. Run `pr-review-loop.sh` with `--platform claude-code-action` against a clean PR and capture output
-2. Run `pr-review-loop.sh` with `--platform codex-github` against the same clean PR and capture output (or a clean codex-github run from a prior test)
+1. Run with `--platform claude-code-action` against a clean PR and capture output:
+   ```bash
+   scripts/development-workflow/pr-review-loop.sh <pr_number> --platform claude-code-action
+   ```
+2. Run with `--platform codex-github` against the same clean PR and capture output (or a clean codex-github run from a prior test):
+   ```bash
+   scripts/development-workflow/pr-review-loop.sh <pr_number> --platform codex-github
+   ```
 3. Compare the key names in both outputs
 
 **Expected result**: Both platform outputs contain exactly: `RESULT`, `PLATFORM`, `PR_NUMBER`, `BRANCH`, `FIX_AGENT`, `COMMENT_COUNT`, `BLOCKING_COUNT`, `SUGGESTION_COUNT`. No extra or missing keys in the `claude-code-action` clean output.
@@ -174,7 +214,7 @@ Before running this smoke test:
 - [ ] AC-3: When the bot has existing unresolved threads, `RESULT=needs_fixes` is emitted with correct `BLOCKING_COUNT` and no new dispatch is triggered
 - [ ] AC-4: When the Actions run completes and the bot posts new blocking threads, `RESULT=needs_fixes` and correct `BLOCKING_COUNT` are emitted
 - [ ] AC-5: When the Actions run times out, `RESULT=escalate` and `REASON=timeout` are emitted
-- [ ] AC-6: When the workflow cannot be dispatched (file absent), `RESULT=escalate` is emitted
+- [ ] AC-6: When the workflow cannot be dispatched (file absent), `RESULT=escalate` and `REASON=timeout` are emitted
 - [ ] AC-7: `CLAUDE_CODE_ACTION_BOT_LOGIN` env var overrides the bot login used for thread identification
 - [ ] AC-8: When `claude-code-action` is in `phase_after_clean`, it is skipped until pre-clean platforms are clean
 - [ ] AC-9: Key-value output keys match those of the `codex-github` platform exactly

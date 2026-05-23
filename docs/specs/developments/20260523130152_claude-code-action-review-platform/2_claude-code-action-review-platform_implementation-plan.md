@@ -112,10 +112,11 @@ This function wraps the companion script with the same three-phase pattern used 
 2. **Pre-existing threads (no dispatch)**: Bot has unresolved threads before the loop runs → `RESULT=needs_fixes`, `BLOCKING_COUNT` equals count of unresolved threads, no new Actions run dispatched (AC-3)
 3. **New blocking threads**: Actions run completes successfully; bot posts blocking review threads → `RESULT=needs_fixes`, `BLOCKING_COUNT` equals count of new threads (AC-4)
 4. **Timeout**: Actions run does not complete within `MAX_WAIT` → `RESULT=escalate`, `REASON=timeout` (AC-5)
-5. **Workflow file absent**: `gh workflow dispatch` receives 404 → `RESULT=escalate`, `REASON=unavailable` (AC-6)
+5. **Workflow file absent**: `gh workflow dispatch` receives 404 → `RESULT=escalate`, `REASON=timeout` (AC-6; both unavailable and actual timeout map to exit 2 and `REASON=timeout` per the canonical exit-code mapping)
 6. **Configurable bot login**: `CLAUDE_CODE_ACTION_BOT_LOGIN` set to custom value; loop uses that login for thread identification (AC-7)
 7. **Phase after clean**: `claude-code-action` listed in `phase_after_clean`; loop skips it until pre-clean platforms report clean (AC-8)
 8. **kv output format**: Compare kv keys emitted for `claude-code-action` with those emitted for `codex-github`; confirm identical set (AC-9)
+9. **End-to-end via `pr-review-loop.sh`**: `claude-code-action` is listed in `.ai-dev-workflow.yaml` `platforms`; the full loop invocation emits `PLATFORM=claude-code-action` with the correct `RESULT` token (AC-1)
 
 **Smoke test runbook**: `docs/testing/workflow/705-claude-code-action-review-platform.smoke-test.md`
 
@@ -304,9 +305,16 @@ Verification: run `git diff .ai-dev-workflow.yaml` and confirm only the comment 
 
 ### Step 6: Write the smoke test runbook
 
-Create `docs/testing/workflow/705-claude-code-action-review-platform.smoke-test.md` using the smoke test runbook template. Cover the eight test scenarios listed in the Testing Strategy section above (AC-1 through AC-9 from the spec).
+Create `docs/testing/workflow/705-claude-code-action-review-platform.smoke-test.md` using the smoke test runbook template. Cover the nine test scenarios listed in the Testing Strategy section above (AC-1 through AC-9 from the spec).
 
-Verification: run `npx markdownlint-cli2 "docs/testing/workflow/705-claude-code-action-review-platform.smoke-test.md"` and confirm no lint errors.
+Verification:
+
+```bash
+markdownlint-cli2 "docs/testing/workflow/705-claude-code-action-review-platform.smoke-test.md"
+python3 scripts/lint/markdown-heuristic-lint.py "docs/testing/workflow/705-claude-code-action-review-platform.smoke-test.md"
+```
+
+Confirm both commands exit 0 with no errors.
 
 ### Step 7: Commit
 
