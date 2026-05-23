@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.2] - 2026-05-23
+
+### Fixed
+
+- **`apply-regression-label.yml`: remove `synchronize` trigger** (hotfix): both `apply-regression-label.yml` and `remove-regression-label-on-push.yml` fired on `synchronize` events with separate concurrency groups, creating a race where the two workflows could interleave and leave the label in an inconsistent state. Removed `synchronize` from `apply-regression-label.yml`'s trigger list; the remove workflow already handles `synchronize` and is sufficient.
+- **`reviewer-loop-guard.yml`: add fork/same-repo guard to status-posting step** (hotfix): the workflow uses `pull_request_target` with `statuses: write` but had no same-repo check, allowing status writes to be attempted for fork-originated PRs where the SHA may not be resolvable in the base repo. Added `if: github.event.pull_request.head.repo.full_name == github.repository` to the status-posting step.
+- **`shellcheck.yml`: declare explicit minimal token permissions** (hotfix): the ShellCheck workflow had no `permissions:` block, causing `GITHUB_TOKEN` to inherit the repo-level default (potentially broader than needed for a read-only checkout). Added `permissions: contents: read` to the job.
+- **`update-tracker-on-merge.yml`: rename `GITHUB_PROJECT_NUMBER/OWNER` to `PROJECT_NUMBER/OWNER`** (hotfix): `GITHUB_` is a reserved prefix for GitHub's own variables; using it as a repository variable name violates the naming convention and causes `actionlint` errors. Renamed to `PROJECT_NUMBER` and `PROJECT_OWNER` in the `env:` block, header comment, and warning message.
+- **`update-tracker-on-merge.yml`: add concurrency control** (hotfix): rapid merges to `develop` could trigger concurrent runs updating the same project item, risking GraphQL conflicts. Added `concurrency: group: tracker-update-${{ github.event.pull_request.number }}, cancel-in-progress: false`.
+- **`retro-metrics.md`: wrap `worktree-agent-*` in backticks** (hotfix): bare `worktree-agent-*` text in the table was parsed as emphasis by markdownlint, triggering MD037 ("spaces inside emphasis markers"). Wrapped the token in backticks.
+- **`pr-review-loop.sh`: emit last-known counts in REST re-check failure path** (hotfix): when `check_unreplied_rest_comments` fails after auto-reply, `coderabbit_thread_gate_clean` was emitting hardcoded `COMMENT_COUNT 0` / `BLOCKING_COUNT 0`, misrepresenting an unknown state as "no blockers". Changed to emit `${rest_unreplied_raw:-0}` (the pre-auto-reply count) as the best available approximation.
+
 ## [0.28.1] - 2026-05-22
 
 ### Fixed
@@ -776,7 +788,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.1...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.2...HEAD
+[0.28.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.1...v0.28.2
 [0.28.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.0...v0.28.1
 [0.28.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.4...v0.28.0
 [0.27.4]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.3...v0.27.4

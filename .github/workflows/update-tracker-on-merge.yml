@@ -19,8 +19,8 @@
 # Required repository secrets / variables:
 #   GH_PROJECT_TOKEN       — PAT with `project` scope (GITHUB_TOKEN cannot
 #                            update Projects v2 fields; a PAT is required)
-#   GITHUB_PROJECT_NUMBER  — the integer project number (e.g. 1)
-#   GITHUB_PROJECT_OWNER   — the GitHub user or org owning the project
+#   PROJECT_NUMBER         — the integer project number (e.g. 1)
+#   PROJECT_OWNER          — the GitHub user or org owning the project
 #                            (falls back to github.repository_owner when unset)
 name: Update tracker status on PR merge
 
@@ -29,6 +29,10 @@ on:
     types: [closed]
     branches:
       - develop
+
+concurrency:
+  group: tracker-update-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
 
 # Least-privilege permissions: only what this workflow needs.
 # - pull-requests: read  — read PR metadata (head.ref, merged flag)
@@ -109,8 +113,8 @@ jobs:
         if: steps.detect.outputs.skip == 'false'
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
         env:
-          PROJECT_NUMBER: ${{ vars.GITHUB_PROJECT_NUMBER }}
-          PROJECT_OWNER: ${{ vars.GITHUB_PROJECT_OWNER }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+          PROJECT_OWNER: ${{ vars.PROJECT_OWNER }}
           TARGET_STATUS: ${{ steps.detect.outputs.target_status }}
           ISSUE_NUMBER: ${{ steps.detect.outputs.issue_number }}
         with:
@@ -122,7 +126,7 @@ jobs:
             const issueNumber = parseInt(process.env.ISSUE_NUMBER, 10);
 
             if (!projectNumber) {
-              core.warning('GITHUB_PROJECT_NUMBER variable is not set — skipping tracker update.');
+              core.warning('PROJECT_NUMBER variable is not set — skipping tracker update.');
               return;
             }
 
