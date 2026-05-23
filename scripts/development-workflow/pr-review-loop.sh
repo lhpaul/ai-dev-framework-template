@@ -733,6 +733,126 @@ run_codex_github_review() {
   esac
 }
 
+run_claude_code_action_review() {
+  local pr_number="$1"
+  local branch_name="$2"
+  local poll_interval="$3"
+  local max_wait="$4"
+  local platform="claude-code-action"
+  local bot_login="${CLAUDE_CODE_ACTION_BOT_LOGIN:-claude[bot]}"
+  # GraphQL author.login returns the login WITHOUT the "[bot]" suffix that the
+  # REST API uses. Strip it here so check_unresolved_threads comparisons work.
+  local graphql_bot_login="${bot_login%\[bot\]}"
+  local repo
+  local reviewer_script
+  local script_exit=0
+  local thread_check_output=""
+  local thread_check_status=0
+  local unresolved_count=0
+
+  require_gh
+  cd_workflow_repo_root
+  repo="$(repo_slug)"
+
+  # Phase 1: Check for existing unresolved review threads from the Claude Code Action bot
+  set +e
+  thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" "$graphql_bot_login")"
+  thread_check_status=$?
+  set -e
+  if [ "$thread_check_status" -eq 0 ]; then
+    unresolved_count="$thread_check_output"
+  fi
+
+  if [ "$unresolved_count" -gt 0 ]; then
+    print_kv RESULT needs_fixes
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv REASON existing_findings
+    print_kv COMMENT_COUNT "$unresolved_count"
+    print_kv BLOCKING_COUNT "$unresolved_count"
+    print_kv SUGGESTION_COUNT 0
+    return 1
+  fi
+
+  # Phase 2: Dispatch the Claude Code Action workflow and wait for completion
+  reviewer_script="$(workflow_repo_root)/scripts/development-workflow/claude-code-action-reviewer.sh"
+
+  local owner repo_name
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  # Keep polling interval bounded by the wait budget to avoid zero-poll attempts
+  # when a caller provides poll_interval > max_wait.
+  local effective_poll_interval
+  effective_poll_interval="$poll_interval"
+  if [ "$effective_poll_interval" -gt "$max_wait" ]; then
+    effective_poll_interval="$max_wait"
+  fi
+  set +e
+  "$reviewer_script" "$pr_number" "$owner" "$repo_name" \
+    --bot-login "$bot_login" \
+    --poll-interval "$effective_poll_interval" \
+    --max-wait "$max_wait" >/dev/null 2>&1
+  script_exit=$?
+  set -e
+
+  case "$script_exit" in
+    0)
+      print_kv RESULT clean
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 0
+      ;;
+    1)
+      unresolved_count=0
+      set +e
+      thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" "$graphql_bot_login")"
+      thread_check_status=$?
+      set -e
+      if [ "$thread_check_status" -eq 0 ]; then
+        unresolved_count="$thread_check_output"
+      fi
+      [ "$unresolved_count" -eq 0 ] && unresolved_count=1
+
+      print_kv RESULT needs_fixes
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv REASON unresolved_review_threads
+      print_kv COMMENT_COUNT "$unresolved_count"
+      print_kv BLOCKING_COUNT "$unresolved_count"
+      print_kv SUGGESTION_COUNT 0
+      return 1
+      ;;
+    2)
+      print_kv RESULT escalate
+      print_kv REASON timeout
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      return 2
+      ;;
+    *)
+      print_kv RESULT escalate
+      print_kv REASON unavailable
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      return 2
+      ;;
+  esac
+}
+
 run_devin_review() {
   local pr_number="$1"
   local branch_name="$2"
@@ -2787,8 +2907,9 @@ bot_login_for_platform() {
     devin)        printf 'devin-ai-integration\n' ;;
     greptile)     printf 'greptile-apps\n' ;;
     pr-agent)     printf '\n' ;;
-    codex-github) printf '%s\n' "${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}" ;;
-    *)            printf '\n' ;;
+    codex-github)        printf '%s\n' "${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}" ;;
+    claude-code-action)  printf '%s\n' "${CLAUDE_CODE_ACTION_BOT_LOGIN:-claude[bot]}" ;;
+    *)                   printf '\n' ;;
   esac
 }
 
@@ -2930,6 +3051,9 @@ run_platform_review() {
       ;;
     codex-github)
       run_codex_github_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      ;;
+    claude-code-action)
+      run_claude_code_action_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
       ;;
     *)
       print_kv RESULT skipped
