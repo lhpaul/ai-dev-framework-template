@@ -1,7 +1,5 @@
 # Claude Code Action Integration Guide — Spec
 
-**Depends on**: 705-claude-code-action-review-platform, 706-claude-code-action-pr-review-workflow
-
 ---
 
 ## Overview
@@ -44,7 +42,7 @@ This feature ships the user-facing setup documentation for `claude-code-action` 
 
 **Actions available**:
 
-- The operator can use the guide's troubleshooting section to diagnose issues (e.g., missing secret, workflow not triggering, review threads not detected).
+- The operator can follow the guide's setup checklist to diagnose common issues (e.g., missing secret, workflow not triggering, review threads not detected).
 
 **Considerations**:
 
