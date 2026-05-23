@@ -1,0 +1,4 @@
+#!/bin/sh
+# Haystack hooks (powered by Entire)
+# Post-commit hook: condense session data if commit has Entire-Checkpoint trailer
+"$HOME/.haystack/bin/entire" hooks git post-commit 2>/dev/null || true
