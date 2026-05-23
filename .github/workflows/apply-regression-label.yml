@@ -1,7 +1,7 @@
 # Automatically applies the ready-for-regression label to implementation PRs
-# based on the branch prefix. Runs on every PR open, reopen, ready_for_review,
-# or synchronize event so the label is present regardless of whether the PR
-# was opened as a draft or converted to non-draft later.
+# based on the branch prefix. Runs on every PR open, reopen, or ready_for_review
+# event so the label is present regardless of whether the PR was opened as a
+# draft or converted to non-draft later.
 #
 # In-scope branch prefixes (configurable via IN_SCOPE_PREFIXES env var):
 #   feature/  fix/  refactor/  hotfix/
@@ -19,7 +19,7 @@ name: Apply ready-for-regression label
 
 on:
   pull_request:
-    types: [opened, reopened, ready_for_review, synchronize]
+    types: [opened, reopened, ready_for_review]
 
 concurrency:
   group: apply-regression-label-${{ github.event.pull_request.number }}

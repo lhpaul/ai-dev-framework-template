@@ -2040,10 +2040,10 @@ coderabbit_thread_gate_clean() {
       print_kv BRANCH "$branch_name"
       print_kv REVIEW_COMMENT_ID ""
       print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-      print_kv COMMENT_COUNT 0
-      print_kv BLOCKING_COUNT 0
+      print_kv COMMENT_COUNT "${rest_unreplied_raw:-0}"
+      print_kv BLOCKING_COUNT "${rest_unreplied_raw:-0}"
       print_kv SUGGESTION_COUNT 0
-      print_kv UNRESOLVED_THREAD_COUNT 0
+      print_kv UNRESOLVED_THREAD_COUNT "${rest_unreplied_raw:-0}"
       return 1
     fi
     if [ "${recheck_raw:-0}" -gt 0 ]; then

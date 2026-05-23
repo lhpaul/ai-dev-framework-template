@@ -36,6 +36,7 @@ jobs:
 
     steps:
       - name: Check for Automated Reviewer Loop Summary comment
+        if: github.event.pull_request.head.repo.full_name == github.repository
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
