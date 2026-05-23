@@ -565,6 +565,7 @@ done
 
 if [ "$yaml_parse_failed" -ne 0 ]; then
   echo "Blocking: one or more workflow YAML files failed validation. Fix before committing."
+  exit 1
 fi
 ```
 
