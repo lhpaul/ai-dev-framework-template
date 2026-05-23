@@ -115,7 +115,7 @@ This feature adds Claude Code Action as a supported automated PR review platform
 - The loop must poll GitHub Actions run status at a configurable interval and respect a configurable maximum wait time
 - When the Actions run does not complete within the maximum wait time, the loop reports `escalate` with reason `timeout`
 - When the Actions workflow cannot be dispatched (file absent, permissions error), the loop reports `escalate` with reason `unavailable`
-- The exit codes and key-value output schema of the new platform function must be identical to those of the existing `run_codex_github_review()` function: exit 0 for clean, exit 1 for needs_fixes, exit 2 for escalate
+- The result reporting format of the new platform must be identical to that of the existing `codex-github` platform: the same result tokens (`clean`, `needs_fixes`, `escalate`) and the same set of output key-value pairs are produced
 - The Claude Code Action bot's review threads are identified by the bot's GitHub login; this login must be configurable via an environment variable so teams that host the bot under a different account can override the default
 - The platform name used in all reviewer loop output (`PLATFORM` key) is the string `claude-code-action`
 
@@ -131,7 +131,7 @@ This feature adds Claude Code Action as a supported automated PR review platform
 - [ ] When the Claude Code Action workflow cannot be dispatched (workflow file absent or dispatch API error), the reviewer loop reports `RESULT=escalate` and `REASON=unavailable`
 - [ ] The Claude Code Action bot login used for thread identification is configurable via an environment variable; the default value matches the standard Claude Code Action bot account
 - [ ] When `claude-code-action` is listed in `review.phase_after_clean`, the reviewer loop skips it until all pre-clean platforms report clean, consistent with the existing `phase_after_clean` behavior for other platforms
-- [ ] The platform function's key-value output format (keys: `RESULT`, `PLATFORM`, `PR_NUMBER`, `BRANCH`, `FIX_AGENT`, `COMMENT_COUNT`, `BLOCKING_COUNT`, `SUGGESTION_COUNT`, optionally `REASON`) is identical to that of `run_codex_github_review()`
+- [ ] The key-value output format emitted for the `claude-code-action` platform (keys: `RESULT`, `PLATFORM`, `PR_NUMBER`, `BRANCH`, `FIX_AGENT`, `COMMENT_COUNT`, `BLOCKING_COUNT`, `SUGGESTION_COUNT`, and optionally `REASON`) is identical to that emitted for the `codex-github` platform
 
 ---
 
