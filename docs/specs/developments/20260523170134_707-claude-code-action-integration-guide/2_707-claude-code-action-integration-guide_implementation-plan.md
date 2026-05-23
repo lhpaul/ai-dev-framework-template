@@ -1,7 +1,7 @@
 # Claude Code Action Integration Guide — Implementation Plan
 
 **Spec**: [1_707-claude-code-action-integration-guide_specs.md](1_707-claude-code-action-integration-guide_specs.md)
-**Smoke test runbook**: [docs/testing/workflow/707-claude-code-action-integration-guide.smoke-test.md](../../../../testing/workflow/707-claude-code-action-integration-guide.smoke-test.md)
+**Smoke test runbook**: [docs/testing/workflow/707-claude-code-action-integration-guide.smoke-test.md](../../../testing/workflow/707-claude-code-action-integration-guide.smoke-test.md)
 
 ---
 
@@ -63,7 +63,7 @@ this guide, not prerequisites for it.
 
 **Key scenarios to test**:
 
-1. New guide exists at the correct path and all seven acceptance criteria pass
+1. New guide exists at the correct path and all acceptance criteria pass
 2. Platform reference table in `pr-review-platform.md` lists `claude-code-action`
    with a working relative link to the new guide
 3. No broken relative links in either modified file
