@@ -623,8 +623,11 @@ run_codex_github_review() {
   local max_wait="$4"
   local platform="codex-github"
   local bot_login="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
-  # GraphQL author.login returns the login WITHOUT the "[bot]" suffix that the
-  # REST API uses. Strip it here so check_unresolved_threads comparisons work.
+  # REST API endpoints (e.g. /pulls/{n}/reviews, /issues/{n}/comments) return
+  # bot logins WITH the "[bot]" suffix (e.g. "chatgpt-codex-connector[bot]").
+  # GraphQL API returns bot logins WITHOUT the "[bot]" suffix
+  # (e.g. "chatgpt-codex-connector"). Strip it here so check_unresolved_threads,
+  # which queries GraphQL, compares against the correct login form.
   local graphql_bot_login="${bot_login%\[bot\]}"
   local repo
   local reviewer_script
@@ -2004,8 +2007,11 @@ coderabbit_thread_gate_clean() {
   local thread_audit_max_retries
   thread_audit_max_retries="$(thread_audit_max_retries_value)"
   local thread_audit_attempt=0
-  # GraphQL author.login returns the login WITHOUT the "[bot]" suffix that the
-  # REST API uses. Strip it here so check_unresolved_threads comparisons work.
+  # REST API endpoints (e.g. /pulls/{n}/reviews, /issues/{n}/comments) return
+  # bot logins WITH the "[bot]" suffix (e.g. "coderabbit-ai[bot]").
+  # GraphQL API returns bot logins WITHOUT the "[bot]" suffix
+  # (e.g. "coderabbit-ai"). Strip it here so check_unresolved_threads,
+  # which queries GraphQL, compares against the correct login form.
   local graphql_bot_login="${bot_login%\[bot\]}"
 
   # check_unresolved_threads re-enables errexit internally; capture and restore
@@ -3664,8 +3670,9 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
   # bracket characters in "[bot]" strings during iteration.
   for _platform in "${platforms[@]}"; do
     _login="$(bot_login_for_platform "$_platform")"
-    # Strip the REST-style "[bot]" suffix — check_unresolved_threads compares
-    # against GraphQL author.login which does not include the "[bot]" suffix.
+    # REST API returns bot logins WITH the "[bot]" suffix; GraphQL API returns
+    # them WITHOUT it. Strip it here so check_unresolved_threads, which queries
+    # GraphQL, compares against the correct login form.
     # (e.g. "chatgpt-codex-connector[bot]" → "chatgpt-codex-connector")
     _login="${_login%\[bot\]}"
     [ -n "$_login" ] && unresolved_bot_logins+=("$_login")

@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **CodeRabbit auto-review disabled** — `.coderabbit.yaml` `auto_review.enabled` set to `false`. CodeRabbit no longer fires automatically on new PRs; it can still be triggered on demand via `@coderabbitai review` in the reviewer loop.
 
+### Fixed
+
+- **`pr-review-loop.sh`: clarify REST-vs-GraphQL bot-login normalization comments** — the inline comments at the `[bot]`-suffix-stripping lines previously said only "GraphQL returns login WITHOUT [bot]", which was ambiguous and led to a Haystack triage misread. Expanded to explicitly state that REST API endpoints return logins WITH the `[bot]` suffix while GraphQL returns them WITHOUT it, and that the strip normalizes for GraphQL usage. Applies to all three stripping sites (`run_codex_github_review`, `coderabbit_thread_gate_clean`, and the `check_all_platforms_for_unresolved_threads` loop).
+
 ### Added
 
 - **Ship Claude Code Action PR-review GHA workflow** (#706): add `.github/workflows/claude-code-review.yml` that invokes `anthropics/claude-code-action@v1` as an on-demand PR reviewer triggered by `workflow_dispatch` with a `pr_number` input; uses `claude-sonnet-4-6` by default and authenticates via `ANTHROPIC_API_KEY`.
