@@ -62,20 +62,22 @@ the guide — reference or activate the file as-is. If the workflow file is abse
 in your repository, ensure issue #706 (or the equivalent sync from the template)
 has been merged.
 
-### 3. Configure the Trigger Phrase
+### 3. Understand the Trigger Mechanism
 
-The shipped workflow dispatches Claude Code Action when a specific comment is
-posted on a PR. The default trigger phrase is:
+The shipped workflow is triggered via `workflow_dispatch` — not by posting a
+comment on the PR. When `pr-review-loop.sh` runs the `claude-code-action`
+platform, it calls the GitHub Actions dispatch API directly:
 
+```bash
+gh api "repos/$OWNER/$REPO/actions/workflows/claude-code-review.yml/dispatches" \
+  --method POST \
+  --raw-field ref="$BASE_BRANCH" \
+  --raw-field inputs='{"pr_number":"'"$PR_NUMBER"'"}'
 ```
-@claude review
-```
 
-The `pr-review-loop.sh` helper posts this phrase automatically when
-`claude-code-action` is listed in `review.platforms`. If you customise the
-trigger phrase in the workflow file, set the `CLAUDE_CODE_ACTION_TRIGGER_PHRASE`
-environment variable or pass `--trigger-phrase` to
-`claude-code-action-reviewer.sh` so the helper uses the same phrase.
+The companion script `claude-code-action-reviewer.sh` handles this step
+automatically. You do not need to dispatch the workflow manually when using
+`pr-review-loop.sh`.
 
 ### 4. Note the Bot Login for Thread Attribution
 
@@ -150,19 +152,19 @@ filter its comments and reviews from human activity.
 
 ### Step 7.1 — Trigger a review
 
-After each push, `pr-review-loop.sh` posts the trigger comment and captures its
-ID:
+After each push, `pr-review-loop.sh` dispatches the workflow via the Actions
+API and records the dispatch timestamp for polling:
 
 ```bash
-trigger_body="@claude review"
-trigger_response=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
-  --method POST --raw-field body="$trigger_body")
-trigger_comment_id=$(printf '%s\n' "$trigger_response" | jq -r '.id')
+gh api "repos/$OWNER/$REPO/actions/workflows/claude-code-review.yml/dispatches" \
+  --method POST \
+  --raw-field ref="$BASE_BRANCH" \
+  --raw-field inputs='{"pr_number":"'"$PR_NUMBER"'"}'
 ```
 
 The companion script `claude-code-action-reviewer.sh` handles this step
-automatically. You do not need to post the trigger manually when using the
-helper.
+automatically. You do not need to dispatch the workflow manually when using
+the helper.
 
 ### Step 7.2 — Detect review completion
 
@@ -206,12 +208,12 @@ gh api graphql -f query='
   -f owner="$OWNER" -f repo="$REPO" -F number="$PR_NUMBER" \
   | jq '.data.repository.pullRequest.reviewThreads.nodes[]
         | select(.isResolved == false)
-        | select(.comments.nodes[0].author.login == "claude")' | wc -l
+        | select(.comments.nodes[0].author.login == "claude[bot]")' | wc -l
 ```
 
-> **Note**: The GraphQL `author.login` field returns `claude` (without `[bot]`)
-> while the REST API returns `claude[bot]`. The script strips the `[bot]` suffix
-> automatically.
+> **Note**: GitHub's GraphQL API returns bot logins with the `[bot]` suffix
+> (e.g., `claude[bot]`), the same as the REST API. Always use the full login
+> including `[bot]` when filtering review threads.
 
 ### Blocking vs. suggestion classification
 
@@ -256,17 +258,19 @@ Configure in `.ai-dev-workflow.yaml`:
 
 ```yaml
 review:
+  platforms:
+    - claude-code-action
   internal_reviewers:
     - claude
-    - claude-code-action
 ```
 
-> **Note**: `claude-code-action` as an internal reviewer requires the
-> `ANTHROPIC_API_KEY` secret and the workflow file to be present. The runner
-> classifies it as `unreachable` if the workflow file is absent or the dispatch
-> is rejected. The configured `internal_reviewers_unavailable_policy` then
-> determines whether to hard-fail or warn and proceed with the remaining
-> reachable reviewers.
+> **Note**: `claude-code-action` is a **platform integration** dispatched by
+> `pr-review-loop.sh` — it belongs under `review.platforms`, not
+> `review.internal_reviewers`. Protocol 91's Step 7a dispatcher only recognises
+> `claude`, `codex`, and `coderabbit` as valid `internal_reviewers` values.
+> Adding `claude-code-action` there has no effect and will be ignored by the
+> runner. Use `review.platforms` (and optionally `phase_after_clean`) to control
+> when and how Claude Code Action runs.
 
 ### Exit code semantics
 
@@ -290,7 +294,7 @@ Step 7a gate maps to outcomes:
 | `RESULT=escalate REASON=timeout`                               | Actions run did not complete within `max_wait` (default 600 s) | Check the Actions tab for the run status; increase `--max-wait` if the review consistently takes longer than 10 minutes         |
 | Review threads not detected after Actions run succeeds         | Bot login mismatch                                             | Confirm the bot posting threads is `claude[bot]`; if using a custom App, set `CLAUDE_CODE_ACTION_BOT_LOGIN` to the correct login |
 | `pr-review-loop.sh` reports `skipped` for `claude-code-action` | Platform not listed in `review.platforms`                      | Add `claude-code-action` to `review.platforms` in `.ai-dev-workflow.yaml`                                                       |
-| Trigger comment posted but no Actions run appears              | Workflow trigger phrase mismatch or workflow event not matching | Confirm the workflow listens to `issue_comment` events with the correct trigger phrase (`@claude review`)                       |
+| Workflow dispatched but no Actions run appears                 | Dispatch accepted but workflow file not found or wrong ref     | Confirm `.github/workflows/claude-code-review.yml` exists on the base branch and the dispatch `ref` matches the PR base branch |
 
 ---
 
