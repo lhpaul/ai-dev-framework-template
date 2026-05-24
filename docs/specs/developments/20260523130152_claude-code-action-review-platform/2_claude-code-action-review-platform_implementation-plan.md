@@ -75,7 +75,7 @@ Options:
 
 **Phase 0 — Input validation**: Validate `pr_number` (positive integer), `owner`/`repo` (alphanumeric plus `-._`), numeric options. Same pattern as `codex-github-reviewer.sh`.
 
-**Phase 1 — Dispatch workflow**: Call `gh api repos/{owner}/{repo}/actions/workflows/{workflow_file}/dispatches --method POST --field ref={base_branch} --field inputs[pr_number]={pr_number}`. Capture the `dispatch_time` as the server-assigned timestamp by recording the time immediately before dispatch (ISO 8601). If the API call fails (404 = workflow file absent, 422 = validation error, other = generic error), emit `VERDICT: TIMED_OUT` and exit 2. Store the `dispatch_time` to scope subsequent run polling.
+**Phase 1 — Dispatch workflow**: Call `gh api repos/{owner}/{repo}/actions/workflows/{workflow_file}/dispatches --method POST --field ref={base_branch} --field inputs[pr_number]={pr_number}`. Capture the `dispatch_time` as the server-assigned timestamp by recording the time immediately before dispatch (ISO 8601). If the API call fails (404 = workflow file absent, 422 = validation error, other = generic error), emit `VERDICT: UNAVAILABLE` and exit 3. Store the `dispatch_time` to scope subsequent run polling.
 
 **Phase 2 — Poll for run completion**: After dispatch, poll `GET /repos/{owner}/{repo}/actions/runs?event=workflow_dispatch&created=>={dispatch_time}` at `POLL_INTERVAL` intervals until a run matching `workflow_file` and triggered after `dispatch_time` reaches a terminal status (`completed`, `failure`, `cancelled`, `skipped`, `timed_out`, `startup_failure`). If `MAX_WAIT` is exhausted before the run completes, emit `VERDICT: TIMED_OUT` and exit 2. Capture the run's `conclusion` and `html_url` for logging.
 

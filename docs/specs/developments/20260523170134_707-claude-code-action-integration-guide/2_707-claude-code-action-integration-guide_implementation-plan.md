@@ -23,7 +23,7 @@ platform table (~5-10 lines). No code, no schema, no config activation changes.
 
 **Dependencies**: Issue #706 (GHA workflow file) is referenced by the guide but
 does not need to be merged first — the guide references the workflow file by its
-expected path (`.github/workflows/claude-code-action-review.yml`) without
+expected path (`.github/workflows/claude-code-review.yml`) without
 requiring the file to exist at merge time. Issue #705 (pr-review-loop.sh
 function) and issue #708 (`.ai-dev-workflow.yaml` activation) are consumers of
 this guide, not prerequisites for it.
@@ -108,11 +108,11 @@ need updating — the guide is a new integration doc that stands alone.
 
    - Opening paragraph: what Claude Code Action is, why it has no per-hour
      vendor cap (BR-2 — own-key, own CI), and pointer to the shipped GHA
-     workflow file at `.github/workflows/claude-code-action-review.yml` (BR-6)
+     workflow file at `.github/workflows/claude-code-review.yml` (BR-6)
    - **Setup section**: step-by-step operator checklist:
      1. Add `ANTHROPIC_API_KEY` as a GitHub Actions repository secret (BR-3)
      2. Reference (do not copy) the workflow file at
-        `.github/workflows/claude-code-action-review.yml` (BR-6)
+        `.github/workflows/claude-code-review.yml` (BR-6)
      3. Note the bot login used for thread attribution (BR-4) — the Claude Code
         Action GitHub App posts review threads as `claude[bot]`; operators must
         use this login when configuring `pr-review-loop.sh` to identify threads;

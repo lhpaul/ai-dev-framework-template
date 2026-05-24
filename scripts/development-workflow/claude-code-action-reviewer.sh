@@ -150,9 +150,22 @@ BOT_LOGIN_PLAIN="${BOT_LOGIN%\[bot\]}"
 echo "INFO: Bot login (plain, for review matching): $BOT_LOGIN_PLAIN"
 
 # ── Record dispatch time (before dispatch to scope run polling) ───────────────
+# Subtract a 10-second buffer from the local clock to guard against clock skew
+# between the runner and GitHub's servers. GitHub Actions run created_at
+# timestamps reflect the server clock; if the server clock lags behind ours,
+# a run created_at value could be earlier than our local DISPATCH_TIME,
+# causing the polling filter (.created_at >= $POLL_AFTER_TIME) to miss the run.
+# Using a 10-second buffer ensures runs are matched even with moderate clock skew.
 
-DISPATCH_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+_DISPATCH_EPOCH=$(date -u +%s)
+DISPATCH_TIME=$(date -u -r "$_DISPATCH_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
+  date -u -d "@$_DISPATCH_EPOCH" +%Y-%m-%dT%H:%M:%SZ)
+_POLL_EPOCH=$((_DISPATCH_EPOCH - 10))
+POLL_AFTER_TIME=$(date -u -r "$_POLL_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
+  date -u -d "@$_POLL_EPOCH" +%Y-%m-%dT%H:%M:%SZ)
+unset _DISPATCH_EPOCH _POLL_EPOCH
 echo "INFO: dispatch time (pre-dispatch): $DISPATCH_TIME"
+echo "INFO: poll filter time (with 10s clock-skew buffer): $POLL_AFTER_TIME"
 
 # ── Phase 1: Dispatch workflow ────────────────────────────────────────────────
 # Call workflow_dispatch with ref=BASE_REF and pr_number input. On failure:
@@ -206,8 +219,8 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
   POLL_STATUS=0
   gh api "repos/$OWNER/$REPO/actions/runs?event=workflow_dispatch&per_page=20" \
     2>"$RUN_POLL_STDERR" \
-    | jq -r --arg wf "$WORKFLOW_FILE" --arg dispatch_time "$DISPATCH_TIME" \
-        '[.workflow_runs[] | select((.path | endswith($wf)) and .created_at >= $dispatch_time)] | first | {status: .status, conclusion: .conclusion, html_url: .html_url, id: .id}' \
+    | jq -r --arg wf "$WORKFLOW_FILE" --arg poll_after "$POLL_AFTER_TIME" \
+        '[.workflow_runs[] | select((.path | endswith($wf)) and .created_at >= $poll_after)] | first | {status: .status, conclusion: .conclusion, html_url: .html_url, id: .id}' \
     > "$RUN_POLL_TMPFILE" 2>/dev/null || POLL_STATUS=$?
 
   if [ "$POLL_STATUS" -ne 0 ]; then
