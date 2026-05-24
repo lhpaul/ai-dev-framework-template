@@ -196,8 +196,6 @@ RUN_URL=""
 RUN_CONCLUSION=""
 
 while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
-  sleep "$POLL_INTERVAL"
-  TOTAL_ELAPSED=$((TOTAL_ELAPSED + POLL_INTERVAL))
   echo "INFO: polling... elapsed ${TOTAL_ELAPSED}s / ${MAX_WAIT}s"
 
   # Query workflow runs filtered by event=workflow_dispatch. We look for the
@@ -216,6 +214,8 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
     POLL_ERR=$(cat "$RUN_POLL_STDERR")
     rm -f "$RUN_POLL_STDERR" "$RUN_POLL_TMPFILE"
     echo "WARNING: gh api failed during run polling: $POLL_ERR" >&2
+    sleep "$POLL_INTERVAL"
+    TOTAL_ELAPSED=$((TOTAL_ELAPSED + POLL_INTERVAL))
     continue
   fi
   rm -f "$RUN_POLL_STDERR"
@@ -226,6 +226,8 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
   # jq outputs "null" when no matching run is found via `first` on empty array
   if [ -z "$RUN_INFO" ] || [ "$RUN_INFO" = "null" ]; then
     echo "INFO: no matching run found yet..."
+    sleep "$POLL_INTERVAL"
+    TOTAL_ELAPSED=$((TOTAL_ELAPSED + POLL_INTERVAL))
     continue
   fi
 
@@ -235,15 +237,17 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
 
   echo "INFO: found run — status=$RUN_STATUS conclusion=$RUN_CONCLUSION url=$RUN_URL"
 
-  # Check for terminal statuses
-  case "$RUN_STATUS" in
-    completed|failure|cancelled|skipped|timed_out|startup_failure)
-      break
-      ;;
-    *)
-      echo "INFO: run is still in progress (status=$RUN_STATUS), continuing to poll..."
-      ;;
-  esac
+  # GitHub Actions API uses `status` for run lifecycle (queued, in_progress,
+  # completed) and `conclusion` for the terminal outcome (success, failure,
+  # cancelled, etc.). Break only when status=completed; conclusion is read in
+  # Phase 3 to determine the verdict.
+  if [ "$RUN_STATUS" = "completed" ]; then
+    break
+  fi
+
+  echo "INFO: run is still in progress (status=$RUN_STATUS), continuing to poll..."
+  sleep "$POLL_INTERVAL"
+  TOTAL_ELAPSED=$((TOTAL_ELAPSED + POLL_INTERVAL))
 done
 
 # ── Phase 3: Parse result ─────────────────────────────────────────────────────
