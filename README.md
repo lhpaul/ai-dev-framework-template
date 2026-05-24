@@ -258,7 +258,7 @@ Use $workflow-item-orchestrator to start and advance work for [feature or issue 
 ## Optional Integrations
 
 - **Issue Tracker (e.g., Linear)**: See [`docs/workflow/development-workflow/integrations/linear.md`](docs/workflow/development-workflow/integrations/linear.md)
-- **Automated PR Review (e.g., Greptile)**: See [`docs/workflow/development-workflow/integrations/greptile.md`](docs/workflow/development-workflow/integrations/greptile.md)
+- **Automated PR Review (e.g., CodeRabbit, claude-code-action)**: See [`docs/workflow/development-workflow/integrations/coderabbit.md`](docs/workflow/development-workflow/integrations/coderabbit.md) or [`docs/workflow/development-workflow/integrations/greptile.md`](docs/workflow/development-workflow/integrations/greptile.md). For projects that want to avoid per-hour rate-limit stalls, `claude-code-action` is the recommended `phase_after_clean` value (no review cap; uses your own Anthropic API key). See `docs/workflow/development-workflow/integrations/claude-code-action.md` for setup instructions (added by sibling item #707).
 - **GitHub Projects board**: See [`docs/workflow/development-workflow/integrations/github-projects.md`](docs/workflow/development-workflow/integrations/github-projects.md)
 - **CI/CD deployment placeholders**: See [`docs/workflow/development-workflow/integrations/ci-cd-deployment.md`](docs/workflow/development-workflow/integrations/ci-cd-deployment.md)
 
