@@ -124,7 +124,7 @@ Before running this smoke test:
 ### Step 7: Verify workflow does not auto-trigger on PR events
 
 - Push a trivial change to a branch with an open PR (or observe an existing PR push).
-- Confirm: `gh workflow list` does not show a new run of `claude-code-review.yml` triggered automatically by the push event.
+- Confirm: `gh run list --workflow claude-code-review.yml --limit 5` does not show a new run triggered automatically by the push event (no run should appear with trigger `push`).
 
 **Maps to**: BR-7; AC: workflow does not trigger automatically on PR open/push/synchronize
 

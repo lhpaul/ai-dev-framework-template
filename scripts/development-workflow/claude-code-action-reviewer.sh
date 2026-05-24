@@ -301,7 +301,7 @@ gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
   2>"$REVIEW_STDERR" \
   | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" \
       --arg dispatch_time "$DISPATCH_TIME" \
-      '[.[] | select((.user.login == $bot or .user.login == $bot_plain or .user.login == ($bot_plain + "[bot]")) and .submitted_at != null and .submitted_at >= $dispatch_time)] | length, (.[].state // empty)' \
+      '[.[] | select((.user.login == $bot or .user.login == ($bot_plain + "[bot]")) and .submitted_at != null and .submitted_at >= $dispatch_time)] | length, (.[].state // empty)' \
   > "$REVIEW_TMPFILE" 2>/dev/null || REVIEW_STATUS=$?
 
 if [ "$REVIEW_STATUS" -ne 0 ]; then

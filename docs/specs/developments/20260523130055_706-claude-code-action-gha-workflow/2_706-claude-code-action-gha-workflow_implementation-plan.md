@@ -78,7 +78,7 @@ No database seed data required. The smoke test requires:
 
 ## Documentation Updates
 
-None. This item ships the workflow file only. Documentation for integrating `claude-code-action` with `pr-review-loop.sh` is covered by sibling issue #707. No files in `docs/project/`, `docs/best-practices/`, or `AGENTS.md` need updating for this item alone.
+- `CHANGELOG.md` — add entry under `[Unreleased]` for the new workflow file (see Implementation Order step 5). No other files in `docs/project/`, `docs/best-practices/`, or `AGENTS.md` need updating; documentation for integrating `claude-code-action` with `pr-review-loop.sh` is covered by sibling issue #707.
 
 ---
 
@@ -170,15 +170,13 @@ jobs:
 
 3. **Validate the workflow YAML syntax**: `python3 -c "import yaml, sys; yaml.safe_load(sys.stdin)" < .github/workflows/claude-code-review.yml` — confirms the file is valid YAML. (Note: `shellcheck` targets shell scripts, not YAML files; the current design has no `run:` steps. If `run:` steps are added later, run `shellcheck --shell=bash` on those scripts directly, not on the YAML file.)
 
-4. **Verify the workflow file is syntactically valid**: run `cat .github/workflows/claude-code-review.yml` and confirm the YAML parses without errors (use `python3 -c "import yaml, sys; yaml.safe_load(sys.stdin)" < .github/workflows/claude-code-review.yml` for a quick lint).
-
-5. **Update `CHANGELOG.md`** under `[Unreleased]`:
+4. **Update `CHANGELOG.md`** under `[Unreleased]`:
 
    ```markdown
    - **Ship Claude Code Action PR-review GHA workflow** (#706): add `.github/workflows/claude-code-review.yml` that invokes `anthropics/claude-code-action@v1` as an on-demand PR reviewer triggered by `workflow_dispatch` with a `pr_number` input; uses `claude-sonnet-4-6` by default and authenticates via `ANTHROPIC_API_KEY`.
    ```
 
-6. **Run the markdown lint pre-commit check** on the plan and smoke test runbook:
+5. **Run the markdown lint pre-commit check** on the plan and smoke test runbook:
 
    ```bash
    REPO_ROOT=$(git rev-parse --git-common-dir)/..
@@ -189,4 +187,4 @@ jobs:
 
    Fix any reported violations before committing.
 
-7. **Verify smoke test runbook covers all acceptance criteria**: confirm each AC from the spec maps to at least one testable step in the runbook.
+6. **Verify smoke test runbook covers all acceptance criteria**: confirm each AC from the spec maps to at least one testable step in the runbook.
