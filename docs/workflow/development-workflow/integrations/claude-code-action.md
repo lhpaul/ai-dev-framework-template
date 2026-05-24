@@ -153,18 +153,9 @@ filter its comments and reviews from human activity.
 ### Step 7.1 — Trigger a review
 
 After each push, `pr-review-loop.sh` dispatches the workflow via the Actions
-API and records the dispatch timestamp for polling:
-
-```bash
-gh api "repos/$OWNER/$REPO/actions/workflows/claude-code-review.yml/dispatches" \
-  --method POST \
-  --raw-field ref="$BASE_BRANCH" \
-  --raw-field inputs='{"pr_number":"'"$PR_NUMBER"'"}'
-```
-
-The companion script `claude-code-action-reviewer.sh` handles this step
-automatically. You do not need to dispatch the workflow manually when using
-the helper.
+API (see Setup §3 for the dispatch command). The companion script
+`claude-code-action-reviewer.sh` handles this automatically — you do not need
+to dispatch the workflow manually when using the helper.
 
 ### Step 7.2 — Detect review completion
 
@@ -268,13 +259,10 @@ review:
     - claude
 ```
 
-> **Note**: `claude-code-action` is a **platform integration** dispatched by
-> `pr-review-loop.sh` — it belongs under `review.platforms`, not
-> `review.internal_reviewers`. Protocol 91's Step 7a dispatcher only recognises
-> `claude`, `codex`, and `coderabbit` as valid `internal_reviewers` values.
-> Adding `claude-code-action` there has no effect and will be ignored by the
-> runner. Use `review.platforms` (and optionally `phase_after_clean`) to control
-> when and how Claude Code Action runs.
+> **Note**: Register `claude-code-action` under `review.platforms`, not
+> `review.internal_reviewers` — Protocol 91 Step 7a only accepts `claude`,
+> `codex`, and `coderabbit` as internal reviewers. See Setup §5 for platform
+> configuration.
 
 ### Exit code semantics
 
