@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`pr-review-loop.sh`: stale-lock detection and recovery** (#734) — when `lock_contention` is reported, the error message now includes the lock file path and a recovery one-liner (`./scripts/development-workflow/pr-review-loop.sh unlock <pr>`). A new `unlock <pr-number>` subcommand lets agents remove a stale lock autonomously without human intervention; it refuses to remove a lock whose recorded PID is still alive, preventing accidental removal of a live lock.
 - **`pr-review-loop.sh`: clarify REST-vs-GraphQL bot-login normalization comments** — the inline comments at the `[bot]`-suffix-stripping lines previously said only "GraphQL returns login WITHOUT [bot]", which was ambiguous and led to a Haystack triage misread. Expanded to explicitly state that REST API endpoints return logins WITH the `[bot]` suffix while GraphQL returns them WITHOUT it, and that the strip normalizes for GraphQL usage. Applies to all three stripping sites (`run_codex_github_review`, `coderabbit_thread_gate_clean`, and the `check_all_platforms_for_unresolved_threads` loop).
 
 ### Added

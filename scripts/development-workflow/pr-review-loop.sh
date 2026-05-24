@@ -63,8 +63,13 @@ else
   _LOCK_CMD="$(cat "$_LOCK_DIR/cmd" 2>/dev/null || true)"
   if [ -n "$_LOCK_PID" ] && kill -0 "$_LOCK_PID" 2>/dev/null && [ "$_LOCK_CMD" = "$(basename "$0")" ]; then
     echo "ERROR: pr-review-loop.sh is already running for PR #${_PR_ARG:-unknown} (PID $_LOCK_PID). Exiting to prevent parallel execution." >&2
+    echo "  Lock file: $_LOCK_DIR" >&2
+    echo "  If the process is dead (stale lock from a crash), recover with:" >&2
+    echo "    ./scripts/development-workflow/pr-review-loop.sh unlock ${_PR_ARG:-<pr>}" >&2
+    echo "  Or manually: rm -rf $_LOCK_DIR" >&2
     print_kv RESULT escalate
     print_kv REASON lock_contention
+    print_kv LOCK_DIR "$_LOCK_DIR"
     print_kv PR_NUMBER "${_PR_ARG:-}"
     exit 75  # EX_TEMPFAIL — lock contention; not a normal review result (0/1/2)
   fi
@@ -81,8 +86,13 @@ else
     _OWN_LOCK=1
   else
     echo "ERROR: pr-review-loop.sh is already running for PR #${_PR_ARG:-unknown} (concurrent startup race). Exiting to prevent parallel execution." >&2
+    echo "  Lock file: $_LOCK_DIR" >&2
+    echo "  If the process is dead (stale lock from a crash), recover with:" >&2
+    echo "    ./scripts/development-workflow/pr-review-loop.sh unlock ${_PR_ARG:-<pr>}" >&2
+    echo "  Or manually: rm -rf $_LOCK_DIR" >&2
     print_kv RESULT escalate
     print_kv REASON lock_contention
+    print_kv LOCK_DIR "$_LOCK_DIR"
     print_kv PR_NUMBER "${_PR_ARG:-}"
     exit 75
   fi
@@ -119,6 +129,7 @@ _interruptible_sleep() {
 usage() {
   cat <<'EOF'
 Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github] [--phase-after-clean coderabbit] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
+       ./scripts/development-workflow/pr-review-loop.sh unlock <pr-number>
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
 triggering a new review, each platform checks for existing blocking findings. If
@@ -127,6 +138,19 @@ If a platform times out or escalates, the script exits 2. If all configured
 platforms are clean or skipped, the script exits 0. If a second instance is
 detected for the same PR number, the script emits RESULT=escalate with
 REASON=lock_contention and exits 75 (EX_TEMPFAIL).
+
+Subcommands:
+  unlock <pr-number>
+    Remove the stale lock directory for a PR whose previous run crashed without
+    cleaning up. Safe to run when no review loop is actively running for that PR.
+    Use this to recover autonomously when lock_contention is reported but the
+    recorded PID is no longer alive.
+
+    Example:
+      ./scripts/development-workflow/pr-review-loop.sh unlock 123
+
+    The lock directory path is /tmp/pr-review-loop-<pr>.lockdir. You can also
+    remove it manually with: rm -rf /tmp/pr-review-loop-<pr>.lockdir
 
 --post-final-summary:
   Post the "Automated Reviewer Loop Summary" comment even when the result is
@@ -3266,6 +3290,33 @@ METRICS_HEADER
 if [ "$#" -lt 1 ]; then
   usage >&2
   exit 64
+fi
+
+# --- unlock subcommand ---
+# Handle before the lock guard so a crashed-process recovery can always proceed.
+if [ "$1" = "unlock" ]; then
+  if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+    echo "Usage: $0 unlock <pr-number>" >&2
+    exit 64
+  fi
+  _UNLOCK_PR="$2"
+  _UNLOCK_LOCK_DIR="/tmp/pr-review-loop-${_UNLOCK_PR}.lockdir"
+  # Verify no live owner holds the lock before removing it.
+  _UNLOCK_PID="$(cat "$_UNLOCK_LOCK_DIR/pid" 2>/dev/null || true)"
+  _UNLOCK_CMD="$(cat "$_UNLOCK_LOCK_DIR/cmd" 2>/dev/null || true)"
+  if [ -n "$_UNLOCK_PID" ] && kill -0 "$_UNLOCK_PID" 2>/dev/null && [ "$_UNLOCK_CMD" = "$(basename "$0")" ]; then
+    echo "ERROR: A live pr-review-loop.sh process (PID $_UNLOCK_PID) currently holds the lock for PR #${_UNLOCK_PR}. Not removing a live lock." >&2
+    echo "  Wait for the process to finish, or send it SIGTERM to stop it gracefully." >&2
+    exit 1
+  fi
+  if [ -d "$_UNLOCK_LOCK_DIR" ]; then
+    rm -rf "$_UNLOCK_LOCK_DIR"
+    echo "OK: stale lock removed for PR #${_UNLOCK_PR} ($_UNLOCK_LOCK_DIR)."
+    exit 0
+  else
+    echo "OK: no lock found for PR #${_UNLOCK_PR} ($_UNLOCK_LOCK_DIR). Nothing to remove."
+    exit 0
+  fi
 fi
 
 pr_number=""
