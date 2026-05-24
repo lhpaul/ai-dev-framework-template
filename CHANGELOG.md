@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`batch-merge.sh`: support non-`develop` base branches in `merge` and `discover` subcommands** (#736): `merge` hardcoded `TARGET_BASE="develop"` and did not honour a `--base` flag or `TARGET_BASE` env var, making batch-merge unusable for integration branches (e.g. `develop-<slug>`). Added: (1) `TARGET_BASE` env var support (`TARGET_BASE="${TARGET_BASE:-develop}"`); (2) per-subcommand `--base <branch>` flag to both `merge` and `discover` (highest priority override); (3) a global pre-dispatch `--base` flag already present is preserved. Protocol 94 Step 4.1 updated to document the `--base` flag and equivalent env var form for integration-branch contexts.
 - **`pr-review-loop.sh`: clarify REST-vs-GraphQL bot-login normalization comments** — the inline comments at the `[bot]`-suffix-stripping lines previously said only "GraphQL returns login WITHOUT [bot]", which was ambiguous and led to a Haystack triage misread. Expanded to explicitly state that REST API endpoints return logins WITH the `[bot]` suffix while GraphQL returns them WITHOUT it, and that the strip normalizes for GraphQL usage. Applies to all three stripping sites (`run_codex_github_review`, `coderabbit_thread_gate_clean`, and the `check_all_platforms_for_unresolved_threads` loop).
 
 ### Added
