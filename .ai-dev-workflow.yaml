@@ -25,7 +25,7 @@ schema_version: 1
 review:
   # Ordered list of automated PR review platforms to run sequentially.
   # Platforms are evaluated in order; the first blocking result stops the loop.
-  # Supported today by pr-review-loop.sh: greptile, devin, coderabbit, pr-agent, codex-github
+  # Supported today by pr-review-loop.sh: greptile, devin, coderabbit, pr-agent, codex-github, claude-code-action
   platforms:
     - pr-agent
     - coderabbit
@@ -37,6 +37,12 @@ review:
   # the PR-Agent-clean gate. This makes CodeRabbit's net-new findings measurable.
   phase_after_clean:
     - coderabbit
+  # Recommended: swap coderabbit for claude-code-action in phase_after_clean to
+  # remove the CodeRabbit per-hour rate-limit bottleneck. claude-code-action has
+  # no review cap and uses your own Anthropic API key. Requires the
+  # ANTHROPIC_API_KEY secret and the CI workflow added by sibling item #706.
+  # See docs/workflow/development-workflow/integrations/claude-code-action.md
+  # for setup instructions.
   #
   # Configurable codex-github options (set via env vars or script flags to codex-github-reviewer.sh):
   #   CODEX_GITHUB_TRIGGER_PHRASE  — trigger phrase sent to the bot (default: "@codex review")
