@@ -11,11 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Ship Claude Code Action PR-review GHA workflow** (#706): add `.github/workflows/claude-code-review.yml` that invokes `anthropics/claude-code-action@v1` as an on-demand PR reviewer triggered by `workflow_dispatch` with a `pr_number` input; uses `claude-sonnet-4-6` by default and authenticates via `ANTHROPIC_API_KEY`.
 - **`claude-code-action` review platform** — `pr-review-loop.sh` now recognizes `claude-code-action` as a review platform. Add it to `review.platforms` in `.ai-dev-workflow.yaml` to integrate a GitHub Actions-based Claude Code review into the automated reviewer loop. Companion script `scripts/development-workflow/claude-code-action-reviewer.sh` dispatches a `workflow_dispatch` event, polls for the resulting Actions run to complete, and exits with codes 0 = APPROVED, 1 = NEEDS_REVISION, 2 = TIMED_OUT, 3 = UNAVAILABLE.
+- **`claude-code-action` recommended as `phase_after_clean` reviewer** (#708): `.ai-dev-workflow.yaml` inline comments now recommend `claude-code-action` over CodeRabbit for `phase_after_clean` (no per-hour rate-limit cap; uses your own Anthropic API key). `README.md` Optional Integrations section updated to surface `claude-code-action` alongside existing options.
 - **Haystack Editor git hooks (optional)** — `haystack hooks install` adds agent-aware pre-commit checks (`hooks/`), Entire session linkage (`.entire/`), and `LLM_RULES.md` aligned with the default `gh pr create` + reviewer-loop workflow. Integration guide: `docs/workflow/development-workflow/integrations/haystack.md`.
-
-### Changed
-
-- **Register claude-code-action as recommended phase_after_clean reviewer** (#708): Updated `.ai-dev-workflow.yaml` inline comments to recommend `claude-code-action` as the `phase_after_clean` value in place of CodeRabbit for projects that want to avoid per-hour rate-limit stalls. Updated `README.md` Optional Integrations section to surface `claude-code-action` alongside existing options.
 
 ## [0.28.2] - 2026-05-23
 
