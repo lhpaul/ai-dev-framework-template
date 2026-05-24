@@ -108,12 +108,20 @@ case "$POLL_INTERVAL" in
     exit 2
     ;;
 esac
+if [ "$POLL_INTERVAL" -gt 300 ]; then
+  echo "ERROR: --poll-interval value '$POLL_INTERVAL' exceeds maximum of 300 seconds (5 minutes)" >&2
+  exit 2
+fi
 case "$MAX_WAIT" in
   ''|0|*[!0-9]*)
     echo "ERROR: --max-wait value '$MAX_WAIT' is not a positive integer (must be >= 1)" >&2
     exit 2
     ;;
 esac
+if [ "$MAX_WAIT" -gt 3600 ]; then
+  echo "ERROR: --max-wait value '$MAX_WAIT' exceeds maximum of 3600 seconds (1 hour)" >&2
+  exit 2
+fi
 
 # ── Pre-flight: verify gh CLI authentication ──────────────────────────────────
 
