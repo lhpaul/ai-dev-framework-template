@@ -1,6 +1,22 @@
-# Integration: Haystack Editor (Git Hooks & Optional PR Workflow)
+# Integration: Haystack Editor (Git Hooks)
 
-This document describes [Haystack Editor](https://haystackeditor.com/) (`@haystackeditor/cli`) as an **optional** complement to this framework's default PR and review workflow.
+This document describes [Haystack Editor](https://haystackeditor.com/) (`@haystackeditor/cli`) local git hooks as an **adopted optional complement** to this framework's default PR and review workflow.
+
+## Adoption Decision (Option B — Recommended)
+
+After evaluating the hooks in production use (2026-05-23/24), this template ships **Option B**:
+
+| Component | Adopted? | Notes |
+| --------- | -------- | ----- |
+| **Truncation checker** (`hooks/truncation-checker/`) | Yes | Silent gate on staged AI-agent code; no external binary dependency |
+| **LLM_RULES.md gate** (`hooks/pre-commit`) | Yes | Two-step commit with bypass token; shows rules and staged stat on first blocked attempt |
+| Entire session tracking | No | Removed — adds `~/.haystack/bin/entire` binary dependency that downstream consumers may not want |
+
+The hooks retained for Entire (`prepare-commit-msg`, `commit-msg`, `post-commit`, `pre-push`) are kept as no-op entry points so downstream teams that want to extend them have the scaffolding.
+
+**What this means for downstream consumers**: Run `haystack hooks install` once per clone to activate the two high-value gates. The Entire binary is not required — this template does not ship or reference it.
+
+---
 
 Haystack is **not** the same product as deepset's [Hayhooks](https://github.com/deepset-ai/hayhooks) (Haystack pipeline deployment). Haystack Editor focuses on AI-assisted development: PR triage, agent-session attribution, and local guardrails on agent commits.
 
@@ -17,16 +33,12 @@ Installed via `haystack hooks install`:
 | Hook | Purpose |
 | ---- | ------- |
 | `pre-commit` | Detects active AI agent sessions (Claude Code, Codex, Gemini CLI, OpenCode); runs truncation checks on staged agent/prompt code; enforces review of `LLM_RULES.md` on agent commits (two-step commit with bypass token) |
-| `prepare-commit-msg` | Entire session tracking / commit message preparation |
-| `commit-msg` | Entire trailer handling |
-| `post-commit` | Condenses session data when an Entire checkpoint exists |
-| `pre-push` | Pushes session logs; reminds agents about `haystack submit` when applicable |
+| `prepare-commit-msg` | No-op entry point (Entire session tracking not adopted — Option B) |
+| `commit-msg` | No-op entry point (Entire session tracking not adopted — Option B) |
+| `post-commit` | No-op entry point (Entire session tracking not adopted — Option B) |
+| `pre-push` | No-op entry point (Entire session tracking not adopted — Option B) |
 
 Human commits skip the enforcement path in `pre-commit` and pass through immediately.
-
-### Entire session linkage
-
-Hooks delegate to Entire (`~/.haystack/bin/entire`) to attach agent conversation context to commits. Local session metadata lives under `.entire/metadata/` (gitignored). Shared settings are in `.entire/settings.json`.
 
 ### Optional PR triage and review (Haystack cloud)
 
@@ -61,11 +73,13 @@ This:
 
 1. Copies hook scripts into `hooks/` and installs `hooks/package.json` dependencies (tree-sitter for truncation AST checks)
 2. Sets `core.hooksPath` to `hooks/` (local git config)
-3. Creates `.entire/settings.json`, `LLM_RULES.md`, and updates `.gitignore` for `.entire/metadata/`
+3. Creates `LLM_RULES.md` (if not already present)
 
-**Teammates** must run `haystack hooks install` on each clone so `core.hooksPath` points at `hooks/`. Commit `hooks/`, `LLM_RULES.md`, and `.entire/settings.json`; do not commit `hooks/node_modules/` (covered by root `node_modules/` ignore).
+**Teammates** must run `haystack hooks install` on each clone so `core.hooksPath` points at `hooks/`. Commit `hooks/` and `LLM_RULES.md`; do not commit `hooks/node_modules/` (covered by root `node_modules/` ignore).
 
 After install, run `npm install` in `hooks/` only if the installer did not already install dependencies.
+
+> **Note**: This template does not ship `.entire/settings.json` or the `.entire/` directory (Option B — Entire session tracking not adopted). If you later adopt full Entire integration, run `haystack hooks install` again and commit the generated `.entire/settings.json` and the corresponding `.gitignore` entry for `.entire/metadata/`.
 
 ---
 
@@ -103,7 +117,6 @@ To disable Haystack's mandatory PR wording entirely, edit the PR section in `LLM
 3. Truncation checker runs on relevant staged paths
 4. First attempt: commit blocked; full `LLM_RULES.md` + staged stat shown
 5. Second attempt (same staged tree): bypass token consumed; commit proceeds
-6. Entire hooks run on `prepare-commit-msg`, `commit-msg`, `post-commit`, `pre-push`
 
 Agents using Cursor are not detected by the stock agent-context parsers today; those commits behave like human commits unless detection is extended.
 
@@ -113,7 +126,7 @@ Agents using Cursor are not detected by the stock agent-context parsers today; t
 
 - **Temporarily skip hooks**: `git commit --no-verify` (human decision; do not use routinely for agent work)
 - **Uninstall hooks path**: `git config --unset core.hooksPath` and remove or stop using `hooks/`
-- **Remove from repo**: delete `hooks/`, `LLM_RULES.md`, `.entire/`, and revert `.gitignore` Entire entries; document the change in `CHANGELOG.md`
+- **Remove from repo**: delete `hooks/` and `LLM_RULES.md`; document the change in `CHANGELOG.md`
 
 ---
 
@@ -125,7 +138,6 @@ Agents using Cursor are not detected by the stock agent-context parsers today; t
 | `hooks/truncation-checker/` | Pattern and AST-based truncation detection |
 | `hooks/agent-context/` | Parsers for Claude, Codex, Gemini, OpenCode sessions |
 | `LLM_RULES.md` | Project rules injected on agent commits |
-| `.entire/settings.json` | Entire enabled/telemetry flags |
 | `docs/best-practices/2-version-control.md` | Default PR conventions (`gh`) |
 
 ---

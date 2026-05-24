@@ -1,25 +1,4 @@
 #!/bin/sh
-# Haystack hooks (powered by Entire)
-# Pre-push hook: push session logs alongside user's push
-# $1 is the remote name (e.g., "origin")
-
-# Check if pushing a non-haystack branch and remind about haystack submit
-current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
-if [ -n "$current_branch" ] && [ "$current_branch" != "main" ] && [ "$current_branch" != "master" ]; then
-  case "$current_branch" in
-    haystack/*)
-      # Already a haystack branch, no reminder needed
-      ;;
-    *)
-      # Check if this is an AI agent session (set by agent-context detector)
-      if [ -n "$HAYSTACK_AGENT_SESSION" ] || [ -n "$CLAUDE_CODE" ] || [ -n "$CODEX_CLI" ] || [ -n "$CODEX_SHELL" ] || [ -n "$CODEX_THREAD_ID" ] || [ -n "$CODEX_CI" ]; then
-        echo ""
-        echo "💡 Tip: Use 'haystack submit' to create PRs through Haystack's submit workflow."
-        echo "   This enables automatic analysis and merge when approved."
-        echo ""
-      fi
-      ;;
-  esac
-fi
-
-"$HOME/.haystack/bin/entire" hooks git pre-push "$1" || true
+# Haystack hooks: pre-push
+# Entire session tracking removed (Option B scope decision — see integrations/haystack.md).
+# Hook retained as a no-op so downstream teams that extend it have the entry point.
