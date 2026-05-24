@@ -168,7 +168,7 @@ jobs:
    - Sets `ANTHROPIC_API_KEY` as an environment variable (not an inline secret echo or script variable)
    - Contains inline comments explaining the model rationale and that public-repo compute minutes are free
 
-3. **Run shellcheck on the workflow file** (only the shell `run:` steps, if any are added beyond the action step): `shellcheck --shell=bash .github/workflows/claude-code-review.yml` — the current design has no `run:` steps, so this may be a no-op. Verify there are no shell issues.
+3. **Validate the workflow YAML syntax**: `python3 -c "import yaml, sys; yaml.safe_load(sys.stdin)" < .github/workflows/claude-code-review.yml` — confirms the file is valid YAML. (Note: `shellcheck` targets shell scripts, not YAML files; the current design has no `run:` steps. If `run:` steps are added later, run `shellcheck --shell=bash` on those scripts directly, not on the YAML file.)
 
 4. **Verify the workflow file is syntactically valid**: run `cat .github/workflows/claude-code-review.yml` and confirm the YAML parses without errors (use `python3 -c "import yaml, sys; yaml.safe_load(sys.stdin)" < .github/workflows/claude-code-review.yml` for a quick lint).
 

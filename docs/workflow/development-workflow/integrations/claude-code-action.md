@@ -197,9 +197,10 @@ gh api graphql -f query='
     }
   }' \
   -f owner="$OWNER" -f repo="$REPO" -F number="$PR_NUMBER" \
-  | jq '.data.repository.pullRequest.reviewThreads.nodes[]
+  | jq --arg bot "$BOT_LOGIN_PLAIN" \
+      '.data.repository.pullRequest.reviewThreads.nodes[]
         | select(.isResolved == false)
-        | select(.comments.nodes[0].author.login == "claude")' | wc -l
+        | select(.comments.nodes[0].author.login == $bot)' | wc -l
 ```
 
 > **Note**: GitHub's GraphQL API returns bot logins **without** the `[bot]`
