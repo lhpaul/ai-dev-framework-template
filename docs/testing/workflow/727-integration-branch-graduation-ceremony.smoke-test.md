@@ -156,6 +156,7 @@ Before running this smoke test:
 
 Each checkbox maps to an acceptance criterion from the spec.
 
+- [ ] AC-1: Protocol 90 Step 1b graduation eligibility check block is present and surfaces eligible branches to the human
 - [ ] AC-2: Protocol 05b Step 0 requires explicit human approval before any graduation action
 - [ ] AC-3: Protocol 05b Step 3 specifies the graduation PR title format exactly
 - [ ] AC-4: Protocol 05b Step 3 requires the PR body to list every sub-item with issue and PR numbers
