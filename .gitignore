@@ -20,6 +20,3 @@ node_modules/
 
 # Temp files
 .tmp/
-
-# Entire CLI local session data
-.entire/metadata/

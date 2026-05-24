@@ -158,7 +158,7 @@ This repository follows the default template workflow (documented in `docs/workf
 
 ### Agent commit hooks (optional — Haystack)
 
-When `haystack hooks install` has been run, git uses `hooks/` for pre-commit enforcement on **AI agent** commits: truncation checks, `LLM_RULES.md` review, and Entire session tracking. Human commits are unaffected. See [`docs/workflow/development-workflow/integrations/haystack.md`](docs/workflow/development-workflow/integrations/haystack.md). Customize `LLM_RULES.md` for your project; the template keeps `gh pr create` + protocol 93 as the default PR path.
+When `haystack hooks install` has been run, git uses `hooks/` for pre-commit enforcement on **AI agent** commits: truncation checks and `LLM_RULES.md` review (Option B — Entire session tracking not adopted; see integration doc for rationale). Human commits are unaffected. See [`docs/workflow/development-workflow/integrations/haystack.md`](docs/workflow/development-workflow/integrations/haystack.md). Customize `LLM_RULES.md` for your project; the template keeps `gh pr create` + protocol 93 as the default PR path.
 
 ### Stack Conventions
 
