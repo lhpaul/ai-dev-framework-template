@@ -122,7 +122,7 @@ _Not applicable — no application runtime or database is involved._
    - **Automated PR Review (e.g., CodeRabbit, claude-code-action)**: See [`docs/workflow/development-workflow/integrations/coderabbit.md`](docs/workflow/development-workflow/integrations/coderabbit.md) or [`docs/workflow/development-workflow/integrations/claude-code-action.md`](docs/workflow/development-workflow/integrations/claude-code-action.md) (recommended `phase_after_clean` value; no rate-limit cap)
    ```
 
-   Verify that sibling item #707's integration guide file (`docs/workflow/development-workflow/integrations/claude-code-action.md`) exists before adding the link. If it does not exist (i.e., #707 is not yet merged), link to the existing `greptile.md` as a placeholder or omit the direct link and add a note instead; do not create a dead link.
+   The integration guide file (`docs/workflow/development-workflow/integrations/claude-code-action.md`) is added by sibling item #707 and is present in this graduation PR. The link above is live and valid.
 
    Verification: open `README.md` and confirm `claude-code-action` is mentioned in the Optional Integrations section.
 

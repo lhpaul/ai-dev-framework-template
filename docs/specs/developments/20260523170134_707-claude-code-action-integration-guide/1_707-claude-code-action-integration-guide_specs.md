@@ -26,7 +26,7 @@ This feature ships the user-facing setup documentation for `claude-code-action` 
 2. The operator follows the setup steps:
    a. Adds `ANTHROPIC_API_KEY` as a GitHub Actions repository secret.
    b. Copies or references the `.github/workflows/` workflow file that ships the Claude Code Action job.
-   c. Configures the trigger phrase (default: `@claude review`) and notes which GitHub user or bot login posts review threads (for attribution purposes).
+   c. Notes which GitHub user or bot login posts review threads (for attribution purposes); the platform is dispatched via `workflow_dispatch` from the helper script — no trigger phrase configuration is required.
 3. The operator updates `.ai-dev-workflow.yaml` to include `claude-code-action` in `review.platforms` (and optionally in `review.phase_after_clean`), following the example in the guide.
 4. The operator opens or re-runs a PR to confirm that `pr-review-loop.sh` triggers the Claude Code Action workflow and receives a review result.
 
@@ -140,7 +140,7 @@ This feature ships the user-facing setup documentation for `claude-code-action` 
 
 ## Acceptance Criteria
 
-- [ ] A new file `docs/workflow/development-workflow/integrations/claude-code-action.md` exists and covers: adding the `ANTHROPIC_API_KEY` secret, referencing the shipped workflow file, configuring the trigger phrase, and noting the bot login used for thread attribution.
+- [ ] A new file `docs/workflow/development-workflow/integrations/claude-code-action.md` exists and covers: adding the `ANTHROPIC_API_KEY` secret, referencing the shipped workflow file, and noting the bot login used for thread attribution (the platform is dispatched via `workflow_dispatch` — no trigger phrase configuration is required).
 - [ ] The guide includes a model choice section that names Sonnet as the default, explains when to use Opus for large diffs, and gives approximate cost context.
 - [ ] The guide explicitly explains why Claude Code Action has no per-hour vendor review cap (own-key, own CI).
 - [ ] `docs/workflow/development-workflow/integrations/pr-review-platform.md` is updated to include `claude-code-action` in the supported platforms table with a link to the new guide.

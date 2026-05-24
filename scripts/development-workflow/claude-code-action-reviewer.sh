@@ -287,8 +287,8 @@ if [ "$REVIEW_STATUS" -ne 0 ]; then
   REVIEW_ERR=$(cat "$REVIEW_STDERR")
   rm -f "$REVIEW_STDERR" "$REVIEW_TMPFILE"
   echo "WARNING: could not fetch PR reviews (exit $REVIEW_STATUS): $REVIEW_ERR" >&2
-  echo "VERDICT: APPROVED — run succeeded; review fetch failed (assuming clean)"
-  exit 0
+  echo "VERDICT: UNAVAILABLE — run succeeded but review fetch failed"
+  exit 3
 fi
 rm -f "$REVIEW_STDERR"
 

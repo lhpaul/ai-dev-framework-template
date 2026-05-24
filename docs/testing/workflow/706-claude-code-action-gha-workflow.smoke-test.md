@@ -34,14 +34,20 @@ Before running this smoke test:
 
 ### Step 1: Verify workflow file exists and is listed
 
-- Run: `gh workflow list --repo lhpaul/ai-dev-framework-template`
+- Run:
+  ```bash
+  gh workflow list --repo lhpaul/ai-dev-framework-template
+  ```
 - Confirm: `Claude Code Action PR Review` appears in the list with status `active`
 
 **Expected result**: The workflow is listed and active. If the workflow is not listed, confirm the file is on the default branch of the repository.
 
 ### Step 2: Inspect workflow structure for spec compliance
 
-- Run: `cat .github/workflows/claude-code-review.yml`
+- Run:
+  ```bash
+  cat .github/workflows/claude-code-review.yml
+  ```
 - Confirm each of the following:
   1. The `on:` section contains only `workflow_dispatch` (no `pull_request`, `push`, or `issue_comment`)
   2. The `workflow_dispatch.inputs.pr_number` field has `required: true`
@@ -58,7 +64,10 @@ Before running this smoke test:
 ### Step 3: Trigger workflow dispatch manually and observe run
 
 - Choose an open PR number (e.g., `<PR_NUMBER>`).
-- Run: `gh workflow run claude-code-review.yml -f pr_number=<PR_NUMBER>`
+- Run:
+  ```bash
+  gh workflow run claude-code-review.yml -f pr_number=<PR_NUMBER>
+  ```
 - Confirm: the command exits with status 0 and prints no error.
 - Poll for run completion:
 
@@ -74,7 +83,10 @@ Before running this smoke test:
 
 ### Step 4: Verify review comment posted on the PR
 
-- Run: `gh pr view <PR_NUMBER> --comments`
+- Run:
+  ```bash
+  gh pr view <PR_NUMBER> --comments
+  ```
 - Confirm: a review comment from the Claude Code Action bot appears on the PR.
 
 **Maps to**: UC-1 Postconditions; AC: Claude reviews the PR and posts comments
@@ -83,8 +95,14 @@ Before running this smoke test:
 
 ### Step 5: Verify model in run logs
 
-- Get the run ID from Step 3: `gh run list --workflow claude-code-review.yml --limit 1 --json databaseId --jq '.[0].databaseId'`
-- Run: `gh run view <run-id> --log | grep -i "sonnet\|claude-sonnet-4-6\|model"`
+- Get the run ID from Step 3:
+  ```bash
+  gh run list --workflow claude-code-review.yml --limit 1 --json databaseId --jq '.[0].databaseId'
+  ```
+- Run:
+  ```bash
+  gh run view <run-id> --log | grep -i "sonnet\|claude-sonnet-4-6\|model"
+  ```
 - Confirm: the log mentions `claude-sonnet-4-6` as the model used.
 
 **Maps to**: BR-2; AC: model set to `claude-sonnet-4-6` as default
@@ -93,7 +111,10 @@ Before running this smoke test:
 
 ### Step 6: Verify secret is not logged
 
-- Run: `gh run view <run-id> --log | grep -i "ANTHROPIC_API_KEY\|sk-ant-"`
+- Run:
+  ```bash
+  gh run view <run-id> --log | grep -i "ANTHROPIC_API_KEY\|sk-ant-"
+  ```
 - Confirm: the raw secret value (starting with `sk-ant-`) does not appear in the logs. The variable name `ANTHROPIC_API_KEY` may appear in logs as a reference but must not expose the secret value.
 
 **Maps to**: BR-8; AC: `ANTHROPIC_API_KEY` is not stored or logged

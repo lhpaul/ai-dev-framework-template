@@ -161,7 +161,7 @@ to dispatch the workflow manually when using the helper.
 
 Claude Code Action completes its review by finishing the GitHub Actions run it
 dispatches. The companion script polls the Actions API for the run triggered
-after the review comment was posted:
+after the workflow was dispatched:
 
 ```bash
 run_status=$(gh api "repos/$OWNER/$REPO/actions/runs" \

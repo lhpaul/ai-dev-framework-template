@@ -113,10 +113,11 @@ need updating — the guide is a new integration doc that stands alone.
      1. Add `ANTHROPIC_API_KEY` as a GitHub Actions repository secret (BR-3)
      2. Reference (do not copy) the workflow file at
         `.github/workflows/claude-code-action-review.yml` (BR-6)
-     3. Configure the trigger phrase (default: `@claude review`)
-     4. Note the bot login used for thread attribution (BR-4) — the Claude Code
+     3. Note the bot login used for thread attribution (BR-4) — the Claude Code
         Action GitHub App posts review threads as `claude[bot]`; operators must
-        use this login when configuring `pr-review-loop.sh` to identify threads
+        use this login when configuring `pr-review-loop.sh` to identify threads;
+        the platform is dispatched via `workflow_dispatch` from the helper script
+        so no trigger phrase configuration is required
      5. Add `claude-code-action` to `review.platforms` in `.ai-dev-workflow.yaml`
         (BR-1) with example YAML showing the platform identifier
    - **Model selection section** (BR-5):

@@ -38,7 +38,7 @@
 - [ ] **`scripts/development-workflow/pr-review-loop.sh`** — add `run_claude_code_action_review()` function following the `run_codex_github_review()` pattern (Phase 1: pre-dispatch thread check; Phase 2: delegate to `claude-code-action-reviewer.sh`; exit-code-to-kv mapping identical to codex-github).
 - [ ] **`scripts/development-workflow/pr-review-loop.sh`** — add `claude-code-action)` case to `bot_login_for_platform()` function (line ~2786), returning the configurable bot login (default: `claude[bot]`, overridable by `CLAUDE_CODE_ACTION_BOT_LOGIN` env var).
 - [ ] **`scripts/development-workflow/pr-review-loop.sh`** — add `claude-code-action)` case to the `run_platform_review()` dispatch table (line ~2931), calling `run_claude_code_action_review()` with the same four positional arguments.
-- [ ] **`scripts/development-workflow/claude-code-action-reviewer.sh`** — new script: dispatches the Claude Code Action GHA workflow, polls for run completion, inspects PR review threads, and exits with the same three exit codes used by `codex-github-reviewer.sh` (0 = APPROVED, 1 = NEEDS_REVISION, 2 = TIMED_OUT).
+- [ ] **`scripts/development-workflow/claude-code-action-reviewer.sh`** — new script: dispatches the Claude Code Action GHA workflow, polls for run completion, inspects PR review threads, and exits with codes 0 = APPROVED, 1 = NEEDS_REVISION, 2 = TIMED_OUT, 3 = UNAVAILABLE.
 
 ### Infrastructure / Configuration
 
@@ -50,11 +50,12 @@
 
 ### Purpose and exit-code contract
 
-The script follows the same contract as `codex-github-reviewer.sh`:
+The script uses a four-code exit contract:
 
 - Exit 0 — APPROVED (Actions run completed, no new blocking review threads posted by the bot)
 - Exit 1 — NEEDS_REVISION (Actions run completed, bot posted new blocking review threads)
-- Exit 2 — TIMED_OUT (Actions run did not complete within `MAX_WAIT`, dispatch failed, or workflow file absent)
+- Exit 2 — TIMED_OUT (Actions run did not complete within `MAX_WAIT`)
+- Exit 3 — UNAVAILABLE (dispatch failed: workflow file absent, 404, permissions error, or review fetch failed)
 
 ### Arguments and options
 
