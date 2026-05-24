@@ -250,6 +250,47 @@ This requirement applies to **new** filter parameters only. Modifications to exi
 
 ---
 
+## Script-Accuracy Self-Check Checklist
+
+**When to apply**: Conditional — applies **only when this PR is a documentation PR that describes the behavior of a script** (including CLI output format, option flags, exit codes, API call patterns, or input/output format). If your PR does not document what a script does, skip this section entirely.
+
+**Why this checklist exists**: PR #731 had a 75% fix-commit ratio because the implementing agent acted on a Haystack reviewer finding about `claude-code-action-reviewer.sh` without verifying the claim against the actual script source, introducing a regression. Documentation that describes script behavior must be verified against the script — memory and inference are unreliable.
+
+**How to apply**: Before opening the PR, run 3–5 targeted greps against the referenced script(s) to confirm each documented claim. Do not audit the full script; focus on the specific claims your documentation makes.
+
+Complete every item below for each script described in the PR before opening the PR:
+
+- [ ] **Claims enumerated**: list every claim the PR documentation makes about the script (input format, output format, exit codes, option flags, API calls, environment variables, trigger conditions).
+- [ ] **Each claim verified against source**: for each claim, run a targeted grep or read the relevant section of the script source directly. Do not rely on memory or on what a reviewer asserted — the script source is the authoritative value.
+
+  ```bash
+  # Example: verify an exit code claim
+  grep -n 'exit 0\|exit 1\|exit 2' scripts/development-workflow/my-script.sh
+
+  # Example: verify a flag or option name
+  grep -n -- '--flag-name\|FLAG_NAME' scripts/development-workflow/my-script.sh
+
+  # Example: verify an output format claim (e.g., a RESULT= or STATUS= value)
+  grep -n 'RESULT=\|STATUS=' scripts/development-workflow/my-script.sh
+  ```
+
+- [ ] **Discrepancies resolved**: if any grep reveals a mismatch between the documentation and the script source, update the documentation to match the script — do not update the script to match the documentation (unless the script itself is wrong and that fix is in scope).
+- [ ] **Self-check log posted**: after completing the checks above, append a brief self-check log to the PR description confirming each verified claim. Example format:
+
+  ```text
+  ## Script-Accuracy Self-Check
+
+  Script: scripts/development-workflow/my-script.sh
+  - Exit code 0 = APPROVED: verified (grep line 47)
+  - Exit code 1 = NEEDS_REVISION: verified (grep line 52)
+  - `--poll-interval` flag: verified (grep line 23)
+  - Output format `RESULT=`: verified (grep line 61)
+  ```
+
+This checklist does not require a full script audit — only the specific claims made in the PR documentation. If a claim cannot be verified by grep (e.g., it is an emergent behavior of multiple code paths), read the relevant function body directly and note the line range in the self-check log.
+
+---
+
 ## Path 1: Full Pipeline
 
 ### Step 1: Non-Negotiable Prep
@@ -361,6 +402,8 @@ Before committing, verify:
 **Test Harness Coverage Checklist (if the implementation includes any test script, test function, or validation harness)**: Complete the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) before self-approving. Do not open the PR with known coverage gaps.
 
 **Filter-Schema Canary Test Checklist (if this PR adds new filter parameters to a tool schema)**: Complete the [Filter-Schema Canary Test Checklist](#filter-schema-canary-test-checklist) before opening the PR. A missing canary test is a blocking code-review finding.
+
+**Script-Accuracy Self-Check Checklist (if this PR is a documentation PR that describes script behavior)**: Complete the [Script-Accuracy Self-Check Checklist](#script-accuracy-self-check-checklist) before opening the PR. Verify each documented claim about input/output format, exit codes, option flags, and API calls against the actual script source.
 
 **ShellCheck (if any `.sh` files were modified)**:
 
@@ -686,6 +729,8 @@ git checkout -b refactor/[branch-slug]
 
    **Filter-Schema Canary Test Checklist (if this PR adds new filter parameters to a tool schema)**: Complete the [Filter-Schema Canary Test Checklist](#filter-schema-canary-test-checklist) before opening the PR. A missing canary test is a blocking code-review finding.
 
+   **Script-Accuracy Self-Check Checklist (if this PR is a documentation PR that describes script behavior)**: Complete the [Script-Accuracy Self-Check Checklist](#script-accuracy-self-check-checklist) before opening the PR. Verify each documented claim about input/output format, exit codes, option flags, and API calls against the actual script source.
+
    If any `.sh` files were modified, run ShellCheck before committing:
 
    ```bash
@@ -881,6 +926,8 @@ Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected
 **Test Harness Coverage Checklist (if the implementation includes any test script, test function, or validation harness)**: Complete the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) before self-approving. Do not open the PR with known coverage gaps.
 
 **Filter-Schema Canary Test Checklist (if this PR adds new filter parameters to a tool schema)**: Complete the [Filter-Schema Canary Test Checklist](#filter-schema-canary-test-checklist) before opening the PR. A missing canary test is a blocking code-review finding.
+
+**Script-Accuracy Self-Check Checklist (if this PR is a documentation PR that describes script behavior)**: Complete the [Script-Accuracy Self-Check Checklist](#script-accuracy-self-check-checklist) before opening the PR. Verify each documented claim about input/output format, exit codes, option flags, and API calls against the actual script source.
 
 **ShellCheck (if any `.sh` files were modified)**:
 
@@ -1105,6 +1152,8 @@ Verify: build, lint, tests pass.
 **Test Harness Coverage Checklist (if the implementation includes any test script, test function, or validation harness)**: Complete the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) before self-approving. Do not open the PR with known coverage gaps.
 
 **Filter-Schema Canary Test Checklist (if this PR adds new filter parameters to a tool schema)**: Complete the [Filter-Schema Canary Test Checklist](#filter-schema-canary-test-checklist) before opening the PR. A missing canary test is a blocking code-review finding.
+
+**Script-Accuracy Self-Check Checklist (if this PR is a documentation PR that describes script behavior)**: Complete the [Script-Accuracy Self-Check Checklist](#script-accuracy-self-check-checklist) before opening the PR. Verify each documented claim about input/output format, exit codes, option flags, and API calls against the actual script source.
 
 **ShellCheck (if any `.sh` files were modified)**:
 
