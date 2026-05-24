@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **CodeRabbit auto-review disabled** — `.coderabbit.yaml` `auto_review.enabled` set to `false`. CodeRabbit no longer fires automatically on new PRs; it can still be triggered on demand via `@coderabbitai review` in the reviewer loop.
 
+### Fixed
+
+- **`pr-review-loop.sh`: clarify REST-vs-GraphQL bot-login normalization comments** — the inline comments at the `[bot]`-suffix-stripping lines previously said only "GraphQL returns login WITHOUT [bot]", which was ambiguous and led to a Haystack triage misread. Expanded to explicitly state that REST API endpoints return logins WITH the `[bot]` suffix while GraphQL returns them WITHOUT it, and that the strip normalizes for GraphQL usage. Applies to all three stripping sites (`run_codex_github_review`, `coderabbit_thread_gate_clean`, and the `check_all_platforms_for_unresolved_threads` loop).
+
 ### Added
 
 - **Haystack Editor git hooks (optional)** — `haystack hooks install` adds agent-aware pre-commit checks (`hooks/`), Entire session linkage (`.entire/`), and `LLM_RULES.md` aligned with the default `gh pr create` + reviewer-loop workflow. Integration guide: `docs/workflow/development-workflow/integrations/haystack.md`.
