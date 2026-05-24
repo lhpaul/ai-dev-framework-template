@@ -70,7 +70,12 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 cd_workflow_repo_root
 
-TARGET_BASE="develop"
+# TARGET_BASE: base integration branch for merge and discover subcommands.
+# Resolution order (highest priority first):
+#   1. --base flag (parsed at entry point before subcommand dispatch)
+#   2. TARGET_BASE environment variable
+#   3. Default: "develop"
+TARGET_BASE="${TARGET_BASE:-develop}"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -157,6 +162,12 @@ cmd_discover() {
       --prs)
         [ $# -ge 2 ] && [ -n "${2:-}" ] || die "--prs requires a comma-separated value (e.g. --prs 101,102)"
         explicit_prs="$2"
+        shift 2
+        ;;
+      --base)
+        # Per-subcommand --base overrides the global TARGET_BASE (and env var).
+        [ $# -ge 2 ] && [ -n "${2:-}" ] || die "--base requires a branch name"
+        TARGET_BASE="$2"
         shift 2
         ;;
       *)
@@ -454,6 +465,12 @@ cmd_merge() {
       --pr)
         [ $# -ge 2 ] && [ -n "${2:-}" ] || die "--pr requires a PR number value"
         pr_num="$2"
+        shift 2
+        ;;
+      --base)
+        # Per-subcommand --base overrides the global TARGET_BASE (and env var).
+        [ $# -ge 2 ] && [ -n "${2:-}" ] || die "--base requires a branch name"
+        TARGET_BASE="$2"
         shift 2
         ;;
       *)

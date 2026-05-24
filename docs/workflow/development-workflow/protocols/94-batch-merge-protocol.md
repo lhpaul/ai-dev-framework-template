@@ -154,7 +154,7 @@ Process PRs one at a time in the approved order.
 > resolution, or abort) **before** advancing to the next PR. Never wrap multiple merge
 > calls in a single non-interactive shell loop (e.g., `for pr in …; do … merge --pr $pr; done`)
 > — if one PR leaves the working tree in a conflicted state, subsequent calls will fail with
-> "Could not check out 'develop' — working tree is not clean" and all remaining PRs will be
+> "Could not check out '<base>' — working tree is not clean" and all remaining PRs will be
 > lost. The sequential discipline is mandatory even when all PRs are expected to be conflict-free.
 
 For each PR in the approved order:
@@ -166,7 +166,13 @@ For each PR in the approved order:
 **b. Run the merge script:**
 
 ```bash
+# Standard (merging into develop):
 ./scripts/development-workflow/batch-merge.sh merge --pr <number>
+
+# Integration-branch override (merging into develop-<slug> or other base):
+./scripts/development-workflow/batch-merge.sh merge --pr <number> --base develop-<slug>
+# Equivalent using the env var form:
+# TARGET_BASE=develop-<slug> ./scripts/development-workflow/batch-merge.sh merge --pr <number>
 ```
 
 Parse the output:
