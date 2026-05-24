@@ -208,12 +208,16 @@ gh api graphql -f query='
   -f owner="$OWNER" -f repo="$REPO" -F number="$PR_NUMBER" \
   | jq '.data.repository.pullRequest.reviewThreads.nodes[]
         | select(.isResolved == false)
-        | select(.comments.nodes[0].author.login == "claude[bot]")' | wc -l
+        | select(.comments.nodes[0].author.login == "claude")' | wc -l
 ```
 
-> **Note**: GitHub's GraphQL API returns bot logins with the `[bot]` suffix
-> (e.g., `claude[bot]`), the same as the REST API. Always use the full login
-> including `[bot]` when filtering review threads.
+> **Note**: GitHub's GraphQL API returns bot logins **without** the `[bot]`
+> suffix (e.g., `claude`), unlike the REST API which includes it (e.g.,
+> `claude[bot]`). The companion script strips `[bot]` from the configured
+> `CLAUDE_CODE_ACTION_BOT_LOGIN` value before building GraphQL filters.
+> When setting `CLAUDE_CODE_ACTION_BOT_LOGIN`, use the full REST format
+> including `[bot]` (e.g., `custom-app[bot]`); the script normalises it
+> for GraphQL queries automatically.
 
 ### Blocking vs. suggestion classification
 
