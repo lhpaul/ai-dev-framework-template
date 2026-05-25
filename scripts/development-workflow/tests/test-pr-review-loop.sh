@@ -621,6 +621,39 @@ run_test "unresolved_threads_graphql_failure_exit3" "3" "$actual_exit"
 unset MOCK_GH_EXIT
 
 # ---------------------------------------------------------------------------
+# Area 7: haystack platform
+#
+# Tests that bot_login_for_platform returns "" for haystack (no GitHub review
+# threads are posted by the Haystack CLI in this MVP), and that run_platform_review
+# routes to run_haystack_review for the haystack platform.
+#
+# run_haystack_review itself calls haystack-reviewer.sh which requires the
+# haystack CLI binary. Full integration is validated by the smoke test runbook
+# at docs/testing/workflow/720-haystack-triage-review-platform.smoke-test.md.
+# These unit tests cover only the routing and bot-login layers.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 7: haystack platform ==="
+
+unset MOCK_GH_POST_EXIT MOCK_GH_POST_OUTPUT MOCK_GH_CALL_LOG MOCK_GH_EXIT
+
+# test: bot_login_for_platform returns "" for haystack
+actual="$(bot_login_for_platform haystack)"
+run_test "bot_login_for_platform_haystack" "" "$actual"
+
+# test: bot_login_for_platform still returns "" for unknown platforms
+actual="$(bot_login_for_platform unknown-platform-xyz)"
+run_test "bot_login_for_platform_unknown_still_empty" "" "$actual"
+
+# test: run_platform_review routes "haystack" to run_haystack_review
+_haystack_dispatch_called=0
+run_haystack_review() { _haystack_dispatch_called=1; }
+run_platform_review "haystack" "999" "feature/test" "30" "120" >/dev/null 2>&1 || true
+run_test "run_platform_review_routes_to_run_haystack_review" "1" "$_haystack_dispatch_called"
+unset -f run_haystack_review
+unset _haystack_dispatch_called
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
