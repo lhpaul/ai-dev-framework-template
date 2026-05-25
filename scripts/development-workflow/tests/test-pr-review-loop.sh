@@ -637,6 +637,107 @@ run_test "copilot_bot_login_env_override" "custom-copilot-bot[bot]" "$actual"
 unset COPILOT_BOT_LOGIN
 
 # ---------------------------------------------------------------------------
+# Area 8: run_copilot_review() — exit-code and key-value output contract (AC-8)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 8: run_copilot_review — clean / needs_fixes / escalate ==="
+
+# Helper overrides used across all Area 8 tests.
+# cd_workflow_repo_root: no-op (no real directory change needed in harness).
+# repo_slug: returns a fixed owner/repo slug so gh URL is deterministic.
+# require_gh: no-op (mock gh already present on PATH).
+_copilot_overrides='
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  require_gh() { :; }
+'
+
+# Test 8.1: clean path — Copilot posts APPROVED review
+# POST (reviewer request) succeeds; GET (reviews poll) returns the jq-extracted
+# state token "APPROVED" (the mock gh returns MOCK_GH_OUTPUT verbatim, bypassing
+# jq execution, so we set MOCK_GH_OUTPUT to the already-processed state string).
+# Use || to capture exit code safely when run_copilot_review may call set -e internally.
+export MOCK_GH_POST_OUTPUT='{}'
+export MOCK_GH_OUTPUT='APPROVED'
+unset COPILOT_BOT_LOGIN
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_copilot_overrides"
+  _ec=0
+  run_copilot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "copilot_clean_result" "RESULT=clean" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "copilot_clean_blocking_count" "BLOCKING_COUNT=0" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
+run_test "copilot_clean_exit_code" "0" "$actual_exit"
+
+# Test 8.2: needs_fixes path — Copilot posts CHANGES_REQUESTED review
+export MOCK_GH_POST_OUTPUT='{}'
+export MOCK_GH_OUTPUT='CHANGES_REQUESTED'
+unset COPILOT_BOT_LOGIN
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_copilot_overrides"
+  _ec=0
+  run_copilot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "copilot_needs_fixes_result" "RESULT=needs_fixes" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "copilot_needs_fixes_blocking_count" "BLOCKING_COUNT=1" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
+run_test "copilot_needs_fixes_exit_code" "1" "$actual_exit"
+
+# Test 8.3: escalate (timeout) path — no review posted within max_wait
+# POST succeeds; GET returns empty string (no review state); max_wait=0 so the
+# while loop body never executes and execution falls through to the timeout block.
+export MOCK_GH_POST_OUTPUT='{}'
+export MOCK_GH_OUTPUT=''
+unset COPILOT_BOT_LOGIN
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_copilot_overrides"
+  _ec=0
+  run_copilot_review "42" "feature/42-test" "1" "0" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "copilot_timeout_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "copilot_timeout_reason" "REASON=timeout" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "copilot_timeout_exit_code" "2" "$actual_exit"
+
+# Test 8.4: escalate (unavailable) path — reviewer request API call fails
+# POST fails (non-zero exit); function must return RESULT=escalate REASON=unavailable.
+export MOCK_GH_POST_EXIT=1
+export MOCK_GH_OUTPUT=''
+unset COPILOT_BOT_LOGIN
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_copilot_overrides"
+  _ec=0
+  run_copilot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "copilot_unavailable_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "copilot_unavailable_reason" "REASON=unavailable" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "copilot_unavailable_exit_code" "2" "$actual_exit"
+unset MOCK_GH_POST_EXIT
+export MOCK_GH_OUTPUT='[]'
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
