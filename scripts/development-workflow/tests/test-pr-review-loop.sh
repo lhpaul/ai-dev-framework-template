@@ -737,6 +737,29 @@ run_test "copilot_unavailable_exit_code" "2" "$actual_exit"
 unset MOCK_GH_POST_EXIT
 export MOCK_GH_OUTPUT='[]'
 
+# Test 8.5: clean path — Copilot posts COMMENTED review (non-blocking comment)
+# COMMENTED is treated as clean (exit 0), BLOCKING_COUNT=0, SUGGESTION_COUNT=1.
+export MOCK_GH_POST_OUTPUT='{}'
+export MOCK_GH_OUTPUT='COMMENTED'
+unset COPILOT_BOT_LOGIN
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_copilot_overrides"
+  _ec=0
+  run_copilot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "copilot_commented_result" "RESULT=clean" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "copilot_commented_blocking_count" "BLOCKING_COUNT=0" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
+run_test "copilot_commented_suggestion_count" "SUGGESTION_COUNT=1" \
+  "$(printf '%s\n' "$actual_output" | grep "^SUGGESTION_COUNT=")"
+run_test "copilot_commented_exit_code" "0" "$actual_exit"
+export MOCK_GH_OUTPUT='[]'
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
