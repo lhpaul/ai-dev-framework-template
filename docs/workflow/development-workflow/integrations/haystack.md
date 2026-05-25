@@ -50,6 +50,8 @@ When using the full Haystack product:
 
 This can run **in parallel** with CodeRabbit/Greptile/Devin configured in `.ai-dev-workflow.yaml`; they address different layers (local commit hygiene vs. hosted PR review).
 
+**Native review platform**: `haystack triage` is also supported as a native automated review platform in `pr-review-loop.sh`. Declare `haystack` under `review.platforms` (or `review.phase_after_clean`) in `.ai-dev-workflow.yaml` to include Haystack triage in the Step 7 automated reviewer loop. See [`haystack-triage.md`](haystack-triage.md) for setup instructions, severity mapping, and troubleshooting.
+
 ---
 
 ## Installation
@@ -139,12 +141,15 @@ Agents using Cursor are not detected by the stock agent-context parsers today; t
 | `hooks/agent-context/` | Parsers for Claude, Codex, Gemini, OpenCode sessions |
 | `LLM_RULES.md` | Project rules injected on agent commits |
 | `docs/best-practices/2-version-control.md` | Default PR conventions (`gh`) |
+| `docs/workflow/development-workflow/integrations/haystack-triage.md` | Haystack triage as a native Step 7 review platform |
+| `scripts/development-workflow/haystack-reviewer.sh` | Companion script wrapping `haystack triage --json` |
 
 ---
 
 ## See Also
 
 - [`pr-review-platform.md`](pr-review-platform.md) — Step 7 multi-platform review loop
+- [`haystack-triage.md`](haystack-triage.md) — Haystack triage as a native review platform
 - [`coderabbit.md`](coderabbit.md) — CodeRabbit integration (common default reviewer)
 - Protocol 93 — [`../protocols/93-automated-reviewer-loop-protocol.md`](../protocols/93-automated-reviewer-loop-protocol.md)
 - Protocol 03 — [`../protocols/03-implement-development-protocol.md`](../protocols/03-implement-development-protocol.md) (`gh pr create` steps)
