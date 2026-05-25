@@ -116,7 +116,7 @@ your environment uses a different login.
 ```bash
 gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/requested_reviewers" \
   --method POST \
-  --raw-field 'reviewers[]=copilot'
+  --field 'reviewers[]=copilot'
 ```
 
 This request is idempotent — GitHub silently deduplicates reviewer requests if
