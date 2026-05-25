@@ -880,6 +880,120 @@ run_claude_code_action_review() {
   esac
 }
 
+run_copilot_review() {
+  # Requests GitHub Copilot as a reviewer via the GitHub Pulls API, polls the
+  # pull-request reviews endpoint until Copilot posts its verdict, and maps the
+  # review state to the standard exit-code contract:
+  #   0 → RESULT=clean      (APPROVED or COMMENTED only)
+  #   1 → RESULT=needs_fixes (CHANGES_REQUESTED)
+  #   2 → RESULT=escalate   (timeout or Copilot feature unavailable)
+  #
+  # Env var override:
+  #   COPILOT_BOT_LOGIN  — override the default bot login
+  #                        (default: "copilot-pull-request-reviewer[bot]")
+  local pr_number="$1"
+  local branch_name="$2"
+  local poll_interval="$3"
+  local max_wait="$4"
+  local platform="copilot"
+  local bot_login="${COPILOT_BOT_LOGIN:-copilot-pull-request-reviewer[bot]}"
+  local repo
+  local elapsed=0
+  local review_state=""
+
+  require_gh
+  cd_workflow_repo_root
+  repo="$(repo_slug)"
+
+  local owner repo_name
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  # Step 1: Request Copilot as a reviewer (idempotent — GitHub silently
+  # deduplicates reviewer requests if Copilot is already requested).
+  set +e
+  gh api "repos/$owner/$repo_name/pulls/$pr_number/requested_reviewers" \
+    --method POST \
+    --field 'reviewers[]=copilot' > /dev/null 2>&1
+  local request_exit=$?
+  set -e
+
+  if [ "$request_exit" -ne 0 ]; then
+    # Request failed — Copilot feature likely not enabled on this repository.
+    print_kv RESULT escalate
+    print_kv REASON unavailable
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    return 2
+  fi
+
+  # Step 2: Poll the pull-request reviews endpoint until Copilot posts a review.
+  local effective_poll_interval="$poll_interval"
+  if [ "$effective_poll_interval" -gt "$max_wait" ]; then
+    effective_poll_interval="$max_wait"
+  fi
+
+  while [ "$elapsed" -lt "$max_wait" ]; do
+    set +e
+    review_state="$(gh api "repos/$owner/$repo_name/pulls/$pr_number/reviews" \
+      --jq "[.[] | select(.user.login == \"$bot_login\")] | last | .state // empty" \
+      2>/dev/null)"
+    set -e
+
+    case "$review_state" in
+      APPROVED)
+        print_kv RESULT clean
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv COMMENT_COUNT 0
+        print_kv BLOCKING_COUNT 0
+        print_kv SUGGESTION_COUNT 0
+        return 0
+        ;;
+      CHANGES_REQUESTED)
+        print_kv RESULT needs_fixes
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv REASON changes_requested
+        print_kv COMMENT_COUNT 1
+        print_kv BLOCKING_COUNT 1
+        print_kv SUGGESTION_COUNT 0
+        return 1
+        ;;
+      COMMENTED)
+        # Non-blocking comment only — treat as clean.
+        print_kv RESULT clean
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv COMMENT_COUNT 1
+        print_kv BLOCKING_COUNT 0
+        print_kv SUGGESTION_COUNT 1
+        return 0
+        ;;
+    esac
+
+    _interruptible_sleep "$effective_poll_interval"
+    elapsed=$(( elapsed + effective_poll_interval ))
+  done
+
+  # Timeout — no review posted within max_wait.
+  print_kv RESULT escalate
+  print_kv REASON timeout
+  print_kv PLATFORM "$platform"
+  print_kv PR_NUMBER "$pr_number"
+  print_kv BRANCH "$branch_name"
+  print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+  return 2
+}
+
 run_devin_review() {
   local pr_number="$1"
   local branch_name="$2"
@@ -2939,6 +3053,7 @@ bot_login_for_platform() {
     pr-agent)     printf '\n' ;;
     codex-github)        printf '%s\n' "${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}" ;;
     claude-code-action)  printf '%s\n' "${CLAUDE_CODE_ACTION_BOT_LOGIN:-claude[bot]}" ;;
+    copilot)             printf '%s\n' "${COPILOT_BOT_LOGIN:-copilot-pull-request-reviewer[bot]}" ;;
     *)                   printf '\n' ;;
   esac
 }
@@ -3084,6 +3199,9 @@ run_platform_review() {
       ;;
     claude-code-action)
       run_claude_code_action_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      ;;
+    copilot)
+      run_copilot_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
       ;;
     *)
       print_kv RESULT skipped
