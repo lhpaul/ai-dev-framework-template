@@ -1439,7 +1439,7 @@ discarded when the orchestration session ends.
 After Step 7 completes with result `clean` or `skipped`, and **before** entering Step 8, apply the `ready-for-regression` label on implementation PRs to trigger label-gated e2e/regression CI checks.
 
 **Applies to**: PRs on branches `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`
-**Does not apply to**: PRs on branches `spec/*`, `implementation-plan/*`
+**Does not apply to**: PRs on branches `spec/*`, `implementation-plan/*`, or graduation PRs (`develop-<slug>` → `develop`) — see the label derivation table in Step 8a for the graduation PR exemption (BR-6)
 
 > **`refactor/*` is not exempt**: `refactor/*` branches require `ready-for-regression` exactly like `fix/*` and `feature/*` branches. Refactors that reach `ready-for-human-review` without this label will bypass e2e/regression CI. Apply the label unconditionally for any `refactor/*` PR — do not infer exemption from the content of the refactor (e.g., "it's documentation-only" or "it changes no logic").
 
@@ -1454,7 +1454,7 @@ This label triggers the `e2e-regression.yml` workflow (or project-specific equiv
 
 The `gh pr edit --add-label` command is idempotent — applying a label that already exists is a no-op. When the label is already present from a previous cycle, the `synchronize` event from the latest push will have already re-triggered the workflow.
 
-Skip this step entirely for spec and plan PRs.
+Skip this step entirely for spec and plan PRs, and for graduation PRs (`develop-<slug>` → `develop`).
 
 ### Step 7b completion confirmation
 
@@ -1515,16 +1515,17 @@ When adding a new gate to this checklist, allocate the next unused exit code and
 
 Required labels are determined by the **branch prefix**, not by the content of the PR (e.g., whether it changes code vs. documentation). An agent must never infer labels from what was changed inside the PR.
 
-| Branch prefix           | Requires `ready-for-regression` | When to apply                                              |
-| ----------------------- | ------------------------------- | ---------------------------------------------------------- |
-| `feature/*`             | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
-| `fix/*`                 | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
-| `refactor/*`            | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
-| `hotfix/*`              | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
-| `spec/*`                | No                              | —                                                          |
-| `implementation-plan/*` | No                              | —                                                          |
+| Branch prefix                                    | Requires `ready-for-regression` | When to apply                                                                                                                                                    |
+| ------------------------------------------------ | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `feature/*`                                      | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2                                                                                                      |
+| `fix/*`                                          | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2                                                                                                      |
+| `refactor/*`                                     | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2                                                                                                      |
+| `hotfix/*`                                       | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2                                                                                                      |
+| `spec/*`                                         | No                              | —                                                                                                                                                                |
+| `implementation-plan/*`                          | No                              | —                                                                                                                                                                |
+| `develop-<slug>` (graduation PR, base `develop`) | No — explicitly exempt (BR-6)   | Graduation PRs carry no new implementation; label not required. Do not log the absence as a protocol deviation. See `05b-graduate-development-protocol.md` Step 4. |
 
-Any branch that does not match a recognized prefix is treated as non-implementation (i.e., `ready-for-regression` is NOT required), but this should be treated as a configuration anomaly and reported to the human.
+Any branch that does not match a recognized prefix above — **other than graduation branches (`develop-<slug>` → `develop`, which are a known and expected non-implementation PR type)** — is treated as non-implementation (i.e., `ready-for-regression` is NOT required), but should be treated as a configuration anomaly and reported to the human.
 
 ### Infrastructure Dependency Scan (pre-readiness)
 
