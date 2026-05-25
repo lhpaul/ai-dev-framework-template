@@ -914,7 +914,7 @@ run_copilot_review() {
   set +e
   gh api "repos/$owner/$repo_name/pulls/$pr_number/requested_reviewers" \
     --method POST \
-    --raw-field 'reviewers[]=copilot' > /dev/null 2>&1
+    --field 'reviewers[]=copilot' > /dev/null 2>&1
   local request_exit=$?
   set -e
 
