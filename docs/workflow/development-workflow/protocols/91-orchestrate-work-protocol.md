@@ -1515,16 +1515,17 @@ When adding a new gate to this checklist, allocate the next unused exit code and
 
 Required labels are determined by the **branch prefix**, not by the content of the PR (e.g., whether it changes code vs. documentation). An agent must never infer labels from what was changed inside the PR.
 
-| Branch prefix           | Requires `ready-for-regression` | When to apply                                              |
-| ----------------------- | ------------------------------- | ---------------------------------------------------------- |
-| `feature/*`             | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
-| `fix/*`                 | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
-| `refactor/*`            | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
-| `hotfix/*`              | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
-| `spec/*`                | No                              | —                                                          |
-| `implementation-plan/*` | No                              | —                                                          |
+| Branch prefix                                      | Requires `ready-for-regression` | When to apply                                              |
+| -------------------------------------------------- | ------------------------------- | ---------------------------------------------------------- |
+| `feature/*`                                        | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
+| `fix/*`                                            | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
+| `refactor/*`                                       | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
+| `hotfix/*`                                         | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
+| `spec/*`                                           | No                              | —                                                          |
+| `implementation-plan/*`                            | No                              | —                                                          |
+| `develop-<slug>` (graduation PR, base `develop`)   | No — explicitly exempt (BR-6)   | Graduation PRs carry no new implementation; label not required. Do not log the absence as a protocol deviation. See `05b-graduate-development-protocol.md` Step 4. |
 
-Any branch that does not match a recognized prefix is treated as non-implementation (i.e., `ready-for-regression` is NOT required), but this should be treated as a configuration anomaly and reported to the human.
+Any branch that does not match a recognized prefix above — **other than graduation branches (`develop-<slug>` → `develop`, which are a known and expected non-implementation PR type)** — is treated as non-implementation (i.e., `ready-for-regression` is NOT required), but should be treated as a configuration anomaly and reported to the human.
 
 ### Infrastructure Dependency Scan (pre-readiness)
 
