@@ -70,7 +70,7 @@ If a future integration adds a Haystack GitHub App with inline thread posting, t
 
 ## Severity Mapping
 
-The `haystack triage --json` output schema uses a `.findings[].category` field as the severity discriminator (confirmed against the Haystack CLI as of 2026-05-25).
+The `haystack triage --json` output schema uses a `.findings[].category` field as the severity discriminator (confirmed against the Haystack CLI as of 2026-05-25). `haystack-reviewer.sh` parses this field from every element of the `.findings[]` array to classify each finding as blocking or advisory; for example, a finding object `{"category": "Logic error", "message": "..."}` maps to a blocking result and increments `BLOCKING_COUNT`.
 
 | Haystack category | Classification | Notes |
 | ----------------- | -------------- | ----- |
