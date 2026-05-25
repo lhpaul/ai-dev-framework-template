@@ -621,6 +621,22 @@ run_test "unresolved_threads_graphql_failure_exit3" "3" "$actual_exit"
 unset MOCK_GH_EXIT
 
 # ---------------------------------------------------------------------------
+# Area 7: bot_login_for_platform — copilot platform
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 7: bot_login_for_platform — copilot ==="
+
+unset COPILOT_BOT_LOGIN
+
+actual="$(bot_login_for_platform "copilot")"
+run_test "copilot_bot_login_default" "copilot-pull-request-reviewer[bot]" "$actual"
+
+export COPILOT_BOT_LOGIN="custom-copilot-bot[bot]"
+actual="$(bot_login_for_platform "copilot")"
+run_test "copilot_bot_login_env_override" "custom-copilot-bot[bot]" "$actual"
+unset COPILOT_BOT_LOGIN
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

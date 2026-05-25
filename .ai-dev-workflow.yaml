@@ -25,7 +25,7 @@ schema_version: 1
 review:
   # Ordered list of automated PR review platforms to run sequentially.
   # Platforms are evaluated in order; the first blocking result stops the loop.
-  # Supported today by pr-review-loop.sh: greptile, devin, coderabbit, pr-agent, codex-github, claude-code-action
+  # Supported today by pr-review-loop.sh: greptile, devin, coderabbit, pr-agent, codex-github, claude-code-action, copilot
   platforms:
     - pr-agent
     - coderabbit
@@ -52,6 +52,13 @@ review:
   # Additional options available as script flags to codex-github-reviewer.sh (passed via pr-review-loop.sh):
   #   --poll-interval <seconds>    — polling interval while waiting for bot response (default: 30)
   #   --max-wait      <seconds>    — maximum total wait time for bot response (default: 300)
+  #
+  # Copilot platform options:
+  #   Prerequisites: an active GitHub Copilot seat or the Copilot for Pull Requests feature
+  #                  must be enabled on the repository. GitHub Enterprise Server (GHES) is
+  #                  not supported. See docs/workflow/development-workflow/integrations/copilot.md
+  #   COPILOT_BOT_LOGIN  — override the default Copilot bot login
+  #                        (default: "copilot-pull-request-reviewer[bot]")
 
   # Ordered list of internal AI reviewers to run sequentially on draft PRs
   # (Step 7a in 91-orchestrate-work-protocol.md) before converting to non-draft.
