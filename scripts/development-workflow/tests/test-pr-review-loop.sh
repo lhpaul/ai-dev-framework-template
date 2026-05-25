@@ -645,6 +645,14 @@ run_test "bot_login_for_platform_haystack" "" "$actual"
 actual="$(bot_login_for_platform unknown-platform-xyz)"
 run_test "bot_login_for_platform_unknown_still_empty" "" "$actual"
 
+# test: run_platform_review routes "haystack" to run_haystack_review
+_haystack_dispatch_called=0
+run_haystack_review() { _haystack_dispatch_called=1; }
+run_platform_review "haystack" "999" "feature/test" "30" "120" >/dev/null 2>&1 || true
+run_test "run_platform_review_routes_to_run_haystack_review" "1" "$_haystack_dispatch_called"
+unset -f run_haystack_review
+unset _haystack_dispatch_called
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

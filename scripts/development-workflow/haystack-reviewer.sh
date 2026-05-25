@@ -125,6 +125,16 @@ if ! command -v haystack >/dev/null 2>&1; then
   exit 3
 fi
 
+if ! command -v jq >/dev/null 2>&1; then
+  echo "INFO: jq not found in PATH — skipping (UNAVAILABLE)" >&2
+  printf 'RESULT=skipped\n'
+  printf 'REASON=unavailable\n'
+  printf 'BLOCKING_COUNT=0\n'
+  printf 'SUGGESTION_COUNT=0\n'
+  printf 'COMMENT_COUNT=0\n'
+  exit 3
+fi
+
 echo "INFO: haystack CLI found: $(command -v haystack)" >&2
 echo "INFO: running: haystack triage ${OWNER}/${REPO}#${PR_NUMBER} --json --no-wait (timeout: ${TIMEOUT}s)" >&2
 
@@ -208,6 +218,20 @@ if [ -z "$TRIAGE_OUTPUT" ]; then
   exit 3
 fi
 
+# Validate that TRIAGE_OUTPUT is well-formed JSON before parsing.
+# jq errors would otherwise be silenced by the 2>/dev/null guards below,
+# causing STATUS_VALUE/CATEGORIES to be empty and the script to fall through
+# to RESULT=clean on malformed output.
+if ! printf '%s\n' "$TRIAGE_OUTPUT" | jq -e . >/dev/null 2>&1; then
+  echo "INFO: haystack triage returned invalid JSON — treating as UNAVAILABLE" >&2
+  printf 'RESULT=skipped\n'
+  printf 'REASON=unavailable\n'
+  printf 'BLOCKING_COUNT=0\n'
+  printf 'SUGGESTION_COUNT=0\n'
+  printf 'COMMENT_COUNT=0\n'
+  exit 3
+fi
+
 # Check for status values that indicate no completed analysis is available.
 # - status=none: no analysis for this PR (not submitted via haystack)
 # - status=pending: analysis in progress (--no-wait exited before completion)
@@ -246,14 +270,18 @@ printf '%s\n' "$TRIAGE_OUTPUT" >&2
 # Unrecognised categories: blocking (safe-fail)
 
 # Extract all finding categories as newline-separated list.
-# Use '.findings[] | .category // empty' (not '.findings[].category // "Unknown"')
-# because on some jq versions (e.g. jq-1.7.1-apple), the // alternative fires
-# once even when the input array is empty, producing a spurious "Unknown" value.
-# Using 'empty' as the fallback suppresses output for null categories; truly
-# unrecognised (null-category) findings are excluded from the count rather than
-# safe-failing. Non-null unrecognised category strings are handled in the case
-# statement below.
-CATEGORIES="$(printf '%s\n' "$TRIAGE_OUTPUT" | jq -r '.findings[] | .category // empty' 2>/dev/null || true)"
+# Use '(.findings // [])[]' to avoid the jq-1.7.1-apple quirk where iterating
+# '.findings[]' with a '// "fallback"' alternative fires once on an empty array,
+# producing a spurious value. With '(.findings // [])[]', an empty/null .findings
+# array produces zero output — no sentinel is emitted spuriously.
+# Null/missing .category values are mapped to the sentinel "__UNKNOWN__" so they
+# are treated as blocking (safe-fail) rather than silently dropped.
+CATEGORIES="$(printf '%s\n' "$TRIAGE_OUTPUT" | jq -r '
+  (.findings // [])[] |
+  if (.category | type) == "string" and .category != "" then .category
+  else "__UNKNOWN__"
+  end
+')"
 
 BLOCKING_COUNT=0
 SUGGESTION_COUNT=0
@@ -275,8 +303,8 @@ if [ -n "$CATEGORIES" ]; then
       "Minor"|"Advisory"|"Nitpick"|"Trivial"|"Weak test coverage")
         SUGGESTION_COUNT=$((SUGGESTION_COUNT + 1))
         ;;
-      *)
-        # Unrecognised category — safe-fail to blocking
+      "__UNKNOWN__"|*)
+        # Null/missing or unrecognised category — safe-fail to blocking
         echo "INFO: unrecognised finding category '$category' — treating as blocking (safe-fail)" >&2
         BLOCKING_COUNT=$((BLOCKING_COUNT + 1))
         ;;

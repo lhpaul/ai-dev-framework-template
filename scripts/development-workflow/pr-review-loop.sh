@@ -916,12 +916,11 @@ run_haystack_review() {
   owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
   repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
 
-  # Keep max_wait bounded by poll_interval floor (consistent with other reviewers).
+  # Haystack runs synchronously; honor the caller-provided max_wait budget directly.
+  # (No poll_interval floor needed — unlike polling-based reviewers, haystack triage
+  # completes in a single invocation.)
   local effective_timeout
   effective_timeout="$max_wait"
-  if [ "$effective_timeout" -lt "$poll_interval" ]; then
-    effective_timeout="$poll_interval"
-  fi
 
   set +e
   script_output="$("$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$effective_timeout" 2>/dev/null)"

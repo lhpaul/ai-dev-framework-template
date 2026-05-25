@@ -161,7 +161,7 @@ INFO: haystack triage returned status=none (no analysis available for this PR ye
 
 ```
 INFO: haystack triage timed out after 120s
-RESULT=skipped
+RESULT=escalate
 REASON=timeout
 ```
 
