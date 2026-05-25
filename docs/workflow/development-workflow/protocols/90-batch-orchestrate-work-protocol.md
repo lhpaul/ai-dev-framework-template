@@ -192,6 +192,40 @@ These scripts read from development folders (`docs/specs/developments/`), workfl
 
 When gathering VCS state, also collect the set of open `develop-<slug>` integration branches: `git branch -r | grep "^  origin/develop-"`. For each integration branch found, look up any issues labeled `integration-branch:<slug>` to match the branch to its epic. Record the integration branch name against each matching sub-item in the portfolio map.
 
+#### Graduation eligibility check (AC-11, AC-12)
+
+After collecting the set of open `develop-<slug>` branches, run a graduation eligibility check for each integration branch found (see `05b-graduate-development-protocol.md` for the full graduation ceremony):
+
+1. For each `develop-<slug>` found, query all sub-items labeled `integration-branch:<slug>`:
+
+   ```bash
+   gh issue list --label "integration-branch:<slug>" --state all \
+     --json number,title,state,labels \
+     --jq '.[] | {number, title, state, labels: [.labels[].name]}'
+   ```
+
+2. Separate sub-items into **planned** (not explicitly deferred or cancelled — i.e., state is not `closed` with a cancellation label, and no `wont-do` or `deferred` label present) and **optional/deferred** (explicitly marked as lower-priority or not in scope for this graduation).
+
+3. For each planned sub-item, check whether a merged implementation PR exists targeting `develop-<slug>`:
+
+   ```bash
+   gh pr list --state merged --base "develop-<slug>" \
+     --json number,headRefName,mergedAt \
+     --jq '[.[] | select(.headRefName | test("^(feature|fix|refactor)/<issue-number>(-|$)"))]'
+   ```
+
+4. **If all planned sub-items have merged implementation PRs**: mark the integration branch as **graduation-eligible** in the portfolio map.
+
+5. **Surface the eligibility to the human** with the following information:
+   - Integration branch name: `develop-<slug>`.
+   - A bulleted list of all planned sub-items with issue number, title, and implementation PR number.
+   - A note on any open optional/deferred sub-items that were not included.
+   - A prompt: "This integration branch is eligible for graduation. Run `/graduate-development <slug>` (Protocol 05b) to proceed — graduation requires explicit human approval before any PR is opened."
+
+6. **Do not auto-graduate** (AC-12): the Portfolio Orchestrator must not initiate the graduation ceremony autonomously. It surfaces the eligibility, then waits for the human to invoke `05b-graduate-development-protocol.md` explicitly. Graduation requires human approval (BR-1 of the graduation spec).
+
+7. If graduation is not yet eligible (some planned sub-items have no merged PR), record the integration branch in the portfolio map with its current status (e.g., "2 of 4 planned sub-items merged") and report it as "graduation not yet eligible."
+
 ### 1c. Build the portfolio map
 
 Combine tracker and VCS data into a portfolio map of:
@@ -202,6 +236,7 @@ Combine tracker and VCS data into a portfolio map of:
 - Items that are **Spec Ready** or **Plan Ready** per the tracker
 - Branches that were pushed but still have no PR
 - PRs that still need readiness work or fix loops
+- Integration branches (`develop-<slug>`) that are **graduation-eligible** (all planned sub-items merged) — human decision required; do not auto-graduate
 
 ---
 
@@ -951,7 +986,7 @@ Verify all of the following by querying artifact state directly. If any check fa
 | Base branch                                     | `develop` (or `develop-<slug>` if the batch is targeting an integration branch) for `feature/*`, `fix/*`, `refactor/*`, `spec/*`, `implementation-plan/*`; `main` for `hotfix/*`                                                                                                                                                                                                                                          | Redispatch agent to rebase onto the correct base                                                                                                                                                                                                                                                  |
 | PR is non-draft                                 | `isDraft: false`                                                                                                                                                                                                                                                                                                                                                                                                          | Run `gh pr ready <pr_number>` directly; log as protocol deviation                                                                                                                                                                                                                                 |
 | `ready-for-human-review` label                  | Present in the `labels` array returned by `gh pr view`                                                                                                                                                                                                                                                                                                                                                                    | Apply directly: `gh pr edit <pr_number> --add-label "ready-for-human-review"` (after all other checks pass)                                                                                                                                                                                       |
-| `ready-for-regression` label                    | Present in the `labels` array on `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PRs; not required for `spec/*`, `implementation-plan/*`                                                                                                                                                                                                                                                                                   | **Apply directly** (primary enforcement point): `gh pr edit <pr_number> --add-label "ready-for-regression"`. Log as protocol deviation: `PROTOCOL_DEVIATION: ready-for-regression was missing on PR #<N> — applied by orchestrator Step 5.1`. **Do not redispatch the agent for this gap alone.** |
+| `ready-for-regression` label                    | Present in the `labels` array on `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PRs; not required for `spec/*`, `implementation-plan/*`, or graduation PRs (head branch `develop-<slug>`, base branch `develop`)                                                                                                                                                                                                         | **Apply directly** (primary enforcement point): `gh pr edit <pr_number> --add-label "ready-for-regression"`. Log as protocol deviation: `PROTOCOL_DEVIATION: ready-for-regression was missing on PR #<N> — applied by orchestrator Step 5.1`. **Do not redispatch the agent for this gap alone.** Do not apply this remediation to graduation PRs (`develop-<slug>` → `develop`) — they are explicitly exempt (BR-6 of the graduation spec). |
 | No `needs-fixes` label                          | Absent from the `labels` array                                                                                                                                                                                                                                                                                                                                                                                            | Remove: `gh pr edit <pr_number> --remove-label "needs-fixes"` (only after CI and reviews are confirmed clean)                                                                                                                                                                                     |
 | CHANGELOG presence                              | `CHANGELOG.md` appears in the `files` array for `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PRs (i.e., `gh pr view <pr_number> --json files --jq '[.files[].path] \| any(. == "CHANGELOG.md")'` returns `true`); not required for `spec/*`, `implementation-plan/*`                                                                                                                                                   | Redispatch agent to add a CHANGELOG entry and push. Do not accept the PR as ready until `CHANGELOG.md` appears in the PR's file set.                                                                                                                                                              |
 | All automated-reviewer `reviewThreads` resolved | GraphQL `reviewThreads.nodes[].isResolved=true` (or `✅ Addressed` in body) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured)                                                                                                                                                                                               | Redispatch agent to address unresolved threads                                                                                                                                                                                                                                                    |
@@ -965,6 +1000,8 @@ Verify all of the following by querying artifact state directly. If any check fa
 3. **Re-polls CI** — the label triggers the `e2e-regression.yml` workflow. The CI check row in this verification table was evaluated _before_ the label was applied, so the e2e check was not yet in `statusCheckRollup`. After applying the label, wait for CI to settle using `pr-ci-loop.sh <pr_number>` before re-running this verification. Do not mark the PR ready until the re-polled CI check is green.
 
 > **`refactor/*` is not exempt**: Orchestrators must not skip the `ready-for-regression` check for `refactor/*` PRs. Refactors require regression testing before merge regardless of their content. This check has the same priority and remediation path as for `fix/*` or `feature/*` PRs.
+
+> **Graduation PRs are exempt**: PRs with a head branch matching `^develop-` and base branch `develop` (i.e., graduation PRs from `develop-<slug>` to `develop`) are explicitly exempt from the `ready-for-regression` requirement. Do not flag the absence of this label on a graduation PR as a protocol deviation. Graduation PRs carry no new implementation — all code was already tested via each sub-item's implementation PR. See `05b-graduate-development-protocol.md` Step 4 and BR-6 of the graduation spec.
 
 Do not redispatch the agent for a missing label alone — the label is applied directly here. Redispatching is only required when there are substantive gaps (wrong base branch, unresolved review threads, missing reviewer loop summary, failing CI). A missing reviewer loop summary comment means `pr-review-loop.sh` did not run to completion — redispatch to resume from Step 7.
 

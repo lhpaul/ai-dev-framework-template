@@ -25,9 +25,10 @@ schema_version: 1
 review:
   # Ordered list of automated PR review platforms to run sequentially.
   # Platforms are evaluated in order; the first blocking result stops the loop.
-  # Supported today by pr-review-loop.sh: greptile, devin, coderabbit, pr-agent, codex-github, claude-code-action, copilot
+  # Supported today by pr-review-loop.sh: greptile, devin, coderabbit, pr-agent, codex-github, claude-code-action, haystack, copilot
   platforms:
     - pr-agent
+    - haystack
     - coderabbit
   #
   # Platforms listed here are treated as "after-clean" reviewers by

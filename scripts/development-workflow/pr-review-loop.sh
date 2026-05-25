@@ -128,7 +128,7 @@ _interruptible_sleep() {
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github] [--phase-after-clean coderabbit] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github,haystack] [--phase-after-clean coderabbit] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
        ./scripts/development-workflow/pr-review-loop.sh unlock <pr-number>
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
@@ -992,6 +992,114 @@ run_copilot_review() {
   print_kv BRANCH "$branch_name"
   print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
   return 2
+}
+
+run_haystack_review() {
+  # Runs haystack-reviewer.sh for the given PR and maps its exit codes to the
+  # standard pr-review-loop key-value output contract.
+  #
+  # Haystack triage runs synchronously (no polling loop required). The companion
+  # script handles the timeout internally via a configurable env var or --timeout flag.
+  #
+  # Exit code mapping from haystack-reviewer.sh:
+  #   0 → RESULT=clean    (no blocking findings)
+  #   1 → RESULT=needs_fixes (one or more blocking findings)
+  #   2 → RESULT=skipped / REASON=timeout → propagated as RESULT=escalate
+  #   3 → RESULT=skipped / REASON=unavailable → propagated as RESULT=skipped
+  local pr_number="$1"
+  local branch_name="$2"
+  # poll_interval and max_wait passed for interface consistency; haystack runs
+  # synchronously so poll_interval is not used. max_wait is passed as --timeout.
+  local poll_interval="$3"
+  local max_wait="$4"
+  local platform="haystack"
+  local reviewer_script
+  local script_exit=0
+  local script_output=""
+  local blocking_count=0
+  local suggestion_count=0
+  local comment_count=0
+
+  require_gh
+  cd_workflow_repo_root
+
+  reviewer_script="$(workflow_repo_root)/scripts/development-workflow/haystack-reviewer.sh"
+
+  local owner repo_name repo
+  repo="$(repo_slug)"
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  # Haystack runs synchronously; honor the caller-provided max_wait budget directly.
+  # (No poll_interval floor needed — unlike polling-based reviewers, haystack triage
+  # completes in a single invocation.)
+  local effective_timeout
+  effective_timeout="$max_wait"
+
+  set +e
+  script_output="$("$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$effective_timeout" 2>/dev/null)"
+  script_exit=$?
+  set -e
+
+  # Parse output from the companion script (key=value lines on stdout).
+  blocking_count="$(printf '%s\n' "$script_output" | grep '^BLOCKING_COUNT=' | cut -d= -f2 | head -1)"
+  suggestion_count="$(printf '%s\n' "$script_output" | grep '^SUGGESTION_COUNT=' | cut -d= -f2 | head -1)"
+  comment_count="$(printf '%s\n' "$script_output" | grep '^COMMENT_COUNT=' | cut -d= -f2 | head -1)"
+
+  # Default to 0 if any field is missing.
+  blocking_count="${blocking_count:-0}"
+  suggestion_count="${suggestion_count:-0}"
+  comment_count="${comment_count:-0}"
+
+  case "$script_exit" in
+    0)
+      print_kv RESULT clean
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT "$comment_count"
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT "$suggestion_count"
+      return 0
+      ;;
+    1)
+      # Ensure blocking_count >= 1 even if stdout parsing failed.
+      [ "$blocking_count" -eq 0 ] && blocking_count=1
+      print_kv RESULT needs_fixes
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv REASON haystack_blocking_findings
+      print_kv COMMENT_COUNT "$comment_count"
+      print_kv BLOCKING_COUNT "$blocking_count"
+      print_kv SUGGESTION_COUNT "$suggestion_count"
+      return 1
+      ;;
+    2)
+      print_kv RESULT escalate
+      print_kv REASON timeout
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      return 2
+      ;;
+    *)
+      # Exit 3 (UNAVAILABLE) and any unexpected exit code → skipped.
+      print_kv RESULT skipped
+      print_kv REASON unavailable
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 0
+      ;;
+  esac
 }
 
 run_devin_review() {
@@ -3054,6 +3162,7 @@ bot_login_for_platform() {
     codex-github)        printf '%s\n' "${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}" ;;
     claude-code-action)  printf '%s\n' "${CLAUDE_CODE_ACTION_BOT_LOGIN:-claude[bot]}" ;;
     copilot)             printf '%s\n' "${COPILOT_BOT_LOGIN:-copilot-pull-request-reviewer[bot]}" ;;
+    haystack)            printf '\n' ;;
     *)                   printf '\n' ;;
   esac
 }
@@ -3202,6 +3311,9 @@ run_platform_review() {
       ;;
     copilot)
       run_copilot_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      ;;
+    haystack)
+      run_haystack_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
       ;;
     *)
       print_kv RESULT skipped
