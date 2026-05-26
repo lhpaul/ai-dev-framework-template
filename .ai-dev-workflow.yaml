@@ -29,15 +29,15 @@ review:
   platforms:
     - pr-agent
     - haystack
-    - coderabbit
   #
   # Platforms listed here are treated as "after-clean" reviewers by
   # pr-review-loop.sh: earlier platforms must reach clean before these platforms
   # are considered the value-measurement phase. The protocol keeps PRs as drafts
-  # while PR-Agent clears, then converts to non-draft so CodeRabbit can run after
-  # the PR-Agent-clean gate. This makes CodeRabbit's net-new findings measurable.
+  # while PR-Agent and Haystack clear, then converts to non-draft so
+  # claude-code-action can run after the clean gate. This makes claude-code-action's
+  # net-new findings measurable. Requires ANTHROPIC_API_KEY in GitHub Actions secrets.
   phase_after_clean:
-    - coderabbit
+    - claude-code-action
   # Recommended: swap coderabbit for claude-code-action in phase_after_clean to
   # remove the CodeRabbit per-hour rate-limit bottleneck. claude-code-action has
   # no review cap and uses your own Anthropic API key. Requires the
