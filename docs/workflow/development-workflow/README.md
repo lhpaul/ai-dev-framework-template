@@ -505,6 +505,7 @@ Repository helpers:
 - `docs/workflow/development-workflow/integrations/greptile.md`
 - `docs/workflow/development-workflow/integrations/devin.md`
 - `docs/workflow/development-workflow/integrations/coderabbit.md`
+- `docs/workflow/development-workflow/integrations/haystack.md`
 - `docs/workflow/development-workflow/integrations/github-projects.md`
 - `docs/workflow/development-workflow/integrations/ci-cd-deployment.md`
 - `docs/workflow/development-workflow/integrations/e2e-regression.md`

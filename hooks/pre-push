@@ -1,0 +1,4 @@
+#!/bin/sh
+# Haystack hooks: pre-push
+# Entire session tracking removed (Option B scope decision — see integrations/haystack.md).
+# Hook retained as a no-op so downstream teams that extend it have the entry point.

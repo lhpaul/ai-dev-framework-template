@@ -63,8 +63,13 @@ else
   _LOCK_CMD="$(cat "$_LOCK_DIR/cmd" 2>/dev/null || true)"
   if [ -n "$_LOCK_PID" ] && kill -0 "$_LOCK_PID" 2>/dev/null && [ "$_LOCK_CMD" = "$(basename "$0")" ]; then
     echo "ERROR: pr-review-loop.sh is already running for PR #${_PR_ARG:-unknown} (PID $_LOCK_PID). Exiting to prevent parallel execution." >&2
+    echo "  Lock file: $_LOCK_DIR" >&2
+    echo "  If the process is dead (stale lock from a crash), recover with:" >&2
+    echo "    ./scripts/development-workflow/pr-review-loop.sh unlock ${_PR_ARG:-<pr>}" >&2
+    echo "  Or manually: rm -rf $_LOCK_DIR" >&2
     print_kv RESULT escalate
     print_kv REASON lock_contention
+    print_kv LOCK_DIR "$_LOCK_DIR"
     print_kv PR_NUMBER "${_PR_ARG:-}"
     exit 75  # EX_TEMPFAIL — lock contention; not a normal review result (0/1/2)
   fi
@@ -81,8 +86,13 @@ else
     _OWN_LOCK=1
   else
     echo "ERROR: pr-review-loop.sh is already running for PR #${_PR_ARG:-unknown} (concurrent startup race). Exiting to prevent parallel execution." >&2
+    echo "  Lock file: $_LOCK_DIR" >&2
+    echo "  If the process is dead (stale lock from a crash), recover with:" >&2
+    echo "    ./scripts/development-workflow/pr-review-loop.sh unlock ${_PR_ARG:-<pr>}" >&2
+    echo "  Or manually: rm -rf $_LOCK_DIR" >&2
     print_kv RESULT escalate
     print_kv REASON lock_contention
+    print_kv LOCK_DIR "$_LOCK_DIR"
     print_kv PR_NUMBER "${_PR_ARG:-}"
     exit 75
   fi
@@ -118,7 +128,8 @@ _interruptible_sleep() {
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github] [--phase-after-clean coderabbit] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github,haystack] [--phase-after-clean coderabbit] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
+       ./scripts/development-workflow/pr-review-loop.sh unlock <pr-number>
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
 triggering a new review, each platform checks for existing blocking findings. If
@@ -127,6 +138,19 @@ If a platform times out or escalates, the script exits 2. If all configured
 platforms are clean or skipped, the script exits 0. If a second instance is
 detected for the same PR number, the script emits RESULT=escalate with
 REASON=lock_contention and exits 75 (EX_TEMPFAIL).
+
+Subcommands:
+  unlock <pr-number>
+    Remove the stale lock directory for a PR whose previous run crashed without
+    cleaning up. Safe to run when no review loop is actively running for that PR.
+    Use this to recover autonomously when lock_contention is reported but the
+    recorded PID is no longer alive.
+
+    Example:
+      ./scripts/development-workflow/pr-review-loop.sh unlock 123
+
+    The lock directory path is /tmp/pr-review-loop-<pr>.lockdir. You can also
+    remove it manually with: rm -rf /tmp/pr-review-loop-<pr>.lockdir
 
 --post-final-summary:
   Post the "Automated Reviewer Loop Summary" comment even when the result is
@@ -623,8 +647,11 @@ run_codex_github_review() {
   local max_wait="$4"
   local platform="codex-github"
   local bot_login="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
-  # GraphQL author.login returns the login WITHOUT the "[bot]" suffix that the
-  # REST API uses. Strip it here so check_unresolved_threads comparisons work.
+  # REST API endpoints (e.g. /pulls/{n}/reviews, /issues/{n}/comments) return
+  # bot logins WITH the "[bot]" suffix (e.g. "chatgpt-codex-connector[bot]").
+  # GraphQL API returns bot logins WITHOUT the "[bot]" suffix
+  # (e.g. "chatgpt-codex-connector"). Strip it here so check_unresolved_threads,
+  # which queries GraphQL, compares against the correct login form.
   local graphql_bot_login="${bot_login%\[bot\]}"
   local repo
   local reviewer_script
@@ -729,6 +756,349 @@ run_codex_github_review() {
       print_kv BRANCH "$branch_name"
       print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
       return 2
+      ;;
+  esac
+}
+
+run_claude_code_action_review() {
+  local pr_number="$1"
+  local branch_name="$2"
+  local poll_interval="$3"
+  local max_wait="$4"
+  local platform="claude-code-action"
+  local bot_login="${CLAUDE_CODE_ACTION_BOT_LOGIN:-claude[bot]}"
+  # GraphQL author.login returns the login WITHOUT the "[bot]" suffix that the
+  # REST API uses. Strip it here so check_unresolved_threads comparisons work.
+  local graphql_bot_login="${bot_login%\[bot\]}"
+  local repo
+  local reviewer_script
+  local script_exit=0
+  local thread_check_output=""
+  local thread_check_status=0
+  local unresolved_count=0
+
+  require_gh
+  cd_workflow_repo_root
+  repo="$(repo_slug)"
+
+  # Phase 1: Check for existing unresolved review threads from the Claude Code Action bot
+  set +e
+  thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" "$graphql_bot_login")"
+  thread_check_status=$?
+  set -e
+  if [ "$thread_check_status" -eq 0 ]; then
+    unresolved_count="$thread_check_output"
+  fi
+
+  if [ "$unresolved_count" -gt 0 ]; then
+    print_kv RESULT needs_fixes
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv REASON existing_findings
+    print_kv COMMENT_COUNT "$unresolved_count"
+    print_kv BLOCKING_COUNT "$unresolved_count"
+    print_kv SUGGESTION_COUNT 0
+    return 1
+  fi
+
+  # Phase 2: Dispatch the Claude Code Action workflow and wait for completion
+  reviewer_script="$(workflow_repo_root)/scripts/development-workflow/claude-code-action-reviewer.sh"
+
+  local owner repo_name
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  # Keep polling interval bounded by the wait budget to avoid zero-poll attempts
+  # when a caller provides poll_interval > max_wait.
+  local effective_poll_interval
+  effective_poll_interval="$poll_interval"
+  if [ "$effective_poll_interval" -gt "$max_wait" ]; then
+    effective_poll_interval="$max_wait"
+  fi
+  set +e
+  "$reviewer_script" "$pr_number" "$owner" "$repo_name" \
+    --bot-login "$bot_login" \
+    --poll-interval "$effective_poll_interval" \
+    --max-wait "$max_wait" >/dev/null 2>&1
+  script_exit=$?
+  set -e
+
+  case "$script_exit" in
+    0)
+      print_kv RESULT clean
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 0
+      ;;
+    1)
+      unresolved_count=0
+      set +e
+      thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" "$graphql_bot_login")"
+      thread_check_status=$?
+      set -e
+      if [ "$thread_check_status" -eq 0 ]; then
+        unresolved_count="$thread_check_output"
+      fi
+      [ "$unresolved_count" -eq 0 ] && unresolved_count=1
+
+      print_kv RESULT needs_fixes
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv REASON unresolved_review_threads
+      print_kv COMMENT_COUNT "$unresolved_count"
+      print_kv BLOCKING_COUNT "$unresolved_count"
+      print_kv SUGGESTION_COUNT 0
+      return 1
+      ;;
+    2)
+      print_kv RESULT escalate
+      print_kv REASON timeout
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      return 2
+      ;;
+    *)
+      print_kv RESULT escalate
+      print_kv REASON unavailable
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      return 2
+      ;;
+  esac
+}
+
+run_copilot_review() {
+  # Requests GitHub Copilot as a reviewer via the GitHub Pulls API, polls the
+  # pull-request reviews endpoint until Copilot posts its verdict, and maps the
+  # review state to the standard exit-code contract:
+  #   0 → RESULT=clean      (APPROVED or COMMENTED only)
+  #   1 → RESULT=needs_fixes (CHANGES_REQUESTED)
+  #   2 → RESULT=escalate   (timeout or Copilot feature unavailable)
+  #
+  # Env var override:
+  #   COPILOT_BOT_LOGIN  — override the default bot login
+  #                        (default: "copilot-pull-request-reviewer[bot]")
+  local pr_number="$1"
+  local branch_name="$2"
+  local poll_interval="$3"
+  local max_wait="$4"
+  local platform="copilot"
+  local bot_login="${COPILOT_BOT_LOGIN:-copilot-pull-request-reviewer[bot]}"
+  local repo
+  local elapsed=0
+  local review_state=""
+
+  require_gh
+  cd_workflow_repo_root
+  repo="$(repo_slug)"
+
+  local owner repo_name
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  # Step 1: Request Copilot as a reviewer (idempotent — GitHub silently
+  # deduplicates reviewer requests if Copilot is already requested).
+  set +e
+  gh api "repos/$owner/$repo_name/pulls/$pr_number/requested_reviewers" \
+    --method POST \
+    --field 'reviewers[]=copilot' > /dev/null 2>&1
+  local request_exit=$?
+  set -e
+
+  if [ "$request_exit" -ne 0 ]; then
+    # Request failed — Copilot feature likely not enabled on this repository.
+    print_kv RESULT escalate
+    print_kv REASON unavailable
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    return 2
+  fi
+
+  # Step 2: Poll the pull-request reviews endpoint until Copilot posts a review.
+  local effective_poll_interval="$poll_interval"
+  if [ "$effective_poll_interval" -gt "$max_wait" ]; then
+    effective_poll_interval="$max_wait"
+  fi
+  [ "$effective_poll_interval" -le 0 ] && effective_poll_interval=1
+
+  while [ "$elapsed" -lt "$max_wait" ]; do
+    set +e
+    review_state="$(gh api "repos/$owner/$repo_name/pulls/$pr_number/reviews" \
+      --jq "[.[] | select(.user.login == \"$bot_login\")] | last | .state // empty" \
+      2>/dev/null)"
+    set -e
+
+    case "$review_state" in
+      APPROVED)
+        print_kv RESULT clean
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv COMMENT_COUNT 0
+        print_kv BLOCKING_COUNT 0
+        print_kv SUGGESTION_COUNT 0
+        return 0
+        ;;
+      CHANGES_REQUESTED)
+        print_kv RESULT needs_fixes
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv REASON changes_requested
+        print_kv COMMENT_COUNT 1
+        print_kv BLOCKING_COUNT 1
+        print_kv SUGGESTION_COUNT 0
+        return 1
+        ;;
+      COMMENTED)
+        # Non-blocking comment only — treat as clean.
+        print_kv RESULT clean
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv COMMENT_COUNT 1
+        print_kv BLOCKING_COUNT 0
+        print_kv SUGGESTION_COUNT 1
+        return 0
+        ;;
+    esac
+
+    _interruptible_sleep "$effective_poll_interval"
+    elapsed=$(( elapsed + effective_poll_interval ))
+  done
+
+  # Timeout — no review posted within max_wait.
+  print_kv RESULT escalate
+  print_kv REASON timeout
+  print_kv PLATFORM "$platform"
+  print_kv PR_NUMBER "$pr_number"
+  print_kv BRANCH "$branch_name"
+  print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+  return 2
+}
+
+run_haystack_review() {
+  # Runs haystack-reviewer.sh for the given PR and maps its exit codes to the
+  # standard pr-review-loop key-value output contract.
+  #
+  # Haystack triage runs synchronously (no polling loop required). The companion
+  # script handles the timeout internally via a configurable env var or --timeout flag.
+  #
+  # Exit code mapping from haystack-reviewer.sh:
+  #   0 → RESULT=clean    (no blocking findings)
+  #   1 → RESULT=needs_fixes (one or more blocking findings)
+  #   2 → RESULT=skipped / REASON=timeout → propagated as RESULT=escalate
+  #   3 → RESULT=skipped / REASON=unavailable → propagated as RESULT=skipped
+  local pr_number="$1"
+  local branch_name="$2"
+  # poll_interval and max_wait passed for interface consistency; haystack runs
+  # synchronously so poll_interval is not used. max_wait is passed as --timeout.
+  local poll_interval="$3"
+  local max_wait="$4"
+  local platform="haystack"
+  local reviewer_script
+  local script_exit=0
+  local script_output=""
+  local blocking_count=0
+  local suggestion_count=0
+  local comment_count=0
+
+  require_gh
+  cd_workflow_repo_root
+
+  reviewer_script="$(workflow_repo_root)/scripts/development-workflow/haystack-reviewer.sh"
+
+  local owner repo_name repo
+  repo="$(repo_slug)"
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  # Haystack runs synchronously; honor the caller-provided max_wait budget directly.
+  # (No poll_interval floor needed — unlike polling-based reviewers, haystack triage
+  # completes in a single invocation.)
+  local effective_timeout
+  effective_timeout="$max_wait"
+
+  set +e
+  script_output="$("$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$effective_timeout" 2>/dev/null)"
+  script_exit=$?
+  set -e
+
+  # Parse output from the companion script (key=value lines on stdout).
+  blocking_count="$(printf '%s\n' "$script_output" | grep '^BLOCKING_COUNT=' | cut -d= -f2 | head -1)"
+  suggestion_count="$(printf '%s\n' "$script_output" | grep '^SUGGESTION_COUNT=' | cut -d= -f2 | head -1)"
+  comment_count="$(printf '%s\n' "$script_output" | grep '^COMMENT_COUNT=' | cut -d= -f2 | head -1)"
+
+  # Default to 0 if any field is missing.
+  blocking_count="${blocking_count:-0}"
+  suggestion_count="${suggestion_count:-0}"
+  comment_count="${comment_count:-0}"
+
+  case "$script_exit" in
+    0)
+      print_kv RESULT clean
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT "$comment_count"
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT "$suggestion_count"
+      return 0
+      ;;
+    1)
+      # Ensure blocking_count >= 1 even if stdout parsing failed.
+      [ "$blocking_count" -eq 0 ] && blocking_count=1
+      print_kv RESULT needs_fixes
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv REASON haystack_blocking_findings
+      print_kv COMMENT_COUNT "$comment_count"
+      print_kv BLOCKING_COUNT "$blocking_count"
+      print_kv SUGGESTION_COUNT "$suggestion_count"
+      return 1
+      ;;
+    2)
+      print_kv RESULT escalate
+      print_kv REASON timeout
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      return 2
+      ;;
+    *)
+      # Exit 3 (UNAVAILABLE) and any unexpected exit code → skipped.
+      print_kv RESULT skipped
+      print_kv REASON unavailable
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 0
       ;;
   esac
 }
@@ -1884,8 +2254,11 @@ coderabbit_thread_gate_clean() {
   local thread_audit_max_retries
   thread_audit_max_retries="$(thread_audit_max_retries_value)"
   local thread_audit_attempt=0
-  # GraphQL author.login returns the login WITHOUT the "[bot]" suffix that the
-  # REST API uses. Strip it here so check_unresolved_threads comparisons work.
+  # REST API endpoints (e.g. /pulls/{n}/reviews, /issues/{n}/comments) return
+  # bot logins WITH the "[bot]" suffix (e.g. "coderabbit-ai[bot]").
+  # GraphQL API returns bot logins WITHOUT the "[bot]" suffix
+  # (e.g. "coderabbit-ai"). Strip it here so check_unresolved_threads,
+  # which queries GraphQL, compares against the correct login form.
   local graphql_bot_login="${bot_login%\[bot\]}"
 
   # check_unresolved_threads re-enables errexit internally; capture and restore
@@ -2787,8 +3160,11 @@ bot_login_for_platform() {
     devin)        printf 'devin-ai-integration\n' ;;
     greptile)     printf 'greptile-apps\n' ;;
     pr-agent)     printf '\n' ;;
-    codex-github) printf '%s\n' "${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}" ;;
-    *)            printf '\n' ;;
+    codex-github)        printf '%s\n' "${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}" ;;
+    claude-code-action)  printf '%s\n' "${CLAUDE_CODE_ACTION_BOT_LOGIN:-claude[bot]}" ;;
+    copilot)             printf '%s\n' "${COPILOT_BOT_LOGIN:-copilot-pull-request-reviewer[bot]}" ;;
+    haystack)            printf '\n' ;;
+    *)                   printf '\n' ;;
   esac
 }
 
@@ -2930,6 +3306,15 @@ run_platform_review() {
       ;;
     codex-github)
       run_codex_github_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      ;;
+    claude-code-action)
+      run_claude_code_action_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      ;;
+    copilot)
+      run_copilot_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      ;;
+    haystack)
+      run_haystack_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
       ;;
     *)
       print_kv RESULT skipped
@@ -3136,6 +3521,33 @@ METRICS_HEADER
 if [ "$#" -lt 1 ]; then
   usage >&2
   exit 64
+fi
+
+# --- unlock subcommand ---
+# Handle before the lock guard so a crashed-process recovery can always proceed.
+if [ "$1" = "unlock" ]; then
+  if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+    echo "Usage: $0 unlock <pr-number>" >&2
+    exit 64
+  fi
+  _UNLOCK_PR="$2"
+  _UNLOCK_LOCK_DIR="/tmp/pr-review-loop-${_UNLOCK_PR}.lockdir"
+  # Verify no live owner holds the lock before removing it.
+  _UNLOCK_PID="$(cat "$_UNLOCK_LOCK_DIR/pid" 2>/dev/null || true)"
+  _UNLOCK_CMD="$(cat "$_UNLOCK_LOCK_DIR/cmd" 2>/dev/null || true)"
+  if [ -n "$_UNLOCK_PID" ] && kill -0 "$_UNLOCK_PID" 2>/dev/null && [ "$_UNLOCK_CMD" = "$(basename "$0")" ]; then
+    echo "ERROR: A live pr-review-loop.sh process (PID $_UNLOCK_PID) currently holds the lock for PR #${_UNLOCK_PR}. Not removing a live lock." >&2
+    echo "  Wait for the process to finish, or send it SIGTERM to stop it gracefully." >&2
+    exit 1
+  fi
+  if [ -d "$_UNLOCK_LOCK_DIR" ]; then
+    rm -rf "$_UNLOCK_LOCK_DIR"
+    echo "OK: stale lock removed for PR #${_UNLOCK_PR} ($_UNLOCK_LOCK_DIR)."
+    exit 0
+  else
+    echo "OK: no lock found for PR #${_UNLOCK_PR} ($_UNLOCK_LOCK_DIR). Nothing to remove."
+    exit 0
+  fi
 fi
 
 pr_number=""
@@ -3540,8 +3952,9 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
   # bracket characters in "[bot]" strings during iteration.
   for _platform in "${platforms[@]}"; do
     _login="$(bot_login_for_platform "$_platform")"
-    # Strip the REST-style "[bot]" suffix — check_unresolved_threads compares
-    # against GraphQL author.login which does not include the "[bot]" suffix.
+    # REST API returns bot logins WITH the "[bot]" suffix; GraphQL API returns
+    # them WITHOUT it. Strip it here so check_unresolved_threads, which queries
+    # GraphQL, compares against the correct login form.
     # (e.g. "chatgpt-codex-connector[bot]" → "chatgpt-codex-connector")
     _login="${_login%\[bot\]}"
     [ -n "$_login" ] && unresolved_bot_logins+=("$_login")

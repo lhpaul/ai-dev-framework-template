@@ -4,9 +4,11 @@ This document defines **platform-agnostic** expectations for how agents use one 
 
 Platform-specific setup lives in each platform's own integration doc. See:
 
+- [`integrations/claude-code-action.md`](claude-code-action.md)
 - [`integrations/coderabbit.md`](coderabbit.md)
 - [`integrations/greptile.md`](greptile.md)
 - [`integrations/devin.md`](devin.md)
+- [`integrations/haystack-triage.md`](haystack-triage.md)
 
 ---
 
@@ -70,6 +72,14 @@ review:
     - greptile
     - devin
     - coderabbit
+    # claude-code-action: own-key, own-CI reviewer with no per-hour vendor cap.
+    # Requires ANTHROPIC_API_KEY secret and .github/workflows/claude-code-review.yml.
+    # See integrations/claude-code-action.md for setup instructions.
+    # - claude-code-action
+    # haystack: Haystack triage CLI reviewer. Requires `haystack` CLI installed
+    # and authenticated via `haystack setup`. No GitHub App required.
+    # See integrations/haystack-triage.md for setup instructions.
+    # - haystack
   phase_after_clean:
     - coderabbit
 ```

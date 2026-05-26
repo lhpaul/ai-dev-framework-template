@@ -92,6 +92,7 @@ The issue ID prefix is the canonical identifier when a tracker is in use. The sl
 - Include context in the PR description: what, why, how to test
 - Link the relevant issue if one exists
 - Every PR must update `CHANGELOG.md` under `[Unreleased]` before merge (see the CHANGELOG section below for exceptions)
+- Open PRs with `gh pr create` per the implementation protocol unless the team has adopted Haystack's submit workflow (see [`docs/workflow/development-workflow/integrations/haystack.md`](../workflow/development-workflow/integrations/haystack.md))
 
 ## Safety Rules
 

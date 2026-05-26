@@ -25,18 +25,20 @@ schema_version: 1
 review:
   # Ordered list of automated PR review platforms to run sequentially.
   # Platforms are evaluated in order; the first blocking result stops the loop.
-  # Supported today by pr-review-loop.sh: greptile, devin, coderabbit, pr-agent, codex-github
+  # Supported today by pr-review-loop.sh: greptile, devin, coderabbit, pr-agent, codex-github, claude-code-action, haystack, copilot
   platforms:
     - pr-agent
-    - coderabbit
+    - haystack
+    - claude-code-action
   #
   # Platforms listed here are treated as "after-clean" reviewers by
   # pr-review-loop.sh: earlier platforms must reach clean before these platforms
   # are considered the value-measurement phase. The protocol keeps PRs as drafts
-  # while PR-Agent clears, then converts to non-draft so CodeRabbit can run after
-  # the PR-Agent-clean gate. This makes CodeRabbit's net-new findings measurable.
+  # while PR-Agent and Haystack clear, then converts to non-draft so
+  # claude-code-action can run after the clean gate. This makes claude-code-action's
+  # net-new findings measurable. Requires ANTHROPIC_API_KEY in GitHub Actions secrets.
   phase_after_clean:
-    - coderabbit
+    - claude-code-action
   #
   # Configurable codex-github options (set via env vars or script flags to codex-github-reviewer.sh):
   #   CODEX_GITHUB_TRIGGER_PHRASE  — trigger phrase sent to the bot (default: "@codex review")
@@ -46,6 +48,13 @@ review:
   # Additional options available as script flags to codex-github-reviewer.sh (passed via pr-review-loop.sh):
   #   --poll-interval <seconds>    — polling interval while waiting for bot response (default: 30)
   #   --max-wait      <seconds>    — maximum total wait time for bot response (default: 300)
+  #
+  # Copilot platform options:
+  #   Prerequisites: an active GitHub Copilot seat or the Copilot for Pull Requests feature
+  #                  must be enabled on the repository. GitHub Enterprise Server (GHES) is
+  #                  not supported. See docs/workflow/development-workflow/integrations/copilot.md
+  #   COPILOT_BOT_LOGIN  — override the default Copilot bot login
+  #                        (default: "copilot-pull-request-reviewer[bot]")
 
   # Ordered list of internal AI reviewers to run sequentially on draft PRs
   # (Step 7a in 91-orchestrate-work-protocol.md) before converting to non-draft.
