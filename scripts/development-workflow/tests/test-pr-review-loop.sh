@@ -621,7 +621,168 @@ run_test "unresolved_threads_graphql_failure_exit3" "3" "$actual_exit"
 unset MOCK_GH_EXIT
 
 # ---------------------------------------------------------------------------
-# Area 7: haystack platform
+# Area 7: bot_login_for_platform — copilot platform
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 7: bot_login_for_platform — copilot ==="
+
+unset COPILOT_BOT_LOGIN
+
+actual="$(bot_login_for_platform "copilot")"
+run_test "copilot_bot_login_default" "copilot-pull-request-reviewer[bot]" "$actual"
+
+export COPILOT_BOT_LOGIN="custom-copilot-bot[bot]"
+actual="$(bot_login_for_platform "copilot")"
+run_test "copilot_bot_login_env_override" "custom-copilot-bot[bot]" "$actual"
+unset COPILOT_BOT_LOGIN
+
+# ---------------------------------------------------------------------------
+# Area 8: run_copilot_review() — exit-code and key-value output contract (AC-8)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 8: run_copilot_review — clean / needs_fixes / escalate ==="
+
+# Helper overrides used across all Area 8 tests.
+# cd_workflow_repo_root: no-op (no real directory change needed in harness).
+# repo_slug: returns a fixed owner/repo slug so gh URL is deterministic.
+# require_gh: no-op (mock gh already present on PATH).
+_copilot_overrides='
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  require_gh() { :; }
+'
+
+# Test 8.1: clean path — Copilot posts APPROVED review
+# POST (reviewer request) succeeds; GET (reviews poll) returns the jq-extracted
+# state token "APPROVED" (the mock gh returns MOCK_GH_OUTPUT verbatim, bypassing
+# jq execution, so we set MOCK_GH_OUTPUT to the already-processed state string).
+# Use || to capture exit code safely when run_copilot_review may call set -e internally.
+export MOCK_GH_POST_OUTPUT='{}'
+export MOCK_GH_OUTPUT='APPROVED'
+unset COPILOT_BOT_LOGIN
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_copilot_overrides"
+  _ec=0
+  run_copilot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "copilot_clean_result" "RESULT=clean" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "copilot_clean_blocking_count" "BLOCKING_COUNT=0" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
+run_test "copilot_clean_exit_code" "0" "$actual_exit"
+
+# Test 8.2: needs_fixes path — Copilot posts CHANGES_REQUESTED review
+export MOCK_GH_POST_OUTPUT='{}'
+export MOCK_GH_OUTPUT='CHANGES_REQUESTED'
+unset COPILOT_BOT_LOGIN
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_copilot_overrides"
+  _ec=0
+  run_copilot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "copilot_needs_fixes_result" "RESULT=needs_fixes" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "copilot_needs_fixes_blocking_count" "BLOCKING_COUNT=1" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
+run_test "copilot_needs_fixes_exit_code" "1" "$actual_exit"
+
+# Test 8.3: escalate (timeout) path — no review posted within max_wait
+# POST succeeds; GET returns empty string (no review state); max_wait=0 so the
+# while loop body never executes and execution falls through to the timeout block.
+export MOCK_GH_POST_OUTPUT='{}'
+export MOCK_GH_OUTPUT=''
+unset COPILOT_BOT_LOGIN
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_copilot_overrides"
+  _ec=0
+  run_copilot_review "42" "feature/42-test" "1" "0" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "copilot_timeout_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "copilot_timeout_reason" "REASON=timeout" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "copilot_timeout_exit_code" "2" "$actual_exit"
+
+# Test 8.4: escalate (unavailable) path — reviewer request API call fails
+# POST fails (non-zero exit); function must return RESULT=escalate REASON=unavailable.
+export MOCK_GH_POST_EXIT=1
+export MOCK_GH_OUTPUT=''
+unset COPILOT_BOT_LOGIN
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_copilot_overrides"
+  _ec=0
+  run_copilot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "copilot_unavailable_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "copilot_unavailable_reason" "REASON=unavailable" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "copilot_unavailable_exit_code" "2" "$actual_exit"
+unset MOCK_GH_POST_EXIT
+export MOCK_GH_OUTPUT='[]'
+
+# Test 8.5: clean path — Copilot posts COMMENTED review (non-blocking comment)
+# COMMENTED is treated as clean (exit 0), BLOCKING_COUNT=0, SUGGESTION_COUNT=1.
+export MOCK_GH_POST_OUTPUT='{}'
+export MOCK_GH_OUTPUT='COMMENTED'
+unset COPILOT_BOT_LOGIN
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_copilot_overrides"
+  _ec=0
+  run_copilot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "copilot_commented_result" "RESULT=clean" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "copilot_commented_blocking_count" "BLOCKING_COUNT=0" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
+run_test "copilot_commented_suggestion_count" "SUGGESTION_COUNT=1" \
+  "$(printf '%s\n' "$actual_output" | grep "^SUGGESTION_COUNT=")"
+run_test "copilot_commented_exit_code" "0" "$actual_exit"
+export MOCK_GH_OUTPUT='[]'
+
+# Test 8.6: zero poll interval guard — effective_poll_interval must be floored to 1
+# A poll_interval of 0 would cause elapsed to never increment, hanging forever.
+# The guard clamps it to 1. Test verifies the function completes (doesn't hang)
+# when poll_interval=0, by returning on the first poll with an APPROVED state.
+export MOCK_GH_POST_OUTPUT='{}'
+export MOCK_GH_OUTPUT='APPROVED'
+unset COPILOT_BOT_LOGIN
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_copilot_overrides"
+  _ec=0
+  run_copilot_review "42" "feature/42-test" "0" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "copilot_zero_poll_interval_completes" "RESULT=clean" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "copilot_zero_poll_interval_exit_code" "0" "$actual_exit"
+export MOCK_GH_OUTPUT='[]'
+
+# ---------------------------------------------------------------------------
+# Area 9: haystack platform
 #
 # Tests that bot_login_for_platform returns "" for haystack (no GitHub review
 # threads are posted by the Haystack CLI in this MVP), and that run_platform_review
@@ -633,7 +794,7 @@ unset MOCK_GH_EXIT
 # These unit tests cover only the routing and bot-login layers.
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== Area 7: haystack platform ==="
+echo "=== Area 9: haystack platform ==="
 
 unset MOCK_GH_POST_EXIT MOCK_GH_POST_OUTPUT MOCK_GH_CALL_LOG MOCK_GH_EXIT
 
