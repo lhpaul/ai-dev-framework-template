@@ -13,8 +13,9 @@
 # Grace-period polling (configurable via env vars):
 #   GUARD_MAX_POLLS     — number of poll attempts before failing (default: 3)
 #   GUARD_POLL_INTERVAL — seconds to wait between polls (default: 30)
-#   Together these give up to GUARD_MAX_POLLS × GUARD_POLL_INTERVAL seconds of
+#   Together these give up to (GUARD_MAX_POLLS - 1) × GUARD_POLL_INTERVAL seconds of
 #   grace so pr-review-loop.sh can finish posting its summary before the guard fails.
+#   (The loop sleeps only between attempts, not after the final attempt.)
 #
 # Branches outside the in-scope list always pass (status set to success).
 #
