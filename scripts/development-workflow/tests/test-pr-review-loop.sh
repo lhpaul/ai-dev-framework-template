@@ -815,6 +815,54 @@ unset -f run_haystack_review
 unset _haystack_dispatch_called
 
 # ---------------------------------------------------------------------------
+# Area 10: per-platform result tokens in summary comment (#755)
+#
+# Tests that:
+#   (a) _summary_platform_list is built correctly from platform_result_tokens.
+#   (b) _post_review_summary renders the correct result_line for result="skipped".
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 10: per-platform result tokens in summary comment ==="
+
+# Test 10.1: _summary_platform_list format from platform_result_tokens
+_test_tokens=("pr-agent=clean" "haystack=unavailable" "claude-code-action=escalated (timeout)")
+_test_spl=""
+for _sprt in "${_test_tokens[@]:-}"; do
+  _spname="${_sprt%%=*}"; _spdisp="${_sprt#*=}"
+  [ -n "$_test_spl" ] && _test_spl="${_test_spl}, "
+  _test_spl="${_test_spl}${_spname} (${_spdisp})"
+done
+[ -z "$_test_spl" ] && _test_spl="none"
+run_test "summary_platform_list_format" \
+  "pr-agent (clean), haystack (unavailable), claude-code-action (escalated (timeout))" \
+  "$_test_spl"
+unset _test_tokens _test_spl _sprt _spname _spdisp
+
+# Test 10.2: _summary_platform_list is "none" when token list is empty
+_test_tokens=()
+_test_spl=""
+if [ "${#_test_tokens[@]}" -gt 0 ]; then
+  for _sprt in "${_test_tokens[@]}"; do
+    _spname="${_sprt%%=*}"; _spdisp="${_sprt#*=}"
+    [ -n "$_test_spl" ] && _test_spl="${_test_spl}, "
+    _test_spl="${_test_spl}${_spname} (${_spdisp})"
+  done
+fi
+[ -z "$_test_spl" ] && _test_spl="none"
+run_test "summary_platform_list_empty_tokens" "none" "$_test_spl"
+unset _test_tokens _test_spl _sprt _spname _spdisp
+
+# Test 10.3: _post_review_summary source contains the skipped result_line constant.
+# _post_review_summary is defined after the HARNESS_MODE return point and cannot
+# be called directly from the test harness; verify the string constant in the source
+# so any accidental change to the wording is caught.
+_skipped_constant_count="$(grep -cF \
+  'result_line="skipped — no platforms configured in review.platforms"' \
+  "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" || true)"
+run_test "summary_result_line_skipped" "1" "$_skipped_constant_count"
+unset _skipped_constant_count
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

@@ -3741,6 +3741,9 @@ total_blocking_count=0
 total_suggestion_count=0
 aggregate_advisory_labels=""
 declare -a compare_verdicts=()
+# Per-platform result tokens for the PR summary comment.
+# Each entry is "platform_name=display_token" (e.g. "haystack=unavailable").
+declare -a platform_result_tokens=()
 # Compare-mode: track the first blocking platform seen so later clean platforms
 # do not overwrite the aggregate. These variables are set once and never reset.
 compare_first_blocking_result=""
@@ -3811,6 +3814,23 @@ for index in "${!platforms[@]}"; do
   print_kv "PLATFORM_${platform_index}_NAME" "$platform_name"
   print_kv "PLATFORM_${platform_index}_RESULT" "$platform_result"
   emit_prefixed_platform_output "$platform_index" "$platform_output"
+  # Record a human-readable display token for the PR summary comment.
+  _prt_reason="$(kv_value_default REASON "$platform_output" "")"
+  case "$platform_result" in
+    clean)      _prt_disp="clean" ;;
+    skipped)
+      if [ "$_prt_reason" = "unavailable" ] || [ "$_prt_reason" = "not_configured" ]; then
+        _prt_disp="unavailable"
+      else
+        _prt_disp="skipped"
+      fi
+      ;;
+    escalate)   _prt_disp="escalated (${_prt_reason:-unknown})" ;;
+    needs_fixes) _prt_disp="needs_fixes" ;;
+    *)           _prt_disp="$platform_result" ;;
+  esac
+  platform_result_tokens+=("${platform_name}=${_prt_disp}")
+  unset _prt_reason _prt_disp
 
   # In compare mode, record a normalized verdict for each platform before
   # deciding whether to break. The normalized verdict captures clean / blocking /
@@ -3903,6 +3923,7 @@ if [ -z "$last_platform" ]; then
   print_kv BLOCKING_COUNT 0
   print_kv SUGGESTION_COUNT 0
   print_kv UNRESOLVED_THREAD_COUNT 0
+  _post_review_summary "skipped" "not_configured" "none" "0" "0" "" "" "0" "" "0" "0" "" "0"
   exit 0
 fi
 
@@ -4185,6 +4206,9 @@ _post_review_summary() {
     escalate)
       result_line="escalated (${reason:-unknown})"
       ;;
+    skipped)
+      result_line="skipped — no platforms configured in review.platforms"
+      ;;
     *)
       result_line="$result"
       ;;
@@ -4383,10 +4407,23 @@ else
   phase_after_clean_platform_list=""
 fi
 
+# Build per-platform result list for the PR summary comment.
+# Format: "pr-agent (clean), haystack (unavailable), claude-code-action (escalated (timeout))"
+_summary_platform_list=""
+if [ "${#platform_result_tokens[@]}" -gt 0 ]; then
+  for _sprt in "${platform_result_tokens[@]}"; do
+    _spname="${_sprt%%=*}"
+    _spdisp="${_sprt#*=}"
+    [ -n "$_summary_platform_list" ] && _summary_platform_list="${_summary_platform_list}, "
+    _summary_platform_list="${_summary_platform_list}${_spname} (${_spdisp})"
+  done
+fi
+[ -z "$_summary_platform_list" ] && _summary_platform_list="none"
+
 case "$aggregate_result" in
   clean)
     _post_review_summary "$aggregate_result" "$aggregate_reason" \
-      "$(IFS=,; printf '%s' "${platforms[*]}")" \
+      "$_summary_platform_list" \
       "$total_blocking_count" "$total_suggestion_count" \
       "$aggregate_advisory_labels" \
       "$aggregate_possible_issue_eval_outcome" \
@@ -4401,7 +4438,7 @@ case "$aggregate_result" in
   needs_fixes)
     if [ "$post_final_summary" -eq 1 ]; then
       _post_review_summary "$aggregate_result" "$aggregate_reason" \
-        "$(IFS=,; printf '%s' "${platforms[*]}")" \
+        "$_summary_platform_list" \
         "$total_blocking_count" "$total_suggestion_count" \
         "$aggregate_advisory_labels" \
         "$aggregate_possible_issue_eval_outcome" \
@@ -4420,7 +4457,7 @@ case "$aggregate_result" in
     ;;
   escalate)
     _post_review_summary "$aggregate_result" "$aggregate_reason" \
-      "$(IFS=,; printf '%s' "${platforms[*]}")" \
+      "$_summary_platform_list" \
       "$total_blocking_count" "$total_suggestion_count" \
       "$aggregate_advisory_labels" \
       "$aggregate_possible_issue_eval_outcome" \
