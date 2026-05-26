@@ -760,6 +760,27 @@ run_test "copilot_commented_suggestion_count" "SUGGESTION_COUNT=1" \
 run_test "copilot_commented_exit_code" "0" "$actual_exit"
 export MOCK_GH_OUTPUT='[]'
 
+# Test 8.6: zero poll interval guard — effective_poll_interval must be floored to 1
+# A poll_interval of 0 would cause elapsed to never increment, hanging forever.
+# The guard clamps it to 1. Test verifies the function completes (doesn't hang)
+# when poll_interval=0, by returning on the first poll with an APPROVED state.
+export MOCK_GH_POST_OUTPUT='{}'
+export MOCK_GH_OUTPUT='APPROVED'
+unset COPILOT_BOT_LOGIN
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_copilot_overrides"
+  _ec=0
+  run_copilot_review "42" "feature/42-test" "0" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "copilot_zero_poll_interval_completes" "RESULT=clean" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "copilot_zero_poll_interval_exit_code" "0" "$actual_exit"
+export MOCK_GH_OUTPUT='[]'
+
 # ---------------------------------------------------------------------------
 # Area 9: haystack platform
 #

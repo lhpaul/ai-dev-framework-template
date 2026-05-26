@@ -934,6 +934,7 @@ run_copilot_review() {
   if [ "$effective_poll_interval" -gt "$max_wait" ]; then
     effective_poll_interval="$max_wait"
   fi
+  [ "$effective_poll_interval" -le 0 ] && effective_poll_interval=1
 
   while [ "$elapsed" -lt "$max_wait" ]; do
     set +e

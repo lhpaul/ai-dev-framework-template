@@ -171,7 +171,7 @@ existing workflow conventions.
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
 | Copilot bot login name differs across GitHub plans or changes in future | Med | Low | Accept `COPILOT_BOT_LOGIN` env var override (same pattern as `CODEX_GITHUB_BOT_LOGIN`, `CLAUDE_CODE_ACTION_BOT_LOGIN`); document in integration guide |
-| Copilot does not post a formal GitHub Review for all PR types (may post comment instead) | Med | Med | Poll both reviews endpoint and PR comments in the function; treat any `APPROVED` signal from either source as clean; fall back to timeout/unavailable if neither posts within `max_wait` |
+| Copilot does not post a formal GitHub Review for all PR types (may post comment instead) | Med | Med | The implementation polls only the reviews endpoint (not PR comments). Copilot does post formal reviews (APPROVED, CHANGES_REQUESTED, COMMENTED) via the reviews API. If Copilot posts no review within `max_wait`, the timeout path returns `RESULT=escalate REASON=timeout`. |
 | GitHub Copilot reviewer request API endpoint or behavior changes | Low | Med | Integration guide documents the current mechanism; the function is self-contained and can be updated independently without protocol changes |
 | Copilot review request silently ignored (no error, no review posted) | Med | Low | Timeout path already handles this; `REASON=unavailable` or `REASON=timeout` is returned so the loop can apply the configured unavailability policy |
 | HARNESS_MODE unit tests tightly coupled to internal function shape | Low | Low | Follow the existing pattern in `test-pr-review-loop.sh` (mock `gh` output, source the script, call the function directly) |
