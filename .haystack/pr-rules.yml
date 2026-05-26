@@ -1,0 +1,137 @@
+rules:
+  - id: "aggregate-paginated-gh-api-results"
+    name: "Aggregate paginated GitHub API results before filtering"
+    type: llm
+    severity: warning
+    category: "performance"
+    message: "For `gh api` list queries, fetch all pages and merge them before counting, sorting, or selecting items."
+    llm:
+      prompt: "For `gh api` list queries, fetch all pages and merge them before counting, sorting, or selecting items."
+  - id: "encode-gh-api-payloads-safely"
+    name: "Encode GitHub API payloads safely"
+    type: llm
+    severity: warning
+    category: "security"
+    message: "Build GitHub API payloads with `jq -n --arg ...` and use `--raw-field` for string form values instead of shell interpolation."
+    llm:
+      prompt: "Build GitHub API payloads with `jq -n --arg ...` and use `--raw-field` for string form values instead of shell interpolation."
+  - id: "avoid-swallowing-critical-command-failures"
+    name: "Do not swallow critical command failures"
+    type: llm
+    severity: warning
+    category: "security"
+    message: "Do not use blanket `|| true` or similar suppression on workflow-critical `gh`/`git`/network commands; handle expected non-fatal cases explicitly and surface real failures."
+    llm:
+      prompt: "Do not use blanket `|| true` or similar suppression on workflow-critical `gh`/`git`/network commands; handle expected non-fatal cases explicitly and surface real failures."
+  - id: "enable-pipefail-for-control-flow-pipelines"
+    name: "Enable pipefail in decision pipelines"
+    type: llm
+    severity: warning
+    category: "security"
+    message: "Use `set -o pipefail` (or equivalent explicit status checks) for pipelines that drive control flow so upstream failures are not treated as valid results."
+    llm:
+      prompt: "Use `set -o pipefail` (or equivalent explicit status checks) for pipelines that drive control flow so upstream failures are not treated as valid results."
+  - id: "use-shell-safe-argument-handling"
+    name: "Use shell-safe argument and path handling"
+    type: llm
+    severity: warning
+    category: "security"
+    message: "Pass dynamic values with proper quoting and `--`, iterate paths safely (prefer line/NUL-delimited loops), and avoid unquoted expansion."
+    llm:
+      prompt: "Pass dynamic values with proper quoting and `--`, iterate paths safely (prefer line/NUL-delimited loops), and avoid unquoted expansion."
+  - id: "pass-dynamic-values-via-tool-args"
+    name: "Pass dynamic values via tool arguments"
+    type: llm
+    severity: warning
+    category: "security"
+    message: "When using jq/awk/python from shell, pass dynamic data via `--arg`/`-v`/`sys.argv` or environment variables instead of interpolating into code or patterns."
+    llm:
+      prompt: "When using jq/awk/python from shell, pass dynamic data via `--arg`/`-v`/`sys.argv` or environment variables instead of interpolating into code or patterns."
+  - id: "scope-review-state-to-current-head"
+    name: "Scope review decisions to current HEAD"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "Classify PR review state using current head SHA (or equivalent updated signal) so stale reviews/comments do not satisfy or block gates."
+    llm:
+      prompt: "Classify PR review state using current head SHA (or equivalent updated signal) so stale reviews/comments do not satisfy or block gates."
+  - id: "emit-stable-kv-output-contract"
+    name: "Preserve machine-readable output contract"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "Scripts emitting key/value outputs must emit documented keys with canonical names on all exit paths, including skip and error branches."
+    llm:
+      prompt: "Scripts emitting key/value outputs must emit documented keys with canonical names on all exit paths, including skip and error branches."
+  - id: "normalize-bot-logins-before-comparison"
+    name: "Normalize bot identities before comparison"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "Normalize bot login formats (for example stripping `[bot]` where required) before author/reviewer/thread comparisons."
+    llm:
+      prompt: "Normalize bot login formats (for example stripping `[bot]` where required) before author/reviewer/thread comparisons."
+  - id: "use-worktree-safe-repo-root-resolution"
+    name: "Resolve repo root via git common dir"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "In worktree-aware scripts and examples, derive repository root from `git rev-parse --git-common-dir` canonicalization instead of CWD-relative assumptions."
+    llm:
+      prompt: "In worktree-aware scripts and examples, derive repository root from `git rev-parse --git-common-dir` canonicalization instead of CWD-relative assumptions."
+  - id: "pin-github-actions-by-full-sha"
+    name: "Pin GitHub Actions by full commit SHA"
+    type: llm
+    severity: warning
+    category: "security"
+    message: "Reference third-party GitHub Actions with immutable full commit SHAs rather than floating tags."
+    llm:
+      prompt: "Reference third-party GitHub Actions with immutable full commit SHAs rather than floating tags."
+  - id: "keep-changelog-unreleased-structure-canonical"
+    name: "Maintain canonical CHANGELOG Unreleased structure"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "Keep a single `[Unreleased]` section with Keep a Changelog ordering and avoid duplicate section/subsection headers."
+    llm:
+      prompt: "Keep a single `[Unreleased]` section with Keep a Changelog ordering and avoid duplicate section/subsection headers."
+  - id: "require-changelog-entry-for-non-exempt-user-visible-changes"
+    name: "Require changelog entries for non-exempt user-visible changes"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "Add a `CHANGELOG.md` entry under `[Unreleased]` for non-exempt user-visible changes in scripts, protocols, or command/docs behavior."
+    llm:
+      prompt: "Add a `CHANGELOG.md` entry under `[Unreleased]` for non-exempt user-visible changes in scripts, protocols, or command/docs behavior."
+  - id: "keep-agent-surface-guidance-in-sync"
+    name: "Keep agent guidance in sync across surfaces"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "When shared agent behavior changes, update corresponding `.claude`, `.cursor`, and `.codex` guidance/docs in the same PR."
+    llm:
+      prompt: "When shared agent behavior changes, update corresponding `.claude`, `.cursor`, and `.codex` guidance/docs in the same PR."
+  - id: "validate-required-inputs-early"
+    name: "Validate required inputs before workflow logic"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "Validate required inputs (for example PR number, HEAD SHA, and numeric identifiers) before running reviewer-loop logic or remote calls."
+    llm:
+      prompt: "Validate required inputs (for example PR number, HEAD SHA, and numeric identifiers) before running reviewer-loop logic or remote calls."
+  - id: "use-bash-3-2-compatible-patterns"
+    name: "Keep shell scripts Bash 3.2 compatible"
+    type: llm
+    severity: warning
+    category: "style"
+    message: "Implement shell logic using Bash 3.2-compatible features and avoid Bash 4+ constructs."
+    llm:
+      prompt: "Implement shell logic using Bash 3.2-compatible features and avoid Bash 4+ constructs."
+  - id: "preserve-exit-code-contracts"
+    name: "Preserve documented exit code mappings"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "When modifying scripts with documented multi-check exits, keep each failure path mapped to its specified distinct exit code."
+    llm:
+      prompt: "When modifying scripts with documented multi-check exits, keep each failure path mapped to its specified distinct exit code."

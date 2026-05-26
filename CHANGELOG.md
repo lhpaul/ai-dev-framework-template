@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Script-Accuracy Self-Check Checklist in protocol 03** (#735): `03-implement-development-protocol.md` now includes a conditional Script-Accuracy Self-Check Checklist that applies to documentation PRs describing script behavior. Before opening such PRs, agents must enumerate each claim about input/output format, exit codes, option flags, and API calls; verify each claim against the actual script source with targeted greps; resolve discrepancies by updating the documentation; and append a self-check log to the PR description. The checklist is cross-referenced in the pre-commit verification step of all four implementation paths (Full Pipeline, Refactor, Fast Track, Hotfix). Developer agent files (`.claude/agents/developer.md`, `.cursor/agents/developer.md`) updated with a corresponding key rule.
 - **`copilot` review platform** (#709): `pr-review-loop.sh` now recognizes `copilot` as a review platform. Add it to `review.platforms` in `.ai-dev-workflow.yaml` to use GitHub Copilot code review as an automated PR reviewer. `run_copilot_review()` requests Copilot as a reviewer via the GitHub Pulls API, polls until Copilot posts its verdict, and maps the review state to the standard exit-code contract (APPROVED → clean, CHANGES\_REQUESTED → needs\_fixes, COMMENTED → clean, timeout → escalate). Falls back gracefully when Copilot code review is not enabled on the repository (`RESULT=escalate REASON=unavailable`). Bot login overridable via `COPILOT_BOT_LOGIN` env var. Integration guide: `docs/workflow/development-workflow/integrations/copilot.md`.
 
+## [0.28.3] - 2026-05-26
+
+### Fixed
+
+- **`.github/workflows/claude-code-review.yml`: add missing workflow to `main`** (hotfix): the workflow was only present on `develop`, causing GitHub's Actions API to return 404 on every `workflow_dispatch` call from `claude-code-action-reviewer.sh`. GitHub serves `workflow_dispatch` events only for workflows registered on the default branch (`main`). Added the workflow file to `main` to restore the `claude-code-action` reviewer.
+
 ## [0.28.2] - 2026-05-23
 
 ### Fixed
@@ -809,7 +815,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.2...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.3...HEAD
+[0.28.3]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.2...v0.28.3
 [0.28.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.1...v0.28.2
 [0.28.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.0...v0.28.1
 [0.28.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.4...v0.28.0
