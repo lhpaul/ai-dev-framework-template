@@ -131,7 +131,12 @@ if ! gh auth status >/dev/null 2>&1; then
   exit 2
 fi
 
-# ── Resolve PR base branch for workflow dispatch ref ─────────────────────────
+# ── Resolve base branch and dispatch ref ─────────────────────────────────────
+# BASE_REF is the PR's target branch (used for logging and context).
+# DISPATCH_REF is always the repo's default branch: GitHub's workflow_dispatch
+# API only serves workflows registered on the default branch. Dispatching
+# against BASE_REF (e.g. 'develop') causes a permanent 404 when the workflow
+# file is not yet on the default branch.
 
 echo "INFO: resolving PR #$PR_NUMBER base branch..."
 if ! BASE_REF=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json baseRefName --jq '.baseRefName' 2>/dev/null); then
@@ -145,7 +150,13 @@ if [ -z "$BASE_REF" ]; then
   exit 2
 fi
 
-echo "INFO: PR #$PR_NUMBER base branch: $BASE_REF"
+DEFAULT_BRANCH=$(gh repo view "$OWNER/$REPO" --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null) || true
+if [ -z "$DEFAULT_BRANCH" ]; then
+  DEFAULT_BRANCH="main"
+fi
+DISPATCH_REF="$DEFAULT_BRANCH"
+echo "INFO: PR #$PR_NUMBER base branch: $BASE_REF (dispatch ref: $DISPATCH_REF)"
+echo "INFO: dispatch ref: $DISPATCH_REF (GitHub workflow_dispatch requires the workflow on the default branch)"
 echo "INFO: Workflow file: $WORKFLOW_FILE"
 echo "INFO: Bot login: $BOT_LOGIN"
 if [ "$POLL_INTERVAL" -gt "$MAX_WAIT" ]; then
@@ -176,17 +187,18 @@ echo "INFO: dispatch time (pre-dispatch): $DISPATCH_TIME"
 echo "INFO: poll filter time (with 10s clock-skew buffer): $POLL_AFTER_TIME"
 
 # ── Phase 1: Dispatch workflow ────────────────────────────────────────────────
-# Call workflow_dispatch with ref=BASE_REF and pr_number input. On failure:
+# Call workflow_dispatch with ref=DISPATCH_REF (default branch) and pr_number
+# input. On failure:
 #   - 404 / "workflow was not found" → exit 3 (UNAVAILABLE: file absent)
 #   - other errors → exit 3 (UNAVAILABLE: dispatch failure)
 
-echo "INFO: dispatching workflow '$WORKFLOW_FILE' on ref '$BASE_REF' for PR #$PR_NUMBER..."
+echo "INFO: dispatching workflow '$WORKFLOW_FILE' on ref '$DISPATCH_REF' for PR #$PR_NUMBER..."
 
 DISPATCH_STDERR=$(mktemp)
 DISPATCH_STATUS=0
 gh api "repos/$OWNER/$REPO/actions/workflows/$WORKFLOW_FILE/dispatches" \
   --method POST \
-  --raw-field "ref=$BASE_REF" \
+  --raw-field "ref=$DISPATCH_REF" \
   --raw-field "inputs[pr_number]=$PR_NUMBER" \
   2>"$DISPATCH_STDERR" || DISPATCH_STATUS=$?
 
@@ -196,7 +208,7 @@ if [ "$DISPATCH_STATUS" -ne 0 ]; then
   echo "ERROR: workflow dispatch failed (exit $DISPATCH_STATUS): $DISPATCH_ERR" >&2
   # Distinguish 404 (workflow file absent / not found) from other errors
   if echo "$DISPATCH_ERR" | grep -qi "not found\|404\|workflow was not found"; then
-    echo "VERDICT: UNAVAILABLE — workflow file '$WORKFLOW_FILE' not found on ref '$BASE_REF'"
+    echo "VERDICT: UNAVAILABLE — workflow file '$WORKFLOW_FILE' not found on ref '$DISPATCH_REF'"
   else
     echo "VERDICT: UNAVAILABLE — workflow dispatch failed: $DISPATCH_ERR"
   fi

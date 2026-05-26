@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`pr-review-loop.sh`: stale-lock detection and recovery** (#734) — when `lock_contention` is reported, the error message now includes the lock file path and a recovery one-liner (`./scripts/development-workflow/pr-review-loop.sh unlock <pr>`). A new `unlock <pr-number>` subcommand lets agents remove a stale lock autonomously without human intervention; it refuses to remove a lock whose recorded PID is still alive, preventing accidental removal of a live lock.
 - **`batch-merge.sh`: support non-`develop` base branches in `merge` and `discover` subcommands** (#736): `merge` hardcoded `TARGET_BASE="develop"` and did not honour a `--base` flag or `TARGET_BASE` env var, making batch-merge unusable for integration branches (e.g. `develop-<slug>`). Added: (1) `TARGET_BASE` env var support (`TARGET_BASE="${TARGET_BASE:-develop}"`); (2) per-subcommand `--base <branch>` flag to both `merge` and `discover` (highest priority override); (3) a global pre-dispatch `--base` flag already present is preserved. Protocol 94 Step 4.1 updated to document the `--base` flag and equivalent env var form for integration-branch contexts.
 - **`pr-review-loop.sh`: clarify REST-vs-GraphQL bot-login normalization comments** — the inline comments at the `[bot]`-suffix-stripping lines previously said only "GraphQL returns login WITHOUT [bot]", which was ambiguous and led to a Haystack triage misread. Expanded to explicitly state that REST API endpoints return logins WITH the `[bot]` suffix while GraphQL returns them WITHOUT it, and that the strip normalizes for GraphQL usage. Applies to all three stripping sites (`run_codex_github_review`, `coderabbit_thread_gate_clean`, and the `check_all_platforms_for_unresolved_threads` loop).
+- **`claude-code-action-reviewer.sh`: dispatch workflow against default branch, not PR base branch** — `workflow_dispatch` only works for workflows registered on the repository's default branch; dispatching against `BASE_REF` (e.g. `develop`) caused a permanent 404 when the workflow file was not yet on the default branch. The script now resolves the default branch via `gh repo view` and uses it as the dispatch ref, falling back to `main` if resolution fails.
 
 ### Added
 
@@ -27,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Integrate Haystack triage CLI as native PR review platform** (#720): add `haystack-reviewer.sh` companion script and wire `haystack` as a native platform in `pr-review-loop.sh`; add `haystack-triage.md` integration guide. Declare `haystack` in `review.platforms` or `review.phase_after_clean` in `.ai-dev-workflow.yaml` to include Haystack triage in the Step 7 automated reviewer loop.
 - **Script-Accuracy Self-Check Checklist in protocol 03** (#735): `03-implement-development-protocol.md` now includes a conditional Script-Accuracy Self-Check Checklist that applies to documentation PRs describing script behavior. Before opening such PRs, agents must enumerate each claim about input/output format, exit codes, option flags, and API calls; verify each claim against the actual script source with targeted greps; resolve discrepancies by updating the documentation; and append a self-check log to the PR description. The checklist is cross-referenced in the pre-commit verification step of all four implementation paths (Full Pipeline, Refactor, Fast Track, Hotfix). Developer agent files (`.claude/agents/developer.md`, `.cursor/agents/developer.md`) updated with a corresponding key rule.
 - **`copilot` review platform** (#709): `pr-review-loop.sh` now recognizes `copilot` as a review platform. Add it to `review.platforms` in `.ai-dev-workflow.yaml` to use GitHub Copilot code review as an automated PR reviewer. `run_copilot_review()` requests Copilot as a reviewer via the GitHub Pulls API, polls until Copilot posts its verdict, and maps the review state to the standard exit-code contract (APPROVED → clean, CHANGES\_REQUESTED → needs\_fixes, COMMENTED → clean, timeout → escalate). Falls back gracefully when Copilot code review is not enabled on the repository (`RESULT=escalate REASON=unavailable`). Bot login overridable via `COPILOT_BOT_LOGIN` env var. Integration guide: `docs/workflow/development-workflow/integrations/copilot.md`.
+
+## [0.28.3] - 2026-05-26
+
+### Fixed
+
+- **`.github/workflows/claude-code-review.yml`: add missing workflow to `main`** (hotfix): the workflow was only present on `develop`, causing GitHub's Actions API to return 404 on every `workflow_dispatch` call from `claude-code-action-reviewer.sh`. GitHub serves `workflow_dispatch` events only for workflows registered on the default branch (`main`). Added the workflow file to `main` to restore the `claude-code-action` reviewer.
 
 ## [0.28.2] - 2026-05-23
 
@@ -809,7 +816,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.2...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.3...HEAD
+[0.28.3]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.2...v0.28.3
 [0.28.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.1...v0.28.2
 [0.28.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.0...v0.28.1
 [0.28.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.4...v0.28.0
