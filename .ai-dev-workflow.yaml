@@ -29,6 +29,7 @@ review:
   platforms:
     - pr-agent
     - haystack
+    - claude-code-action
   #
   # Platforms listed here are treated as "after-clean" reviewers by
   # pr-review-loop.sh: earlier platforms must reach clean before these platforms
@@ -38,12 +39,6 @@ review:
   # net-new findings measurable. Requires ANTHROPIC_API_KEY in GitHub Actions secrets.
   phase_after_clean:
     - claude-code-action
-  # Recommended: swap coderabbit for claude-code-action in phase_after_clean to
-  # remove the CodeRabbit per-hour rate-limit bottleneck. claude-code-action has
-  # no review cap and uses your own Anthropic API key. Requires the
-  # ANTHROPIC_API_KEY secret and the CI workflow added by sibling item #706.
-  # See docs/workflow/development-workflow/integrations/claude-code-action.md
-  # for setup instructions.
   #
   # Configurable codex-github options (set via env vars or script flags to codex-github-reviewer.sh):
   #   CODEX_GITHUB_TRIGGER_PHRASE  — trigger phrase sent to the bot (default: "@codex review")
