@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.3] - 2026-05-26
+
+### Fixed
+
+- **`.github/workflows/claude-code-review.yml`: add missing workflow to `main`** (hotfix): the workflow was only present on `develop`, causing GitHub's Actions API to return 404 on every `workflow_dispatch` call from `claude-code-action-reviewer.sh`. GitHub serves `workflow_dispatch` events only for workflows registered on the default branch (`main`). Added the workflow file to `main` to restore the `claude-code-action` reviewer.
+
 ## [0.28.2] - 2026-05-23
 
 ### Fixed
@@ -788,7 +794,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.2...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.3...HEAD
+[0.28.3]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.2...v0.28.3
 [0.28.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.1...v0.28.2
 [0.28.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.0...v0.28.1
 [0.28.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.27.4...v0.28.0
