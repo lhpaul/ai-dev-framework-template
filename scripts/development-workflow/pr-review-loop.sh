@@ -3915,6 +3915,245 @@ for index in "${!platforms[@]}"; do
   esac
 done
 
+# --- Automated Reviewer Loop Summary comment ---
+# Post a summary comment to the PR on terminal exit paths so the Step 8c
+# hasReviewSummary check is satisfied automatically. The comment body matches
+# the regex used by workflow-next-action.sh and Protocol 90 Step 5.1:
+#   "Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"
+# Post on `clean` and `escalate` exits unconditionally. For `needs_fixes` exits,
+# post only when --post-final-summary is set — i.e. when the orchestrator has
+# determined this is the terminal run (cycle >= max_cycles) and will not dispatch
+# another fixer regardless of the exit code. Posting on every `needs_fixes` exit
+# would create duplicate comments per fix cycle.
+# `skipped` exits (no platforms configured) also do not post per protocol spec.
+_post_review_summary() {
+  local result="$1"
+  local reason="$2"
+  local platform_list="$3"
+  local blocking="$4"
+  local suggestions="$5"
+  local advisory_labels="${6:-}"
+  local possible_issue_eval_outcome="${7:-}"
+  local phase_enabled="${8:-0}"
+  local phase_platform_list="${9:-}"
+  local phase_started="${10:-0}"
+  local phase_net_new_blocker="${11:-0}"
+  local phase_blocking_platform="${12:-}"
+  local pre_after_clean_only_mode="${13:-0}"
+
+  if [ -z "$pr_number" ]; then
+    return 0
+  fi
+
+  local result_line
+  case "$result" in
+    clean)
+      if [ "$blocking" -eq 0 ] && [ "$suggestions" -eq 0 ]; then
+        result_line="clean — no blocking findings"
+      else
+        result_line="clean"
+      fi
+      ;;
+    needs_fixes)
+      result_line="max cycles reached — ${blocking} blocking finding(s) unresolved"
+      ;;
+    escalate)
+      result_line="escalated (${reason:-unknown})"
+      ;;
+    skipped)
+      result_line="skipped — no platforms configured in review.platforms"
+      ;;
+    *)
+      result_line="$result"
+      ;;
+  esac
+
+  # Build the optional advisory findings section.
+  # advisory_labels format: "<labels>@@@<url>" entries separated by "|||"
+  # Each entry's labels are pipe-separated. Render each label as a list item,
+  # linking to the PR-Agent comment URL when available.
+  local advisory_section=""
+  if [ -n "$advisory_labels" ]; then
+    local _entry _labels _url _label
+    advisory_section="
+
+**Advisory findings (non-blocking):**"
+    # Split entries by ||| separator using sed (IFS does not support multi-char
+    # separators). Each entry has the form "<pipe-delimited labels>@@@<url>".
+    local _entries_normalized
+    _entries_normalized="$(printf '%s' "$advisory_labels" | sed 's/|||/\n/g')"
+    while IFS= read -r _entry; do
+      [ -z "$_entry" ] && continue
+      _labels="${_entry%@@@*}"
+      _url="${_entry##*@@@}"
+      # Split pipe-delimited labels within this entry
+      local _labels_normalized
+      _labels_normalized="$(printf '%s' "$_labels" | tr '|' '\n')"
+      while IFS= read -r _label; do
+        [ -z "$_label" ] && continue
+        if [ -n "$_url" ] && [ "$_url" != "$_labels" ]; then
+          advisory_section="${advisory_section}
+- ${_label} ([view comment](${_url}))"
+        else
+          advisory_section="${advisory_section}
+- ${_label}"
+        fi
+      done <<_ADVISORY_LABEL_LINES_
+$_labels_normalized
+_ADVISORY_LABEL_LINES_
+    done <<_ADVISORY_ENTRY_LINES_
+$_entries_normalized
+_ADVISORY_ENTRY_LINES_
+    # Append "Possible Issue" evaluation outcome when available.
+    if [ -n "$possible_issue_eval_outcome" ]; then
+      local _eval_note
+      case "$possible_issue_eval_outcome" in
+        acknowledged)
+          _eval_note="Auto-acknowledged: Possible Issue is advisory-only — loop proceeded clean"
+          ;;
+        fix_pushed)
+          _eval_note="Evaluated by code-reviewer: fix pushed — loop re-ran on new HEAD"
+          ;;
+        unavailable)
+          _eval_note="Evaluated by code-reviewer: unavailable — fell back to advisory-only (clean)"
+          ;;
+        *)
+          _eval_note="Evaluated by code-reviewer: outcome=${possible_issue_eval_outcome}"
+          ;;
+      esac
+      advisory_section="${advisory_section}
+  _Possible Issue evaluation_: ${_eval_note}"
+    fi
+  fi
+
+  # Step 7b regression-label assertion (clean path, implementation PRs only).
+  # When the reviewer loop exits clean for a feature/fix/refactor/hotfix branch,
+  # the next required step is Step 7b (apply ready-for-regression before Step 8).
+  # Check whether the label is already present and append a warning to the summary
+  # comment if it is missing. This makes the missing label visible to agents and
+  # orchestrators that read the summary comment, without blocking the script's exit.
+  # The check is best-effort: suppress all errors so a gh failure does not change
+  # the script's exit code or prevent the summary comment from being posted.
+  local regression_label_section=""
+  if [ "$result" = "clean" ]; then
+    case "${branch_name:-}" in
+      feature/*|fix/*|refactor/*|hotfix/*)
+        local _has_regression_label
+        _has_regression_label="$(gh pr view "$pr_number" --json labels \
+          --jq '[.labels[].name] | any(. == "ready-for-regression")' 2>/dev/null)" || true
+        if [ "${_has_regression_label:-}" = "false" ]; then
+          regression_label_section="
+
+**Step 7b WARNING: \`ready-for-regression\` label is missing.** Apply it now before entering Step 8 (CI loop):
+\`\`\`
+gh pr edit ${pr_number} --add-label \"ready-for-regression\"
+\`\`\`
+Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs after Step 7 completes clean."
+        fi
+        ;;
+    esac
+  fi
+
+  # Build optional compare-mode per-platform section.
+  local compare_section=""
+  if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
+    compare_section="
+
+**Compare mode — per-platform verdicts:**"
+    _idx=0
+    while [ "$_idx" -lt "${#compare_verdicts[@]}" ]; do
+      _cvname="${compare_verdicts[$_idx]}"
+      _cvtoken="${compare_verdicts[$((_idx + 1))]}"
+      compare_section="${compare_section}
+- ${_cvname}: ${_cvtoken}"
+      _idx=$((_idx + 2))
+    done
+    if [ "${_compare_metrics_appended:-0}" -eq 1 ]; then
+      compare_section="${compare_section}
+
+*Metrics row appended to \`docs/workflow/retro-metrics-platforms.md\`.*"
+    fi
+  fi
+
+  local phase_section=""
+  if [ "$phase_enabled" -eq 1 ]; then
+    local _phase_value_line
+    local _phase_subject="${phase_platform_list:-after-clean reviewer}"
+    if [ "$phase_started" -eq 1 ]; then
+      if [ "$phase_net_new_blocker" -eq 1 ]; then
+        _phase_value_line="${_phase_subject} found a net-new blocker after the clean gate (${phase_blocking_platform:-unknown})."
+      else
+        _phase_value_line="No net-new blocker was found after the PR-Agent-clean gate."
+      fi
+    elif [ "$pre_after_clean_only_mode" -eq 1 ]; then
+      _phase_value_line="After-clean phase was not run — invoked in pre-after-clean-only mode."
+    else
+      _phase_value_line="After-clean phase was not reached because an earlier platform did not exit clean."
+    fi
+    phase_section="
+
+**After-clean reviewer phase:** ${_phase_value_line}
+**After-clean platforms:** ${phase_platform_list:-none}"
+  fi
+
+  local comment_body
+  comment_body="$(cat <<EOF
+### Automated Reviewer Loop Summary
+
+**Result:** ${result_line}
+**Platforms:** ${platform_list:-none}
+**Findings:** ${blocking} blocking, ${suggestions} suggestions${phase_section}${compare_section}${advisory_section}${regression_label_section}
+
+*Posted automatically by \`pr-review-loop.sh\`.*
+EOF
+)"
+
+  # Suppress errors — a failed comment post should not change the exit code.
+  # The script's primary contract is the key=value output and exit code.
+  set +e
+
+  # Update-in-place: find an existing script-posted summary comment and edit it
+  # rather than creating a new one. This prevents redundant intermediate summary
+  # comments when the orchestrator invokes the script multiple times (e.g. once
+  # per fix cycle). Only one "Automated Reviewer Loop Summary" comment should
+  # ever exist on the PR timeline at a time.
+  # The marker string "*Posted automatically by `pr-review-loop.sh`.*" is unique
+  # to this script and is present in every comment it posts.
+  local _existing_comment_id=""
+  local _repo
+  _repo="$(repo_slug 2>/dev/null)" || true
+  if [ -n "$_repo" ]; then
+    _existing_comment_id="$(
+      gh api "repos/$_repo/issues/$pr_number/comments" --paginate 2>/dev/null \
+        | jq -rs '
+            add // []
+            | [.[]
+               | select(
+                   (.body // "" | contains("### Automated Reviewer Loop Summary")) and
+                   (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
+                 )
+              ]
+            | sort_by(.created_at)
+            | last
+            | .id // empty
+          '
+    )" || true
+  fi
+
+  if [ -n "$_existing_comment_id" ]; then
+    # Edit the existing comment in place; fall back to creating a new comment
+    # if the PATCH fails (e.g. comment was deleted or a transient API error).
+    gh api "repos/$_repo/issues/comments/$_existing_comment_id" \
+      --method PATCH \
+      -f body="$comment_body" >/dev/null 2>&1 \
+      || gh pr comment "$pr_number" --body "$comment_body" >/dev/null 2>&1
+  else
+    gh pr comment "$pr_number" --body "$comment_body" >/dev/null 2>&1
+  fi
+
+  set -e
+}
+
 if [ -z "$last_platform" ]; then
   print_kv RESULT skipped
   print_kv REASON not_configured
@@ -4161,244 +4400,6 @@ if [ -n "$aggregate_output" ]; then
   [ -n "$review_comment_id" ] && print_kv REVIEW_COMMENT_ID "$review_comment_id"
 fi
 
-# --- Automated Reviewer Loop Summary comment ---
-# Post a summary comment to the PR on terminal exit paths so the Step 8c
-# hasReviewSummary check is satisfied automatically. The comment body matches
-# the regex used by workflow-next-action.sh and Protocol 90 Step 5.1:
-#   "Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"
-# Post on `clean` and `escalate` exits unconditionally. For `needs_fixes` exits,
-# post only when --post-final-summary is set — i.e. when the orchestrator has
-# determined this is the terminal run (cycle >= max_cycles) and will not dispatch
-# another fixer regardless of the exit code. Posting on every `needs_fixes` exit
-# would create duplicate comments per fix cycle.
-# `skipped` exits (no platforms configured) also do not post per protocol spec.
-_post_review_summary() {
-  local result="$1"
-  local reason="$2"
-  local platform_list="$3"
-  local blocking="$4"
-  local suggestions="$5"
-  local advisory_labels="${6:-}"
-  local possible_issue_eval_outcome="${7:-}"
-  local phase_enabled="${8:-0}"
-  local phase_platform_list="${9:-}"
-  local phase_started="${10:-0}"
-  local phase_net_new_blocker="${11:-0}"
-  local phase_blocking_platform="${12:-}"
-  local pre_after_clean_only_mode="${13:-0}"
-
-  if [ -z "$pr_number" ]; then
-    return 0
-  fi
-
-  local result_line
-  case "$result" in
-    clean)
-      if [ "$blocking" -eq 0 ] && [ "$suggestions" -eq 0 ]; then
-        result_line="clean — no blocking findings"
-      else
-        result_line="clean"
-      fi
-      ;;
-    needs_fixes)
-      result_line="max cycles reached — ${blocking} blocking finding(s) unresolved"
-      ;;
-    escalate)
-      result_line="escalated (${reason:-unknown})"
-      ;;
-    skipped)
-      result_line="skipped — no platforms configured in review.platforms"
-      ;;
-    *)
-      result_line="$result"
-      ;;
-  esac
-
-  # Build the optional advisory findings section.
-  # advisory_labels format: "<labels>@@@<url>" entries separated by "|||"
-  # Each entry's labels are pipe-separated. Render each label as a list item,
-  # linking to the PR-Agent comment URL when available.
-  local advisory_section=""
-  if [ -n "$advisory_labels" ]; then
-    local _entry _labels _url _label
-    advisory_section="
-
-**Advisory findings (non-blocking):**"
-    # Split entries by ||| separator using sed (IFS does not support multi-char
-    # separators). Each entry has the form "<pipe-delimited labels>@@@<url>".
-    local _entries_normalized
-    _entries_normalized="$(printf '%s' "$advisory_labels" | sed 's/|||/\n/g')"
-    while IFS= read -r _entry; do
-      [ -z "$_entry" ] && continue
-      _labels="${_entry%@@@*}"
-      _url="${_entry##*@@@}"
-      # Split pipe-delimited labels within this entry
-      local _labels_normalized
-      _labels_normalized="$(printf '%s' "$_labels" | tr '|' '\n')"
-      while IFS= read -r _label; do
-        [ -z "$_label" ] && continue
-        if [ -n "$_url" ] && [ "$_url" != "$_labels" ]; then
-          advisory_section="${advisory_section}
-- ${_label} ([view comment](${_url}))"
-        else
-          advisory_section="${advisory_section}
-- ${_label}"
-        fi
-      done <<_ADVISORY_LABEL_LINES_
-$_labels_normalized
-_ADVISORY_LABEL_LINES_
-    done <<_ADVISORY_ENTRY_LINES_
-$_entries_normalized
-_ADVISORY_ENTRY_LINES_
-    # Append "Possible Issue" evaluation outcome when available.
-    if [ -n "$possible_issue_eval_outcome" ]; then
-      local _eval_note
-      case "$possible_issue_eval_outcome" in
-        acknowledged)
-          _eval_note="Auto-acknowledged: Possible Issue is advisory-only — loop proceeded clean"
-          ;;
-        fix_pushed)
-          _eval_note="Evaluated by code-reviewer: fix pushed — loop re-ran on new HEAD"
-          ;;
-        unavailable)
-          _eval_note="Evaluated by code-reviewer: unavailable — fell back to advisory-only (clean)"
-          ;;
-        *)
-          _eval_note="Evaluated by code-reviewer: outcome=${possible_issue_eval_outcome}"
-          ;;
-      esac
-      advisory_section="${advisory_section}
-  _Possible Issue evaluation_: ${_eval_note}"
-    fi
-  fi
-
-  # Step 7b regression-label assertion (clean path, implementation PRs only).
-  # When the reviewer loop exits clean for a feature/fix/refactor/hotfix branch,
-  # the next required step is Step 7b (apply ready-for-regression before Step 8).
-  # Check whether the label is already present and append a warning to the summary
-  # comment if it is missing. This makes the missing label visible to agents and
-  # orchestrators that read the summary comment, without blocking the script's exit.
-  # The check is best-effort: suppress all errors so a gh failure does not change
-  # the script's exit code or prevent the summary comment from being posted.
-  local regression_label_section=""
-  if [ "$result" = "clean" ]; then
-    case "${branch_name:-}" in
-      feature/*|fix/*|refactor/*|hotfix/*)
-        local _has_regression_label
-        _has_regression_label="$(gh pr view "$pr_number" --json labels \
-          --jq '[.labels[].name] | any(. == "ready-for-regression")' 2>/dev/null)" || true
-        if [ "${_has_regression_label:-}" = "false" ]; then
-          regression_label_section="
-
-**Step 7b WARNING: \`ready-for-regression\` label is missing.** Apply it now before entering Step 8 (CI loop):
-\`\`\`
-gh pr edit ${pr_number} --add-label \"ready-for-regression\"
-\`\`\`
-Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs after Step 7 completes clean."
-        fi
-        ;;
-    esac
-  fi
-
-  # Build optional compare-mode per-platform section.
-  local compare_section=""
-  if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
-    compare_section="
-
-**Compare mode — per-platform verdicts:**"
-    _idx=0
-    while [ "$_idx" -lt "${#compare_verdicts[@]}" ]; do
-      _cvname="${compare_verdicts[$_idx]}"
-      _cvtoken="${compare_verdicts[$((_idx + 1))]}"
-      compare_section="${compare_section}
-- ${_cvname}: ${_cvtoken}"
-      _idx=$((_idx + 2))
-    done
-    if [ "${_compare_metrics_appended:-0}" -eq 1 ]; then
-      compare_section="${compare_section}
-
-*Metrics row appended to \`docs/workflow/retro-metrics-platforms.md\`.*"
-    fi
-  fi
-
-  local phase_section=""
-  if [ "$phase_enabled" -eq 1 ]; then
-    local _phase_value_line
-    local _phase_subject="${phase_platform_list:-after-clean reviewer}"
-    if [ "$phase_started" -eq 1 ]; then
-      if [ "$phase_net_new_blocker" -eq 1 ]; then
-        _phase_value_line="${_phase_subject} found a net-new blocker after the clean gate (${phase_blocking_platform:-unknown})."
-      else
-        _phase_value_line="No net-new blocker was found after the PR-Agent-clean gate."
-      fi
-    elif [ "$pre_after_clean_only_mode" -eq 1 ]; then
-      _phase_value_line="After-clean phase was not run — invoked in pre-after-clean-only mode."
-    else
-      _phase_value_line="After-clean phase was not reached because an earlier platform did not exit clean."
-    fi
-    phase_section="
-
-**After-clean reviewer phase:** ${_phase_value_line}
-**After-clean platforms:** ${phase_platform_list:-none}"
-  fi
-
-  local comment_body
-  comment_body="$(cat <<EOF
-### Automated Reviewer Loop Summary
-
-**Result:** ${result_line}
-**Platforms:** ${platform_list:-none}
-**Findings:** ${blocking} blocking, ${suggestions} suggestions${phase_section}${compare_section}${advisory_section}${regression_label_section}
-
-*Posted automatically by \`pr-review-loop.sh\`.*
-EOF
-)"
-
-  # Suppress errors — a failed comment post should not change the exit code.
-  # The script's primary contract is the key=value output and exit code.
-  set +e
-
-  # Update-in-place: find an existing script-posted summary comment and edit it
-  # rather than creating a new one. This prevents redundant intermediate summary
-  # comments when the orchestrator invokes the script multiple times (e.g. once
-  # per fix cycle). Only one "Automated Reviewer Loop Summary" comment should
-  # ever exist on the PR timeline at a time.
-  # The marker string "*Posted automatically by `pr-review-loop.sh`.*" is unique
-  # to this script and is present in every comment it posts.
-  local _existing_comment_id=""
-  local _repo
-  _repo="$(repo_slug 2>/dev/null)" || true
-  if [ -n "$_repo" ]; then
-    _existing_comment_id="$(
-      gh api "repos/$_repo/issues/$pr_number/comments" --paginate 2>/dev/null \
-        | jq -rs '
-            add // []
-            | [.[]
-               | select(
-                   (.body // "" | contains("### Automated Reviewer Loop Summary")) and
-                   (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
-                 )
-              ]
-            | sort_by(.created_at)
-            | last
-            | .id // empty
-          '
-    )" || true
-  fi
-
-  if [ -n "$_existing_comment_id" ]; then
-    # Edit the existing comment in place; fall back to creating a new comment
-    # if the PATCH fails (e.g. comment was deleted or a transient API error).
-    gh api "repos/$_repo/issues/comments/$_existing_comment_id" \
-      --method PATCH \
-      -f body="$comment_body" >/dev/null 2>&1 \
-      || gh pr comment "$pr_number" --body "$comment_body" >/dev/null 2>&1
-  else
-    gh pr comment "$pr_number" --body "$comment_body" >/dev/null 2>&1
-  fi
-
-  set -e
-}
 
 aggregate_possible_issue_eval_outcome="$(kv_value_default POSSIBLE_ISSUE_EVAL_OUTCOME "$aggregate_output" "")"
 if [ "${#phase_after_clean_platforms[@]}" -gt 0 ]; then
