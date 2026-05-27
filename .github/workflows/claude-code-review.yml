@@ -4,10 +4,17 @@ on:
   # Triggered on demand by pr-review-loop.sh or a repository maintainer.
   # Not triggered automatically on PR open, push, or synchronize events.
   workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull request number to review"
+        required: true
+        type: number
 
 # Prevent duplicate simultaneous runs for the same PR.
+# Uses inputs.pr_number (not github.event.pull_request.number,
+# which is unavailable on workflow_dispatch events).
 concurrency:
-  group: claude-code-review-${{ github.run_id }}
+  group: claude-code-review-${{ inputs.pr_number }}
   cancel-in-progress: true
 
 jobs:
