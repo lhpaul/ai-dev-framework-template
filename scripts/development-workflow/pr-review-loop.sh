@@ -3627,7 +3627,19 @@ fi
 if [ "${#platforms[@]}" -eq 0 ]; then
   # Resolve config from the PR's target branch so platform coverage is
   # consistent regardless of the operator's local checkout state (#756).
-  _pr_base="$(gh pr view "$pr_number" --json baseRefName --jq '.baseRefName' 2>/dev/null || true)"
+  # Capture stderr separately: "Could not resolve" means PR not found (silent
+  # fallback); any other error is unexpected and warrants a diagnostic warning.
+  set +e
+  _pr_base_raw="$(gh pr view "$pr_number" --json baseRefName --jq '.baseRefName' 2>&1)"
+  _pr_base_exit=$?
+  set -e
+  _pr_base=""
+  if [ "$_pr_base_exit" -eq 0 ]; then
+    _pr_base="$_pr_base_raw"
+  elif ! printf '%s\n' "$_pr_base_raw" | grep -qi "Could not resolve\|not found"; then
+    printf 'WARNING: failed to resolve PR base branch (exit %d): %s — falling back to working-tree config\n' \
+      "$_pr_base_exit" "$_pr_base_raw" >&2
+  fi
   if [ -n "$_pr_base" ]; then
     _PR_CONFIG_TMPFILE="$(mktemp)"
     if ! git show "origin/${_pr_base}:.ai-dev-workflow.yaml" > "$_PR_CONFIG_TMPFILE" 2>/dev/null; then
