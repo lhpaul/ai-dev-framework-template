@@ -211,14 +211,14 @@ Always guard `jq` calls against parse failures:
 # Wrong — malformed JSON produces empty string; script continues undetected:
 VALUE=$(echo "$RESPONSE" | jq -r '.field')
 
-# Correct — use -e so jq exits 5 on a null/false result, and check the exit code:
+# Correct — use -e so jq exits 1 on a null/false result, and check the exit code:
 if ! VALUE=$(echo "$RESPONSE" | jq -re '.field' 2>/dev/null); then
   echo "ERROR: jq parse failed or field is null/missing" >&2
   exit 1
 fi
 
 # Correct alternative — explicit OR handler for inline use:
-VALUE=$(echo "$RESPONSE" | jq -r '.field') || { echo "ERROR: jq parse failed" >&2; exit 1; }
+VALUE=$(echo "$RESPONSE" | jq -re '.field') || { echo "ERROR: jq parse failed" >&2; exit 1; }
 ```
 
 Also validate that the parsed value is non-empty before using it when an empty string is not a valid sentinel:
