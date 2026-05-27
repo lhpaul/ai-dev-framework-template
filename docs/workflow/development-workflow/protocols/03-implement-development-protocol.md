@@ -237,8 +237,8 @@ External CLI calls (`gh`, `curl`, `haystack`, `timeout`, custom tools) can block
 # Wrong — no timeout; hangs indefinitely if the service is slow:
 RESULT=$(gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER")
 
-# Correct — use the `timeout` command and check the exit code:
-if ! RESULT=$(timeout 30 gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER" 2>/dev/null); then
+# Correct — capture exit code before the if test, then check it:
+RESULT=$(timeout 30 gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER" 2>/dev/null) || {
   EXIT_CODE=$?
   if [ "$EXIT_CODE" -eq 124 ]; then
     echo "ERROR: gh api timed out after 30 s" >&2
@@ -246,16 +246,12 @@ if ! RESULT=$(timeout 30 gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER" 2>/dev/nul
     echo "ERROR: gh api exited with code $EXIT_CODE" >&2
   fi
   exit 1
-fi
+}
 
 # Alternative — background-wait pattern for finer-grained control:
 gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER" > /tmp/result.json &
 API_PID=$!
-if ! wait "$API_PID"; then
-  kill "$API_PID" 2>/dev/null
-  echo "ERROR: API call failed" >&2
-  exit 1
-fi
+wait "$API_PID" || { echo "ERROR: API call failed" >&2; exit 1; }
 ```
 
 When a script receives a timeout budget from its caller (e.g., a `MAX_WAIT` parameter or environment variable), derive per-call timeouts from it rather than hard-coding constants. Never silently absorb a timeout by catching exit code 124 and returning an empty string — the caller must be informed.
