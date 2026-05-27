@@ -900,6 +900,7 @@ run_copilot_review() {
   local repo
   local elapsed=0
   local review_state=""
+  local head_sha=""
 
   require_gh
   cd_workflow_repo_root
@@ -908,6 +909,10 @@ run_copilot_review() {
   local owner repo_name
   owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
   repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  # Resolve head SHA before requesting review so the poll loop can filter
+  # reviews to only those submitted against the current commit (#759).
+  head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>/dev/null || true)"
 
   # Step 1: Request Copilot as a reviewer (idempotent — GitHub silently
   # deduplicates reviewer requests if Copilot is already requested).
@@ -938,9 +943,15 @@ run_copilot_review() {
 
   while [ "$elapsed" -lt "$max_wait" ]; do
     set +e
-    review_state="$(gh api "repos/$owner/$repo_name/pulls/$pr_number/reviews" \
-      --jq "[.[] | select(.user.login == \"$bot_login\")] | last | .state // empty" \
-      2>/dev/null)"
+    if [ -n "$head_sha" ]; then
+      review_state="$(gh api "repos/$owner/$repo_name/pulls/$pr_number/reviews" \
+        --jq "[.[] | select(.user.login == \"$bot_login\" and .commit_id == \"$head_sha\")] | last | .state // empty" \
+        2>/dev/null)"
+    else
+      review_state="$(gh api "repos/$owner/$repo_name/pulls/$pr_number/reviews" \
+        --jq "[.[] | select(.user.login == \"$bot_login\")] | last | .state // empty" \
+        2>/dev/null)"
+    fi
     set -e
 
     case "$review_state" in
