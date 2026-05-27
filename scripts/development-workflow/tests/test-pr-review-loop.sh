@@ -856,9 +856,12 @@ unset _test_tokens _test_spl _sprt _spname _spdisp
 # _post_review_summary is defined after the HARNESS_MODE return point and cannot
 # be called directly from the test harness; verify the string constant in the source
 # so any accidental change to the wording is caught.
-_skipped_constant_count="$(grep -cF \
-  'result_line="skipped — no platforms configured in review.platforms"' \
-  "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" || true)"
+if grep -qF 'result_line="skipped — no platforms configured in review.platforms"' \
+    "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null; then
+  _skipped_constant_count=1
+else
+  _skipped_constant_count=0
+fi
 run_test "summary_result_line_skipped" "1" "$_skipped_constant_count"
 unset _skipped_constant_count
 
