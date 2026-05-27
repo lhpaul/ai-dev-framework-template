@@ -267,8 +267,25 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
   RUN_STATUS=$(echo "$RUN_INFO" | jq -r '.status // empty')
   RUN_CONCLUSION=$(echo "$RUN_INFO" | jq -r '.conclusion // empty')
   RUN_URL=$(echo "$RUN_INFO" | jq -r '.html_url // empty')
+  RUN_ID=$(echo "$RUN_INFO" | jq -r '.id // empty')
 
-  echo "INFO: found run — status=$RUN_STATUS conclusion=$RUN_CONCLUSION url=$RUN_URL"
+  echo "INFO: found run — id=$RUN_ID status=$RUN_STATUS conclusion=$RUN_CONCLUSION url=$RUN_URL"
+
+  # Verify this run was dispatched for our PR number by fetching the individual
+  # run's inputs. The list endpoint does not include inputs; the individual run
+  # endpoint does. This prevents a concurrent review dispatch for a different PR
+  # from being mistaken for our run (filename+timestamp filter alone is insufficient
+  # when two reviews are dispatched within the timestamp-skew window).
+  if [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ]; then
+    RUN_PR_INPUT=$(gh api "repos/$OWNER/$REPO/actions/runs/$RUN_ID" \
+      --jq '.inputs.pr_number // empty' 2>/dev/null || echo "")
+    if [ -n "$RUN_PR_INPUT" ] && [ "$RUN_PR_INPUT" != "$PR_NUMBER" ]; then
+      echo "INFO: run $RUN_ID has pr_number=$RUN_PR_INPUT, expected $PR_NUMBER — skipping (concurrent dispatch for different PR)"
+      sleep "$POLL_INTERVAL"
+      TOTAL_ELAPSED=$((TOTAL_ELAPSED + POLL_INTERVAL))
+      continue
+    fi
+  fi
 
   # GitHub Actions API uses `status` for run lifecycle (queued, in_progress,
   # completed) and `conclusion` for the terminal outcome (success, failure,

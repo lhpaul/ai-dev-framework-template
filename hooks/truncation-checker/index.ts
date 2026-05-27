@@ -33,7 +33,7 @@ const EXCLUDED_PATH_PATTERNS = [
   /__tests__/,
   /\/test\//,
   /\/tests\//,
-  /^hooks\//, // Don't check our own hook code
+  /^hooks\/truncation-checker\//, // Don't scan our own pattern definitions (false-positive risk)
   /\.md$/,
   /\.json$/,
   /\.yaml$/,
@@ -566,9 +566,9 @@ export function checkStagedChanges(): CheckResult {
     output += '\n' + astOutput;
   }
 
-  // Add timing info in verbose mode
+  // Emit timing info directly to stderr in verbose mode (not part of the violation output)
   if (process.env.TRUNCATION_CHECK_VERBOSE) {
-    output += `\n[Timing: regex=${regexTime}ms, total=${Date.now() - startTime}ms, files=${stagedFiles.length}]`;
+    process.stderr.write(`[Timing: regex=${regexTime}ms, total=${Date.now() - startTime}ms, files=${stagedFiles.length}]\n`);
   }
 
   return {

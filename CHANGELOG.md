@@ -35,11 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`claude-code-action-reviewer.sh`: dispatch against default branch, not PR base branch** — fixes permanent 404 when the workflow file is not yet on the default branch.
 - **`pr-review-loop.sh`: clarify REST-vs-GraphQL bot-login normalization** — comments now explicitly state REST returns logins with `[bot]` suffix, GraphQL without, preventing future Haystack triage misreads.
 
+
 ## [0.28.4] - 2026-05-27
 
 ### Fixed
 
-- **`claude-code-review.yml`: add `id-token: write` and remove deprecated `pr_number`/`model` inputs** (hotfix): `claude-code-action` v1.0.133+ requires `id-token: write` for OIDC token auth; without it every `workflow_dispatch` run failed with "Could not fetch an OIDC token". Also removes the deprecated `model` input from the `with:` block and moves `anthropic_api_key` from `env:` to `with:` as now supported by the action. The `main` branch still carried the original v1 workflow; this hotfix brings it to parity with the fix already applied to `develop` via PR #767.
+- **`claude-code-review.yml`: add `id-token: write` and remove deprecated `pr_number`/`model` inputs** (hotfix): `claude-code-action` v1.0.133+ requires `id-token: write` for OIDC token auth; without it every `workflow_dispatch` run fails with "Could not fetch an OIDC token". Also removes the deprecated `pr_number` and `model` inputs and moves `anthropic_api_key` from `env:` to `with:` as now supported by the action. The `main` branch still carried the original v1 workflow; this hotfix brings it to parity with the fix already applied to `develop` via PR #767.
 
 ## [0.28.3] - 2026-05-26
 
