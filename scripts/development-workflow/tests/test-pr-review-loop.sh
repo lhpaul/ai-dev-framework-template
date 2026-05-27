@@ -60,11 +60,18 @@ cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 if [ -n "${MOCK_GH_CALL_LOG:-}" ]; then
   printf '%s\n' "$*" >> "$MOCK_GH_CALL_LOG"
 fi
-# Differentiate POST calls from read calls.
+# Differentiate call types.
 case "$*" in
   *"--method POST"*)
     printf '%s\n' "${MOCK_GH_POST_OUTPUT:-{}}"
     exit "${MOCK_GH_POST_EXIT:-${MOCK_GH_EXIT:-0}}"
+    ;;
+  # gh pr view --json headRefOid — used by run_copilot_review to resolve head SHA.
+  # Tests set MOCK_GH_HEAD_SHA to control the returned value; default empty string
+  # means head_sha="" so run_copilot_review takes the unfiltered fallback branch.
+  *"headRefOid"*)
+    printf '%s\n' "${MOCK_GH_HEAD_SHA:-}"
+    exit "${MOCK_GH_EXIT:-0}"
     ;;
   *)
     printf '%s\n' "${MOCK_GH_OUTPUT:-[]}"
@@ -653,12 +660,13 @@ _copilot_overrides='
 '
 
 # Test 8.1: clean path — Copilot posts APPROVED review
-# POST (reviewer request) succeeds; GET (reviews poll) returns the jq-extracted
-# state token "APPROVED" (the mock gh returns MOCK_GH_OUTPUT verbatim, bypassing
-# jq execution, so we set MOCK_GH_OUTPUT to the already-processed state string).
+# POST (reviewer request) succeeds; GET (reviews poll) returns a JSON array of
+# review objects. run_copilot_review pipes gh output through jq, so MOCK_GH_OUTPUT
+# must be a valid JSON array. head SHA lookup (headRefOid) returns empty (default),
+# so the unfiltered fallback branch is exercised.
 # Use || to capture exit code safely when run_copilot_review may call set -e internally.
 export MOCK_GH_POST_OUTPUT='{}'
-export MOCK_GH_OUTPUT='APPROVED'
+export MOCK_GH_OUTPUT='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"state":"APPROVED","commit_id":""}]'
 unset COPILOT_BOT_LOGIN
 actual_output=""
 actual_exit=0
@@ -677,7 +685,7 @@ run_test "copilot_clean_exit_code" "0" "$actual_exit"
 
 # Test 8.2: needs_fixes path — Copilot posts CHANGES_REQUESTED review
 export MOCK_GH_POST_OUTPUT='{}'
-export MOCK_GH_OUTPUT='CHANGES_REQUESTED'
+export MOCK_GH_OUTPUT='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"state":"CHANGES_REQUESTED","commit_id":""}]'
 unset COPILOT_BOT_LOGIN
 actual_output=""
 actual_exit=0
@@ -695,10 +703,10 @@ run_test "copilot_needs_fixes_blocking_count" "BLOCKING_COUNT=1" \
 run_test "copilot_needs_fixes_exit_code" "1" "$actual_exit"
 
 # Test 8.3: escalate (timeout) path — no review posted within max_wait
-# POST succeeds; GET returns empty string (no review state); max_wait=0 so the
+# POST succeeds; GET returns empty array (no reviews yet); max_wait=0 so the
 # while loop body never executes and execution falls through to the timeout block.
 export MOCK_GH_POST_OUTPUT='{}'
-export MOCK_GH_OUTPUT=''
+export MOCK_GH_OUTPUT='[]'
 unset COPILOT_BOT_LOGIN
 actual_output=""
 actual_exit=0
@@ -740,7 +748,7 @@ export MOCK_GH_OUTPUT='[]'
 # Test 8.5: clean path — Copilot posts COMMENTED review (non-blocking comment)
 # COMMENTED is treated as clean (exit 0), BLOCKING_COUNT=0, SUGGESTION_COUNT=1.
 export MOCK_GH_POST_OUTPUT='{}'
-export MOCK_GH_OUTPUT='COMMENTED'
+export MOCK_GH_OUTPUT='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"state":"COMMENTED","commit_id":""}]'
 unset COPILOT_BOT_LOGIN
 actual_output=""
 actual_exit=0
@@ -765,7 +773,7 @@ export MOCK_GH_OUTPUT='[]'
 # The guard clamps it to 1. Test verifies the function completes (doesn't hang)
 # when poll_interval=0, by returning on the first poll with an APPROVED state.
 export MOCK_GH_POST_OUTPUT='{}'
-export MOCK_GH_OUTPUT='APPROVED'
+export MOCK_GH_OUTPUT='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"state":"APPROVED","commit_id":""}]'
 unset COPILOT_BOT_LOGIN
 actual_output=""
 actual_exit=0
