@@ -1507,6 +1507,7 @@ Interpret the result as follows:
 | 3         | `ready-for-regression` label missing at pre-Check-4 gate                                         | Apply label, re-run Step 8                          |
 | 4         | Unresolved review threads at pre-Check-4 gate                                                    | Resolve threads, push fixes, re-run checklist       |
 | 5         | CI not green at readiness gate                                                                    | Run Step 8 (pr-ci-loop.sh) and fix failing checks   |
+| 6         | Late-arriving async bot threads detected after label application                                  | Remove `ready-for-human-review`, add `needs-fixes`, return to Step 7a |
 
 When adding a new gate to this checklist, allocate the next unused exit code and update this table. Exit codes must not collide.
 
@@ -1802,7 +1803,7 @@ Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asyn
        gh pr edit "$PR_NUMBER" --remove-label "ready-for-human-review"
        gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
        echo "Return to Step 7a to address the newly-discovered threads."
-       exit 5  # Exit code 5 = "late-arriving async bot threads detected"
+       exit 6  # Exit code 6 = "late-arriving async bot threads detected"
      fi
      ```
    - If `$UNRESOLVED_RECHECK -eq 0`: No new threads found. Continue to Step 8b.

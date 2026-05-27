@@ -525,9 +525,9 @@ export function checkStagedChanges(): CheckResult {
     return {
       violations: [],
       astViolations: [],
-      hasErrors: false,
+      hasErrors: true,
       hasWarnings: false,
-      output: '',
+      output: 'ERROR: truncation checker could not read staged diff — failing closed to prevent policy bypass.',
     };
   }
 

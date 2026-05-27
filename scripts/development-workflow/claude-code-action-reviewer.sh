@@ -227,20 +227,24 @@ echo "INFO: polling for workflow run created after $DISPATCH_TIME..."
 TOTAL_ELAPSED=0
 RUN_URL=""
 RUN_CONCLUSION=""
+# JSON array of run IDs confirmed to belong to other PRs; excluded from future polls.
+EXCLUDED_RUN_IDS_JSON="[]"
 
 while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
   echo "INFO: polling... elapsed ${TOTAL_ELAPSED}s / ${MAX_WAIT}s"
 
   # Query workflow runs filtered by event=workflow_dispatch. We look for the
   # most recent run that matches our workflow file and was created after
-  # DISPATCH_TIME. Use a temp file to avoid SIGPIPE under pipefail.
+  # DISPATCH_TIME, excluding any run IDs already confirmed to belong to other PRs.
+  # Use a temp file to avoid SIGPIPE under pipefail.
   RUN_POLL_STDERR=$(mktemp)
   RUN_POLL_TMPFILE=$(mktemp)
   POLL_STATUS=0
   gh api "repos/$OWNER/$REPO/actions/runs?event=workflow_dispatch&per_page=20" \
     2>"$RUN_POLL_STDERR" \
     | jq -r --arg wf "$WORKFLOW_FILE" --arg poll_after "$POLL_AFTER_TIME" \
-        '[.workflow_runs[] | select((.path | endswith($wf)) and .created_at >= $poll_after)] | first | {status: .status, conclusion: .conclusion, html_url: .html_url, id: .id}' \
+        --argjson excluded "$EXCLUDED_RUN_IDS_JSON" \
+        '[.workflow_runs[] | select((.path | endswith($wf)) and .created_at >= $poll_after and ((.id | tostring) as $rid | $excluded | map(tostring) | index($rid) == null))] | first | {status: .status, conclusion: .conclusion, html_url: .html_url, id: .id}' \
     > "$RUN_POLL_TMPFILE" 2>/dev/null || POLL_STATUS=$?
 
   if [ "$POLL_STATUS" -ne 0 ]; then
@@ -280,7 +284,8 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
     RUN_PR_INPUT=$(gh api "repos/$OWNER/$REPO/actions/runs/$RUN_ID" \
       --jq '.inputs.pr_number // empty' 2>/dev/null || echo "")
     if [ -n "$RUN_PR_INPUT" ] && [ "$RUN_PR_INPUT" != "$PR_NUMBER" ]; then
-      echo "INFO: run $RUN_ID has pr_number=$RUN_PR_INPUT, expected $PR_NUMBER — skipping (concurrent dispatch for different PR)"
+      echo "INFO: run $RUN_ID has pr_number=$RUN_PR_INPUT, expected $PR_NUMBER — excluding from future polls (concurrent dispatch for different PR)"
+      EXCLUDED_RUN_IDS_JSON=$(printf '%s\n' "$EXCLUDED_RUN_IDS_JSON" | jq ". + [\"${RUN_ID}\"]")
       sleep "$POLL_INTERVAL"
       TOTAL_ELAPSED=$((TOTAL_ELAPSED + POLL_INTERVAL))
       continue

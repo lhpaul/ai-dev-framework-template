@@ -94,6 +94,12 @@ jobs:
           # attempt before giving up. Defaults: 3 polls × 30 s = up to 90 s wait.
           GUARD_MAX_POLLS="${GUARD_MAX_POLLS:-3}"
           GUARD_POLL_INTERVAL="${GUARD_POLL_INTERVAL:-30}"
+          case "$GUARD_MAX_POLLS" in
+            ''|0|*[!0-9]*) echo "ERROR: GUARD_MAX_POLLS must be a positive integer (got: '$GUARD_MAX_POLLS')" >&2; exit 1 ;;
+          esac
+          case "$GUARD_POLL_INTERVAL" in
+            ''|0|*[!0-9]*) echo "ERROR: GUARD_POLL_INTERVAL must be a positive integer (got: '$GUARD_POLL_INTERVAL')" >&2; exit 1 ;;
+          esac
 
           FOUND=0
           poll=0
