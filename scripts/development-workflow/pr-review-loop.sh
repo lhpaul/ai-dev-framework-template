@@ -914,6 +914,17 @@ run_copilot_review() {
   # Resolve head SHA before requesting review so the poll loop can filter
   # reviews to only those submitted against the current commit (#759).
   head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>/dev/null || true)"
+  if [ -z "$head_sha" ]; then
+    # Cannot determine current commit — escalate rather than risk matching a
+    # stale unscoped review from a previous cycle.
+    print_kv RESULT escalate
+    print_kv REASON head-sha-unavailable
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    return 2
+  fi
 
   # Step 1: Request Copilot as a reviewer (idempotent — GitHub silently
   # deduplicates reviewer requests if Copilot is already requested).
@@ -944,15 +955,9 @@ run_copilot_review() {
 
   while [ "$elapsed" -lt "$max_wait" ]; do
     set +e
-    if [ -n "$head_sha" ]; then
-      review_state="$(gh api --paginate "repos/$owner/$repo_name/pulls/$pr_number/reviews" 2>/dev/null \
-        | jq -rs --arg login "$bot_login" --arg sha "$head_sha" \
-          '[ .[] | .[] | select(.user.login == $login and .commit_id == $sha) ] | last | .state // empty')"
-    else
-      review_state="$(gh api --paginate "repos/$owner/$repo_name/pulls/$pr_number/reviews" 2>/dev/null \
-        | jq -rs --arg login "$bot_login" \
-          '[ .[] | .[] | select(.user.login == $login) ] | last | .state // empty')"
-    fi
+    review_state="$(gh api --paginate "repos/$owner/$repo_name/pulls/$pr_number/reviews" 2>/dev/null \
+      | jq -rs --arg login "$bot_login" --arg sha "$head_sha" \
+        '[ .[] | .[] | select(.user.login == $login and .commit_id == $sha) ] | last | .state // empty')"
     set -e
 
     case "$review_state" in
@@ -3653,6 +3658,9 @@ if [ "${#platforms[@]}" -eq 0 ]; then
   fi
   if [ -n "$_pr_base" ]; then
     if _PR_CONFIG_TMPFILE="$(mktemp 2>/dev/null)"; then
+      # Refresh the remote-tracking ref so git show reads the current target
+      # branch config, not a potentially stale cached ref (#777).
+      git fetch origin "$_pr_base" 2>/dev/null || true
       if ! git show "origin/${_pr_base}:.ai-dev-workflow.yaml" > "$_PR_CONFIG_TMPFILE" 2>/dev/null; then
         rm -f "$_PR_CONFIG_TMPFILE"
         _PR_CONFIG_TMPFILE=""
