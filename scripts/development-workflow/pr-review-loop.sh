@@ -45,6 +45,7 @@ done
 unset _skip_next
 _LOCK_DIR="/tmp/pr-review-loop-${_PR_ARG:-unknown}.lockdir"
 _OWN_LOCK=0
+_PR_CONFIG_TMPFILE=""
 # PID of the current background child (sleep or gh api) started by
 # _interruptible_sleep / _interruptible_gh.  The TERM/INT handlers kill this
 # child before removing the lock so the signal fires promptly instead of waiting
@@ -97,7 +98,7 @@ else
     exit 75
   fi
 fi
-trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"' EXIT
+trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"; [ -n "$_PR_CONFIG_TMPFILE" ] && rm -f "$_PR_CONFIG_TMPFILE"' EXIT
 # SIGTERM/SIGINT handlers: kill the current background child (if any) so the
 # handler fires promptly even while a foreground sleep or gh api call is
 # running, then clean up the lock dir and re-raise the signal so the parent
@@ -3624,8 +3625,31 @@ if [ -z "$pr_number" ]; then
 fi
 
 if [ "${#platforms[@]}" -eq 0 ]; then
-  config_file="$(workflow_config_file)"
-  if workflow_config_exists; then
+  # Resolve config from the PR's target branch so platform coverage is
+  # consistent regardless of the operator's local checkout state (#756).
+  # Capture stderr separately: "Could not resolve" means PR not found (silent
+  # fallback); any other error is unexpected and warrants a diagnostic warning.
+  set +e
+  _pr_base_raw="$(gh pr view "$pr_number" --json baseRefName --jq '.baseRefName' 2>&1)"
+  _pr_base_exit=$?
+  set -e
+  _pr_base=""
+  if [ "$_pr_base_exit" -eq 0 ]; then
+    _pr_base="$_pr_base_raw"
+  elif ! printf '%s\n' "$_pr_base_raw" | grep -qi "Could not resolve\|not found"; then
+    printf 'WARNING: failed to resolve PR base branch (exit %d): %s — falling back to working-tree config\n' \
+      "$_pr_base_exit" "$_pr_base_raw" >&2
+  fi
+  if [ -n "$_pr_base" ]; then
+    if _PR_CONFIG_TMPFILE="$(mktemp 2>/dev/null)"; then
+      if ! git show "origin/${_pr_base}:.ai-dev-workflow.yaml" > "$_PR_CONFIG_TMPFILE" 2>/dev/null; then
+        rm -f "$_PR_CONFIG_TMPFILE"
+        _PR_CONFIG_TMPFILE=""
+      fi
+    fi
+  fi
+  config_file="${_PR_CONFIG_TMPFILE:-$(workflow_config_file)}"
+  if [ -f "$config_file" ]; then
     while IFS= read -r line; do
       line="$(trim "$line")"
       [ -n "$line" ] && platforms+=("$line")
@@ -3635,7 +3659,7 @@ fi
 
 if [ "${#phase_after_clean_platforms[@]}" -eq 0 ]; then
   config_file="${config_file:-$(workflow_config_file)}"
-  if workflow_config_exists; then
+  if [ -f "$config_file" ]; then
     while IFS= read -r line; do
       line="$(trim "$line")"
       [ -n "$line" ] && phase_after_clean_platforms+=("$line")
