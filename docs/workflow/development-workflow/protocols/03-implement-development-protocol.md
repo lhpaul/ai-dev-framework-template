@@ -248,9 +248,20 @@ RESULT=$(timeout 30 gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER" 2>/dev/null) ||
   exit 1
 }
 
-# Alternative — background-wait pattern for finer-grained control:
+# Alternative — background-wait pattern with an enforced deadline:
+# (bash 3.2 compatible — uses a polling loop instead of wait -n)
 gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER" > /tmp/result.json &
 API_PID=$!
+DEADLINE=$(($(date +%s) + 30))
+while kill -0 "$API_PID" 2>/dev/null && [ "$(date +%s)" -lt "$DEADLINE" ]; do
+  sleep 1
+done
+if kill -0 "$API_PID" 2>/dev/null; then
+  kill "$API_PID" 2>/dev/null
+  wait "$API_PID" 2>/dev/null
+  echo "ERROR: API call timed out after 30 s" >&2
+  exit 1
+fi
 wait "$API_PID" || { echo "ERROR: API call failed" >&2; exit 1; }
 ```
 
