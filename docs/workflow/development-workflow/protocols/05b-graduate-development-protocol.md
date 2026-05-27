@@ -105,6 +105,47 @@ If the diff is empty (no CHANGELOG difference), warn the human:
 
 ---
 
+## Step 2.6: Verify Review Platform Coverage
+
+Before opening the graduation PR, confirm that the integration branch's `.ai-dev-workflow.yaml` lists all applicable review platforms.
+
+When an integration branch is created, it branches off `develop` at a point in time. If `review.platforms` entries are later added to `develop` (e.g., `haystack` was added in v0.27.0), those additions are **not** automatically propagated to existing integration branches. A graduation PR run against a branch missing a platform will silently skip that platform's triage.
+
+**Checklist — run before Step 3**:
+
+1. Fetch the integration branch's `.ai-dev-workflow.yaml` and compare `review.platforms` against the same list on `develop`:
+
+   ```bash
+   # Show review.platforms on develop
+   git show origin/develop:.ai-dev-workflow.yaml | grep -A 20 'platforms:'
+
+   # Show review.platforms on the integration branch
+   git show origin/develop-<slug>:.ai-dev-workflow.yaml | grep -A 20 'platforms:'
+   ```
+
+2. If any platform present on `develop` is absent from `develop-<slug>`, update `.ai-dev-workflow.yaml` on the integration branch to match. At minimum, both `pr-agent` and `haystack` must be listed if the main repository uses them.
+
+   ```bash
+   set -euo pipefail
+   git fetch origin
+   git checkout -B develop-<slug> origin/develop-<slug>
+   CURRENT_BRANCH=$(git branch --show-current)
+   if [ "$CURRENT_BRANCH" != "develop-<slug>" ]; then
+     echo "ERROR: expected branch develop-<slug>, got $CURRENT_BRANCH — aborting" >&2
+     exit 1
+   fi
+   # Edit .ai-dev-workflow.yaml to add any missing platforms under review.platforms
+   git add .ai-dev-workflow.yaml
+   git commit -m "chore: sync review.platforms from develop before graduation"
+   git push origin develop-<slug>
+   ```
+
+3. If the platforms already match, no action is needed — proceed to Step 3.
+
+> **Why this matters**: PRs targeting an integration branch use that branch's `.ai-dev-workflow.yaml` to determine which review platforms run. A missing platform means PR triage is silently incomplete for every sub-item PR on that branch, not just the graduation PR. Catching the gap before graduation ensures the ceremony retrospective has accurate platform coverage data and that the graduation PR itself is fully reviewed. (Root cause: Batch 64, issue #754.)
+
+---
+
 ## Step 3: Open the Graduation PR
 
 1. Ensure the local `develop-<slug>` branch is up to date:
