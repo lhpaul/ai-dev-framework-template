@@ -4,17 +4,10 @@ on:
   # Triggered on demand by pr-review-loop.sh or a repository maintainer.
   # Not triggered automatically on PR open, push, or synchronize events.
   workflow_dispatch:
-    inputs:
-      pr_number:
-        description: "Pull request number to review"
-        required: true
-        type: number
 
 # Prevent duplicate simultaneous runs for the same PR.
-# Uses inputs.pr_number (not github.event.pull_request.number,
-# which is unavailable on workflow_dispatch events).
 concurrency:
-  group: claude-code-review-${{ inputs.pr_number }}
+  group: claude-code-review-${{ github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -25,9 +18,11 @@ jobs:
     # Minimum permissions required:
     #   pull-requests: write — to post review comments on the PR
     #   contents: read — to read the repository checkout during review
+    #   id-token: write — required for OIDC token auth in claude-code-action v1.0.133+
     permissions:
       pull-requests: write
       contents: read
+      id-token: write
 
     steps:
       - name: Run Claude Code Action PR review
@@ -36,16 +31,7 @@ jobs:
         # newer releases and update the SHA accordingly before merging.
         uses: anthropics/claude-code-action@db614ad5ed8c94def23ad6cc336751c8ba450ac1  # v1.0.133
         with:
-          pr_number: ${{ inputs.pr_number }}
-          # Default model: claude-sonnet-4-6
-          # Rationale: Sonnet 4.6 is Anthropic's recommended CI review model —
-          # it delivers adequate review quality at ~1/5 the token cost of Opus.
-          # Public-repo Actions minutes are free; the only cost is token
-          # consumption (~$0.30 per review pass with claude-sonnet-4-6).
-          model: claude-sonnet-4-6
-        env:
-          # Authenticate exclusively via the repository secret ANTHROPIC_API_KEY.
-          # No other Anthropic credential (OAuth, personal token) is used.
+          # Authenticate via the repository secret ANTHROPIC_API_KEY.
           # Set the secret in GitHub repo settings → Secrets → Actions before
           # triggering this workflow.
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
