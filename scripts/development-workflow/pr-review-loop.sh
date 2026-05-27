@@ -3829,7 +3829,7 @@ for index in "${!platforms[@]}"; do
     needs_fixes) _prt_disp="needs_fixes" ;;
     *)           _prt_disp="$platform_result" ;;
   esac
-  platform_result_tokens+=("${platform_name}=${_prt_disp}")
+  platform_result_tokens+=("${platform_name}:${_prt_disp}")
   unset _prt_reason _prt_disp
 
   # In compare mode, record a normalized verdict for each platform before
@@ -4146,15 +4146,22 @@ EOF
 
   local _patch_payload
   _patch_payload="$(jq -n --arg body "$comment_body" '{body: $body}')"
+  local _comment_posted=0
   if [ -n "$_existing_comment_id" ]; then
     # Edit the existing comment in place; fall back to creating a new comment
     # if the PATCH fails (e.g. comment was deleted or a transient API error).
-    gh api "repos/$_repo/issues/comments/$_existing_comment_id" \
-      --method PATCH \
-      --input - <<< "$_patch_payload" >/dev/null 2>&1 \
-      || gh pr comment "$pr_number" --body "$comment_body" >/dev/null 2>&1
-  else
-    gh pr comment "$pr_number" --body "$comment_body" >/dev/null 2>&1
+    if gh api "repos/$_repo/issues/comments/$_existing_comment_id" \
+        --method PATCH \
+        --input - <<< "$_patch_payload" >/dev/null 2>&1; then
+      _comment_posted=1
+    else
+      echo "WARN: failed to update existing summary comment ${_existing_comment_id} for PR ${pr_number}; falling back to create" >&2
+    fi
+  fi
+  if [ "$_comment_posted" -eq 0 ]; then
+    if ! gh pr comment "$pr_number" --body "$comment_body" >/dev/null 2>&1; then
+      echo "WARN: failed to post reviewer loop summary comment for PR ${pr_number}" >&2
+    fi
   fi
 
   set -e
@@ -4419,8 +4426,8 @@ fi
 _summary_platform_list=""
 if [ "${#platform_result_tokens[@]}" -gt 0 ]; then
   for _sprt in "${platform_result_tokens[@]}"; do
-    _spname="${_sprt%%=*}"
-    _spdisp="${_sprt#*=}"
+    _spname="${_sprt%%:*}"
+    _spdisp="${_sprt#*:}"
     [ -n "$_summary_platform_list" ] && _summary_platform_list="${_summary_platform_list}, "
     _summary_platform_list="${_summary_platform_list}${_spname} (${_spdisp})"
   done

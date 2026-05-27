@@ -825,10 +825,10 @@ echo ""
 echo "=== Area 10: per-platform result tokens in summary comment ==="
 
 # Test 10.1: _summary_platform_list format from platform_result_tokens
-_test_tokens=("pr-agent=clean" "haystack=unavailable" "claude-code-action=escalated (timeout)")
+_test_tokens=("pr-agent:clean" "haystack:unavailable" "claude-code-action:escalated (timeout)")
 _test_spl=""
 for _sprt in "${_test_tokens[@]:-}"; do
-  _spname="${_sprt%%=*}"; _spdisp="${_sprt#*=}"
+  _spname="${_sprt%%:*}"; _spdisp="${_sprt#*:}"
   [ -n "$_test_spl" ] && _test_spl="${_test_spl}, "
   _test_spl="${_test_spl}${_spname} (${_spdisp})"
 done
@@ -843,7 +843,7 @@ _test_tokens=()
 _test_spl=""
 if [ "${#_test_tokens[@]}" -gt 0 ]; then
   for _sprt in "${_test_tokens[@]}"; do
-    _spname="${_sprt%%=*}"; _spdisp="${_sprt#*=}"
+    _spname="${_sprt%%:*}"; _spdisp="${_sprt#*:}"
     [ -n "$_test_spl" ] && _test_spl="${_test_spl}, "
     _test_spl="${_test_spl}${_spname} (${_spdisp})"
   done
