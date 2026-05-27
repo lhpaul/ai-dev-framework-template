@@ -4040,7 +4040,8 @@ _ADVISORY_ENTRY_LINES_
       feature/*|fix/*|refactor/*|hotfix/*)
         local _has_regression_label
         _has_regression_label="$(gh pr view "$pr_number" --json labels \
-          --jq '[.labels[].name] | any(. == "ready-for-regression")' 2>/dev/null)" || true
+          --jq '[.labels[].name] | any(. == "ready-for-regression")' 2>/dev/null)" \
+          || { echo "WARN: gh pr view failed for ready-for-regression check (PR ${pr_number}); label check skipped" >&2; _has_regression_label=""; }
         if [ "${_has_regression_label:-}" = "false" ]; then
           regression_label_section="
 
@@ -4108,8 +4109,9 @@ Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs afte
 EOF
 )"
 
-  # Suppress errors — a failed comment post should not change the exit code.
-  # The script's primary contract is the key=value output and exit code.
+  # Errors in the comment-posting block must not change the script's exit code or
+  # prevent key=value output from reaching the caller. Log warnings to stderr so
+  # failures are visible in CI logs without being fatal.
   set +e
 
   # Update-in-place: find an existing script-posted summary comment and edit it
@@ -4121,7 +4123,8 @@ EOF
   # to this script and is present in every comment it posts.
   local _existing_comment_id=""
   local _repo
-  _repo="$(repo_slug 2>/dev/null)" || true
+  _repo="$(repo_slug 2>/dev/null)" \
+    || { echo "WARN: repo_slug failed in _post_review_summary; will post new comment without update-in-place check" >&2; _repo=""; }
   if [ -n "$_repo" ]; then
     _existing_comment_id="$(
       gh api "repos/$_repo/issues/$pr_number/comments" --paginate 2>/dev/null \
@@ -4137,15 +4140,18 @@ EOF
             | last
             | .id // empty
           '
-    )" || true
+    )" \
+      || { echo "WARN: failed to fetch existing summary comments for PR ${pr_number}; will create a new comment" >&2; _existing_comment_id=""; }
   fi
 
+  local _patch_payload
+  _patch_payload="$(jq -n --arg body "$comment_body" '{body: $body}')"
   if [ -n "$_existing_comment_id" ]; then
     # Edit the existing comment in place; fall back to creating a new comment
     # if the PATCH fails (e.g. comment was deleted or a transient API error).
     gh api "repos/$_repo/issues/comments/$_existing_comment_id" \
       --method PATCH \
-      -f body="$comment_body" >/dev/null 2>&1 \
+      --input - <<< "$_patch_payload" >/dev/null 2>&1 \
       || gh pr comment "$pr_number" --body "$comment_body" >/dev/null 2>&1
   else
     gh pr comment "$pr_number" --body "$comment_body" >/dev/null 2>&1
