@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`claude-code-action-reviewer.sh`: dispatch workflow against default branch, not PR base branch** — `workflow_dispatch` only works for workflows registered on the repository's default branch; dispatching against `BASE_REF` (e.g. `develop`) caused a permanent 404 when the workflow file was not yet on the default branch. The script now resolves the default branch via `gh repo view` and uses it as the dispatch ref, falling back to `main` if resolution fails.
 - **`pr-review-loop.sh`: report per-platform results and skipped platforms in reviewer loop summary comment** (#755) — the summary comment previously listed only platform names without individual pass/fail/skip outcomes, and silently exited with no comment at all when `review.platforms` was empty or the config file was absent. The script now tracks each platform's display result (`clean`, `skipped`, `unavailable`, `escalated (<reason>)`, `needs_fixes`) and renders them in the **Platforms** field as `<platform> (<result>)` pairs (e.g. `haystack (clean), claude-code-action (unavailable)`). An "Automated Reviewer Loop Summary" comment is also now posted when no platforms are configured, with result `skipped — no platforms configured in review.platforms`, so the reviewer-loop-guard CI check always has a comment to find. Also fixes a forward-reference bug where `_post_review_summary` was called before its function definition in the no-platforms-configured early-exit path (bash evaluates sequentially; the call would have failed with `command not found`).
 
+## [0.28.4] - 2026-05-27
+
+### Fixed
+
+- **`claude-code-review.yml`: add `id-token: write` and remove deprecated `pr_number`/`model` inputs** (hotfix): `claude-code-action` v1.0.133+ requires `id-token: write` for OIDC token auth; without it every `workflow_dispatch` run failed with "Could not fetch an OIDC token". Also removes the deprecated `model` input from the `with:` block and moves `anthropic_api_key` from `env:` to `with:` as now supported by the action. The `main` branch still carried the original v1 workflow; this hotfix brings it to parity with the fix already applied to `develop` via PR #767.
+
 ## [0.28.3] - 2026-05-26
 
 ### Fixed
@@ -819,7 +825,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.3...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.4...HEAD
+[0.28.4]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.3...v0.28.4
 [0.28.3]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.2...v0.28.3
 [0.28.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.1...v0.28.2
 [0.28.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.0...v0.28.1
