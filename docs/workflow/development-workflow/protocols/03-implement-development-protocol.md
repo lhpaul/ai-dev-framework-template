@@ -201,6 +201,92 @@ Shell code blocks embedded in protocol and documentation markdown files are copi
 
 These rules apply equally to all protocol documents under `docs/workflow/development-workflow/protocols/` and to any other markdown file that embeds shell commands intended to be run by agents or humans.
 
+### 9. `jq` parse-failure handling
+
+`jq` exits non-zero when the input is not valid JSON. Without `-e` or an explicit exit-code check, a parse failure silently produces an empty string and the script continues with a missing value.
+
+Always guard `jq` calls against parse failures:
+
+```bash
+# Wrong — malformed JSON produces empty string; script continues undetected:
+VALUE=$(echo "$RESPONSE" | jq -r '.field')
+
+# Correct — use -e so jq exits 5 on a null/false result, and check the exit code:
+if ! VALUE=$(echo "$RESPONSE" | jq -re '.field' 2>/dev/null); then
+  echo "ERROR: jq parse failed or field is null/missing" >&2
+  exit 1
+fi
+
+# Correct alternative — explicit OR handler for inline use:
+VALUE=$(echo "$RESPONSE" | jq -r '.field') || { echo "ERROR: jq parse failed" >&2; exit 1; }
+```
+
+Also validate that the parsed value is non-empty before using it when an empty string is not a valid sentinel:
+
+```bash
+[ -z "$VALUE" ] && { echo "ERROR: parsed value is empty" >&2; exit 1; }
+```
+
+This pattern is required for every `jq` call whose output is passed to a downstream command, comparison, or API call. Pure logging/display calls that do not affect control flow are exempt.
+
+### 10. External CLI timeout budget
+
+External CLI calls (`gh`, `curl`, `haystack`, `timeout`, custom tools) can block indefinitely if the remote service is slow or unresponsive. Scripts that impose a timeout budget must propagate and check the result.
+
+```bash
+# Wrong — no timeout; hangs indefinitely if the service is slow:
+RESULT=$(gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER")
+
+# Correct — use the `timeout` command and check the exit code:
+if ! RESULT=$(timeout 30 gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER" 2>/dev/null); then
+  EXIT_CODE=$?
+  if [ "$EXIT_CODE" -eq 124 ]; then
+    echo "ERROR: gh api timed out after 30 s" >&2
+  else
+    echo "ERROR: gh api exited with code $EXIT_CODE" >&2
+  fi
+  exit 1
+fi
+
+# Alternative — background-wait pattern for finer-grained control:
+gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER" > /tmp/result.json &
+API_PID=$!
+if ! wait "$API_PID"; then
+  kill "$API_PID" 2>/dev/null
+  echo "ERROR: API call failed" >&2
+  exit 1
+fi
+```
+
+When a script receives a timeout budget from its caller (e.g., a `MAX_WAIT` parameter or environment variable), derive per-call timeouts from it rather than hard-coding constants. Never silently absorb a timeout by catching exit code 124 and returning an empty string — the caller must be informed.
+
+### 11. Structured-data input validation before use
+
+Scripts that accept structured input (JSON, YAML, TSV, newline-delimited data) from a previous command, file, or pipe must validate that the input is non-empty before attempting to parse or iterate over it. Proceeding with an empty input silently skips all iterations and produces no error, which can look like a successful run.
+
+```bash
+# Wrong — empty RESPONSE silently produces no iterations:
+echo "$RESPONSE" | jq -r '.items[]' | while read -r item; do
+  process_item "$item"
+done
+
+# Correct — validate before parsing:
+if [ -z "$RESPONSE" ]; then
+  echo "ERROR: empty response — cannot parse items" >&2
+  exit 1
+fi
+ITEMS=$(echo "$RESPONSE" | jq -r '.items[]') || { echo "ERROR: jq failed on response" >&2; exit 1; }
+if [ -z "$ITEMS" ]; then
+  echo "WARNING: response contained no items — nothing to process"
+  exit 0  # or exit 1, depending on whether an empty list is expected
+fi
+echo "$ITEMS" | while read -r item; do
+  process_item "$item"
+done
+```
+
+This validation is especially important in PR-review loop scripts and CI tools where a silent empty-parse produces a false-clean result.
+
 ---
 
 ## Test Harness Coverage Checklist
