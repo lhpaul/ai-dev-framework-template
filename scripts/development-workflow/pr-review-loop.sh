@@ -944,13 +944,13 @@ run_copilot_review() {
   while [ "$elapsed" -lt "$max_wait" ]; do
     set +e
     if [ -n "$head_sha" ]; then
-      review_state="$(gh api "repos/$owner/$repo_name/pulls/$pr_number/reviews" \
-        --jq "[.[] | select(.user.login == \"$bot_login\" and .commit_id == \"$head_sha\")] | last | .state // empty" \
-        2>/dev/null)"
+      review_state="$(gh api --paginate "repos/$owner/$repo_name/pulls/$pr_number/reviews" 2>/dev/null \
+        | jq -rs --arg login "$bot_login" --arg sha "$head_sha" \
+          '[ .[] | .[] | select(.user.login == $login and .commit_id == $sha) ] | last | .state // empty')"
     else
-      review_state="$(gh api "repos/$owner/$repo_name/pulls/$pr_number/reviews" \
-        --jq "[.[] | select(.user.login == \"$bot_login\")] | last | .state // empty" \
-        2>/dev/null)"
+      review_state="$(gh api --paginate "repos/$owner/$repo_name/pulls/$pr_number/reviews" 2>/dev/null \
+        | jq -rs --arg login "$bot_login" \
+          '[ .[] | .[] | select(.user.login == $login) ] | last | .state // empty')"
     fi
     set -e
 
