@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.4] - 2026-05-27
+
+### Fixed
+
+- **`claude-code-review.yml`: add `id-token: write` and remove deprecated `pr_number`/`model` inputs** (hotfix): `claude-code-action` v1.0.133+ requires `id-token: write` for OIDC token auth; without it every `workflow_dispatch` run fails with "Could not fetch an OIDC token". Also removes the deprecated `pr_number` and `model` inputs and moves `anthropic_api_key` from `env:` to `with:` as now supported by the action. The `main` branch still carried the original v1 workflow; this hotfix brings it to parity with the fix already applied to `develop` via PR #767.
+
 ## [0.28.3] - 2026-05-26
 
 ### Fixed
@@ -794,7 +800,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.3...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.4...HEAD
+[0.28.4]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.3...v0.28.4
 [0.28.3]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.2...v0.28.3
 [0.28.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.1...v0.28.2
 [0.28.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.0...v0.28.1
