@@ -126,7 +126,14 @@ When an integration branch is created, it branches off `develop` at a point in t
 2. If any platform present on `develop` is absent from `develop-<slug>`, update `.ai-dev-workflow.yaml` on the integration branch to match. At minimum, both `pr-agent` and `haystack` must be listed if the main repository uses them.
 
    ```bash
+   set -euo pipefail
+   git fetch origin
    git checkout -B develop-<slug> origin/develop-<slug>
+   CURRENT_BRANCH=$(git branch --show-current)
+   if [ "$CURRENT_BRANCH" != "develop-<slug>" ]; then
+     echo "ERROR: expected branch develop-<slug>, got $CURRENT_BRANCH — aborting" >&2
+     exit 1
+   fi
    # Edit .ai-dev-workflow.yaml to add any missing platforms under review.platforms
    git add .ai-dev-workflow.yaml
    git commit -m "chore: sync review.platforms from develop before graduation"
