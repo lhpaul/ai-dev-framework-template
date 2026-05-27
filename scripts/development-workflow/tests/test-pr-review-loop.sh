@@ -68,7 +68,7 @@ case "$*" in
     ;;
   # gh pr view --json headRefOid — used by run_copilot_review to resolve head SHA.
   # Tests set MOCK_GH_HEAD_SHA to control the returned value; default empty string
-  # means head_sha="" so run_copilot_review takes the unfiltered fallback branch.
+  # triggers the head-sha-unavailable escalation path.
   *"headRefOid"*)
     printf '%s\n' "${MOCK_GH_HEAD_SHA:-}"
     exit "${MOCK_GH_EXIT:-0}"
@@ -662,11 +662,12 @@ _copilot_overrides='
 # Test 8.1: clean path — Copilot posts APPROVED review
 # POST (reviewer request) succeeds; GET (reviews poll) returns a JSON array of
 # review objects. run_copilot_review pipes gh output through jq, so MOCK_GH_OUTPUT
-# must be a valid JSON array. head SHA lookup (headRefOid) returns empty (default),
-# so the unfiltered fallback branch is exercised.
+# must be a valid JSON array. MOCK_GH_HEAD_SHA is set so the SHA-filtered path is
+# exercised and commit_id in the review matches.
 # Use || to capture exit code safely when run_copilot_review may call set -e internally.
 export MOCK_GH_POST_OUTPUT='{}'
-export MOCK_GH_OUTPUT='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"state":"APPROVED","commit_id":""}]'
+export MOCK_GH_HEAD_SHA='abc123sha'
+export MOCK_GH_OUTPUT='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"state":"APPROVED","commit_id":"abc123sha"}]'
 unset COPILOT_BOT_LOGIN
 actual_output=""
 actual_exit=0
@@ -685,7 +686,8 @@ run_test "copilot_clean_exit_code" "0" "$actual_exit"
 
 # Test 8.2: needs_fixes path — Copilot posts CHANGES_REQUESTED review
 export MOCK_GH_POST_OUTPUT='{}'
-export MOCK_GH_OUTPUT='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"state":"CHANGES_REQUESTED","commit_id":""}]'
+export MOCK_GH_HEAD_SHA='abc123sha'
+export MOCK_GH_OUTPUT='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"state":"CHANGES_REQUESTED","commit_id":"abc123sha"}]'
 unset COPILOT_BOT_LOGIN
 actual_output=""
 actual_exit=0
@@ -705,7 +707,9 @@ run_test "copilot_needs_fixes_exit_code" "1" "$actual_exit"
 # Test 8.3: escalate (timeout) path — no review posted within max_wait
 # POST succeeds; GET returns empty array (no reviews yet); max_wait=0 so the
 # while loop body never executes and execution falls through to the timeout block.
+# MOCK_GH_HEAD_SHA is set so the SHA check passes and the timeout block is reached.
 export MOCK_GH_POST_OUTPUT='{}'
+export MOCK_GH_HEAD_SHA='abc123sha'
 export MOCK_GH_OUTPUT='[]'
 unset COPILOT_BOT_LOGIN
 actual_output=""
@@ -725,7 +729,9 @@ run_test "copilot_timeout_exit_code" "2" "$actual_exit"
 
 # Test 8.4: escalate (unavailable) path — reviewer request API call fails
 # POST fails (non-zero exit); function must return RESULT=escalate REASON=unavailable.
+# MOCK_GH_HEAD_SHA is set so the SHA check passes and the POST failure path is reached.
 export MOCK_GH_POST_EXIT=1
+export MOCK_GH_HEAD_SHA='abc123sha'
 export MOCK_GH_OUTPUT=''
 unset COPILOT_BOT_LOGIN
 actual_output=""
@@ -748,7 +754,8 @@ export MOCK_GH_OUTPUT='[]'
 # Test 8.5: clean path — Copilot posts COMMENTED review (non-blocking comment)
 # COMMENTED is treated as clean (exit 0), BLOCKING_COUNT=0, SUGGESTION_COUNT=1.
 export MOCK_GH_POST_OUTPUT='{}'
-export MOCK_GH_OUTPUT='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"state":"COMMENTED","commit_id":""}]'
+export MOCK_GH_HEAD_SHA='abc123sha'
+export MOCK_GH_OUTPUT='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"state":"COMMENTED","commit_id":"abc123sha"}]'
 unset COPILOT_BOT_LOGIN
 actual_output=""
 actual_exit=0
@@ -773,7 +780,8 @@ export MOCK_GH_OUTPUT='[]'
 # The guard clamps it to 1. Test verifies the function completes (doesn't hang)
 # when poll_interval=0, by returning on the first poll with an APPROVED state.
 export MOCK_GH_POST_OUTPUT='{}'
-export MOCK_GH_OUTPUT='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"state":"APPROVED","commit_id":""}]'
+export MOCK_GH_HEAD_SHA='abc123sha'
+export MOCK_GH_OUTPUT='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"state":"APPROVED","commit_id":"abc123sha"}]'
 unset COPILOT_BOT_LOGIN
 actual_output=""
 actual_exit=0
@@ -788,6 +796,27 @@ run_test "copilot_zero_poll_interval_completes" "RESULT=clean" \
   "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
 run_test "copilot_zero_poll_interval_exit_code" "0" "$actual_exit"
 export MOCK_GH_OUTPUT='[]'
+
+# Test 8.7: escalate (head-sha-unavailable) path — headRefOid lookup returns empty
+# When head_sha is empty the function must escalate immediately rather than
+# falling back to an unscoped review query that could match stale verdicts.
+unset MOCK_GH_HEAD_SHA
+export MOCK_GH_POST_OUTPUT='{}'
+unset COPILOT_BOT_LOGIN
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_copilot_overrides"
+  _ec=0
+  run_copilot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "copilot_head_sha_unavailable_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "copilot_head_sha_unavailable_reason" "REASON=head-sha-unavailable" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "copilot_head_sha_unavailable_exit_code" "2" "$actual_exit"
 
 # ---------------------------------------------------------------------------
 # Area 9: haystack platform
