@@ -3641,10 +3641,11 @@ if [ "${#platforms[@]}" -eq 0 ]; then
       "$_pr_base_exit" "$_pr_base_raw" >&2
   fi
   if [ -n "$_pr_base" ]; then
-    _PR_CONFIG_TMPFILE="$(mktemp)"
-    if ! git show "origin/${_pr_base}:.ai-dev-workflow.yaml" > "$_PR_CONFIG_TMPFILE" 2>/dev/null; then
-      rm -f "$_PR_CONFIG_TMPFILE"
-      _PR_CONFIG_TMPFILE=""
+    if _PR_CONFIG_TMPFILE="$(mktemp 2>/dev/null)"; then
+      if ! git show "origin/${_pr_base}:.ai-dev-workflow.yaml" > "$_PR_CONFIG_TMPFILE" 2>/dev/null; then
+        rm -f "$_PR_CONFIG_TMPFILE"
+        _PR_CONFIG_TMPFILE=""
+      fi
     fi
   fi
   config_file="${_PR_CONFIG_TMPFILE:-$(workflow_config_file)}"
