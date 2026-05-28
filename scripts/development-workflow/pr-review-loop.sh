@@ -987,7 +987,15 @@ run_copilot_review() {
     # while Copilot's review is still in-flight, the filter matches the review
     # against the current commit rather than timing out on a stale SHA.
     set +e
-    current_sha="$(gh pr view "$pr_number" --repo "$owner/$repo_name" --json headRefOid --jq '.headRefOid' 2>/dev/null || echo "$head_sha")"
+    current_sha="$(gh pr view "$pr_number" --repo "$owner/$repo_name" --json headRefOid --jq '.headRefOid' 2>/dev/null)"
+    _sha_rc=$?
+    set -e
+    if [ "$_sha_rc" -ne 0 ] || [ -z "$current_sha" ]; then
+      echo "WARN: could not refresh HEAD SHA for PR $pr_number (exit $_sha_rc) — falling back to initial SHA $head_sha" >&2
+      current_sha="$head_sha"
+    fi
+    unset _sha_rc
+    set +e
     review_state="$(gh api --paginate "repos/$owner/$repo_name/pulls/$pr_number/reviews" 2>/dev/null \
       | jq -rs --arg login "$bot_login" --arg sha "$current_sha" \
         '[ .[] | .[] | select(.user.login == $login and .commit_id == $sha) ] | last | .state // empty')"
