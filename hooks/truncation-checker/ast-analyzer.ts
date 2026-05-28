@@ -468,7 +468,12 @@ export function analyzeFile(filePath: string): ASTViolation[] {
   const parser = getParser(filePath);
   if (!parser) return [];
 
-  const source = readFileSync(filePath, "utf-8");
+  let source: string;
+  try {
+    source = readFileSync(filePath, "utf-8");
+  } catch {
+    return [];
+  }
   const tree = parser.parse(source);
 
   const violations: ASTViolation[] = [

@@ -4,10 +4,12 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import type { DetectionResult, AgentType } from './types.js';
 
-const STALENESS_MINUTES = parseInt(
+const _parsedStaleness = parseInt(
   process.env.AGENT_CONTEXT_STALENESS_MINUTES ?? '5',
   10,
 );
+const STALENESS_MINUTES =
+  isNaN(_parsedStaleness) || _parsedStaleness <= 0 ? 5 : _parsedStaleness;
 
 export function sanitizePath(absPath: string): string {
   return absPath.replace(/[^a-zA-Z0-9]/g, '-');
@@ -149,7 +151,11 @@ function codexSessionMatchesRepo(
   repoPath: string,
 ): boolean {
   const sessionRepoPath = readCodexSessionRepoPath(sessionFilePath);
-  return !sessionRepoPath || sessionRepoPath === repoPath;
+  // If the session file cannot be read or has no repo info, do not treat as a
+  // match — returning true here would cause any unreadable session file to be
+  // accepted, potentially matching sessions from other repositories.
+  if (sessionRepoPath === null) return false;
+  return sessionRepoPath === repoPath;
 }
 
 function getCodexSessionRoots(): string[] {

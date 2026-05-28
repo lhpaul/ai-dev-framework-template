@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 HOOKS_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$HOOKS_DIR/.." && pwd)"
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || cd "$HOOKS_DIR/.." && pwd)"
 TSX_IMPORT="$HOOKS_DIR/node_modules/tsx/dist/loader.mjs"
 TSX_BIN="$HOOKS_DIR/node_modules/.bin/tsx"
 

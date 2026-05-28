@@ -205,7 +205,7 @@ export class ClaudeParser implements AgentParser {
     // (not a tool_result array) and not a system instruction injected by the host
     let taskPrompt = '';
     for (const user of userLines) {
-      const content = user.message?.content;
+      const content = user.message?.content ?? user.content;
       if (typeof content !== 'string') continue;
       if (content.startsWith('<system_instruction>') || content.startsWith('<system-')) continue;
       taskPrompt = content;

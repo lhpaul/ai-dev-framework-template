@@ -170,7 +170,7 @@ For each PR in the approved order:
 ./scripts/development-workflow/batch-merge.sh merge --pr <number>
 
 # Integration-branch override (merging into develop-<slug> or other base):
-./scripts/development-workflow/batch-merge.sh merge --pr <number> --base develop-<slug>
+./scripts/development-workflow/batch-merge.sh --base develop-<slug> merge --pr <number>
 # Equivalent using the env var form:
 # TARGET_BASE=develop-<slug> ./scripts/development-workflow/batch-merge.sh merge --pr <number>
 ```

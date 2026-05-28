@@ -5,13 +5,13 @@
 #
 # This repository is configured for CLI-only mode (Path A):
 # - auto PR reviews are disabled (auto_review.enabled: false below)
-# - CodeRabbit is still listed in review.platforms in .ai-dev-workflow.yaml
-#   so pr-review-loop.sh can invoke it on demand via @coderabbitai review
+# - pr-review-loop.sh invokes CodeRabbit on demand via @coderabbitai review
+#   when "coderabbit" is listed in review.platforms in .ai-dev-workflow.yaml
 # - draft PR reviews remain disabled
 #
 # To re-enable External PR reviewer mode (Path B):
 #   1. Set reviews.auto_review.enabled to true below
-#   2. Ensure "coderabbit" is in review.platforms in .ai-dev-workflow.yaml
+#   2. Add "coderabbit" to review.platforms in .ai-dev-workflow.yaml if not present
 
 reviews:
   tools:

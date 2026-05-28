@@ -331,5 +331,5 @@ fi
 printf 'RESULT=clean\n'
 printf 'BLOCKING_COUNT=0\n'
 printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
-printf 'COMMENT_COUNT=%d\n' "$SUGGESTION_COUNT"
+printf 'COMMENT_COUNT=%d\n' "$COMMENT_COUNT"
 exit 0
