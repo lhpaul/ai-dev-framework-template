@@ -18,6 +18,45 @@ if [ "${HARNESS_MODE:-0}" -eq 1 ] && [ "${BASH_SOURCE[0]}" != "$0" ]; then
   _HARNESS_MODE_EFFECTIVE=1
 fi
 
+# --- unlock subcommand ---
+# Must run before the single-instance lock guard so stale-lock recovery always
+# works: if a previous invocation crashed, the lock guard would re-acquire the
+# lock for this process before `unlock` could check it, causing `unlock` to see
+# a live PID and refuse to remove the (now re-owned) lock dir.
+if [ "${1:-}" = "unlock" ]; then
+  if [ "$#" -lt 2 ] || [ -z "${2:-}" ]; then
+    echo "Usage: $0 unlock <pr-number>" >&2
+    exit 64
+  fi
+  _UNLOCK_PR="$2"
+  _UNLOCK_LOCK_DIR="/tmp/pr-review-loop-${_UNLOCK_PR}.lockdir"
+  # Read lock metadata only when the dir exists; surface failures explicitly so
+  # filesystem or permission errors are not silently swallowed.
+  _UNLOCK_PID=""
+  _UNLOCK_CMD=""
+  if [ -d "$_UNLOCK_LOCK_DIR" ]; then
+    if ! _UNLOCK_PID="$(cat "$_UNLOCK_LOCK_DIR/pid" 2>/dev/null)"; then
+      echo "WARN: could not read lock PID from $_UNLOCK_LOCK_DIR/pid" >&2
+    fi
+    if ! _UNLOCK_CMD="$(cat "$_UNLOCK_LOCK_DIR/cmd" 2>/dev/null)"; then
+      echo "WARN: could not read lock cmd from $_UNLOCK_LOCK_DIR/cmd" >&2
+    fi
+  fi
+  if [ -n "$_UNLOCK_PID" ] && kill -0 "$_UNLOCK_PID" 2>/dev/null && [ "$_UNLOCK_CMD" = "$(basename "$0")" ]; then
+    echo "ERROR: A live pr-review-loop.sh process (PID $_UNLOCK_PID) currently holds the lock for PR #${_UNLOCK_PR}. Not removing a live lock." >&2
+    echo "  Wait for the process to finish, or send it SIGTERM to stop it gracefully." >&2
+    exit 1
+  fi
+  if [ -d "$_UNLOCK_LOCK_DIR" ]; then
+    rm -rf "$_UNLOCK_LOCK_DIR"
+    echo "OK: stale lock removed for PR #${_UNLOCK_PR} ($_UNLOCK_LOCK_DIR)."
+    exit 0
+  else
+    echo "OK: no lock found for PR #${_UNLOCK_PR} ($_UNLOCK_LOCK_DIR). Nothing to remove."
+    exit 0
+  fi
+fi
+
 # In harness mode (sourced), skip the single-instance lock guard entirely.
 # The guard is irrelevant when the script is sourced by the test harness
 # (no real PR is being processed and no lock directory should be created).
@@ -129,7 +168,7 @@ _interruptible_sleep() {
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github,haystack] [--phase-after-clean coderabbit] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github,claude-code-action,copilot,haystack] [--phase-after-clean coderabbit] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
        ./scripts/development-workflow/pr-review-loop.sh unlock <pr-number>
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
@@ -954,9 +993,21 @@ run_copilot_review() {
   [ "$effective_poll_interval" -le 0 ] && effective_poll_interval=1
 
   while [ "$elapsed" -lt "$max_wait" ]; do
+    # Re-fetch the HEAD SHA on each iteration so that if a new commit is pushed
+    # while Copilot's review is still in-flight, the filter matches the review
+    # against the current commit rather than timing out on a stale SHA.
+    set +e
+    current_sha="$(gh pr view "$pr_number" --repo "$owner/$repo_name" --json headRefOid --jq '.headRefOid' 2>/dev/null)"
+    _sha_rc=$?
+    set -e
+    if [ "$_sha_rc" -ne 0 ] || [ -z "$current_sha" ]; then
+      echo "WARN: could not refresh HEAD SHA for PR $pr_number (exit $_sha_rc) — falling back to initial SHA $head_sha" >&2
+      current_sha="$head_sha"
+    fi
+    unset _sha_rc
     set +e
     review_state="$(gh api --paginate "repos/$owner/$repo_name/pulls/$pr_number/reviews" 2>/dev/null \
-      | jq -rs --arg login "$bot_login" --arg sha "$head_sha" \
+      | jq -rs --arg login "$bot_login" --arg sha "$current_sha" \
         '[ .[] | .[] | select(.user.login == $login and .commit_id == $sha) ] | last | .state // empty')"
     set -e
 
@@ -1082,8 +1133,11 @@ run_haystack_review() {
       return 0
       ;;
     1)
-      # Ensure blocking_count >= 1 even if stdout parsing failed.
+      # Ensure blocking_count >= 1 even if stdout parsing failed, and keep
+      # comment_count consistent so downstream consumers don't see blocking
+      # findings with zero comments.
       [ "$blocking_count" -eq 0 ] && blocking_count=1
+      [ "$comment_count" -eq 0 ] && comment_count=1
       print_kv RESULT needs_fixes
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
@@ -1172,6 +1226,11 @@ run_devin_review() {
   if [ -z "$since_iso" ]; then
     since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
   fi
+  # Cap to now: a future committer.date (clock skew or rebase) would exclude all
+  # existing bot comments, causing false-clean results or duplicate review requests.
+  _now_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  [ "$since_iso" \> "$_now_iso" ] && since_iso="$_now_iso"
+  unset _now_iso
 
   # --- Phase 1: Check for existing blocking findings on the current HEAD ---
   existing_comments="$(
@@ -1615,6 +1674,11 @@ run_pr_agent_review() {
   if [ -z "$since_iso" ]; then
     since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
   fi
+  # Cap to now: a future committer.date (clock skew or rebase) would exclude all
+  # existing bot comments, causing false-clean results or duplicate review requests.
+  _now_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  [ "$since_iso" \> "$_now_iso" ] && since_iso="$_now_iso"
+  unset _now_iso
 
   # Common helper: fetch the matching PR-Agent comment and return one of its fields.
   # Parameters: field (e.g. "body" or "html_url"), match_mode (optional, default "strict_sha").
@@ -2512,6 +2576,11 @@ run_coderabbit_review() {
   if [ -z "$since_iso" ]; then
     since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
   fi
+  # Cap to now: a future committer.date (clock skew or rebase) would exclude all
+  # existing bot comments, causing false-clean results or duplicate review requests.
+  _now_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  [ "$since_iso" \> "$_now_iso" ] && since_iso="$_now_iso"
+  unset _now_iso
 
   # --- Phase 1: Check for existing blocking findings on the current HEAD ---
   existing_comments="$(
@@ -3538,33 +3607,6 @@ METRICS_HEADER
 if [ "$#" -lt 1 ]; then
   usage >&2
   exit 64
-fi
-
-# --- unlock subcommand ---
-# Handle before the lock guard so a crashed-process recovery can always proceed.
-if [ "$1" = "unlock" ]; then
-  if [ "$#" -lt 2 ] || [ -z "$2" ]; then
-    echo "Usage: $0 unlock <pr-number>" >&2
-    exit 64
-  fi
-  _UNLOCK_PR="$2"
-  _UNLOCK_LOCK_DIR="/tmp/pr-review-loop-${_UNLOCK_PR}.lockdir"
-  # Verify no live owner holds the lock before removing it.
-  _UNLOCK_PID="$(cat "$_UNLOCK_LOCK_DIR/pid" 2>/dev/null || true)"
-  _UNLOCK_CMD="$(cat "$_UNLOCK_LOCK_DIR/cmd" 2>/dev/null || true)"
-  if [ -n "$_UNLOCK_PID" ] && kill -0 "$_UNLOCK_PID" 2>/dev/null && [ "$_UNLOCK_CMD" = "$(basename "$0")" ]; then
-    echo "ERROR: A live pr-review-loop.sh process (PID $_UNLOCK_PID) currently holds the lock for PR #${_UNLOCK_PR}. Not removing a live lock." >&2
-    echo "  Wait for the process to finish, or send it SIGTERM to stop it gracefully." >&2
-    exit 1
-  fi
-  if [ -d "$_UNLOCK_LOCK_DIR" ]; then
-    rm -rf "$_UNLOCK_LOCK_DIR"
-    echo "OK: stale lock removed for PR #${_UNLOCK_PR} ($_UNLOCK_LOCK_DIR)."
-    exit 0
-  else
-    echo "OK: no lock found for PR #${_UNLOCK_PR} ($_UNLOCK_LOCK_DIR). Nothing to remove."
-    exit 0
-  fi
 fi
 
 pr_number=""

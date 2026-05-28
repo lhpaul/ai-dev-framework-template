@@ -127,8 +127,8 @@ fi
 
 if ! gh auth status >/dev/null 2>&1; then
   echo "ERROR: gh CLI not authenticated. Run 'gh auth login' before using claude-code-action-reviewer.sh" >&2
-  echo "VERDICT: TIMED_OUT — gh CLI authentication failed (treated as unavailable)"
-  exit 2
+  echo "VERDICT: UNAVAILABLE — gh CLI authentication failed"
+  exit 3
 fi
 
 # ── Resolve base branch and dispatch ref ─────────────────────────────────────
@@ -141,13 +141,13 @@ fi
 echo "INFO: resolving PR #$PR_NUMBER base branch..."
 if ! BASE_REF=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json baseRefName --jq '.baseRefName' 2>/dev/null); then
   echo "ERROR: could not resolve PR #$PR_NUMBER base branch" >&2
-  echo "VERDICT: TIMED_OUT — could not resolve PR base branch (treated as unavailable)"
-  exit 2
+  echo "VERDICT: UNAVAILABLE — could not resolve PR base branch"
+  exit 3
 fi
 if [ -z "$BASE_REF" ]; then
   echo "ERROR: could not resolve PR #$PR_NUMBER base branch (empty result)" >&2
-  echo "VERDICT: TIMED_OUT — could not resolve PR base branch (treated as unavailable)"
-  exit 2
+  echo "VERDICT: UNAVAILABLE — could not resolve PR base branch (empty result)"
+  exit 3
 fi
 
 DEFAULT_BRANCH=$(gh repo view "$OWNER/$REPO" --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null) || true

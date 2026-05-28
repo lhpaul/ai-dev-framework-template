@@ -41,7 +41,7 @@ tier for private repositories) are the only other resource consumed.
 In your repository settings, navigate to **Settings → Secrets and variables →
 Actions** and create a new repository secret named exactly:
 
-```
+```text
 ANTHROPIC_API_KEY
 ```
 
@@ -53,7 +53,7 @@ reviewer script expect this name by default.
 
 The framework template ships a ready-to-use GitHub Actions workflow at:
 
-```
+```text
 .github/workflows/claude-code-review.yml
 ```
 
@@ -84,7 +84,7 @@ automatically. You do not need to dispatch the workflow manually when using
 When Claude Code Action posts review threads on a PR, the comments appear under
 the GitHub App bot login:
 
-```
+```text
 claude[bot]
 ```
 
@@ -287,7 +287,7 @@ Step 7a gate maps to outcomes:
 | `RESULT=escalate REASON=timeout`                               | Actions run did not complete within `max_wait` (default 600 s) | Check the Actions tab for the run status; increase `--max-wait` if the review consistently takes longer than 10 minutes         |
 | Review threads not detected after Actions run succeeds         | Bot login mismatch                                             | Confirm the bot posting threads is `claude[bot]`; if using a custom App, set `CLAUDE_CODE_ACTION_BOT_LOGIN` to the correct login |
 | `pr-review-loop.sh` reports `skipped` for `claude-code-action` | Platform not listed in `review.platforms`                      | Add `claude-code-action` to `review.platforms` in `.ai-dev-workflow.yaml`                                                       |
-| Workflow dispatched but no Actions run appears                 | Dispatch accepted but workflow file not found or wrong ref     | Confirm `.github/workflows/claude-code-review.yml` exists on the base branch and the dispatch `ref` matches the PR base branch |
+| Workflow dispatched but no Actions run appears                 | Dispatch accepted but workflow file not found or wrong ref     | Confirm `.github/workflows/claude-code-review.yml` exists on the default branch and the dispatch `ref` matches the repository default branch |
 
 ---
 
