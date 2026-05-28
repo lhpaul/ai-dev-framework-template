@@ -3,17 +3,15 @@
 # This file controls CodeRabbit's behavior for this repository.
 # Docs: https://docs.coderabbit.ai/reference/configuration
 #
-# This repository is configured for External PR reviewer mode (Path B):
-# - review.platforms includes "coderabbit" in .ai-dev-workflow.yaml
-# - review.phase_after_clean marks CodeRabbit as the post-PR-Agent-clean
-#   measurement phase
-# - auto PR reviews are enabled below
-# - draft PR reviews remain disabled, so CodeRabbit starts only after the
-#   workflow converts a PR to non-draft
+# This repository is configured for CLI-only mode (Path A):
+# - auto PR reviews are disabled (auto_review.enabled: false below)
+# - pr-review-loop.sh invokes CodeRabbit on demand via @coderabbitai review
+#   when "coderabbit" is listed in review.platforms in .ai-dev-workflow.yaml
+# - draft PR reviews remain disabled
 #
-# To switch back to CLI-only mode (Path A):
-#   1. Set reviews.auto_review.enabled to false below
-#   2. Remove "coderabbit" from review.platforms in .ai-dev-workflow.yaml
+# To re-enable External PR reviewer mode (Path B):
+#   1. Set reviews.auto_review.enabled to true below
+#   2. Add "coderabbit" to review.platforms in .ai-dev-workflow.yaml if not present
 
 reviews:
   tools:
@@ -21,7 +19,7 @@ reviews:
       enabled: true
       timeout_ms: 600000
   auto_review:
-    enabled: true
+    enabled: false
     drafts: false
     base_branches:
       - develop

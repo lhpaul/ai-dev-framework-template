@@ -9,14 +9,16 @@
 #
 # Usage:
 #   # --- Discovery mode ---
-#   ./scripts/development-workflow/batch-merge.sh discover
-#   ./scripts/development-workflow/batch-merge.sh discover --prs 101,102,103
+#   ./scripts/development-workflow/batch-merge.sh [--base <branch>] discover
+#   ./scripts/development-workflow/batch-merge.sh [--base <branch>] discover --prs 101,102,103
 #
 #   # --- Per-PR merge mode ---
-#   ./scripts/development-workflow/batch-merge.sh merge --pr 101
+#   ./scripts/development-workflow/batch-merge.sh [--base <branch>] merge --pr 101
 #
 #   # --- Safe branch deletion (MERGED-state guard) ---
-#   ./scripts/development-workflow/batch-merge.sh delete-branch --pr 101
+#   ./scripts/development-workflow/batch-merge.sh [--base <branch>] delete-branch --pr 101
+#
+#   --base defaults to 'develop'; override to merge into an epic integration branch.
 #
 # Discovery output (one block per candidate PR):
 #   DISCOVERY_RESULT=found|none
@@ -68,7 +70,12 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 cd_workflow_repo_root
 
-TARGET_BASE="develop"
+# TARGET_BASE: base integration branch for merge and discover subcommands.
+# Resolution order (highest priority first):
+#   1. --base flag (parsed at entry point before subcommand dispatch)
+#   2. TARGET_BASE environment variable
+#   3. Default: "develop"
+TARGET_BASE="${TARGET_BASE:-develop}"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -77,9 +84,12 @@ TARGET_BASE="develop"
 usage() {
   cat >&2 <<'EOF'
 Usage:
-  batch-merge.sh discover [--prs <num1,num2,...>]
-  batch-merge.sh merge --pr <number>
-  batch-merge.sh delete-branch --pr <number>
+  batch-merge.sh [--base <branch>] discover [--prs <num1,num2,...>]
+  batch-merge.sh [--base <branch>] merge --pr <number>
+  batch-merge.sh [--base <branch>] delete-branch --pr <number>
+
+  --base  Target integration branch (default: develop).
+          Override when merging PRs into an epic integration branch.
 EOF
   exit 2
 }
@@ -154,6 +164,12 @@ cmd_discover() {
         explicit_prs="$2"
         shift 2
         ;;
+      --base)
+        # Per-subcommand --base overrides the global TARGET_BASE (and env var).
+        [ $# -ge 2 ] && [ -n "${2:-}" ] || die "--base requires a branch name"
+        TARGET_BASE="$2"
+        shift 2
+        ;;
       *)
         die "Unknown option: $1"
         ;;
@@ -188,7 +204,7 @@ cmd_discover() {
       printf '%s\n' "$pr_id" >> "$pr_list_file"
     done
   else
-    # Auto-discover PRs labeled ready-for-human-review targeting develop.
+    # Auto-discover PRs labeled ready-for-human-review targeting TARGET_BASE.
     # Distinguish a real API failure (exit non-zero + no output) from an
     # empty result (exit 0 + no output) so API errors are not silently
     # treated as DISCOVERY_RESULT=none.
@@ -451,6 +467,12 @@ cmd_merge() {
         pr_num="$2"
         shift 2
         ;;
+      --base)
+        # Per-subcommand --base overrides the global TARGET_BASE (and env var).
+        [ $# -ge 2 ] && [ -n "${2:-}" ] || die "--base requires a branch name"
+        TARGET_BASE="$2"
+        shift 2
+        ;;
       *)
         die "Unknown option: $1"
         ;;
@@ -510,7 +532,7 @@ cmd_merge() {
     merge_die "Working tree has unresolved conflicts from a previous merge — resolve or abort the in-progress merge before calling merge --pr again. Conflicting paths: $(printf '%s' "$conflict_state" | awk '{print $2}' | tr '\n' ' ')"
   fi
 
-  # Ensure local develop is current
+  # Ensure local TARGET_BASE is current
   git checkout "$TARGET_BASE" >/dev/null 2>&1 || \
     merge_die "Could not check out '${TARGET_BASE}' — ensure the working tree is clean and the branch exists locally"
   if ! git pull --ff-only origin "$TARGET_BASE" >/dev/null 2>&1; then
@@ -713,6 +735,20 @@ cmd_delete_branch() {
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
+# Parse global flags before the subcommand name.
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --base)
+      [ $# -ge 2 ] && [ -n "${2:-}" ] || die "--base requires a branch name"
+      TARGET_BASE="$2"
+      shift 2
+      ;;
+    --) shift; break ;;
+    -*) break ;;  # Unknown flag — let the subcommand handle or reject it.
+    *)  break ;;
+  esac
+done
 
 if [ $# -lt 1 ]; then
   usage

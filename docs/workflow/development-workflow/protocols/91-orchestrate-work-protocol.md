@@ -1439,7 +1439,7 @@ discarded when the orchestration session ends.
 After Step 7 completes with result `clean` or `skipped`, and **before** entering Step 8, apply the `ready-for-regression` label on implementation PRs to trigger label-gated e2e/regression CI checks.
 
 **Applies to**: PRs on branches `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`
-**Does not apply to**: PRs on branches `spec/*`, `implementation-plan/*`
+**Does not apply to**: PRs on branches `spec/*`, `implementation-plan/*`, or graduation PRs (`develop-<slug>` → `develop`) — see the label derivation table in Step 8a for the graduation PR exemption (BR-6)
 
 > **`refactor/*` is not exempt**: `refactor/*` branches require `ready-for-regression` exactly like `fix/*` and `feature/*` branches. Refactors that reach `ready-for-human-review` without this label will bypass e2e/regression CI. Apply the label unconditionally for any `refactor/*` PR — do not infer exemption from the content of the refactor (e.g., "it's documentation-only" or "it changes no logic").
 
@@ -1454,7 +1454,7 @@ This label triggers the `e2e-regression.yml` workflow (or project-specific equiv
 
 The `gh pr edit --add-label` command is idempotent — applying a label that already exists is a no-op. When the label is already present from a previous cycle, the `synchronize` event from the latest push will have already re-triggered the workflow.
 
-Skip this step entirely for spec and plan PRs.
+Skip this step entirely for spec and plan PRs, and for graduation PRs (`develop-<slug>` → `develop`).
 
 ### Step 7b completion confirmation
 
@@ -1501,11 +1501,13 @@ Interpret the result as follows:
 
 | Exit Code | Meaning                                                                                          | Action                                              |
 | --------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------- |
-| 0         | PR is ready (non-draft, regression label verified for implementation PRs, no unresolved threads) | Apply `ready-for-human-review`                      |
+| 0         | PR is ready (CI green, non-draft, regression label verified for implementation PRs, no unresolved threads) | Apply `ready-for-human-review`               |
 | 1         | PR is still in draft                                                                             | Run `gh pr ready` first                             |
 | 2         | `ready-for-regression` label applied this run                                                    | Re-run Step 8 (pr-ci-loop.sh) before returning here |
 | 3         | `ready-for-regression` label missing at pre-Check-4 gate                                         | Apply label, re-run Step 8                          |
 | 4         | Unresolved review threads at pre-Check-4 gate                                                    | Resolve threads, push fixes, re-run checklist       |
+| 5         | CI not green at readiness gate                                                                    | Run Step 8 (pr-ci-loop.sh) and fix failing checks   |
+| 6         | Late-arriving async bot threads detected after label application                                  | Remove `ready-for-human-review`, add `needs-fixes`, return to Step 7a |
 
 When adding a new gate to this checklist, allocate the next unused exit code and update this table. Exit codes must not collide.
 
@@ -1515,16 +1517,17 @@ When adding a new gate to this checklist, allocate the next unused exit code and
 
 Required labels are determined by the **branch prefix**, not by the content of the PR (e.g., whether it changes code vs. documentation). An agent must never infer labels from what was changed inside the PR.
 
-| Branch prefix           | Requires `ready-for-regression` | When to apply                                              |
-| ----------------------- | ------------------------------- | ---------------------------------------------------------- |
-| `feature/*`             | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
-| `fix/*`                 | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
-| `refactor/*`            | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
-| `hotfix/*`              | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2 |
-| `spec/*`                | No                              | —                                                          |
-| `implementation-plan/*` | No                              | —                                                          |
+| Branch prefix                                    | Requires `ready-for-regression` | When to apply                                                                                                                                                    |
+| ------------------------------------------------ | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `feature/*`                                      | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2                                                                                                      |
+| `fix/*`                                          | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2                                                                                                      |
+| `refactor/*`                                     | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2                                                                                                      |
+| `hotfix/*`                                       | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2                                                                                                      |
+| `spec/*`                                         | No                              | —                                                                                                                                                                |
+| `implementation-plan/*`                          | No                              | —                                                                                                                                                                |
+| `develop-<slug>` (graduation PR, base `develop`) | No — explicitly exempt (BR-6)   | Graduation PRs carry no new implementation; label not required. Do not log the absence as a protocol deviation. See `05b-graduate-development-protocol.md` Step 4. |
 
-Any branch that does not match a recognized prefix is treated as non-implementation (i.e., `ready-for-regression` is NOT required), but this should be treated as a configuration anomaly and reported to the human.
+Any branch that does not match a recognized prefix above — **other than graduation branches (`develop-<slug>` → `develop`, which are a known and expected non-implementation PR type)** — is treated as non-implementation (i.e., `ready-for-regression` is NOT required), but should be treated as a configuration anomaly and reported to the human.
 
 ### Infrastructure Dependency Scan (pre-readiness)
 
@@ -1626,6 +1629,22 @@ case "$BRANCH" in
     echo "WARNING: Branch '$BRANCH' does not match a recognized prefix (feature/*, fix/*, refactor/*, hotfix/*, spec/*, implementation-plan/*). Treating as non-implementation PR. Report this anomaly to the human."
     ;;
 esac
+
+# Check 0: CI must be green on the PR's head SHA.
+# This is a hard gate — do NOT apply ready-for-human-review when any check is
+# failing or still pending. Run Step 8 (pr-ci-loop.sh) first if CI is not green.
+HEAD_SHA=$(gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid')
+REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+CI_FAILING=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" \
+  --jq '[.check_runs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")] | length')
+CI_PENDING=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" \
+  --jq '[.check_runs[] | select(.status != "completed")] | length')
+if [ "$CI_FAILING" -gt 0 ] || [ "$CI_PENDING" -gt 0 ]; then
+  echo "ERROR: CI is not green — ${CI_FAILING} failing and ${CI_PENDING} pending check(s) on $HEAD_SHA."
+  echo "Run Step 8 (pr-ci-loop.sh) and resolve all failures before applying ready-for-human-review."
+  exit 5  # Exit code 5 = "CI not green at readiness gate"
+fi
+echo "✅ CI is green on $HEAD_SHA."
 
 # Check 1: PR is non-draft
 DRAFT=$(gh pr view "$PR_NUMBER" --json isDraft --jq '.isDraft')
@@ -1784,7 +1803,7 @@ Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asyn
        gh pr edit "$PR_NUMBER" --remove-label "ready-for-human-review"
        gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
        echo "Return to Step 7a to address the newly-discovered threads."
-       exit 5  # Exit code 5 = "late-arriving async bot threads detected"
+       exit 6  # Exit code 6 = "late-arriving async bot threads detected"
      fi
      ```
    - If `$UNRESOLVED_RECHECK -eq 0`: No new threads found. Continue to Step 8b.

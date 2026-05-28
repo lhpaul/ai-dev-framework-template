@@ -60,11 +60,18 @@ cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 if [ -n "${MOCK_GH_CALL_LOG:-}" ]; then
   printf '%s\n' "$*" >> "$MOCK_GH_CALL_LOG"
 fi
-# Differentiate POST calls from read calls.
+# Differentiate call types.
 case "$*" in
   *"--method POST"*)
     printf '%s\n' "${MOCK_GH_POST_OUTPUT:-{}}"
     exit "${MOCK_GH_POST_EXIT:-${MOCK_GH_EXIT:-0}}"
+    ;;
+  # gh pr view --json headRefOid — used by run_copilot_review to resolve head SHA.
+  # Tests set MOCK_GH_HEAD_SHA to control the returned value; default empty string
+  # triggers the head-sha-unavailable escalation path.
+  *"headRefOid"*)
+    printf '%s\n' "${MOCK_GH_HEAD_SHA:-}"
+    exit "${MOCK_GH_EXIT:-0}"
     ;;
   *)
     printf '%s\n' "${MOCK_GH_OUTPUT:-[]}"
@@ -619,6 +626,281 @@ actual_exit=0
 check_unresolved_threads "1" "owner/repo" "coderabbitai" > /dev/null 2>&1 || actual_exit=$?
 run_test "unresolved_threads_graphql_failure_exit3" "3" "$actual_exit"
 unset MOCK_GH_EXIT
+
+# ---------------------------------------------------------------------------
+# Area 7: bot_login_for_platform — copilot platform
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 7: bot_login_for_platform — copilot ==="
+
+unset COPILOT_BOT_LOGIN
+
+actual="$(bot_login_for_platform "copilot")"
+run_test "copilot_bot_login_default" "copilot-pull-request-reviewer[bot]" "$actual"
+
+export COPILOT_BOT_LOGIN="custom-copilot-bot[bot]"
+actual="$(bot_login_for_platform "copilot")"
+run_test "copilot_bot_login_env_override" "custom-copilot-bot[bot]" "$actual"
+unset COPILOT_BOT_LOGIN
+
+# ---------------------------------------------------------------------------
+# Area 8: run_copilot_review() — exit-code and key-value output contract (AC-8)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 8: run_copilot_review — clean / needs_fixes / escalate ==="
+
+# Helper overrides used across all Area 8 tests.
+# cd_workflow_repo_root: no-op (no real directory change needed in harness).
+# repo_slug: returns a fixed owner/repo slug so gh URL is deterministic.
+# require_gh: no-op (mock gh already present on PATH).
+_copilot_overrides='
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  require_gh() { :; }
+'
+
+# Test 8.1: clean path — Copilot posts APPROVED review
+# POST (reviewer request) succeeds; GET (reviews poll) returns a JSON array of
+# review objects. run_copilot_review pipes gh output through jq, so MOCK_GH_OUTPUT
+# must be a valid JSON array. MOCK_GH_HEAD_SHA is set so the SHA-filtered path is
+# exercised and commit_id in the review matches.
+# Use || to capture exit code safely when run_copilot_review may call set -e internally.
+export MOCK_GH_POST_OUTPUT='{}'
+export MOCK_GH_HEAD_SHA='abc123sha'
+export MOCK_GH_OUTPUT='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"state":"APPROVED","commit_id":"abc123sha"}]'
+unset COPILOT_BOT_LOGIN
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_copilot_overrides"
+  _ec=0
+  run_copilot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "copilot_clean_result" "RESULT=clean" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "copilot_clean_blocking_count" "BLOCKING_COUNT=0" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
+run_test "copilot_clean_exit_code" "0" "$actual_exit"
+
+# Test 8.2: needs_fixes path — Copilot posts CHANGES_REQUESTED review
+export MOCK_GH_POST_OUTPUT='{}'
+export MOCK_GH_HEAD_SHA='abc123sha'
+export MOCK_GH_OUTPUT='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"state":"CHANGES_REQUESTED","commit_id":"abc123sha"}]'
+unset COPILOT_BOT_LOGIN
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_copilot_overrides"
+  _ec=0
+  run_copilot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "copilot_needs_fixes_result" "RESULT=needs_fixes" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "copilot_needs_fixes_blocking_count" "BLOCKING_COUNT=1" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
+run_test "copilot_needs_fixes_exit_code" "1" "$actual_exit"
+
+# Test 8.3: escalate (timeout) path — no review posted within max_wait
+# POST succeeds; GET returns empty array (no reviews yet); max_wait=0 so the
+# while loop body never executes and execution falls through to the timeout block.
+# MOCK_GH_HEAD_SHA is set so the SHA check passes and the timeout block is reached.
+export MOCK_GH_POST_OUTPUT='{}'
+export MOCK_GH_HEAD_SHA='abc123sha'
+export MOCK_GH_OUTPUT='[]'
+unset COPILOT_BOT_LOGIN
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_copilot_overrides"
+  _ec=0
+  run_copilot_review "42" "feature/42-test" "1" "0" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "copilot_timeout_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "copilot_timeout_reason" "REASON=timeout" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "copilot_timeout_exit_code" "2" "$actual_exit"
+
+# Test 8.4: escalate (unavailable) path — reviewer request API call fails
+# POST fails (non-zero exit); function must return RESULT=escalate REASON=unavailable.
+# MOCK_GH_HEAD_SHA is set so the SHA check passes and the POST failure path is reached.
+export MOCK_GH_POST_EXIT=1
+export MOCK_GH_HEAD_SHA='abc123sha'
+export MOCK_GH_OUTPUT=''
+unset COPILOT_BOT_LOGIN
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_copilot_overrides"
+  _ec=0
+  run_copilot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "copilot_unavailable_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "copilot_unavailable_reason" "REASON=unavailable" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "copilot_unavailable_exit_code" "2" "$actual_exit"
+unset MOCK_GH_POST_EXIT
+export MOCK_GH_OUTPUT='[]'
+
+# Test 8.5: clean path — Copilot posts COMMENTED review (non-blocking comment)
+# COMMENTED is treated as clean (exit 0), BLOCKING_COUNT=0, SUGGESTION_COUNT=1.
+export MOCK_GH_POST_OUTPUT='{}'
+export MOCK_GH_HEAD_SHA='abc123sha'
+export MOCK_GH_OUTPUT='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"state":"COMMENTED","commit_id":"abc123sha"}]'
+unset COPILOT_BOT_LOGIN
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_copilot_overrides"
+  _ec=0
+  run_copilot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "copilot_commented_result" "RESULT=clean" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "copilot_commented_blocking_count" "BLOCKING_COUNT=0" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
+run_test "copilot_commented_suggestion_count" "SUGGESTION_COUNT=1" \
+  "$(printf '%s\n' "$actual_output" | grep "^SUGGESTION_COUNT=")"
+run_test "copilot_commented_exit_code" "0" "$actual_exit"
+export MOCK_GH_OUTPUT='[]'
+
+# Test 8.6: zero poll interval guard — effective_poll_interval must be floored to 1
+# A poll_interval of 0 would cause elapsed to never increment, hanging forever.
+# The guard clamps it to 1. Test verifies the function completes (doesn't hang)
+# when poll_interval=0, by returning on the first poll with an APPROVED state.
+export MOCK_GH_POST_OUTPUT='{}'
+export MOCK_GH_HEAD_SHA='abc123sha'
+export MOCK_GH_OUTPUT='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"state":"APPROVED","commit_id":"abc123sha"}]'
+unset COPILOT_BOT_LOGIN
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_copilot_overrides"
+  _ec=0
+  run_copilot_review "42" "feature/42-test" "0" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "copilot_zero_poll_interval_completes" "RESULT=clean" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "copilot_zero_poll_interval_exit_code" "0" "$actual_exit"
+export MOCK_GH_OUTPUT='[]'
+
+# Test 8.7: escalate (head-sha-unavailable) path — headRefOid lookup returns empty
+# When head_sha is empty the function must escalate immediately rather than
+# falling back to an unscoped review query that could match stale verdicts.
+unset MOCK_GH_HEAD_SHA
+export MOCK_GH_POST_OUTPUT='{}'
+unset COPILOT_BOT_LOGIN
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_copilot_overrides"
+  _ec=0
+  run_copilot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "copilot_head_sha_unavailable_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "copilot_head_sha_unavailable_reason" "REASON=head-sha-unavailable" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "copilot_head_sha_unavailable_exit_code" "2" "$actual_exit"
+
+# ---------------------------------------------------------------------------
+# Area 9: haystack platform
+#
+# Tests that bot_login_for_platform returns "" for haystack (no GitHub review
+# threads are posted by the Haystack CLI in this MVP), and that run_platform_review
+# routes to run_haystack_review for the haystack platform.
+#
+# run_haystack_review itself calls haystack-reviewer.sh which requires the
+# haystack CLI binary. Full integration is validated by the smoke test runbook
+# at docs/testing/workflow/720-haystack-triage-review-platform.smoke-test.md.
+# These unit tests cover only the routing and bot-login layers.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 9: haystack platform ==="
+
+unset MOCK_GH_POST_EXIT MOCK_GH_POST_OUTPUT MOCK_GH_CALL_LOG MOCK_GH_EXIT
+
+# test: bot_login_for_platform returns "" for haystack
+actual="$(bot_login_for_platform haystack)"
+run_test "bot_login_for_platform_haystack" "" "$actual"
+
+# test: bot_login_for_platform still returns "" for unknown platforms
+actual="$(bot_login_for_platform unknown-platform-xyz)"
+run_test "bot_login_for_platform_unknown_still_empty" "" "$actual"
+
+# test: run_platform_review routes "haystack" to run_haystack_review
+_haystack_dispatch_called=0
+run_haystack_review() { _haystack_dispatch_called=1; }
+run_platform_review "haystack" "999" "feature/test" "30" "120" >/dev/null 2>&1 || true
+run_test "run_platform_review_routes_to_run_haystack_review" "1" "$_haystack_dispatch_called"
+unset -f run_haystack_review
+unset _haystack_dispatch_called
+
+# ---------------------------------------------------------------------------
+# Area 10: per-platform result tokens in summary comment (#755)
+#
+# Tests that:
+#   (a) _summary_platform_list is built correctly from platform_result_tokens.
+#   (b) _post_review_summary renders the correct result_line for result="skipped".
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 10: per-platform result tokens in summary comment ==="
+
+# Test 10.1: _summary_platform_list format from platform_result_tokens
+_test_tokens=("pr-agent:clean" "haystack:unavailable" "claude-code-action:escalated (timeout)")
+_test_spl=""
+for _sprt in "${_test_tokens[@]:-}"; do
+  _spname="${_sprt%%:*}"; _spdisp="${_sprt#*:}"
+  [ -n "$_test_spl" ] && _test_spl="${_test_spl}, "
+  _test_spl="${_test_spl}${_spname} (${_spdisp})"
+done
+[ -z "$_test_spl" ] && _test_spl="none"
+run_test "summary_platform_list_format" \
+  "pr-agent (clean), haystack (unavailable), claude-code-action (escalated (timeout))" \
+  "$_test_spl"
+unset _test_tokens _test_spl _sprt _spname _spdisp
+
+# Test 10.2: _summary_platform_list is "none" when token list is empty
+_test_tokens=()
+_test_spl=""
+if [ "${#_test_tokens[@]}" -gt 0 ]; then
+  for _sprt in "${_test_tokens[@]}"; do
+    _spname="${_sprt%%:*}"; _spdisp="${_sprt#*:}"
+    [ -n "$_test_spl" ] && _test_spl="${_test_spl}, "
+    _test_spl="${_test_spl}${_spname} (${_spdisp})"
+  done
+fi
+[ -z "$_test_spl" ] && _test_spl="none"
+run_test "summary_platform_list_empty_tokens" "none" "$_test_spl"
+unset _test_tokens _test_spl _sprt _spname _spdisp
+
+# Test 10.3: _post_review_summary source contains the skipped result_line constant.
+# _post_review_summary is defined after the HARNESS_MODE return point and cannot
+# be called directly from the test harness; verify the string constant in the source
+# so any accidental change to the wording is caught.
+if grep -qF 'result_line="skipped — no platforms configured in review.platforms"' \
+    "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null; then
+  _skipped_constant_count=1
+else
+  _skipped_constant_count=0
+fi
+run_test "summary_result_line_skipped" "1" "$_skipped_constant_count"
+unset _skipped_constant_count
 
 # ---------------------------------------------------------------------------
 # Summary

@@ -45,6 +45,7 @@ done
 unset _skip_next
 _LOCK_DIR="/tmp/pr-review-loop-${_PR_ARG:-unknown}.lockdir"
 _OWN_LOCK=0
+_PR_CONFIG_TMPFILE=""
 # PID of the current background child (sleep or gh api) started by
 # _interruptible_sleep / _interruptible_gh.  The TERM/INT handlers kill this
 # child before removing the lock so the signal fires promptly instead of waiting
@@ -63,8 +64,13 @@ else
   _LOCK_CMD="$(cat "$_LOCK_DIR/cmd" 2>/dev/null || true)"
   if [ -n "$_LOCK_PID" ] && kill -0 "$_LOCK_PID" 2>/dev/null && [ "$_LOCK_CMD" = "$(basename "$0")" ]; then
     echo "ERROR: pr-review-loop.sh is already running for PR #${_PR_ARG:-unknown} (PID $_LOCK_PID). Exiting to prevent parallel execution." >&2
+    echo "  Lock file: $_LOCK_DIR" >&2
+    echo "  If the process is dead (stale lock from a crash), recover with:" >&2
+    echo "    ./scripts/development-workflow/pr-review-loop.sh unlock ${_PR_ARG:-<pr>}" >&2
+    echo "  Or manually: rm -rf $_LOCK_DIR" >&2
     print_kv RESULT escalate
     print_kv REASON lock_contention
+    print_kv LOCK_DIR "$_LOCK_DIR"
     print_kv PR_NUMBER "${_PR_ARG:-}"
     exit 75  # EX_TEMPFAIL — lock contention; not a normal review result (0/1/2)
   fi
@@ -81,13 +87,18 @@ else
     _OWN_LOCK=1
   else
     echo "ERROR: pr-review-loop.sh is already running for PR #${_PR_ARG:-unknown} (concurrent startup race). Exiting to prevent parallel execution." >&2
+    echo "  Lock file: $_LOCK_DIR" >&2
+    echo "  If the process is dead (stale lock from a crash), recover with:" >&2
+    echo "    ./scripts/development-workflow/pr-review-loop.sh unlock ${_PR_ARG:-<pr>}" >&2
+    echo "  Or manually: rm -rf $_LOCK_DIR" >&2
     print_kv RESULT escalate
     print_kv REASON lock_contention
+    print_kv LOCK_DIR "$_LOCK_DIR"
     print_kv PR_NUMBER "${_PR_ARG:-}"
     exit 75
   fi
 fi
-trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"' EXIT
+trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"; [ -n "$_PR_CONFIG_TMPFILE" ] && rm -f "$_PR_CONFIG_TMPFILE"' EXIT
 # SIGTERM/SIGINT handlers: kill the current background child (if any) so the
 # handler fires promptly even while a foreground sleep or gh api call is
 # running, then clean up the lock dir and re-raise the signal so the parent
@@ -118,7 +129,8 @@ _interruptible_sleep() {
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github] [--phase-after-clean coderabbit] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github,haystack] [--phase-after-clean coderabbit] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
+       ./scripts/development-workflow/pr-review-loop.sh unlock <pr-number>
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
 triggering a new review, each platform checks for existing blocking findings. If
@@ -127,6 +139,19 @@ If a platform times out or escalates, the script exits 2. If all configured
 platforms are clean or skipped, the script exits 0. If a second instance is
 detected for the same PR number, the script emits RESULT=escalate with
 REASON=lock_contention and exits 75 (EX_TEMPFAIL).
+
+Subcommands:
+  unlock <pr-number>
+    Remove the stale lock directory for a PR whose previous run crashed without
+    cleaning up. Safe to run when no review loop is actively running for that PR.
+    Use this to recover autonomously when lock_contention is reported but the
+    recorded PID is no longer alive.
+
+    Example:
+      ./scripts/development-workflow/pr-review-loop.sh unlock 123
+
+    The lock directory path is /tmp/pr-review-loop-<pr>.lockdir. You can also
+    remove it manually with: rm -rf /tmp/pr-review-loop-<pr>.lockdir
 
 --post-final-summary:
   Post the "Automated Reviewer Loop Summary" comment even when the result is
@@ -623,8 +648,11 @@ run_codex_github_review() {
   local max_wait="$4"
   local platform="codex-github"
   local bot_login="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
-  # GraphQL author.login returns the login WITHOUT the "[bot]" suffix that the
-  # REST API uses. Strip it here so check_unresolved_threads comparisons work.
+  # REST API endpoints (e.g. /pulls/{n}/reviews, /issues/{n}/comments) return
+  # bot logins WITH the "[bot]" suffix (e.g. "chatgpt-codex-connector[bot]").
+  # GraphQL API returns bot logins WITHOUT the "[bot]" suffix
+  # (e.g. "chatgpt-codex-connector"). Strip it here so check_unresolved_threads,
+  # which queries GraphQL, compares against the correct login form.
   local graphql_bot_login="${bot_login%\[bot\]}"
   local repo
   local reviewer_script
@@ -729,6 +757,365 @@ run_codex_github_review() {
       print_kv BRANCH "$branch_name"
       print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
       return 2
+      ;;
+  esac
+}
+
+run_claude_code_action_review() {
+  local pr_number="$1"
+  local branch_name="$2"
+  local poll_interval="$3"
+  local max_wait="$4"
+  local platform="claude-code-action"
+  local bot_login="${CLAUDE_CODE_ACTION_BOT_LOGIN:-claude[bot]}"
+  # GraphQL author.login returns the login WITHOUT the "[bot]" suffix that the
+  # REST API uses. Strip it here so check_unresolved_threads comparisons work.
+  local graphql_bot_login="${bot_login%\[bot\]}"
+  local repo
+  local reviewer_script
+  local script_exit=0
+  local thread_check_output=""
+  local thread_check_status=0
+  local unresolved_count=0
+
+  require_gh
+  cd_workflow_repo_root
+  repo="$(repo_slug)"
+
+  # Phase 1: Check for existing unresolved review threads from the Claude Code Action bot
+  set +e
+  thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" "$graphql_bot_login")"
+  thread_check_status=$?
+  set -e
+  if [ "$thread_check_status" -eq 0 ]; then
+    unresolved_count="$thread_check_output"
+  fi
+
+  if [ "$unresolved_count" -gt 0 ]; then
+    print_kv RESULT needs_fixes
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv REASON existing_findings
+    print_kv COMMENT_COUNT "$unresolved_count"
+    print_kv BLOCKING_COUNT "$unresolved_count"
+    print_kv SUGGESTION_COUNT 0
+    return 1
+  fi
+
+  # Phase 2: Dispatch the Claude Code Action workflow and wait for completion
+  reviewer_script="$(workflow_repo_root)/scripts/development-workflow/claude-code-action-reviewer.sh"
+
+  local owner repo_name
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  # Keep polling interval bounded by the wait budget to avoid zero-poll attempts
+  # when a caller provides poll_interval > max_wait.
+  local effective_poll_interval
+  effective_poll_interval="$poll_interval"
+  if [ "$effective_poll_interval" -gt "$max_wait" ]; then
+    effective_poll_interval="$max_wait"
+  fi
+  set +e
+  "$reviewer_script" "$pr_number" "$owner" "$repo_name" \
+    --bot-login "$bot_login" \
+    --poll-interval "$effective_poll_interval" \
+    --max-wait "$max_wait" >/dev/null 2>&1
+  script_exit=$?
+  set -e
+
+  case "$script_exit" in
+    0)
+      print_kv RESULT clean
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 0
+      ;;
+    1)
+      unresolved_count=0
+      set +e
+      thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" "$graphql_bot_login")"
+      thread_check_status=$?
+      set -e
+      if [ "$thread_check_status" -eq 0 ]; then
+        unresolved_count="$thread_check_output"
+      fi
+      [ "$unresolved_count" -eq 0 ] && unresolved_count=1
+
+      print_kv RESULT needs_fixes
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv REASON unresolved_review_threads
+      print_kv COMMENT_COUNT "$unresolved_count"
+      print_kv BLOCKING_COUNT "$unresolved_count"
+      print_kv SUGGESTION_COUNT 0
+      return 1
+      ;;
+    2)
+      print_kv RESULT escalate
+      print_kv REASON timeout
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      return 2
+      ;;
+    *)
+      print_kv RESULT escalate
+      print_kv REASON unavailable
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      return 2
+      ;;
+  esac
+}
+
+run_copilot_review() {
+  # Requests GitHub Copilot as a reviewer via the GitHub Pulls API, polls the
+  # pull-request reviews endpoint until Copilot posts its verdict, and maps the
+  # review state to the standard exit-code contract:
+  #   0 → RESULT=clean      (APPROVED or COMMENTED only)
+  #   1 → RESULT=needs_fixes (CHANGES_REQUESTED)
+  #   2 → RESULT=escalate   (timeout or Copilot feature unavailable)
+  #
+  # Env var override:
+  #   COPILOT_BOT_LOGIN  — override the default bot login
+  #                        (default: "copilot-pull-request-reviewer[bot]")
+  local pr_number="$1"
+  local branch_name="$2"
+  local poll_interval="$3"
+  local max_wait="$4"
+  local platform="copilot"
+  local bot_login="${COPILOT_BOT_LOGIN:-copilot-pull-request-reviewer[bot]}"
+  local repo
+  local elapsed=0
+  local review_state=""
+  local head_sha=""
+
+  require_gh
+  cd_workflow_repo_root
+  repo="$(repo_slug)"
+
+  local owner repo_name
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  # Resolve head SHA before requesting review so the poll loop can filter
+  # reviews to only those submitted against the current commit (#759).
+  head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>/dev/null || true)"
+  if [ -z "$head_sha" ]; then
+    # Cannot determine current commit — escalate rather than risk matching a
+    # stale unscoped review from a previous cycle.
+    print_kv RESULT escalate
+    print_kv REASON head-sha-unavailable
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    return 2
+  fi
+
+  # Step 1: Request Copilot as a reviewer (idempotent — GitHub silently
+  # deduplicates reviewer requests if Copilot is already requested).
+  set +e
+  gh api "repos/$owner/$repo_name/pulls/$pr_number/requested_reviewers" \
+    --method POST \
+    --field 'reviewers[]=copilot' > /dev/null 2>&1
+  local request_exit=$?
+  set -e
+
+  if [ "$request_exit" -ne 0 ]; then
+    # Request failed — Copilot feature likely not enabled on this repository.
+    print_kv RESULT escalate
+    print_kv REASON unavailable
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    return 2
+  fi
+
+  # Step 2: Poll the pull-request reviews endpoint until Copilot posts a review.
+  local effective_poll_interval="$poll_interval"
+  if [ "$effective_poll_interval" -gt "$max_wait" ]; then
+    effective_poll_interval="$max_wait"
+  fi
+  [ "$effective_poll_interval" -le 0 ] && effective_poll_interval=1
+
+  while [ "$elapsed" -lt "$max_wait" ]; do
+    set +e
+    review_state="$(gh api --paginate "repos/$owner/$repo_name/pulls/$pr_number/reviews" 2>/dev/null \
+      | jq -rs --arg login "$bot_login" --arg sha "$head_sha" \
+        '[ .[] | .[] | select(.user.login == $login and .commit_id == $sha) ] | last | .state // empty')"
+    set -e
+
+    case "$review_state" in
+      APPROVED)
+        print_kv RESULT clean
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv COMMENT_COUNT 0
+        print_kv BLOCKING_COUNT 0
+        print_kv SUGGESTION_COUNT 0
+        return 0
+        ;;
+      CHANGES_REQUESTED)
+        print_kv RESULT needs_fixes
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv REASON changes_requested
+        print_kv COMMENT_COUNT 1
+        print_kv BLOCKING_COUNT 1
+        print_kv SUGGESTION_COUNT 0
+        return 1
+        ;;
+      COMMENTED)
+        # Non-blocking comment only — treat as clean.
+        print_kv RESULT clean
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv COMMENT_COUNT 1
+        print_kv BLOCKING_COUNT 0
+        print_kv SUGGESTION_COUNT 1
+        return 0
+        ;;
+    esac
+
+    _interruptible_sleep "$effective_poll_interval"
+    elapsed=$(( elapsed + effective_poll_interval ))
+  done
+
+  # Timeout — no review posted within max_wait.
+  print_kv RESULT escalate
+  print_kv REASON timeout
+  print_kv PLATFORM "$platform"
+  print_kv PR_NUMBER "$pr_number"
+  print_kv BRANCH "$branch_name"
+  print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+  return 2
+}
+
+run_haystack_review() {
+  # Runs haystack-reviewer.sh for the given PR and maps its exit codes to the
+  # standard pr-review-loop key-value output contract.
+  #
+  # Haystack triage runs synchronously (no polling loop required). The companion
+  # script handles the timeout internally via a configurable env var or --timeout flag.
+  #
+  # Exit code mapping from haystack-reviewer.sh:
+  #   0 → RESULT=clean    (no blocking findings)
+  #   1 → RESULT=needs_fixes (one or more blocking findings)
+  #   2 → RESULT=skipped / REASON=timeout → propagated as RESULT=escalate
+  #   3 → RESULT=skipped / REASON=unavailable → propagated as RESULT=skipped
+  local pr_number="$1"
+  local branch_name="$2"
+  # poll_interval and max_wait passed for interface consistency; haystack runs
+  # synchronously so poll_interval is not used. max_wait is passed as --timeout.
+  local poll_interval="$3"
+  local max_wait="$4"
+  local platform="haystack"
+  local reviewer_script
+  local script_exit=0
+  local script_output=""
+  local blocking_count=0
+  local suggestion_count=0
+  local comment_count=0
+
+  require_gh
+  cd_workflow_repo_root
+
+  reviewer_script="$(workflow_repo_root)/scripts/development-workflow/haystack-reviewer.sh"
+
+  local owner repo_name repo
+  repo="$(repo_slug)"
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  # Haystack runs synchronously; honor the caller-provided max_wait budget directly.
+  # (No poll_interval floor needed — unlike polling-based reviewers, haystack triage
+  # completes in a single invocation.)
+  local effective_timeout
+  effective_timeout="$max_wait"
+
+  set +e
+  script_output="$("$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$effective_timeout" 2>/dev/null)"
+  script_exit=$?
+  set -e
+
+  # Parse output from the companion script (key=value lines on stdout).
+  blocking_count="$(printf '%s\n' "$script_output" | grep '^BLOCKING_COUNT=' | cut -d= -f2 | head -1)"
+  suggestion_count="$(printf '%s\n' "$script_output" | grep '^SUGGESTION_COUNT=' | cut -d= -f2 | head -1)"
+  comment_count="$(printf '%s\n' "$script_output" | grep '^COMMENT_COUNT=' | cut -d= -f2 | head -1)"
+
+  # Default to 0 if any field is missing.
+  blocking_count="${blocking_count:-0}"
+  suggestion_count="${suggestion_count:-0}"
+  comment_count="${comment_count:-0}"
+
+  case "$script_exit" in
+    0)
+      print_kv RESULT clean
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT "$comment_count"
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT "$suggestion_count"
+      return 0
+      ;;
+    1)
+      # Ensure blocking_count >= 1 even if stdout parsing failed.
+      [ "$blocking_count" -eq 0 ] && blocking_count=1
+      print_kv RESULT needs_fixes
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv REASON haystack_blocking_findings
+      print_kv COMMENT_COUNT "$comment_count"
+      print_kv BLOCKING_COUNT "$blocking_count"
+      print_kv SUGGESTION_COUNT "$suggestion_count"
+      return 1
+      ;;
+    2)
+      print_kv RESULT escalate
+      print_kv REASON timeout
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      return 2
+      ;;
+    *)
+      # Exit 3 (UNAVAILABLE) and any unexpected exit code → skipped.
+      print_kv RESULT skipped
+      print_kv REASON unavailable
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 0
       ;;
   esac
 }
@@ -1884,8 +2271,11 @@ coderabbit_thread_gate_clean() {
   local thread_audit_max_retries
   thread_audit_max_retries="$(thread_audit_max_retries_value)"
   local thread_audit_attempt=0
-  # GraphQL author.login returns the login WITHOUT the "[bot]" suffix that the
-  # REST API uses. Strip it here so check_unresolved_threads comparisons work.
+  # REST API endpoints (e.g. /pulls/{n}/reviews, /issues/{n}/comments) return
+  # bot logins WITH the "[bot]" suffix (e.g. "coderabbit-ai[bot]").
+  # GraphQL API returns bot logins WITHOUT the "[bot]" suffix
+  # (e.g. "coderabbit-ai"). Strip it here so check_unresolved_threads,
+  # which queries GraphQL, compares against the correct login form.
   local graphql_bot_login="${bot_login%\[bot\]}"
 
   # check_unresolved_threads re-enables errexit internally; capture and restore
@@ -2787,8 +3177,11 @@ bot_login_for_platform() {
     devin)        printf 'devin-ai-integration\n' ;;
     greptile)     printf 'greptile-apps\n' ;;
     pr-agent)     printf '\n' ;;
-    codex-github) printf '%s\n' "${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}" ;;
-    *)            printf '\n' ;;
+    codex-github)        printf '%s\n' "${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}" ;;
+    claude-code-action)  printf '%s\n' "${CLAUDE_CODE_ACTION_BOT_LOGIN:-claude[bot]}" ;;
+    copilot)             printf '%s\n' "${COPILOT_BOT_LOGIN:-copilot-pull-request-reviewer[bot]}" ;;
+    haystack)            printf '\n' ;;
+    *)                   printf '\n' ;;
   esac
 }
 
@@ -2930,6 +3323,15 @@ run_platform_review() {
       ;;
     codex-github)
       run_codex_github_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      ;;
+    claude-code-action)
+      run_claude_code_action_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      ;;
+    copilot)
+      run_copilot_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      ;;
+    haystack)
+      run_haystack_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
       ;;
     *)
       print_kv RESULT skipped
@@ -3138,6 +3540,33 @@ if [ "$#" -lt 1 ]; then
   exit 64
 fi
 
+# --- unlock subcommand ---
+# Handle before the lock guard so a crashed-process recovery can always proceed.
+if [ "$1" = "unlock" ]; then
+  if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+    echo "Usage: $0 unlock <pr-number>" >&2
+    exit 64
+  fi
+  _UNLOCK_PR="$2"
+  _UNLOCK_LOCK_DIR="/tmp/pr-review-loop-${_UNLOCK_PR}.lockdir"
+  # Verify no live owner holds the lock before removing it.
+  _UNLOCK_PID="$(cat "$_UNLOCK_LOCK_DIR/pid" 2>/dev/null || true)"
+  _UNLOCK_CMD="$(cat "$_UNLOCK_LOCK_DIR/cmd" 2>/dev/null || true)"
+  if [ -n "$_UNLOCK_PID" ] && kill -0 "$_UNLOCK_PID" 2>/dev/null && [ "$_UNLOCK_CMD" = "$(basename "$0")" ]; then
+    echo "ERROR: A live pr-review-loop.sh process (PID $_UNLOCK_PID) currently holds the lock for PR #${_UNLOCK_PR}. Not removing a live lock." >&2
+    echo "  Wait for the process to finish, or send it SIGTERM to stop it gracefully." >&2
+    exit 1
+  fi
+  if [ -d "$_UNLOCK_LOCK_DIR" ]; then
+    rm -rf "$_UNLOCK_LOCK_DIR"
+    echo "OK: stale lock removed for PR #${_UNLOCK_PR} ($_UNLOCK_LOCK_DIR)."
+    exit 0
+  else
+    echo "OK: no lock found for PR #${_UNLOCK_PR} ($_UNLOCK_LOCK_DIR). Nothing to remove."
+    exit 0
+  fi
+fi
+
 pr_number=""
 branch_name=""
 poll_interval=120
@@ -3212,8 +3641,34 @@ if [ -z "$pr_number" ]; then
 fi
 
 if [ "${#platforms[@]}" -eq 0 ]; then
-  config_file="$(workflow_config_file)"
-  if workflow_config_exists; then
+  # Resolve config from the PR's target branch so platform coverage is
+  # consistent regardless of the operator's local checkout state (#756).
+  # Capture stderr separately: "Could not resolve" means PR not found (silent
+  # fallback); any other error is unexpected and warrants a diagnostic warning.
+  set +e
+  _pr_base_raw="$(gh pr view "$pr_number" --json baseRefName --jq '.baseRefName' 2>&1)"
+  _pr_base_exit=$?
+  set -e
+  _pr_base=""
+  if [ "$_pr_base_exit" -eq 0 ]; then
+    _pr_base="$_pr_base_raw"
+  elif ! printf '%s\n' "$_pr_base_raw" | grep -qi "Could not resolve\|not found"; then
+    printf 'WARNING: failed to resolve PR base branch (exit %d): %s — falling back to working-tree config\n' \
+      "$_pr_base_exit" "$_pr_base_raw" >&2
+  fi
+  if [ -n "$_pr_base" ]; then
+    if _PR_CONFIG_TMPFILE="$(mktemp 2>/dev/null)"; then
+      # Refresh the remote-tracking ref so git show reads the current target
+      # branch config, not a potentially stale cached ref (#777).
+      git fetch origin "$_pr_base" 2>/dev/null || true
+      if ! git show "origin/${_pr_base}:.ai-dev-workflow.yaml" > "$_PR_CONFIG_TMPFILE" 2>/dev/null; then
+        rm -f "$_PR_CONFIG_TMPFILE"
+        _PR_CONFIG_TMPFILE=""
+      fi
+    fi
+  fi
+  config_file="${_PR_CONFIG_TMPFILE:-$(workflow_config_file)}"
+  if [ -f "$config_file" ]; then
     while IFS= read -r line; do
       line="$(trim "$line")"
       [ -n "$line" ] && platforms+=("$line")
@@ -3223,7 +3678,7 @@ fi
 
 if [ "${#phase_after_clean_platforms[@]}" -eq 0 ]; then
   config_file="${config_file:-$(workflow_config_file)}"
-  if workflow_config_exists; then
+  if [ -f "$config_file" ]; then
     while IFS= read -r line; do
       line="$(trim "$line")"
       [ -n "$line" ] && phase_after_clean_platforms+=("$line")
@@ -3329,6 +3784,9 @@ total_blocking_count=0
 total_suggestion_count=0
 aggregate_advisory_labels=""
 declare -a compare_verdicts=()
+# Per-platform result tokens for the PR summary comment.
+# Each entry is "platform_name=display_token" (e.g. "haystack=unavailable").
+declare -a platform_result_tokens=()
 # Compare-mode: track the first blocking platform seen so later clean platforms
 # do not overwrite the aggregate. These variables are set once and never reset.
 compare_first_blocking_result=""
@@ -3399,6 +3857,23 @@ for index in "${!platforms[@]}"; do
   print_kv "PLATFORM_${platform_index}_NAME" "$platform_name"
   print_kv "PLATFORM_${platform_index}_RESULT" "$platform_result"
   emit_prefixed_platform_output "$platform_index" "$platform_output"
+  # Record a human-readable display token for the PR summary comment.
+  _prt_reason="$(kv_value_default REASON "$platform_output" "")"
+  case "$platform_result" in
+    clean)      _prt_disp="clean" ;;
+    skipped)
+      if [ "$_prt_reason" = "unavailable" ] || [ "$_prt_reason" = "not_configured" ]; then
+        _prt_disp="unavailable"
+      else
+        _prt_disp="skipped"
+      fi
+      ;;
+    escalate)   _prt_disp="escalated (${_prt_reason:-unknown})" ;;
+    needs_fixes) _prt_disp="needs_fixes" ;;
+    *)           _prt_disp="$platform_result" ;;
+  esac
+  platform_result_tokens+=("${platform_name}:${_prt_disp}")
+  unset _prt_reason _prt_disp
 
   # In compare mode, record a normalized verdict for each platform before
   # deciding whether to break. The normalized verdict captures clean / blocking /
@@ -3483,6 +3958,258 @@ for index in "${!platforms[@]}"; do
   esac
 done
 
+# --- Automated Reviewer Loop Summary comment ---
+# Post a summary comment to the PR on terminal exit paths so the Step 8c
+# hasReviewSummary check is satisfied automatically. The comment body matches
+# the regex used by workflow-next-action.sh and Protocol 90 Step 5.1:
+#   "Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"
+# Post on `clean` and `escalate` exits unconditionally. For `needs_fixes` exits,
+# post only when --post-final-summary is set — i.e. when the orchestrator has
+# determined this is the terminal run (cycle >= max_cycles) and will not dispatch
+# another fixer regardless of the exit code. Posting on every `needs_fixes` exit
+# would create duplicate comments per fix cycle.
+# `skipped` exits (no platforms configured) also do not post per protocol spec.
+_post_review_summary() {
+  local result="$1"
+  local reason="$2"
+  local platform_list="$3"
+  local blocking="$4"
+  local suggestions="$5"
+  local advisory_labels="${6:-}"
+  local possible_issue_eval_outcome="${7:-}"
+  local phase_enabled="${8:-0}"
+  local phase_platform_list="${9:-}"
+  local phase_started="${10:-0}"
+  local phase_net_new_blocker="${11:-0}"
+  local phase_blocking_platform="${12:-}"
+  local pre_after_clean_only_mode="${13:-0}"
+
+  if [ -z "$pr_number" ]; then
+    return 0
+  fi
+
+  local result_line
+  case "$result" in
+    clean)
+      if [ "$blocking" -eq 0 ] && [ "$suggestions" -eq 0 ]; then
+        result_line="clean — no blocking findings"
+      else
+        result_line="clean"
+      fi
+      ;;
+    needs_fixes)
+      result_line="max cycles reached — ${blocking} blocking finding(s) unresolved"
+      ;;
+    escalate)
+      result_line="escalated (${reason:-unknown})"
+      ;;
+    skipped)
+      result_line="skipped — no platforms configured in review.platforms"
+      ;;
+    *)
+      result_line="$result"
+      ;;
+  esac
+
+  # Build the optional advisory findings section.
+  # advisory_labels format: "<labels>@@@<url>" entries separated by "|||"
+  # Each entry's labels are pipe-separated. Render each label as a list item,
+  # linking to the PR-Agent comment URL when available.
+  local advisory_section=""
+  if [ -n "$advisory_labels" ]; then
+    local _entry _labels _url _label
+    advisory_section="
+
+**Advisory findings (non-blocking):**"
+    # Split entries by ||| separator using sed (IFS does not support multi-char
+    # separators). Each entry has the form "<pipe-delimited labels>@@@<url>".
+    local _entries_normalized
+    _entries_normalized="$(printf '%s' "$advisory_labels" | sed 's/|||/\n/g')"
+    while IFS= read -r _entry; do
+      [ -z "$_entry" ] && continue
+      _labels="${_entry%@@@*}"
+      _url="${_entry##*@@@}"
+      # Split pipe-delimited labels within this entry
+      local _labels_normalized
+      _labels_normalized="$(printf '%s' "$_labels" | tr '|' '\n')"
+      while IFS= read -r _label; do
+        [ -z "$_label" ] && continue
+        if [ -n "$_url" ] && [ "$_url" != "$_labels" ]; then
+          advisory_section="${advisory_section}
+- ${_label} ([view comment](${_url}))"
+        else
+          advisory_section="${advisory_section}
+- ${_label}"
+        fi
+      done <<_ADVISORY_LABEL_LINES_
+$_labels_normalized
+_ADVISORY_LABEL_LINES_
+    done <<_ADVISORY_ENTRY_LINES_
+$_entries_normalized
+_ADVISORY_ENTRY_LINES_
+    # Append "Possible Issue" evaluation outcome when available.
+    if [ -n "$possible_issue_eval_outcome" ]; then
+      local _eval_note
+      case "$possible_issue_eval_outcome" in
+        acknowledged)
+          _eval_note="Auto-acknowledged: Possible Issue is advisory-only — loop proceeded clean"
+          ;;
+        fix_pushed)
+          _eval_note="Evaluated by code-reviewer: fix pushed — loop re-ran on new HEAD"
+          ;;
+        unavailable)
+          _eval_note="Evaluated by code-reviewer: unavailable — fell back to advisory-only (clean)"
+          ;;
+        *)
+          _eval_note="Evaluated by code-reviewer: outcome=${possible_issue_eval_outcome}"
+          ;;
+      esac
+      advisory_section="${advisory_section}
+  _Possible Issue evaluation_: ${_eval_note}"
+    fi
+  fi
+
+  # Step 7b regression-label assertion (clean path, implementation PRs only).
+  # When the reviewer loop exits clean for a feature/fix/refactor/hotfix branch,
+  # the next required step is Step 7b (apply ready-for-regression before Step 8).
+  # Check whether the label is already present and append a warning to the summary
+  # comment if it is missing. This makes the missing label visible to agents and
+  # orchestrators that read the summary comment, without blocking the script's exit.
+  # The check is best-effort: suppress all errors so a gh failure does not change
+  # the script's exit code or prevent the summary comment from being posted.
+  local regression_label_section=""
+  if [ "$result" = "clean" ]; then
+    case "${branch_name:-}" in
+      feature/*|fix/*|refactor/*|hotfix/*)
+        local _has_regression_label
+        _has_regression_label="$(gh pr view "$pr_number" --json labels \
+          --jq '[.labels[].name] | any(. == "ready-for-regression")' 2>/dev/null)" \
+          || { echo "WARN: gh pr view failed for ready-for-regression check (PR ${pr_number}); label check skipped" >&2; _has_regression_label=""; }
+        if [ "${_has_regression_label:-}" = "false" ]; then
+          regression_label_section="
+
+**Step 7b WARNING: \`ready-for-regression\` label is missing.** Apply it now before entering Step 8 (CI loop):
+\`\`\`
+gh pr edit ${pr_number} --add-label \"ready-for-regression\"
+\`\`\`
+Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs after Step 7 completes clean."
+        fi
+        ;;
+    esac
+  fi
+
+  # Build optional compare-mode per-platform section.
+  local compare_section=""
+  if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
+    compare_section="
+
+**Compare mode — per-platform verdicts:**"
+    _idx=0
+    while [ "$_idx" -lt "${#compare_verdicts[@]}" ]; do
+      _cvname="${compare_verdicts[$_idx]}"
+      _cvtoken="${compare_verdicts[$((_idx + 1))]}"
+      compare_section="${compare_section}
+- ${_cvname}: ${_cvtoken}"
+      _idx=$((_idx + 2))
+    done
+    if [ "${_compare_metrics_appended:-0}" -eq 1 ]; then
+      compare_section="${compare_section}
+
+*Metrics row appended to \`docs/workflow/retro-metrics-platforms.md\`.*"
+    fi
+  fi
+
+  local phase_section=""
+  if [ "$phase_enabled" -eq 1 ]; then
+    local _phase_value_line
+    local _phase_subject="${phase_platform_list:-after-clean reviewer}"
+    if [ "$phase_started" -eq 1 ]; then
+      if [ "$phase_net_new_blocker" -eq 1 ]; then
+        _phase_value_line="${_phase_subject} found a net-new blocker after the clean gate (${phase_blocking_platform:-unknown})."
+      else
+        _phase_value_line="No net-new blocker was found after the PR-Agent-clean gate."
+      fi
+    elif [ "$pre_after_clean_only_mode" -eq 1 ]; then
+      _phase_value_line="After-clean phase was not run — invoked in pre-after-clean-only mode."
+    else
+      _phase_value_line="After-clean phase was not reached because an earlier platform did not exit clean."
+    fi
+    phase_section="
+
+**After-clean reviewer phase:** ${_phase_value_line}
+**After-clean platforms:** ${phase_platform_list:-none}"
+  fi
+
+  local comment_body
+  comment_body="$(cat <<EOF
+### Automated Reviewer Loop Summary
+
+**Result:** ${result_line}
+**Platforms:** ${platform_list:-none}
+**Findings:** ${blocking} blocking, ${suggestions} suggestions${phase_section}${compare_section}${advisory_section}${regression_label_section}
+
+*Posted automatically by \`pr-review-loop.sh\`.*
+EOF
+)"
+
+  # Errors in the comment-posting block must not change the script's exit code or
+  # prevent key=value output from reaching the caller. Log warnings to stderr so
+  # failures are visible in CI logs without being fatal.
+  set +e
+
+  # Update-in-place: find an existing script-posted summary comment and edit it
+  # rather than creating a new one. This prevents redundant intermediate summary
+  # comments when the orchestrator invokes the script multiple times (e.g. once
+  # per fix cycle). Only one "Automated Reviewer Loop Summary" comment should
+  # ever exist on the PR timeline at a time.
+  # The marker string "*Posted automatically by `pr-review-loop.sh`.*" is unique
+  # to this script and is present in every comment it posts.
+  local _existing_comment_id=""
+  local _repo
+  _repo="$(repo_slug 2>/dev/null)" \
+    || { echo "WARN: repo_slug failed in _post_review_summary; will post new comment without update-in-place check" >&2; _repo=""; }
+  if [ -n "$_repo" ]; then
+    _existing_comment_id="$(
+      gh api "repos/$_repo/issues/$pr_number/comments" --paginate 2>/dev/null \
+        | jq -rs '
+            add // []
+            | [.[]
+               | select(
+                   (.body // "" | contains("### Automated Reviewer Loop Summary")) and
+                   (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
+                 )
+              ]
+            | sort_by(.created_at)
+            | last
+            | .id // empty
+          '
+    )" \
+      || { echo "WARN: failed to fetch existing summary comments for PR ${pr_number}; will create a new comment" >&2; _existing_comment_id=""; }
+  fi
+
+  local _patch_payload
+  _patch_payload="$(jq -n --arg body "$comment_body" '{body: $body}')"
+  local _comment_posted=0
+  if [ -n "$_existing_comment_id" ]; then
+    # Edit the existing comment in place; fall back to creating a new comment
+    # if the PATCH fails (e.g. comment was deleted or a transient API error).
+    if gh api "repos/$_repo/issues/comments/$_existing_comment_id" \
+        --method PATCH \
+        --input - <<< "$_patch_payload" >/dev/null 2>&1; then
+      _comment_posted=1
+    else
+      echo "WARN: failed to update existing summary comment ${_existing_comment_id} for PR ${pr_number}; falling back to create" >&2
+    fi
+  fi
+  if [ "$_comment_posted" -eq 0 ]; then
+    if ! gh pr comment "$pr_number" --body "$comment_body" >/dev/null 2>&1; then
+      echo "WARN: failed to post reviewer loop summary comment for PR ${pr_number}" >&2
+    fi
+  fi
+
+  set -e
+}
+
 if [ -z "$last_platform" ]; then
   print_kv RESULT skipped
   print_kv REASON not_configured
@@ -3491,6 +4218,7 @@ if [ -z "$last_platform" ]; then
   print_kv BLOCKING_COUNT 0
   print_kv SUGGESTION_COUNT 0
   print_kv UNRESOLVED_THREAD_COUNT 0
+  _post_review_summary "skipped" "not_configured" "none" "0" "0" "" "" "0" "" "0" "0" "" "0"
   exit 0
 fi
 
@@ -3540,8 +4268,9 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
   # bracket characters in "[bot]" strings during iteration.
   for _platform in "${platforms[@]}"; do
     _login="$(bot_login_for_platform "$_platform")"
-    # Strip the REST-style "[bot]" suffix — check_unresolved_threads compares
-    # against GraphQL author.login which does not include the "[bot]" suffix.
+    # REST API returns bot logins WITH the "[bot]" suffix; GraphQL API returns
+    # them WITHOUT it. Strip it here so check_unresolved_threads, which queries
+    # GraphQL, compares against the correct login form.
     # (e.g. "chatgpt-codex-connector[bot]" → "chatgpt-codex-connector")
     _login="${_login%\[bot\]}"
     [ -n "$_login" ] && unresolved_bot_logins+=("$_login")
@@ -3727,241 +4456,6 @@ if [ -n "$aggregate_output" ]; then
   [ -n "$review_comment_id" ] && print_kv REVIEW_COMMENT_ID "$review_comment_id"
 fi
 
-# --- Automated Reviewer Loop Summary comment ---
-# Post a summary comment to the PR on terminal exit paths so the Step 8c
-# hasReviewSummary check is satisfied automatically. The comment body matches
-# the regex used by workflow-next-action.sh and Protocol 90 Step 5.1:
-#   "Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"
-# Post on `clean` and `escalate` exits unconditionally. For `needs_fixes` exits,
-# post only when --post-final-summary is set — i.e. when the orchestrator has
-# determined this is the terminal run (cycle >= max_cycles) and will not dispatch
-# another fixer regardless of the exit code. Posting on every `needs_fixes` exit
-# would create duplicate comments per fix cycle.
-# `skipped` exits (no platforms configured) also do not post per protocol spec.
-_post_review_summary() {
-  local result="$1"
-  local reason="$2"
-  local platform_list="$3"
-  local blocking="$4"
-  local suggestions="$5"
-  local advisory_labels="${6:-}"
-  local possible_issue_eval_outcome="${7:-}"
-  local phase_enabled="${8:-0}"
-  local phase_platform_list="${9:-}"
-  local phase_started="${10:-0}"
-  local phase_net_new_blocker="${11:-0}"
-  local phase_blocking_platform="${12:-}"
-  local pre_after_clean_only_mode="${13:-0}"
-
-  if [ -z "$pr_number" ]; then
-    return 0
-  fi
-
-  local result_line
-  case "$result" in
-    clean)
-      if [ "$blocking" -eq 0 ] && [ "$suggestions" -eq 0 ]; then
-        result_line="clean — no blocking findings"
-      else
-        result_line="clean"
-      fi
-      ;;
-    needs_fixes)
-      result_line="max cycles reached — ${blocking} blocking finding(s) unresolved"
-      ;;
-    escalate)
-      result_line="escalated (${reason:-unknown})"
-      ;;
-    *)
-      result_line="$result"
-      ;;
-  esac
-
-  # Build the optional advisory findings section.
-  # advisory_labels format: "<labels>@@@<url>" entries separated by "|||"
-  # Each entry's labels are pipe-separated. Render each label as a list item,
-  # linking to the PR-Agent comment URL when available.
-  local advisory_section=""
-  if [ -n "$advisory_labels" ]; then
-    local _entry _labels _url _label
-    advisory_section="
-
-**Advisory findings (non-blocking):**"
-    # Split entries by ||| separator using sed (IFS does not support multi-char
-    # separators). Each entry has the form "<pipe-delimited labels>@@@<url>".
-    local _entries_normalized
-    _entries_normalized="$(printf '%s' "$advisory_labels" | sed 's/|||/\n/g')"
-    while IFS= read -r _entry; do
-      [ -z "$_entry" ] && continue
-      _labels="${_entry%@@@*}"
-      _url="${_entry##*@@@}"
-      # Split pipe-delimited labels within this entry
-      local _labels_normalized
-      _labels_normalized="$(printf '%s' "$_labels" | tr '|' '\n')"
-      while IFS= read -r _label; do
-        [ -z "$_label" ] && continue
-        if [ -n "$_url" ] && [ "$_url" != "$_labels" ]; then
-          advisory_section="${advisory_section}
-- ${_label} ([view comment](${_url}))"
-        else
-          advisory_section="${advisory_section}
-- ${_label}"
-        fi
-      done <<_ADVISORY_LABEL_LINES_
-$_labels_normalized
-_ADVISORY_LABEL_LINES_
-    done <<_ADVISORY_ENTRY_LINES_
-$_entries_normalized
-_ADVISORY_ENTRY_LINES_
-    # Append "Possible Issue" evaluation outcome when available.
-    if [ -n "$possible_issue_eval_outcome" ]; then
-      local _eval_note
-      case "$possible_issue_eval_outcome" in
-        acknowledged)
-          _eval_note="Auto-acknowledged: Possible Issue is advisory-only — loop proceeded clean"
-          ;;
-        fix_pushed)
-          _eval_note="Evaluated by code-reviewer: fix pushed — loop re-ran on new HEAD"
-          ;;
-        unavailable)
-          _eval_note="Evaluated by code-reviewer: unavailable — fell back to advisory-only (clean)"
-          ;;
-        *)
-          _eval_note="Evaluated by code-reviewer: outcome=${possible_issue_eval_outcome}"
-          ;;
-      esac
-      advisory_section="${advisory_section}
-  _Possible Issue evaluation_: ${_eval_note}"
-    fi
-  fi
-
-  # Step 7b regression-label assertion (clean path, implementation PRs only).
-  # When the reviewer loop exits clean for a feature/fix/refactor/hotfix branch,
-  # the next required step is Step 7b (apply ready-for-regression before Step 8).
-  # Check whether the label is already present and append a warning to the summary
-  # comment if it is missing. This makes the missing label visible to agents and
-  # orchestrators that read the summary comment, without blocking the script's exit.
-  # The check is best-effort: suppress all errors so a gh failure does not change
-  # the script's exit code or prevent the summary comment from being posted.
-  local regression_label_section=""
-  if [ "$result" = "clean" ]; then
-    case "${branch_name:-}" in
-      feature/*|fix/*|refactor/*|hotfix/*)
-        local _has_regression_label
-        _has_regression_label="$(gh pr view "$pr_number" --json labels \
-          --jq '[.labels[].name] | any(. == "ready-for-regression")' 2>/dev/null)" || true
-        if [ "${_has_regression_label:-}" = "false" ]; then
-          regression_label_section="
-
-**Step 7b WARNING: \`ready-for-regression\` label is missing.** Apply it now before entering Step 8 (CI loop):
-\`\`\`
-gh pr edit ${pr_number} --add-label \"ready-for-regression\"
-\`\`\`
-Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs after Step 7 completes clean."
-        fi
-        ;;
-    esac
-  fi
-
-  # Build optional compare-mode per-platform section.
-  local compare_section=""
-  if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
-    compare_section="
-
-**Compare mode — per-platform verdicts:**"
-    _idx=0
-    while [ "$_idx" -lt "${#compare_verdicts[@]}" ]; do
-      _cvname="${compare_verdicts[$_idx]}"
-      _cvtoken="${compare_verdicts[$((_idx + 1))]}"
-      compare_section="${compare_section}
-- ${_cvname}: ${_cvtoken}"
-      _idx=$((_idx + 2))
-    done
-    if [ "${_compare_metrics_appended:-0}" -eq 1 ]; then
-      compare_section="${compare_section}
-
-*Metrics row appended to \`docs/workflow/retro-metrics-platforms.md\`.*"
-    fi
-  fi
-
-  local phase_section=""
-  if [ "$phase_enabled" -eq 1 ]; then
-    local _phase_value_line
-    local _phase_subject="${phase_platform_list:-after-clean reviewer}"
-    if [ "$phase_started" -eq 1 ]; then
-      if [ "$phase_net_new_blocker" -eq 1 ]; then
-        _phase_value_line="${_phase_subject} found a net-new blocker after the clean gate (${phase_blocking_platform:-unknown})."
-      else
-        _phase_value_line="No net-new blocker was found after the PR-Agent-clean gate."
-      fi
-    elif [ "$pre_after_clean_only_mode" -eq 1 ]; then
-      _phase_value_line="After-clean phase was not run — invoked in pre-after-clean-only mode."
-    else
-      _phase_value_line="After-clean phase was not reached because an earlier platform did not exit clean."
-    fi
-    phase_section="
-
-**After-clean reviewer phase:** ${_phase_value_line}
-**After-clean platforms:** ${phase_platform_list:-none}"
-  fi
-
-  local comment_body
-  comment_body="$(cat <<EOF
-### Automated Reviewer Loop Summary
-
-**Result:** ${result_line}
-**Platforms:** ${platform_list:-none}
-**Findings:** ${blocking} blocking, ${suggestions} suggestions${phase_section}${compare_section}${advisory_section}${regression_label_section}
-
-*Posted automatically by \`pr-review-loop.sh\`.*
-EOF
-)"
-
-  # Suppress errors — a failed comment post should not change the exit code.
-  # The script's primary contract is the key=value output and exit code.
-  set +e
-
-  # Update-in-place: find an existing script-posted summary comment and edit it
-  # rather than creating a new one. This prevents redundant intermediate summary
-  # comments when the orchestrator invokes the script multiple times (e.g. once
-  # per fix cycle). Only one "Automated Reviewer Loop Summary" comment should
-  # ever exist on the PR timeline at a time.
-  # The marker string "*Posted automatically by `pr-review-loop.sh`.*" is unique
-  # to this script and is present in every comment it posts.
-  local _existing_comment_id=""
-  local _repo
-  _repo="$(repo_slug 2>/dev/null)" || true
-  if [ -n "$_repo" ]; then
-    _existing_comment_id="$(
-      gh api "repos/$_repo/issues/$pr_number/comments" --paginate 2>/dev/null \
-        | jq -rs '
-            add // []
-            | [.[]
-               | select(
-                   (.body // "" | contains("### Automated Reviewer Loop Summary")) and
-                   (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
-                 )
-              ]
-            | sort_by(.created_at)
-            | last
-            | .id // empty
-          '
-    )" || true
-  fi
-
-  if [ -n "$_existing_comment_id" ]; then
-    # Edit the existing comment in place; fall back to creating a new comment
-    # if the PATCH fails (e.g. comment was deleted or a transient API error).
-    gh api "repos/$_repo/issues/comments/$_existing_comment_id" \
-      --method PATCH \
-      -f body="$comment_body" >/dev/null 2>&1 \
-      || gh pr comment "$pr_number" --body "$comment_body" >/dev/null 2>&1
-  else
-    gh pr comment "$pr_number" --body "$comment_body" >/dev/null 2>&1
-  fi
-
-  set -e
-}
 
 aggregate_possible_issue_eval_outcome="$(kv_value_default POSSIBLE_ISSUE_EVAL_OUTCOME "$aggregate_output" "")"
 if [ "${#phase_after_clean_platforms[@]}" -gt 0 ]; then
@@ -3970,10 +4464,23 @@ else
   phase_after_clean_platform_list=""
 fi
 
+# Build per-platform result list for the PR summary comment.
+# Format: "pr-agent (clean), haystack (unavailable), claude-code-action (escalated (timeout))"
+_summary_platform_list=""
+if [ "${#platform_result_tokens[@]}" -gt 0 ]; then
+  for _sprt in "${platform_result_tokens[@]}"; do
+    _spname="${_sprt%%:*}"
+    _spdisp="${_sprt#*:}"
+    [ -n "$_summary_platform_list" ] && _summary_platform_list="${_summary_platform_list}, "
+    _summary_platform_list="${_summary_platform_list}${_spname} (${_spdisp})"
+  done
+fi
+[ -z "$_summary_platform_list" ] && _summary_platform_list="none"
+
 case "$aggregate_result" in
   clean)
     _post_review_summary "$aggregate_result" "$aggregate_reason" \
-      "$(IFS=,; printf '%s' "${platforms[*]}")" \
+      "$_summary_platform_list" \
       "$total_blocking_count" "$total_suggestion_count" \
       "$aggregate_advisory_labels" \
       "$aggregate_possible_issue_eval_outcome" \
@@ -3988,7 +4495,7 @@ case "$aggregate_result" in
   needs_fixes)
     if [ "$post_final_summary" -eq 1 ]; then
       _post_review_summary "$aggregate_result" "$aggregate_reason" \
-        "$(IFS=,; printf '%s' "${platforms[*]}")" \
+        "$_summary_platform_list" \
         "$total_blocking_count" "$total_suggestion_count" \
         "$aggregate_advisory_labels" \
         "$aggregate_possible_issue_eval_outcome" \
@@ -4007,7 +4514,7 @@ case "$aggregate_result" in
     ;;
   escalate)
     _post_review_summary "$aggregate_result" "$aggregate_reason" \
-      "$(IFS=,; printf '%s' "${platforms[*]}")" \
+      "$_summary_platform_list" \
       "$total_blocking_count" "$total_suggestion_count" \
       "$aggregate_advisory_labels" \
       "$aggregate_possible_issue_eval_outcome" \

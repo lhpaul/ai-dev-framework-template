@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-05-27
+
+### Added
+
+- **`copilot` review platform** (#709) — add `copilot` to `review.platforms` in `.ai-dev-workflow.yaml` to use GitHub Copilot code review in the automated reviewer loop. `run_copilot_review()` requests Copilot via the GitHub Pulls API, polls for the verdict, and maps review states to the standard exit-code contract. Falls back gracefully when not enabled. Bot login overridable via `COPILOT_BOT_LOGIN`. Guide: `docs/workflow/development-workflow/integrations/copilot.md`.
+- **`haystack` review platform** (#720) — `haystack-reviewer.sh` wraps the Haystack triage CLI as a native `pr-review-loop.sh` platform. Declare `haystack` in `review.platforms` or `review.phase_after_clean` in `.ai-dev-workflow.yaml`. Guide: `docs/workflow/development-workflow/integrations/haystack-triage.md`.
+- **`claude-code-action` review platform** (#706, #708) — `.github/workflows/claude-code-review.yml` invokes `anthropics/claude-code-action` as an on-demand `workflow_dispatch` reviewer. `claude-code-action-reviewer.sh` dispatches the run, polls for completion, and returns the standard exit-code contract. Recommended for `phase_after_clean` (no hourly rate-limit cap, uses your own Anthropic API key). Guide: `docs/workflow/development-workflow/integrations/pr-review-platform.md`.
+- **Haystack Editor git hooks** (#722) — `haystack hooks install` adds agent-aware pre-commit checks (`hooks/`) and `LLM_RULES.md` aligned with the `gh pr create` + reviewer-loop workflow (Option B; entire session tracking not adopted). Guide: `docs/workflow/development-workflow/integrations/haystack.md`.
+- **Integration branch graduation ceremony** (#727) — Protocol 05b expanded with human-approval gate, divergence check, CHANGELOG handling, optional sub-item disposition, and epic issue closure. Protocol 90 Step 1b now surfaces graduation-eligible branches. Graduation PRs (`develop-<slug>` → `develop`) exempt from `ready-for-regression`.
+- **Script-Accuracy Self-Check Checklist** (#735) — `03-implement-development-protocol.md` requires agents to verify all script-behavior claims (input/output format, exit codes, flags, API calls) against source before opening documentation PRs. Self-check log appended to PR description. Cross-referenced in all four implementation paths.
+
+### Changed
+
+- **CodeRabbit auto-review disabled** — `.coderabbit.yaml` `auto_review.enabled` set to `false`. Trigger on demand via `@coderabbitai review` in the reviewer loop.
+
+### Fixed
+
+- **`pr-review-loop.sh`: read `review.platforms` from PR target branch** (#756) — resolves `.ai-dev-workflow.yaml` from `origin/<base>` via `git show` instead of the working tree, so platform coverage is consistent regardless of local checkout state. Falls back to working-tree config if remote ref is unavailable.
+- **`pr-review-loop.sh`: fix `run_copilot_review()` returning stale verdict after new commits** (#759) — filters the reviews poll to entries whose `commit_id` matches the current head SHA. Falls back to unfiltered if head SHA cannot be resolved.
+- **`pr-review-loop.sh`: report per-platform results and skipped platforms in summary comment** (#755) — each platform now shows its outcome (`clean`, `skipped`, `unavailable`, `escalated`, `needs_fixes`) in the summary comment. A summary is posted even when no platforms are configured, so the reviewer-loop-guard always has a comment to find. Fixes a forward-reference bug in the no-platforms early-exit path.
+- **`reviewer-loop-guard.yml`: add grace-period polling before failing** (#733) — polls up to `GUARD_MAX_POLLS` times (default 3, 30 s apart) before posting a failure status, giving `pr-review-loop.sh` up to 60 s to post its summary without a race. Both values configurable via env vars.
+- **`pr-review-loop.sh`: stale-lock detection and recovery** (#734) — new `unlock <pr>` subcommand removes stale locks autonomously (refuses to remove a live-PID lock). Error message now includes the lock path and recovery one-liner.
+- **`batch-merge.sh`: support non-`develop` base branches** (#736) — `merge` and `discover` subcommands now honor `--base <branch>` flag and `TARGET_BASE` env var for integration-branch contexts (`develop-<slug>`).
+- **`graduate-development-protocol.md`: add Step 2.6 — verify review platform coverage before graduation** (#754) — agents must sync missing `review.platforms` entries from `develop` to `develop-<slug>` before opening the graduation PR.
+- **Shell Script Quality Checklist: add `jq`, timeout, and structured-input items** (#752) — items 9–11 in `03-implement-development-protocol.md`: `jq -e` exit-code guards, `timeout` for external CLIs, non-empty validation for structured input.
+- **`claude-code-action-reviewer.sh`: dispatch against default branch, not PR base branch** — fixes permanent 404 when the workflow file is not yet on the default branch.
+- **`pr-review-loop.sh`: clarify REST-vs-GraphQL bot-login normalization** — comments now explicitly state REST returns logins with `[bot]` suffix, GraphQL without, preventing future Haystack triage misreads.
+
+
 ## [0.28.4] - 2026-05-27
 
 ### Fixed
@@ -800,7 +829,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.4...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.29.0...HEAD
+[0.29.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.4...v0.29.0
 [0.28.4]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.3...v0.28.4
 [0.28.3]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.2...v0.28.3
 [0.28.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.1...v0.28.2

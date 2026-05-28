@@ -10,6 +10,13 @@
 # In-scope branch prefixes (configurable via IN_SCOPE_PREFIXES env var):
 #   feature/  fix/  refactor/  hotfix/
 #
+# Grace-period polling (configurable via env vars):
+#   GUARD_MAX_POLLS     — number of poll attempts before failing (default: 3)
+#   GUARD_POLL_INTERVAL — seconds to wait between polls (default: 30)
+#   Together these give up to (GUARD_MAX_POLLS - 1) × GUARD_POLL_INTERVAL seconds of
+#   grace so pr-review-loop.sh can finish posting its summary before the guard fails.
+#   (The loop sleeps only between attempts, not after the final attempt.)
+#
 # Branches outside the in-scope list always pass (status set to success).
 #
 # The commit-status context name "Reviewer-loop completion guard" can be added
@@ -80,34 +87,60 @@ jobs:
           MARKER1="### Automated Reviewer Loop Summary"
           # shellcheck disable=SC2016
           MARKER2='*Posted automatically by `pr-review-loop.sh`.*'
-          # gh api --paginate | jq -s produces [[page1_items], [page2_items], ...].
-          # Use 'add // []' to flatten pages before selecting comment objects.
-          FOUND=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
-            --paginate \
-            | jq -rs --arg m1 "$MARKER1" --arg m2 "$MARKER2" \
-            'add // []
-            | [.[] | select(
-              (.body // "" | contains($m1)) and
-              (.body // "" | contains($m2))
-            )] | length') || {
-            echo "ERROR: failed to fetch PR comments — treating as transient failure (posting failure status)."
-            gh api \
-              --method POST \
-              "repos/$REPO/statuses/$HEAD_SHA" \
-              -f state="failure" \
-              -f description="Could not fetch PR comments. Re-run the workflow to retry." \
-              -f context="Reviewer-loop completion guard"
-            exit 1
-          }
 
-          echo "Reviewer-loop summary comments found: ${FOUND}"
+          # Grace-period polling: pr-review-loop.sh posts its summary asynchronously
+          # and may not have finished when this guard first fires. Poll up to
+          # GUARD_MAX_POLLS times with GUARD_POLL_INTERVAL seconds between each
+          # attempt before giving up. Defaults: 3 polls × 30 s = up to 90 s wait.
+          GUARD_MAX_POLLS="${GUARD_MAX_POLLS:-3}"
+          GUARD_POLL_INTERVAL="${GUARD_POLL_INTERVAL:-30}"
+          case "$GUARD_MAX_POLLS" in
+            ''|0|*[!0-9]*) echo "ERROR: GUARD_MAX_POLLS must be a positive integer (got: '$GUARD_MAX_POLLS')" >&2; exit 1 ;;
+          esac
+          case "$GUARD_POLL_INTERVAL" in
+            ''|0|*[!0-9]*) echo "ERROR: GUARD_POLL_INTERVAL must be a positive integer (got: '$GUARD_POLL_INTERVAL')" >&2; exit 1 ;;
+          esac
+
+          FOUND=0
+          poll=0
+          while [ "$poll" -lt "$GUARD_MAX_POLLS" ]; do
+            poll=$((poll + 1))
+            echo "Poll attempt ${poll}/${GUARD_MAX_POLLS}: fetching PR comments..."
+            # gh api --paginate | jq -s produces [[page1_items], [page2_items], ...].
+            # Use 'add // []' to flatten pages before selecting comment objects.
+            FOUND=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
+              --paginate \
+              | jq -rs --arg m1 "$MARKER1" --arg m2 "$MARKER2" \
+              'add // []
+              | [.[] | select(
+                (.body // "" | contains($m1)) and
+                (.body // "" | contains($m2))
+              )] | length') || {
+              echo "ERROR: failed to fetch PR comments — treating as transient failure (posting failure status)."
+              gh api \
+                --method POST \
+                "repos/$REPO/statuses/$HEAD_SHA" \
+                -f state="failure" \
+                -f description="Could not fetch PR comments. Re-run the workflow to retry." \
+                -f context="Reviewer-loop completion guard"
+              exit 1
+            }
+            echo "Reviewer-loop summary comments found: ${FOUND}"
+            if [ "${FOUND:-0}" -gt 0 ]; then
+              break
+            fi
+            if [ "$poll" -lt "$GUARD_MAX_POLLS" ]; then
+              echo "Summary not yet present — waiting ${GUARD_POLL_INTERVAL}s before next poll (${poll}/${GUARD_MAX_POLLS} done)."
+              sleep "$GUARD_POLL_INTERVAL"
+            fi
+          done
 
           if [ "${FOUND:-0}" -gt 0 ]; then
             STATE="success"
             DESCRIPTION="Reviewer-loop summary present."
           else
             STATE="failure"
-            DESCRIPTION="No reviewer-loop summary found. Run the automated reviewer loop before merging."
+            DESCRIPTION="No reviewer-loop summary found after ${GUARD_MAX_POLLS} poll(s). Run the automated reviewer loop before merging."
           fi
 
           gh api \

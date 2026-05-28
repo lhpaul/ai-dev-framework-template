@@ -201,6 +201,99 @@ Shell code blocks embedded in protocol and documentation markdown files are copi
 
 These rules apply equally to all protocol documents under `docs/workflow/development-workflow/protocols/` and to any other markdown file that embeds shell commands intended to be run by agents or humans.
 
+### 9. `jq` parse-failure handling
+
+`jq` exits non-zero when the input is not valid JSON. Without `-e` or an explicit exit-code check, a parse failure silently produces an empty string and the script continues with a missing value.
+
+Always guard `jq` calls against parse failures:
+
+```bash
+# Wrong — malformed JSON produces empty string; script continues undetected:
+VALUE=$(echo "$RESPONSE" | jq -r '.field')
+
+# Correct — use -e so jq exits 1 on a null/false result, and check the exit code:
+if ! VALUE=$(echo "$RESPONSE" | jq -re '.field' 2>/dev/null); then
+  echo "ERROR: jq parse failed or field is null/missing" >&2
+  exit 1
+fi
+
+# Correct alternative — explicit OR handler for inline use:
+VALUE=$(echo "$RESPONSE" | jq -re '.field') || { echo "ERROR: jq parse failed" >&2; exit 1; }
+```
+
+Also validate that the parsed value is non-empty before using it when an empty string is not a valid sentinel:
+
+```bash
+[ -z "$VALUE" ] && { echo "ERROR: parsed value is empty" >&2; exit 1; }
+```
+
+This pattern is required for every `jq` call whose output is passed to a downstream command, comparison, or API call. Pure logging/display calls that do not affect control flow are exempt.
+
+### 10. External CLI timeout budget
+
+External CLI calls (`gh`, `curl`, `haystack`, `timeout`, custom tools) can block indefinitely if the remote service is slow or unresponsive. Scripts that impose a timeout budget must propagate and check the result.
+
+```bash
+# Wrong — no timeout; hangs indefinitely if the service is slow:
+RESULT=$(gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER")
+
+# Correct — capture exit code before the if test, then check it:
+RESULT=$(timeout 30 gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER" 2>/dev/null) || {
+  EXIT_CODE=$?
+  if [ "$EXIT_CODE" -eq 124 ]; then
+    echo "ERROR: gh api timed out after 30 s" >&2
+  else
+    echo "ERROR: gh api exited with code $EXIT_CODE" >&2
+  fi
+  exit 1
+}
+
+# Alternative — background-wait pattern with an enforced deadline:
+# (bash 3.2 compatible — uses a polling loop instead of wait -n)
+gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER" > /tmp/result.json &
+API_PID=$!
+DEADLINE=$(($(date +%s) + 30))
+while kill -0 "$API_PID" 2>/dev/null && [ "$(date +%s)" -lt "$DEADLINE" ]; do
+  sleep 1
+done
+if kill -0 "$API_PID" 2>/dev/null; then
+  kill "$API_PID" 2>/dev/null
+  wait "$API_PID" 2>/dev/null
+  echo "ERROR: API call timed out after 30 s" >&2
+  exit 1
+fi
+wait "$API_PID" || { echo "ERROR: API call failed" >&2; exit 1; }
+```
+
+When a script receives a timeout budget from its caller (e.g., a `MAX_WAIT` parameter or environment variable), derive per-call timeouts from it rather than hard-coding constants. Never silently absorb a timeout by catching exit code 124 and returning an empty string — the caller must be informed.
+
+### 11. Structured-data input validation before use
+
+Scripts that accept structured input (JSON, YAML, TSV, newline-delimited data) from a previous command, file, or pipe must validate that the input is non-empty before attempting to parse or iterate over it. Proceeding with an empty input silently skips all iterations and produces no error, which can look like a successful run.
+
+```bash
+# Wrong — empty RESPONSE silently produces no iterations:
+echo "$RESPONSE" | jq -r '.items[]' | while read -r item; do
+  process_item "$item"
+done
+
+# Correct — validate before parsing:
+if [ -z "$RESPONSE" ]; then
+  echo "ERROR: empty response — cannot parse items" >&2
+  exit 1
+fi
+ITEMS=$(echo "$RESPONSE" | jq -r '.items[]') || { echo "ERROR: jq failed on response" >&2; exit 1; }
+if [ -z "$ITEMS" ]; then
+  echo "WARNING: response contained no items — nothing to process"
+  exit 0  # or exit 1, depending on whether an empty list is expected
+fi
+echo "$ITEMS" | while read -r item; do
+  process_item "$item"
+done
+```
+
+This validation is especially important in PR-review loop scripts and CI tools where a silent empty-parse produces a false-clean result.
+
 ---
 
 ## Test Harness Coverage Checklist
@@ -247,6 +340,47 @@ Complete every item below for each newly added filter parameter before opening t
 - [ ] **Impracticality documented**: if a canary test is impractical (e.g., no test fixtures, no in-memory DB), the constraint is documented explicitly in the PR and an alternative verification approach is proposed — silence is not acceptable.
 
 This requirement applies to **new** filter parameters only. Modifications to existing filter parameters that do not change the schema contract are exempt.
+
+---
+
+## Script-Accuracy Self-Check Checklist
+
+**When to apply**: Conditional — applies **only when this PR is a documentation PR that describes the behavior of a script** (including CLI output format, option flags, exit codes, API call patterns, or input/output format). If your PR does not document what a script does, skip this section entirely.
+
+**Why this checklist exists**: PR #731 had a 75% fix-commit ratio because the implementing agent acted on a Haystack reviewer finding about `claude-code-action-reviewer.sh` without verifying the claim against the actual script source, introducing a regression. Documentation that describes script behavior must be verified against the script — memory and inference are unreliable.
+
+**How to apply**: Before opening the PR, run 3–5 targeted greps against the referenced script(s) to confirm each documented claim. Do not audit the full script; focus on the specific claims your documentation makes.
+
+Complete every item below for each script described in the PR before opening the PR:
+
+- [ ] **Claims enumerated**: list every claim the PR documentation makes about the script (input format, output format, exit codes, option flags, API calls, environment variables, trigger conditions).
+- [ ] **Each claim verified against source**: for each claim, run a targeted grep or read the relevant section of the script source directly. Do not rely on memory or on what a reviewer asserted — the script source is the authoritative value.
+
+  ```bash
+  # Example: verify an exit code claim
+  grep -n 'exit 0\|exit 1\|exit 2' scripts/development-workflow/my-script.sh
+
+  # Example: verify a flag or option name
+  grep -n -- '--flag-name\|FLAG_NAME' scripts/development-workflow/my-script.sh
+
+  # Example: verify an output format claim (e.g., a RESULT= or STATUS= value)
+  grep -n 'RESULT=\|STATUS=' scripts/development-workflow/my-script.sh
+  ```
+
+- [ ] **Discrepancies resolved**: if any grep reveals a mismatch between the documentation and the script source, update the documentation to match the script — do not update the script to match the documentation (unless the script itself is wrong and that fix is in scope).
+- [ ] **Self-check log posted**: after completing the checks above, append a brief self-check log to the PR description confirming each verified claim. Example format:
+
+  ```text
+  ## Script-Accuracy Self-Check
+
+  Script: scripts/development-workflow/my-script.sh
+  - Exit code 0 = APPROVED: verified (grep line 47)
+  - Exit code 1 = NEEDS_REVISION: verified (grep line 52)
+  - `--poll-interval` flag: verified (grep line 23)
+  - Output format `RESULT=`: verified (grep line 61)
+  ```
+
+This checklist does not require a full script audit — only the specific claims made in the PR documentation. If a claim cannot be verified by grep (e.g., it is an emergent behavior of multiple code paths), read the relevant function body directly and note the line range in the self-check log.
 
 ---
 
@@ -361,6 +495,8 @@ Before committing, verify:
 **Test Harness Coverage Checklist (if the implementation includes any test script, test function, or validation harness)**: Complete the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) before self-approving. Do not open the PR with known coverage gaps.
 
 **Filter-Schema Canary Test Checklist (if this PR adds new filter parameters to a tool schema)**: Complete the [Filter-Schema Canary Test Checklist](#filter-schema-canary-test-checklist) before opening the PR. A missing canary test is a blocking code-review finding.
+
+**Script-Accuracy Self-Check Checklist (if this PR is a documentation PR that describes script behavior)**: Complete the [Script-Accuracy Self-Check Checklist](#script-accuracy-self-check-checklist) before opening the PR. Verify each documented claim about input/output format, exit codes, option flags, and API calls against the actual script source.
 
 **ShellCheck (if any `.sh` files were modified)**:
 
@@ -686,6 +822,8 @@ git checkout -b refactor/[branch-slug]
 
    **Filter-Schema Canary Test Checklist (if this PR adds new filter parameters to a tool schema)**: Complete the [Filter-Schema Canary Test Checklist](#filter-schema-canary-test-checklist) before opening the PR. A missing canary test is a blocking code-review finding.
 
+   **Script-Accuracy Self-Check Checklist (if this PR is a documentation PR that describes script behavior)**: Complete the [Script-Accuracy Self-Check Checklist](#script-accuracy-self-check-checklist) before opening the PR. Verify each documented claim about input/output format, exit codes, option flags, and API calls against the actual script source.
+
    If any `.sh` files were modified, run ShellCheck before committing:
 
    ```bash
@@ -881,6 +1019,8 @@ Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected
 **Test Harness Coverage Checklist (if the implementation includes any test script, test function, or validation harness)**: Complete the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) before self-approving. Do not open the PR with known coverage gaps.
 
 **Filter-Schema Canary Test Checklist (if this PR adds new filter parameters to a tool schema)**: Complete the [Filter-Schema Canary Test Checklist](#filter-schema-canary-test-checklist) before opening the PR. A missing canary test is a blocking code-review finding.
+
+**Script-Accuracy Self-Check Checklist (if this PR is a documentation PR that describes script behavior)**: Complete the [Script-Accuracy Self-Check Checklist](#script-accuracy-self-check-checklist) before opening the PR. Verify each documented claim about input/output format, exit codes, option flags, and API calls against the actual script source.
 
 **ShellCheck (if any `.sh` files were modified)**:
 
@@ -1105,6 +1245,8 @@ Verify: build, lint, tests pass.
 **Test Harness Coverage Checklist (if the implementation includes any test script, test function, or validation harness)**: Complete the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) before self-approving. Do not open the PR with known coverage gaps.
 
 **Filter-Schema Canary Test Checklist (if this PR adds new filter parameters to a tool schema)**: Complete the [Filter-Schema Canary Test Checklist](#filter-schema-canary-test-checklist) before opening the PR. A missing canary test is a blocking code-review finding.
+
+**Script-Accuracy Self-Check Checklist (if this PR is a documentation PR that describes script behavior)**: Complete the [Script-Accuracy Self-Check Checklist](#script-accuracy-self-check-checklist) before opening the PR. Verify each documented claim about input/output format, exit codes, option flags, and API calls against the actual script source.
 
 **ShellCheck (if any `.sh` files were modified)**:
 

@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+HOOKS_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || cd "$HOOKS_DIR/.." && pwd)"
+TSX_IMPORT="$HOOKS_DIR/node_modules/tsx/dist/loader.mjs"
+TSX_BIN="$HOOKS_DIR/node_modules/.bin/tsx"
+
+if [ ! -f "$TSX_IMPORT" ]; then
+  TSX_IMPORT="tsx"
+fi
+
+node_version() {
+  node -v 2>/dev/null | sed 's/^v//'
+}
+
+node_version_major() {
+  node_version | cut -d. -f1
+}
+
+node_version_minor() {
+  node_version | cut -d. -f2
+}
+
+node_supports_import() {
+  major=$(node_version_major)
+  minor=$(node_version_minor)
+
+  if [ -z "$major" ] || [ -z "$minor" ]; then
+    return 1
+  fi
+
+  if [ "$major" -gt 20 ]; then
+    return 0
+  fi
+
+  if [ "$major" -eq 20 ] && [ "$minor" -ge 6 ]; then
+    return 0
+  fi
+
+  if [ "$major" -eq 19 ]; then
+    return 0
+  fi
+
+  if [ "$major" -eq 18 ] && [ "$minor" -ge 19 ]; then
+    return 0
+  fi
+
+  return 1
+}
+
+node_supports_loader() {
+  major=$(node_version_major)
+
+  if [ -z "$major" ]; then
+    return 1
+  fi
+
+  if [ "$major" -lt 18 ]; then
+    return 1
+  fi
+
+  ! node_supports_import
+}
+
+run_tsx() {
+  if node_supports_import; then
+    node --import "$TSX_IMPORT" "$@"
+    return
+  fi
+
+  if node_supports_loader; then
+    node --loader "$TSX_IMPORT" "$@"
+    return
+  fi
+
+  if [ -x "$TSX_BIN" ]; then
+    "$TSX_BIN" "$@"
+    return
+  fi
+
+  npx tsx "$@"
+}
+
+# Extract agent context if running under an AI agent
+# Capture stderr to detect whether an AI agent is present
+AGENT_OUTPUT=$(run_tsx "$HOOKS_DIR/agent-context/index.ts" "$REPO_ROOT" 2>&1) || true
+
+# Print the agent context to stderr so it still appears in the commit output
+if [ -n "$AGENT_OUTPUT" ]; then
+  echo "$AGENT_OUTPUT" >&2
+fi
+
+# If no agent detected, this is a human commit — pass through
+if ! echo "$AGENT_OUTPUT" | grep -q "AGENT CONTEXT DETECTED"; then
+  exit 0
+fi
+
+# --- AI agent detected: run automated checks ---
+
+# Check for truncation violations in staged changes
+TRUNCATION_OUTPUT=$(run_tsx "$HOOKS_DIR/truncation-checker/index.ts" 2>&1)
+TRUNCATION_EXIT=$?
+
+if [ -n "$TRUNCATION_OUTPUT" ]; then
+  echo "$TRUNCATION_OUTPUT" >&2
+fi
+
+if [ $TRUNCATION_EXIT -ne 0 ]; then
+  echo "" >&2
+  echo "========================================" >&2
+  echo "  COMMIT BLOCKED: TRUNCATION VIOLATIONS" >&2
+  echo "========================================" >&2
+  echo "" >&2
+  echo "Your staged changes contain truncation patterns that violate LLM_RULES.md." >&2
+  echo "Review the violations above and either:" >&2
+  echo "  1. Remove the truncation code" >&2
+  echo "  2. Add a comment with 'intentional' explaining why it's needed" >&2
+  echo "  3. Get explicit user permission for the truncation" >&2
+  echo "" >&2
+  exit 1
+fi
+
+# --- Enforce LLM rules review ---
+
+GIT_DIR=$(git rev-parse --git-dir)
+BYPASS_TOKEN_FILE="$GIT_DIR/llm-rules-reviewed"
+RULES_FILE="$REPO_ROOT/LLM_RULES.md"
+
+# Get the SHA of the current staged tree
+STAGED_TREE_SHA=$(git write-tree)
+
+# Check for a valid bypass token (written on a previous failed attempt)
+if [ -f "$BYPASS_TOKEN_FILE" ]; then
+  STORED_SHA=$(cat "$BYPASS_TOKEN_FILE")
+  if [ "$STORED_SHA" = "$STAGED_TREE_SHA" ]; then
+    # Agent has already been shown the rules for this exact set of changes
+    rm -f "$BYPASS_TOKEN_FILE"
+    exit 0
+  fi
+fi
+
+# First attempt — block the commit and inject the rules into the agent's context
+
+echo "" >&2
+echo "========================================" >&2
+echo "  LLM RULES — REVIEW BEFORE COMMITTING" >&2
+echo "========================================" >&2
+echo "" >&2
+
+if [ -f "$RULES_FILE" ]; then
+  cat "$RULES_FILE" >&2
+else
+  echo "(LLM_RULES.md not found at $RULES_FILE)" >&2
+fi
+
+echo "" >&2
+echo "========================================" >&2
+echo "  STAGED CHANGES" >&2
+echo "========================================" >&2
+echo "" >&2
+git diff --cached --stat >&2
+
+echo "" >&2
+echo "========================================" >&2
+echo "PRE-COMMIT CHECK: You must confirm your changes comply with the above rules. The rules have been re-injected into your context. Review your staged changes against each rule, then retry the commit. A bypass token has been written." >&2
+echo "========================================" >&2
+
+# Write the bypass token so the next attempt with the same staged tree passes
+echo "$STAGED_TREE_SHA" > "$BYPASS_TOKEN_FILE"
+
+exit 1
