@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.1] - 2026-05-28
+
+### Fixed
+
+- **`pr-review-loop.sh`: move `unlock` before the single-instance lock guard** — when a stale lock exists, the guard was re-acquiring it before `unlock` could run, causing `unlock` to see a live PID and refuse to remove the lock, breaking manual stale-lock recovery.
+- **`claude-code-action-reviewer.sh`: emit `UNAVAILABLE`/exit 3 for preflight failures** — auth failure and unresolvable PR base branch were returning `TIMED_OUT`/exit 2, causing callers to apply the timeout policy instead of the unavailable policy.
+- **`pr-review-loop.sh`: add `claude-code-action` and `copilot` to usage string** — both platforms were omitted from the help text, making CLI discoverability inconsistent with the actual dispatcher.
+- **`claude-code-action.md`: fix dispatch-ref troubleshooting row** — the table incorrectly said the dispatch `ref` must match the PR base branch; the correct value is the repository default branch.
+- **`pr-review-loop.sh`: re-fetch Copilot review SHA each poll iteration** — if a new commit is pushed while the Copilot review is in-flight, the initial SHA becomes stale and the SHA-filtered poll would never match the submitted review, causing a spurious timeout.
+- **`pr-review-loop.sh`: guard `since_iso` against future-dated commit timestamps** — a committer date ahead of wall-clock time (clock skew or rebase) caused all existing bot comments to be excluded, producing false-clean results or duplicate review requests in the Devin, PR-Agent, and codex-github platforms.
+- **`pr-review-loop.sh`: keep `comment_count` consistent with forced `blocking_count`** — when the Haystack companion script exits 1 with unparseable stdout, `blocking_count` was forced to 1 but `comment_count` stayed at 0, producing inconsistent output for downstream consumers.
+- **`haystack-triage.md`: add language specifiers to fenced code blocks** — unlabeled fences triggered MD040 markdownlint warnings.
+
 ## [0.29.0] - 2026-05-27
 
 ### Added
@@ -829,7 +842,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.29.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.29.1...HEAD
+[0.29.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.29.0...v0.29.1
 [0.29.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.4...v0.29.0
 [0.28.4]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.3...v0.28.4
 [0.28.3]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.2...v0.28.3
