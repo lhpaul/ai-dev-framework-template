@@ -112,7 +112,7 @@ If `haystack triage` does not return within the timeout, `haystack-reviewer.sh` 
 
 When the `haystack` CLI is absent from `$PATH` or returns a non-zero exit code (authentication failure, network error, etc.), `haystack-reviewer.sh` exits `3` (UNAVAILABLE) and emits:
 
-```
+```text
 RESULT=skipped
 REASON=unavailable
 BLOCKING_COUNT=0
@@ -139,7 +139,7 @@ COMMENT_COUNT=0
 
 ### `haystack` CLI not found
 
-```
+```text
 INFO: haystack CLI not found in PATH — skipping (UNAVAILABLE)
 RESULT=skipped
 REASON=unavailable
@@ -149,7 +149,7 @@ REASON=unavailable
 
 ### Triage returns `status=none`
 
-```
+```text
 INFO: haystack triage returned status=none (no analysis available for this PR yet) — treating as UNAVAILABLE
 ```
 
@@ -159,7 +159,7 @@ INFO: haystack triage returned status=none (no analysis available for this PR ye
 
 ### Triage times out
 
-```
+```text
 INFO: haystack triage timed out after 120s
 RESULT=escalate
 REASON=timeout
@@ -169,7 +169,7 @@ REASON=timeout
 
 ### Unrecognised finding category
 
-```
+```text
 INFO: unrecognised finding category 'SomeNewCategory' — treating as blocking (safe-fail)
 ```
 
