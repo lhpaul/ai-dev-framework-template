@@ -281,9 +281,17 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
   # from being mistaken for our run (filename+timestamp filter alone is insufficient
   # when two reviews are dispatched within the timestamp-skew window).
   if [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ]; then
-    RUN_PR_INPUT=$(gh api "repos/$OWNER/$REPO/actions/runs/$RUN_ID" \
-      --jq '.inputs.pr_number // empty' 2>/dev/null || echo "")
-    if [ -n "$RUN_PR_INPUT" ] && [ "$RUN_PR_INPUT" != "$PR_NUMBER" ]; then
+    RUN_PR_INPUT=""
+    _pr_input_ok=0
+    RUN_PR_INPUT="$(gh api "repos/$OWNER/$REPO/actions/runs/$RUN_ID" \
+      --jq '.inputs.pr_number // empty' 2>/dev/null)" && _pr_input_ok=1 || _pr_input_ok=0
+    if [ "$_pr_input_ok" -eq 0 ] || [ -z "$RUN_PR_INPUT" ]; then
+      echo "WARNING: could not verify inputs.pr_number for run $RUN_ID (lookup_ok=${_pr_input_ok}, value='${RUN_PR_INPUT}') — skipping this cycle"
+      sleep "$POLL_INTERVAL"
+      TOTAL_ELAPSED=$((TOTAL_ELAPSED + POLL_INTERVAL))
+      continue
+    fi
+    if [ "$RUN_PR_INPUT" != "$PR_NUMBER" ]; then
       echo "INFO: run $RUN_ID has pr_number=$RUN_PR_INPUT, expected $PR_NUMBER — excluding from future polls (concurrent dispatch for different PR)"
       EXCLUDED_RUN_IDS_JSON=$(printf '%s\n' "$EXCLUDED_RUN_IDS_JSON" | jq ". + [\"${RUN_ID}\"]")
       sleep "$POLL_INTERVAL"
