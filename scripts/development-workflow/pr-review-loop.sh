@@ -30,8 +30,18 @@ if [ "${1:-}" = "unlock" ]; then
   fi
   _UNLOCK_PR="$2"
   _UNLOCK_LOCK_DIR="/tmp/pr-review-loop-${_UNLOCK_PR}.lockdir"
-  _UNLOCK_PID="$(cat "$_UNLOCK_LOCK_DIR/pid" 2>/dev/null || true)"
-  _UNLOCK_CMD="$(cat "$_UNLOCK_LOCK_DIR/cmd" 2>/dev/null || true)"
+  # Read lock metadata only when the dir exists; surface failures explicitly so
+  # filesystem or permission errors are not silently swallowed.
+  _UNLOCK_PID=""
+  _UNLOCK_CMD=""
+  if [ -d "$_UNLOCK_LOCK_DIR" ]; then
+    if ! _UNLOCK_PID="$(cat "$_UNLOCK_LOCK_DIR/pid" 2>/dev/null)"; then
+      echo "WARN: could not read lock PID from $_UNLOCK_LOCK_DIR/pid" >&2
+    fi
+    if ! _UNLOCK_CMD="$(cat "$_UNLOCK_LOCK_DIR/cmd" 2>/dev/null)"; then
+      echo "WARN: could not read lock cmd from $_UNLOCK_LOCK_DIR/cmd" >&2
+    fi
+  fi
   if [ -n "$_UNLOCK_PID" ] && kill -0 "$_UNLOCK_PID" 2>/dev/null && [ "$_UNLOCK_CMD" = "$(basename "$0")" ]; then
     echo "ERROR: A live pr-review-loop.sh process (PID $_UNLOCK_PID) currently holds the lock for PR #${_UNLOCK_PR}. Not removing a live lock." >&2
     echo "  Wait for the process to finish, or send it SIGTERM to stop it gracefully." >&2
