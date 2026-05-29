@@ -1411,6 +1411,8 @@ echo "Post-create assertion passed: backport PR base is '$ACTUAL_BASE'"
 
 **Automated reviewer loop exemption for identical cherry-pick backports**: For identical cherry-pick backport PRs (no changes beyond what was reviewed on the main hotfix PR), running the full automated reviewer loop is optional. If the automated reviewers (PR-Agent, Codex) post a clean result or no result, proceeding directly to merge is acceptable. If any reviewer posts a blocking finding on the backport PR, it must be addressed before merge.
 
+**Haystack "Rules violation" false positive on backport PRs**: When Haystack is configured in `review.platforms`, it may flag a `Rules violation` finding on the backport PR related to CHANGELOG structure. This is a known false positive: the diff of the backport branch against `develop` shows an empty `[Unreleased]` section (from `main`'s CHANGELOG), which Haystack misidentifies as a structure violation. As of v0.29.2, `haystack-reviewer.sh` classifies `Rules violation` as advisory (non-blocking), so this finding will not block the reviewer loop. If you see it reported as a suggestion, verify that `develop`'s `[Unreleased]` section is also empty or equivalent, confirming the merged result will be structurally correct. See [`haystack-triage.md`](../integrations/haystack-triage.md) for details.
+
 If the backport PR introduces any changes beyond a plain cherry-pick (e.g., conflict resolution changes, develop-only fixups), treat it as a normal implementation PR and run the full internal review gate, automated reviewer loop, and CI loop.
 
 Apply `ready-for-regression` and `ready-for-human-review` labels when the PR is clean. The backport PR can be merged by the human alongside or after the main hotfix review.
