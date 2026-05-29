@@ -122,7 +122,7 @@ branch protection rule.
 **Option B — GitHub Rulesets with status-check wildcards**
 
 GitHub repository rulesets (Settings → Rules → Rulesets) support
-`starts_with` and `ends_with` match types for required status checks. Create a
+`starts_with` and `contains` match types for required status checks. Create a
 ruleset and add a status-check requirement that matches
 `Reviewer-loop completion guard`.
 
