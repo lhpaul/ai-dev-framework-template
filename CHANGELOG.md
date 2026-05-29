@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`haystack-reviewer.sh`: classify `Rules violation` as advisory, not blocking** (#782) — Haystack uses this category for custom rule findings such as CHANGELOG structure checks. On hotfix backport PRs the diff against `develop` shows an empty `[Unreleased]` section from `main`, which Haystack misidentifies as a structural violation; the 3-way merge produces a correct result. Mapping `Rules violation` to advisory prevents this false positive from blocking the reviewer loop. Updated `haystack-triage.md` with a dedicated section and troubleshooting entry, and added a Haystack false-positive note to the backport section of `03-implement-development-protocol.md`.
+
 ## [0.29.1] - 2026-05-28
 
 ### Fixed
