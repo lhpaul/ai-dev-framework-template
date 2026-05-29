@@ -1409,11 +1409,37 @@ fi
 echo "Post-create assertion passed: backport PR base is '$ACTUAL_BASE'"
 ```
 
-**Automated reviewer loop exemption for identical cherry-pick backports**: For identical cherry-pick backport PRs (no changes beyond what was reviewed on the main hotfix PR), running the full automated reviewer loop is optional. If the automated reviewers (PR-Agent, Codex) post a clean result or no result, proceeding directly to merge is acceptable. If any reviewer posts a blocking finding on the backport PR, it must be addressed before merge.
+**Backport PR readiness steps (mandatory — mirrors the main hotfix PR path)**:
 
-If the backport PR introduces any changes beyond a plain cherry-pick (e.g., conflict resolution changes, develop-only fixups), treat it as a normal implementation PR and run the full internal review gate, automated reviewer loop, and CI loop.
+Regardless of whether the backport is an identical cherry-pick or introduces conflict-resolution changes, the following steps are required before the human merges:
 
-Apply `ready-for-regression` and `ready-for-human-review` labels when the PR is clean. The backport PR can be merged by the human alongside or after the main hotfix review.
+1. **Run `gh pr ready <backport_pr_number>`** to convert the draft PR to non-draft.
+
+2. **Run the automated reviewer loop**:
+
+   ```bash
+   ./scripts/development-workflow/pr-review-loop.sh <backport_pr_number> --branch backport/hotfix/[slug]
+   ```
+
+   For identical cherry-pick backports (no changes beyond what was reviewed on the main hotfix PR), the reviewer loop is abbreviated: if all configured reviewers post a clean result or no result, the PR is considered clean. If any reviewer posts a blocking finding, it must be addressed before proceeding.
+
+   If the backport PR introduces any changes beyond a plain cherry-pick (e.g., conflict resolution changes, develop-only fixups), treat it as a normal implementation PR and run the full internal review gate (Step 7a), automated reviewer loop (Step 7), and CI loop (Step 8) per Protocol 91.
+
+3. **Apply `ready-for-regression`** after the reviewer loop is clean:
+
+   ```bash
+   gh pr edit <backport_pr_number> --add-label "ready-for-regression"
+   ```
+
+4. **Verify CI is green** using `pr-ci-loop.sh` or by checking the PR's status checks.
+
+5. **Apply `ready-for-human-review`** after CI is green and all reviewer loop threads are resolved:
+
+   ```bash
+   gh pr edit <backport_pr_number> --add-label "ready-for-human-review"
+   ```
+
+Both `ready-for-regression` and `ready-for-human-review` are required on the backport PR before the human merges it. The orchestrator's Step 5.1 verification (Protocol 91) checks for these labels on `backport/hotfix/*` branches and will flag missing labels as a protocol deviation. The backport PR can be merged by the human alongside or after the main hotfix review.
 
 **Branch lifecycle summary**:
 

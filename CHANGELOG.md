@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Protocol 03 Path 4: backport PR labeling required before merge** (#783) — the hotfix backport section previously granted a vague "reviewer loop exemption" that agents interpreted as skipping both the reviewer loop and the readiness labels. The section now explicitly requires running `pr-review-loop.sh`, applying `ready-for-regression`, verifying CI, and applying `ready-for-human-review` before the human merges the backport PR — regardless of whether the backport is an identical cherry-pick or contains conflict-resolution changes. Protocol 91 Step 7b/8a and Protocol 90 Step 5.1 now include `backport/hotfix/*` in all label-requirement and branch-type detection rules. Protocol 92 updated to match.
+
 ## [0.29.1] - 2026-05-28
 
 ### Fixed
