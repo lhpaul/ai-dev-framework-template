@@ -47,7 +47,7 @@
 # Severity mapping (based on confirmed schema — .findings[].category):
 #   Blocking:  "Logic error", "Critical", any unrecognised value (safe-fail)
 #   Advisory:  "Major" (conservative — see note), "Minor", "Advisory",
-#              "Nitpick", "Trivial", "Weak test coverage"
+#              "Nitpick", "Trivial", "Weak test coverage", "Rules violation"
 #
 # NOTE on "Major": The spec marks "Major" as blocking (conservative safe-fail).
 # However, Haystack uses "Major" for findings like "Weak test coverage" that are
@@ -300,7 +300,7 @@ if [ -n "$CATEGORIES" ]; then
           SUGGESTION_COUNT=$((SUGGESTION_COUNT + 1))
         fi
         ;;
-      "Minor"|"Advisory"|"Nitpick"|"Trivial"|"Weak test coverage")
+      "Minor"|"Advisory"|"Nitpick"|"Trivial"|"Weak test coverage"|"Rules violation")
         SUGGESTION_COUNT=$((SUGGESTION_COUNT + 1))
         ;;
       "__UNKNOWN__"|*)
