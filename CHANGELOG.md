@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`pr-review-loop.sh`: fetch remote-tracking ref before reading base-branch config** (#777) — `git show "origin/${_pr_base}:.ai-dev-workflow.yaml"` was reading the local remote-tracking ref as-is. In a long-lived clone or worktree behind `origin`, this could load a stale platform list or stale `phase_after_clean` values, silently breaking the intent of reading platform config from the PR's actual target branch. A `git fetch origin "$_pr_base"` call is now issued before `git show` so the remote-tracking ref is always current.
+
 ## [0.29.1] - 2026-05-28
 
 ### Fixed
