@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`reviewer-loop-guard.yml`: include PR number in commit-status context name** (#781) — the guard now posts to context `"Reviewer-loop completion guard (#<PR_NUMBER>)"` instead of the fixed `"Reviewer-loop completion guard"`, so two PRs sharing the same commit SHA (e.g. a release PR and its backport) cannot overwrite each other's guard result. `ci-enforcement.md` updated with revised branch-protection setup guidance.
+
 ## [0.29.1] - 2026-05-28
 
 ### Fixed
