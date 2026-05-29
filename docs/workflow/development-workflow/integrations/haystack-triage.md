@@ -82,7 +82,7 @@ The `haystack triage --json` output schema uses a `.findings[].category` field a
 | `Nitpick` | Advisory | Non-blocking; reported in SUGGESTION_COUNT |
 | `Trivial` | Advisory | Non-blocking; reported in SUGGESTION_COUNT |
 | `Weak test coverage` | Advisory | Non-blocking; reported in SUGGESTION_COUNT |
-| `Rules violation` | Advisory | Non-blocking; used for custom rule findings (e.g. CHANGELOG structure) that can produce false positives on hotfix backport PRs — see note below |
+| `Rules violation` | Advisory | Non-blocking; used for custom rule findings (e.g. CHANGELOG structure) that can produce false positives on hotfix backport PRs — see the ["Rules violation" section](#rules-violation--changelog-false-positive-on-hotfix-backport-prs) below |
 | Any unrecognised value | Blocking | Conservative safe-fail per spec BR-2 |
 
 The `COMMENT_COUNT` output equals `BLOCKING_COUNT + SUGGESTION_COUNT`.
