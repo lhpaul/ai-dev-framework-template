@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`pr-review-loop.sh`: escalate instead of falling back to unscoped Copilot query when head SHA lookup fails** (#776) — when `gh pr view --json headRefOid` returns empty (transient API failure), `run_copilot_review()` now returns `RESULT=escalate REASON=head-sha-unavailable` instead of querying the reviews endpoint without a commit filter. The unscoped fallback could reuse a stale `APPROVED` or `CHANGES_REQUESTED` verdict from a previous review cycle, producing a false-clean or false-block result.
+
 ## [0.29.1] - 2026-05-28
 
 ### Fixed
