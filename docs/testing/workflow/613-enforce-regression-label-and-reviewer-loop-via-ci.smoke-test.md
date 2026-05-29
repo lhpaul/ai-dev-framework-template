@@ -26,7 +26,7 @@ Before running this smoke test:
 | Out-of-scope fixture branch | `spec/613-smoke-test-fixture` |
 | Target branch for fixture PRs | `develop` |
 | Label to verify | `ready-for-regression` |
-| Guard check name | `Reviewer-loop completion guard` |
+| Guard check name | `Reviewer-loop completion guard (#<PR_NUMBER>)` (PR-number-scoped) |
 
 ---
 
@@ -75,7 +75,7 @@ Before running this smoke test:
    ```bash
    HEAD_SHA=$(gh pr view "$PR_NUM" --json headRefOid --jq '.headRefOid')
    gh api "repos/$(gh repo view --json nameWithOwner --jq '.nameWithOwner')/commits/$HEAD_SHA/statuses" \
-     --jq '[.[] | select(.context == "Reviewer-loop completion guard")] | first | {state, description}'
+     --jq "[.[] | select(.context | startswith(\"Reviewer-loop completion guard (#\"))] | first | {state, description}"
    ```
 
 **Expected result**:
@@ -133,7 +133,7 @@ Before running this smoke test:
    ```bash
    HEAD_SHA=$(gh pr view "$PR_NUM" --json headRefOid --jq '.headRefOid')
    gh api "repos/$(gh repo view --json nameWithOwner --jq '.nameWithOwner')/commits/$HEAD_SHA/statuses" \
-     --jq '[.[] | select(.context == "Reviewer-loop completion guard")] | first | {state, description}'
+     --jq "[.[] | select(.context | startswith(\"Reviewer-loop completion guard (#\"))] | first | {state, description}"
    ```
 
 **Expected result**:
@@ -160,12 +160,12 @@ Before running this smoke test:
    ```bash
    HEAD_SHA=$(gh pr view "$PR_NUM" --json headRefOid --jq '.headRefOid')
    gh api "repos/$(gh repo view --json nameWithOwner --jq '.nameWithOwner')/commits/$HEAD_SHA/statuses" \
-     --jq '[.[] | select(.context == "Reviewer-loop completion guard")] | first | {state, description}'
+     --jq "[.[] | select(.context | startswith(\"Reviewer-loop completion guard (#\"))] | first | {state, description}"
    ```
 
 **Expected result**:
 
-- A new status is posted for the new `HEAD_SHA` under context `Reviewer-loop completion guard`.
+- A new status is posted for the new `HEAD_SHA` under context `Reviewer-loop completion guard (#<PR_NUMBER>)`.
 - `state` reflects whether the canonical summary comment is present on the PR at evaluation time.
 - **Maps to**: Acceptance Criterion #7 (guard re-evaluates on every push).
 
@@ -271,7 +271,7 @@ Each checkbox maps to an acceptance criterion from the spec.
 - [ ] **AC #2**: Opening a PR from `spec/613-smoke-test-fixture` did not result in `ready-for-regression` being applied.
 - [ ] **AC #3**: Converting the draft implementation PR to non-draft resulted in the label being present.
 - [ ] **AC #4**: Re-running the label workflow when the label was already present completed without failure and without duplicating the label.
-- [ ] **AC #5**: The implementation PR with no reviewer-loop summary comment showed a failing `Reviewer-loop completion guard` check.
+- [ ] **AC #5**: The implementation PR with no reviewer-loop summary comment showed a failing `Reviewer-loop completion guard (#<PR_NUMBER>)` check.
 - [ ] **AC #6**: After posting the canonical summary comment, the guard check transitioned to passing.
 - [ ] **AC #7**: A subsequent push caused the guard to re-evaluate and post a fresh status on the new SHA.
 - [ ] **AC #9** (defer to CI): Both workflow files pass `actionlint` with no new warnings (verified in the implementation PR's CI run).
@@ -299,5 +299,5 @@ No seed data is required. The smoke test uses fixture branches and PRs created i
 
 ## Known Limitations
 
-- The guard check uses the GitHub Commit Statuses API (not Checks API). Some branch protection UIs surface statuses and checks in separate sections. Downstream maintainers must search for `Reviewer-loop completion guard` in the "Statuses" section, not only under "GitHub Actions checks", when configuring branch protection.
+- The guard check uses the GitHub Commit Statuses API (not Checks API). Some branch protection UIs surface statuses and checks in separate sections. Downstream maintainers must search for `Reviewer-loop completion guard (#<PR_NUMBER>)` in the "Statuses" section, not only under "GitHub Actions checks", when configuring branch protection. Because the context name includes the PR number, wildcard matching (e.g. via GitHub Rulesets) is required to enforce it as a required status check.
 - The smoke test steps require a repository where the workflows are active. This runbook cannot be executed entirely offline.
