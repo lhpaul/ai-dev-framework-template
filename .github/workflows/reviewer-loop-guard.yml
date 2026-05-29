@@ -19,8 +19,15 @@
 #
 # Branches outside the in-scope list always pass (status set to success).
 #
-# The commit-status context name "Reviewer-loop completion guard" can be added
-# to branch-protection required checks so the guard is enforced at merge time.
+# The commit-status context name uses a PR-number suffix
+# ("Reviewer-loop completion guard (#<PR_NUMBER>)") to prevent two PRs that
+# share the same commit SHA (e.g. a main PR and its backport) from
+# overwriting each other's guard result.
+#
+# Branch-protection required checks: add the expected context name for each
+# PR number you want to enforce, or use a wildcard pattern if your provider
+# supports it. In practice, most teams enable the guard via a status-check
+# pattern rule rather than a fixed context string.
 # See docs/workflow/development-workflow/integrations/ci-enforcement.md for setup.
 #
 # Downstream override: edit IN_SCOPE_PREFIXES to change the in-scope prefix list.
@@ -66,6 +73,11 @@ jobs:
             fi
           done
 
+          # Build the PR-specific context name: including the PR number prevents two
+          # PRs that share the same commit SHA (e.g. a release PR and its backport)
+          # from overwriting each other's guard result.
+          GUARD_CONTEXT="Reviewer-loop completion guard (#${PR_NUMBER})"
+
           if [ "$in_scope" = "false" ]; then
             echo "Branch '${BRANCH}' is not in scope — posting success status (guard skipped)."
             gh api \
@@ -73,7 +85,7 @@ jobs:
               "repos/$REPO/statuses/$HEAD_SHA" \
               -f state="success" \
               -f description="Not an implementation branch; guard skipped." \
-              -f context="Reviewer-loop completion guard"
+              -f context="$GUARD_CONTEXT"
             exit 0
           fi
 
@@ -122,7 +134,7 @@ jobs:
                 "repos/$REPO/statuses/$HEAD_SHA" \
                 -f state="failure" \
                 -f description="Could not fetch PR comments. Re-run the workflow to retry." \
-                -f context="Reviewer-loop completion guard"
+                -f context="$GUARD_CONTEXT"
               exit 1
             }
             echo "Reviewer-loop summary comments found: ${FOUND}"
@@ -148,9 +160,9 @@ jobs:
             "repos/$REPO/statuses/$HEAD_SHA" \
             -f state="$STATE" \
             -f description="$DESCRIPTION" \
-            -f context="Reviewer-loop completion guard"
+            -f context="$GUARD_CONTEXT"
 
-          echo "Posted commit status '${STATE}' for SHA ${HEAD_SHA}."
+          echo "Posted commit status '${STATE}' for SHA ${HEAD_SHA} with context '${GUARD_CONTEXT}'."
 
           if [ "$STATE" = "failure" ]; then
             echo "Guard FAILED: the automated reviewer loop must run to completion before this PR is treated as ready."
