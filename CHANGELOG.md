@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`pr-review-loop.sh`: surface SHA-refresh errors and lock metadata read failures** (#780) — two silent error-swallow patterns introduced during the hotfix v0.29.1 authoring process are replaced with proper error propagation. In `run_copilot_review()`, the SHA-refresh poll loop now logs a `WARN` to stderr when `gh pr view` fails before falling back to the initial SHA, making auth, rate-limit, and network errors visible to operators. In the `unlock` subcommand, `|| true` fallbacks on `cat` are replaced with explicit `if !` guards that log `WARN` messages when lock-metadata files (`pid`, `cmd`) are unreadable, surfacing filesystem and permission errors instead of silently swallowing them.
+
 ## [0.29.1] - 2026-05-28
 
 ### Fixed
