@@ -1105,10 +1105,23 @@ run_haystack_review() {
   local effective_timeout
   effective_timeout="$max_wait"
 
+  local haystack_stderr_file
+  haystack_stderr_file="$(mktemp)"
+  trap 'rm -f "${haystack_stderr_file:-}"' RETURN
+
   set +e
-  script_output="$("$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$effective_timeout" 2>/dev/null)"
+  script_output="$("$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$effective_timeout" 2>"$haystack_stderr_file")"
   script_exit=$?
   set -e
+
+  # Surface haystack-reviewer.sh stderr (INFO: diagnostics) to our own stderr so
+  # callers can determine why a result was returned (e.g. status=pending, unavailable,
+  # auth failure, CLI not installed).
+  if [ -s "$haystack_stderr_file" ]; then
+    echo "INFO: haystack-reviewer.sh stderr:" >&2
+    cat "$haystack_stderr_file" >&2
+  fi
+  rm -f "$haystack_stderr_file"
 
   # Parse output from the companion script (key=value lines on stdout).
   blocking_count="$(printf '%s\n' "$script_output" | grep '^BLOCKING_COUNT=' | cut -d= -f2 | head -1)"
