@@ -846,7 +846,7 @@ git checkout -b refactor/[branch-slug]
      --include="*.sh" --include="*.ts" --include="*.js" --include="*.json"
    ```
 
-   Expected output: empty, or only files where the old string appears intentionally (e.g., a CHANGELOG entry describing the rename, a comment explaining the old value). For each file listed: open it, confirm whether the occurrence is intentional or a missed substitution, and fix every missed substitution before staging.
+   Expected output: empty, or only files where the old string appears intentionally (e.g., a CHANGELOG entry describing the rename, a comment explaining the old value). For each file listed: open it, confirm whether the occurrence is intentional or a missed substitution, and fix every missed substitution before staging. Re-run until the output contains only intentional occurrences.
 
    If any `.sh` files were modified, run ShellCheck before committing:
 
