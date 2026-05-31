@@ -498,6 +498,18 @@ Before committing, verify:
 
 **Script-Accuracy Self-Check Checklist (if this PR is a documentation PR that describes script behavior)**: Complete the [Script-Accuracy Self-Check Checklist](#script-accuracy-self-check-checklist) before opening the PR. Verify each documented claim about input/output format, exit codes, option flags, and API calls against the actual script source.
 
+**Renamed-string downstream scan (if any literal string, identifier, context name, or signal value was renamed or changed in this PR)**: Before committing, run a full-repository grep for every old string that was renamed. This catches downstream references in fixture files, test files, documentation, shell scripts, and CI workflows that were not part of the primary edit.
+
+```bash
+# Replace "old_string" with each literal string you renamed.
+# Run once per renamed string — do not skip because you "only changed one file."
+grep -r "old_string" . --exclude-dir=".git" --exclude-dir="worktrees" \
+  --include="*.md" --include="*.mdc" --include="*.yaml" --include="*.yml" \
+  --include="*.sh" --include="*.ts" --include="*.js" --include="*.json"
+```
+
+Expected output: empty, or only files where the old string appears intentionally (e.g., a CHANGELOG entry describing the rename, a comment explaining the old value). For each file listed: open it, confirm whether the occurrence is intentional or a missed substitution, and fix every missed substitution before staging. Re-run until the output contains only intentional occurrences.
+
 **ShellCheck (if any `.sh` files were modified)**:
 
 ```bash
@@ -824,6 +836,18 @@ git checkout -b refactor/[branch-slug]
 
    **Script-Accuracy Self-Check Checklist (if this PR is a documentation PR that describes script behavior)**: Complete the [Script-Accuracy Self-Check Checklist](#script-accuracy-self-check-checklist) before opening the PR. Verify each documented claim about input/output format, exit codes, option flags, and API calls against the actual script source.
 
+   **Renamed-string downstream scan (if any literal string, identifier, context name, or signal value was renamed or changed in this PR)**: Before committing, run a full-repository grep for every old string that was renamed. This catches downstream references in fixture files, test files, documentation, shell scripts, and CI workflows that were not part of the primary edit. The [Mass-rename sub-step](#refactor-steps) above covers the primary substitution; this check is the final catch-all before staging.
+
+   ```bash
+   # Replace "old_string" with each literal string you renamed.
+   # Run once per renamed string — do not skip because you "only changed one file."
+   grep -r "old_string" . --exclude-dir=".git" --exclude-dir="worktrees" \
+     --include="*.md" --include="*.mdc" --include="*.yaml" --include="*.yml" \
+     --include="*.sh" --include="*.ts" --include="*.js" --include="*.json"
+   ```
+
+   Expected output: empty, or only files where the old string appears intentionally (e.g., a CHANGELOG entry describing the rename, a comment explaining the old value). For each file listed: open it, confirm whether the occurrence is intentional or a missed substitution, and fix every missed substitution before staging. Re-run until the output contains only intentional occurrences.
+
    If any `.sh` files were modified, run ShellCheck before committing:
 
    ```bash
@@ -1021,6 +1045,18 @@ Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected
 **Filter-Schema Canary Test Checklist (if this PR adds new filter parameters to a tool schema)**: Complete the [Filter-Schema Canary Test Checklist](#filter-schema-canary-test-checklist) before opening the PR. A missing canary test is a blocking code-review finding.
 
 **Script-Accuracy Self-Check Checklist (if this PR is a documentation PR that describes script behavior)**: Complete the [Script-Accuracy Self-Check Checklist](#script-accuracy-self-check-checklist) before opening the PR. Verify each documented claim about input/output format, exit codes, option flags, and API calls against the actual script source.
+
+**Renamed-string downstream scan (if any literal string, identifier, context name, or signal value was renamed or changed in this PR)**: Before committing, run a full-repository grep for every old string that was renamed. This catches downstream references in fixture files, test files, documentation, shell scripts, and CI workflows that were not part of the primary edit.
+
+```bash
+# Replace "old_string" with each literal string you renamed.
+# Run once per renamed string — do not skip because you "only changed one file."
+grep -r "old_string" . --exclude-dir=".git" --exclude-dir="worktrees" \
+  --include="*.md" --include="*.mdc" --include="*.yaml" --include="*.yml" \
+  --include="*.sh" --include="*.ts" --include="*.js" --include="*.json"
+```
+
+Expected output: empty, or only files where the old string appears intentionally (e.g., a CHANGELOG entry describing the rename, a comment explaining the old value). For each file listed: open it, confirm whether the occurrence is intentional or a missed substitution, and fix every missed substitution before staging. Re-run until the output contains only intentional occurrences.
 
 **ShellCheck (if any `.sh` files were modified)**:
 
@@ -1247,6 +1283,18 @@ Verify: build, lint, tests pass.
 **Filter-Schema Canary Test Checklist (if this PR adds new filter parameters to a tool schema)**: Complete the [Filter-Schema Canary Test Checklist](#filter-schema-canary-test-checklist) before opening the PR. A missing canary test is a blocking code-review finding.
 
 **Script-Accuracy Self-Check Checklist (if this PR is a documentation PR that describes script behavior)**: Complete the [Script-Accuracy Self-Check Checklist](#script-accuracy-self-check-checklist) before opening the PR. Verify each documented claim about input/output format, exit codes, option flags, and API calls against the actual script source.
+
+**Renamed-string downstream scan (if any literal string, identifier, context name, or signal value was renamed or changed in this PR)**: Before committing, run a full-repository grep for every old string that was renamed. This catches downstream references in fixture files, test files, documentation, shell scripts, and CI workflows that were not part of the primary edit.
+
+```bash
+# Replace "old_string" with each literal string you renamed.
+# Run once per renamed string — do not skip because you "only changed one file."
+grep -r "old_string" . --exclude-dir=".git" --exclude-dir="worktrees" \
+  --include="*.md" --include="*.mdc" --include="*.yaml" --include="*.yml" \
+  --include="*.sh" --include="*.ts" --include="*.js" --include="*.json"
+```
+
+Expected output: empty, or only files where the old string appears intentionally (e.g., a CHANGELOG entry describing the rename, a comment explaining the old value). For each file listed: open it, confirm whether the occurrence is intentional or a missed substitution, and fix every missed substitution before staging. Re-run until the output contains only intentional occurrences.
 
 **ShellCheck (if any `.sh` files were modified)**:
 
