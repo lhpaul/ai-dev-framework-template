@@ -3,7 +3,11 @@
 set -euo pipefail
 
 workflow_script_dir() {
-  CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]:-workflow-lib.sh}")" && pwd
+  if [[ -z "${BASH_SOURCE[0]:-}" ]]; then
+    printf 'ERROR: BASH_SOURCE[0] is unset — source workflow-lib.sh from a Bash script or via:\n  bash -c "source scripts/development-workflow/workflow-lib.sh"\n' >&2
+    return 1
+  fi
+  CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd
 }
 
 workflow_repo_root() {
