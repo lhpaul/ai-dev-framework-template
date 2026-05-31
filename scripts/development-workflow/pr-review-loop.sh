@@ -1079,8 +1079,9 @@ run_haystack_review() {
   #   3 → RESULT=skipped / REASON=unavailable → propagated as RESULT=skipped
   local pr_number="$1"
   local branch_name="$2"
-  # poll_interval and max_wait passed for interface consistency; haystack runs
-  # synchronously so poll_interval is not used. max_wait is passed as --timeout.
+  # poll_interval and max_wait passed for interface consistency; haystack-reviewer.sh
+  # manages its own internal poll interval (HAYSTACK_POLL_INTERVAL env var), so
+  # poll_interval from the caller is not used here. max_wait is passed as --timeout.
   local poll_interval="$3"
   local max_wait="$4"
   local platform="haystack"
