@@ -167,9 +167,37 @@ REASON=unavailable
 INFO: haystack triage returned status=none (no analysis available for this PR yet) — treating as UNAVAILABLE
 ```
 
-**Cause**: Haystack has not yet analysed this PR (e.g., the PR was just opened and analysis is still pending, or the PR was not submitted via `haystack submit`). The `--no-wait` flag used by `haystack-reviewer.sh` exits immediately if analysis is pending.
+**Cause**: Haystack has no record of this PR. This happens when the PR was not submitted via `haystack submit` and the Haystack GitHub App has not yet picked it up automatically.
 
-**Remediation**: Run `haystack triage <PR>` without `--no-wait` to wait for analysis to complete, then re-run the review loop. Alternatively, use `haystack submit` when opening PRs to ensure analysis starts immediately.
+**Remediation**: Run `haystack submit` on the branch to trigger analysis, then re-run the review loop.
+
+### Triage returns `status=pending` (analysis timing gap)
+
+```text
+INFO: haystack triage returned status=pending (analysis still in progress — use --no-wait=false to poll) — treating as UNAVAILABLE
+```
+
+**Cause**: `haystack-reviewer.sh` calls `haystack triage` with `--no-wait`, which exits immediately when the Haystack cloud analysis is not yet complete. Haystack analysis typically takes 2–4 minutes after a PR is pushed. If the reviewer loop runs in that window, it gets `status=pending` and maps it to `UNAVAILABLE` — even though real findings will arrive shortly. This is a **transient timing gap**, not a permanent unavailability.
+
+**How to distinguish from a genuine `unavailable`**: Check whether the Haystack GitHub App has posted a "Haystack Code Reviewer: PR Analysis Ready!" comment on the PR:
+
+```bash
+gh pr view <pr_number> --json comments \
+  --jq '[.comments[].body | select(test("Haystack Code Reviewer: PR Analysis Ready"))] | length'
+```
+
+- Output `0` → Haystack has not yet completed (or the App is not installed). Re-run the review loop after a few minutes.
+- Output `≥ 1` → Haystack has completed its analysis. The `unavailable` result was a false-negative caused by the timing gap. **Do not accept the review loop's `clean` verdict — run `haystack triage` manually instead:**
+
+```bash
+haystack triage <pr_number>
+```
+
+Evaluate the findings and address any `[Logic error]` or `[Critical]` items before labeling the PR `ready-for-human-review`.
+
+> **Protocol guard (when Haystack is listed in `review.platforms` and the loop returns `skipped/unavailable`)**: Before applying `ready-for-human-review`, agents must check whether the Haystack GitHub App has posted its "PR Analysis Ready!" comment. If it has, run `haystack triage <pr_number>` manually and evaluate findings. Applying `ready-for-human-review` without this check risks merging genuine `[Logic error]` findings that the automated loop missed.
+
+**Long-term fix**: tracked in [issue filed after batch 68 retro] — `haystack-reviewer.sh` should poll-retry when `status=pending` instead of immediately mapping to `UNAVAILABLE`.
 
 ### Triage times out
 
