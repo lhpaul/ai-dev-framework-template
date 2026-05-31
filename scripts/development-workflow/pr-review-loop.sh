@@ -1067,13 +1067,15 @@ run_haystack_review() {
   # Runs haystack-reviewer.sh for the given PR and maps its exit codes to the
   # standard pr-review-loop key-value output contract.
   #
-  # Haystack triage runs synchronously (no polling loop required). The companion
-  # script handles the timeout internally via a configurable env var or --timeout flag.
+  # The companion script polls haystack triage internally (poll-retry loop for
+  # status=pending). The timeout is passed via --timeout.
   #
   # Exit code mapping from haystack-reviewer.sh:
   #   0 → RESULT=clean    (no blocking findings)
   #   1 → RESULT=needs_fixes (one or more blocking findings)
-  #   2 → RESULT=skipped / REASON=timeout → propagated as RESULT=escalate
+  #   2 → RESULT=escalate; REASON forwarded from companion script:
+  #         REASON=timeout         — per-call OS timeout exhausted budget
+  #         REASON=pending_timeout — analysis stayed pending past timeout budget
   #   3 → RESULT=skipped / REASON=unavailable → propagated as RESULT=skipped
   local pr_number="$1"
   local branch_name="$2"
@@ -1099,9 +1101,8 @@ run_haystack_review() {
   owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
   repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
 
-  # Haystack runs synchronously; honor the caller-provided max_wait budget directly.
-  # (No poll_interval floor needed — unlike polling-based reviewers, haystack triage
-  # completes in a single invocation.)
+  # Haystack-reviewer.sh manages its own poll-retry loop internally; honor the
+  # caller-provided max_wait budget as the overall timeout.
   local effective_timeout
   effective_timeout="$max_wait"
 
@@ -1163,8 +1164,12 @@ run_haystack_review() {
       return 1
       ;;
     2)
+      # Forward the REASON from the companion script (timeout or pending_timeout).
+      local haystack_reason
+      haystack_reason="$(printf '%s\n' "$script_output" | grep '^REASON=' | cut -d= -f2 | head -1)"
+      haystack_reason="${haystack_reason:-timeout}"  # default to timeout if missing
       print_kv RESULT escalate
-      print_kv REASON timeout
+      print_kv REASON "$haystack_reason"
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
