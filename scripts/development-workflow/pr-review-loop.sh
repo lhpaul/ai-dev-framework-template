@@ -3459,7 +3459,7 @@ normalize_platform_verdict() {
     escalate)
       # Distinguish timeout from service-unavailable via REASON.
       case "$reason" in
-        timeout|timed_out|max_wait_exceeded|no_response|rate_limit_max_retries)
+        timeout|timed_out|max_wait_exceeded|no_response|rate_limit_max_retries|pending_timeout)
           printf 'timed out' ;;
         *)
           printf 'unavailable' ;;

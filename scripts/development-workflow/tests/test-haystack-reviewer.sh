@@ -21,7 +21,11 @@ set -euo pipefail
 # Locate repository root (works inside worktrees and normal checkouts).
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel)"
+# Use --git-common-dir (not --show-toplevel) so this resolves correctly even
+# when the harness is run inside a git worktree (--show-toplevel returns the
+# worktree path, not the main repo root).
+GIT_COMMON_DIR="$(cd "$SCRIPT_DIR" && git rev-parse --git-common-dir)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/$GIT_COMMON_DIR/.." && pwd -P)"
 
 HAYSTACK_REVIEWER="$REPO_ROOT/scripts/development-workflow/haystack-reviewer.sh"
 
