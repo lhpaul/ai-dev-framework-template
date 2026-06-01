@@ -179,6 +179,7 @@ echo "INFO: poll-retry loop — polling every ${POLL_INTERVAL}s, overall timeout
 TRIAGE_OUTPUT=""
 TRIAGE_EXIT=0
 elapsed=0
+LOOP_START_TS="$(date +%s 2>/dev/null || printf '0')"
 TRIAGE_STDERR=$(mktemp)
 
 while true; do
@@ -186,6 +187,13 @@ while true; do
   TRIAGE_STDERR=$(mktemp)
   TRIAGE_OUTPUT=""
   TRIAGE_EXIT=0
+
+  # Compute actual elapsed seconds using wall-clock timestamps so the budget
+  # tracking reflects real time, not just accumulated sleep intervals.
+  NOW_TS="$(date +%s 2>/dev/null || printf '0')"
+  if [ "$LOOP_START_TS" -gt 0 ] && [ "$NOW_TS" -ge "$LOOP_START_TS" ]; then
+    elapsed=$((NOW_TS - LOOP_START_TS))
+  fi
 
   # Per-call timeout: half of the remaining budget (minimum 1s).
   remaining=$((TIMEOUT - elapsed))
@@ -237,8 +245,12 @@ while true; do
 
   # ── Handle per-call timeout ─────────────────────────────────────────────────
   if [ "$TRIAGE_EXIT" -eq 124 ]; then
-    elapsed=$((elapsed + POLL_CALL_TIMEOUT))
-    echo "INFO: haystack triage per-call timeout after ${POLL_CALL_TIMEOUT}s (total elapsed: ${elapsed}s)" >&2
+    # Recompute elapsed from wall-clock before the next budget check.
+    NOW_TS="$(date +%s 2>/dev/null || printf '0')"
+    if [ "$LOOP_START_TS" -gt 0 ] && [ "$NOW_TS" -ge "$LOOP_START_TS" ]; then
+      elapsed=$((NOW_TS - LOOP_START_TS))
+    fi
+    echo "INFO: haystack triage per-call timeout (total elapsed: ${elapsed}s)" >&2
     if [ "$elapsed" -ge "$TIMEOUT" ]; then
       TRIAGE_EXIT=124  # propagate timeout sentinel
       break
@@ -299,15 +311,16 @@ while true; do
       exit 3
       ;;
     pending)
-      # Transient: analysis still in progress — poll-retry.
-      elapsed=$((elapsed + POLL_INTERVAL))
+      # Transient: analysis still in progress — poll-retry after POLL_INTERVAL.
       echo "INFO: status=pending — waiting ${POLL_INTERVAL}s before retry (${elapsed}s elapsed of ${TIMEOUT}s budget)" >&2
-      if [ "$elapsed" -ge "$TIMEOUT" ]; then
-        # Budget exhausted while still pending.
+      # Check budget BEFORE sleeping so we don't overshoot the timeout.
+      if [ $((elapsed + POLL_INTERVAL)) -ge "$TIMEOUT" ]; then
+        # Sleeping would exhaust the budget — exit now with pending_timeout.
         TRIAGE_EXIT=200  # sentinel: pending_timeout
         break
       fi
       sleep "$POLL_INTERVAL"
+      # Wall-clock elapsed will be recomputed at the top of the next iteration.
       continue
       ;;
     *)
