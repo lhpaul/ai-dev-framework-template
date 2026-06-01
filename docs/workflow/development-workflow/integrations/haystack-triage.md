@@ -12,7 +12,7 @@ For information about Haystack's local git hooks (truncation checker, LLM_RULES.
 
 Key properties:
 
-- **Synchronous**: `haystack triage` runs and returns; no polling loop required.
+- **Poll-retry on pending**: When `haystack triage` returns `status=pending` (analysis still in progress), `haystack-reviewer.sh` waits `HAYSTACK_POLL_INTERVAL` seconds (default: 15) and retries automatically until the analysis completes or the overall `HAYSTACK_REVIEWER_TIMEOUT` budget is exhausted. This eliminates the timing-gap false-negative where the reviewer loop ran within the first 2–4 minutes of a PR push and silently skipped findings.
 - **No per-hour rate cap**: Unlike some hosted review services, Haystack triage is not subject to hourly review limits (as of the time of writing).
 - **Graceful degradation**: If the `haystack` CLI is absent or unauthenticated, the reviewer exits with `UNAVAILABLE` and the review loop continues with the remaining configured platforms.
 - **No GitHub App required**: This integration uses the CLI only. Haystack does not post inline GitHub review threads in this MVP — findings are reported locally via the key-value output.
@@ -110,21 +110,31 @@ If both conditions hold, the finding is a false positive and can be dismissed. G
 
 ---
 
-## Timeout Configuration
+## Timeout and Poll Interval Configuration
 
-The default timeout for `haystack triage` is 120 seconds. Override it with the `HAYSTACK_REVIEWER_TIMEOUT` environment variable:
+`haystack-reviewer.sh` polls `haystack triage` until the analysis completes or the overall budget expires. Two environment variables control this behaviour:
+
+| Variable | Default | Description |
+| -------- | ------- | ----------- |
+| `HAYSTACK_REVIEWER_TIMEOUT` | `120` | Total seconds the script may spend across all poll-retry calls. When this budget is exhausted while the analysis is still `pending`, the script exits with `REASON=pending_timeout`. |
+| `HAYSTACK_POLL_INTERVAL` | `15` | Seconds to wait between successive `haystack triage --no-wait` calls when the response carries `status=pending`. |
+
+Override both via environment variable:
 
 ```bash
-HAYSTACK_REVIEWER_TIMEOUT=60 ./scripts/development-workflow/pr-review-loop.sh <pr_number>
+HAYSTACK_REVIEWER_TIMEOUT=180 HAYSTACK_POLL_INTERVAL=20 \
+  ./scripts/development-workflow/pr-review-loop.sh <pr_number>
 ```
 
-If `haystack triage` does not return within the timeout, `haystack-reviewer.sh` exits with code `2` (TIMED_OUT) and `pr-review-loop.sh` reports `RESULT=escalate / REASON=timeout`.
+If a single `haystack triage` call hangs (e.g., network issue), the script enforces a per-call timeout of `floor(remaining_budget / 2)` seconds (minimum 1 second) and retries as long as the overall budget allows. When the budget is finally exhausted due to a hung call, the script exits with `REASON=timeout` (exit code 2).
 
 ---
 
 ## Graceful Degradation
 
-When the `haystack` CLI is absent from `$PATH` or returns a non-zero exit code (authentication failure, network error, etc.), `haystack-reviewer.sh` exits `3` (UNAVAILABLE) and emits:
+`haystack-reviewer.sh` degrades gracefully in three distinct scenarios:
+
+**CLI not installed or authentication failed** (`REASON=unavailable`, exit 3):
 
 ```text
 RESULT=skipped
@@ -134,18 +144,41 @@ SUGGESTION_COUNT=0
 COMMENT_COUNT=0
 ```
 
-`pr-review-loop.sh` then applies the configured `internal_reviewers_unavailable_policy` (default: `warn`) — it logs a warning and continues with the remaining platforms. Other platforms are not blocked.
+**Analysis timed out waiting for pending result** (`REASON=pending_timeout`, exit 2):
+
+```text
+RESULT=skipped
+REASON=pending_timeout
+BLOCKING_COUNT=0
+SUGGESTION_COUNT=0
+COMMENT_COUNT=0
+```
+
+**Single `haystack triage` call hung past the overall budget** (`REASON=timeout`, exit 2):
+
+```text
+RESULT=skipped
+REASON=timeout
+BLOCKING_COUNT=0
+SUGGESTION_COUNT=0
+COMMENT_COUNT=0
+```
+
+In all three cases, `pr-review-loop.sh` treats the reviewer as unavailable and continues with the remaining platforms. Other platforms are not blocked.
 
 ---
 
 ## Exit Code Contract
 
-| Exit code | Meaning | RESULT emitted |
-| --------- | ------- | -------------- |
-| `0` | APPROVED — no blocking findings | `clean` |
-| `1` | NEEDS_REVISION — one or more blocking findings | `needs_fixes` |
-| `2` | TIMED_OUT — `haystack triage` did not return within timeout | `escalate` (via `pr-review-loop.sh`) |
-| `3` | UNAVAILABLE — CLI not installed or authentication failed | `skipped` |
+| Exit code | Meaning | RESULT emitted | REASON emitted |
+| --------- | ------- | -------------- | -------------- |
+| `0` | APPROVED — no blocking findings | `clean` | — |
+| `1` | NEEDS_REVISION — one or more blocking findings | `needs_fixes` | — |
+| `2` | TIMED_OUT — per-call OS timeout exhausted the overall budget | `skipped` (→ `escalate` via `pr-review-loop.sh`) | `timeout` |
+| `2` | PENDING_TIMEOUT — analysis stayed `pending` until the overall budget expired | `skipped` (→ `escalate` via `pr-review-loop.sh`) | `pending_timeout` |
+| `3` | UNAVAILABLE — CLI not installed, authentication failed, `status=none` | `skipped` | `unavailable` |
+
+The `REASON` field distinguishes the three `skipped` sub-cases so callers can decide whether to retry later (`pending_timeout` — analysis was in progress), investigate connectivity (`timeout` — a call hung), or check authentication (`unavailable` — CLI absent or no analysis submitted).
 
 ---
 
@@ -171,33 +204,44 @@ INFO: haystack triage returned status=none (no analysis available for this PR ye
 
 **Remediation**: Run `haystack submit` on the branch to trigger analysis, then re-run the review loop.
 
-### Triage returns `status=pending` (analysis timing gap)
+### Triage returns `status=pending` (analysis in progress — automatic retry)
 
 ```text
-INFO: haystack triage returned status=pending (analysis still in progress — use --no-wait=false to poll) — treating as UNAVAILABLE
+INFO: status=pending — waiting 15s before retry (15s elapsed of 120s budget)
 ```
 
-**Cause**: `haystack-reviewer.sh` calls `haystack triage` with `--no-wait`, which exits immediately when the Haystack cloud analysis is not yet complete. Haystack analysis typically takes 2–4 minutes after a PR is pushed. If the reviewer loop runs in that window, it gets `status=pending` and maps it to `UNAVAILABLE` — even though real findings will arrive shortly. This is a **transient timing gap**, not a permanent unavailability.
+**Cause**: `haystack triage --no-wait` exits immediately when the Haystack cloud analysis is not yet complete. Haystack analysis typically takes 2–4 minutes after a PR is pushed.
 
-**How to distinguish from a genuine `unavailable`**: Check whether the Haystack GitHub App has posted a "Haystack Code Reviewer: PR Analysis Ready!" comment on the PR:
+**Behaviour since issue #795**: `haystack-reviewer.sh` now **automatically polls and retries** when it receives `status=pending`. It waits `HAYSTACK_POLL_INTERVAL` seconds (default: 15) between calls and continues retrying until the analysis completes or the `HAYSTACK_REVIEWER_TIMEOUT` budget (default: 120 seconds) is exhausted.
 
-```bash
-gh pr view <pr_number> --json comments \
-  --jq '[.comments[].body | select(test("Haystack Code Reviewer: PR Analysis Ready"))] | length'
+If the overall budget is exhausted while the analysis is still pending, the script emits:
+
+```text
+INFO: haystack triage status=pending — budget exhausted after 120s (pending_timeout)
+RESULT=skipped
+REASON=pending_timeout
 ```
 
-- Output `0` → Haystack has not yet completed (or the App is not installed). Re-run the review loop after a few minutes.
-- Output `≥ 1` → Haystack has completed its analysis. The `unavailable` result was a false-negative caused by the timing gap. **Do not accept the review loop's `clean` verdict — run `haystack triage` manually instead:**
+**When you see `REASON=pending_timeout`**: The review loop will treat the reviewer as unavailable for this run and continue with the remaining platforms. This is distinct from `REASON=unavailable` (CLI not installed or authentication failed) and `REASON=timeout` (a single call hung).
 
-```bash
-haystack triage <pr_number>
-```
+**Recovery options**:
 
-Evaluate the findings and address any `[Logic error]` or `[Critical]` items before labeling the PR `ready-for-human-review`.
+1. **Increase the timeout**: Set `HAYSTACK_REVIEWER_TIMEOUT=300` to give Haystack more time to complete analysis.
+2. **Re-run the review loop manually** after a few minutes: `./scripts/development-workflow/pr-review-loop.sh <pr_number>`.
+3. **Run haystack triage directly** if you need an immediate result:
 
-> **Protocol guard (when Haystack is listed in `review.platforms` and the loop returns `skipped/unavailable`)**: Before applying `ready-for-human-review`, agents must check whether the Haystack GitHub App has posted its "PR Analysis Ready!" comment. If it has, run `haystack triage <pr_number>` manually and evaluate findings. Applying `ready-for-human-review` without this check risks merging genuine `[Logic error]` findings that the automated loop missed.
+   ```bash
+   haystack triage <pr_number>
+   ```
 
-**Long-term fix**: tracked in [issue filed after batch 68 retro] — `haystack-reviewer.sh` should poll-retry when `status=pending` instead of immediately mapping to `UNAVAILABLE`.
+> **Protocol guard (when Haystack is listed in `review.platforms` and the loop returns `skipped/pending_timeout`)**: Before applying `ready-for-human-review`, agents must verify that `REASON=pending_timeout` is not masking real findings. Check whether the Haystack GitHub App has posted a "Haystack Code Reviewer: PR Analysis Ready!" comment on the PR:
+>
+> ```bash
+> gh pr view <pr_number> --json comments \
+>   --jq '[.comments[].body | select(test("Haystack Code Reviewer: PR Analysis Ready"))] | length'
+> ```
+>
+> If the output is `≥ 1`, the analysis completed after the reviewer loop timed out. Run `haystack triage <pr_number>` manually and evaluate findings before labeling the PR `ready-for-human-review`.
 
 ### Triage times out
 
