@@ -1056,6 +1056,10 @@ run_copilot_review() {
           [ -n "$_cnt" ] && [ "$_cnt" -gt 0 ] && _copilot_comment_count="$_cnt"
         fi
         set -e
+        # Copilot may place findings in the review body rather than as inline
+        # comments. Ensure BLOCKING_COUNT >= 1 so callers always see at least
+        # one blocking finding when the verdict is CHANGES_REQUESTED.
+        [ "$_copilot_comment_count" -eq 0 ] && _copilot_comment_count=1
         print_kv RESULT needs_fixes
         print_kv PLATFORM "$platform"
         print_kv PR_NUMBER "$pr_number"

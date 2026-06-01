@@ -687,10 +687,14 @@ run_test "copilot_clean_blocking_count" "BLOCKING_COUNT=0" \
   "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
 run_test "copilot_clean_exit_code" "0" "$actual_exit"
 
-# Test 8.2: needs_fixes path — Copilot posts CHANGES_REQUESTED review
+# Test 8.2: needs_fixes path — Copilot posts CHANGES_REQUESTED review.
+# The mock review includes an id (456) so the review-comments API call is
+# exercised. The mock gh returns the same MOCK_GH_OUTPUT for all GET calls,
+# so the review-comments endpoint returns one element (the review object) —
+# length=1. BLOCKING_COUNT should equal 1 (the actual inline count).
 export MOCK_GH_POST_OUTPUT='{}'
 export MOCK_GH_HEAD_SHA='abc123sha'
-export MOCK_GH_OUTPUT='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"state":"CHANGES_REQUESTED","commit_id":"abc123sha"}]'
+export MOCK_GH_OUTPUT='[{"id":456,"user":{"login":"copilot-pull-request-reviewer[bot]"},"state":"CHANGES_REQUESTED","commit_id":"abc123sha"}]'
 unset COPILOT_BOT_LOGIN
 actual_output=""
 actual_exit=0
