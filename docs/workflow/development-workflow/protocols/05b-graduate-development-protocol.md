@@ -94,7 +94,7 @@ The sub-item PRs each added CHANGELOG entries to `develop-<slug>`. The graduatio
 
 ```bash
 # Check whether CHANGELOG.md differs between develop and develop-<slug>
-git diff origin/develop..origin/develop-<slug> -- CHANGELOG.md | head -40
+git diff origin/develop..origin/develop-<slug> -- CHANGELOG.md | head -n 40
 ```
 
 If the diff shows `[Unreleased]` entries on `develop-<slug>` that are absent from `develop`, these will be carried over by the graduation PR as expected — no additional action is needed.

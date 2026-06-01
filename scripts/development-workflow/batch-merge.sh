@@ -633,7 +633,7 @@ cmd_merge() {
   # Non-conflict failure: abort and report.
   git merge --abort 2>/dev/null || true
   local error_msg
-  error_msg="$(printf '%s' "$merge_output" | head -5 | tr '\n' ' ')"
+  error_msg="$(printf '%s' "$merge_output" | head -n 5 | tr '\n' ' ')"
   print_kv MERGE_RESULT "failed"
   print_kv_escaped ERROR_MESSAGE "$error_msg"
   exit 2

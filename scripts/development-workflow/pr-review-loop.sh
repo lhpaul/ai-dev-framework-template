@@ -36,10 +36,14 @@ if [ "${1:-}" = "unlock" ]; then
   _UNLOCK_CMD=""
   if [ -d "$_UNLOCK_LOCK_DIR" ]; then
     if ! _UNLOCK_PID="$(cat "$_UNLOCK_LOCK_DIR/pid" 2>/dev/null)"; then
-      echo "WARN: could not read lock PID from $_UNLOCK_LOCK_DIR/pid" >&2
+      echo "ERROR: could not read lock PID from $_UNLOCK_LOCK_DIR/pid — cannot verify ownership." >&2
+      echo "  If you are certain no process holds this lock, remove it manually: rm -rf $_UNLOCK_LOCK_DIR" >&2
+      exit 1
     fi
     if ! _UNLOCK_CMD="$(cat "$_UNLOCK_LOCK_DIR/cmd" 2>/dev/null)"; then
-      echo "WARN: could not read lock cmd from $_UNLOCK_LOCK_DIR/cmd" >&2
+      echo "ERROR: could not read lock cmd from $_UNLOCK_LOCK_DIR/cmd — cannot verify ownership." >&2
+      echo "  If you are certain no process holds this lock, remove it manually: rm -rf $_UNLOCK_LOCK_DIR" >&2
+      exit 1
     fi
   fi
   if [ -n "$_UNLOCK_PID" ] && kill -0 "$_UNLOCK_PID" 2>/dev/null && [ "$_UNLOCK_CMD" = "$(basename "$0")" ]; then
@@ -711,6 +715,16 @@ run_codex_github_review() {
   set -e
   if [ "$thread_check_status" -eq 0 ]; then
     unresolved_count="$thread_check_output"
+  else
+    # Thread check failed — escalate rather than proceeding with stale unresolved_count=0,
+    # which would dispatch a new review even if blocking threads already exist.
+    print_kv RESULT escalate
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv REASON thread-check-failed
+    return 2
   fi
 
   if [ "$unresolved_count" -gt 0 ]; then
@@ -1024,14 +1038,32 @@ run_copilot_review() {
         return 0
         ;;
       CHANGES_REQUESTED)
+        # Fetch the actual review-comment count so COMMENT_COUNT/BLOCKING_COUNT
+        # reflect how many inline findings Copilot posted, not just "at least 1".
+        local _copilot_review_id _copilot_comment_count
+        _copilot_review_id=""
+        _copilot_comment_count=0
+        set +e
+        _copilot_review_id="$(gh api --paginate \
+          "repos/$owner/$repo_name/pulls/$pr_number/reviews" 2>/dev/null \
+          | jq -rs --arg login "$bot_login" --arg sha "$current_sha" \
+            '[ .[] | .[] | select(.user.login == $login and .commit_id == $sha) ] | last | .id // empty')"
+        if [ -n "$_copilot_review_id" ]; then
+          local _cnt
+          _cnt="$(gh api --paginate \
+            "repos/$owner/$repo_name/pulls/$pr_number/reviews/$_copilot_review_id/comments" \
+            2>/dev/null | jq -rs 'length' 2>/dev/null)"
+          [ -n "$_cnt" ] && [ "$_cnt" -gt 0 ] && _copilot_comment_count="$_cnt"
+        fi
+        set -e
         print_kv RESULT needs_fixes
         print_kv PLATFORM "$platform"
         print_kv PR_NUMBER "$pr_number"
         print_kv BRANCH "$branch_name"
         print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
         print_kv REASON changes_requested
-        print_kv COMMENT_COUNT 1
-        print_kv BLOCKING_COUNT 1
+        print_kv COMMENT_COUNT "$_copilot_comment_count"
+        print_kv BLOCKING_COUNT "$_copilot_comment_count"
         print_kv SUGGESTION_COUNT 0
         return 1
         ;;
@@ -1046,6 +1078,12 @@ run_copilot_review() {
         print_kv BLOCKING_COUNT 0
         print_kv SUGGESTION_COUNT 1
         return 0
+        ;;
+      "")
+        # review_state is empty — gh api or jq failed under set +e.
+        # Log a warning so the failure is visible; continue polling rather
+        # than escalating on a single transient error.
+        echo "WARN: review state API call returned empty for PR $pr_number SHA $current_sha — retrying in ${effective_poll_interval}s" >&2
         ;;
     esac
 
@@ -1126,9 +1164,9 @@ run_haystack_review() {
   rm -f "$haystack_stderr_file"
 
   # Parse output from the companion script (key=value lines on stdout).
-  blocking_count="$(printf '%s\n' "$script_output" | grep '^BLOCKING_COUNT=' | cut -d= -f2 | head -1)"
-  suggestion_count="$(printf '%s\n' "$script_output" | grep '^SUGGESTION_COUNT=' | cut -d= -f2 | head -1)"
-  comment_count="$(printf '%s\n' "$script_output" | grep '^COMMENT_COUNT=' | cut -d= -f2 | head -1)"
+  blocking_count="$(printf '%s\n' "$script_output" | grep '^BLOCKING_COUNT=' | cut -d= -f2 | head -n 1)"
+  suggestion_count="$(printf '%s\n' "$script_output" | grep '^SUGGESTION_COUNT=' | cut -d= -f2 | head -n 1)"
+  comment_count="$(printf '%s\n' "$script_output" | grep '^COMMENT_COUNT=' | cut -d= -f2 | head -n 1)"
 
   # Default to 0 if any field is missing.
   blocking_count="${blocking_count:-0}"
@@ -1167,7 +1205,7 @@ run_haystack_review() {
     2)
       # Forward the REASON from the companion script (timeout or pending_timeout).
       local haystack_reason
-      haystack_reason="$(printf '%s\n' "$script_output" | grep '^REASON=' | cut -d= -f2 | head -1)"
+      haystack_reason="$(printf '%s\n' "$script_output" | grep '^REASON=' | cut -d= -f2 | head -n 1)"
       haystack_reason="${haystack_reason:-timeout}"  # default to timeout if missing
       print_kv RESULT escalate
       print_kv REASON "$haystack_reason"
@@ -4263,9 +4301,13 @@ EOF
     fi
   fi
   if [ "$_comment_posted" -eq 0 ]; then
-    if ! gh pr comment "$pr_number" --body "$comment_body" >/dev/null 2>&1; then
+    local _body_tmpfile
+    _body_tmpfile="$(mktemp)"
+    printf '%s' "$comment_body" > "$_body_tmpfile"
+    if ! gh pr comment "$pr_number" --body-file "$_body_tmpfile" >/dev/null 2>&1; then
       echo "WARN: failed to post reviewer loop summary comment for PR ${pr_number}" >&2
     fi
+    rm -f "$_body_tmpfile"
   fi
 
   set -e
