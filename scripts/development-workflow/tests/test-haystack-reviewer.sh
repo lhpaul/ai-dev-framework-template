@@ -8,6 +8,13 @@
 #   4. status=none still maps to REASON=unavailable (permanent unavailability)
 #   5. status=completed (no status field) proceeds to findings parsing
 #   6. HAYSTACK_POLL_INTERVAL env var controls retry cadence
+#   7. argument validation
+#   8. non-zero exit + valid JSON recovery (issue #800):
+#      - non-zero exit + valid completed JSON → findings parsed (not UNAVAILABLE)
+#      - non-zero exit + status=pending JSON → poll-retry (not UNAVAILABLE)
+#      - non-zero exit + status=none JSON → UNAVAILABLE (correct)
+#      - non-zero exit + empty stdout → UNAVAILABLE (correct)
+#      - non-zero exit + invalid JSON stdout → UNAVAILABLE (correct)
 #
 # Usage: bash scripts/development-workflow/tests/test-haystack-reviewer.sh
 # No external tooling required beyond bash and jq (jq is used to validate JSON
@@ -40,13 +47,14 @@ fi
 MOCK_BIN="$(mktemp -d)"
 CALL_LOG="$(mktemp)"
 RESPONSE_SEQ_FILE="$(mktemp)"
+EXIT_SEQ_FILE="$(mktemp)"
 _REVIEWER_OUTPUT_FILE="$(mktemp)"
 _REVIEWER_EXIT_FILE="$(mktemp)"
 
 _harness_exit() {
   local status=$?
   rm -rf "$MOCK_BIN"
-  rm -f "$CALL_LOG" "$RESPONSE_SEQ_FILE" \
+  rm -f "$CALL_LOG" "$RESPONSE_SEQ_FILE" "$EXIT_SEQ_FILE" \
         "${_REVIEWER_OUTPUT_FILE:-}" "${_REVIEWER_EXIT_FILE:-}"
   case "$status" in
     141) exit 0 ;;
@@ -92,16 +100,27 @@ _reset_mocks() {
   CALL_LOG="$(mktemp)"
   rm -f "$RESPONSE_SEQ_FILE"
   RESPONSE_SEQ_FILE="$(mktemp)"
+  rm -f "$EXIT_SEQ_FILE"
+  EXIT_SEQ_FILE="$(mktemp)"
   # Write the current MOCK_HAYSTACK_OUTPUTS lines (one JSON per line) to the
   # sequence file consumed by the mock binary.
   if [ -n "${MOCK_HAYSTACK_OUTPUTS:-}" ]; then
     printf '%s\n' "$MOCK_HAYSTACK_OUTPUTS" > "$RESPONSE_SEQ_FILE"
   fi
+  # Write the current MOCK_HAYSTACK_EXITS lines (one exit code per line) to the
+  # exit-code sequence file consumed by the mock binary.
+  if [ -n "${MOCK_HAYSTACK_EXITS:-}" ]; then
+    printf '%s\n' "$MOCK_HAYSTACK_EXITS" > "$EXIT_SEQ_FILE"
+  fi
 }
 
 _install_haystack_mock() {
-  # Create the mock haystack binary. It reads from RESPONSE_SEQ_FILE and
-  # CALL_LOG path from environment variables exported before calling the script.
+  # Create the mock haystack binary. It reads from RESPONSE_SEQ_FILE,
+  # EXIT_SEQ_FILE, and CALL_LOG path from environment variables exported before
+  # calling the script.
+  #
+  # MOCK_HAYSTACK_EXITS (optional): one exit code per line in the same order as
+  # MOCK_HAYSTACK_OUTPUTS.  Defaults to 0 for every call if unset or exhausted.
   cat > "$MOCK_BIN/haystack" <<'MOCK_HAYSTACK'
 #!/usr/bin/env bash
 # Append call counter to log.
@@ -121,7 +140,24 @@ else
 fi
 response=$(sed -n "${line_num}p" "$MOCK_RESPONSE_SEQ")
 printf '%s\n' "$response"
-exit 0
+
+# Read the corresponding exit code from EXIT_SEQ_FILE (defaults to 0).
+mock_exit=0
+if [ -n "${MOCK_EXIT_SEQ:-}" ] && [ -f "$MOCK_EXIT_SEQ" ]; then
+  total_exits=$(wc -l < "$MOCK_EXIT_SEQ" | tr -d ' ')
+  if [ "$total_exits" -gt 0 ]; then
+    if [ "$call_num" -le "$total_exits" ]; then
+      exit_line_num="$call_num"
+    else
+      exit_line_num="$total_exits"
+    fi
+    mock_exit=$(sed -n "${exit_line_num}p" "$MOCK_EXIT_SEQ" | tr -d '[:space:]')
+    case "$mock_exit" in
+      ''|*[!0-9]*) mock_exit=0 ;;
+    esac
+  fi
+fi
+exit "$mock_exit"
 MOCK_HAYSTACK
   chmod +x "$MOCK_BIN/haystack"
 }
@@ -143,6 +179,7 @@ _run_reviewer() {
   HAYSTACK_POLL_INTERVAL="$poll_interval" \
   MOCK_CALL_LOG="$CALL_LOG" \
   MOCK_RESPONSE_SEQ="$RESPONSE_SEQ_FILE" \
+  MOCK_EXIT_SEQ="$EXIT_SEQ_FILE" \
   PATH="$MOCK_BIN:$PATH" \
     bash "$HAYSTACK_REVIEWER" "123" "owner" "repo" \
     >"$_REVIEWER_OUTPUT_FILE" 2>/dev/null
@@ -164,6 +201,7 @@ _run_reviewer_exit_code() {
     HAYSTACK_POLL_INTERVAL="$poll_interval" \
     MOCK_CALL_LOG="$CALL_LOG" \
     MOCK_RESPONSE_SEQ="$RESPONSE_SEQ_FILE" \
+    MOCK_EXIT_SEQ="$EXIT_SEQ_FILE" \
     PATH="$MOCK_BIN:$PATH" \
       bash "$HAYSTACK_REVIEWER" "123" "owner" "repo" >/dev/null 2>/dev/null
     echo $?
@@ -272,6 +310,7 @@ _SAFE_PATH="$_ISOLATED_BIN:$_SAFE_PATH"
 set +e
 output=$(HAYSTACK_REVIEWER_TIMEOUT=5 HAYSTACK_POLL_INTERVAL=1 \
   MOCK_CALL_LOG="$CALL_LOG" MOCK_RESPONSE_SEQ="$RESPONSE_SEQ_FILE" \
+  MOCK_EXIT_SEQ="$EXIT_SEQ_FILE" \
   PATH="$_SAFE_PATH" \
   bash "$HAYSTACK_REVIEWER" "123" "owner" "repo" 2>/dev/null)
 ec=$?
@@ -362,6 +401,7 @@ echo "=== Area 6: HAYSTACK_POLL_INTERVAL env var ==="
 set +e
 output=$(HAYSTACK_REVIEWER_TIMEOUT=10 HAYSTACK_POLL_INTERVAL=0 \
   MOCK_CALL_LOG="$CALL_LOG" MOCK_RESPONSE_SEQ="$RESPONSE_SEQ_FILE" \
+  MOCK_EXIT_SEQ="$EXIT_SEQ_FILE" \
   PATH="$MOCK_BIN:$PATH" \
   bash "$HAYSTACK_REVIEWER" "123" "owner" "repo" 2>&1)
 ec=$?
@@ -400,6 +440,7 @@ _install_haystack_mock
 # Test 7.1: missing arguments → exit 3.
 set +e
 MOCK_CALL_LOG="$CALL_LOG" MOCK_RESPONSE_SEQ="$RESPONSE_SEQ_FILE" \
+  MOCK_EXIT_SEQ="$EXIT_SEQ_FILE" \
   PATH="$MOCK_BIN:$PATH" \
   bash "$HAYSTACK_REVIEWER" 2>/dev/null
 ec=$?
@@ -409,6 +450,7 @@ run_test "missing_args_exit_code" "3" "$ec"
 # Test 7.2: invalid PR number → exit 3.
 set +e
 MOCK_CALL_LOG="$CALL_LOG" MOCK_RESPONSE_SEQ="$RESPONSE_SEQ_FILE" \
+  MOCK_EXIT_SEQ="$EXIT_SEQ_FILE" \
   PATH="$MOCK_BIN:$PATH" \
   bash "$HAYSTACK_REVIEWER" "abc" "owner" "repo" 2>/dev/null
 ec=$?
@@ -418,11 +460,124 @@ run_test "invalid_pr_number_exit_code" "3" "$ec"
 # Test 7.3: zero PR number → exit 3.
 set +e
 MOCK_CALL_LOG="$CALL_LOG" MOCK_RESPONSE_SEQ="$RESPONSE_SEQ_FILE" \
+  MOCK_EXIT_SEQ="$EXIT_SEQ_FILE" \
   PATH="$MOCK_BIN:$PATH" \
   bash "$HAYSTACK_REVIEWER" "0" "owner" "repo" 2>/dev/null
 ec=$?
 set -e
 run_test "zero_pr_number_exit_code" "3" "$ec"
+
+# ---------------------------------------------------------------------------
+# Area 8: non-zero exit + valid JSON recovery (issue #800)
+#
+# Some versions of the haystack CLI return a non-zero exit code even when
+# stdout contains a valid completed analysis or a status=pending response.
+# The fix (issue #800) inspects stdout before treating a non-zero exit as
+# UNAVAILABLE.  This area exercises each sub-case of the recovery logic.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 8: non-zero exit + valid JSON recovery (issue #800) ==="
+
+# Helper: _install_haystack_mock_with_exits installs the mock using
+# MOCK_HAYSTACK_OUTPUTS (JSON lines) and MOCK_HAYSTACK_EXITS (exit code lines).
+_install_mock_with_exits() {
+  _reset_mocks
+  # EXIT_SEQ_FILE was written by _reset_mocks via MOCK_HAYSTACK_EXITS.
+  _install_haystack_mock
+}
+
+# Test 8.1: non-zero exit (1) + valid completed JSON with no findings
+# → RESULT=clean, exit 0 (not UNAVAILABLE).
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}'
+MOCK_HAYSTACK_EXITS='1'
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "nonzero_exit_completed_json_result" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+run_test "nonzero_exit_completed_json_exit_code" "0" "$ec"
+run_test "nonzero_exit_completed_json_blocking_zero" "BLOCKING_COUNT=0" "$(echo "$output" | grep '^BLOCKING_COUNT=')"
+
+# Test 8.2: non-zero exit (1) + valid completed JSON WITH blocking finding
+# → RESULT=needs_fixes, exit 1 (not UNAVAILABLE).
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":2,"findings":[{"category":"Logic error","summary":"Null dereference","detail":""}]}'
+MOCK_HAYSTACK_EXITS='1'
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "nonzero_exit_blocking_finding_result" "RESULT=needs_fixes" "$(echo "$output" | grep '^RESULT=')"
+run_test "nonzero_exit_blocking_finding_exit_code" "1" "$ec"
+run_test "nonzero_exit_blocking_finding_count" "BLOCKING_COUNT=1" "$(echo "$output" | grep '^BLOCKING_COUNT=')"
+
+# Test 8.3: non-zero exit (1) + status=pending JSON
+# → poll-retry (not UNAVAILABLE); second call returns completed JSON.
+MOCK_HAYSTACK_OUTPUTS='{"status":"pending"}
+{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}'
+MOCK_HAYSTACK_EXITS='1
+0'
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+calls=$(_call_count)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "nonzero_exit_pending_retries" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+run_test "nonzero_exit_pending_call_count" "2" "$calls"
+run_test "nonzero_exit_pending_exit_code" "0" "$ec"
+
+# Test 8.4: non-zero exit (1) + status=none JSON
+# → UNAVAILABLE (permanent — no analysis submitted), exit 3.
+MOCK_HAYSTACK_OUTPUTS='{"status":"none"}'
+MOCK_HAYSTACK_EXITS='1'
+_install_mock_with_exits
+
+output=$(_run_reviewer 10 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "nonzero_exit_status_none_result" "RESULT=skipped" "$(echo "$output" | grep '^RESULT=')"
+run_test "nonzero_exit_status_none_reason" "REASON=unavailable" "$(echo "$output" | grep '^REASON=')"
+run_test "nonzero_exit_status_none_exit_code" "3" "$ec"
+
+# Test 8.5: non-zero exit (1) + EMPTY stdout
+# → UNAVAILABLE (genuinely unavailable), exit 3.
+MOCK_HAYSTACK_OUTPUTS=''
+MOCK_HAYSTACK_EXITS='1'
+_install_mock_with_exits
+
+output=$(_run_reviewer 10 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "nonzero_exit_empty_stdout_result" "RESULT=skipped" "$(echo "$output" | grep '^RESULT=')"
+run_test "nonzero_exit_empty_stdout_reason" "REASON=unavailable" "$(echo "$output" | grep '^REASON=')"
+run_test "nonzero_exit_empty_stdout_exit_code" "3" "$ec"
+
+# Test 8.6: non-zero exit (1) + INVALID JSON stdout
+# → UNAVAILABLE (genuinely unavailable), exit 3.
+MOCK_HAYSTACK_OUTPUTS='this is not JSON at all'
+MOCK_HAYSTACK_EXITS='1'
+_install_mock_with_exits
+
+output=$(_run_reviewer 10 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "nonzero_exit_invalid_json_result" "RESULT=skipped" "$(echo "$output" | grep '^RESULT=')"
+run_test "nonzero_exit_invalid_json_reason" "REASON=unavailable" "$(echo "$output" | grep '^REASON=')"
+run_test "nonzero_exit_invalid_json_exit_code" "3" "$ec"
+
+# Test 8.7: zero exit + completed JSON (existing behaviour unchanged)
+# → RESULT=clean, exit 0.
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}'
+MOCK_HAYSTACK_EXITS='0'
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "zero_exit_completed_result" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+run_test "zero_exit_completed_exit_code" "0" "$ec"
 
 # ---------------------------------------------------------------------------
 # Summary

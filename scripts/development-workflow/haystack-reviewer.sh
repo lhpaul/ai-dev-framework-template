@@ -260,15 +260,44 @@ while true; do
   fi
 
   # ── Handle other non-zero exit codes ────────────────────────────────────────
+  #
+  # Some versions of the haystack CLI return a non-zero exit code even when
+  # stdout contains a valid completed-analysis JSON payload (e.g. a payload with
+  # findings, or one where status=pending when analysis is still in progress).
+  # Treating every non-zero exit as UNAVAILABLE silently drops completed results
+  # and prevents the poll-retry loop from retrying pending analyses — the root
+  # cause of issue #800 (Haystack reported unavailable while analysis completed
+  # on the platform).
+  #
+  # Recovery strategy: when TRIAGE_EXIT is non-zero, inspect stdout before giving
+  # up.  Three sub-cases:
+  #   a) Empty or non-JSON output → genuine unavailability, exit UNAVAILABLE.
+  #   b) Valid JSON with status=pending → transient; the CLI exited non-zero but
+  #      the analysis is still running.  Fall through to the status-check block
+  #      below so the poll-retry loop can sleep and retry (same path as exit 0 +
+  #      pending).
+  #   c) Valid JSON with a completed result (no status / unknown status) → the
+  #      CLI exited non-zero but produced a usable result.  Log a warning (so the
+  #      non-zero exit is not silent) and fall through to findings parsing.
+  #   d) Valid JSON with status=none → permanent unavailability; fall through to
+  #      the status-check block which handles this case.
   if [ "$TRIAGE_EXIT" -ne 0 ]; then
-    echo "INFO: haystack triage exited with code $TRIAGE_EXIT — treating as UNAVAILABLE" >&2
-    rm -f "$TRIAGE_STDERR"
-    printf 'RESULT=skipped\n'
-    printf 'REASON=unavailable\n'
-    printf 'BLOCKING_COUNT=0\n'
-    printf 'SUGGESTION_COUNT=0\n'
-    printf 'COMMENT_COUNT=0\n'
-    exit 3
+    echo "INFO: haystack triage exited with code $TRIAGE_EXIT — inspecting stdout before deciding outcome" >&2
+    if [ -z "$TRIAGE_OUTPUT" ] || ! printf '%s\n' "$TRIAGE_OUTPUT" | jq -e . >/dev/null 2>&1; then
+      # Sub-case (a): empty or invalid JSON → genuinely unavailable.
+      echo "INFO: haystack triage non-zero exit AND empty/invalid stdout — treating as UNAVAILABLE" >&2
+      rm -f "$TRIAGE_STDERR"
+      printf 'RESULT=skipped\n'
+      printf 'REASON=unavailable\n'
+      printf 'BLOCKING_COUNT=0\n'
+      printf 'SUGGESTION_COUNT=0\n'
+      printf 'COMMENT_COUNT=0\n'
+      exit 3
+    fi
+    # Sub-cases (b), (c), (d): stdout is valid JSON — fall through to status check
+    # and findings parsing.  The status-check block below will handle pending,
+    # none, and completed outcomes identically to the exit-0 path.
+    echo "INFO: haystack triage non-zero exit (code $TRIAGE_EXIT) but stdout is valid JSON — proceeding to status/findings parsing (non-zero exit may be a haystack CLI version quirk)" >&2
   fi
 
   # ── Validate JSON output ─────────────────────────────────────────────────────
