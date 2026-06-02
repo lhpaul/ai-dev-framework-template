@@ -71,18 +71,20 @@ jobs:
           # With pipefail active, a gh failure propagates and the if-block's WARN
           # path fires correctly (fail-open: proceed with label removal).
           #
-          # Author-scoping: filter to bot-authored comments only (user.login
-          # ending with "[bot]") so a human comment quoting the loop-summary
-          # phrase cannot trigger a false skip.  The automated reviewer loop
-          # posts its summary as github-actions[bot] when invoked from CI.
+          # Marker-based matching: match the canonical heading "### Automated Reviewer
+          # Loop Summary" that pr-review-loop.sh writes at the top of every summary
+          # comment (mirroring pr-review-loop.sh's own contains("### Automated
+          # Reviewer Loop Summary") check). This is author-agnostic — the comment
+          # may be posted by the maintainer's gh token (e.g. user "lhpaul" when run
+          # locally) or by github-actions[bot] when run from CI. Scoping by bot
+          # author would silently miss the local-run case and defeat the fix.
           LOOP_COMMENT=0
           _GH_COMMENTS_OUTPUT=""
           if _GH_COMMENTS_OUTPUT=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
             --paginate 2>&1); then
             LOOP_COMMENT=$(printf '%s\n' "$_GH_COMMENTS_OUTPUT" \
               | jq -rs 'add // [] | [.[] | select(
-                  (.user.login // "" | endswith("[bot]")) and
-                  (.body // "" | test("Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"))
+                  (.body // "" | contains("### Automated Reviewer Loop Summary"))
                 )] | length') || LOOP_COMMENT=0
           else
             echo "WARN: Failed to check for reviewer loop summary comment on PR #${PR_NUMBER}. Proceeding with label removal (fail-open)." >&2
