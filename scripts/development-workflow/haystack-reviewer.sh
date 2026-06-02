@@ -26,14 +26,19 @@
 #   REASON=<value>   (only when RESULT=skipped — values: unavailable, timeout,
 #                     pending_timeout)
 #
-# Polling behaviour for status=pending:
-#   When `haystack triage --no-wait` returns status=pending (analysis still in
-#   progress), the script polls every HAYSTACK_POLL_INTERVAL seconds (default: 15)
-#   until the analysis completes or the overall TIMEOUT budget is exhausted.
-#   If the budget is exhausted while status is still pending, RESULT=skipped is
-#   emitted with REASON=pending_timeout (distinct from REASON=unavailable, which
-#   means the CLI is absent or authentication failed, and REASON=timeout, which
-#   means a single haystack triage call exceeded the per-call OS timeout).
+# Polling behaviour for transient states (status=pending, status=error, etc.):
+#   When `haystack triage --no-wait` returns ANY non-empty status value other
+#   than "none" (e.g. status=pending, status=error, "Rating synthesis not
+#   available"), the analysis is still in progress.  The script polls every
+#   HAYSTACK_POLL_INTERVAL seconds (default: 15) until a genuinely completed
+#   result is returned (no "status" field in the JSON) or the overall TIMEOUT
+#   budget is exhausted.  A completed result is signalled by the ABSENCE of a
+#   "status" field — this is the only condition under which RESULT=clean may be
+#   emitted.  If the budget is exhausted while the analysis is still transient,
+#   RESULT=skipped is emitted with REASON=pending_timeout (distinct from
+#   REASON=unavailable, which means the CLI is absent or authentication failed,
+#   and REASON=timeout, which means a single haystack triage call exceeded the
+#   per-call OS timeout).
 #
 # Confirmed JSON schema (haystack triage <PR> --json as of 2026-05-25):
 #   {
@@ -325,6 +330,22 @@ while true; do
   fi
 
   # ── Check status field ───────────────────────────────────────────────────────
+  #
+  # Empirical signal for a genuinely completed analysis (confirmed 2026-06-02):
+  #   - COMPLETED:  the JSON has NO "status" field at all (.status // empty
+  #                 returns empty string).  This is the only condition that
+  #                 produces a usable findings payload.
+  #   - TRANSIENT:  the JSON has a "status" field with any value (pending,
+  #                 error, "Rating synthesis not available", or any other
+  #                 non-null, non-"none" string).  These are still-synthesizing
+  #                 states and must be retried.
+  #   - PERMANENT:  status=none — no analysis was ever submitted for this PR.
+  #
+  # Mapping ANY non-empty, non-"none" status value to "completed" (the previous
+  # *) catch-all behaviour) was the root cause of the Batch 71 false-clean bug:
+  # status=error / "Rating synthesis not available" was treated as terminal,
+  # findings parsing found zero findings, and RESULT=clean was emitted — silently
+  # masking real findings that appeared on the web UI once synthesis finished.
   STATUS_VALUE="$(printf '%s\n' "$TRIAGE_OUTPUT" | jq -r '.status // empty' 2>/dev/null || true)"
 
   case "$STATUS_VALUE" in
@@ -339,9 +360,18 @@ while true; do
       printf 'COMMENT_COUNT=0\n'
       exit 3
       ;;
-    pending)
-      # Transient: analysis still in progress — poll-retry after POLL_INTERVAL.
-      echo "INFO: status=pending — waiting ${POLL_INTERVAL}s before retry (${elapsed}s elapsed of ${TIMEOUT}s budget)" >&2
+    "")
+      # Empty status field = no "status" key in the JSON = genuinely completed
+      # analysis.  Exit the loop and proceed to findings parsing.
+      break
+      ;;
+    *)
+      # Non-empty, non-"none" status value (e.g. "pending", "error",
+      # "Rating synthesis not available", or any future transient state).
+      # Treat as transient — poll-retry after POLL_INTERVAL.
+      # NEVER map an unknown or error status to "clean"; only a genuinely
+      # completed result (empty STATUS_VALUE above) may yield RESULT=clean.
+      echo "INFO: status='${STATUS_VALUE}' — still synthesizing; waiting ${POLL_INTERVAL}s before retry (${elapsed}s elapsed of ${TIMEOUT}s budget)" >&2
       # Check budget BEFORE sleeping so we don't overshoot the timeout.
       if [ $((elapsed + POLL_INTERVAL)) -ge "$TIMEOUT" ]; then
         # Sleeping would exhaust the budget — exit now with pending_timeout.
@@ -351,10 +381,6 @@ while true; do
       sleep "$POLL_INTERVAL"
       # Wall-clock elapsed will be recomputed at the top of the next iteration.
       continue
-      ;;
-    *)
-      # Terminal status (completed, or empty/unknown) — exit the loop.
-      break
       ;;
   esac
 done
@@ -376,10 +402,13 @@ if [ "$TRIAGE_EXIT" -eq 124 ]; then
 fi
 
 if [ "$TRIAGE_EXIT" -eq 200 ]; then
-  # Budget exhausted while status was still pending (analysis never completed
-  # within the timeout window). This is distinct from REASON=unavailable
-  # (CLI not found / auth failure) and REASON=timeout (per-call OS timeout).
-  echo "INFO: haystack triage status=pending — budget exhausted after ${TIMEOUT}s (pending_timeout)" >&2
+  # Budget exhausted while the analysis was still in a transient state
+  # (status=pending, status=error, "Rating synthesis not available", or any
+  # other non-empty non-"none" status value) — analysis never produced a
+  # completed result within the timeout window. This is distinct from
+  # REASON=unavailable (CLI not found / auth failure) and REASON=timeout
+  # (per-call OS timeout).
+  echo "INFO: haystack triage transient state persisted — budget exhausted after ${TIMEOUT}s (pending_timeout)" >&2
   printf 'RESULT=skipped\n'
   printf 'REASON=pending_timeout\n'
   printf 'BLOCKING_COUNT=0\n'

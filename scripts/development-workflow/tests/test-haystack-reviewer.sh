@@ -15,6 +15,11 @@
 #      - non-zero exit + status=none JSON → UNAVAILABLE (correct)
 #      - non-zero exit + empty stdout → UNAVAILABLE (correct)
 #      - non-zero exit + invalid JSON stdout → UNAVAILABLE (correct)
+#   9. status=error / incomplete-synthesis never yields clean (issue #800 fix round 2):
+#      - status=error then completed-with-findings → findings surfaced (not clean)
+#      - status=error persisting until timeout → REASON=pending_timeout (not clean)
+#      - completed-with-0-findings → clean (the ONLY path that may yield clean)
+#      - status=error then completed-0-findings → clean (retry succeeds, result is genuinely empty)
 #
 # Usage: bash scripts/development-workflow/tests/test-haystack-reviewer.sh
 # No external tooling required beyond bash and jq (jq is used to validate JSON
@@ -578,6 +583,99 @@ ec=$(cat "$_REVIEWER_EXIT_FILE")
 
 run_test "zero_exit_completed_result" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
 run_test "zero_exit_completed_exit_code" "0" "$ec"
+
+# ---------------------------------------------------------------------------
+# Area 9: status=error / incomplete-synthesis must never yield clean
+#         (issue #800 fix round 2 — Batch 71 false-clean regression)
+#
+# Empirical signal (confirmed 2026-06-02): a genuinely completed analysis has
+# NO "status" field in its JSON payload (.status // empty returns "").
+# Any non-empty, non-"none" status value (including "error") means the analysis
+# is still synthesizing and must be treated as transient — poll-retry, NOT clean.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 9: status=error / incomplete synthesis must never yield clean ==="
+
+# Test 9.1: status=error then completed-with-blocking-finding on retry
+# → RESULT=needs_fixes, BLOCKING_COUNT=1.  Confirms error is transient, not terminal.
+MOCK_HAYSTACK_OUTPUTS='{"status":"error"}
+{"owner":"owner","repo":"repo","prNumber":123,"rating":2,"findings":[{"category":"Logic error","summary":"Null dereference","detail":""}]}'
+MOCK_HAYSTACK_EXITS='0
+0'
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+calls=$(_call_count)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "status_error_then_findings_result" "RESULT=needs_fixes" "$(echo "$output" | grep '^RESULT=')"
+run_test "status_error_then_findings_blocking_count" "BLOCKING_COUNT=1" "$(echo "$output" | grep '^BLOCKING_COUNT=')"
+run_test "status_error_then_findings_exit_code" "1" "$ec"
+run_test "status_error_then_findings_retried" "2" "$calls"
+
+# Test 9.2: status=error persisting until timeout
+# → RESULT=skipped REASON=pending_timeout (NOT clean, NOT 0-finding clean).
+MOCK_HAYSTACK_OUTPUTS='{"status":"error"}
+{"status":"error"}
+{"status":"error"}'
+MOCK_HAYSTACK_EXITS='0
+0
+0'
+_install_mock_with_exits
+
+output=$(_run_reviewer 2 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "status_error_timeout_result" "RESULT=skipped" "$(echo "$output" | grep '^RESULT=')"
+run_test "status_error_timeout_reason" "REASON=pending_timeout" "$(echo "$output" | grep '^REASON=')"
+run_test "status_error_timeout_exit_code" "2" "$ec"
+run_test "status_error_timeout_blocking_zero" "BLOCKING_COUNT=0" "$(echo "$output" | grep '^BLOCKING_COUNT=')"
+
+# Test 9.3: completed-with-0-findings → clean.
+# This is the ONLY path that may yield RESULT=clean (no status field + empty findings).
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}'
+MOCK_HAYSTACK_EXITS='0'
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+calls=$(_call_count)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "completed_zero_findings_result" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+run_test "completed_zero_findings_exit_code" "0" "$ec"
+run_test "completed_zero_findings_single_call" "1" "$calls"
+
+# Test 9.4: status=error then completed-with-0-findings → clean.
+# Confirms that after transient error, a genuine 0-finding result IS clean.
+MOCK_HAYSTACK_OUTPUTS='{"status":"error"}
+{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}'
+MOCK_HAYSTACK_EXITS='0
+0'
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+calls=$(_call_count)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "status_error_then_zero_findings_result" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+run_test "status_error_then_zero_findings_exit_code" "0" "$ec"
+run_test "status_error_then_zero_findings_retried" "2" "$calls"
+
+# Test 9.5: non-zero exit + status=error then completed-with-blocking-finding
+# → RESULT=needs_fixes (non-zero exit + transient status → still retries).
+MOCK_HAYSTACK_OUTPUTS='{"status":"error"}
+{"owner":"owner","repo":"repo","prNumber":123,"rating":2,"findings":[{"category":"Logic error","summary":"Bad logic","detail":""}]}'
+MOCK_HAYSTACK_EXITS='1
+0'
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+calls=$(_call_count)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "nonzero_exit_status_error_then_findings_result" "RESULT=needs_fixes" "$(echo "$output" | grep '^RESULT=')"
+run_test "nonzero_exit_status_error_then_findings_count" "BLOCKING_COUNT=1" "$(echo "$output" | grep '^BLOCKING_COUNT=')"
+run_test "nonzero_exit_status_error_then_findings_retried" "2" "$calls"
 
 # ---------------------------------------------------------------------------
 # Summary
