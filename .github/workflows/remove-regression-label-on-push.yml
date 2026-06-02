@@ -59,10 +59,15 @@ jobs:
           # deliberately applied by the orchestrator; pr-review-loop.sh will
           # re-apply it at the start of its next invocation (Option C guard), so
           # dropping it here would only force manual re-application before CI runs.
+          #
+          # Use `gh api --paginate | jq -rs 'add // [] | ...'` to accumulate all
+          # pages into a single array before counting. The --jq flag on gh api
+          # applies the filter per-page and concatenates results, which would make
+          # the length check unreliable across page boundaries.
+          LOOP_COMMENT=0
           if ! LOOP_COMMENT=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
-            --paginate \
-            --jq '[.[] | select(.body | test("Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"; ""))] | length' \
-            2>/dev/null); then
+            --paginate 2>/dev/null \
+            | jq -rs 'add // [] | [.[] | select(.body // "" | test("Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"))] | length'); then
             echo "WARN: Failed to check for reviewer loop summary comment on PR #${PR_NUMBER}. Proceeding with label removal (fail-open)." >&2
             LOOP_COMMENT=0
           fi
