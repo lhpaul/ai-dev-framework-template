@@ -67,11 +67,26 @@
 # If your team wants "Major" to be blocking, set HAYSTACK_MAJOR_IS_BLOCKING=1.
 #
 # NOTE on "Rules violation": Haystack uses this category for custom rule findings
-# such as CHANGELOG structure checks. These can produce false positives on hotfix
-# backport PRs (where the diff against develop shows an empty [Unreleased] section
-# from main, which Haystack misidentifies as a structural violation). "Rules violation"
-# is treated as advisory here because it is not a code logic error or security issue;
-# genuine CHANGELOG structure problems are already caught by the markdownlint CI check.
+# such as CHANGELOG structure checks (rule: keep-changelog-unreleased-structure-canonical).
+# This produces false positives in two known scenarios:
+#
+#   1. Regular PRs with correctly-formatted CHANGELOG entries under [Unreleased] ->
+#      ### Fixed (or other subsections). Haystack's LLM checker misidentifies the
+#      diff context and flags the entry as appended outside the section. This has
+#      recurred across multiple batches (Batches 34, 35, 55, and PR #801).
+#
+#   2. Hotfix backport PRs (where the diff against develop shows an empty [Unreleased]
+#      section from main, which Haystack misidentifies as a structural violation).
+#
+# IMPORTANT for agents: When you see a "Rules violation" finding for CHANGELOG
+# structure, do NOT attempt to restructure the CHANGELOG. The finding is a known
+# false positive. The current format is correct; restructuring will introduce a
+# real regression. See haystack-triage.md for the full guidance and dismissal procedure.
+#
+# "Rules violation" is treated as advisory here because it is not a code logic error
+# or security issue; genuine CHANGELOG structure problems are caught by the
+# markdownlint CI check and check-changelog-duplicate-headers.sh, which are not
+# subject to the same diff-interpretation issue.
 #
 # Unrecognised categories are treated as blocking (conservative safe-fail per spec).
 
