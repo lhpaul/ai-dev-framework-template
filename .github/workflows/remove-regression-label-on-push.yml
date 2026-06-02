@@ -4,8 +4,15 @@
 #
 # Behavior:
 #   - Runs only when the PR has the ready-for-regression label.
-#   - Removes the label so the automated reviewer loop must be re-run before
-#     ready-for-regression can be reapplied.
+#   - Skips removal when the automated reviewer loop has already run on this PR
+#     (detected by the presence of an "Automated Reviewer Loop Summary" comment).
+#     In that case, pr-review-loop.sh is responsible for the label — it will be
+#     re-applied automatically at the start of the next loop invocation (Option C
+#     guard in pr-review-loop.sh), so dropping it here would only create noise and
+#     require manual re-application before CI re-runs.
+#   - Removes the label (first-push path) when no reviewer loop summary comment
+#     exists, so the automated reviewer loop must run before ready-for-regression
+#     is applied.
 #   - Idempotent: if the label is absent, the job exits cleanly with no action.
 name: Remove ready-for-regression label on push
 
@@ -24,7 +31,7 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Remove ready-for-regression label if present
+      - name: Remove ready-for-regression label if present and reviewer loop has not run
         if: github.event.pull_request.head.repo.full_name == github.repository
         env:
           GH_TOKEN: ${{ github.token }}
@@ -46,7 +53,26 @@ jobs:
             exit 0
           fi
 
-          echo "Label 'ready-for-regression' found on PR #${PR_NUMBER}. Removing it."
+          # Check whether the automated reviewer loop has already run on this PR.
+          # pr-review-loop.sh posts an "Automated Reviewer Loop Summary" comment on
+          # every clean or escalate exit. When that comment exists the label was
+          # deliberately applied by the orchestrator; pr-review-loop.sh will
+          # re-apply it at the start of its next invocation (Option C guard), so
+          # dropping it here would only force manual re-application before CI runs.
+          if ! LOOP_COMMENT=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
+            --paginate \
+            --jq '[.[] | select(.body | test("Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"; ""))] | length' \
+            2>/dev/null); then
+            echo "WARN: Failed to check for reviewer loop summary comment on PR #${PR_NUMBER}. Proceeding with label removal (fail-open)." >&2
+            LOOP_COMMENT=0
+          fi
+
+          if [ "${LOOP_COMMENT:-0}" -gt 0 ]; then
+            echo "Reviewer loop has already run on PR #${PR_NUMBER} (found ${LOOP_COMMENT} summary comment(s)). Skipping label removal — pr-review-loop.sh will restore it on the next invocation."
+            exit 0
+          fi
+
+          echo "Label 'ready-for-regression' found on PR #${PR_NUMBER} and reviewer loop has not run yet. Removing it."
           gh pr edit "$PR_NUMBER" \
             --repo "$REPO" \
             --remove-label "ready-for-regression"

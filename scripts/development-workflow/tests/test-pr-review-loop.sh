@@ -910,6 +910,67 @@ run_test "summary_result_line_skipped" "1" "$_skipped_constant_count"
 unset _skipped_constant_count
 
 # ---------------------------------------------------------------------------
+# Area 11: Step 7b regression-label auto-restore (Option C, issue #805)
+#
+# The main execution block (including the auto-restore guard) is skipped in
+# harness mode, so these tests verify the source-level contract instead of
+# exercising the guard at runtime.  This mirrors Test 10.3 above.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 11: regression-label auto-restore (Option C, issue #805) ==="
+
+# Test 11.1: auto-restore block is present in the source file for implementation
+# branch patterns.  Checks that the guard case expression covers the four
+# implementation prefixes.
+if grep -qF 'feature/*|fix/*|refactor/*|hotfix/*)' \
+    "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null; then
+  _restore_case_count=1
+else
+  _restore_case_count=0
+fi
+run_test "regression_restore_case_covers_impl_branches" "1" "$_restore_case_count"
+unset _restore_case_count
+
+# Test 11.2: auto-restore block applies the label via gh pr edit --add-label.
+if grep -qF 'gh pr edit "$pr_number" --add-label "ready-for-regression"' \
+    "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null; then
+  _restore_edit_count=1
+else
+  _restore_edit_count=0
+fi
+run_test "regression_restore_calls_gh_pr_edit_add_label" "1" "$_restore_edit_count"
+unset _restore_edit_count
+
+# Test 11.3: auto-restore block is guarded by a check for the label's current
+# state (reads '[.labels[].name] | any(. == "ready-for-regression")').
+if grep -qF 'any(. == "ready-for-regression")' \
+    "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null; then
+  _restore_guard_count=1
+else
+  _restore_guard_count=0
+fi
+run_test "regression_restore_guarded_by_label_presence_check" "1" "$_restore_guard_count"
+unset _restore_guard_count
+
+# Test 11.4: auto-restore block appears BEFORE the platform loop (aggregate_result
+# initialisation) so the label is present when the first platform runs.
+# We verify ordering by comparing line numbers in the source file.
+_restore_line="$(grep -n 'ready-for-regression label missing on PR' \
+  "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null \
+  | head -1 | cut -d: -f1)"
+_loop_start_line="$(grep -n 'aggregate_result="skipped"' \
+  "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null \
+  | head -1 | cut -d: -f1)"
+if [ -n "$_restore_line" ] && [ -n "$_loop_start_line" ] \
+    && [ "$_restore_line" -lt "$_loop_start_line" ]; then
+  _ordering_ok="yes"
+else
+  _ordering_ok="no"
+fi
+run_test "regression_restore_appears_before_platform_loop" "yes" "$_ordering_ok"
+unset _restore_line _loop_start_line _ordering_ok
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

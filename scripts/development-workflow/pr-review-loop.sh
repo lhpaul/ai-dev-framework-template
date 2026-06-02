@@ -3877,6 +3877,35 @@ if [ "$max_wait_explicit" -eq 0 ]; then
   esac
 fi
 
+# Step 7b regression-label auto-restore (implementation PRs only).
+# The remove-ready-for-regression-on-push.yml workflow drops the
+# ready-for-regression label on every synchronize event, including pushes
+# made after the reviewer loop has already run (fix commits). This guard
+# re-applies the label at the start of every pr-review-loop.sh invocation
+# for implementation branches so the label is always present when the CI loop
+# (Step 8) begins — eliminating the recurring manual re-application pattern.
+#
+# Scope: feature/*, fix/*, refactor/*, hotfix/* branches only.
+# The operation is idempotent: if the label is already present, gh pr edit
+# --add-label is a no-op. Errors are suppressed (best-effort) so a transient
+# gh API failure does not abort the review loop.
+if [ -n "$pr_number" ] && [ "${#platforms[@]}" -gt 0 ]; then
+  case "${branch_name:-}" in
+    feature/*|fix/*|refactor/*|hotfix/*)
+      _rfr_has_label=""
+      _rfr_has_label="$(gh pr view "$pr_number" --json labels \
+        --jq '[.labels[].name] | any(. == "ready-for-regression")' 2>/dev/null)" \
+        || { echo "WARN: gh pr view failed for regression-label auto-restore (PR ${pr_number}); skipping" >&2; _rfr_has_label=""; }
+      if [ "${_rfr_has_label:-}" = "false" ]; then
+        echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); restoring before reviewer loop runs." >&2
+        gh pr edit "$pr_number" --add-label "ready-for-regression" 2>/dev/null \
+          || echo "WARN: failed to restore ready-for-regression label on PR #${pr_number}; proceeding without it" >&2
+      fi
+      unset _rfr_has_label
+      ;;
+  esac
+fi
+
 aggregate_result="skipped"
 aggregate_reason=""
 last_platform=""
