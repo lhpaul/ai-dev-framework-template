@@ -4,7 +4,7 @@
 
 ## Overview
 
-This feature adds an explicit pre-submission self-review step to Protocol 03 (implementation) that runs **before** the agent opens the PR. The agent diffs the working branch against the base branch, then systematically checks each changed file for: stale debug comments or review markers left in the code, sibling and caller functions that must stay consistent with the changed logic, and full coverage of every spec acceptance criterion. The step fires on every implementation path (Full Pipeline, Refactor, Fast Track Fix) and runs before the `gh pr create` call.
+This feature adds an explicit pre-submission self-review step to Protocol 03 (implementation) that runs **before** the agent opens the PR. The agent diffs the working branch against the base branch, then systematically checks each changed file for: stale debug comments or review markers left in the code, sibling and caller functions that must stay consistent with the changed logic, and full coverage of every spec acceptance criterion. The step fires on every implementation path (Full Pipeline, Refactor, Fast Track Fix, Hotfix) and runs before the `gh pr create` call. <!-- markdown-heuristic-disable COUNT001 -->
 
 Closed issue #614 ("agents miss test harness edge cases during impl self-review") already shipped test-harness-specific self-review guidance (the Test Harness Coverage Checklist) targeting bash trap patterns and BASH_SOURCE guard placement. This spec builds on that foundation rather than replacing it: #614 addressed the test-harness dimension; issue #799 addresses the **broader pre-PR diff review** — stale review markers, sibling/caller consistency across any changed code, and full AC coverage — that applies to every implementation PR regardless of whether a test harness is involved.
 
@@ -14,7 +14,7 @@ Closed issue #614 ("agents miss test harness edge cases during impl self-review"
 
 ### Use Case 1: Agent completes implementation and is about to open a draft PR
 
-**Actor**: Developer agent (or human developer) following Protocol 03, any path (Full Pipeline, Refactor, or Fast Track Fix).
+**Actor**: Developer agent (or human developer) following Protocol 03, any path (Full Pipeline, Refactor, Fast Track Fix, or Hotfix). <!-- markdown-heuristic-disable COUNT001 -->
 
 **Preconditions**:
 
