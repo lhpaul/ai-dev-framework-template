@@ -1052,7 +1052,7 @@ run_copilot_review() {
           local _cnt
           _cnt="$(gh api --paginate \
             "repos/$owner/$repo_name/pulls/$pr_number/reviews/$_copilot_review_id/comments" \
-            2>/dev/null | jq -rs 'length' 2>/dev/null)"
+            2>/dev/null | jq -rs '[ .[] | .[] ] | length' 2>/dev/null)"
           [ -n "$_cnt" ] && [ "$_cnt" -gt 0 ] && _copilot_comment_count="$_cnt"
         fi
         set -e
