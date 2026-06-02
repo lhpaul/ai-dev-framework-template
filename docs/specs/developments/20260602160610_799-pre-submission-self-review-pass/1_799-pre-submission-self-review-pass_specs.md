@@ -27,8 +27,8 @@ Closed issue #614 ("agents miss test harness edge cases during impl self-review"
 2. For each file that appears in the diff, the agent performs three targeted checks:
    a. **Stale markers check**: scan the diff for debug statements, TODO/FIXME comments added during implementation, temporary workarounds, or review-marker comments (`# TODO: remove`, `// REVIEW:`, `# DEBUG:`, etc.) that were not present before the change and have not been cleaned up.
    b. **Sibling/caller consistency check**: identify functions, variables, or data structures that the changed code calls or depends on. Verify that those sibling and caller sites are internally consistent with the changed behavior (e.g., if a function's return shape changed, all call sites in the diff handle the new shape).
-   c. **AC coverage check** (Full Pipeline and Refactor paths only): re-read the spec's acceptance criteria list. For each AC item, confirm that at least one change in the diff directly addresses it. Flag any AC with no corresponding change.
-3. If all three checks are clean, the agent proceeds to open the PR.
+   c. **AC coverage check** (Full Pipeline and Refactor paths only): re-read the spec's acceptance criteria list. For each AC item, confirm that at least one change in the diff directly addresses it. Flag any AC with no corresponding change. <!-- markdown-heuristic-disable COUNT001 -->
+3. If all three checks are clean, the agent proceeds to open the PR. <!-- markdown-heuristic-disable COUNT001 -->
 4. If any check finds an issue, the agent resolves it (fix the code, update a call site, or add missing coverage for an AC) and repeats the check for the affected file before opening the PR.
 
 **Postconditions**:
@@ -97,7 +97,7 @@ Closed issue #614 ("agents miss test harness edge cases during impl self-review"
 ## Business Rules
 
 - BR-1: Every implementation path in Protocol 03 (Full Pipeline Path 1, Refactor Path 2, Fast Track Fix Path 3, Hotfix Path 4) MUST include the pre-submission self-review pass as an explicit step that runs before `gh pr create`.
-- BR-2: The pre-submission self-review pass consists of three checks: (a) stale-markers check, (b) sibling/caller consistency check, and (c) AC coverage check. All three must be completed before the PR is opened.
+- BR-2: The pre-submission self-review pass consists of three checks: (a) stale-markers check, (b) sibling/caller consistency check, and (c) AC coverage check. All three must be completed before the PR is opened. <!-- markdown-heuristic-disable COUNT001 -->
 - BR-3: The AC coverage check (BR-2c) is required for Full Pipeline and Refactor paths, where a spec file with ACs exists. For Fast Track Fix and Hotfix paths, the equivalent coverage check uses the issue body's stated problem and proposed fix as the reference.
 - BR-4: The diff command used in the pre-submission pass MUST be `git diff <base-branch>...HEAD` (three-dot form). The `<base-branch>` is the item's actual base branch (typically `develop`; `develop-<slug>` when the `integration-branch:<slug>` label is present; `main` for hotfixes).
 - BR-5: The pre-submission pass builds on — and does not replace — the Test Harness Coverage Checklist introduced by #614. When an implementation includes a test script or validation harness, both the Test Harness Coverage Checklist and this pre-submission pass apply. The pre-submission pass covers the broader diff; the Test Harness Coverage Checklist covers bash-harness-specific edge cases.
@@ -111,7 +111,7 @@ Closed issue #614 ("agents miss test harness edge cases during impl self-review"
 - [ ] AC-1: Protocol 03 Path 1 (Full Pipeline) includes an explicit pre-submission self-review step between the "commit and push" step and the "open draft PR" step. The step's instructions include: run `git diff develop...HEAD`, check each changed file for stale markers, verify sibling/caller consistency, and confirm all spec ACs are covered.
 - [ ] AC-2: Protocol 03 Path 2 (Refactor) includes the same pre-submission self-review step as AC-1, with AC coverage referencing the implementation plan's acceptance criteria rather than a separate spec file.
 - [ ] AC-3: Protocol 03 Path 3 (Fast Track Fix) includes the pre-submission self-review step with the stale-markers and sibling/caller checks. The AC coverage check is replaced by a "stated-fix coverage check" that confirms the diff addresses the issue body's described problem and proposed fix.
-- [ ] AC-4: Protocol 03 Path 4 (Hotfix) includes the pre-submission self-review step with the same three checks applied, using `main` as the base branch in the diff command.
+- [ ] AC-4: Protocol 03 Path 4 (Hotfix) includes the pre-submission self-review step with the same three checks applied, using `main` as the base branch in the diff command. <!-- markdown-heuristic-disable COUNT001 -->
 - [ ] AC-5: The pre-submission self-review step explicitly cites `git diff <base-branch>...HEAD` (three-dot form) as the diff command, not the two-dot `git diff <base-branch> HEAD` form, and notes that `<base-branch>` is `develop` by default (or `develop-<slug>` / `main` as applicable to the path).
 - [ ] AC-6: The pre-submission self-review step includes a cross-reference to the existing Test Harness Coverage Checklist (from #614) explaining that both apply when a test harness is involved, and that the pre-submission pass does not replace the harness-specific checklist.
 - [ ] AC-7: The PR description requirement (self-review log summarizing each check's outcome) is stated in the pre-submission step so agents include it when opening the PR.
