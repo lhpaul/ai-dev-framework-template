@@ -112,7 +112,7 @@ jobs:
           #   (a) the summary comment is found — guard passes immediately, or
           #   (b) GUARD_MAX_WAIT total seconds have elapsed — guard fails.
           #
-          # Defaults: 30 s interval, 600 s max wait (up to 20 poll attempts).
+          # Defaults: 30 s interval, 600 s max wait (up to 21 poll attempts).
           # Override via env vars in the workflow dispatch or repository variables.
           GUARD_MAX_WAIT="${GUARD_MAX_WAIT:-600}"
           GUARD_POLL_INTERVAL="${GUARD_POLL_INTERVAL:-30}"
