@@ -3659,10 +3659,57 @@ METRICS_HEADER
     >> "$metrics_file"
 }
 
+# restore_regression_label_if_missing — Step 7b regression-label auto-restore.
+# Re-applies the ready-for-regression label at the start of every pr-review-loop.sh
+# invocation for implementation branches so the label is always present when the CI
+# loop (Step 8) begins — eliminating the recurring manual re-application pattern.
+#
+# Arguments:
+#   $1  pr_number   — numeric PR number
+#   $2  branch_name — full branch ref (e.g. fix/805-slug)
+#
+# Behaviour:
+#   - Runs only for feature/*, fix/*, refactor/*, hotfix/* branches.
+#   - Checks current label state via `gh pr view --json labels`.
+#     On gh failure the check is skipped (fail-open; WARN emitted to stderr).
+#   - Re-applies the label when absent via `gh pr edit --add-label`.
+#     On gh failure a WARN is emitted to stderr (not silently swallowed).
+#   - The operation is idempotent: if the label is already present, gh pr edit
+#     --add-label is a documented no-op.
+#
+# Returns 0 in all cases (best-effort; never aborts the caller).
+restore_regression_label_if_missing() {
+  local pr_number="$1"
+  local branch_name="$2"
+  case "${branch_name:-}" in
+    feature/*|fix/*|refactor/*|hotfix/*)
+      local _rfr_has_label=""
+      # pipefail is needed here: if gh fails, jq would still see empty input and
+      # output "false", causing a spurious re-apply. Use command substitution with
+      # explicit exit-code capture instead, equivalent to pipefail on a single-stage
+      # pipeline (gh --jq is one command, not a pipe).
+      if ! _rfr_has_label="$(gh pr view "$pr_number" --json labels \
+          --jq '[.labels[].name] | any(. == "ready-for-regression")')"; then
+        echo "WARN: gh pr view failed for regression-label auto-restore (PR ${pr_number}); skipping" >&2
+        return 0
+      fi
+      if [ "${_rfr_has_label:-}" = "false" ]; then
+        echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); restoring before reviewer loop runs." >&2
+        # Do NOT redirect stderr here: surface gh errors so failures are observable
+        # rather than silently swallowed. The || branch handles the non-zero exit.
+        if ! gh pr edit "$pr_number" --add-label "ready-for-regression"; then
+          echo "WARN: failed to restore ready-for-regression label on PR #${pr_number}; proceeding without it" >&2
+        fi
+      fi
+      ;;
+  esac
+  return 0
+}
+
 # Skip the main execution block when sourced in test-harness mode.
-# All function definitions above (including normalize_platform_verdict and
-# append_compare_metrics_row) are loaded; only the argument-parsing and
-# execution sections below are skipped.
+# All function definitions above (including normalize_platform_verdict,
+# append_compare_metrics_row, and restore_regression_label_if_missing) are
+# loaded; only the argument-parsing and execution sections below are skipped.
 [ "$_HARNESS_MODE_EFFECTIVE" -eq 1 ] && return 0 2>/dev/null || true
 
 if [ "$#" -lt 1 ]; then
@@ -3878,32 +3925,10 @@ if [ "$max_wait_explicit" -eq 0 ]; then
 fi
 
 # Step 7b regression-label auto-restore (implementation PRs only).
-# The remove-ready-for-regression-on-push.yml workflow drops the
-# ready-for-regression label on every synchronize event, including pushes
-# made after the reviewer loop has already run (fix commits). This guard
-# re-applies the label at the start of every pr-review-loop.sh invocation
-# for implementation branches so the label is always present when the CI loop
-# (Step 8) begins — eliminating the recurring manual re-application pattern.
-#
-# Scope: feature/*, fix/*, refactor/*, hotfix/* branches only.
-# The operation is idempotent: if the label is already present, gh pr edit
-# --add-label is a no-op. Errors are suppressed (best-effort) so a transient
-# gh API failure does not abort the review loop.
+# Delegates to restore_regression_label_if_missing() (defined in the function
+# section above) so the logic can be unit-tested in harness mode.
 if [ -n "$pr_number" ] && [ "${#platforms[@]}" -gt 0 ]; then
-  case "${branch_name:-}" in
-    feature/*|fix/*|refactor/*|hotfix/*)
-      _rfr_has_label=""
-      _rfr_has_label="$(gh pr view "$pr_number" --json labels \
-        --jq '[.labels[].name] | any(. == "ready-for-regression")' 2>/dev/null)" \
-        || { echo "WARN: gh pr view failed for regression-label auto-restore (PR ${pr_number}); skipping" >&2; _rfr_has_label=""; }
-      if [ "${_rfr_has_label:-}" = "false" ]; then
-        echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); restoring before reviewer loop runs." >&2
-        gh pr edit "$pr_number" --add-label "ready-for-regression" 2>/dev/null \
-          || echo "WARN: failed to restore ready-for-regression label on PR #${pr_number}; proceeding without it" >&2
-      fi
-      unset _rfr_has_label
-      ;;
-  esac
+  restore_regression_label_if_missing "$pr_number" "${branch_name:-}"
 fi
 
 aggregate_result="skipped"

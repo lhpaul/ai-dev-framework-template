@@ -912,63 +912,103 @@ unset _skipped_constant_count
 # ---------------------------------------------------------------------------
 # Area 11: Step 7b regression-label auto-restore (Option C, issue #805)
 #
-# The main execution block (including the auto-restore guard) is skipped in
-# harness mode, so these tests verify the source-level contract instead of
-# exercising the guard at runtime.  This mirrors Test 10.3 above.
+# restore_regression_label_if_missing() is defined before the HARNESS_MODE
+# return point and is therefore callable directly from the test harness.
+# These tests exercise the actual function (not source-string grep) so that
+# runtime regressions — e.g. a mis-scoped case branch, a missing label
+# check, or a silent gh failure — are detected.
+#
+# The mock gh stub (already on PATH) is driven by MOCK_GH_OUTPUT (controls
+# the `gh pr view` label check result) and MOCK_GH_CALL_LOG (records every
+# `gh pr edit --add-label` call so we can assert it was or was not made).
+# MOCK_GH_EXIT controls whether gh exits with an error (simulates API
+# failure).
 # ---------------------------------------------------------------------------
 echo ""
 echo "=== Area 11: regression-label auto-restore (Option C, issue #805) ==="
 
-# Test 11.1: auto-restore block is present in the source file for implementation
-# branch patterns.  Checks that the guard case expression covers the four
-# implementation prefixes.
-if grep -qF 'feature/*|fix/*|refactor/*|hotfix/*)' \
-    "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null; then
-  _restore_case_count=1
-else
-  _restore_case_count=0
-fi
-run_test "regression_restore_case_covers_impl_branches" "1" "$_restore_case_count"
-unset _restore_case_count
+# Reset mock vars from earlier areas.
+unset MOCK_GH_POST_EXIT MOCK_GH_POST_OUTPUT MOCK_GH_CALL_LOG MOCK_GH_EXIT
 
-# Test 11.2: auto-restore block applies the label via gh pr edit --add-label.
-if grep -qF 'gh pr edit "$pr_number" --add-label "ready-for-regression"' \
-    "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null; then
-  _restore_edit_count=1
-else
-  _restore_edit_count=0
-fi
-run_test "regression_restore_calls_gh_pr_edit_add_label" "1" "$_restore_edit_count"
-unset _restore_edit_count
+# Test 11.1: label absent on an implementation branch → gh pr edit called.
+# MOCK_GH_OUTPUT is "false" (what `gh pr view --jq 'any(. == ...)'` returns
+# when the label is absent).
+_call_log_11="$(mktemp)"
+export MOCK_GH_OUTPUT="false"
+export MOCK_GH_CALL_LOG="$_call_log_11"
+restore_regression_label_if_missing "42" "fix/42-my-fix" 2>/dev/null
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null || true)"
+run_test "restore_label_absent_impl_branch_calls_gh_edit" "1" "$_edit_calls"
+rm -f "$_call_log_11"
+unset MOCK_GH_CALL_LOG
 
-# Test 11.3: auto-restore block is guarded by a check for the label's current
-# state (reads '[.labels[].name] | any(. == "ready-for-regression")').
-if grep -qF 'any(. == "ready-for-regression")' \
-    "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null; then
-  _restore_guard_count=1
-else
-  _restore_guard_count=0
-fi
-run_test "regression_restore_guarded_by_label_presence_check" "1" "$_restore_guard_count"
-unset _restore_guard_count
+# Test 11.2: label already present on an implementation branch → NO gh pr edit.
+# MOCK_GH_OUTPUT is "true" (label present).
+_call_log_11="$(mktemp)"
+export MOCK_GH_OUTPUT="true"
+export MOCK_GH_CALL_LOG="$_call_log_11"
+restore_regression_label_if_missing "42" "feature/42-my-feature" 2>/dev/null
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null || true)"
+run_test "restore_label_already_present_no_gh_edit" "0" "$_edit_calls"
+rm -f "$_call_log_11"
+unset MOCK_GH_CALL_LOG
 
-# Test 11.4: auto-restore block appears BEFORE the platform loop (aggregate_result
-# initialisation) so the label is present when the first platform runs.
-# We verify ordering by comparing line numbers in the source file.
-_restore_line="$(grep -n 'ready-for-regression label missing on PR' \
+# Test 11.3: non-implementation branch (spec/) → NO gh pr edit regardless of
+# label state.
+_call_log_11="$(mktemp)"
+export MOCK_GH_OUTPUT="false"
+export MOCK_GH_CALL_LOG="$_call_log_11"
+restore_regression_label_if_missing "42" "spec/42-my-spec" 2>/dev/null
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null || true)"
+run_test "restore_label_non_impl_branch_no_gh_edit" "0" "$_edit_calls"
+rm -f "$_call_log_11"
+unset MOCK_GH_CALL_LOG
+
+# Test 11.4: gh pr view failure (API error) → function returns 0 (fail-open),
+# gh pr edit is NOT called (no false re-apply on unknown label state).
+_call_log_11="$(mktemp)"
+export MOCK_GH_EXIT=1
+export MOCK_GH_CALL_LOG="$_call_log_11"
+_restore_exit=0
+restore_regression_label_if_missing "42" "fix/42-api-fail" 2>/dev/null || _restore_exit=$?
+run_test "restore_label_gh_view_fail_returns_0" "0" "$_restore_exit"
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null || true)"
+run_test "restore_label_gh_view_fail_no_gh_edit" "0" "$_edit_calls"
+rm -f "$_call_log_11"
+unset MOCK_GH_CALL_LOG MOCK_GH_EXIT
+
+# Test 11.5: hotfix/* branch with absent label → gh pr edit called
+# (hotfix is an implementation branch; must be in scope).
+_call_log_11="$(mktemp)"
+export MOCK_GH_OUTPUT="false"
+export MOCK_GH_CALL_LOG="$_call_log_11"
+restore_regression_label_if_missing "99" "hotfix/99-critical" 2>/dev/null
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null || true)"
+run_test "restore_label_hotfix_branch_calls_gh_edit" "1" "$_edit_calls"
+rm -f "$_call_log_11"
+unset MOCK_GH_CALL_LOG
+
+# Test 11.6: restore function is defined before the HARNESS_MODE return point
+# (source-level ordering check — ensures the function remains testable after
+# future refactors move it).
+_restore_fn_line="$(grep -n 'restore_regression_label_if_missing()' \
   "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null \
   | head -1 | cut -d: -f1)"
-_loop_start_line="$(grep -n 'aggregate_result="skipped"' \
+_harness_return_line="$(grep -n '_HARNESS_MODE_EFFECTIVE.*return 0' \
   "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null \
   | head -1 | cut -d: -f1)"
-if [ -n "$_restore_line" ] && [ -n "$_loop_start_line" ] \
-    && [ "$_restore_line" -lt "$_loop_start_line" ]; then
-  _ordering_ok="yes"
+if [ -n "$_restore_fn_line" ] && [ -n "$_harness_return_line" ] \
+    && [ "$_restore_fn_line" -lt "$_harness_return_line" ]; then
+  _fn_ordering_ok="yes"
 else
-  _ordering_ok="no"
+  _fn_ordering_ok="no"
 fi
-run_test "regression_restore_appears_before_platform_loop" "yes" "$_ordering_ok"
-unset _restore_line _loop_start_line _ordering_ok
+run_test "restore_fn_defined_before_harness_return" "yes" "$_fn_ordering_ok"
+unset _restore_fn_line _harness_return_line _fn_ordering_ok
+
+# Reset mock state.
+export MOCK_GH_OUTPUT='[]'
+unset MOCK_GH_EXIT
 
 # ---------------------------------------------------------------------------
 # Summary
