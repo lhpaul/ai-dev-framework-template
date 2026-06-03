@@ -10,9 +10,10 @@ After evaluating the hooks in production use (2026-05-23/24), this template ship
 | --------- | -------- | ----- |
 | **Truncation checker** (`hooks/truncation-checker/`) | Yes | Silent gate on staged AI-agent code; no external binary dependency |
 | **LLM_RULES.md gate** (`hooks/pre-commit`) | Yes | Two-step commit with bypass token; shows rules and staged stat on first blocked attempt |
+| **Conventional Commit gate** (`hooks/commit-msg`) | Yes | Deterministic local validation of the repository commit-message contract |
 | Entire session tracking | No | Removed — adds `~/.haystack/bin/entire` binary dependency that downstream consumers may not want |
 
-The hooks retained for Entire (`prepare-commit-msg`, `commit-msg`, `post-commit`, `pre-push`) are kept as no-op entry points so downstream teams that want to extend them have the scaffolding.
+The hooks retained for Entire (`prepare-commit-msg`, `post-commit`, `pre-push`) are kept as no-op entry points so downstream teams that want to extend them have the scaffolding. `commit-msg` is repurposed for Conventional Commit validation because that rule is deterministic and already part of the repository contract.
 
 **What this means for downstream consumers**: Run `haystack hooks install` once per clone to activate the two high-value gates. The Entire binary is not required — this template does not ship or reference it.
 
@@ -34,11 +35,11 @@ Installed via `haystack hooks install`:
 | ---- | ------- |
 | `pre-commit` | Detects active AI agent sessions (Claude Code, Codex, Gemini CLI, OpenCode); runs truncation checks on staged agent/prompt code; enforces review of `LLM_RULES.md` on agent commits (two-step commit with bypass token) |
 | `prepare-commit-msg` | No-op entry point (Entire session tracking not adopted — Option B) |
-| `commit-msg` | No-op entry point (Entire session tracking not adopted — Option B) |
+| `commit-msg` | Validates Conventional Commit subject format and first-line length; allows normal merge, revert, fixup, squash, and amend commits |
 | `post-commit` | No-op entry point (Entire session tracking not adopted — Option B) |
 | `pre-push` | No-op entry point (Entire session tracking not adopted — Option B) |
 
-Human commits skip the enforcement path in `pre-commit` and pass through immediately.
+Human commits skip the agent-specific enforcement path in `pre-commit` and pass through immediately. `commit-msg` applies to all commits because the Conventional Commits contract is repository-wide.
 
 ### Optional PR triage and review (Haystack cloud)
 
@@ -51,6 +52,32 @@ When using the full Haystack product:
 This can run **in parallel** with CodeRabbit/Greptile/Devin configured in `.ai-dev-workflow.yaml`; they address different layers (local commit hygiene vs. hosted PR review).
 
 **Native review platform**: `haystack triage` is also supported as a native automated review platform in `pr-review-loop.sh`. Declare `haystack` under `review.platforms` (or `review.phase_after_clean`) in `.ai-dev-workflow.yaml` to include Haystack triage in the Step 7 automated reviewer loop. See [`haystack-triage.md`](haystack-triage.md) for setup instructions, severity mapping, and troubleshooting.
+
+### Operating model
+
+Use Haystack in three layers, each with a different failure mode:
+
+| Layer | Files | Use for | Do not rely on it for |
+| ----- | ----- | ------- | --------------------- |
+| Local deterministic hooks | `hooks/`, `LLM_RULES.md` | Cheap checks before a commit leaves the workstation: agent truncation checks, agent rule re-injection, commit-message format | Hosted PR review, semantic correctness, checks that require repository-wide context |
+| Haystack PR rules | `.haystack/pr-rules.yml`, `.haystack/review-policy.md` | Semantic review prompts and risk prioritization for PRs that Haystack analyzes | Hard guarantees where a script or CI check can validate the invariant |
+| Reviewer loop integration | `scripts/development-workflow/haystack-reviewer.sh`, `.ai-dev-workflow.yaml` | Folding `haystack triage` into Step 7 with the same key-value contract as other reviewers | GitHub inline-thread audits; the MVP reports findings locally and does not post GitHub review threads |
+
+Prefer deterministic checks for rules that can be expressed mechanically. Keep `.haystack/pr-rules.yml` focused on judgement calls: shell control-flow risk, review-state freshness, unsafe API payload construction, and workflow-contract drift. When Haystack reports a non-blocking finding, record the disposition in the reviewer-loop summary instead of silently ignoring it.
+
+For repositories that open implementation PRs as drafts, configure Haystack in
+`review.phase_after_clean` instead of the draft phase. The reviewer loop will
+mark the PR ready before running after-clean platforms; Haystack triage may stay
+`pending` indefinitely while a PR remains draft.
+
+### Hardening roadmap
+
+Use small PRs when expanding this integration:
+
+1. Promote deterministic invariants out of `.haystack/pr-rules.yml` when they can be checked without LLM judgement.
+2. Extend local hooks only for repo-wide contracts with low false-positive risk.
+3. Keep `haystack triage` visible in reviewer-loop summaries, especially `unavailable`, `pending_timeout`, and advisory-only outcomes.
+4. Add agent detection only for tools that the team actively uses. Cursor is not detected by the stock parsers today; those commits behave like human commits unless detection is extended.
 
 ---
 
@@ -137,6 +164,7 @@ Agents using Cursor are not detected by the stock agent-context parsers today; t
 | Path | Role |
 | ---- | ---- |
 | `hooks/pre-commit` | Agent detection, truncation check, LLM rules gate |
+| `hooks/commit-msg` | Conventional Commit format gate |
 | `hooks/truncation-checker/` | Pattern and AST-based truncation detection |
 | `hooks/agent-context/` | Parsers for Claude, Codex, Gemini, OpenCode sessions |
 | `LLM_RULES.md` | Project rules injected on agent commits |

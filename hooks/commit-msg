@@ -1,4 +1,57 @@
 #!/bin/sh
 # Haystack hooks: commit-msg
 # Entire session tracking removed (Option B scope decision — see integrations/haystack.md).
-# Hook retained as a no-op so downstream teams that extend it have the entry point.
+# This hook validates the repository Conventional Commits contract.
+
+MSG_FILE="$1"
+
+if [ -z "$MSG_FILE" ] || [ ! -f "$MSG_FILE" ]; then
+  echo "ERROR: commit-msg hook expected a commit message file path" >&2
+  exit 1
+fi
+
+SUBJECT=$(
+  sed -n '
+    /^[[:space:]]*#/d
+    /^[[:space:]]*$/d
+    p
+    q
+  ' "$MSG_FILE"
+)
+
+if [ -z "$SUBJECT" ]; then
+  echo "ERROR: commit message subject is empty" >&2
+  exit 1
+fi
+
+case "$SUBJECT" in
+  Merge\ *|Revert\ *|fixup!\ *|squash!\ *|amend!\ *)
+    exit 0
+    ;;
+esac
+
+if [ "${#SUBJECT}" -gt 72 ]; then
+  echo "ERROR: commit message subject must be 72 characters or fewer" >&2
+  echo "Subject (${#SUBJECT} chars): $SUBJECT" >&2
+  exit 1
+fi
+
+if ! printf '%s\n' "$SUBJECT" | grep -Eq '^(feat|fix|docs|style|refactor|perf|test|chore|revert)(\([A-Za-z0-9._/-]+\))?: [^[:space:]].*'; then
+  cat >&2 <<'EOF'
+ERROR: commit message must follow Conventional Commits.
+
+Format:
+  <type>[optional scope]: <description>
+
+Allowed types:
+  feat, fix, docs, style, refactor, perf, test, chore, revert
+
+Examples:
+  feat(auth): add email OTP login flow
+  fix(payments): correct rounding on invoice totals
+  docs: update setup instructions for new env vars
+EOF
+  exit 1
+fi
+
+exit 0

@@ -1,4 +1,4 @@
-name: pr-review-loop test harness
+name: workflow test harnesses
 
 on:
   pull_request:
@@ -9,6 +9,9 @@ on:
       - 'scripts/development-workflow/pr-review-loop.sh'
       - 'scripts/development-workflow/workflow-lib.sh'
       - 'scripts/development-workflow/tests/test-pr-review-loop.sh'
+      - 'scripts/development-workflow/tests/test-haystack-commit-msg-hook.sh'
+      - 'hooks/commit-msg'
+      - '.github/workflows/test-pr-review-loop.yml'
 
 concurrency:
   group: test-pr-review-loop-${{ github.ref }}
@@ -16,7 +19,7 @@ concurrency:
 
 jobs:
   test-harness:
-    name: pr-review-loop test harness
+    name: workflow test harnesses
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -24,5 +27,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - name: Run test harness
+      - name: Run pr-review-loop test harness
         run: bash scripts/development-workflow/tests/test-pr-review-loop.sh
+
+      - name: Run Haystack commit-msg hook test harness
+        run: bash scripts/development-workflow/tests/test-haystack-commit-msg-hook.sh

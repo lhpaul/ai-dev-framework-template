@@ -56,6 +56,13 @@ review:
 
 No other configuration changes are required in `.ai-dev-workflow.yaml`.
 
+If the repository creates implementation PRs as drafts, prefer
+`review.phase_after_clean` for Haystack. In this mode the reviewer loop lets
+draft-compatible platforms clear first, marks the PR ready, and then runs
+Haystack. Haystack triage may remain `pending` indefinitely while a PR is still
+draft, so running it before `gh pr ready` can produce avoidable
+`pending_timeout` escalations.
+
 ---
 
 ## Bot Login Identifier
