@@ -176,6 +176,31 @@ run-work
 sync-template
 ALIASES
 
+while IFS= read -r workflow_name; do
+  [ -n "$workflow_name" ] || continue
+  expected_target="$REPO_ROOT/.agents/skills/$workflow_name"
+
+  run_test "primary_workflow_target_${workflow_name}" "$expected_target" "$(
+    readlink "$agents_home/skills/$workflow_name"
+  )"
+  run_test "legacy_workflow_target_${workflow_name}" "$expected_target" "$(
+    readlink "$codex_home/skills/$workflow_name"
+  )"
+done <<'WORKFLOW_SKILLS'
+workflow-code-reviewer
+workflow-implementer
+workflow-item-orchestrator
+workflow-orchestrator
+workflow-plan-reviewer
+workflow-plan-writer
+workflow-project-setup
+workflow-retrospective
+workflow-reviewer-loop
+workflow-spec-reviewer
+workflow-spec-writer
+workflow-sync-template
+WORKFLOW_SKILLS
+
 echo ""
 echo "=== Summary ==="
 echo "Passed: $PASS_COUNT"
