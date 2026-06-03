@@ -858,6 +858,41 @@ run_test "run_platform_review_routes_to_run_haystack_review" "1" "$_haystack_dis
 unset -f run_haystack_review
 unset _haystack_dispatch_called
 
+# test: ensure_pr_ready_for_after_clean converts draft PRs before after-clean reviewers
+_call_log="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log"
+MOCK_GH_OUTPUT="true"
+MOCK_GH_EXIT=0
+export MOCK_GH_OUTPUT MOCK_GH_EXIT
+ensure_pr_ready_for_after_clean "999" >/dev/null 2>&1
+ready_calls="$(grep -c -- 'pr ready 999' "$_call_log" 2>/dev/null || true)"
+run_test "after_clean_ready_converts_draft_pr" "1" "$ready_calls"
+rm -f "$_call_log"
+unset MOCK_GH_CALL_LOG MOCK_GH_OUTPUT MOCK_GH_EXIT ready_calls
+
+# test: ensure_pr_ready_for_after_clean leaves non-draft PRs unchanged
+_call_log="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log"
+MOCK_GH_OUTPUT="false"
+MOCK_GH_EXIT=0
+export MOCK_GH_OUTPUT MOCK_GH_EXIT
+ensure_pr_ready_for_after_clean "999" >/dev/null 2>&1
+ready_calls="$(grep -c -- 'pr ready 999' "$_call_log" 2>/dev/null || true)"
+run_test "after_clean_ready_skips_non_draft_pr" "0" "$ready_calls"
+rm -f "$_call_log"
+unset MOCK_GH_CALL_LOG MOCK_GH_OUTPUT MOCK_GH_EXIT ready_calls
+
+# test: ensure_pr_ready_for_after_clean fails closed when draft state cannot be read
+MOCK_GH_OUTPUT=""
+MOCK_GH_EXIT=1
+export MOCK_GH_OUTPUT MOCK_GH_EXIT
+set +e
+ensure_pr_ready_for_after_clean "999" >/dev/null 2>&1
+ready_status=$?
+set -e
+run_test "after_clean_ready_fails_closed_on_state_error" "2" "$ready_status"
+unset MOCK_GH_OUTPUT MOCK_GH_EXIT ready_status
+
 # ---------------------------------------------------------------------------
 # Area 10: per-platform result tokens in summary comment (#755)
 #
