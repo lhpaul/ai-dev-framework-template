@@ -234,25 +234,25 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
   echo "INFO: polling... elapsed ${TOTAL_ELAPSED}s / ${MAX_WAIT}s"
 
   # Query workflow runs filtered by event=workflow_dispatch. We look for the
-  # most recent run that matches ALL of:
-  #   1. workflow file path (endswith $wf)
-  #   2. created_at >= POLL_AFTER_TIME (dispatch time minus 10-second clock-skew buffer)
-  #   3. run name contains "PR #<pr_number>" — the PR-scoping mechanism that
-  #      replaces the never-functional inputs.pr_number check (#806).
+  # most recent run matching our workflow file and created at or after
+  # POLL_AFTER_TIME (dispatch time minus 10-second clock-skew buffer).
   #
-  # Why run-name scoping is required for concurrent/parallel dispatch:
+  # PR-scoping via run-name (required for concurrent/parallel dispatch):
   #   The GitHub Actions Runs API always returns inputs: null regardless of what
   #   was passed at dispatch time (confirmed empirically via
   #   `gh api ".../actions/runs/<id>" --jq 'has("inputs")'` → false for all tested
   #   runs, including workflow_dispatch-triggered runs). Under concurrent dispatch,
   #   two PRs that trigger claude-code-review.yml within the same poll window both
   #   match the timestamp filter, so `sort_by | reverse | first` could select the
-  #   wrong PR's run. The run-name filter fixes this: claude-code-review.yml sets
+  #   wrong PR's run. To fix this, claude-code-review.yml sets
   #   `run-name: "Claude Code Review — PR #${{ inputs.pr_number }}"`, and GitHub
-  #   populates that string into the .name field on Runs API objects. We match
-  #   `.name` (primary) and fall back to `.display_title` (some API versions) for
-  #   defensive coverage. The timestamp filter remains as a secondary guard to
-  #   exclude pre-dispatch runs with identical names (e.g. a retry for the same PR).
+  #   populates that string into the .name field on Runs API objects. The filter
+  #   below prefers name-scoped runs (where .name contains "PR #<pr>" with a
+  #   word-boundary guard) and falls back to timestamp-only selection when the
+  #   workflow has not yet been updated to include run-name (backward compatibility
+  #   during the transition period after #808 is merged to the default branch).
+  #   The timestamp filter remains as a secondary guard in the fallback path to
+  #   exclude pre-dispatch runs. See issue #806 and #808.
   # Use a temp file to avoid SIGPIPE under pipefail.
   RUN_POLL_STDERR=$(mktemp)
   RUN_POLL_TMPFILE=$(mktemp)
@@ -261,11 +261,20 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
     2>"$RUN_POLL_STDERR" \
     | jq -r --arg wf "$WORKFLOW_FILE" --arg poll_after "$POLL_AFTER_TIME" \
         --arg pr "$PR_NUMBER" \
-        '[.workflow_runs[] | select(
-           (.path | endswith($wf))
-           and .created_at >= $poll_after
-           and ((.name // "") | test("PR #" + $pr + "\\b"))
-         )] | sort_by(.created_at) | reverse | first | {status: .status, conclusion: .conclusion, html_url: .html_url, id: .id}' \
+        '# Candidate set: workflow-file + timestamp match
+         (.workflow_runs // []) as $all |
+         [$all[] | select((.path | endswith($wf)) and .created_at >= $poll_after)] as $candidates |
+         # PR-scoping via run-name (#808): if any candidate has a "PR #N"-style name
+         # (indicating the workflow uses run-name), require name match for THIS PR to
+         # prevent selecting the wrong PR'\''s run under concurrent/parallel dispatch.
+         # Fall back to all candidates when no run has the "PR #N" pattern — backward
+         # compat with pre-#808 deployments where the workflow has no run-name yet.
+         ([$candidates[] | select((.name // "") | test("PR #[0-9]+\\b"))] | length > 0) as $name_scoped |
+         ($candidates | if $name_scoped then
+           [.[] | select((.name // "") | test("PR #" + $pr + "\\b"))]
+         else . end) |
+         sort_by(.created_at) | reverse | first |
+         {status: .status, conclusion: .conclusion, html_url: .html_url, id: .id}' \
     > "$RUN_POLL_TMPFILE" 2>/dev/null || POLL_STATUS=$?
 
   if [ "$POLL_STATUS" -ne 0 ]; then

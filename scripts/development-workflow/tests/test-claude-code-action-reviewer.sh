@@ -40,11 +40,20 @@ run_test() {
 # Arguments: $wf (workflow filename suffix), $poll_after (ISO8601 timestamp),
 #            $pr (PR number string for run-name scoping)
 # ---------------------------------------------------------------------------
-RUN_POLL_FILTER='[.workflow_runs[] | select(
-           (.path | endswith($wf))
-           and .created_at >= $poll_after
-           and ((.name // "") | test("PR #" + $pr + "\\b"))
-         )] | sort_by(.created_at) | reverse | first | {status: .status, conclusion: .conclusion, html_url: .html_url, id: .id}'
+RUN_POLL_FILTER='# Candidate set: workflow-file + timestamp match
+         (.workflow_runs // []) as $all |
+         [$all[] | select((.path | endswith($wf)) and .created_at >= $poll_after)] as $candidates |
+         # PR-scoping via run-name (#808): if any candidate has a "PR #N"-style name
+         # (indicating the workflow uses run-name), require name match for THIS PR to
+         # prevent selecting the wrong PR'\''s run under concurrent/parallel dispatch.
+         # Fall back to all candidates when no run has the "PR #N" pattern — backward
+         # compat with pre-#808 deployments where the workflow has no run-name yet.
+         ([$candidates[] | select((.name // "") | test("PR #[0-9]+\\b"))] | length > 0) as $name_scoped |
+         ($candidates | if $name_scoped then
+           [.[] | select((.name // "") | test("PR #" + $pr + "\\b"))]
+         else . end) |
+         sort_by(.created_at) | reverse | first |
+         {status: .status, conclusion: .conclusion, html_url: .html_url, id: .id}'
 
 run_filter() {
   local json="$1" wf="$2" poll_after="$3" pr="${4:-808}"
@@ -235,6 +244,19 @@ _json='{"workflow_runs":[
 _result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
 _id=$(printf '%s\n' "$_result" | jq -r '.id')
 run_test "two_runs_same_pr_most_recent_selected" "830" "$_id"
+unset _json _result _id
+
+# Test 5.6: Backward compat — old workflow (no run-name, generic names) falls back
+# to timestamp-only selection. When no candidate has a "PR #N"-style name, the
+# filter uses all candidates. The most recent one is selected regardless of name.
+# This covers the transition period before the new workflow is deployed to main.
+_json='{"workflow_runs":[
+  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Action PR Review","created_at":"2026-06-02T16:01:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":901},
+  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Action PR Review","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://b","id":900}
+]}'
+_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
+_id=$(printf '%s\n' "$_result" | jq -r '.id')
+run_test "backward_compat_generic_name_falls_back_to_newest" "901" "$_id"
 unset _json _result _id
 
 # ---------------------------------------------------------------------------
