@@ -1,0 +1,7 @@
+interface:
+  display_name: "Retrospective"
+  short_description: "Analyze completed workflow work and act on improvements."
+  default_prompt: "Use $retrospective to run a retrospective for the recent batch, item, PR, or branch I provide."
+
+policy:
+  allow_implicit_invocation: false

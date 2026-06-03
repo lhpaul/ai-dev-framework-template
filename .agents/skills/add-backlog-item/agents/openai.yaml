@@ -1,0 +1,7 @@
+interface:
+  display_name: "Add backlog item"
+  short_description: "Create a tracked backlog item using the configured issue tracker."
+  default_prompt: "Use $add-backlog-item to create a backlog item using this repository's configured issue tracker."
+
+policy:
+  allow_implicit_invocation: false
