@@ -82,7 +82,7 @@ The `haystack triage --json` output schema uses a `.findings[].category` field a
 | `Nitpick` | Advisory | Non-blocking; reported in SUGGESTION_COUNT |
 | `Trivial` | Advisory | Non-blocking; reported in SUGGESTION_COUNT |
 | `Weak test coverage` | Advisory | Non-blocking; reported in SUGGESTION_COUNT |
-| `Rules violation` | Advisory | Non-blocking; used for custom rule findings (e.g. CHANGELOG structure) that can produce false positives on hotfix backport PRs — see the ["Rules violation" section](#rules-violation--changelog-false-positive-on-hotfix-backport-prs) below |
+| `Rules violation` | Advisory | Non-blocking; used for custom rule findings (e.g. CHANGELOG structure) that can produce false positives on correctly-formatted PRs and hotfix backport PRs — see the ["Rules violation" section](#rules-violation--changelog-false-positive-on-correctly-formatted-prs) below |
 | Any unrecognised value | Blocking | Conservative safe-fail per spec BR-2 |
 
 The `COMMENT_COUNT` output equals `BLOCKING_COUNT + SUGGESTION_COUNT`.
@@ -95,13 +95,26 @@ By default, `Major` findings are treated as advisory (non-blocking). If your tea
 HAYSTACK_MAJOR_IS_BLOCKING=1 ./scripts/development-workflow/pr-review-loop.sh <pr_number>
 ```
 
-### "Rules violation" — CHANGELOG false positive on hotfix backport PRs
+### "Rules violation" — CHANGELOG false positive on correctly-formatted PRs
 
-Haystack uses the `Rules violation` category for custom rule findings, including CHANGELOG structure checks. On hotfix backport PRs, this can produce a false positive:
+Haystack uses the `Rules violation` category for custom rule findings, including CHANGELOG structure checks (rule `keep-changelog-unreleased-structure-canonical`). This rule fires as a false positive on PRs whose CHANGELOG entry is **correctly** formatted. This is a known recurring pattern (observed in Batches 34, 35, 55, and PR #801).
 
-**Root cause**: Hotfix branches are cut from `main`. The diff of a backport branch against `develop` shows an empty `[Unreleased]` section (from `main`'s version of the CHANGELOG). Haystack interprets the diff as "removing `[Unreleased]` content" and flags it as a structure violation. In reality, the 3-way merge on the `develop` side preserves its own `[Unreleased]` content; the CHANGELOG structure in the merged result is correct.
+> **IMPORTANT — for agents**: When you see a `Rules violation` finding that references CHANGELOG structure (`keep-changelog-unreleased-structure-canonical` or similar), **do not attempt to fix it**. The current CHANGELOG format is correct. Attempting to restructure the CHANGELOG in response to this finding will introduce a real regression. Treat it as non-actionable and dismiss it.
 
-**Resolution**: `Rules violation` is classified as advisory (non-blocking) in `haystack-reviewer.sh`. If you see this finding on a backport PR, verify:
+**Why the finding fires**: Haystack's LLM-based CHANGELOG structure checker (`keep-changelog-unreleased-structure-canonical` rule in `.haystack/pr-rules.yml`) misidentifies correctly placed entries. The rule is intended to catch a single `[Unreleased]` section with ordered subsections, but Haystack's analysis of a diff (not the full file) can misread the context and report the entry as appended outside the section rather than nested within it. The actual CHANGELOG structure follows Keep a Changelog format correctly.
+
+**Resolution**: `Rules violation` is classified as advisory (non-blocking) in `haystack-reviewer.sh`. The loop exits `RESULT=clean` with `SUGGESTION_COUNT=1`. No code change is required. Verify:
+
+1. The CHANGELOG entry is under `## [Unreleased]` followed by `### Fixed` (or another appropriate subsection).
+2. The `check-changelog-duplicate-headers.sh` CI check and `markdownlint-cli2` lint pass — these are the authoritative validators for CHANGELOG structure and are not subject to Haystack's diff-interpretation issue.
+
+If both conditions hold, the finding is a confirmed false positive and can be dismissed.
+
+#### Hotfix backport PRs
+
+An additional false positive occurs specifically on hotfix backport PRs. Hotfix branches are cut from `main`. The diff of a backport branch against `develop` shows an empty `[Unreleased]` section (from `main`'s version of the CHANGELOG). Haystack interprets the diff as "removing `[Unreleased]` content" and flags it as a structure violation. In reality, the 3-way merge on the `develop` side preserves its own `[Unreleased]` content; the CHANGELOG structure in the merged result is correct.
+
+For backport PRs, verify:
 
 1. The `develop` branch also has an empty `[Unreleased]` section (or the same content that was on `main`).
 2. The merged CHANGELOG on `develop` will have the correct Keep-a-Changelog structure: `[Unreleased]` at the top, followed by the new versioned section from the hotfix, followed by prior versioned sections.
@@ -253,6 +266,17 @@ REASON=timeout
 
 **Remediation**: Increase `HAYSTACK_REVIEWER_TIMEOUT` or check network connectivity to the Haystack service.
 
+### "Rules violation" finding for CHANGELOG structure (regular PR)
+
+```text
+INFO: findings parsed — blocking: 0, advisory: 1, total: 1
+RESULT=clean
+```
+
+**Cause**: Haystack fired the `keep-changelog-unreleased-structure-canonical` rule on a PR whose CHANGELOG entry is correctly formatted under `[Unreleased]` → `### Fixed`. This is a known false positive (see the ["Rules violation" section](#rules-violation--changelog-false-positive-on-correctly-formatted-prs) above). The finding is advisory and does not block the reviewer loop.
+
+**Remediation**: Verify that the CHANGELOG entry follows the correct Keep a Changelog format (`## [Unreleased]` → `### Fixed`) and that `markdownlint-cli2` and `check-changelog-duplicate-headers.sh` both pass. No code change is required; the finding can be dismissed. **Do not restructure the CHANGELOG to satisfy this finding.**
+
 ### "Rules violation" finding on a hotfix backport PR
 
 ```text
@@ -260,7 +284,7 @@ INFO: findings parsed — blocking: 0, advisory: 1, total: 1
 RESULT=clean
 ```
 
-**Cause**: Haystack flagged a `Rules violation` finding for CHANGELOG structure on the backport PR. This is a known false positive (see the "Rules violation" section above). The finding is advisory and does not block the reviewer loop.
+**Cause**: Haystack flagged a `Rules violation` finding for CHANGELOG structure on the backport PR. This is a known false positive (see the "Hotfix backport PRs" subsection above). The finding is advisory and does not block the reviewer loop.
 
 **Remediation**: Verify that the merged CHANGELOG on `develop` will have correct Keep-a-Changelog structure. No code change is required; the finding can be dismissed.
 
