@@ -309,6 +309,7 @@ docs/workflow/                          ← full tree, all files recursively
 .claude/commands/                 ← all *.md files
 .claude/skills/                   ← all *.md files (including this skill itself)
 .codex/skills/                    ← Codex skill trees shipped with the template (SKILL.md and assets)
+.agents/skills/                   ← Codex repo-scoped skill discovery path and command-style aliases
 .cursor/commands/                 ← all *.md files
 .cursor/agents/                   ← all *.md files
 .cursor/rules/                    ← all *.mdc files
@@ -627,7 +628,7 @@ git checkout -b feature/sync-template-v{TEMPLATE_VERSION}
 Stage only approved paths — avoid `git add .` so unapproved files never enter the commit:
 
 ```bash
-git add REVIEW.md docs/workflow/ .claude/agents/ .claude/commands/ .claude/skills/ .codex/skills/ \
+git add REVIEW.md docs/workflow/ .claude/agents/ .claude/commands/ .claude/skills/ .codex/skills/ .agents/skills/ \
   .cursor/commands/ .cursor/agents/ .cursor/rules/ \
   scripts/development-workflow/ scripts/README.md \
   docs/best-practices/1-general.md \

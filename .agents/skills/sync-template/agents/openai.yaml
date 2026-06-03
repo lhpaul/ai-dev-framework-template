@@ -1,0 +1,7 @@
+interface:
+  display_name: "Sync template"
+  short_description: "Sync framework updates from the upstream template."
+  default_prompt: "Use $sync-template to sync this downstream project with the upstream template."
+
+policy:
+  allow_implicit_invocation: false
