@@ -959,7 +959,7 @@ export MOCK_GH_OUTPUT="false"
 export MOCK_GH_COMMENTS_OUTPUT="$_SUMMARY_COMMENT_JSON"
 export MOCK_GH_CALL_LOG="$_call_log_11"
 restore_regression_label_if_missing "42" "fix/42-my-fix" 2>/dev/null
-_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null || true)"
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
 run_test "restore_label_absent_summary_present_calls_gh_edit" "1" "$_edit_calls"
 rm -f "$_call_log_11"
 unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT
@@ -970,7 +970,7 @@ _call_log_11="$(mktemp)"
 export MOCK_GH_OUTPUT="true"
 export MOCK_GH_CALL_LOG="$_call_log_11"
 restore_regression_label_if_missing "42" "feature/42-my-feature" 2>/dev/null
-_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null || true)"
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
 run_test "restore_label_already_present_no_gh_edit" "0" "$_edit_calls"
 rm -f "$_call_log_11"
 unset MOCK_GH_CALL_LOG
@@ -982,7 +982,7 @@ export MOCK_GH_OUTPUT="false"
 export MOCK_GH_COMMENTS_OUTPUT="$_SUMMARY_COMMENT_JSON"
 export MOCK_GH_CALL_LOG="$_call_log_11"
 restore_regression_label_if_missing "42" "spec/42-my-spec" 2>/dev/null
-_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null || true)"
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
 run_test "restore_label_non_impl_branch_no_gh_edit" "0" "$_edit_calls"
 rm -f "$_call_log_11"
 unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT
@@ -997,7 +997,7 @@ export MOCK_GH_CALL_LOG="$_call_log_11"
 _restore_exit=0
 restore_regression_label_if_missing "42" "fix/42-api-fail" 2>/dev/null || _restore_exit=$?
 run_test "restore_label_gh_view_fail_returns_0" "0" "$_restore_exit"
-_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null || true)"
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
 run_test "restore_label_gh_view_fail_no_gh_edit" "0" "$_edit_calls"
 rm -f "$_call_log_11"
 unset MOCK_GH_CALL_LOG MOCK_GH_EXIT
@@ -1009,7 +1009,7 @@ export MOCK_GH_OUTPUT="false"
 export MOCK_GH_COMMENTS_OUTPUT="$_SUMMARY_COMMENT_JSON"
 export MOCK_GH_CALL_LOG="$_call_log_11"
 restore_regression_label_if_missing "99" "hotfix/99-critical" 2>/dev/null
-_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null || true)"
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
 run_test "restore_label_hotfix_branch_calls_gh_edit" "1" "$_edit_calls"
 rm -f "$_call_log_11"
 unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT
@@ -1040,7 +1040,7 @@ export MOCK_GH_OUTPUT="false"
 export MOCK_GH_COMMENTS_OUTPUT="[]"
 export MOCK_GH_CALL_LOG="$_call_log_11"
 restore_regression_label_if_missing "42" "fix/42-no-summary" 2>/dev/null
-_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null || true)"
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
 run_test "restore_label_absent_summary_absent_no_gh_edit" "0" "$_edit_calls"
 rm -f "$_call_log_11"
 unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT
@@ -1054,7 +1054,7 @@ export MOCK_GH_OUTPUT="false"
 export MOCK_GH_COMMENTS_EXIT=1
 export MOCK_GH_CALL_LOG="$_call_log_11"
 _warn_output="$(restore_regression_label_if_missing "42" "fix/42-comments-fail" 2>&1)"
-_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null || true)"
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
 run_test "restore_label_comments_api_fail_failopen_calls_gh_edit" "1" "$_edit_calls"
 # Verify WARN is emitted (not silent).
 if printf '%s\n' "$_warn_output" | grep -q "WARN"; then
