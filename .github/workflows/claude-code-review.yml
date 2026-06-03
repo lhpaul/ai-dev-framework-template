@@ -1,5 +1,15 @@
 name: Claude Code Action PR Review
 
+# run-name embeds the PR number so each dispatched run is uniquely identifiable
+# via the GitHub Actions Runs API (.name field). This is the PR-scoping mechanism
+# that replaces the never-functional inputs.pr_number check removed in #806:
+# unlike .inputs (always null per the Runs API), .name IS populated from run-name
+# and is readable via gh api .../actions/runs. Required for correctness under
+# concurrent/parallel dispatch where two PRs may dispatch this workflow within the
+# same poll window — without the name filter, the polling loop could select the
+# wrong PR's run. See issue #806 and claude-code-action-reviewer.sh Phase 2 filter.
+run-name: "Claude Code Review — PR #${{ inputs.pr_number }}"
+
 on:
   # Triggered on demand by pr-review-loop.sh or a repository maintainer.
   # Not triggered automatically on PR open, push, or synchronize events.

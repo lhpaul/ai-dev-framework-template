@@ -2,9 +2,13 @@
 # test-claude-code-action-reviewer.sh — Unit tests for the run-poll jq filter
 # logic in claude-code-action-reviewer.sh.
 #
-# Tests verify that the timestamp-only filter (post-#806 fix) selects the
-# correct run from the GitHub Actions Runs API response and does NOT rely on
-# inputs.pr_number (which is always null in the API).
+# Tests verify that the run-name PR-scoped filter (post-#806/#808 fix) selects
+# the correct run from the GitHub Actions Runs API response. Area 3 verifies
+# that inputs.pr_number (always null in the API) is not referenced. Areas 5+
+# verify the run-name PR-scoping mechanism required for concurrent dispatch:
+# under parallel batches, two PRs may dispatch claude-code-review.yml within
+# the same poll window; the run-name filter ensures only the run for THIS PR
+# is selected, not the most-recent run regardless of which PR triggered it.
 #
 # Usage: bash scripts/development-workflow/tests/test-claude-code-action-reviewer.sh
 # Requires: bash, jq
@@ -33,27 +37,35 @@ run_test() {
 
 # ---------------------------------------------------------------------------
 # The run-poll jq filter (extracted verbatim from claude-code-action-reviewer.sh)
-# Arguments: $wf (workflow filename suffix), $poll_after (ISO8601 timestamp)
+# Arguments: $wf (workflow filename suffix), $poll_after (ISO8601 timestamp),
+#            $pr (PR number string for run-name scoping)
 # ---------------------------------------------------------------------------
-RUN_POLL_FILTER='[.workflow_runs[] | select((.path | endswith($wf)) and .created_at >= $poll_after)] | sort_by(.created_at) | reverse | first | {status: .status, conclusion: .conclusion, html_url: .html_url, id: .id}'
+RUN_POLL_FILTER='[.workflow_runs[] | select(
+           (.path | endswith($wf))
+           and .created_at >= $poll_after
+           and ((.name // "") | test("PR #" + $pr + "\\b"))
+         )] | sort_by(.created_at) | reverse | first | {status: .status, conclusion: .conclusion, html_url: .html_url, id: .id}'
 
 run_filter() {
-  local json="$1" wf="$2" poll_after="$3"
+  local json="$1" wf="$2" poll_after="$3" pr="${4:-808}"
   printf '%s\n' "$json" | jq -r \
     --arg wf "$wf" \
     --arg poll_after "$poll_after" \
+    --arg pr "$pr" \
     "$RUN_POLL_FILTER"
 }
 
 # ---------------------------------------------------------------------------
 # Area 1: Basic timestamp filtering
+# Run objects include "name" matching the dispatched PR (808) so they pass the
+# run-name PR-scoping filter added in #808.
 # ---------------------------------------------------------------------------
 echo ""
 echo "=== Area 1: timestamp filtering ==="
 
 # Test 1.1: A single matching run is selected
-_json='{"workflow_runs":[{"path":".github/workflows/claude-code-review.yml","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://github.com/owner/repo/actions/runs/100","id":100}]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z")
+_json='{"workflow_runs":[{"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://github.com/owner/repo/actions/runs/100","id":100}]}'
+_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
 _id=$(printf '%s\n' "$_result" | jq -r '.id')
 run_test "single_match_selected" "100" "$_id"
 unset _json _result _id
@@ -62,22 +74,22 @@ unset _json _result _id
 # When the filtered array is empty, jq `first` on [] returns null; piping through
 # `| {id: .id}` yields {"id":null}. The script treats this as "no match found"
 # via the `RUN_STATUS=$(... '.status // empty')` guard (empty string → loop continues).
-_json='{"workflow_runs":[{"path":".github/workflows/claude-code-review.yml","created_at":"2026-06-02T15:58:00Z","status":"completed","conclusion":"success","html_url":"https://github.com/owner/repo/actions/runs/99","id":99}]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z")
+_json='{"workflow_runs":[{"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T15:58:00Z","status":"completed","conclusion":"success","html_url":"https://github.com/owner/repo/actions/runs/99","id":99}]}'
+_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
 _id=$(printf '%s\n' "$_result" | jq -r '.id // "null"')
 run_test "old_run_excluded_null_id" "null" "$_id"
 unset _json _result _id
 
-# Test 1.3: Multiple runs — most recent is selected
-_json='{"workflow_runs":[{"path":".github/workflows/claude-code-review.yml","created_at":"2026-06-02T16:01:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":200},{"path":".github/workflows/claude-code-review.yml","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://b","id":100}]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z")
+# Test 1.3: Multiple runs for same PR — most recent is selected
+_json='{"workflow_runs":[{"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:01:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":200},{"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://b","id":100}]}'
+_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
 _id=$(printf '%s\n' "$_result" | jq -r '.id')
 run_test "most_recent_selected" "200" "$_id"
 unset _json _result _id
 
 # Test 1.4: Empty workflow_runs → no match (id field is null)
 _json='{"workflow_runs":[]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z")
+_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
 _id=$(printf '%s\n' "$_result" | jq -r '.id // "null"')
 run_test "empty_list_null_id" "null" "$_id"
 unset _json _result _id
@@ -89,15 +101,15 @@ echo ""
 echo "=== Area 2: workflow file path matching ==="
 
 # Test 2.1: A run with a different workflow file is excluded (id field is null)
-_json='{"workflow_runs":[{"path":".github/workflows/other-workflow.yml","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":300}]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z")
+_json='{"workflow_runs":[{"path":".github/workflows/other-workflow.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":300}]}'
+_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
 _id=$(printf '%s\n' "$_result" | jq -r '.id // "null"')
 run_test "different_workflow_excluded_null_id" "null" "$_id"
 unset _json _result _id
 
 # Test 2.2: Mixed runs — only the matching workflow file is selected
-_json='{"workflow_runs":[{"path":".github/workflows/other-workflow.yml","created_at":"2026-06-02T16:01:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":400},{"path":".github/workflows/claude-code-review.yml","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://b","id":401}]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z")
+_json='{"workflow_runs":[{"path":".github/workflows/other-workflow.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:01:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":400},{"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://b","id":401}]}'
+_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
 _id=$(printf '%s\n' "$_result" | jq -r '.id')
 run_test "correct_workflow_selected_from_mixed" "401" "$_id"
 unset _json _result _id
@@ -111,23 +123,23 @@ unset _json _result _id
 echo ""
 echo "=== Area 3: inputs.pr_number absent (API returns null) ==="
 
-# Test 3.1: Run with inputs: null is still selected (no inputs check)
-_json='{"workflow_runs":[{"path":".github/workflows/claude-code-review.yml","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":500,"inputs":null}]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z")
+# Test 3.1: Run with inputs: null is still selected (no inputs check needed)
+_json='{"workflow_runs":[{"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":500,"inputs":null}]}'
+_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
 _id=$(printf '%s\n' "$_result" | jq -r '.id')
 run_test "null_inputs_run_selected" "500" "$_id"
 unset _json _result _id
 
 # Test 3.2: Run without inputs field at all is still selected
-_json='{"workflow_runs":[{"path":".github/workflows/claude-code-review.yml","created_at":"2026-06-02T16:00:00Z","status":"in_progress","conclusion":null,"html_url":"https://a","id":501}]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z")
+_json='{"workflow_runs":[{"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"in_progress","conclusion":null,"html_url":"https://a","id":501}]}'
+_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
 _id=$(printf '%s\n' "$_result" | jq -r '.id')
 run_test "missing_inputs_field_run_selected" "501" "$_id"
 unset _json _result _id
 
 # Test 3.3: Filter does NOT reference .inputs in the select clause
 # This verifies structurally that the filter removed the inputs dependency.
-if printf '%s\n' "$RUN_POLL_FILTER" | grep -q 'inputs'; then
+if printf '%s\n' "$RUN_POLL_FILTER" | grep -q '\.inputs'; then
   _has_inputs=1
 else
   _has_inputs=0
@@ -142,18 +154,88 @@ echo ""
 echo "=== Area 4: in-progress run status passthrough ==="
 
 # Test 4.1: in_progress run is returned (status field preserved)
-_json='{"workflow_runs":[{"path":".github/workflows/claude-code-review.yml","created_at":"2026-06-02T16:00:00Z","status":"in_progress","conclusion":null,"html_url":"https://a","id":600}]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z")
+_json='{"workflow_runs":[{"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"in_progress","conclusion":null,"html_url":"https://a","id":600}]}'
+_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
 _status=$(printf '%s\n' "$_result" | jq -r '.status')
 run_test "in_progress_status_returned" "in_progress" "$_status"
 unset _json _result _status
 
 # Test 4.2: queued run is returned (status field preserved)
-_json='{"workflow_runs":[{"path":".github/workflows/claude-code-review.yml","created_at":"2026-06-02T16:00:00Z","status":"queued","conclusion":null,"html_url":"https://a","id":700}]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z")
+_json='{"workflow_runs":[{"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"queued","conclusion":null,"html_url":"https://a","id":700}]}'
+_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
 _status=$(printf '%s\n' "$_result" | jq -r '.status')
 run_test "queued_status_returned" "queued" "$_status"
 unset _json _result _status
+
+# ---------------------------------------------------------------------------
+# Area 5: Run-name PR scoping — concurrent dispatch correctness (#808)
+#
+# These are the critical behavioral tests for the fix: given a workflow_runs
+# payload containing runs for TWO different PRs (same workflow-file and
+# timestamp window), assert the filter selects the run whose name matches THIS
+# PR — not merely the newest run regardless of PR.
+#
+# The scenario mirrors a parallel batch where PR #808 and PR #999 both dispatch
+# claude-code-review.yml within the same poll window. Without the name filter,
+# sort_by(.created_at) | reverse | first would select PR #999's run (newest).
+# With the name filter, only PR #808's run matches.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 5: run-name PR scoping (concurrent dispatch) ==="
+
+# Test 5.1: Two PRs dispatched; most-recent is other PR — filter selects THIS PR's run
+# PR #808 run (id=810) was dispatched at 16:00; PR #999 run (id=999) dispatched at 16:01.
+# Without name filter: id=999 would be selected (newest). With name filter: id=810 selected.
+_json='{"workflow_runs":[
+  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #999","created_at":"2026-06-02T16:01:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":999},
+  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://b","id":810}
+]}'
+_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
+_id=$(printf '%s\n' "$_result" | jq -r '.id')
+run_test "concurrent_other_pr_newest_selects_this_pr" "810" "$_id"
+unset _json _result _id
+
+# Test 5.2: Only this PR's run is present — selected
+_json='{"workflow_runs":[
+  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":820}
+]}'
+_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
+_id=$(printf '%s\n' "$_result" | jq -r '.id')
+run_test "only_this_pr_run_selected" "820" "$_id"
+unset _json _result _id
+
+# Test 5.3: Only the other PR's run is present — no match (id is null)
+# When the poll window has only a run for PR #999 but not #808, the filter
+# returns null (loop continues polling until THIS PR's run appears).
+_json='{"workflow_runs":[
+  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #999","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":999}
+]}'
+_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
+_id=$(printf '%s\n' "$_result" | jq -r '.id // "null"')
+run_test "only_other_pr_run_returns_null" "null" "$_id"
+unset _json _result _id
+
+# Test 5.4: Filter requires run-name to contain the PR number token
+# A run with name "Claude Code Review — PR #8080" must NOT match PR #808
+# (word-boundary check: \b prevents "808" from matching "8080").
+_json='{"workflow_runs":[
+  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #8080","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":8080}
+]}'
+_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
+_id=$(printf '%s\n' "$_result" | jq -r '.id // "null"')
+run_test "pr_number_word_boundary_no_false_match" "null" "$_id"
+unset _json _result _id
+
+# Test 5.5: Two runs for THIS PR in the same window — most recent selected
+# (regression guard: name filter must not break multi-run deduplication)
+_json='{"workflow_runs":[
+  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:02:00Z","status":"completed","conclusion":"success","html_url":"https://b","id":830},
+  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":808}
+]}'
+_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
+_id=$(printf '%s\n' "$_result" | jq -r '.id')
+run_test "two_runs_same_pr_most_recent_selected" "830" "$_id"
+unset _json _result _id
 
 # ---------------------------------------------------------------------------
 # Summary

@@ -234,23 +234,38 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
   echo "INFO: polling... elapsed ${TOTAL_ELAPSED}s / ${MAX_WAIT}s"
 
   # Query workflow runs filtered by event=workflow_dispatch. We look for the
-  # most recent run that matches our workflow file and was created at or after
-  # POLL_AFTER_TIME (dispatch time minus 10-second clock-skew buffer).
-  # Use a temp file to avoid SIGPIPE under pipefail.
+  # most recent run that matches ALL of:
+  #   1. workflow file path (endswith $wf)
+  #   2. created_at >= POLL_AFTER_TIME (dispatch time minus 10-second clock-skew buffer)
+  #   3. run name contains "PR #<pr_number>" — the PR-scoping mechanism that
+  #      replaces the never-functional inputs.pr_number check (#806).
   #
-  # NOTE: The GitHub Actions Runs API always returns inputs: null regardless of
-  # what was passed at dispatch time (confirmed empirically via
-  # `gh api ".../actions/runs/<id>" --jq 'has("inputs")'` → false for all tested
-  # runs, including workflow_dispatch-triggered runs). We therefore rely solely on
-  # the timestamp filter here; the PR-number cross-check is handled in Phase 3 by
-  # scoping the review-thread query to PR $PR_NUMBER. See issue #806.
+  # Why run-name scoping is required for concurrent/parallel dispatch:
+  #   The GitHub Actions Runs API always returns inputs: null regardless of what
+  #   was passed at dispatch time (confirmed empirically via
+  #   `gh api ".../actions/runs/<id>" --jq 'has("inputs")'` → false for all tested
+  #   runs, including workflow_dispatch-triggered runs). Under concurrent dispatch,
+  #   two PRs that trigger claude-code-review.yml within the same poll window both
+  #   match the timestamp filter, so `sort_by | reverse | first` could select the
+  #   wrong PR's run. The run-name filter fixes this: claude-code-review.yml sets
+  #   `run-name: "Claude Code Review — PR #${{ inputs.pr_number }}"`, and GitHub
+  #   populates that string into the .name field on Runs API objects. We match
+  #   `.name` (primary) and fall back to `.display_title` (some API versions) for
+  #   defensive coverage. The timestamp filter remains as a secondary guard to
+  #   exclude pre-dispatch runs with identical names (e.g. a retry for the same PR).
+  # Use a temp file to avoid SIGPIPE under pipefail.
   RUN_POLL_STDERR=$(mktemp)
   RUN_POLL_TMPFILE=$(mktemp)
   POLL_STATUS=0
   gh api "repos/$OWNER/$REPO/actions/runs?event=workflow_dispatch&per_page=20" \
     2>"$RUN_POLL_STDERR" \
     | jq -r --arg wf "$WORKFLOW_FILE" --arg poll_after "$POLL_AFTER_TIME" \
-        '[.workflow_runs[] | select((.path | endswith($wf)) and .created_at >= $poll_after)] | sort_by(.created_at) | reverse | first | {status: .status, conclusion: .conclusion, html_url: .html_url, id: .id}' \
+        --arg pr "$PR_NUMBER" \
+        '[.workflow_runs[] | select(
+           (.path | endswith($wf))
+           and .created_at >= $poll_after
+           and ((.name // "") | test("PR #" + $pr + "\\b"))
+         )] | sort_by(.created_at) | reverse | first | {status: .status, conclusion: .conclusion, html_url: .html_url, id: .id}' \
     > "$RUN_POLL_TMPFILE" 2>/dev/null || POLL_STATUS=$?
 
   if [ "$POLL_STATUS" -ne 0 ]; then
