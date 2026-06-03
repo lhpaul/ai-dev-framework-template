@@ -63,6 +63,11 @@ hook_result() {
   local subject="$1"
   local msg_file="$TMP_DIR/message"
   printf '%s\n' "$subject" > "$msg_file"
+  hook_file_result "$msg_file"
+}
+
+hook_file_result() {
+  local msg_file="$1"
   if "$HOOK" "$msg_file" >/dev/null 2>&1; then
     printf 'pass'
   else
@@ -79,11 +84,21 @@ run_test "squash_prefix_bypasses" "pass" "$(hook_result "squash! invalid subject
 run_test "amend_prefix_bypasses" "pass" "$(hook_result "amend! invalid subject")"
 run_test "merge_prefix_bypasses" "pass" "$(hook_result "Merge branch 'develop'")"
 run_test "revert_prefix_bypasses" "pass" "$(hook_result "Revert \"docs: update haystack usage\"")"
+run_test "unquoted_revert_prefix_bypasses" "pass" "$(hook_result "Revert docs: update haystack usage")"
 
 run_test "missing_type_fails" "fail" "$(hook_result "update haystack usage")"
 run_test "unknown_type_fails" "fail" "$(hook_result "feature: add hook guardrail")"
 run_test "empty_description_fails" "fail" "$(hook_result "docs: ")"
 run_test "leading_space_fails" "fail" "$(hook_result " docs: update haystack usage")"
+
+missing_msg_file="$TMP_DIR/does-not-exist"
+empty_msg_file="$TMP_DIR/empty-message"
+comment_only_msg_file="$TMP_DIR/comment-only-message"
+: > "$empty_msg_file"
+printf '%s\n\n%s\n' "# commit message comment" "   # another comment" > "$comment_only_msg_file"
+run_test "missing_message_file_fails" "fail" "$(hook_file_result "$missing_msg_file")"
+run_test "empty_message_file_fails" "fail" "$(hook_file_result "$empty_msg_file")"
+run_test "comment_only_message_file_fails" "fail" "$(hook_file_result "$comment_only_msg_file")"
 
 boundary_description="$(repeat_char a 66)"
 over_limit_description="$(repeat_char a 67)"
