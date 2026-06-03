@@ -229,15 +229,30 @@ echo "INFO: polling for workflow run created after $DISPATCH_TIME..."
 TOTAL_ELAPSED=0
 RUN_URL=""
 RUN_CONCLUSION=""
-# JSON array of run IDs confirmed to belong to other PRs; excluded from future polls.
-EXCLUDED_RUN_IDS_JSON="[]"
 
 while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
   echo "INFO: polling... elapsed ${TOTAL_ELAPSED}s / ${MAX_WAIT}s"
 
   # Query workflow runs filtered by event=workflow_dispatch. We look for the
-  # most recent run that matches our workflow file and was created after
-  # DISPATCH_TIME, excluding any run IDs already confirmed to belong to other PRs.
+  # most recent run matching our workflow file and created at or after
+  # POLL_AFTER_TIME (dispatch time minus 10-second clock-skew buffer).
+  #
+  # PR-scoping via run-name (required for concurrent/parallel dispatch):
+  #   The GitHub Actions Runs API always returns inputs: null regardless of what
+  #   was passed at dispatch time (confirmed empirically via
+  #   `gh api ".../actions/runs/<id>" --jq 'has("inputs")'` → false for all tested
+  #   runs, including workflow_dispatch-triggered runs). Under concurrent dispatch,
+  #   two PRs that trigger claude-code-review.yml within the same poll window both
+  #   match the timestamp filter, so `sort_by | reverse | first` could select the
+  #   wrong PR's run. To fix this, claude-code-review.yml sets
+  #   `run-name: "Claude Code Review — PR #${{ inputs.pr_number }}"`, and GitHub
+  #   populates that string into the .name field on Runs API objects. The filter
+  #   below prefers name-scoped runs (where .name contains "PR #<pr>" with a
+  #   word-boundary guard) and falls back to timestamp-only selection when the
+  #   workflow has not yet been updated to include run-name (backward compatibility
+  #   during the transition period after #808 is merged to the default branch).
+  #   The timestamp filter remains as a secondary guard in the fallback path to
+  #   exclude pre-dispatch runs. See issue #806 and #808.
   # Use a temp file to avoid SIGPIPE under pipefail.
   RUN_POLL_STDERR=$(mktemp)
   RUN_POLL_TMPFILE=$(mktemp)
@@ -245,8 +260,21 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
   gh api "repos/$OWNER/$REPO/actions/runs?event=workflow_dispatch&per_page=20" \
     2>"$RUN_POLL_STDERR" \
     | jq -r --arg wf "$WORKFLOW_FILE" --arg poll_after "$POLL_AFTER_TIME" \
-        --argjson excluded "$EXCLUDED_RUN_IDS_JSON" \
-        '[.workflow_runs[] | select((.path | endswith($wf)) and .created_at >= $poll_after and ((.id | tostring) as $rid | $excluded | map(tostring) | index($rid) == null))] | sort_by(.created_at) | reverse | first | {status: .status, conclusion: .conclusion, html_url: .html_url, id: .id}' \
+        --arg pr "$PR_NUMBER" \
+        '# Candidate set: workflow-file + timestamp match
+         (.workflow_runs // []) as $all |
+         [$all[] | select((.path | endswith($wf)) and .created_at >= $poll_after)] as $candidates |
+         # PR-scoping via run-name (#808): if any candidate has a "PR #N"-style name
+         # (indicating the workflow uses run-name), require name match for THIS PR to
+         # prevent selecting the wrong PR'\''s run under concurrent/parallel dispatch.
+         # Fall back to all candidates when no run has the "PR #N" pattern — backward
+         # compat with pre-#808 deployments where the workflow has no run-name yet.
+         ([$candidates[] | select((.name // "") | test("PR #[0-9]+\\b"))] | length > 0) as $name_scoped |
+         ($candidates | if $name_scoped then
+           [.[] | select((.name // "") | test("PR #" + $pr + "\\b"))]
+         else . end) |
+         sort_by(.created_at) | reverse | first |
+         {status: .status, conclusion: .conclusion, html_url: .html_url, id: .id}' \
     > "$RUN_POLL_TMPFILE" 2>/dev/null || POLL_STATUS=$?
 
   if [ "$POLL_STATUS" -ne 0 ]; then
@@ -276,31 +304,6 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
   RUN_ID=$(echo "$RUN_INFO" | jq -r '.id // empty')
 
   echo "INFO: found run — id=$RUN_ID status=$RUN_STATUS conclusion=$RUN_CONCLUSION url=$RUN_URL"
-
-  # Verify this run was dispatched for our PR number by fetching the individual
-  # run's inputs. The list endpoint does not include inputs; the individual run
-  # endpoint does. This prevents a concurrent review dispatch for a different PR
-  # from being mistaken for our run (filename+timestamp filter alone is insufficient
-  # when two reviews are dispatched within the timestamp-skew window).
-  if [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ]; then
-    RUN_PR_INPUT=""
-    _pr_input_ok=0
-    RUN_PR_INPUT="$(gh api "repos/$OWNER/$REPO/actions/runs/$RUN_ID" \
-      --jq '.inputs.pr_number // empty' 2>/dev/null)" && _pr_input_ok=1 || _pr_input_ok=0
-    if [ "$_pr_input_ok" -eq 0 ] || [ -z "$RUN_PR_INPUT" ]; then
-      echo "WARNING: could not verify inputs.pr_number for run $RUN_ID (lookup_ok=${_pr_input_ok}, value='${RUN_PR_INPUT}') — skipping this cycle"
-      sleep "$POLL_INTERVAL"
-      TOTAL_ELAPSED=$((TOTAL_ELAPSED + POLL_INTERVAL))
-      continue
-    fi
-    if [ "$RUN_PR_INPUT" != "$PR_NUMBER" ]; then
-      echo "INFO: run $RUN_ID has pr_number=$RUN_PR_INPUT, expected $PR_NUMBER — excluding from future polls (concurrent dispatch for different PR)"
-      EXCLUDED_RUN_IDS_JSON=$(printf '%s\n' "$EXCLUDED_RUN_IDS_JSON" | jq ". + [\"${RUN_ID}\"]")
-      sleep "$POLL_INTERVAL"
-      TOTAL_ELAPSED=$((TOTAL_ELAPSED + POLL_INTERVAL))
-      continue
-    fi
-  fi
 
   # GitHub Actions API uses `status` for run lifecycle (queued, in_progress,
   # completed) and `conclusion` for the terminal outcome (success, failure,
