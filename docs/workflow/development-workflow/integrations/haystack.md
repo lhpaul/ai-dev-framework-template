@@ -65,6 +65,11 @@ Use Haystack in three layers, each with a different failure mode:
 
 Prefer deterministic checks for rules that can be expressed mechanically. Keep `.haystack/pr-rules.yml` focused on judgement calls: shell control-flow risk, review-state freshness, unsafe API payload construction, and workflow-contract drift. When Haystack reports a non-blocking finding, record the disposition in the reviewer-loop summary instead of silently ignoring it.
 
+For repositories that open implementation PRs as drafts, configure Haystack in
+`review.phase_after_clean` instead of the draft phase. The reviewer loop will
+mark the PR ready before running after-clean platforms; Haystack triage may stay
+`pending` indefinitely while a PR remains draft.
+
 ### Hardening roadmap
 
 Use small PRs when expanding this integration:
