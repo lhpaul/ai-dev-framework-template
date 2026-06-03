@@ -35,7 +35,7 @@ Installed via `haystack hooks install`:
 | ---- | ------- |
 | `pre-commit` | Detects active AI agent sessions (Claude Code, Codex, Gemini CLI, OpenCode); runs truncation checks on staged agent/prompt code; enforces review of `LLM_RULES.md` on agent commits (two-step commit with bypass token) |
 | `prepare-commit-msg` | No-op entry point (Entire session tracking not adopted — Option B) |
-| `commit-msg` | Validates Conventional Commit subject format and first-line length; allows normal merge, revert, fixup, and squash commits |
+| `commit-msg` | Validates Conventional Commit subject format and first-line length; allows normal merge, revert, fixup, squash, and amend commits |
 | `post-commit` | No-op entry point (Entire session tracking not adopted — Option B) |
 | `pre-push` | No-op entry point (Entire session tracking not adopted — Option B) |
 
