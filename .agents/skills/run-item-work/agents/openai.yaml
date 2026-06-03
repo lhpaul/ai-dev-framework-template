@@ -1,0 +1,7 @@
+interface:
+  display_name: "Run item work"
+  short_description: "Advance one workflow item until a terminal condition."
+  default_prompt: "Use $run-item-work to resume or advance the specific workflow item, branch, or PR I provide."
+
+policy:
+  allow_implicit_invocation: false

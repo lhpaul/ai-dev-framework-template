@@ -1,21 +1,22 @@
 # Development workflow scripts
 
-Scripts used by the staged AI development workflow. Referenced by `docs/workflow/development-workflow/` and by the Codex skills in `.codex/skills/`. Run from the repository root.
+Scripts used by the staged AI development workflow. Referenced by `docs/workflow/development-workflow/` and by the Codex skills in `.agents/skills/` and `.codex/skills/`. Run from the repository root.
 
 ## `install-codex-skills.sh`
 
-Installs the repository's bundled Codex skills into the local Codex skill directory by creating symlinks.
+Installs the repository's bundled Codex skills into the local Codex skill directories by creating symlinks.
 
 What it does:
 
-- Reads skills from `.codex/skills/`
-- Uses `CODEX_HOME/skills` if `CODEX_HOME` is set
-- Otherwise uses `~/.codex/skills`
+- Reads repo-discoverable skills and command aliases from `.agents/skills/`
+- Keeps legacy canonical skill compatibility from `.codex/skills/`
+- Installs into `AGENTS_HOME/skills` if `AGENTS_HOME` is set, otherwise `~/.agents/skills`
+- Also installs into `CODEX_HOME/skills` if `CODEX_HOME` is set, otherwise `~/.codex/skills`, for older local setups
 - Skips an existing destination if it is not a symlink
 
 Use this when:
 
-- You want to make the template's bundled Codex skills available in your local Codex environment
+- You want to make the template's bundled Codex skills and command-style aliases available in your local Codex environment
 - You are testing the workflow skills in a downstream repository created from this template
 
 ### `add-backlog-item.sh`
@@ -236,4 +237,4 @@ Use this when:
 
 - The agent protocol `94-batch-merge-protocol.md` is running a batch merge.
 - You want to inspect the merge ordering for a set of PRs before invoking the agent command.
-- Called by the `/batch-merge` Claude Code command, `/batch-merge` Cursor command, or the `batch-merge` Codex skill.
+- Called by the `/batch-merge` Claude Code command, `/batch-merge` Cursor command, or the `/batch-merge` / `batch-merge` Codex skill alias.

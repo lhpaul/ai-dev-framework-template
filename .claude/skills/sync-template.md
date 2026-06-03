@@ -310,6 +310,7 @@ docs/workflow/                          ← full tree, all files recursively
 .claude/commands/                 ← all *.md files
 .claude/skills/                   ← all *.md files (including this skill itself)
 .codex/skills/                    ← Codex skill trees shipped with the template (SKILL.md and assets)
+.agents/skills/                   ← Codex repo-scoped skill discovery path and command-style aliases
 .cursor/commands/                 ← all *.md files
 .cursor/agents/                   ← all *.md files
 .cursor/rules/                    ← all *.mdc files
@@ -624,7 +625,7 @@ git checkout -b feature/sync-template-v{TEMPLATE_VERSION}
 git diff --stat
 
 # 3. Stage and commit (only after you've reviewed the changes)
-git add REVIEW.md docs/workflow/ .claude/agents/ .claude/commands/ .claude/skills/ .codex/skills/ .cursor/ \
+git add REVIEW.md docs/workflow/ .claude/agents/ .claude/commands/ .claude/skills/ .codex/skills/ .agents/skills/ .cursor/ \
   scripts/development-workflow/ scripts/README.md \
   docs/best-practices/1-general.md \
   docs/best-practices/2-version-control.md \

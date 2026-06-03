@@ -48,6 +48,9 @@ categories:
     - path: .codex/skills/
       glob: "**/*"
       note: Codex skill trees shipped with the template (SKILL.md and assets)
+    - path: .agents/skills/
+      glob: "**/*"
+      note: Codex repo-scoped skill discovery path and command-style aliases
     - path: .cursor/commands/
       glob: "*.md"
       note: Cursor slash commands
