@@ -54,7 +54,10 @@ assert_skill_link() {
   local expected_target="$3"
   local actual_target
 
-  actual_target="$(readlink "$installed_path" 2> /dev/null || true)"
+  actual_target=""
+  if [ -L "$installed_path" ]; then
+    actual_target="$(readlink "$installed_path")"
+  fi
 
   run_test "${name}_exists" "yes" "$(
     [ -e "$installed_path" ] && echo yes || echo no
