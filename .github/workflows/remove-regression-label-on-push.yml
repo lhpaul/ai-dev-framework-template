@@ -10,9 +10,11 @@
 #     re-applied automatically at the start of the next loop invocation (Option C
 #     guard in pr-review-loop.sh), so dropping it here would only create noise and
 #     require manual re-application before CI re-runs.
-#   - Removes the label (first-push path) when no reviewer loop summary comment
-#     exists, so the automated reviewer loop must run before ready-for-regression
-#     is applied.
+#   - Removes the label (first-push path) when the comments API succeeds and no
+#     reviewer loop summary comment is found, so the automated reviewer loop must
+#     run before ready-for-regression is applied.
+#   - On comments API failure, skips label removal (treats unknown state as
+#     "loop may have run" to avoid dropping a loop-applied label on API errors).
 #   - Idempotent: if the label is absent, the job exits cleanly with no action.
 name: Remove ready-for-regression label on push
 
@@ -87,8 +89,14 @@ jobs:
                   (.body // "" | contains("### Automated Reviewer Loop Summary"))
                 )] | length') || LOOP_COMMENT=0
           else
-            echo "WARN: Failed to check for reviewer loop summary comment on PR #${PR_NUMBER}. Proceeding with label removal (fail-open)." >&2
-            LOOP_COMMENT=0
+            # On API failure, treat as "unknown state" — do NOT remove the label.
+            # Setting LOOP_COMMENT=1 causes the workflow to skip label removal,
+            # which is the safer default: a transient API failure should not drop
+            # a label that may have been deliberately applied by the reviewer loop.
+            # The label is only removed when we have positive evidence the loop has
+            # NOT run (API succeeded and returned 0 summary comments).
+            echo "WARN: Failed to check for reviewer loop summary comment on PR #${PR_NUMBER}. Skipping label removal to avoid dropping a loop-applied label on API failure." >&2
+            LOOP_COMMENT=1
           fi
 
           if [ "${LOOP_COMMENT:-0}" -gt 0 ]; then
