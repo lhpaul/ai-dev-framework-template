@@ -13,7 +13,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel)"
+GIT_COMMON_DIR="$(cd "$SCRIPT_DIR" && git rev-parse --git-common-dir)"
+case "$GIT_COMMON_DIR" in
+  /*) REPO_ROOT="$(cd "$GIT_COMMON_DIR/.." && pwd -P)" ;;
+  *)  REPO_ROOT="$(cd "$SCRIPT_DIR/$GIT_COMMON_DIR/.." && pwd -P)" ;;
+esac
 INSTALLER="$REPO_ROOT/scripts/development-workflow/install-codex-skills.sh"
 
 TMP_ROOT="$(mktemp -d)"
@@ -138,6 +142,39 @@ run_test "missing_source_exit_code" "1" "$missing_exit"
 run_test "missing_source_error_message" "yes" "$(
   grep -q 'Skill source directory not found:' "$stderr_file" && echo yes || echo no
 )"
+
+echo ""
+echo "=== Area 4: real repo command alias coverage ==="
+
+agents_home="$TMP_ROOT/agents-home-real"
+codex_home="$TMP_ROOT/codex-home-real"
+output_file="$TMP_ROOT/real.out"
+
+AGENTS_HOME="$agents_home" CODEX_HOME="$codex_home" \
+  bash "$INSTALLER" > "$output_file"
+
+while IFS= read -r alias_name; do
+  [ -n "$alias_name" ] || continue
+
+  run_test "primary_alias_${alias_name}" "yes" "$(
+    [ -e "$agents_home/skills/$alias_name" ] && echo yes || echo no
+  )"
+  run_test "legacy_alias_${alias_name}" "yes" "$(
+    [ -e "$codex_home/skills/$alias_name" ] && echo yes || echo no
+  )"
+done <<'ALIASES'
+add-backlog-item
+batch-merge
+code-review
+graduate-development
+post-merge-cleanup
+prepare-release
+retrospective
+run-item-work
+run-reviewer-loop
+run-work
+sync-template
+ALIASES
 
 echo ""
 echo "=== Summary ==="
