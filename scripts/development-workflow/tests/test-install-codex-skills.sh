@@ -48,6 +48,26 @@ run_test() {
   fi
 }
 
+assert_skill_link() {
+  local name="$1"
+  local installed_path="$2"
+  local expected_target="$3"
+  local actual_target
+
+  actual_target="$(readlink "$installed_path" 2> /dev/null || true)"
+
+  run_test "${name}_exists" "yes" "$(
+    [ -e "$installed_path" ] && echo yes || echo no
+  )"
+  run_test "${name}_symlink" "yes" "$(
+    [ -L "$installed_path" ] && echo yes || echo no
+  )"
+  run_test "${name}_target" "$expected_target" "$actual_target"
+  run_test "${name}_skill_file" "yes" "$(
+    [ -e "$installed_path/SKILL.md" ] && echo yes || echo no
+  )"
+}
+
 make_repo_fixture() {
   local fixture="$1"
 
@@ -155,13 +175,16 @@ AGENTS_HOME="$agents_home" CODEX_HOME="$codex_home" \
 
 while IFS= read -r alias_name; do
   [ -n "$alias_name" ] || continue
+  expected_target="$REPO_ROOT/.agents/skills/$alias_name"
 
-  run_test "primary_alias_${alias_name}" "yes" "$(
-    [ -e "$agents_home/skills/$alias_name" ] && echo yes || echo no
-  )"
-  run_test "legacy_alias_${alias_name}" "yes" "$(
-    [ -e "$codex_home/skills/$alias_name" ] && echo yes || echo no
-  )"
+  assert_skill_link \
+    "primary_alias_${alias_name}" \
+    "$agents_home/skills/$alias_name" \
+    "$expected_target"
+  assert_skill_link \
+    "legacy_alias_${alias_name}" \
+    "$codex_home/skills/$alias_name" \
+    "$expected_target"
 done <<'ALIASES'
 add-backlog-item
 batch-merge
@@ -180,12 +203,14 @@ while IFS= read -r workflow_name; do
   [ -n "$workflow_name" ] || continue
   expected_target="$REPO_ROOT/.agents/skills/$workflow_name"
 
-  run_test "primary_workflow_target_${workflow_name}" "$expected_target" "$(
-    readlink "$agents_home/skills/$workflow_name"
-  )"
-  run_test "legacy_workflow_target_${workflow_name}" "$expected_target" "$(
-    readlink "$codex_home/skills/$workflow_name"
-  )"
+  assert_skill_link \
+    "primary_workflow_${workflow_name}" \
+    "$agents_home/skills/$workflow_name" \
+    "$expected_target"
+  assert_skill_link \
+    "legacy_workflow_${workflow_name}" \
+    "$codex_home/skills/$workflow_name" \
+    "$expected_target"
 done <<'WORKFLOW_SKILLS'
 workflow-code-reviewer
 workflow-implementer
