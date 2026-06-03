@@ -3719,7 +3719,13 @@ restore_regression_label_if_missing() {
         # This prevents overriding a human intentional label removal that occurs
         # before the loop has ever applied the label.
         local _rfr_repo=""
-        _rfr_repo="$(repo_slug 2>/dev/null)" || true
+        # repo_slug failure is handled explicitly below: an empty slug falls
+        # into the else branch (fail-open WARN + restore). Do not use || true
+        # here — capture the exit code and let the if-condition detect the
+        # empty string rather than masking the failure.
+        if ! _rfr_repo="$(repo_slug 2>/dev/null)"; then
+          _rfr_repo=""
+        fi
         local _rfr_loop_comment=0
         local _rfr_comments_raw=""
         if [ -n "${_rfr_repo:-}" ] && _rfr_comments_raw="$(gh api \
