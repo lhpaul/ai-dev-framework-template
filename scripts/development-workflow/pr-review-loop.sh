@@ -3672,10 +3672,30 @@ METRICS_HEADER
 #   - Runs only for feature/*, fix/*, refactor/*, hotfix/* branches.
 #   - Checks current label state via `gh pr view --json labels`.
 #     On gh failure the check is skipped (fail-open; WARN emitted to stderr).
-#   - Re-applies the label when absent via `gh pr edit --add-label`.
-#     On gh failure a WARN is emitted to stderr (not silently swallowed).
+#   - When the label is absent, gates the restore on prior-loop evidence:
+#     checks whether an "Automated Reviewer Loop Summary" comment already exists
+#     on the PR via `gh api repos/.../issues/.../comments --paginate`.
+#       • summary comment PRESENT + label missing  → RESTORE.
+#         Within the reviewer-loop operating model, ready-for-regression is
+#         owned by the loop and should be present whenever the loop runs after
+#         the first summary comment. A label drop after the summary comment exists
+#         means remove-regression-label-on-push.yml fired (the #805 scenario), so
+#         restoring here is correct.
+#       • summary comment ABSENT + label missing   → do NOT restore.
+#         This is the normal initial state (loop has never run), and the only
+#         window in which a human intentional removal is unambiguous. A deliberate
+#         removal AFTER the loop has run while still re-invoking the loop is
+#         treated as out-of-model (the loop will re-apply on the next invocation).
+#     The summary-comment gate prevents overriding an intentional removal that
+#     occurs before the loop has ever applied the label.
+#   - If the comment-presence query fails (gh/API error): fail-open — the restore
+#     IS attempted and a WARN is emitted. This mirrors the higher-frequency
+#     real-world failure (#805) being more harmful than a spurious re-apply.
 #   - The operation is idempotent: if the label is already present, gh pr edit
 #     --add-label is a documented no-op.
+#   - Marker: "### Automated Reviewer Loop Summary" (author-agnostic; the comment
+#     is posted by the maintainer's gh token when run locally, not necessarily by
+#     a bot account). Do NOT scope by [bot] — that silently misses local-run cases.
 #
 # Returns 0 in all cases (best-effort; never aborts the caller).
 restore_regression_label_if_missing() {
@@ -3694,11 +3714,34 @@ restore_regression_label_if_missing() {
         return 0
       fi
       if [ "${_rfr_has_label:-}" = "false" ]; then
-        echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); restoring before reviewer loop runs." >&2
-        # Do NOT redirect stderr here: surface gh errors so failures are observable
-        # rather than silently swallowed. The || branch handles the non-zero exit.
-        if ! gh pr edit "$pr_number" --add-label "ready-for-regression"; then
-          echo "WARN: failed to restore ready-for-regression label on PR #${pr_number}; proceeding without it" >&2
+        # Gate the restore on prior-loop evidence: only restore when an
+        # "Automated Reviewer Loop Summary" comment already exists on the PR.
+        # This prevents overriding a human intentional label removal that occurs
+        # before the loop has ever applied the label.
+        local _rfr_repo=""
+        _rfr_repo="$(repo_slug 2>/dev/null)" || true
+        local _rfr_loop_comment=0
+        local _rfr_comments_raw=""
+        if [ -n "${_rfr_repo:-}" ] && _rfr_comments_raw="$(gh api \
+            "repos/${_rfr_repo}/issues/${pr_number}/comments" \
+            --paginate 2>/dev/null)"; then
+          _rfr_loop_comment="$(printf '%s\n' "$_rfr_comments_raw" \
+            | jq -rs 'add // [] | [.[] | select(
+                (.body // "" | contains("### Automated Reviewer Loop Summary"))
+              )] | length' 2>/dev/null)" || _rfr_loop_comment=0
+        else
+          echo "WARN: gh api failed for summary-comment gate on PR ${pr_number}; failing open — restoring label." >&2
+          _rfr_loop_comment=1
+        fi
+        if [ "${_rfr_loop_comment:-0}" -gt 0 ]; then
+          echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); reviewer loop summary comment found — restoring before loop runs." >&2
+          # Do NOT redirect stderr here: surface gh errors so failures are observable
+          # rather than silently swallowed. The || branch handles the non-zero exit.
+          if ! gh pr edit "$pr_number" --add-label "ready-for-regression"; then
+            echo "WARN: failed to restore ready-for-regression label on PR #${pr_number}; proceeding without it" >&2
+          fi
+        else
+          echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); no reviewer loop summary comment found — skipping restore (label not yet applied by loop)." >&2
         fi
       fi
       ;;
