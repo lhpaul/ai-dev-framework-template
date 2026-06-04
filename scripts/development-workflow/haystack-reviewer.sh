@@ -513,6 +513,13 @@ if [ "$PR_STATUS_CHECK" != "0" ]; then
   PR_STATUS_EXIT=0
   PR_STATUS_STDERR="$(mktemp)"
   PR_STATUS_TIMEOUT="$TIMEOUT"
+  case "$PR_STATUS_TIMEOUT" in
+    ''|0|*[!0-9]*)
+      echo "ERROR: internal pr-status timeout '$PR_STATUS_TIMEOUT' is not a positive integer" >&2
+      rm -f "$PR_STATUS_STDERR"
+      exit 3
+      ;;
+  esac
   [ "$PR_STATUS_TIMEOUT" -gt 30 ] && PR_STATUS_TIMEOUT=30
 
   echo "INFO: running: haystack pr-status ${OWNER}/${REPO}#${PR_NUMBER} --json" >&2

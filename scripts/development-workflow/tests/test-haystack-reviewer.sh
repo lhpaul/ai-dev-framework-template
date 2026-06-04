@@ -474,6 +474,16 @@ ec=$?
 set -e
 run_test "zero_pr_number_exit_code" "3" "$ec"
 
+# Test 7.4: non-numeric timeout exits before pr-status arithmetic.
+set +e
+MOCK_CALL_LOG="$CALL_LOG" MOCK_RESPONSE_SEQ="$RESPONSE_SEQ_FILE" \
+  MOCK_EXIT_SEQ="$EXIT_SEQ_FILE" \
+  PATH="$MOCK_BIN:$PATH" \
+  bash "$HAYSTACK_REVIEWER" "123" "owner" "repo" --timeout "abc" 2>/dev/null
+ec=$?
+set -e
+run_test "non_numeric_timeout_exit_code" "3" "$ec"
+
 # ---------------------------------------------------------------------------
 # Area 8: non-zero exit + valid JSON recovery (issue #800)
 #
