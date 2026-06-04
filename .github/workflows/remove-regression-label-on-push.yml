@@ -4,8 +4,17 @@
 #
 # Behavior:
 #   - Runs only when the PR has the ready-for-regression label.
-#   - Removes the label so the automated reviewer loop must be re-run before
-#     ready-for-regression can be reapplied.
+#   - Skips removal when the automated reviewer loop has already run on this PR
+#     (detected by the presence of an "Automated Reviewer Loop Summary" comment).
+#     In that case, pr-review-loop.sh is responsible for the label — it will be
+#     re-applied automatically at the start of the next loop invocation (Option C
+#     guard in pr-review-loop.sh), so dropping it here would only create noise and
+#     require manual re-application before CI re-runs.
+#   - Removes the label (first-push path) when the comments API succeeds and no
+#     reviewer loop summary comment is found, so the automated reviewer loop must
+#     run before ready-for-regression is applied.
+#   - On comments API failure, skips label removal (treats unknown state as
+#     "loop may have run" to avoid dropping a loop-applied label on API errors).
 #   - Idempotent: if the label is absent, the job exits cleanly with no action.
 name: Remove ready-for-regression label on push
 
@@ -24,7 +33,7 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Remove ready-for-regression label if present
+      - name: Remove ready-for-regression label if present and reviewer loop has not run
         if: github.event.pull_request.head.repo.full_name == github.repository
         env:
           GH_TOKEN: ${{ github.token }}
@@ -46,7 +55,56 @@ jobs:
             exit 0
           fi
 
-          echo "Label 'ready-for-regression' found on PR #${PR_NUMBER}. Removing it."
+          # Check whether the automated reviewer loop has already run on this PR.
+          # pr-review-loop.sh posts an "Automated Reviewer Loop Summary" comment on
+          # every clean or escalate exit. When that comment exists the label was
+          # deliberately applied by the orchestrator; pr-review-loop.sh will
+          # re-apply it at the start of its next invocation (Option C guard), so
+          # dropping it here would only force manual re-application before CI runs.
+          #
+          # Use `gh api --paginate | jq -rs 'add // [] | ...'` to accumulate all
+          # pages into a single array before counting. The --jq flag on gh api
+          # applies the filter per-page and concatenates results, which would make
+          # the length check unreliable across page boundaries.
+          #
+          # pipefail is required: without it, a gh API failure returns exit 0
+          # (jq's exit code from empty input), masking the upstream failure and
+          # misreading the result as "no summary comment found" (false-absent).
+          # With pipefail active, a gh failure propagates and the if-block's WARN
+          # path fires correctly (fail-open: proceed with label removal).
+          #
+          # Marker-based matching: match the canonical heading "### Automated Reviewer
+          # Loop Summary" that pr-review-loop.sh writes at the top of every summary
+          # comment (mirroring pr-review-loop.sh's own contains("### Automated
+          # Reviewer Loop Summary") check). This is author-agnostic — the comment
+          # may be posted by the maintainer's gh token (e.g. user "lhpaul" when run
+          # locally) or by github-actions[bot] when run from CI. Scoping by bot
+          # author would silently miss the local-run case and defeat the fix.
+          LOOP_COMMENT=0
+          _GH_COMMENTS_OUTPUT=""
+          if _GH_COMMENTS_OUTPUT=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
+            --paginate 2>&1); then
+            LOOP_COMMENT=$(printf '%s\n' "$_GH_COMMENTS_OUTPUT" \
+              | jq -rs 'add // [] | [.[] | select(
+                  (.body // "" | contains("### Automated Reviewer Loop Summary"))
+                )] | length') || LOOP_COMMENT=0
+          else
+            # On API failure, treat as "unknown state" — do NOT remove the label.
+            # Setting LOOP_COMMENT=1 causes the workflow to skip label removal,
+            # which is the safer default: a transient API failure should not drop
+            # a label that may have been deliberately applied by the reviewer loop.
+            # The label is only removed when we have positive evidence the loop has
+            # NOT run (API succeeded and returned 0 summary comments).
+            echo "WARN: Failed to check for reviewer loop summary comment on PR #${PR_NUMBER}. Skipping label removal to avoid dropping a loop-applied label on API failure." >&2
+            LOOP_COMMENT=1
+          fi
+
+          if [ "${LOOP_COMMENT:-0}" -gt 0 ]; then
+            echo "Reviewer loop has already run on PR #${PR_NUMBER} (found ${LOOP_COMMENT} summary comment(s)). Skipping label removal — pr-review-loop.sh will restore it on the next invocation."
+            exit 0
+          fi
+
+          echo "Label 'ready-for-regression' found on PR #${PR_NUMBER} and reviewer loop has not run yet. Removing it."
           gh pr edit "$PR_NUMBER" \
             --repo "$REPO" \
             --remove-label "ready-for-regression"

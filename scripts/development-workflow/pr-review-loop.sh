@@ -3683,10 +3683,106 @@ METRICS_HEADER
     >> "$metrics_file"
 }
 
+# restore_regression_label_if_missing — Step 7b regression-label auto-restore.
+# Re-applies the ready-for-regression label at the start of every pr-review-loop.sh
+# invocation for implementation branches so the label is always present when the CI
+# loop (Step 8) begins — eliminating the recurring manual re-application pattern.
+#
+# Arguments:
+#   $1  pr_number   — numeric PR number
+#   $2  branch_name — full branch ref (e.g. fix/805-slug)
+#
+# Behaviour:
+#   - Runs only for feature/*, fix/*, refactor/*, hotfix/* branches.
+#   - Checks current label state via `gh pr view --json labels`.
+#     On gh failure the check is skipped (fail-open; WARN emitted to stderr).
+#   - When the label is absent, gates the restore on prior-loop evidence:
+#     checks whether an "Automated Reviewer Loop Summary" comment already exists
+#     on the PR via `gh api repos/.../issues/.../comments --paginate`.
+#       • summary comment PRESENT + label missing  → RESTORE.
+#         Within the reviewer-loop operating model, ready-for-regression is
+#         owned by the loop and should be present whenever the loop runs after
+#         the first summary comment. A label drop after the summary comment exists
+#         means remove-regression-label-on-push.yml fired (the #805 scenario), so
+#         restoring here is correct.
+#       • summary comment ABSENT + label missing   → do NOT restore.
+#         This is the normal initial state (loop has never run), and the only
+#         window in which a human intentional removal is unambiguous. A deliberate
+#         removal AFTER the loop has run while still re-invoking the loop is
+#         treated as out-of-model (the loop will re-apply on the next invocation).
+#     The summary-comment gate prevents overriding an intentional removal that
+#     occurs before the loop has ever applied the label.
+#   - If the comment-presence query fails (gh/API error): fail-open — the restore
+#     IS attempted and a WARN is emitted. This mirrors the higher-frequency
+#     real-world failure (#805) being more harmful than a spurious re-apply.
+#   - The operation is idempotent: if the label is already present, gh pr edit
+#     --add-label is a documented no-op.
+#   - Marker: "### Automated Reviewer Loop Summary" (author-agnostic; the comment
+#     is posted by the maintainer's gh token when run locally, not necessarily by
+#     a bot account). Do NOT scope by [bot] — that silently misses local-run cases.
+#
+# Returns 0 in all cases (best-effort; never aborts the caller).
+restore_regression_label_if_missing() {
+  local pr_number="$1"
+  local branch_name="$2"
+  case "${branch_name:-}" in
+    feature/*|fix/*|refactor/*|hotfix/*)
+      local _rfr_has_label=""
+      # pipefail is needed here: if gh fails, jq would still see empty input and
+      # output "false", causing a spurious re-apply. Use command substitution with
+      # explicit exit-code capture instead, equivalent to pipefail on a single-stage
+      # pipeline (gh --jq is one command, not a pipe).
+      if ! _rfr_has_label="$(gh pr view "$pr_number" --json labels \
+          --jq '[.labels[].name] | any(. == "ready-for-regression")')"; then
+        echo "WARN: gh pr view failed for regression-label auto-restore (PR ${pr_number}); skipping" >&2
+        return 0
+      fi
+      if [ "${_rfr_has_label:-}" = "false" ]; then
+        # Gate the restore on prior-loop evidence: only restore when an
+        # "Automated Reviewer Loop Summary" comment already exists on the PR.
+        # This prevents overriding a human intentional label removal that occurs
+        # before the loop has ever applied the label.
+        local _rfr_repo=""
+        # repo_slug failure is handled explicitly below: an empty slug falls
+        # into the else branch (fail-open WARN + restore). Do not use || true
+        # here — capture the exit code and let the if-condition detect the
+        # empty string rather than masking the failure.
+        if ! _rfr_repo="$(repo_slug 2>/dev/null)"; then
+          _rfr_repo=""
+        fi
+        local _rfr_loop_comment=0
+        local _rfr_comments_raw=""
+        if [ -n "${_rfr_repo:-}" ] && _rfr_comments_raw="$(gh api \
+            "repos/${_rfr_repo}/issues/${pr_number}/comments" \
+            --paginate 2>/dev/null)"; then
+          _rfr_loop_comment="$(printf '%s\n' "$_rfr_comments_raw" \
+            | jq -rs 'add // [] | [.[] | select(
+                (.body // "" | contains("### Automated Reviewer Loop Summary"))
+              )] | length' 2>/dev/null)" || _rfr_loop_comment=0
+        else
+          echo "WARN: gh api failed for summary-comment gate on PR ${pr_number}; failing open — restoring label." >&2
+          _rfr_loop_comment=1
+        fi
+        if [ "${_rfr_loop_comment:-0}" -gt 0 ]; then
+          echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); reviewer loop summary comment found — restoring before loop runs." >&2
+          # Do NOT redirect stderr here: surface gh errors so failures are observable
+          # rather than silently swallowed. The || branch handles the non-zero exit.
+          if ! gh pr edit "$pr_number" --add-label "ready-for-regression"; then
+            echo "WARN: failed to restore ready-for-regression label on PR #${pr_number}; proceeding without it" >&2
+          fi
+        else
+          echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); no reviewer loop summary comment found — skipping restore (label not yet applied by loop)." >&2
+        fi
+      fi
+      ;;
+  esac
+  return 0
+}
+
 # Skip the main execution block when sourced in test-harness mode.
-# All function definitions above (including normalize_platform_verdict and
-# append_compare_metrics_row) are loaded; only the argument-parsing and
-# execution sections below are skipped.
+# All function definitions above (including normalize_platform_verdict,
+# append_compare_metrics_row, and restore_regression_label_if_missing) are
+# loaded; only the argument-parsing and execution sections below are skipped.
 [ "$_HARNESS_MODE_EFFECTIVE" -eq 1 ] && return 0 2>/dev/null || true
 
 if [ "$#" -lt 1 ]; then
@@ -3899,6 +3995,13 @@ if [ "$max_wait_explicit" -eq 0 ]; then
       fi
       ;;
   esac
+fi
+
+# Step 7b regression-label auto-restore (implementation PRs only).
+# Delegates to restore_regression_label_if_missing() (defined in the function
+# section above) so the logic can be unit-tested in harness mode.
+if [ -n "$pr_number" ] && [ "${#platforms[@]}" -gt 0 ]; then
+  restore_regression_label_if_missing "$pr_number" "${branch_name:-}"
 fi
 
 aggregate_result="skipped"

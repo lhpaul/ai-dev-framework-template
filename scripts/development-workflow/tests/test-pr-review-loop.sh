@@ -77,6 +77,15 @@ case "$*" in
     printf '%s\n' "${MOCK_GH_HEAD_SHA:-}"
     exit "${MOCK_GH_EXIT:-0}"
     ;;
+  # gh api repos/.../issues/.../comments — used by restore_regression_label_if_missing
+  # to check for prior reviewer-loop summary comments (Area 11 summary-comment gate).
+  # Tests set MOCK_GH_COMMENTS_OUTPUT to control the returned JSON; defaults to an
+  # empty JSON array (no comments — loop has never run). Tests set
+  # MOCK_GH_COMMENTS_EXIT to simulate an API failure independently of MOCK_GH_EXIT.
+  *"issues/"*"/comments"*)
+    printf '%s\n' "${MOCK_GH_COMMENTS_OUTPUT:-[]}"
+    exit "${MOCK_GH_COMMENTS_EXIT:-${MOCK_GH_EXIT:-0}}"
+    ;;
   *)
     printf '%s\n' "${MOCK_GH_OUTPUT:-[]}"
     exit "${MOCK_GH_EXIT:-0}"
@@ -959,6 +968,159 @@ else
 fi
 run_test "summary_result_line_skipped" "1" "$_skipped_constant_count"
 unset _skipped_constant_count
+
+# ---------------------------------------------------------------------------
+# Area 11: Step 7b regression-label auto-restore (Option C, issue #805)
+#
+# restore_regression_label_if_missing() is defined before the HARNESS_MODE
+# return point and is therefore callable directly from the test harness.
+# These tests exercise the actual function (not source-string grep) so that
+# runtime regressions — e.g. a mis-scoped case branch, a missing label
+# check, or a silent gh failure — are detected.
+#
+# The mock gh stub (already on PATH) is driven by:
+#   MOCK_GH_OUTPUT       — `gh pr view` label-check result ("true"/"false")
+#   MOCK_GH_COMMENTS_OUTPUT — `gh api .../comments` result (JSON array; controls
+#                             summary-comment gate)
+#   MOCK_GH_CALL_LOG     — records every `gh pr edit --add-label` call
+#   MOCK_GH_EXIT         — controls whether gh exits with an error (all calls)
+#   MOCK_GH_COMMENTS_EXIT — controls whether the comments API call exits with
+#                           an error independently of MOCK_GH_EXIT
+#
+# Summary-comment gate (issue #805 Haystack finding):
+#   label missing + summary PRESENT → restore IS called
+#   label missing + summary ABSENT  → restore NOT called
+#   comments API fails              → fail-open: restore IS called + WARN emitted
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 11: regression-label auto-restore (Option C, issue #805) ==="
+
+# Reset mock vars from earlier areas.
+unset MOCK_GH_POST_EXIT MOCK_GH_POST_OUTPUT MOCK_GH_CALL_LOG MOCK_GH_EXIT
+unset MOCK_GH_COMMENTS_OUTPUT MOCK_GH_COMMENTS_EXIT
+
+# JSON payload used by tests that require a summary comment to be "present".
+_SUMMARY_COMMENT_JSON='[{"id":1,"body":"### Automated Reviewer Loop Summary\nAll platforms clean."}]'
+
+# Test 11.1: label absent + summary comment PRESENT on an implementation branch
+# → gh pr edit IS called (the #805 scenario: loop ran before, label was dropped
+# by a push, restore is correct).
+_call_log_11="$(mktemp)"
+export MOCK_GH_OUTPUT="false"
+export MOCK_GH_COMMENTS_OUTPUT="$_SUMMARY_COMMENT_JSON"
+export MOCK_GH_CALL_LOG="$_call_log_11"
+restore_regression_label_if_missing "42" "fix/42-my-fix" 2>/dev/null
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
+run_test "restore_label_absent_summary_present_calls_gh_edit" "1" "$_edit_calls"
+rm -f "$_call_log_11"
+unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT
+
+# Test 11.2: label already present on an implementation branch → NO gh pr edit.
+# MOCK_GH_OUTPUT is "true" (label present); summary-comment gate is not reached.
+_call_log_11="$(mktemp)"
+export MOCK_GH_OUTPUT="true"
+export MOCK_GH_CALL_LOG="$_call_log_11"
+restore_regression_label_if_missing "42" "feature/42-my-feature" 2>/dev/null
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
+run_test "restore_label_already_present_no_gh_edit" "0" "$_edit_calls"
+rm -f "$_call_log_11"
+unset MOCK_GH_CALL_LOG
+
+# Test 11.3: non-implementation branch (spec/) → NO gh pr edit regardless of
+# label state or summary-comment presence.
+_call_log_11="$(mktemp)"
+export MOCK_GH_OUTPUT="false"
+export MOCK_GH_COMMENTS_OUTPUT="$_SUMMARY_COMMENT_JSON"
+export MOCK_GH_CALL_LOG="$_call_log_11"
+restore_regression_label_if_missing "42" "spec/42-my-spec" 2>/dev/null
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
+run_test "restore_label_non_impl_branch_no_gh_edit" "0" "$_edit_calls"
+rm -f "$_call_log_11"
+unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT
+
+# Test 11.4: gh pr view failure (API error) → function returns 0 (fail-open),
+# gh pr edit is NOT called (no false re-apply on unknown label state).
+# Note: MOCK_GH_EXIT=1 affects the label-check `gh pr view` call; the function
+# returns early before reaching the summary-comment gate.
+_call_log_11="$(mktemp)"
+export MOCK_GH_EXIT=1
+export MOCK_GH_CALL_LOG="$_call_log_11"
+_restore_exit=0
+restore_regression_label_if_missing "42" "fix/42-api-fail" 2>/dev/null || _restore_exit=$?
+run_test "restore_label_gh_view_fail_returns_0" "0" "$_restore_exit"
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
+run_test "restore_label_gh_view_fail_no_gh_edit" "0" "$_edit_calls"
+rm -f "$_call_log_11"
+unset MOCK_GH_CALL_LOG MOCK_GH_EXIT
+
+# Test 11.5: hotfix/* branch + label absent + summary comment PRESENT
+# → gh pr edit called (hotfix is an implementation branch; must be in scope).
+_call_log_11="$(mktemp)"
+export MOCK_GH_OUTPUT="false"
+export MOCK_GH_COMMENTS_OUTPUT="$_SUMMARY_COMMENT_JSON"
+export MOCK_GH_CALL_LOG="$_call_log_11"
+restore_regression_label_if_missing "99" "hotfix/99-critical" 2>/dev/null
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
+run_test "restore_label_hotfix_branch_calls_gh_edit" "1" "$_edit_calls"
+rm -f "$_call_log_11"
+unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT
+
+# Test 11.6: restore function is defined before the HARNESS_MODE return point
+# (source-level ordering check — ensures the function remains testable after
+# future refactors move it).
+_restore_fn_line="$(grep -n 'restore_regression_label_if_missing()' \
+  "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null \
+  | head -1 | cut -d: -f1)"
+_harness_return_line="$(grep -n '_HARNESS_MODE_EFFECTIVE.*return 0' \
+  "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null \
+  | head -1 | cut -d: -f1)"
+if [ -n "$_restore_fn_line" ] && [ -n "$_harness_return_line" ] \
+    && [ "$_restore_fn_line" -lt "$_harness_return_line" ]; then
+  _fn_ordering_ok="yes"
+else
+  _fn_ordering_ok="no"
+fi
+run_test "restore_fn_defined_before_harness_return" "yes" "$_fn_ordering_ok"
+unset _restore_fn_line _harness_return_line _fn_ordering_ok
+
+# Test 11.7: label absent + summary comment ABSENT → gh pr edit NOT called.
+# This is the normal initial state (loop has never run) or the window in which
+# a human intentional removal is unambiguous. The restore must be suppressed.
+_call_log_11="$(mktemp)"
+export MOCK_GH_OUTPUT="false"
+export MOCK_GH_COMMENTS_OUTPUT="[]"
+export MOCK_GH_CALL_LOG="$_call_log_11"
+restore_regression_label_if_missing "42" "fix/42-no-summary" 2>/dev/null
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
+run_test "restore_label_absent_summary_absent_no_gh_edit" "0" "$_edit_calls"
+rm -f "$_call_log_11"
+unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT
+
+# Test 11.8: label absent + comments API failure → fail-open: gh pr edit IS called
+# and a WARN is emitted. Rationale: the #805 regression (label silently dropped
+# after loop ran) is the higher-frequency real-world failure; when we cannot
+# determine whether the loop ran, restoring is the safer choice.
+_call_log_11="$(mktemp)"
+export MOCK_GH_OUTPUT="false"
+export MOCK_GH_COMMENTS_EXIT=1
+export MOCK_GH_CALL_LOG="$_call_log_11"
+_warn_output="$(restore_regression_label_if_missing "42" "fix/42-comments-fail" 2>&1)"
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
+run_test "restore_label_comments_api_fail_failopen_calls_gh_edit" "1" "$_edit_calls"
+# Verify WARN is emitted (not silent).
+if printf '%s\n' "$_warn_output" | grep -q "WARN"; then
+  _warn_emitted="yes"
+else
+  _warn_emitted="no"
+fi
+run_test "restore_label_comments_api_fail_warn_emitted" "yes" "$_warn_emitted"
+rm -f "$_call_log_11"
+unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_EXIT _warn_output
+
+# Reset mock state.
+export MOCK_GH_OUTPUT='[]'
+unset MOCK_GH_EXIT MOCK_GH_COMMENTS_OUTPUT MOCK_GH_COMMENTS_EXIT
+unset _SUMMARY_COMMENT_JSON
 
 # ---------------------------------------------------------------------------
 # Summary
