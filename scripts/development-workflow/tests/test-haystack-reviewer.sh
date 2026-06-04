@@ -840,7 +840,25 @@ run_test "policy_verdict_only_comment_count" "COMMENT_COUNT=0" "$(echo "$output"
 run_test "policy_verdict_only_exit_code" "0" "$ec"
 unset TEST_HAYSTACK_PR_STATUS_CHECK
 
-# Test 10.7: non-review policy verdicts remain non-advisory.
+# Test 10.7: other non-pass verdicts also trigger policy review.
+TEST_HAYSTACK_PR_STATUS_CHECK=1
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}
+{"bucket":"needs-assignment","inputs":{"analysisVerdict":"needs-changes","needsHumanReview":false}}'
+MOCK_HAYSTACK_EXITS='0
+0'
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "policy_needs_changes_required" "POLICY_REVIEW_REQUIRED=1" "$(echo "$output" | grep '^POLICY_REVIEW_REQUIRED=')"
+run_test "policy_needs_changes_verdict" "POLICY_VERDICT=needs-changes" "$(echo "$output" | grep '^POLICY_VERDICT=')"
+run_test "policy_needs_changes_display" "DISPLAY_RESULT=needs-review: policy" "$(echo "$output" | grep '^DISPLAY_RESULT=')"
+run_test "policy_needs_changes_suggestion_count" "SUGGESTION_COUNT=0" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
+run_test "policy_needs_changes_exit_code" "0" "$ec"
+unset TEST_HAYSTACK_PR_STATUS_CHECK
+
+# Test 10.8: clean policy verdicts remain non-advisory.
 TEST_HAYSTACK_PR_STATUS_CHECK=1
 MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}
 {"bucket":"created-by-you","inputs":{"analysisVerdict":"pass","needsHumanReview":false}}'
@@ -856,7 +874,7 @@ run_test "policy_pass_suggestion_count" "SUGGESTION_COUNT=0" "$(echo "$output" |
 run_test "policy_pass_exit_code" "0" "$ec"
 unset TEST_HAYSTACK_PR_STATUS_CHECK
 
-# Test 10.8: legacy top-level pr-status keys are parsed as policy metadata.
+# Test 10.9: legacy top-level pr-status keys are parsed as policy metadata.
 TEST_HAYSTACK_PR_STATUS_CHECK=1
 MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}
 {"bucket":"needs-assignment","analysisVerdict":"needs-review","needsHumanReview":true,"haystackRating":4,"hasReviewer":false}'
@@ -876,7 +894,7 @@ run_test "policy_top_level_display" "DISPLAY_RESULT=needs-review: policy" "$(ech
 run_test "policy_top_level_exit_code" "0" "$ec"
 unset TEST_HAYSTACK_PR_STATUS_CHECK
 
-# Test 10.9: no-timeout fallback still reads pr-status policy metadata.
+# Test 10.10: no-timeout fallback still reads pr-status policy metadata.
 TEST_HAYSTACK_PR_STATUS_CHECK=1
 TEST_REVIEWER_PATH="$MOCK_BIN:$NO_TIMEOUT_BIN"
 MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}
@@ -896,7 +914,7 @@ run_test "policy_no_timeout_fallback_display" "DISPLAY_RESULT=needs-review: poli
 run_test "policy_no_timeout_fallback_exit_code" "0" "$ec"
 unset TEST_HAYSTACK_PR_STATUS_CHECK TEST_REVIEWER_PATH
 
-# Test 10.10: no-timeout fallback terminates a hung pr-status subprocess.
+# Test 10.11: no-timeout fallback terminates a hung pr-status subprocess.
 TEST_HAYSTACK_PR_STATUS_CHECK=1
 TEST_REVIEWER_PATH="$MOCK_BIN:$NO_TIMEOUT_BIN"
 MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}

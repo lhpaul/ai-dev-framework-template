@@ -954,6 +954,8 @@ else
 fi
 run_test "summary_platform_display_override" "needs-review: policy" "$_prt_disp"
 run_test "policy_review_compare_verdict" "advisory" "$(normalize_platform_verdict clean "$_platform_output")"
+run_test "policy_review_does_not_override_needs_fixes" "blocking" "$(normalize_platform_verdict needs_fixes "$_platform_output")"
+run_test "policy_review_does_not_override_skipped" "unavailable" "$(normalize_platform_verdict skipped "$_platform_output")"
 unset _platform_output _prt_display_override _prt_disp
 
 # Test 10.2: _summary_platform_list is "none" when token list is empty
