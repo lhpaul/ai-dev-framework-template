@@ -23,6 +23,8 @@
 #   BLOCKING_COUNT=<n>
 #   SUGGESTION_COUNT=<n>
 #   COMMENT_COUNT=<n>
+#   DISPLAY_RESULT=<value> (optional; used by pr-review-loop.sh summaries)
+#   POLICY_REVIEW_REQUIRED=0|1 (optional; present when pr-status is available)
 #   REASON=<value>   (only when RESULT=skipped — values: unavailable, timeout,
 #                     pending_timeout)
 #
@@ -132,6 +134,7 @@ esac
 # Parse optional flags
 TIMEOUT="${HAYSTACK_REVIEWER_TIMEOUT:-120}"
 POLL_INTERVAL="${HAYSTACK_POLL_INTERVAL:-15}"
+PR_STATUS_CHECK="${HAYSTACK_PR_STATUS_CHECK:-1}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -492,6 +495,103 @@ COMMENT_COUNT=$((BLOCKING_COUNT + SUGGESTION_COUNT))
 
 echo "INFO: findings parsed — blocking: $BLOCKING_COUNT, advisory: $SUGGESTION_COUNT, total: $COMMENT_COUNT" >&2
 
+# ── Parse review-policy verdict from haystack pr-status ──────────────────────
+#
+# haystack triage --json reports code-review findings, but policy verdicts live
+# in haystack pr-status --json. Keep the verdict advisory for loop control while
+# making it visible to humans in pr-review-loop.sh summaries.
+
+POLICY_STATUS_AVAILABLE=0
+POLICY_REVIEW_REQUIRED=0
+POLICY_VERDICT=""
+POLICY_BUCKET=""
+POLICY_RATING=""
+POLICY_HAS_REVIEWER=""
+
+if [ "$PR_STATUS_CHECK" != "0" ]; then
+  PR_STATUS_OUTPUT=""
+  PR_STATUS_EXIT=0
+  PR_STATUS_STDERR="$(mktemp)"
+  PR_STATUS_TIMEOUT="$TIMEOUT"
+  case "$PR_STATUS_TIMEOUT" in
+    ''|0|*[!0-9]*)
+      echo "ERROR: internal pr-status timeout '$PR_STATUS_TIMEOUT' is not a positive integer" >&2
+      rm -f "$PR_STATUS_STDERR"
+      exit 3
+      ;;
+  esac
+  [ "$PR_STATUS_TIMEOUT" -gt 30 ] && PR_STATUS_TIMEOUT=30
+
+  echo "INFO: running: haystack pr-status ${OWNER}/${REPO}#${PR_NUMBER} --json" >&2
+  if command -v timeout >/dev/null 2>&1; then
+    set +e
+    PR_STATUS_OUTPUT="$(timeout "$PR_STATUS_TIMEOUT" haystack pr-status "${OWNER}/${REPO}#${PR_NUMBER}" --json 2>"$PR_STATUS_STDERR")"
+    PR_STATUS_EXIT=$?
+    set -e
+  else
+    echo "INFO: 'timeout' command not available; using pr-status background-process fallback" >&2
+    set +e
+    haystack pr-status "${OWNER}/${REPO}#${PR_NUMBER}" --json >"$PR_STATUS_STDERR.stdout" 2>"$PR_STATUS_STDERR" &
+    PR_STATUS_PID=$!
+    pr_status_elapsed=0
+    while kill -0 "$PR_STATUS_PID" 2>/dev/null && [ "$pr_status_elapsed" -lt "$PR_STATUS_TIMEOUT" ]; do
+      sleep 1
+      pr_status_elapsed=$((pr_status_elapsed + 1))
+    done
+    if kill -0 "$PR_STATUS_PID" 2>/dev/null; then
+      if ! kill "$PR_STATUS_PID" 2>/dev/null; then
+        echo "WARN: failed to terminate timed-out haystack pr-status process $PR_STATUS_PID" >&2
+      fi
+      wait "$PR_STATUS_PID" 2>/dev/null
+      pr_status_wait_exit=$?
+      case "$pr_status_wait_exit" in
+        0|130|137|143) ;;
+        *)
+          echo "WARN: haystack pr-status process $PR_STATUS_PID exited with status $pr_status_wait_exit after timeout cleanup" >&2
+          ;;
+      esac
+      PR_STATUS_EXIT=124
+    else
+      wait "$PR_STATUS_PID" 2>/dev/null
+      PR_STATUS_EXIT=$?
+      if ! PR_STATUS_OUTPUT="$(cat "$PR_STATUS_STDERR.stdout" 2>/dev/null)"; then
+        echo "WARN: failed to read haystack pr-status stdout capture" >&2
+        PR_STATUS_OUTPUT=""
+      fi
+    fi
+    set -e
+    rm -f "$PR_STATUS_STDERR.stdout"
+  fi
+
+  if [ -s "$PR_STATUS_STDERR" ]; then
+    echo "INFO: haystack pr-status stderr output:" >&2
+    cat "$PR_STATUS_STDERR" >&2
+  fi
+  rm -f "$PR_STATUS_STDERR"
+
+  if [ "$PR_STATUS_EXIT" -eq 0 ] && printf '%s\n' "$PR_STATUS_OUTPUT" | jq -e . >/dev/null 2>&1; then
+    POLICY_STATUS_AVAILABLE=1
+    POLICY_BUCKET="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '.bucket // ""')"
+    POLICY_VERDICT="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '.inputs.analysisVerdict // .analysisVerdict // ""')"
+    POLICY_RATING="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '(.inputs.haystackRating // .haystackRating // "") | tostring')"
+    POLICY_HAS_REVIEWER="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r 'if (.inputs? | type == "object" and has("hasReviewer")) then .inputs.hasReviewer elif has("hasReviewer") then .hasReviewer else "" end | tostring')"
+    POLICY_NEEDS_HUMAN="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '(.inputs.needsHumanReview // .needsHumanReview // false) | tostring')"
+    case "$POLICY_VERDICT" in
+      ''|pass|passed|clean|approved)
+        POLICY_VERDICT_REQUIRES_REVIEW=0
+        ;;
+      *)
+        POLICY_VERDICT_REQUIRES_REVIEW=1
+        ;;
+    esac
+    if [ "$POLICY_NEEDS_HUMAN" = "true" ] || [ "$POLICY_VERDICT_REQUIRES_REVIEW" -eq 1 ]; then
+      POLICY_REVIEW_REQUIRED=1
+    fi
+  else
+    echo "INFO: haystack pr-status unavailable or invalid — policy verdict not surfaced" >&2
+  fi
+fi
+
 # ── Emit result ───────────────────────────────────────────────────────────────
 
 if [ "$BLOCKING_COUNT" -gt 0 ]; then
@@ -499,6 +599,12 @@ if [ "$BLOCKING_COUNT" -gt 0 ]; then
   printf 'BLOCKING_COUNT=%d\n' "$BLOCKING_COUNT"
   printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
   printf 'COMMENT_COUNT=%d\n' "$COMMENT_COUNT"
+  printf 'POLICY_STATUS_AVAILABLE=%d\n' "$POLICY_STATUS_AVAILABLE"
+  printf 'POLICY_REVIEW_REQUIRED=%d\n' "$POLICY_REVIEW_REQUIRED"
+  [ -n "$POLICY_VERDICT" ] && printf 'POLICY_VERDICT=%s\n' "$POLICY_VERDICT"
+  [ -n "$POLICY_BUCKET" ] && printf 'POLICY_BUCKET=%s\n' "$POLICY_BUCKET"
+  [ -n "$POLICY_RATING" ] && printf 'POLICY_RATING=%s\n' "$POLICY_RATING"
+  [ -n "$POLICY_HAS_REVIEWER" ] && printf 'POLICY_HAS_REVIEWER=%s\n' "$POLICY_HAS_REVIEWER"
   exit 1
 fi
 
@@ -506,4 +612,11 @@ printf 'RESULT=clean\n'
 printf 'BLOCKING_COUNT=0\n'
 printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
 printf 'COMMENT_COUNT=%d\n' "$COMMENT_COUNT"
+printf 'POLICY_STATUS_AVAILABLE=%d\n' "$POLICY_STATUS_AVAILABLE"
+printf 'POLICY_REVIEW_REQUIRED=%d\n' "$POLICY_REVIEW_REQUIRED"
+[ -n "$POLICY_VERDICT" ] && printf 'POLICY_VERDICT=%s\n' "$POLICY_VERDICT"
+[ -n "$POLICY_BUCKET" ] && printf 'POLICY_BUCKET=%s\n' "$POLICY_BUCKET"
+[ -n "$POLICY_RATING" ] && printf 'POLICY_RATING=%s\n' "$POLICY_RATING"
+[ -n "$POLICY_HAS_REVIEWER" ] && printf 'POLICY_HAS_REVIEWER=%s\n' "$POLICY_HAS_REVIEWER"
+[ "$POLICY_REVIEW_REQUIRED" -eq 1 ] && printf 'DISPLAY_RESULT=needs-review: policy\n'
 exit 0
