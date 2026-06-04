@@ -708,7 +708,8 @@ ec=$(cat "$_REVIEWER_EXIT_FILE")
 run_test "policy_needs_review_result_stays_clean" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
 run_test "policy_needs_review_required" "POLICY_REVIEW_REQUIRED=1" "$(echo "$output" | grep '^POLICY_REVIEW_REQUIRED=')"
 run_test "policy_needs_review_display" "DISPLAY_RESULT=needs-review: policy" "$(echo "$output" | grep '^DISPLAY_RESULT=')"
-run_test "policy_needs_review_suggestion_count" "SUGGESTION_COUNT=1" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
+run_test "policy_needs_review_suggestion_count" "SUGGESTION_COUNT=0" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
+run_test "policy_needs_review_comment_count" "COMMENT_COUNT=0" "$(echo "$output" | grep '^COMMENT_COUNT=')"
 run_test "policy_needs_review_exit_code" "0" "$ec"
 unset TEST_HAYSTACK_PR_STATUS_CHECK
 
@@ -781,7 +782,8 @@ ec=$(cat "$_REVIEWER_EXIT_FILE")
 
 run_test "policy_needs_human_pass_required" "POLICY_REVIEW_REQUIRED=1" "$(echo "$output" | grep '^POLICY_REVIEW_REQUIRED=')"
 run_test "policy_needs_human_pass_display" "DISPLAY_RESULT=needs-review: policy" "$(echo "$output" | grep '^DISPLAY_RESULT=')"
-run_test "policy_needs_human_pass_suggestion_count" "SUGGESTION_COUNT=1" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
+run_test "policy_needs_human_pass_suggestion_count" "SUGGESTION_COUNT=0" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
+run_test "policy_needs_human_pass_comment_count" "COMMENT_COUNT=0" "$(echo "$output" | grep '^COMMENT_COUNT=')"
 run_test "policy_needs_human_pass_exit_code" "0" "$ec"
 unset TEST_HAYSTACK_PR_STATUS_CHECK
 
@@ -798,7 +800,8 @@ ec=$(cat "$_REVIEWER_EXIT_FILE")
 
 run_test "policy_verdict_only_required" "POLICY_REVIEW_REQUIRED=1" "$(echo "$output" | grep '^POLICY_REVIEW_REQUIRED=')"
 run_test "policy_verdict_only_display" "DISPLAY_RESULT=needs-review: policy" "$(echo "$output" | grep '^DISPLAY_RESULT=')"
-run_test "policy_verdict_only_suggestion_count" "SUGGESTION_COUNT=1" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
+run_test "policy_verdict_only_suggestion_count" "SUGGESTION_COUNT=0" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
+run_test "policy_verdict_only_comment_count" "COMMENT_COUNT=0" "$(echo "$output" | grep '^COMMENT_COUNT=')"
 run_test "policy_verdict_only_exit_code" "0" "$ec"
 unset TEST_HAYSTACK_PR_STATUS_CHECK
 

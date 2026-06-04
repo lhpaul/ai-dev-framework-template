@@ -578,8 +578,6 @@ if [ "$PR_STATUS_CHECK" != "0" ]; then
     POLICY_NEEDS_HUMAN="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '(.inputs.needsHumanReview // .needsHumanReview // false) | tostring')"
     if [ "$POLICY_NEEDS_HUMAN" = "true" ] || [ "$POLICY_VERDICT" = "needs-review" ]; then
       POLICY_REVIEW_REQUIRED=1
-      SUGGESTION_COUNT=$((SUGGESTION_COUNT + 1))
-      COMMENT_COUNT=$((COMMENT_COUNT + 1))
     fi
   else
     echo "INFO: haystack pr-status unavailable or invalid — policy verdict not surfaced" >&2
