@@ -738,6 +738,76 @@ run_test "policy_nonzero_exit_suggestion_count" "SUGGESTION_COUNT=0" "$(echo "$o
 run_test "policy_nonzero_exit_exit_code" "0" "$ec"
 unset TEST_HAYSTACK_PR_STATUS_CHECK
 
+# Test 10.4: disabled pr-status checks do not call policy status.
+TEST_HAYSTACK_PR_STATUS_CHECK=0
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}
+{"bucket":"needs-assignment","inputs":{"analysisVerdict":"needs-review","needsHumanReview":true}}'
+MOCK_HAYSTACK_EXITS='0
+0'
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+calls=$(_call_count)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "policy_disabled_result_stays_clean" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+run_test "policy_disabled_single_triage_call" "1" "$calls"
+run_test "policy_disabled_unavailable" "POLICY_STATUS_AVAILABLE=0" "$(echo "$output" | grep '^POLICY_STATUS_AVAILABLE=')"
+run_test "policy_disabled_not_required" "POLICY_REVIEW_REQUIRED=0" "$(echo "$output" | grep '^POLICY_REVIEW_REQUIRED=')"
+run_test "policy_disabled_suggestion_count" "SUGGESTION_COUNT=0" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
+run_test "policy_disabled_exit_code" "0" "$ec"
+unset TEST_HAYSTACK_PR_STATUS_CHECK
+
+# Test 10.5: needsHumanReview=true triggers policy review even if verdict passes.
+TEST_HAYSTACK_PR_STATUS_CHECK=1
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}
+{"bucket":"needs-assignment","inputs":{"analysisVerdict":"pass","needsHumanReview":true}}'
+MOCK_HAYSTACK_EXITS='0
+0'
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "policy_needs_human_pass_required" "POLICY_REVIEW_REQUIRED=1" "$(echo "$output" | grep '^POLICY_REVIEW_REQUIRED=')"
+run_test "policy_needs_human_pass_display" "DISPLAY_RESULT=needs-review: policy" "$(echo "$output" | grep '^DISPLAY_RESULT=')"
+run_test "policy_needs_human_pass_suggestion_count" "SUGGESTION_COUNT=1" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
+run_test "policy_needs_human_pass_exit_code" "0" "$ec"
+unset TEST_HAYSTACK_PR_STATUS_CHECK
+
+# Test 10.6: analysisVerdict=needs-review triggers even without needsHumanReview.
+TEST_HAYSTACK_PR_STATUS_CHECK=1
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}
+{"bucket":"created-by-you","inputs":{"analysisVerdict":"needs-review","needsHumanReview":false}}'
+MOCK_HAYSTACK_EXITS='0
+0'
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "policy_verdict_only_required" "POLICY_REVIEW_REQUIRED=1" "$(echo "$output" | grep '^POLICY_REVIEW_REQUIRED=')"
+run_test "policy_verdict_only_display" "DISPLAY_RESULT=needs-review: policy" "$(echo "$output" | grep '^DISPLAY_RESULT=')"
+run_test "policy_verdict_only_suggestion_count" "SUGGESTION_COUNT=1" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
+run_test "policy_verdict_only_exit_code" "0" "$ec"
+unset TEST_HAYSTACK_PR_STATUS_CHECK
+
+# Test 10.7: non-review policy verdicts remain non-advisory.
+TEST_HAYSTACK_PR_STATUS_CHECK=1
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}
+{"bucket":"created-by-you","inputs":{"analysisVerdict":"pass","needsHumanReview":false}}'
+MOCK_HAYSTACK_EXITS='0
+0'
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "policy_pass_not_required" "POLICY_REVIEW_REQUIRED=0" "$(echo "$output" | grep '^POLICY_REVIEW_REQUIRED=')"
+run_test "policy_pass_suggestion_count" "SUGGESTION_COUNT=0" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
+run_test "policy_pass_exit_code" "0" "$ec"
+unset TEST_HAYSTACK_PR_STATUS_CHECK
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
