@@ -532,13 +532,25 @@ if [ "$PR_STATUS_CHECK" != "0" ]; then
       pr_status_elapsed=$((pr_status_elapsed + 1))
     done
     if kill -0 "$PR_STATUS_PID" 2>/dev/null; then
-      kill "$PR_STATUS_PID" 2>/dev/null || true
-      wait "$PR_STATUS_PID" 2>/dev/null || true
+      if ! kill "$PR_STATUS_PID" 2>/dev/null; then
+        echo "WARN: failed to terminate timed-out haystack pr-status process $PR_STATUS_PID" >&2
+      fi
+      wait "$PR_STATUS_PID" 2>/dev/null
+      pr_status_wait_exit=$?
+      case "$pr_status_wait_exit" in
+        0|130|137|143) ;;
+        *)
+          echo "WARN: haystack pr-status process $PR_STATUS_PID exited with status $pr_status_wait_exit after timeout cleanup" >&2
+          ;;
+      esac
       PR_STATUS_EXIT=124
     else
       wait "$PR_STATUS_PID" 2>/dev/null
       PR_STATUS_EXIT=$?
-      PR_STATUS_OUTPUT="$(cat "$PR_STATUS_STDERR.stdout" 2>/dev/null || true)"
+      if ! PR_STATUS_OUTPUT="$(cat "$PR_STATUS_STDERR.stdout" 2>/dev/null)"; then
+        echo "WARN: failed to read haystack pr-status stdout capture" >&2
+        PR_STATUS_OUTPUT=""
+      fi
     fi
     set -e
     rm -f "$PR_STATUS_STDERR.stdout"

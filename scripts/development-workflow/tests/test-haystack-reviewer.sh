@@ -702,6 +702,42 @@ run_test "policy_needs_review_suggestion_count" "SUGGESTION_COUNT=1" "$(echo "$o
 run_test "policy_needs_review_exit_code" "0" "$ec"
 unset TEST_HAYSTACK_PR_STATUS_CHECK
 
+# Test 10.2: invalid pr-status JSON does not block or emit policy metadata.
+TEST_HAYSTACK_PR_STATUS_CHECK=1
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}
+not-json'
+MOCK_HAYSTACK_EXITS='0
+0'
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "policy_invalid_json_result_stays_clean" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+run_test "policy_invalid_json_unavailable" "POLICY_STATUS_AVAILABLE=0" "$(echo "$output" | grep '^POLICY_STATUS_AVAILABLE=')"
+run_test "policy_invalid_json_not_required" "POLICY_REVIEW_REQUIRED=0" "$(echo "$output" | grep '^POLICY_REVIEW_REQUIRED=')"
+run_test "policy_invalid_json_suggestion_count" "SUGGESTION_COUNT=0" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
+run_test "policy_invalid_json_exit_code" "0" "$ec"
+unset TEST_HAYSTACK_PR_STATUS_CHECK
+
+# Test 10.3: non-zero pr-status exit does not hide clean triage findings.
+TEST_HAYSTACK_PR_STATUS_CHECK=1
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}
+{"bucket":"needs-assignment","inputs":{"analysisVerdict":"needs-review","needsHumanReview":true}}'
+MOCK_HAYSTACK_EXITS='0
+1'
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "policy_nonzero_exit_result_stays_clean" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+run_test "policy_nonzero_exit_unavailable" "POLICY_STATUS_AVAILABLE=0" "$(echo "$output" | grep '^POLICY_STATUS_AVAILABLE=')"
+run_test "policy_nonzero_exit_not_required" "POLICY_REVIEW_REQUIRED=0" "$(echo "$output" | grep '^POLICY_REVIEW_REQUIRED=')"
+run_test "policy_nonzero_exit_suggestion_count" "SUGGESTION_COUNT=0" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
+run_test "policy_nonzero_exit_exit_code" "0" "$ec"
+unset TEST_HAYSTACK_PR_STATUS_CHECK
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
