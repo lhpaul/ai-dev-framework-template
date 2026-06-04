@@ -7,7 +7,10 @@ on:
       - main
     paths:
       - 'scripts/development-workflow/**/*.sh'
+      - 'scripts/lint/workflow-shell-guard-lint.py'
+      - 'scripts/lint/tests/test-workflow-shell-guard-lint.sh'
       - '.shellcheckrc'
+      - '.github/workflows/shellcheck.yml'
 
 jobs:
   shellcheck:
@@ -18,6 +21,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
+        with:
+          fetch-depth: 0
 
       - name: Run ShellCheck
         run: |
@@ -29,3 +34,20 @@ jobs:
           echo "Analyzing ${#shell_files[@]} shell file(s):"
           printf '  %s\n' "${shell_files[@]}"
           shellcheck --severity=warning "${shell_files[@]}"
+
+      - name: Run workflow shell guard lint tests
+        run: bash scripts/lint/tests/test-workflow-shell-guard-lint.sh
+
+      - name: Validate pull request base ref
+        run: |
+          if [ -z "${GITHUB_BASE_REF:-}" ]; then
+            echo "ERROR: GITHUB_BASE_REF is required for workflow shell guard lint." >&2
+            echo "This workflow must run in a pull_request context." >&2
+            exit 1
+          fi
+
+      - name: Fetch base ref for workflow shell guard lint
+        run: git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"
+
+      - name: Run workflow shell guard lint
+        run: python3 scripts/lint/workflow-shell-guard-lint.py --base-ref "origin/$GITHUB_BASE_REF"

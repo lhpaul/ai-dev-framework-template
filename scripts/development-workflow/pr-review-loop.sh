@@ -3478,6 +3478,30 @@ run_platform_review() {
   esac
 }
 
+ensure_pr_ready_for_after_clean() {
+  # After-clean platforms are intended to run only once draft-compatible
+  # reviewers have cleared. Some external reviewers, including Haystack triage,
+  # do not reliably complete while the PR is still draft, so convert the PR to
+  # ready before dispatching the first after-clean platform.
+  local pr_number="$1"
+  local is_draft
+
+  if ! is_draft="$(gh pr view "$pr_number" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+    echo "WARN: could not determine draft state for PR #$pr_number before after-clean phase" >&2
+    return 2
+  fi
+
+  if [ "$is_draft" = "true" ]; then
+    echo "INFO: converting PR #$pr_number to ready before after-clean reviewers" >&2
+    if ! gh pr ready "$pr_number" >/dev/null 2>&1; then
+      echo "WARN: failed to mark PR #$pr_number ready before after-clean phase" >&2
+      return 2
+    fi
+  fi
+
+  return 0
+}
+
 # --- Compare-mode helpers ---
 # These functions are defined here (before the main execution block) so that
 # the test harness can load them via HARNESS_MODE=1 sourcing without executing
@@ -3929,6 +3953,22 @@ for index in "${!platforms[@]}"; do
       && [ "$phase_after_clean_started" -eq 0 ] \
       && is_phase_after_clean_platform "$platform_name"; then
     if [ "$compare_mode" -eq 0 ] || [ -z "$compare_first_blocking_result" ]; then
+      set +e
+      ensure_pr_ready_for_after_clean "$pr_number"
+      ready_status=$?
+      set -e
+      if [ "$ready_status" -ne 0 ]; then
+        phase_after_clean_started=1
+        phase_after_clean_gate_result="ready_failed"
+        phase_after_clean_net_new_blocker=1
+        phase_after_clean_blocking_platform="ready_for_review"
+        aggregate_result="escalate"
+        aggregate_reason="ready_for_review_failed"
+        aggregate_output="$(printf 'RESULT=escalate\nREASON=ready_for_review_failed\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+        aggregate_status=2
+        break
+      fi
+      unset ready_status
       phase_after_clean_started=1
       phase_after_clean_gate_result="clean"
     fi

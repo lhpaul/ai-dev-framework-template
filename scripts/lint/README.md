@@ -43,3 +43,31 @@ Exit code `0` means no findings; exit code `1` means one or more findings.
 find docs/specs/developments docs/testing/workflow -name "*.md" -print0 \
   | xargs -0 python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md
 ```
+
+## workflow-shell-guard-lint.py
+
+Diff-based guard for newly added lines in `scripts/development-workflow/**/*.sh`.
+
+**Checks implemented:**
+
+- **SH001** - Critical command failure suppression: detects added lines that run
+  `gh`, `git`, `curl`, or `haystack` and suppress failures with `|| true`.
+
+Use explicit control flow instead of blanket suppression. If a best-effort
+failure is intentional, keep the suppression local and add a rationale:
+
+```bash
+git fetch origin "$base" 2>/dev/null || true # workflow-shell-guard: allow SH001 - best effort cache refresh
+```
+
+**Usage:**
+
+```bash
+python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop
+```
+
+**Tests:**
+
+```bash
+bash scripts/lint/tests/test-workflow-shell-guard-lint.sh
+```
