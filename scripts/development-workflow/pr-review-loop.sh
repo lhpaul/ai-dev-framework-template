@@ -3516,6 +3516,10 @@ normalize_platform_verdict() {
   local output="${2:-}"
   local reason
   reason="$(kv_value_default REASON "$output" "")"
+  if [ "$result" = "clean" ] && [ "$(kv_value_default POLICY_REVIEW_REQUIRED "$output" 0)" = "1" ]; then
+    printf 'advisory'
+    return
+  fi
   case "$result" in
     clean)       printf 'clean' ;;
     needs_fixes) printf 'blocking' ;;
@@ -4105,21 +4109,26 @@ for index in "${!platforms[@]}"; do
   emit_prefixed_platform_output "$platform_index" "$platform_output"
   # Record a human-readable display token for the PR summary comment.
   _prt_reason="$(kv_value_default REASON "$platform_output" "")"
-  case "$platform_result" in
-    clean)      _prt_disp="clean" ;;
-    skipped)
-      if [ "$_prt_reason" = "unavailable" ] || [ "$_prt_reason" = "not_configured" ]; then
-        _prt_disp="unavailable"
-      else
-        _prt_disp="skipped"
-      fi
-      ;;
-    escalate)   _prt_disp="escalated (${_prt_reason:-unknown})" ;;
-    needs_fixes) _prt_disp="needs_fixes" ;;
-    *)           _prt_disp="$platform_result" ;;
-  esac
+  _prt_display_override="$(kv_value_default DISPLAY_RESULT "$platform_output" "")"
+  if [ -n "$_prt_display_override" ]; then
+    _prt_disp="$_prt_display_override"
+  else
+    case "$platform_result" in
+      clean)      _prt_disp="clean" ;;
+      skipped)
+        if [ "$_prt_reason" = "unavailable" ] || [ "$_prt_reason" = "not_configured" ]; then
+          _prt_disp="unavailable"
+        else
+          _prt_disp="skipped"
+        fi
+        ;;
+      escalate)   _prt_disp="escalated (${_prt_reason:-unknown})" ;;
+      needs_fixes) _prt_disp="needs_fixes" ;;
+      *)           _prt_disp="$platform_result" ;;
+    esac
+  fi
   platform_result_tokens+=("${platform_name}:${_prt_disp}")
-  unset _prt_reason _prt_disp
+  unset _prt_reason _prt_display_override _prt_disp
 
   # In compare mode, record a normalized verdict for each platform before
   # deciding whether to break. The normalized verdict captures clean / blocking /

@@ -13,6 +13,7 @@ For information about Haystack's local git hooks (truncation checker, LLM_RULES.
 Key properties:
 
 - **Poll-retry on pending**: When `haystack triage` returns `status=pending` (analysis still in progress), `haystack-reviewer.sh` waits `HAYSTACK_POLL_INTERVAL` seconds (default: 15) and retries automatically until the analysis completes or the overall `HAYSTACK_REVIEWER_TIMEOUT` budget is exhausted. This eliminates the timing-gap false-negative where the reviewer loop ran within the first 2–4 minutes of a PR push and silently skipped findings.
+- **Policy-verdict visibility**: After triage completes, `haystack-reviewer.sh` also reads `haystack pr-status <PR> --json`. When Haystack reports `needsHumanReview: true` or `analysisVerdict: "needs-review"`, the reviewer loop keeps the result non-blocking if there are no blocking findings but displays `haystack (needs-review: policy)` in the PR summary instead of `haystack (clean)`.
 - **No per-hour rate cap**: Unlike some hosted review services, Haystack triage is not subject to hourly review limits (as of the time of writing).
 - **Graceful degradation**: If the `haystack` CLI is absent or unauthenticated, the reviewer exits with `UNAVAILABLE` and the review loop continues with the remaining configured platforms.
 - **No GitHub App required**: This integration uses the CLI only. Haystack does not post inline GitHub review threads in this MVP — findings are reported locally via the key-value output.
@@ -93,6 +94,37 @@ The `haystack triage --json` output schema uses a `.findings[].category` field a
 | Any unrecognised value | Blocking | Conservative safe-fail per spec BR-2 |
 
 The `COMMENT_COUNT` output equals `BLOCKING_COUNT + SUGGESTION_COUNT`.
+
+## Review Policy Verdicts
+
+Haystack exposes two related but separate result channels:
+
+| CLI command | Data surfaced | Reviewer-loop treatment |
+| ----------- | ------------- | ----------------------- |
+| `haystack triage <PR> --json` | Code-review findings in `.findings[]` and rating | Blocking categories stop the loop; advisory categories increment `SUGGESTION_COUNT` |
+| `haystack pr-status <PR> --json` | Pipeline/review-policy verdicts such as `analysisVerdict`, `needsHumanReview`, `bucket`, `hasReviewer`, and `haystackRating` | Non-blocking visibility signal when no blocking triage findings exist |
+
+When `pr-status` reports `needsHumanReview: true` or
+`analysisVerdict: "needs-review"`, `haystack-reviewer.sh` emits:
+
+```text
+POLICY_STATUS_AVAILABLE=1
+POLICY_REVIEW_REQUIRED=1
+POLICY_VERDICT=needs-review
+DISPLAY_RESULT=needs-review: policy
+```
+
+`pr-review-loop.sh` uses `DISPLAY_RESULT` in its summary comment, so a clean
+triage result with a policy verdict appears as:
+
+```text
+haystack (needs-review: policy)
+```
+
+This is intentionally advisory: the workflow already routes ready PRs to human
+review, so the policy verdict should be visible without blocking deterministic
+progress when `.findings[]` has no blocking issue. If Haystack also reports a
+blocking triage category, the normal `needs_fixes` path still wins.
 
 ### Overriding "Major" to blocking
 
