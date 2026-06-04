@@ -1052,12 +1052,22 @@ gh pr view <pr_number> --json isDraft,labels,comments \
 **Summary-comment recency (verifying the summary matches the _latest_ commit)**: The presence checks above confirm a reviewer-loop summary _exists_, but to confirm Step 7 ran against the **current** head commit (e.g., after a fix push or a rebase), compare the summary comment's **`updated_at`** to the latest commit's timestamp — **never `created_at`**. `pr-review-loop.sh` maintains a **single** summary comment and **updates it in place** on each run, so `created_at` reflects the _first_ run and a `created_at`-based freshness check produces false "stale / incomplete" verdicts for PRs whose summary was legitimately refreshed. Fetch `updated_at` via REST (`gh api repos/{owner}/{repo}/issues/{n}/comments`), since `gh pr view --json comments` does not expose it:
 
 ```bash
-# Newest summary comment's updated_at vs the branch's latest commit time
+# Newest summary comment's updated_at, normalized to epoch seconds, vs the
+# branch's latest commit time.
 COMMIT_EPOCH=$(git log -1 --format=%ct "origin/<branch>")
 SUMM_UPDATED=$(gh api "repos/<owner>/<repo>/issues/<pr_number>/comments" --paginate \
   --jq '[.[] | select(.body | startswith("### Automated Reviewer Loop Summary"))] | sort_by(.updated_at) | last | .updated_at')
-# A summary whose updated_at is >= COMMIT_EPOCH corresponds to the current head; an
-# older updated_at means Step 7 has not re-run on the latest commit (genuinely stale).
+SUMM_UPDATED_EPOCH=$(python3 - "$SUMM_UPDATED" <<'PY'
+from datetime import datetime
+import sys
+
+updated_at = sys.argv[1]
+print(int(datetime.fromisoformat(updated_at.replace("Z", "+00:00")).timestamp()))
+PY
+)
+# A summary whose updated_at epoch is >= COMMIT_EPOCH corresponds to the current
+# head; an older updated_at means Step 7 has not re-run on the latest commit
+# (genuinely stale).
 ```
 
 **Classification table** (evaluate in order; first matching row wins):
