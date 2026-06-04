@@ -182,6 +182,7 @@ _run_reviewer() {
   set +e
   HAYSTACK_REVIEWER_TIMEOUT="$timeout" \
   HAYSTACK_POLL_INTERVAL="$poll_interval" \
+  HAYSTACK_PR_STATUS_CHECK="${TEST_HAYSTACK_PR_STATUS_CHECK:-0}" \
   MOCK_CALL_LOG="$CALL_LOG" \
   MOCK_RESPONSE_SEQ="$RESPONSE_SEQ_FILE" \
   MOCK_EXIT_SEQ="$EXIT_SEQ_FILE" \
@@ -204,6 +205,7 @@ _run_reviewer_exit_code() {
     set +e
     HAYSTACK_REVIEWER_TIMEOUT="$timeout" \
     HAYSTACK_POLL_INTERVAL="$poll_interval" \
+    HAYSTACK_PR_STATUS_CHECK="${TEST_HAYSTACK_PR_STATUS_CHECK:-0}" \
     MOCK_CALL_LOG="$CALL_LOG" \
     MOCK_RESPONSE_SEQ="$RESPONSE_SEQ_FILE" \
     MOCK_EXIT_SEQ="$EXIT_SEQ_FILE" \
@@ -676,6 +678,29 @@ ec=$(cat "$_REVIEWER_EXIT_FILE")
 run_test "nonzero_exit_status_error_then_findings_result" "RESULT=needs_fixes" "$(echo "$output" | grep '^RESULT=')"
 run_test "nonzero_exit_status_error_then_findings_count" "BLOCKING_COUNT=1" "$(echo "$output" | grep '^BLOCKING_COUNT=')"
 run_test "nonzero_exit_status_error_then_findings_retried" "2" "$calls"
+
+# ---------------------------------------------------------------------------
+# Area 10: pr-status policy verdict is surfaced as advisory metadata (#818)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 10: pr-status policy verdict metadata ==="
+
+TEST_HAYSTACK_PR_STATUS_CHECK=1
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}
+{"bucket":"needs-assignment","inputs":{"analysisStatus":"ready","analysisVerdict":"needs-review","needsHumanReview":true,"haystackRating":5,"hasReviewer":false}}'
+MOCK_HAYSTACK_EXITS='0
+0'
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "policy_needs_review_result_stays_clean" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+run_test "policy_needs_review_required" "POLICY_REVIEW_REQUIRED=1" "$(echo "$output" | grep '^POLICY_REVIEW_REQUIRED=')"
+run_test "policy_needs_review_display" "DISPLAY_RESULT=needs-review: policy" "$(echo "$output" | grep '^DISPLAY_RESULT=')"
+run_test "policy_needs_review_suggestion_count" "SUGGESTION_COUNT=1" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
+run_test "policy_needs_review_exit_code" "0" "$ec"
+unset TEST_HAYSTACK_PR_STATUS_CHECK
 
 # ---------------------------------------------------------------------------
 # Summary

@@ -942,6 +942,20 @@ run_test "summary_platform_list_format" \
   "$_test_spl"
 unset _test_tokens _test_spl _sprt _spname _spdisp
 
+# Test 10.1b: display override allows Haystack policy verdicts to avoid reading as clean
+_platform_output='RESULT=clean
+DISPLAY_RESULT=needs-review: policy
+POLICY_REVIEW_REQUIRED=1'
+_prt_display_override="$(kv_value_default DISPLAY_RESULT "$_platform_output" "")"
+if [ -n "$_prt_display_override" ]; then
+  _prt_disp="$_prt_display_override"
+else
+  _prt_disp="clean"
+fi
+run_test "summary_platform_display_override" "needs-review: policy" "$_prt_disp"
+run_test "policy_review_compare_verdict" "advisory" "$(normalize_platform_verdict clean "$_platform_output")"
+unset _platform_output _prt_display_override _prt_disp
+
 # Test 10.2: _summary_platform_list is "none" when token list is empty
 _test_tokens=()
 _test_spl=""
