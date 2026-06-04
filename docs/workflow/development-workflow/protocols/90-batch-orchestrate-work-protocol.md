@@ -1056,7 +1056,11 @@ gh pr view <pr_number> --json isDraft,labels,comments \
 # branch's latest commit time.
 COMMIT_EPOCH=$(git log -1 --format=%ct "origin/<branch>")
 SUMM_UPDATED=$(gh api "repos/<owner>/<repo>/issues/<pr_number>/comments" --paginate \
-  --jq '[.[] | select(.body | startswith("### Automated Reviewer Loop Summary"))] | sort_by(.updated_at) | last | .updated_at')
+  --jq '[.[] | select(.body | startswith("### Automated Reviewer Loop Summary"))] | sort_by(.updated_at) | last | .updated_at // ""')
+if [ -z "$SUMM_UPDATED" ]; then
+  echo "No reviewer-loop summary comment found; Step 7 has not completed for this PR." >&2
+  exit 1
+fi
 SUMM_UPDATED_EPOCH=$(python3 - "$SUMM_UPDATED" <<'PY'
 from datetime import datetime
 import sys
