@@ -48,6 +48,15 @@ run_linter() {
   fi
 }
 
+run_git_linter() {
+  local repo_dir="$1"
+  if (cd "$repo_dir" && python3 "$LINTER" --base-ref main) >/dev/null 2>&1; then
+    printf 'pass'
+  else
+    printf 'fail'
+  fi
+}
+
 cat > "$TMP_DIR/bad.diff" <<'DIFF'
 diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
 --- a/scripts/development-workflow/example.sh
@@ -55,6 +64,16 @@ diff --git a/scripts/development-workflow/example.sh b/scripts/development-workf
 @@ -1,0 +1,2 @@
 +#!/usr/bin/env bash
 +RESULT=$(gh api "repos/example/repo/pulls/1" --jq '.state' 2>/dev/null || true)
+DIFF
+
+cat > "$TMP_DIR/bad-continuation.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,3 @@
++#!/usr/bin/env bash
++RESULT=$(gh api "repos/example/repo/pulls/1" \
++  --jq '.state' 2>/dev/null || true)
 DIFF
 
 cat > "$TMP_DIR/allowed.diff" <<'DIFF'
@@ -93,11 +112,40 @@ diff --git a/scripts/development-workflow/example.sh b/scripts/development-workf
 +echo "new safe line"
 DIFF
 
+cat > "$TMP_DIR/comment-only.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,3 @@
++
++# gh api "repos/example/repo/pulls/1" || true
++echo "safe"
+DIFF
+
+git_repo="$TMP_DIR/git-repo"
+mkdir -p "$git_repo/scripts/development-workflow"
+(
+  cd "$git_repo"
+  git init -q -b main
+  git config user.email "test@example.com"
+  git config user.name "Test User"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo safe' > scripts/development-workflow/example.sh
+  git add scripts/development-workflow/example.sh
+  git commit -q -m "test: seed repo"
+  git checkout -q -b feature
+  printf '%s\n' 'RESULT=$(gh api "repos/example/repo/pulls/1" --jq '"'"'.state'"'"' 2>/dev/null || true)' >> scripts/development-workflow/example.sh
+  git add scripts/development-workflow/example.sh
+  git commit -q -m "test: add suppressed command"
+)
+
 run_test "critical_suppression_fails" "fail" "$(run_linter "$TMP_DIR/bad.diff")"
+run_test "continued_critical_suppression_fails" "fail" "$(run_linter "$TMP_DIR/bad-continuation.diff")"
 run_test "inline_suppression_passes" "pass" "$(run_linter "$TMP_DIR/allowed.diff")"
 run_test "noncritical_grep_passes" "pass" "$(run_linter "$TMP_DIR/benign.diff")"
+run_test "blank_and_comment_added_lines_pass" "pass" "$(run_linter "$TMP_DIR/comment-only.diff")"
 run_test "out_of_scope_path_passes" "pass" "$(run_linter "$TMP_DIR/out-of-scope.diff")"
 run_test "context_line_ignored" "pass" "$(run_linter "$TMP_DIR/context-only.diff")"
+run_test "git_diff_mode_detects_added_suppression" "fail" "$(run_git_linter "$git_repo")"
 
 echo ""
 echo "Summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"

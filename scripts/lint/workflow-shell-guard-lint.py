@@ -91,7 +91,7 @@ def parse_added_lines(diff_text: str) -> list[AddedLine]:
 def lint_added_lines(lines: Iterable[AddedLine]) -> list[Finding]:
     findings: list[Finding] = []
 
-    for line in lines:
+    for line in logical_lines(lines):
         stripped = line.content.strip()
         if not stripped or stripped.startswith("#"):
             continue
@@ -113,6 +113,44 @@ def lint_added_lines(lines: Iterable[AddedLine]) -> list[Finding]:
             )
 
     return findings
+
+
+def logical_lines(lines: Iterable[AddedLine]) -> list[AddedLine]:
+    combined: list[AddedLine] = []
+    pending: AddedLine | None = None
+    pending_end_line = 0
+
+    for line in lines:
+        if pending is None:
+            pending = line
+            pending_end_line = line.line
+        else:
+            previous_continues = pending.content.rstrip().endswith("\\")
+            same_file = pending.path == line.path
+            consecutive = line.line == pending_end_line + 1
+            if previous_continues and same_file and consecutive:
+                pending = AddedLine(
+                    pending.path,
+                    pending.line,
+                    f"{pending.content.rstrip()[:-1]} {line.content.strip()}",
+                )
+                pending_end_line = line.line
+            else:
+                combined.append(pending)
+                pending = line
+                pending_end_line = line.line
+
+        if pending.content.rstrip().endswith("\\"):
+            continue
+
+        combined.append(pending)
+        pending = None
+        pending_end_line = 0
+
+    if pending is not None:
+        combined.append(pending)
+
+    return combined
 
 
 def format_findings(findings: list[Finding]) -> str:

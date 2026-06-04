@@ -38,6 +38,14 @@ jobs:
       - name: Run workflow shell guard lint tests
         run: bash scripts/lint/tests/test-workflow-shell-guard-lint.sh
 
+      - name: Validate pull request base ref
+        run: |
+          if [ -z "${GITHUB_BASE_REF:-}" ]; then
+            echo "ERROR: GITHUB_BASE_REF is required for workflow shell guard lint." >&2
+            echo "This workflow must run in a pull_request context." >&2
+            exit 1
+          fi
+
       - name: Fetch base ref for workflow shell guard lint
         run: git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"
 

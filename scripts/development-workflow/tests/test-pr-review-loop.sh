@@ -62,6 +62,10 @@ if [ -n "${MOCK_GH_CALL_LOG:-}" ]; then
 fi
 # Differentiate call types.
 case "$*" in
+  *"pr ready"*)
+    printf '%s\n' "${MOCK_GH_READY_OUTPUT:-{}}"
+    exit "${MOCK_GH_READY_EXIT:-${MOCK_GH_EXIT:-0}}"
+    ;;
   *"--method POST"*)
     printf '%s\n' "${MOCK_GH_POST_OUTPUT:-{}}"
     exit "${MOCK_GH_POST_EXIT:-${MOCK_GH_EXIT:-0}}"
@@ -892,6 +896,18 @@ ready_status=$?
 set -e
 run_test "after_clean_ready_fails_closed_on_state_error" "2" "$ready_status"
 unset MOCK_GH_OUTPUT MOCK_GH_EXIT ready_status
+
+# test: ensure_pr_ready_for_after_clean fails closed when gh pr ready fails
+MOCK_GH_OUTPUT="true"
+MOCK_GH_EXIT=0
+MOCK_GH_READY_EXIT=1
+export MOCK_GH_OUTPUT MOCK_GH_EXIT MOCK_GH_READY_EXIT
+set +e
+ensure_pr_ready_for_after_clean "999" >/dev/null 2>&1
+ready_status=$?
+set -e
+run_test "after_clean_ready_fails_closed_on_ready_error" "2" "$ready_status"
+unset MOCK_GH_OUTPUT MOCK_GH_EXIT MOCK_GH_READY_EXIT ready_status
 
 # ---------------------------------------------------------------------------
 # Area 10: per-platform result tokens in summary comment (#755)
