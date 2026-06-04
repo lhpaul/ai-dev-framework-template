@@ -50,16 +50,18 @@ fi
 # Temp dir for mock binaries and state files.
 # ---------------------------------------------------------------------------
 MOCK_BIN="$(mktemp -d)"
+NO_TIMEOUT_BIN="$(mktemp -d)"
 CALL_LOG="$(mktemp)"
 RESPONSE_SEQ_FILE="$(mktemp)"
 EXIT_SEQ_FILE="$(mktemp)"
+SLEEP_SEQ_FILE="$(mktemp)"
 _REVIEWER_OUTPUT_FILE="$(mktemp)"
 _REVIEWER_EXIT_FILE="$(mktemp)"
 
 _harness_exit() {
   local status=$?
-  rm -rf "$MOCK_BIN"
-  rm -f "$CALL_LOG" "$RESPONSE_SEQ_FILE" "$EXIT_SEQ_FILE" \
+  rm -rf "$MOCK_BIN" "$NO_TIMEOUT_BIN"
+  rm -f "$CALL_LOG" "$RESPONSE_SEQ_FILE" "$EXIT_SEQ_FILE" "$SLEEP_SEQ_FILE" \
         "${_REVIEWER_OUTPUT_FILE:-}" "${_REVIEWER_EXIT_FILE:-}"
   case "$status" in
     141) exit 0 ;;
@@ -67,6 +69,12 @@ _harness_exit() {
   esac
 }
 trap _harness_exit EXIT
+
+for _cmd in bash env jq mktemp date cat rm wc sed tr sleep; do
+  _cmd_path="$(command -v "$_cmd")"
+  ln -sf "$_cmd_path" "$NO_TIMEOUT_BIN/$_cmd"
+done
+unset _cmd _cmd_path
 
 # ---------------------------------------------------------------------------
 # Test framework — minimal pass/fail counter and assertion helper.
@@ -107,6 +115,8 @@ _reset_mocks() {
   RESPONSE_SEQ_FILE="$(mktemp)"
   rm -f "$EXIT_SEQ_FILE"
   EXIT_SEQ_FILE="$(mktemp)"
+  rm -f "$SLEEP_SEQ_FILE"
+  SLEEP_SEQ_FILE="$(mktemp)"
   # Write the current MOCK_HAYSTACK_OUTPUTS lines (one JSON per line) to the
   # sequence file consumed by the mock binary.
   if [ -n "${MOCK_HAYSTACK_OUTPUTS:-}" ]; then
@@ -116,6 +126,11 @@ _reset_mocks() {
   # exit-code sequence file consumed by the mock binary.
   if [ -n "${MOCK_HAYSTACK_EXITS:-}" ]; then
     printf '%s\n' "$MOCK_HAYSTACK_EXITS" > "$EXIT_SEQ_FILE"
+  fi
+  # Optional per-call sleep durations, used to exercise background-process
+  # timeout cleanup paths without calling the real Haystack CLI.
+  if [ -n "${MOCK_HAYSTACK_SLEEPS:-}" ]; then
+    printf '%s\n' "$MOCK_HAYSTACK_SLEEPS" > "$SLEEP_SEQ_FILE"
   fi
 }
 
@@ -142,6 +157,21 @@ if [ "$call_num" -le "$total_lines" ]; then
   line_num="$call_num"
 else
   line_num="$total_lines"  # repeat last entry
+fi
+if [ -n "${MOCK_SLEEP_SEQ:-}" ] && [ -f "$MOCK_SLEEP_SEQ" ]; then
+  total_sleeps=$(wc -l < "$MOCK_SLEEP_SEQ" | tr -d ' ')
+  if [ "$total_sleeps" -gt 0 ]; then
+    if [ "$call_num" -le "$total_sleeps" ]; then
+      sleep_line_num="$call_num"
+    else
+      sleep_line_num="$total_sleeps"
+    fi
+    mock_sleep=$(sed -n "${sleep_line_num}p" "$MOCK_SLEEP_SEQ" | tr -d '[:space:]')
+    case "$mock_sleep" in
+      ''|*[!0-9]*) mock_sleep=0 ;;
+    esac
+    [ "$mock_sleep" -gt 0 ] && sleep "$mock_sleep"
+  fi
 fi
 response=$(sed -n "${line_num}p" "$MOCK_RESPONSE_SEQ")
 printf '%s\n' "$response"
@@ -178,6 +208,7 @@ _run_reviewer() {
   # exit code to _REVIEWER_EXIT_FILE. Never fails the calling shell.
   local timeout="${1:-30}"
   local poll_interval="${2:-1}"
+  local reviewer_path="${TEST_REVIEWER_PATH:-$MOCK_BIN:$PATH}"
   rm -f "$_REVIEWER_OUTPUT_FILE" "$_REVIEWER_EXIT_FILE"
   set +e
   HAYSTACK_REVIEWER_TIMEOUT="$timeout" \
@@ -186,7 +217,8 @@ _run_reviewer() {
   MOCK_CALL_LOG="$CALL_LOG" \
   MOCK_RESPONSE_SEQ="$RESPONSE_SEQ_FILE" \
   MOCK_EXIT_SEQ="$EXIT_SEQ_FILE" \
-  PATH="$MOCK_BIN:$PATH" \
+  MOCK_SLEEP_SEQ="$SLEEP_SEQ_FILE" \
+  PATH="$reviewer_path" \
     bash "$HAYSTACK_REVIEWER" "123" "owner" "repo" \
     >"$_REVIEWER_OUTPUT_FILE" 2>/dev/null
   echo $? > "$_REVIEWER_EXIT_FILE"
@@ -707,6 +739,9 @@ ec=$(cat "$_REVIEWER_EXIT_FILE")
 
 run_test "policy_needs_review_result_stays_clean" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
 run_test "policy_needs_review_required" "POLICY_REVIEW_REQUIRED=1" "$(echo "$output" | grep '^POLICY_REVIEW_REQUIRED=')"
+run_test "policy_needs_review_bucket" "POLICY_BUCKET=needs-assignment" "$(echo "$output" | grep '^POLICY_BUCKET=')"
+run_test "policy_needs_review_rating" "POLICY_RATING=5" "$(echo "$output" | grep '^POLICY_RATING=')"
+run_test "policy_needs_review_has_reviewer" "POLICY_HAS_REVIEWER=false" "$(echo "$output" | grep '^POLICY_HAS_REVIEWER=')"
 run_test "policy_needs_review_display" "DISPLAY_RESULT=needs-review: policy" "$(echo "$output" | grep '^DISPLAY_RESULT=')"
 run_test "policy_needs_review_suggestion_count" "SUGGESTION_COUNT=0" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
 run_test "policy_needs_review_comment_count" "COMMENT_COUNT=0" "$(echo "$output" | grep '^COMMENT_COUNT=')"
@@ -820,6 +855,68 @@ run_test "policy_pass_not_required" "POLICY_REVIEW_REQUIRED=0" "$(echo "$output"
 run_test "policy_pass_suggestion_count" "SUGGESTION_COUNT=0" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
 run_test "policy_pass_exit_code" "0" "$ec"
 unset TEST_HAYSTACK_PR_STATUS_CHECK
+
+# Test 10.8: legacy top-level pr-status keys are parsed as policy metadata.
+TEST_HAYSTACK_PR_STATUS_CHECK=1
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}
+{"bucket":"needs-assignment","analysisVerdict":"needs-review","needsHumanReview":true,"haystackRating":4,"hasReviewer":false}'
+MOCK_HAYSTACK_EXITS='0
+0'
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "policy_top_level_required" "POLICY_REVIEW_REQUIRED=1" "$(echo "$output" | grep '^POLICY_REVIEW_REQUIRED=')"
+run_test "policy_top_level_bucket" "POLICY_BUCKET=needs-assignment" "$(echo "$output" | grep '^POLICY_BUCKET=')"
+run_test "policy_top_level_verdict" "POLICY_VERDICT=needs-review" "$(echo "$output" | grep '^POLICY_VERDICT=')"
+run_test "policy_top_level_rating" "POLICY_RATING=4" "$(echo "$output" | grep '^POLICY_RATING=')"
+run_test "policy_top_level_has_reviewer" "POLICY_HAS_REVIEWER=false" "$(echo "$output" | grep '^POLICY_HAS_REVIEWER=')"
+run_test "policy_top_level_display" "DISPLAY_RESULT=needs-review: policy" "$(echo "$output" | grep '^DISPLAY_RESULT=')"
+run_test "policy_top_level_exit_code" "0" "$ec"
+unset TEST_HAYSTACK_PR_STATUS_CHECK
+
+# Test 10.9: no-timeout fallback still reads pr-status policy metadata.
+TEST_HAYSTACK_PR_STATUS_CHECK=1
+TEST_REVIEWER_PATH="$MOCK_BIN:$NO_TIMEOUT_BIN"
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}
+{"bucket":"needs-assignment","inputs":{"analysisVerdict":"needs-review","needsHumanReview":true,"haystackRating":5,"hasReviewer":false}}'
+MOCK_HAYSTACK_EXITS='0
+0'
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+calls=$(_call_count)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "policy_no_timeout_fallback_calls_triage_and_status" "2" "$calls"
+run_test "policy_no_timeout_fallback_available" "POLICY_STATUS_AVAILABLE=1" "$(echo "$output" | grep '^POLICY_STATUS_AVAILABLE=')"
+run_test "policy_no_timeout_fallback_required" "POLICY_REVIEW_REQUIRED=1" "$(echo "$output" | grep '^POLICY_REVIEW_REQUIRED=')"
+run_test "policy_no_timeout_fallback_display" "DISPLAY_RESULT=needs-review: policy" "$(echo "$output" | grep '^DISPLAY_RESULT=')"
+run_test "policy_no_timeout_fallback_exit_code" "0" "$ec"
+unset TEST_HAYSTACK_PR_STATUS_CHECK TEST_REVIEWER_PATH
+
+# Test 10.10: no-timeout fallback terminates a hung pr-status subprocess.
+TEST_HAYSTACK_PR_STATUS_CHECK=1
+TEST_REVIEWER_PATH="$MOCK_BIN:$NO_TIMEOUT_BIN"
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}
+{"bucket":"needs-assignment","inputs":{"analysisVerdict":"needs-review","needsHumanReview":true}}'
+MOCK_HAYSTACK_EXITS='0
+0'
+MOCK_HAYSTACK_SLEEPS='0
+2'
+_install_mock_with_exits
+
+output=$(_run_reviewer 1 1)
+calls=$(_call_count)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "policy_no_timeout_hung_status_called" "2" "$calls"
+run_test "policy_no_timeout_hung_status_unavailable" "POLICY_STATUS_AVAILABLE=0" "$(echo "$output" | grep '^POLICY_STATUS_AVAILABLE=')"
+run_test "policy_no_timeout_hung_status_not_required" "POLICY_REVIEW_REQUIRED=0" "$(echo "$output" | grep '^POLICY_REVIEW_REQUIRED=')"
+run_test "policy_no_timeout_hung_status_result_clean" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+run_test "policy_no_timeout_hung_status_exit_code" "0" "$ec"
+unset TEST_HAYSTACK_PR_STATUS_CHECK TEST_REVIEWER_PATH MOCK_HAYSTACK_SLEEPS
 
 # ---------------------------------------------------------------------------
 # Summary
