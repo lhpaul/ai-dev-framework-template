@@ -218,6 +218,8 @@ COMMENT_COUNT=0
 
 In all three cases, `pr-review-loop.sh` treats the reviewer as unavailable and continues with the remaining platforms. Other platforms are not blocked.
 
+When any of these Haystack reviewer-health failures occur, `pr-review-loop.sh` applies the `reviewer-failed` label to the PR so the failure is visible from the PR list or project board. The label is self-healing: a later loop run that reaches healthy reviewer output (`clean`, `needs_fixes`, `needs_rerun`, or only `skipped/not_configured`) removes `reviewer-failed`.
+
 ---
 
 ## Exit Code Contract
@@ -274,7 +276,7 @@ RESULT=skipped
 REASON=pending_timeout
 ```
 
-**When you see `REASON=pending_timeout`**: The review loop will treat the reviewer as unavailable for this run and continue with the remaining platforms. This is distinct from `REASON=unavailable` (CLI not installed or authentication failed) and `REASON=timeout` (a single call hung).
+**When you see `REASON=pending_timeout`**: The review loop will treat the reviewer as unavailable for this run, apply `reviewer-failed`, and continue with the remaining platforms. This is distinct from `REASON=unavailable` (CLI not installed or authentication failed) and `REASON=timeout` (a single call hung). A later clean Haystack run removes `reviewer-failed`.
 
 **Recovery options**:
 

@@ -66,6 +66,18 @@ case "$*" in
     printf '%s\n' "${MOCK_GH_READY_OUTPUT:-{}}"
     exit "${MOCK_GH_READY_EXIT:-${MOCK_GH_EXIT:-0}}"
     ;;
+  *"label view"*)
+    printf '%s\n' "${MOCK_GH_LABEL_VIEW_OUTPUT:-${MOCK_GH_OUTPUT:-{}}}"
+    exit "${MOCK_GH_LABEL_VIEW_EXIT:-${MOCK_GH_EXIT:-0}}"
+    ;;
+  *"label create"*)
+    printf '%s\n' "${MOCK_GH_LABEL_CREATE_OUTPUT:-${MOCK_GH_OUTPUT:-{}}}"
+    exit "${MOCK_GH_LABEL_CREATE_EXIT:-${MOCK_GH_EXIT:-0}}"
+    ;;
+  *"pr edit"*)
+    printf '%s\n' "${MOCK_GH_PR_EDIT_OUTPUT:-${MOCK_GH_OUTPUT:-{}}}"
+    exit "${MOCK_GH_PR_EDIT_EXIT:-${MOCK_GH_EXIT:-0}}"
+    ;;
   *"--method POST"*)
     printf '%s\n' "${MOCK_GH_POST_OUTPUT:-{}}"
     exit "${MOCK_GH_POST_EXIT:-${MOCK_GH_EXIT:-0}}"
@@ -1137,6 +1149,146 @@ unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_EXIT _warn_output
 export MOCK_GH_OUTPUT='[]'
 unset MOCK_GH_EXIT MOCK_GH_COMMENTS_OUTPUT MOCK_GH_COMMENTS_EXIT
 unset _SUMMARY_COMMENT_JSON
+
+# ---------------------------------------------------------------------------
+# Area 12: reviewer-failed label sync (issue #804)
+#
+# reviewer_failed_label_required_for_result(), ensure_reviewer_failed_label_exists(),
+# and sync_reviewer_failed_label() are defined before the HARNESS_MODE return point
+# and are therefore callable directly from the test harness.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 12: reviewer-failed label sync (issue #804) ==="
+
+_reviewer_failed_required() {
+  if reviewer_failed_label_required_for_result "$1" "${2:-}"; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+}
+
+run_test "reviewer_failed_escalate_timeout" "yes" "$(_reviewer_failed_required escalate timeout)"
+run_test "reviewer_failed_escalate_empty_reason" "yes" "$(_reviewer_failed_required escalate '')"
+run_test "reviewer_failed_escalate_pending_timeout" "yes" "$(_reviewer_failed_required escalate pending_timeout)"
+run_test "reviewer_failed_skipped_unavailable" "yes" "$(_reviewer_failed_required skipped unavailable)"
+run_test "reviewer_failed_skipped_thread_check_failed" "yes" "$(_reviewer_failed_required skipped thread-check-failed)"
+run_test "reviewer_failed_skipped_not_configured" "no" "$(_reviewer_failed_required skipped not_configured)"
+run_test "reviewer_failed_clean_no" "no" "$(_reviewer_failed_required clean timeout)"
+run_test "reviewer_failed_needs_fixes_no" "no" "$(_reviewer_failed_required needs_fixes '')"
+run_test "reviewer_failed_needs_rerun_no" "no" "$(_reviewer_failed_required needs_rerun '')"
+
+_rf_accumulated=0
+if reviewer_failed_label_required_for_result clean ""; then
+  _rf_accumulated=1
+fi
+if reviewer_failed_label_required_for_result skipped unavailable; then
+  _rf_accumulated=1
+fi
+if reviewer_failed_label_required_for_result clean ""; then
+  _rf_accumulated=1
+fi
+run_test "reviewer_failed_accumulator_or" "1" "$_rf_accumulated"
+unset _rf_accumulated
+
+unset MOCK_GH_CALL_LOG MOCK_GH_EXIT MOCK_GH_LABEL_VIEW_EXIT MOCK_GH_LABEL_CREATE_EXIT MOCK_GH_PR_EDIT_EXIT
+
+_call_log_12="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log_12"
+export MOCK_GH_LABEL_VIEW_EXIT=1
+sync_reviewer_failed_label "42" "1" 2>/dev/null
+_create_calls="$(grep -c -- 'label create reviewer-failed' "$_call_log_12" 2>/dev/null)" || _create_calls="0"
+_add_calls="$(grep -c -- 'pr edit 42 --add-label reviewer-failed' "$_call_log_12" 2>/dev/null)" || _add_calls="0"
+run_test "reviewer_failed_required_creates_missing_label" "1" "$_create_calls"
+run_test "reviewer_failed_required_adds_label" "1" "$_add_calls"
+rm -f "$_call_log_12"
+unset MOCK_GH_CALL_LOG MOCK_GH_LABEL_VIEW_EXIT
+
+_call_log_12="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log_12"
+export MOCK_GH_LABEL_VIEW_EXIT=0
+sync_reviewer_failed_label "42" "1" 2>/dev/null
+_create_calls="$(grep -c -- 'label create reviewer-failed' "$_call_log_12" 2>/dev/null)" || _create_calls="0"
+_add_calls="$(grep -c -- 'pr edit 42 --add-label reviewer-failed' "$_call_log_12" 2>/dev/null)" || _add_calls="0"
+run_test "reviewer_failed_existing_label_no_create" "0" "$_create_calls"
+run_test "reviewer_failed_existing_label_adds_label" "1" "$_add_calls"
+rm -f "$_call_log_12"
+unset MOCK_GH_CALL_LOG MOCK_GH_LABEL_VIEW_EXIT
+
+_call_log_12="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log_12"
+export MOCK_GH_OUTPUT='reviewer-failed'
+sync_reviewer_failed_label "42" "0" 2>/dev/null
+_remove_calls="$(grep -c -- 'pr edit 42 --remove-label reviewer-failed' "$_call_log_12" 2>/dev/null)" || _remove_calls="0"
+run_test "reviewer_failed_not_required_removes_present_label" "1" "$_remove_calls"
+rm -f "$_call_log_12"
+unset MOCK_GH_CALL_LOG MOCK_GH_OUTPUT
+
+_call_log_12="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log_12"
+export MOCK_GH_OUTPUT='some-other-label'
+sync_reviewer_failed_label "42" "0" 2>/dev/null
+_remove_calls="$(grep -c -- 'pr edit 42 --remove-label reviewer-failed' "$_call_log_12" 2>/dev/null)" || _remove_calls="0"
+run_test "reviewer_failed_not_required_absent_noop" "0" "$_remove_calls"
+rm -f "$_call_log_12"
+unset MOCK_GH_CALL_LOG MOCK_GH_OUTPUT
+
+_call_log_12="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log_12"
+export MOCK_GH_EXIT=1
+export MOCK_GH_PR_EDIT_EXIT=0
+sync_reviewer_failed_label "42" "0" 2>/dev/null
+_remove_calls="$(grep -c -- 'pr edit 42 --remove-label reviewer-failed' "$_call_log_12" 2>/dev/null)" || _remove_calls="0"
+run_test "reviewer_failed_not_required_view_failure_attempts_remove" "1" "$_remove_calls"
+rm -f "$_call_log_12"
+unset MOCK_GH_CALL_LOG MOCK_GH_EXIT MOCK_GH_PR_EDIT_EXIT
+
+_call_log_12="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log_12"
+export MOCK_GH_LABEL_VIEW_EXIT=1
+export MOCK_GH_LABEL_CREATE_EXIT=1
+_sync_exit=0
+_warn_output="$(sync_reviewer_failed_label "42" "1" 2>&1)" || _sync_exit=$?
+_add_calls="$(grep -c -- 'pr edit 42 --add-label reviewer-failed' "$_call_log_12" 2>/dev/null)" || _add_calls="0"
+run_test "reviewer_failed_create_failure_returns_0" "0" "$_sync_exit"
+run_test "reviewer_failed_create_failure_still_attempts_add" "1" "$_add_calls"
+if printf '%s\n' "$_warn_output" | grep -q "WARN"; then
+  _warn_emitted="yes"
+else
+  _warn_emitted="no"
+fi
+run_test "reviewer_failed_create_failure_warns" "yes" "$_warn_emitted"
+rm -f "$_call_log_12"
+unset MOCK_GH_CALL_LOG MOCK_GH_LABEL_VIEW_EXIT MOCK_GH_LABEL_CREATE_EXIT _warn_output _sync_exit
+
+_call_log_12="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log_12"
+sync_reviewer_failed_label "42" "1" 2>/dev/null
+_ready_label_mentions="$(grep -c -- 'ready-for-human-review' "$_call_log_12" 2>/dev/null)" || _ready_label_mentions="0"
+run_test "reviewer_failed_does_not_touch_ready_label" "0" "$_ready_label_mentions"
+rm -f "$_call_log_12"
+unset MOCK_GH_CALL_LOG
+
+_reviewer_failed_fn_line="$(grep -n 'reviewer_failed_label_required_for_result()' \
+  "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null \
+  | head -1 | cut -d: -f1)"
+_sync_fn_line="$(grep -n 'sync_reviewer_failed_label()' \
+  "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null \
+  | head -1 | cut -d: -f1)"
+_harness_return_line="$(grep -n '_HARNESS_MODE_EFFECTIVE.*return 0' \
+  "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null \
+  | head -1 | cut -d: -f1)"
+if [ -n "$_reviewer_failed_fn_line" ] && [ -n "$_sync_fn_line" ] \
+    && [ -n "$_harness_return_line" ] \
+    && [ "$_reviewer_failed_fn_line" -lt "$_harness_return_line" ] \
+    && [ "$_sync_fn_line" -lt "$_harness_return_line" ]; then
+  _reviewer_failed_ordering_ok="yes"
+else
+  _reviewer_failed_ordering_ok="no"
+fi
+run_test "reviewer_failed_helpers_before_harness_return" "yes" "$_reviewer_failed_ordering_ok"
+unset _reviewer_failed_required _reviewer_failed_fn_line _sync_fn_line _harness_return_line _reviewer_failed_ordering_ok
+unset MOCK_GH_EXIT MOCK_GH_LABEL_VIEW_EXIT MOCK_GH_LABEL_CREATE_EXIT MOCK_GH_PR_EDIT_EXIT
 
 # ---------------------------------------------------------------------------
 # Summary

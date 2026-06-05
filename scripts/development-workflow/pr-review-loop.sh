@@ -3539,6 +3539,85 @@ normalize_platform_verdict() {
   esac
 }
 
+REVIEWER_FAILED_LABEL="reviewer-failed"
+REVIEWER_FAILED_LABEL_COLOR="b60205"
+REVIEWER_FAILED_LABEL_DESCRIPTION="Automated reviewer platform failed, timed out, or was unavailable"
+
+reviewer_failed_label_required_for_result() {
+  local result="$1"
+  local reason="${2:-}"
+
+  case "$result" in
+    escalate)
+      return 0
+      ;;
+    skipped)
+      case "$reason" in
+        unavailable|timeout|thread-check-failed|pending_timeout)
+          return 0
+          ;;
+      esac
+      ;;
+  esac
+
+  return 1
+}
+
+ensure_reviewer_failed_label_exists() {
+  if gh label view "$REVIEWER_FAILED_LABEL" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if ! gh label create "$REVIEWER_FAILED_LABEL" \
+      --color "$REVIEWER_FAILED_LABEL_COLOR" \
+      --description "$REVIEWER_FAILED_LABEL_DESCRIPTION" >/dev/null; then
+    echo "WARN: failed to create ${REVIEWER_FAILED_LABEL} label; proceeding with reviewer loop" >&2
+  fi
+
+  return 0
+}
+
+pr_has_reviewer_failed_label() {
+  local pr_number_arg="$1"
+  local labels
+
+  if ! labels="$(gh pr view "$pr_number_arg" --json labels --jq '.labels[].name' 2>/dev/null)"; then
+    return 2
+  fi
+
+  printf '%s\n' "$labels" | grep -Fxq "$REVIEWER_FAILED_LABEL"
+}
+
+sync_reviewer_failed_label() {
+  local pr_number_arg="$1"
+  local required="$2"
+  local label_check_status
+
+  [ -n "${pr_number_arg:-}" ] || return 0
+
+  if [ "$required" = "1" ]; then
+    ensure_reviewer_failed_label_exists
+    if ! gh pr edit "$pr_number_arg" --add-label "$REVIEWER_FAILED_LABEL" >/dev/null; then
+      echo "WARN: failed to apply ${REVIEWER_FAILED_LABEL} label to PR #${pr_number_arg}; proceeding with reviewer loop" >&2
+    fi
+  else
+    label_check_status=1
+    if pr_has_reviewer_failed_label "$pr_number_arg"; then
+      label_check_status=0
+    else
+      label_check_status=$?
+    fi
+    if [ "$label_check_status" -eq 1 ]; then
+      return 0
+    fi
+    if ! gh pr edit "$pr_number_arg" --remove-label "$REVIEWER_FAILED_LABEL" >/dev/null; then
+      echo "WARN: failed to remove ${REVIEWER_FAILED_LABEL} label from PR #${pr_number_arg}; proceeding with reviewer loop" >&2
+    fi
+  fi
+
+  return 0
+}
+
 # append_compare_metrics_row: append one structured row to the platform metrics log.
 # Called at the end of the platform loop when compare_mode=1.
 # $1 = pr_number
@@ -4017,6 +4096,7 @@ total_comment_count=0
 total_blocking_count=0
 total_suggestion_count=0
 aggregate_advisory_labels=""
+reviewer_failed_required=0
 declare -a compare_verdicts=()
 # Per-platform result tokens for the PR summary comment.
 # Each entry is "platform_name=display_token" (e.g. "haystack=unavailable").
@@ -4091,6 +4171,10 @@ for index in "${!platforms[@]}"; do
   platform_blocking_count="$(kv_value_default BLOCKING_COUNT "$platform_output" 0)"
   platform_suggestion_count="$(kv_value_default SUGGESTION_COUNT "$platform_output" 0)"
   platform_advisory_labels="$(kv_value_default ADVISORY_LABELS "$platform_output" "")"
+  platform_reason="$(kv_value_default REASON "$platform_output" "")"
+  if reviewer_failed_label_required_for_result "$platform_result" "$platform_reason"; then
+    reviewer_failed_required=1
+  fi
 
   total_comment_count=$((total_comment_count + platform_comment_count))
   total_blocking_count=$((total_blocking_count + platform_blocking_count))
@@ -4108,7 +4192,7 @@ for index in "${!platforms[@]}"; do
   print_kv "PLATFORM_${platform_index}_RESULT" "$platform_result"
   emit_prefixed_platform_output "$platform_index" "$platform_output"
   # Record a human-readable display token for the PR summary comment.
-  _prt_reason="$(kv_value_default REASON "$platform_output" "")"
+  _prt_reason="$platform_reason"
   _prt_display_override="$(kv_value_default DISPLAY_RESULT "$platform_output" "")"
   if [ -n "$_prt_display_override" ]; then
     _prt_disp="$_prt_display_override"
@@ -4478,6 +4562,7 @@ if [ -z "$last_platform" ]; then
   print_kv SUGGESTION_COUNT 0
   print_kv UNRESOLVED_THREAD_COUNT 0
   _post_review_summary "skipped" "not_configured" "none" "0" "0" "" "" "0" "" "0" "0" "" "0"
+  sync_reviewer_failed_label "$pr_number" 0
   exit 0
 fi
 
@@ -4702,6 +4787,11 @@ if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
     echo "WARN: append_compare_metrics_row failed — metrics row not written" >&2
   set -e
 fi
+
+if reviewer_failed_label_required_for_result "$aggregate_result" "$aggregate_reason"; then
+  reviewer_failed_required=1
+fi
+sync_reviewer_failed_label "$pr_number" "$reviewer_failed_required"
 
 print_kv RESULT "$aggregate_result"
 print_kv PLATFORM "$last_platform"
