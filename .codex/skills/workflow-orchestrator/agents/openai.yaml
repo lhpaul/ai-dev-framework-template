@@ -1,7 +1,7 @@
 interface:
   display_name: "Workflow Orchestrator"
-  short_description: "Batch and supervise workflow items until each reaches a terminal condition."
-  default_prompt: "Use $workflow-orchestrator to inspect workflow state, build safe parallel batches, and supervise each eligible item until it is waiting on a human, blocked, or escalated."
+  short_description: "Propose and supervise the largest safe workflow batch."
+  default_prompt: "Use $workflow-orchestrator to inspect workflow state, advance deterministic in-flight work, and propose the largest safe Backlog start batch by priority and parallelization feasibility before asking for approval."
 
 policy:
   allow_implicit_invocation: true
