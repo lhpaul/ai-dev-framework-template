@@ -148,6 +148,14 @@ PR-Agent's blocking classification is based on stable body-content markers in it
 
 When `Recommended focus areas for review` is present but contains **only** explicitly-known advisory labels (`Possible Issue`, `Edge Case`, `Logic Gap`, `Documentation Inconsistency`), the classifier returns `clean`. Hard-blocker labels, security labels (`Security Concern`), and compatibility labels (`API Change`, `Backward Compatibility`) always block.
 
+**Classifier-safe fallback**: If an agent cannot read the full PR-Agent comment body
+because the runner's classifier or tool policy blocks the structured review text, do
+not stop the reviewer loop. Re-run PR-Agent through `pr-review-loop.sh --platform
+pr-agent` and consume only the helper's key-value output (`RESULT`, counts, advisory
+labels, and possible-issue evaluation). Protocol 93 documents this label-only path;
+the full review body should not be required for the agent to decide whether to proceed,
+dispatch a fixer, or escalate.
+
 ### Fork PR handling
 
 When a PR is opened from a fork, GitHub Actions **does not expose repository secrets** to the workflow. This means `DEEPSEEK_API_KEY` (or the alternative key) is unavailable and the workflow will fail silently — no review is posted. The helper will time out and report `RESULT=skipped` with `REASON=no_review`. This is expected behavior and is not a configuration error.
