@@ -579,18 +579,14 @@ workflow_github_project_id() {
      [ "$__workflow_github_project_id_cache_number" != "$project_number" ] || \
      [ -z "$__workflow_github_project_id_cache_id" ]; then
     # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
-    if ! response=$(gh api graphql \
+    response=$(gh api graphql \
       -f owner="$project_owner" \
       -F projectNumber="$project_number" \
       -f query='
         query($owner: String!, $projectNumber: Int!) {
           user(login: $owner) { projectV2(number: $projectNumber) { id } }
-          organization(login: $owner) { projectV2(number: $projectNumber) { id } }
         }
-      ' 2>/dev/null); then
-      printf ''
-      return 0
-    fi
+      ' 2>/dev/null || true)
 
     project_id="$(printf '%s' "$response" | python3 -c "
 import json, sys
@@ -598,13 +594,31 @@ try:
     data = json.loads(sys.stdin.read(), strict=False)
 except Exception:
     sys.exit(0)
-root = data.get('data') or {}
-for owner_type in ('user', 'organization'):
-    project = (root.get(owner_type) or {}).get('projectV2') or {}
-    if project.get('id'):
-        print(project.get('id'), end='')
-        break
+project = ((data.get('data') or {}).get('user') or {}).get('projectV2') or {}
+print(project.get('id') or '', end='')
 " 2>/dev/null || true)"
+
+    if [ -z "$project_id" ]; then
+      # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
+      response=$(gh api graphql \
+        -f owner="$project_owner" \
+        -F projectNumber="$project_number" \
+        -f query='
+          query($owner: String!, $projectNumber: Int!) {
+            organization(login: $owner) { projectV2(number: $projectNumber) { id } }
+          }
+        ' 2>/dev/null || true)
+
+      project_id="$(printf '%s' "$response" | python3 -c "
+import json, sys
+try:
+    data = json.loads(sys.stdin.read(), strict=False)
+except Exception:
+    sys.exit(0)
+project = ((data.get('data') or {}).get('organization') or {}).get('projectV2') or {}
+print(project.get('id') or '', end='')
+" 2>/dev/null || true)"
+    fi
 
     __workflow_github_project_id_cache_owner="$project_owner"
     __workflow_github_project_id_cache_number="$project_number"
