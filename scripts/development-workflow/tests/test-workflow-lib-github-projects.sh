@@ -45,17 +45,30 @@ case "$*" in
 {"data":{"user":{"projectV2":{"id":"PVT_project_1"}},"organization":null}}
 JSON
         ;;
-      *"projectItems(first:"*)
-        if [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "missing" ]; then
-          cat <<'JSON'
-{"data":{"repository":{"issue":{"projectItems":{"nodes":[]}}}}}
+	      *"projectItems(first:"*)
+	        if [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "missing" ]; then
+	          cat <<'JSON'
+	{"data":{"repository":{"issue":{"projectItems":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
 JSON
-        else
-          cat <<'JSON'
-{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"fieldValueByName":{"name":"Spec Ready"}}]}}}}}
+	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "paginated" ]; then
+	          case "$*" in
+	            *"after=cursor_page_1"*)
+	              cat <<'JSON'
+	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"fieldValueByName":{"name":"Spec Ready"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
 JSON
-        fi
-        ;;
+	              ;;
+	            *)
+	              cat <<'JSON'
+	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_other","project":{"id":"PVT_other","number":99},"fieldValueByName":{"name":"Backlog"}}],"pageInfo":{"hasNextPage":true,"endCursor":"cursor_page_1"}}}}}}
+JSON
+	              ;;
+	          esac
+	        else
+	          cat <<'JSON'
+	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"fieldValueByName":{"name":"Spec Ready"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
+JSON
+	        fi
+	        ;;
       *"fields(first:"*)
         cat <<'JSON'
 {"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_status","name":"Status","options":[{"id":"OPT_spec_ready","name":"Spec Ready"},{"id":"OPT_in_development","name":"In Development"}]}]}}}}
@@ -126,6 +139,14 @@ reset_log
 status="$(get_tracker_status_for_issue 824)"
 run_test "targeted_status_read" "Spec Ready" "$status"
 run_test "status_read_avoids_full_board_scan" "" "$(forbidden_project_reads)"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=paginated
+status="$(get_tracker_status_for_issue 824)"
+unset MOCK_PROJECT_ITEM_MODE
+run_test "targeted_status_read_paginates" "Spec Ready" "$status"
+run_test "paginated_status_uses_two_item_queries" "2" "$(count_log_matches 'projectItems')"
+run_test "paginated_status_avoids_full_board_scan" "" "$(forbidden_project_reads)"
 
 reset_log
 membership_output="$(ensure_on_project_board 824 "In Development")"

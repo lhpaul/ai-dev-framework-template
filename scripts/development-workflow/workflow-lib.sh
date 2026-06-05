@@ -648,6 +648,7 @@ workflow_github_project_item_for_issue() {
   local issue_number="$1"
   local project_number="$2"
   local project_owner project_id repo_owner repo_name response
+  local cursor page_state item_json has_next end_cursor page_count line
 
   project_owner="$(workflow_resolve_github_project_owner)"
   project_id="$(workflow_github_project_id "$project_owner" "$project_number")"
@@ -658,51 +659,98 @@ workflow_github_project_item_for_issue() {
     return 0
   fi
 
-  # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
-  if ! response=$(gh api graphql \
-    -f owner="$repo_owner" \
-    -f repo="$repo_name" \
-    -F issueNumber="$issue_number" \
-    -f query='
-      query($owner: String!, $repo: String!, $issueNumber: Int!) {
-        repository(owner: $owner, name: $repo) {
-          issue(number: $issueNumber) {
-            projectItems(first: 50) {
-              nodes {
-                id
-                project { id number }
-                fieldValueByName(name: "Status") {
-                  ... on ProjectV2ItemFieldSingleSelectValue { name }
+  cursor=""
+  page_count=0
+  while :; do
+    # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
+    if ! response=$(gh api graphql \
+      -f owner="$repo_owner" \
+      -f repo="$repo_name" \
+      -F issueNumber="$issue_number" \
+      -F after="${cursor:-null}" \
+      -f query='
+        query($owner: String!, $repo: String!, $issueNumber: Int!, $after: String) {
+          repository(owner: $owner, name: $repo) {
+            issue(number: $issueNumber) {
+              projectItems(first: 100, after: $after) {
+                nodes {
+                  id
+                  project { id number }
+                  fieldValueByName(name: "Status") {
+                    ... on ProjectV2ItemFieldSingleSelectValue { name }
+                  }
                 }
+                pageInfo { hasNextPage endCursor }
               }
             }
           }
         }
-      }
-    ' 2>/dev/null); then
-    printf ''
-    return 0
-  fi
+      ' 2>/dev/null); then
+      echo "Warning: GraphQL project item lookup failed for issue #${issue_number}; tracker status not read." >&2
+      printf ''
+      return 0
+    fi
 
-  printf '%s' "$response" | python3 -c "
+    if ! page_state="$(printf '%s' "$response" | python3 -c "
 import json, sys
 project_id = sys.argv[1]
 try:
     data = json.loads(sys.stdin.read(), strict=False)
 except Exception:
-    sys.exit(0)
+    sys.exit(2)
 issue = (((data.get('data') or {}).get('repository') or {}).get('issue') or {})
-for item in (issue.get('projectItems') or {}).get('nodes') or []:
+project_items = issue.get('projectItems') or {}
+match = ''
+for item in project_items.get('nodes') or []:
     project = item.get('project') or {}
     if project.get('id') == project_id:
         status_value = item.get('fieldValueByName') or {}
-        print(json.dumps({
+        match = json.dumps({
             'item_id': item.get('id') or '',
             'project_id': project.get('id') or '',
             'status': status_value.get('name') or '',
-        }))
+        }, separators=(',', ':'))
         break
-" "$project_id" 2>/dev/null || true
+page_info = project_items.get('pageInfo') or {}
+has_next = 'true' if page_info.get('hasNextPage') else 'false'
+end_cursor = page_info.get('endCursor') or ''
+print('ITEM=' + match)
+print('HAS_NEXT=' + has_next)
+print('END_CURSOR=' + end_cursor)
+" "$project_id" 2>/dev/null)"; then
+      echo "Warning: could not parse GraphQL project item response for issue #${issue_number}; tracker status not read." >&2
+      printf ''
+      return 0
+    fi
+
+    item_json=""
+    has_next="false"
+    end_cursor=""
+    while IFS= read -r line; do
+      case "$line" in
+        ITEM=*) item_json="${line#ITEM=}" ;;
+        HAS_NEXT=*) has_next="${line#HAS_NEXT=}" ;;
+        END_CURSOR=*) end_cursor="${line#END_CURSOR=}" ;;
+      esac
+    done <<EOF
+$page_state
+EOF
+    if [ -n "$item_json" ]; then
+      printf '%s' "$item_json"
+      return 0
+    fi
+    if [ "$has_next" != "true" ] || [ -z "$end_cursor" ]; then
+      break
+    fi
+    page_count=$((page_count + 1))
+    if [ "$page_count" -ge 20 ]; then
+      echo "Warning: project item lookup exceeded pagination limit for issue #${issue_number}; tracker status not read." >&2
+      break
+    fi
+    cursor="$end_cursor"
+  done
+
+  printf ''
 }
 
 workflow_github_project_status_field_json() {
