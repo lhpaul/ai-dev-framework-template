@@ -388,7 +388,7 @@ This checklist does not require a full script audit — only the specific claims
 
 Complete this pass after implementation, verification, CHANGELOG work, commit, and push, but before board membership checks or `gh pr create`. If the pass finds a gap, fix it, commit the fix, push it, and re-run the affected check before opening the draft PR.
 
-Use `git diff <base-branch>...HEAD` to review the exact PR diff. This is the required three-dot form. Resolve `<base-branch>` from the actual PR target:
+Use `git diff <base-branch>...HEAD` to review the exact PR diff. This is the required three-dot form. For a normal `develop`-target implementation branch, this means `git diff develop...HEAD`. Resolve `<base-branch>` from the actual PR target:
 
 - `develop` by default for Full Pipeline, Refactor, and Fast Track Fix work.
 - `develop-<slug>` when the work item carries an `integration-branch:<slug>` label.
@@ -630,7 +630,7 @@ Use Conventional Commits (see `docs/best-practices/2-version-control.md`).
 
 ### Step 8: Open PR (Draft)
 
-**Pre-Submission Self-Review Pass (mandatory — before opening the PR)**: Complete the [Pre-Submission Self-Review Pass](#pre-submission-self-review-pass) using `git diff <base-branch>...HEAD` (`develop` by default, or `develop-<slug>` for integration-branch items). For Full Pipeline work, the coverage check must confirm every spec acceptance criterion is addressed. This pass complements, and does not replace, the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) when a test harness is involved. Add the self-review log to the PR description.
+**Pre-Submission Self-Review Pass (mandatory — before opening the PR)**: Complete the [Pre-Submission Self-Review Pass](#pre-submission-self-review-pass) using `git diff develop...HEAD` for normal `develop`-target work, or `git diff develop-<slug>...HEAD` for integration-branch items. For Full Pipeline work, the coverage check must confirm every spec acceptance criterion is addressed. This pass complements, and does not replace, the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) when a test harness is involved. Add the self-review log to the PR description.
 
 **Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
 
@@ -923,7 +923,7 @@ git checkout -b refactor/[branch-slug]
 
 7. Commit: `refactor([scope]): [description]`
 8. Push branch to remote
-9. **Pre-Submission Self-Review Pass (mandatory — before opening the PR)**: Complete the [Pre-Submission Self-Review Pass](#pre-submission-self-review-pass) using `git diff <base-branch>...HEAD` (`develop` by default, or `develop-<slug>` for integration-branch items). For Refactor work, the coverage check must confirm every implementation-plan acceptance criterion is addressed. This pass complements, and does not replace, the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) when a test harness is involved. Add the self-review log to the PR description.
+9. **Pre-Submission Self-Review Pass (mandatory — before opening the PR)**: Complete the [Pre-Submission Self-Review Pass](#pre-submission-self-review-pass) using `git diff develop...HEAD` for normal `develop`-target work, or `git diff develop-<slug>...HEAD` for integration-branch items. For Refactor work, the coverage check must confirm every implementation-plan acceptance criterion is addressed. This pass complements, and does not replace, the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) when a test harness is involved. Add the self-review log to the PR description.
 10. **Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
 11. Open a **draft** PR targeting `develop` with refactor-appropriate metadata (do **not** reuse Path 1 Step 8 verbatim — that path uses `feat(...)` and a spec link):
     - **Title**: `refactor([scope]): [short description]`
@@ -1145,7 +1145,7 @@ git push -u origin fix/[branch-slug]
 
 ### Step 8: Open PR (Draft)
 
-**Pre-Submission Self-Review Pass (mandatory — before opening the PR)**: Complete the [Pre-Submission Self-Review Pass](#pre-submission-self-review-pass) using `git diff <base-branch>...HEAD` (`develop` by default, or `develop-<slug>` for integration-branch items). For Fast Track Fix work, the coverage check must confirm the diff addresses the issue body's stated problem and proposed fix. This pass complements, and does not replace, the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) when a test harness is involved. Add the self-review log to the PR description.
+**Pre-Submission Self-Review Pass (mandatory — before opening the PR)**: Complete the [Pre-Submission Self-Review Pass](#pre-submission-self-review-pass) using `git diff develop...HEAD` for normal `develop`-target work, or `git diff develop-<slug>...HEAD` for integration-branch items. For Fast Track Fix work, the coverage check must confirm the diff addresses the issue body's stated problem and proposed fix. This pass complements, and does not replace, the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) when a test harness is involved. Add the self-review log to the PR description.
 
 **Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
 
