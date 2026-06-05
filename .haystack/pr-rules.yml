@@ -1,137 +1,273 @@
 rules:
-  - id: "aggregate-paginated-gh-api-results"
-    name: "Aggregate paginated GitHub API results before filtering"
-    type: llm
-    severity: warning
-    category: "performance"
-    message: "For `gh api` list queries, fetch all pages and merge them before counting, sorting, or selecting items."
-    llm:
-      prompt: "For `gh api` list queries, fetch all pages and merge them before counting, sorting, or selecting items."
-  - id: "encode-gh-api-payloads-safely"
-    name: "Encode GitHub API payloads safely"
-    type: llm
-    severity: warning
-    category: "security"
-    message: "Build GitHub API payloads with `jq -n --arg ...` and use `--raw-field` for string form values instead of shell interpolation."
-    llm:
-      prompt: "Build GitHub API payloads with `jq -n --arg ...` and use `--raw-field` for string form values instead of shell interpolation."
-  - id: "avoid-swallowing-critical-command-failures"
-    name: "Do not swallow critical command failures"
-    type: llm
-    severity: warning
-    category: "security"
-    message: "Do not use blanket `|| true` or similar suppression on workflow-critical `gh`/`git`/network commands; handle expected non-fatal cases explicitly and surface real failures."
-    llm:
-      prompt: "Do not use blanket `|| true` or similar suppression on workflow-critical `gh`/`git`/network commands; handle expected non-fatal cases explicitly and surface real failures."
-  - id: "enable-pipefail-for-control-flow-pipelines"
-    name: "Enable pipefail in decision pipelines"
-    type: llm
-    severity: warning
-    category: "security"
-    message: "Use `set -o pipefail` (or equivalent explicit status checks) for pipelines that drive control flow so upstream failures are not treated as valid results."
-    llm:
-      prompt: "Use `set -o pipefail` (or equivalent explicit status checks) for pipelines that drive control flow so upstream failures are not treated as valid results."
-  - id: "use-shell-safe-argument-handling"
-    name: "Use shell-safe argument and path handling"
-    type: llm
-    severity: warning
-    category: "security"
-    message: "Pass dynamic values with proper quoting and `--`, iterate paths safely (prefer line/NUL-delimited loops), and avoid unquoted expansion."
-    llm:
-      prompt: "Pass dynamic values with proper quoting and `--`, iterate paths safely (prefer line/NUL-delimited loops), and avoid unquoted expansion."
-  - id: "pass-dynamic-values-via-tool-args"
-    name: "Pass dynamic values via tool arguments"
-    type: llm
-    severity: warning
-    category: "security"
-    message: "When using jq/awk/python from shell, pass dynamic data via `--arg`/`-v`/`sys.argv` or environment variables instead of interpolating into code or patterns."
-    llm:
-      prompt: "When using jq/awk/python from shell, pass dynamic data via `--arg`/`-v`/`sys.argv` or environment variables instead of interpolating into code or patterns."
-  - id: "scope-review-state-to-current-head"
-    name: "Scope review decisions to current HEAD"
+  - id: "cover-all-acceptance-criteria"
+    name: "Cover every acceptance criterion"
     type: llm
     severity: warning
     category: "patterns"
-    message: "Classify PR review state using current head SHA (or equivalent updated signal) so stale reviews/comments do not satisfy or block gates."
+    message: "Each implementation plan and runbook must include at least one concrete step for every acceptance criterion in the spec."
     llm:
-      prompt: "Classify PR review state using current head SHA (or equivalent updated signal) so stale reviews/comments do not satisfy or block gates."
-  - id: "emit-stable-kv-output-contract"
-    name: "Preserve machine-readable output contract"
-    type: llm
-    severity: warning
-    category: "patterns"
-    message: "Scripts emitting key/value outputs must emit documented keys with canonical names on all exit paths, including skip and error branches."
-    llm:
-      prompt: "Scripts emitting key/value outputs must emit documented keys with canonical names on all exit paths, including skip and error branches."
-  - id: "normalize-bot-logins-before-comparison"
-    name: "Normalize bot identities before comparison"
-    type: llm
-    severity: warning
-    category: "patterns"
-    message: "Normalize bot login formats (for example stripping `[bot]` where required) before author/reviewer/thread comparisons."
-    llm:
-      prompt: "Normalize bot login formats (for example stripping `[bot]` where required) before author/reviewer/thread comparisons."
-  - id: "use-worktree-safe-repo-root-resolution"
-    name: "Resolve repo root via git common dir"
-    type: llm
-    severity: warning
-    category: "patterns"
-    message: "In worktree-aware scripts and examples, derive repository root from `git rev-parse --git-common-dir` canonicalization instead of CWD-relative assumptions."
-    llm:
-      prompt: "In worktree-aware scripts and examples, derive repository root from `git rev-parse --git-common-dir` canonicalization instead of CWD-relative assumptions."
-  - id: "pin-github-actions-by-full-sha"
-    name: "Pin GitHub Actions by full commit SHA"
-    type: llm
-    severity: warning
-    category: "security"
-    message: "Reference third-party GitHub Actions with immutable full commit SHAs rather than floating tags."
-    llm:
-      prompt: "Reference third-party GitHub Actions with immutable full commit SHAs rather than floating tags."
-  - id: "keep-changelog-unreleased-structure-canonical"
-    name: "Maintain canonical CHANGELOG Unreleased structure"
-    type: llm
-    severity: warning
-    category: "patterns"
-    message: "Keep a single `[Unreleased]` section with Keep a Changelog ordering and avoid duplicate section/subsection headers."
-    llm:
-      prompt: "Keep a single `[Unreleased]` section with Keep a Changelog ordering and avoid duplicate section/subsection headers."
-  - id: "require-changelog-entry-for-non-exempt-user-visible-changes"
-    name: "Require changelog entries for non-exempt user-visible changes"
-    type: llm
-    severity: warning
-    category: "patterns"
-    message: "Add a `CHANGELOG.md` entry under `[Unreleased]` for non-exempt user-visible changes in scripts, protocols, or command/docs behavior."
-    llm:
-      prompt: "Add a `CHANGELOG.md` entry under `[Unreleased]` for non-exempt user-visible changes in scripts, protocols, or command/docs behavior."
-  - id: "keep-agent-surface-guidance-in-sync"
-    name: "Keep agent guidance in sync across surfaces"
-    type: llm
-    severity: warning
-    category: "patterns"
-    message: "When shared agent behavior changes, update corresponding `.claude`, `.cursor`, and `.codex` guidance/docs in the same PR."
-    llm:
-      prompt: "When shared agent behavior changes, update corresponding `.claude`, `.cursor`, and `.codex` guidance/docs in the same PR."
-  - id: "validate-required-inputs-early"
-    name: "Validate required inputs before workflow logic"
-    type: llm
-    severity: warning
-    category: "patterns"
-    message: "Validate required inputs (for example PR number, HEAD SHA, and numeric identifiers) before running reviewer-loop logic or remote calls."
-    llm:
-      prompt: "Validate required inputs (for example PR number, HEAD SHA, and numeric identifiers) before running reviewer-loop logic or remote calls."
-  - id: "use-bash-3-2-compatible-patterns"
-    name: "Keep shell scripts Bash 3.2 compatible"
+      prompt: "Each implementation plan and runbook must include at least one concrete step for every acceptance criterion in the spec."
+  - id: "renumber-protocol-steps-and-references"
+    name: "Renumber protocol steps after edits"
     type: llm
     severity: warning
     category: "style"
-    message: "Implement shell logic using Bash 3.2-compatible features and avoid Bash 4+ constructs."
+    message: "When adding numbered protocol steps, update numbering and cross references to avoid duplicates."
     llm:
-      prompt: "Implement shell logic using Bash 3.2-compatible features and avoid Bash 4+ constructs."
-  - id: "preserve-exit-code-contracts"
-    name: "Preserve documented exit code mappings"
+      prompt: "When adding numbered protocol steps, update numbering and cross references to avoid duplicates."
+  - id: "fail-closed-on-checker-and-review-fetch-errors"
+    name: "Fail closed on checker errors"
+    type: llm
+    severity: warning
+    category: "security"
+    message: "If policy checks or review fetch calls fail, return a blocking or unavailable result instead of clean success."
+    llm:
+      prompt: "If policy checks or review fetch calls fail, return a blocking or unavailable result instead of clean success."
+  - id: "wire-new-reason-codes-through-mappings"
+    name: "Update reason code mappings"
     type: llm
     severity: warning
     category: "patterns"
-    message: "When modifying scripts with documented multi-check exits, keep each failure path mapped to its specified distinct exit code."
+    message: "When adding a new verdict reason code, update normalization and classification mappings in the same change."
     llm:
-      prompt: "When modifying scripts with documented multi-check exits, keep each failure path mapped to its specified distinct exit code."
+      prompt: "When adding a new verdict reason code, update normalization and classification mappings in the same change."
+  - id: "add-regression-tests-for-logic-changes"
+    name: "Add regression tests with logic fixes"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "Any decision or classification logic change must add or update a targeted regression test in the same pull request."
+    llm:
+      prompt: "Any decision or classification logic change must add or update a targeted regression test in the same pull request."
+  - id: "do-not-suppress-critical-shell-errors"
+    name: "Do not hide command failures"
+    type: llm
+    severity: warning
+    category: "security"
+    message: "Do not mask critical command failures with blanket patterns like or true when failures should affect behavior."
+    llm:
+      prompt: "Do not mask critical command failures with blanket patterns like or true when failures should affect behavior."
+  - id: "use-guarded-jq-in-control-flow"
+    name: "Use guarded jq for control flow"
+    type: llm
+    severity: warning
+    category: "security"
+    message: "When jq output drives script logic, use jq -e, check for empty results, and pass dynamic values with args."
+    llm:
+      prompt: "When jq output drives script logic, use jq -e, check for empty results, and pass dynamic values with args."
+  - id: "update-review-loop-tests-with-script-changes"
+    name: "Update review loop tests with script changes"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "Changes to pr-review-loop.sh must include matching updates and execution of its test script in the same pull request."
+    llm:
+      prompt: "Changes to pr-review-loop.sh must include matching updates and execution of its test script in the same pull request."
+  - id: "keep-agent-docs-in-sync"
+    name: "Keep mirrored agent docs in sync"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "When shared agent guidance changes, update matching files under .claude and .cursor together."
+    llm:
+      prompt: "When shared agent guidance changes, update matching files under .claude and .cursor together."
+  - id: "sync-integration-docs-with-script-behavior"
+    name: "Sync integration docs and scripts"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "If reviewer integration behavior changes, update both the integration script and its matching integration documentation in the same pull request."
+    llm:
+      prompt: "If reviewer integration behavior changes, update both the integration script and its matching integration documentation in the same pull request."
+  - id: "paginate-and-merge-github-api-list-results"
+    name: "Paginate GitHub API list queries"
+    type: llm
+    severity: warning
+    category: "performance"
+    message: "For GitHub API list endpoints, use pagination and merge all pages before filtering, counting, or sorting."
+    llm:
+      prompt: "For GitHub API list endpoints, use pagination and merge all pages before filtering, counting, or sorting."
+  - id: "ignore-ack-comments-in-review-detection"
+    name: "Ignore acknowledgement comments in review detection"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "Do not count pause or resume acknowledgement comments as real reviewer activity."
+    llm:
+      prompt: "Do not count pause or resume acknowledgement comments as real reviewer activity."
+  - id: "match-reviews-to-current-head-sha"
+    name: "Match reviews to current commit SHA"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "When deciding review state, filter review data by the current pull request head SHA instead of time windows."
+    llm:
+      prompt: "When deciding review state, filter review data by the current pull request head SHA instead of time windows."
+  - id: "use-safe-path-handling-in-shell"
+    name: "Use safe path handling in shell loops"
+    type: llm
+    severity: warning
+    category: "security"
+    message: "Handle dynamic file paths with per-line quoted loops and -- to avoid splitting, globbing, and option injection."
+    llm:
+      prompt: "Handle dynamic file paths with per-line quoted loops and -- to avoid splitting, globbing, and option injection."
+  - id: "use-interruptible-sleep-in-polling-loops"
+    name: "Use interruptible sleep in polling loops"
+    type: llm
+    severity: warning
+    category: "performance"
+    message: "Use interruptible sleep helpers in long polling loops so INT and TERM signals stop promptly."
+    llm:
+      prompt: "Use interruptible sleep helpers in long polling loops so INT and TERM signals stop promptly."
+  - id: "emit-documented-output-fields-on-all-exits"
+    name: "Always emit documented output fields"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "Every exit path must print all documented key value output fields before exiting."
+    llm:
+      prompt: "Every exit path must print all documented key value output fields before exiting."
+  - id: "normalize-bot-login-before-comparison"
+    name: "Normalize bot login before checks"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "Strip the bot suffix from bot usernames before comparing logins in GraphQL or thread checks."
+    llm:
+      prompt: "Strip the bot suffix from bot usernames before comparing logins in GraphQL or thread checks."
+  - id: "enable-pipefail-when-pipeline-failure-matters"
+    name: "Use pipefail for guard pipelines"
+    type: llm
+    severity: warning
+    category: "security"
+    message: "Enable pipefail when control flow depends on full pipeline success such as branch existence checks."
+    llm:
+      prompt: "Enable pipefail when control flow depends on full pipeline success such as branch existence checks."
+  - id: "resolve-repo-root-from-git-common-dir"
+    name: "Resolve repo root from git common dir"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "In worktree-aware scripts, derive the main repository root from git common dir instead of current directory assumptions."
+    llm:
+      prompt: "In worktree-aware scripts, derive the main repository root from git common dir instead of current directory assumptions."
+  - id: "use-semantic-doc-references-not-line-numbers"
+    name: "Use semantic references in docs"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "In docs and runbooks, reference script names and behavior instead of approximate line numbers."
+    llm:
+      prompt: "In docs and runbooks, reference script names and behavior instead of approximate line numbers."
+  - id: "set-explicit-limits-on-gh-list-commands"
+    name: "Set explicit limits on gh list calls"
+    type: llm
+    severity: warning
+    category: "performance"
+    message: "Add explicit limit values to gh list and project item list commands to avoid silent truncation."
+    llm:
+      prompt: "Add explicit limit values to gh list and project item list commands to avoid silent truncation."
+  - id: "keep-single-unreleased-changelog-section"
+    name: "Keep one Unreleased changelog section"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "Update the existing Unreleased section in CHANGELOG.md instead of creating duplicate Unreleased or subsection headers."
+    llm:
+      prompt: "Update the existing Unreleased section in CHANGELOG.md instead of creating duplicate Unreleased or subsection headers."
+  - id: "validate-numeric-env-settings"
+    name: "Validate numeric retry and wait settings"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "Validate retry and wait environment variables as positive integers and fall back to defaults when invalid."
+    llm:
+      prompt: "Validate retry and wait environment variables as positive integers and fall back to defaults when invalid."
+  - id: "use-boundary-aware-path-matching"
+    name: "Use boundary aware path matching"
+    type: llm
+    severity: warning
+    category: "security"
+    message: "Use boundary aware patterns for file path matching so superstrings like backup filenames do not match."
+    llm:
+      prompt: "Use boundary aware patterns for file path matching so superstrings like backup filenames do not match."
+  - id: "pass-graphql-cursor-only-when-present"
+    name: "Pass GraphQL cursor only when present"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "Include a GraphQL cursor argument only when a cursor value exists."
+    llm:
+      prompt: "Include a GraphQL cursor argument only when a cursor value exists."
+  - id: "load-workflow-config-via-helper-path"
+    name: "Load workflow config through helper path"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "Read workflow config through the helper path so parsing does not depend on the current working directory."
+    llm:
+      prompt: "Read workflow config through the helper path so parsing does not depend on the current working directory."
+  - id: "pin-github-actions-to-full-sha"
+    name: "Pin GitHub Actions by full SHA"
+    type: llm
+    severity: warning
+    category: "security"
+    message: "Use full commit SHA pins for GitHub Actions instead of floating tags."
+    llm:
+      prompt: "Use full commit SHA pins for GitHub Actions instead of floating tags."
+  - id: "restrict-pull-request-target-usage"
+    name: "Use pull request target safely"
+    type: llm
+    severity: warning
+    category: "security"
+    message: "Use pull request target only for metadata jobs that do not check out or run pull request code."
+    llm:
+      prompt: "Use pull request target only for metadata jobs that do not check out or run pull request code."
+  - id: "use-correct-gh-api-field-flags"
+    name: "Use correct gh api field flags"
+    type: llm
+    severity: warning
+    category: "style"
+    message: "Use field for booleans and numbers and raw field for literal strings such as workflow dispatch ref."
+    llm:
+      prompt: "Use field for booleans and numbers and raw field for literal strings such as workflow dispatch ref."
+  - id: "check-shell-tool-exit-codes-before-use"
+    name: "Check shell tool exit codes"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "Check command exit status before using output from tools like mktemp, jq, gh, git, or network lookups."
+    llm:
+      prompt: "Check command exit status before using output from tools like mktemp, jq, gh, git, or network lookups."
+  - id: "keep-exit-code-and-verdict-mapping-consistent"
+    name: "Keep exit code verdict mapping consistent"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "When changing exit paths, keep verdict text aligned with the documented exit code contract."
+    llm:
+      prompt: "When changing exit paths, keep verdict text aligned with the documented exit code contract."
+  - id: "treat-completed-as-terminal-run-status"
+    name: "Use completed as terminal run status"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "In polling logic, treat only completed as terminal and read success or failure from conclusion values."
+    llm:
+      prompt: "In polling logic, treat only completed as terminal and read success or failure from conclusion values."
+  - id: "preserve-shell-signal-and-lock-safety-patterns"
+    name: "Preserve shell signal and lock safety"
+    type: llm
+    severity: warning
+    category: "security"
+    message: "Keep own-lock cleanup guards and proper trapped signal re-raise patterns so cleanup and termination remain correct."
+    llm:
+      prompt: "Keep own-lock cleanup guards and proper trapped signal re-raise patterns so cleanup and termination remain correct."
+  - id: "anchor-branch-prefix-mapping-checks"
+    name: "Anchor branch prefix mapping checks"
+    type: llm
+    severity: warning
+    category: "patterns"
+    message: "Use anchored prefix matching so short names do not accidentally match longer branch types."
+    llm:
+      prompt: "Use anchored prefix matching so short names do not accidentally match longer branch types."
