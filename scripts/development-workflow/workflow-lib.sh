@@ -377,14 +377,18 @@ workflow_resolve_github_project_owner() {
 
 workflow_resolve_github_repo_owner() {
   local owner
-  owner="$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || true)"
+  if ! owner="$(gh repo view --json owner --jq '.owner.login' 2>/dev/null)"; then
+    owner=""
+  fi
   if [ -n "$owner" ]; then
     printf '%s' "$owner"
     return 0
   fi
 
   local remote_url
-  remote_url="$(git remote get-url origin 2>/dev/null || true)"
+  if ! remote_url="$(git remote get-url origin 2>/dev/null)"; then
+    remote_url=""
+  fi
   if [ -n "$remote_url" ]; then
     case "$remote_url" in
       https://*github.com/*)
@@ -415,14 +419,18 @@ workflow_resolve_github_repo_owner() {
 
 workflow_resolve_github_repo_name() {
   local repo_name
-  repo_name="$(gh repo view --json name --jq '.name' 2>/dev/null || true)"
+  if ! repo_name="$(gh repo view --json name --jq '.name' 2>/dev/null)"; then
+    repo_name=""
+  fi
   if [ -n "$repo_name" ]; then
     printf '%s' "$repo_name"
     return 0
   fi
 
   local remote_url
-  remote_url="$(git remote get-url origin 2>/dev/null || true)"
+  if ! remote_url="$(git remote get-url origin 2>/dev/null)"; then
+    remote_url=""
+  fi
   if [ -n "$remote_url" ]; then
     repo_name="${remote_url##*/}"
     repo_name="${repo_name%.git}"
