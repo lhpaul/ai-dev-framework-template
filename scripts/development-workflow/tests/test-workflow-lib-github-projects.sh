@@ -70,9 +70,24 @@ JSON
 	        fi
 	        ;;
       *"fields(first:"*)
-        cat <<'JSON'
-{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_status","name":"Status","options":[{"id":"OPT_spec_ready","name":"Spec Ready"},{"id":"OPT_in_development","name":"In Development"}]}]}}}}
+        if [ "${MOCK_STATUS_FIELD_MODE:-existing}" = "paginated" ]; then
+          case "$*" in
+            *"after=cursor_field_1"*)
+              cat <<'JSON'
+{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_status","name":"Status","options":[{"id":"OPT_spec_ready","name":"Spec Ready"},{"id":"OPT_in_development","name":"In Development"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
 JSON
+              ;;
+            *)
+              cat <<'JSON'
+{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_other","name":"Priority","options":[{"id":"OPT_high","name":"High"}]}],"pageInfo":{"hasNextPage":true,"endCursor":"cursor_field_1"}}}}}
+JSON
+              ;;
+          esac
+        else
+          cat <<'JSON'
+{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_status","name":"Status","options":[{"id":"OPT_spec_ready","name":"Spec Ready"},{"id":"OPT_in_development","name":"In Development"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
+JSON
+        fi
         ;;
       *"updateProjectV2ItemFieldValue"*)
         cat <<'JSON'
@@ -149,6 +164,11 @@ run_test "paginated_status_uses_two_item_queries" "2" "$(count_log_matches 'proj
 run_test "paginated_status_avoids_full_board_scan" "" "$(forbidden_project_reads)"
 
 reset_log
+invalid_item="$(workflow_github_project_item_for_issue "not-a-number" "1" 2>/dev/null)"
+run_test "invalid_issue_number_returns_empty" "" "$invalid_item"
+run_test "invalid_issue_number_avoids_graphql" "0" "$(count_log_matches 'api graphql')"
+
+reset_log
 membership_output="$(ensure_on_project_board 824 "In Development")"
 case "$membership_output" in
   *"already on project board"*) membership_result="already-present" ;;
@@ -179,6 +199,18 @@ esac
 run_test "status_update_runs" "updated" "$update_result"
 run_test "status_update_avoids_full_board_scan" "" "$(forbidden_project_reads)"
 run_test "status_update_mutates_project_item" "1" "$(count_log_matches 'api graphql' | awk '{print ($1 >= 3) ? 1 : 0}')"
+
+reset_log
+export MOCK_STATUS_FIELD_MODE=paginated
+update_output="$(update_tracker_status_best_effort 824 "In Development" "Spec Ready")"
+unset MOCK_STATUS_FIELD_MODE
+case "$update_output" in
+  *"Updating tracker status for issue #824 to 'In Development'"*) update_result="updated" ;;
+  *) update_result="$update_output" ;;
+esac
+run_test "status_update_field_lookup_paginates" "updated" "$update_result"
+run_test "status_update_field_lookup_uses_two_field_queries" "2" "$(count_log_matches 'fields')"
+run_test "status_update_field_lookup_avoids_full_board_scan" "" "$(forbidden_project_reads)"
 
 echo ""
 echo "Test summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"

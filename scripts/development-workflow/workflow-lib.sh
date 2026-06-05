@@ -651,6 +651,21 @@ workflow_github_project_item_for_issue() {
   local cursor page_state item_json has_next end_cursor page_count line
   local -a graphql_args
 
+  case "$issue_number" in
+    ''|*[!0-9]*)
+      echo "Warning: issue number '${issue_number}' is not numeric; tracker status not read." >&2
+      printf ''
+      return 0
+      ;;
+  esac
+  case "$project_number" in
+    ''|*[!0-9]*)
+      echo "Warning: project number '${project_number}' is not numeric; tracker status not read." >&2
+      printf ''
+      return 0
+      ;;
+  esac
+
   project_owner="$(workflow_resolve_github_project_owner)"
   project_id="$(workflow_github_project_id "$project_owner" "$project_number")"
   repo_owner="$(workflow_resolve_github_repo_owner)"
@@ -764,7 +779,8 @@ EOF
 
 workflow_github_project_status_field_json() {
   local project_id="$1"
-  local response
+  local response cursor page_state field_json has_next end_cursor page_count line
+  local -a graphql_args
 
   if [ -z "$project_id" ]; then
     printf ''
@@ -773,45 +789,99 @@ workflow_github_project_status_field_json() {
 
   if [ "$__workflow_project_status_field_cache_project_id" != "$project_id" ] || \
      [ -z "$__workflow_project_status_field_cache_json" ]; then
-    # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
-    if ! response=$(gh api graphql \
-      -f projectId="$project_id" \
-      -f query='
-        query($projectId: ID!) {
-          node(id: $projectId) {
-            ... on ProjectV2 {
-              fields(first: 50) {
-                nodes {
-                  ... on ProjectV2SingleSelectField {
-                    id
-                    name
-                    options { id name }
+    __workflow_project_status_field_cache_json=""
+    cursor=""
+    page_count=0
+    while :; do
+      graphql_args=(
+        api graphql
+        -f projectId="$project_id"
+      )
+      if [ -n "$cursor" ]; then
+        graphql_args+=(-f after="$cursor")
+      fi
+      # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
+      graphql_args+=(
+        -f query='
+          query($projectId: ID!, $after: String) {
+            node(id: $projectId) {
+              ... on ProjectV2 {
+                fields(first: 100, after: $after) {
+                  nodes {
+                    ... on ProjectV2SingleSelectField {
+                      id
+                      name
+                      options { id name }
+                    }
                   }
+                  pageInfo { hasNextPage endCursor }
                 }
               }
             }
           }
-        }
-      ' 2>/dev/null); then
-      printf ''
-      return 0
-    fi
+        '
+      )
 
-    __workflow_project_status_field_cache_json="$(printf '%s' "$response" | python3 -c "
+      if ! response=$(gh "${graphql_args[@]}" 2>/dev/null); then
+        echo "Warning: GraphQL project Status field lookup failed for project '${project_id}'." >&2
+        printf ''
+        return 0
+      fi
+
+      if ! page_state="$(printf '%s' "$response" | python3 -c "
 import json, sys
 try:
     data = json.loads(sys.stdin.read(), strict=False)
 except Exception:
-    sys.exit(0)
-fields = (((data.get('data') or {}).get('node') or {}).get('fields') or {}).get('nodes') or []
+    sys.exit(2)
+field_connection = (((data.get('data') or {}).get('node') or {}).get('fields') or {})
+fields = field_connection.get('nodes') or []
+field_json = ''
 for field in fields:
     if field.get('name') == 'Status':
-        print(json.dumps({
+        field_json = json.dumps({
             'field_id': field.get('id') or '',
             'options': {option.get('name') or '': option.get('id') or '' for option in field.get('options') or []},
-        }))
+        }, separators=(',', ':'))
         break
-" 2>/dev/null || true)"
+page_info = field_connection.get('pageInfo') or {}
+has_next = 'true' if page_info.get('hasNextPage') else 'false'
+end_cursor = page_info.get('endCursor') or ''
+print('FIELD_JSON=' + field_json)
+print('HAS_NEXT=' + has_next)
+print('END_CURSOR=' + end_cursor)
+" 2>/dev/null)"; then
+        echo "Warning: could not parse GraphQL project Status field response for project '${project_id}'." >&2
+        printf ''
+        return 0
+      fi
+
+      field_json=""
+      has_next="false"
+      end_cursor=""
+      while IFS= read -r line; do
+        case "$line" in
+          FIELD_JSON=*) field_json="${line#FIELD_JSON=}" ;;
+          HAS_NEXT=*) has_next="${line#HAS_NEXT=}" ;;
+          END_CURSOR=*) end_cursor="${line#END_CURSOR=}" ;;
+        esac
+      done <<EOF
+$page_state
+EOF
+      if [ -n "$field_json" ]; then
+        __workflow_project_status_field_cache_json="$field_json"
+        break
+      fi
+      if [ "$has_next" != "true" ] || [ -z "$end_cursor" ]; then
+        break
+      fi
+      page_count=$((page_count + 1))
+      if [ "$page_count" -ge 20 ]; then
+        echo "Warning: project Status field lookup exceeded pagination limit for project '${project_id}'." >&2
+        break
+      fi
+      cursor="$end_cursor"
+    done
     __workflow_project_status_field_cache_project_id="$project_id"
   fi
 
