@@ -220,7 +220,7 @@ gh api graphql \
     query($owner: String!, $repo: String!, $issueNumber: Int!, $projectNumber: Int!) {
       repository(owner: $owner, name: $repo) {
         issue(number: $issueNumber) {
-          projectItems(first: 20) {
+          projectItems(first: 50) {
             nodes {
               id
               project { id number }

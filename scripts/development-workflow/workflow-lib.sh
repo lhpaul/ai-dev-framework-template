@@ -645,7 +645,7 @@ workflow_github_project_item_for_issue() {
       query($owner: String!, $repo: String!, $issueNumber: Int!) {
         repository(owner: $owner, name: $repo) {
           issue(number: $issueNumber) {
-            projectItems(first: 20) {
+            projectItems(first: 50) {
               nodes {
                 id
                 project { id number }

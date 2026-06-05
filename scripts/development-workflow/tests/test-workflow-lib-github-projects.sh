@@ -38,9 +38,6 @@ case "$*" in
   "repo view --json name --jq .name")
     printf 'ai-dev-framework-template\n'
     ;;
-  *"api graphql"*"[[:space:]]"*)
-    printf '{}\n'
-    ;;
   *"api graphql"* )
     case "$*" in
       *"projectV2(number:"*)
