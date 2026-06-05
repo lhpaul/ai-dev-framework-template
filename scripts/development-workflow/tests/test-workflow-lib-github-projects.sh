@@ -11,7 +11,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel)"
+REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../../.." && pwd)"
 
 MOCK_BIN="$(mktemp -d)"
 CALL_LOG="$(mktemp)"
@@ -107,7 +107,12 @@ run_test() {
 }
 
 forbidden_project_reads() {
-  grep -E 'project (item-list|view|field-list)' "$CALL_LOG" || true
+  awk '/project (item-list|view|field-list)/ { print }' "$CALL_LOG"
+}
+
+count_log_matches() {
+  local pattern="$1"
+  awk -v pattern="$pattern" '$0 ~ pattern { count += 1 } END { print count + 0 }' "$CALL_LOG"
 }
 
 reset_log() {
@@ -130,7 +135,19 @@ case "$membership_output" in
 esac
 run_test "membership_existing_detected" "already-present" "$membership_result"
 run_test "membership_check_avoids_full_board_scan" "" "$(forbidden_project_reads)"
-run_test "membership_existing_does_not_add" "0" "$(grep -c 'project item-add' "$CALL_LOG" || true)"
+run_test "membership_existing_does_not_add" "0" "$(count_log_matches 'project item-add')"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=missing
+membership_output="$(ensure_on_project_board 824 "In Development")"
+unset MOCK_PROJECT_ITEM_MODE
+case "$membership_output" in
+  *"added to project board"*) membership_result="added" ;;
+  *) membership_result="$membership_output" ;;
+esac
+run_test "membership_missing_adds_issue" "added" "$membership_result"
+run_test "membership_missing_avoids_full_board_scan" "" "$(forbidden_project_reads)"
+run_test "membership_missing_adds_once" "1" "$(count_log_matches 'project item-add')"
 
 reset_log
 update_output="$(update_tracker_status_best_effort 824 "In Development" "Spec Ready")"
@@ -140,7 +157,7 @@ case "$update_output" in
 esac
 run_test "status_update_runs" "updated" "$update_result"
 run_test "status_update_avoids_full_board_scan" "" "$(forbidden_project_reads)"
-run_test "status_update_mutates_project_item" "1" "$(grep -c 'api graphql' "$CALL_LOG" | awk '{print ($1 >= 3) ? 1 : 0}')"
+run_test "status_update_mutates_project_item" "1" "$(count_log_matches 'api graphql' | awk '{print ($1 >= 3) ? 1 : 0}')"
 
 echo ""
 echo "Test summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"

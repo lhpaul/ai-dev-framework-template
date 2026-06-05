@@ -825,12 +825,6 @@ ensure_on_project_board() {
     echo "Warning: GITHUB_PROJECT_NUMBER not set and no project_number in .ai-dev-workflow.yaml; skipping board-membership check for issue #${issue_number}."
     return 0
   fi
-  owner="$(workflow_resolve_github_project_owner)"
-  if [ -z "$owner" ]; then
-    # workflow_resolve_github_project_owner already emitted a warning.
-    return 0
-  fi
-
   item_json="$(workflow_github_project_item_for_issue "$issue_number" "$project_number")"
   if [ -n "$item_json" ]; then
     echo "Board membership check: issue #${issue_number} already on project board."
@@ -845,10 +839,16 @@ ensure_on_project_board() {
     return 0
   fi
   repo_url="https://github.com/${repo_owner}/${repo_name}"
+  owner="$(workflow_resolve_github_project_owner)"
+  if [ -z "$owner" ]; then
+    owner="$repo_owner"
+  fi
 
-  gh project item-add "$project_number" --owner "$owner" \
-    --url "${repo_url}/issues/${issue_number}" 2>/dev/null \
-    || { echo "Warning: gh project item-add failed for issue #${issue_number}; continuing."; return 0; }
+  if ! gh project item-add "$project_number" --owner "$owner" \
+    --url "${repo_url}/issues/${issue_number}" 2>/dev/null; then
+    echo "Warning: gh project item-add failed for issue #${issue_number}; continuing."
+    return 0
+  fi
 
   echo "Board membership check: issue #${issue_number} added to project board."
 
@@ -948,7 +948,7 @@ print(item.get('status') or '', end='')
 
   echo "Updating tracker status for issue #${issue_number} to '${status_label}'..."
   # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
-  gh api graphql \
+  if ! gh api graphql \
     -f projectId="$project_id" \
     -f itemId="$item_id" \
     -f fieldId="$field_id" \
@@ -964,5 +964,7 @@ print(item.get('status') or '', end='')
           projectV2Item { id }
         }
       }
-    ' 2>/dev/null || echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker status not updated."
+    ' 2>/dev/null; then
+    echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker status not updated."
+  fi
 }
