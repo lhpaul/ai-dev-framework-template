@@ -120,44 +120,20 @@ The function is **fail-open**: if the issue is already on the board it returns 0
 
 ### One-shot status update (recommended pattern)
 
-Use the following script pattern when a stage completes and the tracker status must advance. Replace the placeholder values below with your project owner and number, or set `GITHUB_PROJECT_OWNER` and `GITHUB_PROJECT_NUMBER` environment variables if preferred.
+Use the shared helper when a stage completes and the tracker status must advance. It performs a targeted `repository.issue(...).projectItems` lookup for the single issue and avoids `gh project item-list`, which paginates the whole board and can drain the GraphQL rate-limit bucket.
 
 ```bash
-PROJECT_OWNER="${GITHUB_PROJECT_OWNER:-<OWNER>}"   # GitHub user or org owning the project
-PROJECT_NUMBER="${GITHUB_PROJECT_NUMBER:-<NUMBER>}" # GitHub project number (from URL or `gh project list`)
-ISSUE_NUMBER=<ISSUE>      # GitHub issue number to update
+# Source workflow-lib.sh to get the targeted GitHub Projects helpers.
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source scripts/development-workflow/workflow-lib.sh
 
-# 1. Get the project node ID
-PROJECT_ID=$(gh project view "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json --jq '.id')
+ISSUE_NUMBER=<ISSUE>                         # GitHub issue number to update
+TARGET_STATUS="Development in Review"        # Use a value from the table below
 
-# 2. Get the item ID for this issue
-ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --limit 10000 --format json \
-  | jq -r --argjson n "$ISSUE_NUMBER" '.items[] | select(.content.number == $n) | .id')
-
-# 3. Get the Status field ID
-STATUS_FIELD_ID=$(gh project field-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json \
-  | jq -r '.fields[] | select(.name == "Status") | .id')
-
-# 4. Get the option ID for the target status
-# (Use the appropriate value from the table in "Status values by workflow stage" below)
-TARGET_STATUS="Development in Review"  # Example for feature/*/fix/*/refactor/*/hotfix/* PR
-OPTION_ID=$(gh project field-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json \
-  | jq -r --arg s "$TARGET_STATUS" \
-    '.fields[] | select(.name == "Status") | .options[] | select(.name == $s) | .id')
-
-# 5. Apply the update
-gh api graphql -f query="
-  mutation {
-    updateProjectV2ItemFieldValue(input: {
-      projectId: \"$PROJECT_ID\"
-      itemId: \"$ITEM_ID\"
-      fieldId: \"$STATUS_FIELD_ID\"
-      value: { singleSelectOptionId: \"$OPTION_ID\" }
-    }) {
-      projectV2Item { id }
-    }
-  }"
+update_tracker_status_best_effort "$ISSUE_NUMBER" "$TARGET_STATUS"
 ```
+
+For manual debugging, call `workflow_github_project_item_for_issue <issue> <project-number>` after sourcing `workflow-lib.sh`; it returns the project item ID, project ID, and current Status for exactly one issue.
 
 ### Status values by workflow stage (Step 8b targets)
 
@@ -169,13 +145,10 @@ gh api graphql -f query="
 
 ### Caching field and option IDs
 
-Field IDs and option IDs are stable within a project. To avoid repeated `field-list` calls, agents may cache them in a `.tmp/github-project-ids.json` file (gitignored path) at the start of a session:
-
-```bash
-gh project field-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json > .tmp/github-project-ids.json
-```
-
-Re-fetch if the file is missing or older than 24 hours.
+Field IDs and option IDs are stable within a project. `update_tracker_status_best_effort`
+caches the Status field metadata in memory for the current shell process after the first
+targeted lookup, so repeated status updates in the same run do not need repeated field
+metadata queries. Re-run the helper in a fresh shell if the project field configuration changes.
 
 ---
 
@@ -233,20 +206,41 @@ and report the reset time. See Protocol 90 Step 1a for the full rate-limit guida
 
 ### Updating Status via GraphQL
 
-Updating project item fields requires GraphQL. The general pattern:
+Updating project item fields requires GraphQL. For agent and script use, prefer `update_tracker_status_best_effort` from `workflow-lib.sh`; it resolves the item ID through a targeted single-issue query and caches Status field metadata for the run.
+
+If you must issue the GraphQL manually, do not use `gh project item-list` for a single issue. Resolve the item through the issue's projectItems connection:
 
 ```bash
-# 1. Get the project node ID
-PROJECT_ID=$(gh project view <PROJECT_NUMBER> --owner <OWNER> --format json | jq -r '.id')
+gh api graphql \
+  -f owner=<REPO_OWNER> \
+  -f repo=<REPO_NAME> \
+  -F issueNumber=<ISSUE_NUMBER> \
+  -F projectNumber=<PROJECT_NUMBER> \
+  -f query='
+    query($owner: String!, $repo: String!, $issueNumber: Int!, $projectNumber: Int!) {
+      repository(owner: $owner, name: $repo) {
+        issue(number: $issueNumber) {
+          projectItems(first: 50) {
+            nodes {
+              id
+              project { id number }
+              fieldValueByName(name: "Status") {
+                ... on ProjectV2ItemFieldSingleSelectValue { name }
+              }
+            }
+          }
+        }
+      }
+    }' \
+  | jq --argjson projectNumber <PROJECT_NUMBER> \
+    '.data.repository.issue.projectItems.nodes[]
+     | select(.project.number == $projectNumber)
+     | {item_id: .id, project_id: .project.id, status: .fieldValueByName.name}'
+```
 
-# 2. Get the Status field ID and option IDs
-gh project field-list <PROJECT_NUMBER> --owner <OWNER> --format json
+Then use the returned `project_id` with a Status field/option lookup and apply the mutation:
 
-# 3. Get the item ID for the issue
-ITEM_ID=$(gh project item-list <PROJECT_NUMBER> --owner <OWNER> --format json \
-  | jq -r '.items[] | select(.content.number == <ISSUE_NUMBER>) | .id')
-
-# 4. Update the status
+```bash
 gh api graphql -f query='
   mutation {
     updateProjectV2ItemFieldValue(input: {
