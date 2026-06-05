@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Pre-submission self-review pass** (#799): Adds a mandatory pre-PR diff self-review gate for implementation agents so stale markers, caller inconsistencies, and uncovered acceptance criteria are caught before draft PR creation.
+
 ### Fixed
 
 - **GitHub Projects status helpers avoid full-board scans for single issues** (#824) — `workflow-lib.sh` now reads a single issue's project item via targeted `repository.issue(...).projectItems` GraphQL and resolves Status field metadata from the project node, replacing repeated `gh project item-list --limit 10000` calls in `get_tracker_status_for_issue`, `ensure_on_project_board`, and `update_tracker_status_best_effort`. This prevents per-item status reads and updates from paginating the whole project board and draining the GraphQL rate-limit bucket during orchestration.
