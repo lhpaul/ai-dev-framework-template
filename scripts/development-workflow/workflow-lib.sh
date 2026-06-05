@@ -649,6 +649,7 @@ workflow_github_project_item_for_issue() {
   local project_number="$2"
   local project_owner project_id repo_owner repo_name response
   local cursor page_state item_json has_next end_cursor page_count line
+  local -a graphql_args
 
   project_owner="$(workflow_resolve_github_project_owner)"
   project_id="$(workflow_github_project_id "$project_owner" "$project_number")"
@@ -662,12 +663,17 @@ workflow_github_project_item_for_issue() {
   cursor=""
   page_count=0
   while :; do
+    graphql_args=(
+      api graphql
+      -f owner="$repo_owner"
+      -f repo="$repo_name"
+      -F issueNumber="$issue_number"
+    )
+    if [ -n "$cursor" ]; then
+      graphql_args+=(-f after="$cursor")
+    fi
     # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
-    if ! response=$(gh api graphql \
-      -f owner="$repo_owner" \
-      -f repo="$repo_name" \
-      -F issueNumber="$issue_number" \
-      -F after="${cursor:-null}" \
+    graphql_args+=(
       -f query='
         query($owner: String!, $repo: String!, $issueNumber: Int!, $after: String) {
           repository(owner: $owner, name: $repo) {
@@ -685,7 +691,10 @@ workflow_github_project_item_for_issue() {
             }
           }
         }
-      ' 2>/dev/null); then
+      '
+    )
+
+    if ! response=$(gh "${graphql_args[@]}" 2>/dev/null); then
       echo "Warning: GraphQL project item lookup failed for issue #${issue_number}; tracker status not read." >&2
       printf ''
       return 0
