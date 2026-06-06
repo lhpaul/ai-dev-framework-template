@@ -23,6 +23,7 @@ Apply this label when **all** of the following are true:
 
 - [ ] CI checks are green (build, lint, tests all pass)
 - [ ] The relevant pre-PR review gate from `REVIEW.md` has been completed
+- [ ] Step 7's latest automated reviewer-loop summary has `Result: clean` or `Result: skipped`; `RESULT=escalate`, `pending_timeout`, `timeout`, `needs_fixes`, or any other non-clean terminal result blocks this label
 - [ ] Every configured automated PR reviewer has no blocking PR feedback (or is skipped)
 - [ ] All feedback from a previous human review cycle has been addressed
 

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Item orchestrator blocks ready labels on reviewer-loop escalation** (#827) — Protocol 91 Step 8a now requires the latest automated reviewer-loop summary to report `Result: clean` or `Result: skipped` before applying `ready-for-human-review`. `RESULT=escalate`, pending timeouts, reviewer timeouts, `needs_fixes`, and any other non-clean terminal reviewer-loop result now hard-block readiness labeling and force escalation or a return to the reviewer loop.
 - **PR-Agent Security Concern stuck-loop handling** (#815) — `.pr_agent.toml`
   now instructs PR-Agent to reserve `Security Concern` for high-confidence,
   actionable vulnerabilities and use `Possible Issue` for low-confidence or

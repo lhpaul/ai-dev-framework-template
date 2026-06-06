@@ -1508,6 +1508,7 @@ Interpret the result as follows:
 | 4         | Unresolved review threads at pre-Check-4 gate                                                    | Resolve threads, push fixes, re-run checklist       |
 | 5         | CI not green at readiness gate                                                                    | Run Step 8 (pr-ci-loop.sh) and fix failing checks   |
 | 6         | Late-arriving async bot threads detected after label application                                  | Remove `ready-for-human-review`, add `needs-fixes`, return to Step 7a |
+| 7         | Latest reviewer-loop summary is missing or has a non-clean terminal result                       | Do not label ready; escalate or return to reviewer loop |
 
 When adding a new gate to this checklist, allocate the next unused exit code and update this table. Exit codes must not collide.
 
@@ -1646,6 +1647,29 @@ if [ "$CI_FAILING" -gt 0 ] || [ "$CI_PENDING" -gt 0 ]; then
   exit 5  # Exit code 5 = "CI not green at readiness gate"
 fi
 echo "✅ CI is green on $HEAD_SHA."
+
+# Check 0.5: latest automated reviewer-loop summary must be clean or skipped.
+# A non-clean terminal result such as RESULT=escalate, needs_fixes, timeout, or
+# pending_timeout must never advance to ready-for-human-review, even if CI is green.
+LOOP_SUMMARY_BODY=$(gh pr view "$PR_NUMBER" --json comments --jq '
+  [.comments[]
+   | select(.body | test("Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"))]
+  | sort_by(.createdAt)
+  | last
+  | .body // ""')
+if [ -z "$LOOP_SUMMARY_BODY" ]; then
+  echo "ERROR: Cannot verify automated reviewer-loop result — no reviewer-loop summary comment found."
+  echo "Run Step 7 (pr-review-loop.sh) before applying ready-for-human-review."
+  exit 7  # Exit code 7 = "reviewer-loop summary missing or non-clean"
+fi
+if echo "$LOOP_SUMMARY_BODY" | grep -Eiq '(^|[*[:space:]])Result:([*[:space:]])*(clean|skipped)([[:space:]—.,;:)]|$)|No blocking PR feedback'; then
+  echo "✅ Automated reviewer-loop summary result is clean/skipped."
+else
+  echo "ERROR: Latest automated reviewer-loop summary is not clean/skipped."
+  echo "RESULT=escalate or any non-clean terminal reviewer-loop result MUST NOT apply ready-for-human-review."
+  echo "Escalate to the human or return to the reviewer loop according to Step 7."
+  exit 7  # Exit code 7 = "reviewer-loop summary missing or non-clean"
+fi
 
 # Check 1: PR is non-draft
 DRAFT=$(gh pr view "$PR_NUMBER" --json isDraft --jq '.isDraft')
@@ -1820,6 +1844,7 @@ Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asyn
   - If `ready-for-regression not verified` on implementation PR (exit 3 from pre-Check-4 gate): Step 7b was not completed. Apply the label via Step 7b, run Step 8 (CI loop), and re-enter Step 8a from the beginning. This gate is a hard block — `ready-for-human-review` cannot be applied until `ready-for-regression` is verified present.
   - If `unresolved review threads found` (exit 4 from GraphQL pre-Check-4 gate): The GraphQL query returned unresolved bot-authored review threads. Address the findings, push fixes, and re-enter Step 8a from the beginning. This gate is a hard block — `ready-for-human-review` cannot be applied until the GraphQL query confirms all threads are resolved. **Do not rely on self-tracked thread state** — the GraphQL query is the authoritative check.
   - If `late-arriving async bot threads detected` (exit 6 from Step 8a.1 re-check): Late-arriving threads from async bots (e.g., `codex-github`) were discovered after the pre-Check-4 gate. Remove `ready-for-human-review`, add `needs-fixes`, and return to Step 7a. This indicates a race condition where the bot posted its thread after the initial verification but before the label was applied.
+  - If `reviewer-loop summary missing or non-clean` (exit 7 from Check 0.5): The latest automated reviewer-loop summary comment is absent or its `Result:` line is not `clean`/`skipped`. Do not apply `ready-for-human-review`. For `RESULT=escalate`, `pending_timeout`, `timeout`, `needs_fixes`, or any other non-clean terminal result, escalate or re-enter Step 7 according to the reviewer-loop result.
   - If `needs-fixes` is present (Check 3): The label is stale at this point (CI is green and reviews are clean), so it is automatically removed before proceeding to apply `ready-for-human-review`
 
 This checklist ensures the label sequence is always complete and all CI checks (including e2e/regression) have passed before the PR is declared ready for human review.
@@ -1900,7 +1925,7 @@ Verify all of the following. If any check fails, **do not report ready** — tre
 | No `needs-fixes` label                          | `needs-fixes` absent from `labels[].name`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `needs-setup` label (if present)                | **Valid co-label** — `needs-setup` may be present alongside `ready-for-human-review` when the diff contains infrastructure dependency signals. Its presence does **not** constitute a verification failure and does not block this check. Do not remove it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | All automated-reviewer `reviewThreads` resolved | GraphQL query above returns empty output — `isResolved: true` (or first comment body contains `✅ Addressed`) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| Automated reviewer loop summary                 | At least one comment whose body contains `"Automated Reviewer Loop Summary"`, `"Reviewer Loop Summary"`, or `"No blocking PR feedback"` (skip this check only when Step 7 was `skipped` because no review platforms are configured). **This is a hard requirement. Agents applying fixes MUST NOT remove or skip this check — the presence of the comment is the only reliable signal that Step 7 ran to completion. A PR that has `ready-for-human-review` but lacks this comment is in an incomplete state and must re-run Step 7.** (Note: the Step 7a summary comment posted by the internal review gate is a distinct comment from a distinct step — it does not satisfy this check. This check targets the external automated reviewer loop summary from Step 7 only.) |
+| Automated reviewer loop summary                 | At least one comment whose body contains `"Automated Reviewer Loop Summary"`, `"Reviewer Loop Summary"`, or `"No blocking PR feedback"` (skip this check only when Step 7 was `skipped` because no review platforms are configured), and the latest summary's `Result:` line is `clean` or `skipped`. **This is a hard requirement. Agents applying fixes MUST NOT remove or skip this check — the presence of the comment plus a clean/skipped result is the only reliable signal that Step 7 ran to completion successfully. A PR that has `ready-for-human-review` but lacks this comment or has `RESULT=escalate`, `pending_timeout`, `timeout`, `needs_fixes`, or any other non-clean terminal result is in an incomplete state and must re-run Step 7 or escalate.** (Note: the Step 7a summary comment posted by the internal review gate is a distinct comment from a distinct step — it does not satisfy this check. This check targets the external automated reviewer loop summary from Step 7 only.) |
 | CI checks                                       | All required status checks have `state: SUCCESS` or `conclusion: success` in `statusCheckRollup` (no check in `PENDING`, `FAILURE`, or `ERROR` state)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 If any check fails:
