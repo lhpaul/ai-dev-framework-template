@@ -1651,12 +1651,16 @@ echo "✅ CI is green on $HEAD_SHA."
 # Check 0.5: latest automated reviewer-loop summary must be clean or skipped.
 # A non-clean terminal result such as RESULT=escalate, needs_fixes, timeout, or
 # pending_timeout must never advance to ready-for-human-review, even if CI is green.
-LOOP_SUMMARY_BODY=$(gh pr view "$PR_NUMBER" --json comments --jq '
+if ! LOOP_SUMMARY_BODY=$(gh pr view "$PR_NUMBER" --json comments --jq '
   [.comments[]
    | select(.body | test("Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"))]
   | sort_by(.createdAt)
   | last
-  | .body // ""')
+  | .body // ""); then
+  echo "ERROR: Cannot verify automated reviewer-loop result — gh pr view failed."
+  echo "Retry the GitHub query or resolve the CLI/API failure before applying ready-for-human-review."
+  exit 7  # Exit code 7 = "reviewer-loop summary missing or non-clean"
+fi
 if [ -z "$LOOP_SUMMARY_BODY" ]; then
   echo "ERROR: Cannot verify automated reviewer-loop result — no reviewer-loop summary comment found."
   echo "Run Step 7 (pr-review-loop.sh) before applying ready-for-human-review."
