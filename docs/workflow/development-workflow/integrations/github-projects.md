@@ -60,6 +60,28 @@ GitHub Projects v2 creates a default **Status** single-select field. Configure i
 
 To add or rename status options, use the project settings UI at `https://github.com/users/<OWNER>/projects/<NUMBER>/settings` (or the equivalent org URL).
 
+### 2.1 Configure Built-In Project Workflows
+
+GitHub Projects can run its own built-in workflow when an item is closed. Configure
+that workflow so it does not override the AI development workflow's merge state:
+
+- Preferred: set the built-in "item closed" workflow to update Status to `Merged`.
+- Also acceptable: disable the built-in "item closed" Status update entirely.
+- Do not configure the built-in workflow to set Status to `Released` when an item
+  is closed.
+
+Implementation PR merges follow this sequence:
+
+1. `update-tracker-on-merge.yml` or `post-merge-cleanup.sh` sets the issue's
+   project Status to `Merged`.
+2. The workflow closes the GitHub issue for the merged implementation branch.
+3. A later release workflow moves shipped issues from `Merged` to `Released`.
+
+If the built-in "item closed" workflow sets Status to `Released`, it races with
+and overrides the intended `Merged` status immediately after every implementation
+merge. The board then incorrectly shows unreleased work as released, and operators
+must manually correct each item before preparing a release.
+
 ### 3. Add Custom Fields
 
 Add these custom fields to the project (via project settings UI or GraphQL):

@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **GitHub Projects closed-item workflow configuration** (#826) — documents that
+  the built-in GitHub Projects "item closed" workflow must set Status to
+  `Merged` or be disabled, rather than setting closed items to `Released`.
+  This prevents implementation issues from being marked released immediately
+  after merge, before the prepare-release workflow publishes them.
 - **PR-Agent Security Concern stuck-loop handling** (#815) — `.pr_agent.toml`
   now instructs PR-Agent to reserve `Security Concern` for high-confidence,
   actionable vulnerabilities and use `Possible Issue` for low-confidence or
