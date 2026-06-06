@@ -468,6 +468,17 @@ Use the **PR feedback ledger** (keyed by `(platform, path, body_snippet)`) to de
 
 3. **Maximum cycle count**: As specified in `91-orchestrate-work-protocol.md`, escalate when `cycle >= max_cycles` (default: 10). This is a hard limit independent of finding counts.
 
+4. **PR-Agent low-confidence Security Concern loop**: If PR-Agent applies
+   `Security Concern` in two or more consecutive cycles while another configured
+   reviewer is clean, inspect the PR-Agent finding text before dispatching another
+   fix pass. When the finding text itself describes the concern as theoretical,
+   unlikely, technically correct, low risk, or not a vulnerability, treat the loop
+   as stuck and escalate with that evidence instead of making non-substantive code
+   changes. PR-Agent is configured to reserve `Security Concern` for
+   high-confidence actionable defects and to use `Possible Issue` for these
+   low-confidence cases; repeated low-confidence security labels indicate reviewer
+   calibration drift, not necessarily a code defect.
+
 #### Escalation trigger
 
 Stop the loop and escalate to human when any of the above conditions are met. In the final summary comment (see "PR feedback tracking and comments" below), include:

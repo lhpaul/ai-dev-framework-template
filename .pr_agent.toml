@@ -96,6 +96,11 @@ This is a workflow framework template repository. Adjust your review accordingly
 - Do not flag intentionally redundant-looking shell guards when they are defensive
   validation around external command output, API responses, or cross-platform shell
   compatibility.
+- Apply the "Security Concern" label only for high-confidence, actionable security
+  defects. If the finding is low-confidence, theoretical, or the body describes the
+  code as technically correct, unlikely to be exploitable, low risk, or not a real
+  vulnerability, use "Possible Issue" instead so the reviewer loop treats it as
+  advisory and avoids an unresolvable fix cycle.
 - Prefer "No major issues detected" over low-confidence process, style, or
   documentation-ordering comments. Only report a focus area when it identifies a
   concrete failure mode introduced by the diff.
