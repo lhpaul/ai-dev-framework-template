@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **PR-Agent Security Concern stuck-loop handling** (#815) — `.pr_agent.toml`
+  now instructs PR-Agent to reserve `Security Concern` for high-confidence,
+  actionable vulnerabilities and use `Possible Issue` for low-confidence or
+  self-described non-vulnerability findings. Protocol 93 now treats repeated
+  low-confidence `Security Concern` labels as a stuck-loop escalation signal when
+  other configured reviewers are clean, avoiding non-substantive fix cycles.
 - **`/run-work` proposes the largest safe Backlog start batch** (#838) — Protocol 90 now distinguishes dispatch-eligible in-flight work from proposal-eligible Backlog work. In unrestricted portfolio mode, the orchestrator must evaluate prioritized Backlog items, build the largest safe start batch by dependency and parallelization constraints, and present it for explicit human approval instead of reporting "no eligible work remains" whenever no PRs or in-flight development folders are active.
 - **GitHub Projects status helpers avoid full-board scans for single issues** (#824) — `workflow-lib.sh` now reads a single issue's project item via targeted `repository.issue(...).projectItems` GraphQL and resolves Status field metadata from the project node, replacing repeated `gh project item-list --limit 10000` calls in `get_tracker_status_for_issue`, `ensure_on_project_board`, and `update_tracker_status_best_effort`. This prevents per-item status reads and updates from paginating the whole project board and draining the GraphQL rate-limit bucket during orchestration.
 - **Protocol 93 / PR-Agent: add classifier-safe label-only fallback for blocked review-body reads** (#817) — when an agent's classifier or tool policy blocks reading PR-Agent's full structured review body, the reviewer loop now documents a non-handoff fallback: rerun `pr-review-loop.sh --platform pr-agent`, consume only key-value classification output (`RESULT`, counts, advisory labels, possible-issue evaluation), and continue or escalate from that metadata. This prevents routine PR-Agent comment reads from prematurely ending autonomous fix loops.
