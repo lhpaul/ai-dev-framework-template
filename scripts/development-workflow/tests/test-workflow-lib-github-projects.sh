@@ -64,6 +64,10 @@ JSON
 JSON
 	              ;;
 	          esac
+	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "legacy_field_value" ]; then
+	          cat <<'JSON'
+	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"fieldValueByName":{"name":"Spec Ready"},"type":{"name":"Workflow"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
+JSON
 	        else
 	          cat <<'JSON'
 	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"status":{"name":"Spec Ready"},"type":{"name":"Workflow"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
@@ -76,6 +80,10 @@ JSON
           exit 42
         elif [ "${MOCK_STATUS_FIELD_MODE:-existing}" = "invalid_json" ]; then
           printf 'not json\n'
+        elif [[ "$*" == *"projectId=PVT_project_2"* ]]; then
+          cat <<'JSON'
+{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_type_project_2","name":"Type","options":[{"id":"OPT_workflow_project_2","name":"Workflow"},{"id":"OPT_bug_project_2","name":"Bug"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
+JSON
         elif [ "${MOCK_STATUS_FIELD_MODE:-existing}" = "paginated" ]; then
           case "$*" in
             *"after=cursor_field_1"*)
@@ -193,6 +201,15 @@ run_test "paginated_status_uses_two_item_queries" "2" "$(count_log_matches 'proj
 run_test "paginated_status_avoids_full_board_scan" "" "$(forbidden_project_reads)"
 
 reset_log
+export MOCK_PROJECT_ITEM_MODE=legacy_field_value
+status="$(get_tracker_status_for_issue 824)"
+tracker_type="$(get_tracker_type_for_issue 824)"
+unset MOCK_PROJECT_ITEM_MODE
+run_test "legacy_field_value_status_fallback" "Spec Ready" "$status"
+run_test "legacy_field_value_type_alias_read" "Workflow" "$tracker_type"
+run_test "legacy_field_value_avoids_full_board_scan" "" "$(forbidden_project_reads)"
+
+reset_log
 invalid_item="$(workflow_github_project_item_for_issue "not-a-number" "1" 2>/dev/null)"
 run_test "invalid_issue_number_returns_empty" "" "$invalid_item"
 run_test "invalid_issue_number_avoids_graphql" "0" "$(count_log_matches 'api graphql')"
@@ -268,6 +285,17 @@ type_field_output="$(workflow_github_project_type_field_json "" 2>/dev/null)" ||
 run_test "type_field_empty_project_id_returns_nonzero" "1" "$type_field_exit"
 run_test "type_field_empty_project_id_empty_output" "" "$type_field_output"
 run_test "type_field_empty_project_id_avoids_graphql" "0" "$(count_log_matches 'api graphql')"
+
+reset_log
+__workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_json=""
+type_field_json="$(workflow_github_project_type_field_json "PVT_project_1")"
+type_field_id_one="$(printf '%s' "$type_field_json" | jq -r '.field_id // empty')"
+type_field_json="$(workflow_github_project_type_field_json "PVT_project_2")"
+type_field_id_two="$(printf '%s' "$type_field_json" | jq -r '.field_id // empty')"
+run_test "type_field_cache_project_one_id" "PVTSSF_type" "$type_field_id_one"
+run_test "type_field_cache_project_two_id" "PVTSSF_type_project_2" "$type_field_id_two"
+run_test "type_field_cache_scoped_by_project" "2" "$(count_log_matches 'fields')"
 
 reset_log
 __workflow_project_type_field_cache_project_id=""
