@@ -1372,6 +1372,13 @@ list_open_workflow_type_issues() {
     printf '[]\n'
     return 0
   fi
+  case "$project_number" in
+    *[!0-9]*)
+      echo "Warning: project number '${project_number}' is not numeric; cannot discover Workflow Type issues." >&2
+      printf '[]\n'
+      return 0
+      ;;
+  esac
 
   owner="$(workflow_resolve_github_project_owner)"
   if [ -z "$owner" ]; then

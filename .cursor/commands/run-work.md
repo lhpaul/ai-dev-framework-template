@@ -12,6 +12,7 @@ Key responsibilities:
 
 - Read current state from the issue tracker (if configured) and `docs/specs/developments/`
 - When using an issue tracker, read the current brief per `docs/workflow/development-workflow/integrations/issue-tracker.md`
+- When GitHub Projects is configured, use the Project **Type** field (`Feature`, `Bug`, `Refactor`, `Workflow`) for work-item classification; do not rely on legacy repository labels such as `workflow`, `bug`, `enhancement`, or `type:*`
 - Respect dependencies declared in specs
 - Prioritize: due within 2 weeks → priority level → creation date
 - Flag conflicts to the human rather than choosing silently

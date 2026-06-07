@@ -107,12 +107,12 @@ JSON
     ;;
   "issue list --repo lhpaul/ai-dev-framework-template --state open --limit 1000 --json number,title,labels,createdAt,url")
     cat <<'JSON'
-[{"number":824,"title":"Workflow helper issue","labels":[],"createdAt":"2026-06-04T00:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/824"},{"number":825,"title":"Bug helper issue","labels":[],"createdAt":"2026-06-04T01:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/825"}]
+[{"number":824,"title":"Workflow helper issue","labels":[],"createdAt":"2026-06-04T00:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/824"},{"number":825,"title":"Bug helper issue","labels":[],"createdAt":"2026-06-04T01:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/825"},{"number":826,"title":"Done workflow helper issue","labels":[],"createdAt":"2026-06-04T02:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/826"},{"number":827,"title":"Merged workflow helper issue","labels":[],"createdAt":"2026-06-04T03:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/827"},{"number":828,"title":"Released workflow helper issue","labels":[],"createdAt":"2026-06-04T04:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/828"},{"number":829,"title":"Cancelled workflow helper issue","labels":[],"createdAt":"2026-06-04T05:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/829"}]
 JSON
     ;;
   "project item-list 1 --owner lhpaul --limit 1000 --format json")
     cat <<'JSON'
-{"items":[{"content":{"number":824},"status":"Backlog","priority":"High","type":"Workflow","title":"Workflow helper issue"},{"content":{"number":825},"status":"Backlog","priority":"High","type":"Bug","title":"Bug helper issue"},{"content":{"number":826},"status":"Merged","priority":"High","type":"Workflow","title":"Closed workflow helper issue"}]}
+{"items":[{"content":{"number":824},"status":"Backlog","priority":"High","type":"Workflow","title":"Workflow helper issue"},{"content":{"number":825},"status":"Backlog","priority":"High","type":"Bug","title":"Bug helper issue"},{"content":{"number":826},"status":"Done","priority":"High","type":"Workflow","title":"Done workflow helper issue"},{"content":{"number":827},"status":"Merged","priority":"High","type":"Workflow","title":"Merged workflow helper issue"},{"content":{"number":828},"status":"Released","priority":"High","type":"Workflow","title":"Released workflow helper issue"},{"content":{"number":829},"status":"Cancelled","priority":"High","type":"Workflow","title":"Cancelled workflow helper issue"}]}
 JSON
     ;;
   "project item-add "*)
@@ -133,6 +133,14 @@ export GITHUB_PROJECT_NUMBER="1"
 
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh"
+
+workflow_issue_tracker_provider_raw() {
+  printf '%s\n' "${MOCK_TRACKER_PROVIDER:-github_projects}"
+}
+
+workflow_issue_tracker_project_number() {
+  printf '%s\n' "${MOCK_TRACKER_PROJECT_NUMBER-1}"
+}
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -246,6 +254,16 @@ run_test "type_update_mutates_project_item" "1" "$(count_log_matches 'api graphq
 reset_log
 __workflow_project_type_field_cache_project_id=""
 __workflow_project_type_field_cache_json=""
+export MOCK_STATUS_FIELD_MODE=paginated
+type_field_json="$(workflow_github_project_type_field_json "PVT_project_1")"
+unset MOCK_STATUS_FIELD_MODE
+type_field_id="$(printf '%s' "$type_field_json" | jq -r '.field_id // empty')"
+run_test "type_field_lookup_paginates" "PVTSSF_type" "$type_field_id"
+run_test "type_field_lookup_uses_two_field_queries" "2" "$(count_log_matches 'fields')"
+
+reset_log
+__workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_json=""
 export MOCK_STATUS_FIELD_MODE=graphql_fail
 type_field_output=""
 type_field_exit=0
@@ -272,7 +290,50 @@ reset_log
 workflow_issues="$(list_open_workflow_type_issues)"
 workflow_issue_numbers="$(printf '%s' "$workflow_issues" | jq -r '.[].number' | tr '\n' ' ' | sed 's/ $//')"
 run_test "workflow_type_discovery_filters_open_type" "824" "$workflow_issue_numbers"
+run_test "workflow_type_discovery_filters_terminal_statuses" "824" "$workflow_issue_numbers"
 run_test "workflow_type_discovery_uses_single_board_scan" "1" "$(count_log_matches 'project item-list')"
+
+reset_log
+export MOCK_TRACKER_PROVIDER=linear
+tracker_type="$(get_tracker_type_for_issue 824)"
+type_update_output="$(update_tracker_type_best_effort 824 "Workflow" 2>&1)"
+workflow_issues="$(list_open_workflow_type_issues)"
+unset MOCK_TRACKER_PROVIDER
+run_test "type_helpers_wrong_provider_empty_read" "" "$tracker_type"
+case "$type_update_output" in
+  *"does not support GitHub Projects Type updates"*) provider_guard_result="warned" ;;
+  *) provider_guard_result="$type_update_output" ;;
+esac
+run_test "type_helpers_wrong_provider_warns" "warned" "$provider_guard_result"
+run_test "type_helpers_wrong_provider_empty_list" "[]" "$(printf '%s' "$workflow_issues" | jq -c '.')"
+run_test "type_helpers_wrong_provider_avoids_api" "0" "$(count_log_matches 'api graphql|issue list|project item-list')"
+
+reset_log
+old_project_number="${GITHUB_PROJECT_NUMBER:-}"
+unset GITHUB_PROJECT_NUMBER
+MOCK_TRACKER_PROJECT_NUMBER=""
+tracker_type="$(get_tracker_type_for_issue 824)"
+type_update_output="$(update_tracker_type_best_effort 824 "Workflow" 2>&1)"
+workflow_issues="$(list_open_workflow_type_issues 2>/dev/null)"
+MOCK_TRACKER_PROJECT_NUMBER="not-a-number"
+invalid_type_update_output="$(update_tracker_type_best_effort 824 "Workflow" 2>&1)"
+invalid_workflow_issues="$(list_open_workflow_type_issues 2>/dev/null)"
+export GITHUB_PROJECT_NUMBER="$old_project_number"
+unset MOCK_TRACKER_PROJECT_NUMBER
+run_test "type_helpers_missing_project_empty_read" "" "$tracker_type"
+case "$type_update_output" in
+  *"GITHUB_PROJECT_NUMBER not set"*) project_guard_result="warned" ;;
+  *) project_guard_result="$type_update_output" ;;
+esac
+run_test "type_helpers_missing_project_warns" "warned" "$project_guard_result"
+run_test "type_helpers_missing_project_empty_list" "[]" "$(printf '%s' "$workflow_issues" | jq -c '.')"
+case "$invalid_type_update_output" in
+  *"project number 'not-a-number' is not numeric"*) invalid_project_guard_result="warned" ;;
+  *) invalid_project_guard_result="$invalid_type_update_output" ;;
+esac
+run_test "type_helpers_invalid_project_warns" "warned" "$invalid_project_guard_result"
+run_test "type_helpers_invalid_project_empty_list" "[]" "$(printf '%s' "$invalid_workflow_issues" | jq -c '.')"
+run_test "type_helpers_missing_invalid_project_avoids_api" "0" "$(count_log_matches 'api graphql|issue list|project item-list')"
 
 reset_log
 workflow_github_project_item_for_issue() {

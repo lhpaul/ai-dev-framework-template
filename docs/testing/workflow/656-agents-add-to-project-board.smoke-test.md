@@ -33,7 +33,14 @@ Before running this smoke test:
 ### Step 1: Create a test issue not on the project board
 
 ```bash
-TEST_ISSUE=$(gh issue create --title "Smoke test: board-add (delete me)" --body "Temporary issue for smoke testing #656." --json number --jq '.number')
+if ! TEST_ISSUE=$(gh issue create --title "Smoke test: board-add (delete me)" --body "Temporary issue for smoke testing #656." --json number --jq '.number'); then
+  echo "ERROR: failed to create smoke-test issue" >&2
+  exit 1
+fi
+if [ -z "$TEST_ISSUE" ]; then
+  echo "ERROR: gh issue create returned an empty issue number" >&2
+  exit 1
+fi
 echo "Created test issue #$TEST_ISSUE"
 ```
 
