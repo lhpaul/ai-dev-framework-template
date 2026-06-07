@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Reviewer-loop guard race** (#790, #781): waits for the actual summary comment and includes the PR number in the status context to avoid cross-PR overwrites.
 - **Copilot and reviewer-loop failure handling** (#776, #780): escalates missing head SHAs, surfaces SHA-refresh errors, and reports unreadable lock metadata.
 - **Workflow script portability and guards** (#792): allows `workflow-lib.sh` to degrade when `BASH_SOURCE` is unset in non-Bash contexts.
+- **Workflow shell guard release lint**: removes an unsafe suppressed `haystack` lookup from the Haystack reviewer test harness.
 - **Downstream sync fixes**: backports multiple shell, Copilot, CodeRabbit, summary-comment, and protocol fixes found during downstream template sync review.
 - **Reviewer-loop follow-up coverage** (#802, #803): adds regression coverage for lock-unlock failures, Codex thread audit escalation, summary temp-file cleanup, timestamp fallback, and paginated Actions run selection.
 
