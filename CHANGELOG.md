@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Haystack doc-branch reviewer timeout** (#851) — raises the reviewer-loop
+  default wait budget for `spec/*` and `implementation-plan/*` branches to 180s,
+  exposes `PR_REVIEW_LOOP_DOC_MAX_WAIT` for operators, and preserves explicit
+  `--max-wait` overrides so transient Haystack `pending_timeout` states are less
+  likely to produce false `reviewer-failed` labels on small documentation PRs.
 - **GitHub Projects closed-item workflow configuration** (#826) — documents that
   the built-in GitHub Projects "item closed" workflow must set Status to
   `Merged` or be disabled, rather than setting closed items to `Released`.

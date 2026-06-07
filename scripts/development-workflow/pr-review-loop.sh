@@ -232,13 +232,14 @@ Platform selection (in priority order):
 Branch-type-aware default timeout:
   On spec/* and implementation-plan/* branches, Devin has no trigger condition and
   exits immediately with REASON=no_check_run. To avoid wasting the full 20-minute
-  default wait budget on these branches, the script automatically reduces --max-wait
-  to 60 s and --poll-interval to 30 s when the branch matches spec/* or
-  implementation-plan/* and the caller did not pass the respective flag explicitly.
-  poll_interval is also reduced so it stays below max_wait — the per-loop timeout
-  check requires elapsed >= max_wait, which can only fire after at least one
-  poll_interval has elapsed. Pass --max-wait and/or --poll-interval explicitly to
-  override either value.
+  default wait budget on these branches, the script automatically reduces
+  --max-wait to PR_REVIEW_LOOP_DOC_MAX_WAIT seconds (default: 180) and
+  --poll-interval to 30 s when the branch matches spec/* or
+  implementation-plan/* and the caller did not pass the respective flag
+  explicitly. poll_interval is also reduced when needed so it stays below
+  max_wait — the per-loop timeout check requires elapsed >= max_wait, which can
+  only fire after at least one poll_interval has elapsed. Pass --max-wait and/or
+  --poll-interval explicitly to override either value.
 
 Large-diff poll-window extension:
   CodeRabbit takes significantly longer to post its review on PRs with a large
@@ -3862,6 +3863,25 @@ restore_regression_label_if_missing() {
   return 0
 }
 
+doc_branch_default_max_wait() {
+  local configured="${PR_REVIEW_LOOP_DOC_MAX_WAIT:-180}"
+  if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]]; then
+    echo "WARN: PR_REVIEW_LOOP_DOC_MAX_WAIT must be a positive integer; defaulting to 180" >&2
+    configured=180
+  fi
+  printf '%s\n' "$configured"
+}
+
+doc_branch_default_poll_interval() {
+  local max_wait="$1"
+  local interval=30
+  if [ "$interval" -ge "$max_wait" ]; then
+    interval=$((max_wait / 2))
+    [ "$interval" -lt 1 ] && interval=1
+  fi
+  printf '%s\n' "$interval"
+}
+
 # Skip the main execution block when sourced in test-harness mode.
 # All function definitions above (including normalize_platform_verdict,
 # append_compare_metrics_row, and restore_regression_label_if_missing) are
@@ -4015,15 +4035,15 @@ fi
 # Branch-type-aware timeout: spec/* and implementation-plan/* branches produce
 # REASON=no_check_run immediately when Devin has no trigger condition (non-implementation
 # branches). Waiting the full 1200-second default wastes orchestrator budget.
-# Apply a short max_wait=60 / poll_interval=30 default when the caller did not pass
-# --max-wait / --poll-interval explicitly. poll_interval must be less than max_wait
-# so the per-loop timeout check can fire within the budget.
+# Apply a bounded doc-branch max_wait / poll_interval=30 default when the caller
+# did not pass --max-wait / --poll-interval explicitly. poll_interval must be
+# less than max_wait so the per-loop timeout check can fire within the budget.
 if [ "$max_wait_explicit" -eq 0 ]; then
   case "$branch_name" in
     spec/*|implementation-plan/*)
-      max_wait=60
+      max_wait="$(doc_branch_default_max_wait)"
       if [ "$poll_interval_explicit" -eq 0 ]; then
-        poll_interval=30
+        poll_interval="$(doc_branch_default_poll_interval "$max_wait")"
       fi
       ;;
   esac
@@ -4040,7 +4060,7 @@ fi
 # count and extend max_wait to LARGE_DIFF_MAX_WAIT (default 2400 s) when the count
 # exceeds LARGE_DIFF_THRESHOLD (default 50 files). A case guard excludes spec/* and
 # implementation-plan/* branches — those are already handled by the branch-type-aware
-# timeout block above and must not have their 60-second budget overridden.
+# timeout block above and must not have their bounded doc-branch budget overridden.
 large_diff_threshold="${LARGE_DIFF_THRESHOLD:-50}"
 large_diff_max_wait="${LARGE_DIFF_MAX_WAIT:-2400}"
 if ! [[ "$large_diff_threshold" =~ ^[1-9][0-9]*$ ]]; then

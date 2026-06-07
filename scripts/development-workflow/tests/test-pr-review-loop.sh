@@ -219,6 +219,30 @@ run_test "pre_after_clean_only_filters_phase_platform" "pr-agent" "${platforms[0
 run_test "pre_after_clean_only_platform_count" "1" "${#platforms[@]}"
 
 # ---------------------------------------------------------------------------
+# Area 0b: doc branch timeout defaults
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 0b: doc branch timeout defaults ==="
+
+unset PR_REVIEW_LOOP_DOC_MAX_WAIT
+run_test "doc_branch_default_max_wait" "180" "$(doc_branch_default_max_wait)"
+
+PR_REVIEW_LOOP_DOC_MAX_WAIT=240
+export PR_REVIEW_LOOP_DOC_MAX_WAIT
+run_test "doc_branch_env_override_max_wait" "240" "$(doc_branch_default_max_wait)"
+
+PR_REVIEW_LOOP_DOC_MAX_WAIT=abc
+export PR_REVIEW_LOOP_DOC_MAX_WAIT
+_doc_timeout_output="$(doc_branch_default_max_wait 2>/dev/null)"
+run_test "doc_branch_invalid_env_falls_back" "180" "$_doc_timeout_output"
+
+run_test "doc_branch_poll_interval_default" "30" "$(doc_branch_default_poll_interval 180)"
+run_test "doc_branch_poll_interval_equal_clamps" "15" "$(doc_branch_default_poll_interval 30)"
+run_test "doc_branch_poll_interval_greater_clamps" "10" "$(doc_branch_default_poll_interval 20)"
+
+unset PR_REVIEW_LOOP_DOC_MAX_WAIT _doc_timeout_output
+
+# ---------------------------------------------------------------------------
 # Area 1: normalize_platform_verdict
 # ---------------------------------------------------------------------------
 echo ""
