@@ -1337,7 +1337,7 @@ print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
 # Discovery is intentionally open-issues-first, then one project item-list
 # cross-reference, so callers avoid per-item full-board scans.
 list_open_workflow_type_issues() {
-  local project_number owner open_issues project_items
+  local project_number owner open_issues project_items repo_owner repo_name repo_slug
 
   local _lowti_provider
   _lowti_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
@@ -1363,7 +1363,16 @@ list_open_workflow_type_issues() {
     return 0
   fi
 
-  if ! open_issues="$(gh issue list --state open --limit 1000 --json number,title,labels,createdAt,url 2>/dev/null)"; then
+  repo_owner="$(workflow_resolve_github_repo_owner)"
+  repo_name="$(workflow_resolve_github_repo_name)"
+  if [ -z "$repo_owner" ] || [ -z "$repo_name" ]; then
+    echo "Warning: could not resolve GitHub repository; cannot discover Workflow Type issues." >&2
+    printf '[]\n'
+    return 0
+  fi
+  repo_slug="${repo_owner}/${repo_name}"
+
+  if ! open_issues="$(gh issue list --repo "$repo_slug" --state open --limit 1000 --json number,title,labels,createdAt,url 2>/dev/null)"; then
     echo "Warning: failed to list open GitHub issues; cannot discover Workflow Type issues." >&2
     printf '[]\n'
     return 0
@@ -1379,7 +1388,7 @@ list_open_workflow_type_issues() {
     return 0
   fi
 
-  printf '%s' "$project_items" | jq --argjson open "$open_issues" '
+  if ! printf '%s' "$project_items" | jq --argjson open "$open_issues" '
     def terminal($status):
       ($status // "") as $s
       | ($s == "Done" or $s == "Merged" or $s == "Released" or $s == "Cancelled");
@@ -1399,5 +1408,8 @@ list_open_workflow_type_issues() {
           type: ($item.type // "")
         }
     ]
-  ' 2>/dev/null || printf '[]\n'
+  ' 2>/dev/null; then
+    echo "Warning: failed to parse GitHub Project items while discovering Workflow Type issues." >&2
+    printf '[]\n'
+  fi
 }

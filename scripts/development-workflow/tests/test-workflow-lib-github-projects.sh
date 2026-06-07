@@ -100,7 +100,7 @@ JSON
         ;;
     esac
     ;;
-  "issue list --state open --limit 1000 --json number,title,labels,createdAt,url")
+  "issue list --repo lhpaul/ai-dev-framework-template --state open --limit 1000 --json number,title,labels,createdAt,url")
     cat <<'JSON'
 [{"number":824,"title":"Workflow helper issue","labels":[],"createdAt":"2026-06-04T00:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/824"},{"number":825,"title":"Bug helper issue","labels":[],"createdAt":"2026-06-04T01:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/825"}]
 JSON
