@@ -144,8 +144,17 @@ CodeRabbit is not installed, manually review changed workflow scripts for logic
 bugs before labeling the production PR `ready-for-human-review`.
 
 **Downstream script-bug review**: Before labeling the production PR
-`ready-for-human-review`, search for open GitHub issues labeled `workflow` that
-were filed from downstream sync retrospectives:
+`ready-for-human-review`, search for open workflow-framework GitHub issues that
+were filed from downstream sync retrospectives. When `issue_tracker.provider` is
+`github_projects`, use the project Type field instead of the legacy `workflow`
+label:
+
+```bash
+bash -lc 'source scripts/development-workflow/workflow-lib.sh; list_open_workflow_type_issues'
+```
+
+When the provider is `github_issues`, use the repository's configured
+classification convention. Older repositories may still use:
 
 ```bash
 gh issue list --label workflow --state open --limit 200

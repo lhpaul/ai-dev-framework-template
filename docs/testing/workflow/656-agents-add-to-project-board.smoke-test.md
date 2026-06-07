@@ -33,7 +33,7 @@ Before running this smoke test:
 ### Step 1: Create a test issue not on the project board
 
 ```bash
-TEST_ISSUE=$(gh issue create --title "Smoke test: board-add (delete me)" --body "Temporary issue for smoke testing #656." --label workflow --json number --jq '.number')
+TEST_ISSUE=$(gh issue create --title "Smoke test: board-add (delete me)" --body "Temporary issue for smoke testing #656." --json number --jq '.number')
 echo "Created test issue #$TEST_ISSUE"
 ```
 

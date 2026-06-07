@@ -85,12 +85,12 @@ Before running this smoke test:
 
 1. Verify the findings presentation (protocol Step 4) includes a **"Related existing item"** field for each finding (`#NNN — [title]` or "No existing backlog item found")
 2. From the findings, choose "Add to backlog" for one finding that has **no related existing item**
-3. Verify a new GitHub issue is created (via `gh issue create` with the `workflow` label)
+3. Verify a new GitHub issue is created. For GitHub Projects, confirm it is added to the project with Type `Workflow`; for GitHub Issues-only setups, confirm the repository's workflow label/tag convention is applied.
 4. Verify the issue has a descriptive title and body
 5. Verify the agent returns the issue URL
 6. Inspect the created issue: confirm the body includes enough context to understand the problem without the original conversation
 
-**Expected result**: GitHub issue created with descriptive content and `workflow` label; URL returned.
+**Expected result**: GitHub issue created with descriptive content and provider-appropriate workflow classification; URL returned.
 
 ### Step 5b: Add to Backlog — Expand Existing Issue
 

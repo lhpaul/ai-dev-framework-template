@@ -58,7 +58,8 @@ If any of the above are missing or contradictory, ask **targeted** clarifying qu
    - `./scripts/development-workflow/add-backlog-item.sh create --title "..." --body-file -` (requires `gh` authenticated), **or**
    - Equivalent `gh issue create` with the same title/body.
 3. For **Linear**, use the Linear API/MCP per [`linear.md`](../integrations/linear.md). The `add-backlog-item.sh create` command exits with a non-success code for Linear when the shell helper cannot perform the operation — follow the protocol manually instead of failing silently.
-4. For **GitHub Projects** after the issue exists: if the team uses a project board, add/update the project item per `github-projects.md` (optional field updates such as Status = Backlog) **only when** the human or repo docs supply enough context (project number, owner). If project context is missing, **ask** rather than guessing.
+4. For **GitHub Projects** after the issue exists: if the team uses a project board, add/update the project item per `github-projects.md` (optional field updates such as Status = Backlog and Type = Feature/Bug/Refactor/Workflow) **only when** the human or repo docs supply enough context (project number, owner). If project context is missing, **ask** rather than guessing.
+5. When GitHub Projects is configured, use the project **Type** field for classification instead of repository labels. Set `Type = Workflow` for AI-development-framework/process/tooling work, `Type = Feature` for full-pipeline product work, `Type = Bug` for fast-track fixes, and `Type = Refactor` for plan-only refactors. Do not apply legacy classification labels such as `workflow`, `bug`, `enhancement`, or `type:*`; operational labels such as `integration-branch:<slug>` remain valid when the protocol requires them.
 
 ---
 

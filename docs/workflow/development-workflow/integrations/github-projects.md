@@ -86,15 +86,27 @@ must manually correct each item before preparing a release.
 
 Add these custom fields to the project (via project settings UI or GraphQL):
 
-| Field    | Type                                             | Purpose                                                        |
-| -------- | ------------------------------------------------ | -------------------------------------------------------------- |
-| Priority | Single select: `Urgent`, `High`, `Normal`, `Low` | Drives orchestrator prioritization                             |
-| Due date | Date                                             | Items due within 2 weeks get priority boost                    |
-| Type     | Single select: `Feature`, `Bug`, `Refactor`      | Maps to workflow path (Full Pipeline, Refactor, or Fast Track) |
+| Field    | Type                                                         | Purpose                                                                                 |
+| -------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| Priority | Single select: `Urgent`, `High`, `Normal`, `Low`             | Drives orchestrator prioritization                                                      |
+| Due date | Date                                                         | Items due within 2 weeks get priority boost                                             |
+| Type     | Single select: `Feature`, `Bug`, `Refactor`, `Workflow`      | Source of truth for work-item classification and workflow path routing                  |
+
+The **Type** field is the classification source of truth for GitHub Projects
+integrations:
+
+- `Feature` routes through the full pipeline: spec, plan, implementation.
+- `Bug` routes through the fast-track fix path when the scope check allows it.
+- `Refactor` routes through the plan-only refactor path.
+- `Workflow` marks AI-development-framework/tooling work. In downstream product
+  repositories, reserve `Feature` and `Bug` for product work and use `Workflow`
+  for framework/process/tooling items. In this template repository, workflow
+  framework work also uses `Workflow`.
 
 ### 4. Issue Labels (on the Repository)
 
-Labels live on the repository, not the project. Create labels for scope:
+Labels live on the repository, not the project. Keep labels for operational
+automation and optional scope markers:
 
 ```bash
 gh label create "scope:api" --description "API / backend"
@@ -102,13 +114,23 @@ gh label create "scope:frontend" --description "Frontend / UI"
 # Add more as needed for your project's components
 ```
 
-Type labels are optional if you use the project-level **Type** field instead. If you prefer labels:
+Operational labels such as `ready-for-human-review`, `needs-fixes`,
+`ready-for-regression`, `reviewer-failed`, `feedback-staging`, and
+`integration-branch:<slug>` remain labels because workflow automation consumes
+them directly.
 
-```bash
-gh label create "type:feature" --description "New capability"
-gh label create "type:bug" --description "Something broken"
-gh label create "type:refactor" --description "Code restructuring or tech-debt cleanup"
-```
+Do **not** use repository labels as classification source of truth when
+GitHub Projects is configured. Labels such as `bug`, `enhancement`,
+`type:feature`, `type:bug`, `type:refactor`, and `workflow` are legacy
+classification labels; new workflow automation should set/read the project
+**Type** field instead.
+
+Migration checklist:
+
+1. Add the `Workflow` option to the project **Type** field.
+2. Backfill Type values for open items from current labels and issue context.
+3. Verify open workflow/framework items have `Type = Workflow`.
+4. Remove retired classification labels from open issues after Type is set.
 
 ---
 
@@ -155,7 +177,26 @@ TARGET_STATUS="Development in Review"        # Use a value from the table below
 update_tracker_status_best_effort "$ISSUE_NUMBER" "$TARGET_STATUS"
 ```
 
-For manual debugging, call `workflow_github_project_item_for_issue <issue> <project-number>` after sourcing `workflow-lib.sh`; it returns the project item ID, project ID, and current Status for exactly one issue.
+For manual debugging, call `workflow_github_project_item_for_issue <issue> <project-number>` after sourcing `workflow-lib.sh`; it returns the project item ID, project ID, current Status, and current Type for exactly one issue.
+
+### One-shot Type update and discovery
+
+Use the shared Type helpers when GitHub Projects is the configured tracker:
+
+```bash
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source scripts/development-workflow/workflow-lib.sh
+
+get_tracker_type_for_issue "$ISSUE_NUMBER"
+update_tracker_type_best_effort "$ISSUE_NUMBER" "Workflow"
+list_open_workflow_type_issues
+```
+
+`get_tracker_type_for_issue` and `update_tracker_type_best_effort` use the same
+targeted `repository.issue(...).projectItems` lookup as the Status helpers.
+`list_open_workflow_type_issues` fetches open issues first and then
+cross-references a single project item-list result, so callers do not perform
+one full-board scan per issue.
 
 ### Status values by workflow stage (Step 8b targets)
 
@@ -167,10 +208,12 @@ For manual debugging, call `workflow_github_project_item_for_issue <issue> <proj
 
 ### Caching field and option IDs
 
-Field IDs and option IDs are stable within a project. `update_tracker_status_best_effort`
-caches the Status field metadata in memory for the current shell process after the first
-targeted lookup, so repeated status updates in the same run do not need repeated field
-metadata queries. Re-run the helper in a fresh shell if the project field configuration changes.
+Field IDs and option IDs are stable within a project.
+`update_tracker_status_best_effort` and `update_tracker_type_best_effort` cache
+field metadata in memory for the current shell process after the first targeted
+lookup, so repeated updates in the same run do not need repeated field metadata
+queries. Re-run the helper in a fresh shell if the project field configuration
+changes.
 
 ---
 

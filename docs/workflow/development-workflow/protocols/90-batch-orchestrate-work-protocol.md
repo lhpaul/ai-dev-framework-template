@@ -258,8 +258,10 @@ When no dispatch-eligible work exists, the orchestrator must still evaluate prop
 
 | Portfolio item state (per tracker)                                                  | Can advance if...                                                   | Dispatch target                                                                 |
 | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Backlog (Feature)                                                                   | Human explicitly requested it, or unrestricted portfolio mode is building a proposed start batch | Work Item Runner on the tracker item / brief after approval (starts at spec stage) |
+| Backlog (Feature)                                                                   | Human explicitly requested it, or unrestricted portfolio mode is building a proposed start batch and tracker Type/brief classifies it as Feature | Work Item Runner on the tracker item / brief after approval (starts at spec stage) |
+| Backlog (Bug)                                                                       | Human explicitly requested it as a bug / fast-track item, or unrestricted portfolio mode is building a proposed start batch and tracker Type/brief classifies it as Bug | Work Item Runner on the tracker item / brief after approval (starts at fast-track scope check) |
 | Backlog (Refactor)                                                                  | Human explicitly requested it as a Refactor, or unrestricted portfolio mode is building a proposed start batch and tracker Type/brief classifies it as Refactor | Work Item Runner on the tracker item / brief after approval (starts at plan stage, skips spec) |
+| Backlog (Workflow)                                                                  | Human explicitly requested it, or unrestricted portfolio mode is building a proposed start batch and tracker Type/brief classifies it as Workflow | Work Item Runner on the tracker item / brief after approval (route by brief: full pipeline, refactor, or fast-track) |
 | Writing Spec                                                                        | Tracker **Writing Spec**; spec PR not yet human-ready               | Work Item Runner on the tracker item / branch / PR                              |
 | Writing Plan                                                                        | Tracker **Writing Plan**; plan PR not yet human-ready               | Work Item Runner on the tracker item / branch / PR                              |
 | In Development                                                                      | Tracker **In Development**; feature/fix PR not yet human-ready      | Work Item Runner on the tracker item / branch / PR                              |
@@ -279,6 +281,11 @@ When multiple items are eligible or proposal-eligible, prioritize as follows:
 3. Creation date, earlier first
 
 If a due date conflicts with the abstract priority order, flag it to the human rather than silently choosing.
+
+For GitHub Projects, the project **Type** field is authoritative for Backlog
+route classification. Repository labels such as `workflow`, `bug`,
+`enhancement`, and `type:*` are legacy classification hints only; do not rely on
+them when Type is available.
 
 ### Largest safe start-batch rule
 

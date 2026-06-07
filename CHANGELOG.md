@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Reviewer failure label** (#804): Adds a self-healing reviewer-failed PR label when automated reviewer platforms time out, escalate, or are unavailable.
 - **Pre-submission self-review pass** (#799): Adds a mandatory pre-PR diff self-review gate for implementation agents so stale markers, caller inconsistencies, and uncovered acceptance criteria are caught before draft PR creation.
 
+### Changed
+
+- **Tracker Type field classification** (#828): Makes GitHub Projects Type the source of truth for workflow item classification, adds the Workflow Type convention, and retires repository labels for bug/enhancement/workflow classification while preserving operational PR labels.
+
 ### Fixed
 
 - **GitHub Projects closed-item workflow configuration** (#826) — documents that
