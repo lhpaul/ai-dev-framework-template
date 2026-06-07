@@ -71,7 +71,12 @@ JSON
 	        fi
 	        ;;
       *"fields(first:"*)
-        if [ "${MOCK_STATUS_FIELD_MODE:-existing}" = "paginated" ]; then
+        if [ "${MOCK_STATUS_FIELD_MODE:-existing}" = "graphql_fail" ]; then
+          printf 'GraphQL failure\n' >&2
+          exit 42
+        elif [ "${MOCK_STATUS_FIELD_MODE:-existing}" = "invalid_json" ]; then
+          printf 'not json\n'
+        elif [ "${MOCK_STATUS_FIELD_MODE:-existing}" = "paginated" ]; then
           case "$*" in
             *"after=cursor_field_1"*)
               cat <<'JSON'
@@ -239,10 +244,47 @@ run_test "type_update_avoids_full_board_scan" "" "$(forbidden_project_reads)"
 run_test "type_update_mutates_project_item" "1" "$(count_log_matches 'api graphql' | awk '{print ($1 >= 3) ? 1 : 0}')"
 
 reset_log
+__workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_json=""
+export MOCK_STATUS_FIELD_MODE=graphql_fail
+type_field_output=""
+type_field_exit=0
+type_field_output="$(workflow_github_project_type_field_json "PVT_project_1" 2>/dev/null)" || type_field_exit=$?
+unset MOCK_STATUS_FIELD_MODE
+run_test "type_field_graphql_failure_returns_nonzero" "1" "$type_field_exit"
+run_test "type_field_graphql_failure_empty_output" "" "$type_field_output"
+run_test "type_field_graphql_failure_no_cache" "" "$__workflow_project_type_field_cache_json"
+
+reset_log
+__workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_json=""
+export MOCK_STATUS_FIELD_MODE=invalid_json
+type_update_output="$(update_tracker_type_best_effort 824 "Workflow" 2>&1)"
+unset MOCK_STATUS_FIELD_MODE
+case "$type_update_output" in
+  *"could not read project Type field metadata"*) type_update_result="metadata-failed" ;;
+  *) type_update_result="$type_update_output" ;;
+esac
+run_test "type_update_metadata_parse_failure_warns" "metadata-failed" "$type_update_result"
+run_test "type_update_metadata_parse_failure_no_mutation" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+
+reset_log
 workflow_issues="$(list_open_workflow_type_issues)"
 workflow_issue_numbers="$(printf '%s' "$workflow_issues" | jq -r '.[].number' | tr '\n' ' ' | sed 's/ $//')"
 run_test "workflow_type_discovery_filters_open_type" "824" "$workflow_issue_numbers"
 run_test "workflow_type_discovery_uses_single_board_scan" "1" "$(count_log_matches 'project item-list')"
+
+reset_log
+workflow_github_project_item_for_issue() {
+  printf 'not json'
+}
+type_update_output="$(update_tracker_type_best_effort 824 "Workflow" 2>&1)"
+case "$type_update_output" in
+  *"could not parse project item ID"*) type_update_result="item-parse-failed" ;;
+  *) type_update_result="$type_update_output" ;;
+esac
+run_test "type_update_item_parse_failure_warns" "item-parse-failed" "$type_update_result"
+run_test "type_update_item_parse_failure_no_mutation" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
 
 echo ""
 echo "Test summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"

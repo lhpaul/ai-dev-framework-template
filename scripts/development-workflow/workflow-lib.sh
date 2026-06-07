@@ -943,7 +943,7 @@ workflow_github_project_type_field_json() {
       if ! response=$(gh "${graphql_args[@]}" 2>/dev/null); then
         echo "Warning: GraphQL project Type field lookup failed for project '${project_id}'." >&2
         printf ''
-        return 0
+        return 1
       fi
 
       if ! page_state="$(printf '%s' "$response" | python3 -c "
@@ -971,7 +971,7 @@ print('END_CURSOR=' + end_cursor)
 " 2>/dev/null)"; then
         echo "Warning: could not parse GraphQL project Type field response for project '${project_id}'." >&2
         printf ''
-        return 0
+        return 1
       fi
 
       field_json=""
@@ -996,7 +996,8 @@ EOF
       page_count=$((page_count + 1))
       if [ "$page_count" -ge 20 ]; then
         echo "Warning: project Type field lookup exceeded pagination limit for project '${project_id}'." >&2
-        break
+        printf ''
+        return 1
       fi
       cursor="$end_cursor"
     done
@@ -1080,11 +1081,15 @@ get_tracker_type_for_issue() {
     return 0
   fi
 
-  current_type=$(printf '%s' "$item_json" | python3 -c "
+  if ! current_type=$(printf '%s' "$item_json" | python3 -c "
 import json, sys
 item = json.loads(sys.stdin.read(), strict=False)
 print(item.get('type') or '', end='')
-" 2>/dev/null || true)
+" 2>/dev/null); then
+    echo "Warning: could not parse project item Type for issue #${issue_number}." >&2
+    printf ''
+    return 1
+  fi
   printf '%s' "${current_type:-}"
 }
 
@@ -1273,16 +1278,22 @@ update_tracker_type_best_effort() {
   fi
 
   item_json="$(workflow_github_project_item_for_issue "$issue_number" "$project_number")"
-  item_id=$(printf '%s' "$item_json" | python3 -c "
+  if ! item_id=$(printf '%s' "$item_json" | python3 -c "
 import json, sys
 item = json.loads(sys.stdin.read(), strict=False)
 print(item.get('item_id') or '', end='')
-" 2>/dev/null || true)
-  project_id=$(printf '%s' "$item_json" | python3 -c "
+" 2>/dev/null); then
+    echo "Warning: could not parse project item ID for issue #${issue_number}; skipping tracker Type update."
+    return 0
+  fi
+  if ! project_id=$(printf '%s' "$item_json" | python3 -c "
 import json, sys
 item = json.loads(sys.stdin.read(), strict=False)
 print(item.get('project_id') or '', end='')
-" 2>/dev/null || true)
+" 2>/dev/null); then
+    echo "Warning: could not parse project ID for issue #${issue_number}; skipping tracker Type update."
+    return 0
+  fi
   if [ -z "$item_id" ]; then
     echo "Warning: issue #${issue_number} not found in project #${project_number}; skipping tracker Type update."
     return 0
@@ -1292,17 +1303,26 @@ print(item.get('project_id') or '', end='')
     return 0
   fi
 
-  field_json="$(workflow_github_project_type_field_json "$project_id")"
-  field_id=$(printf '%s' "$field_json" | python3 -c "
+  if ! field_json="$(workflow_github_project_type_field_json "$project_id")"; then
+    echo "Warning: could not read project Type field metadata; skipping tracker Type update."
+    return 0
+  fi
+  if ! field_id=$(printf '%s' "$field_json" | python3 -c "
 import json, sys
 data = json.loads(sys.stdin.read(), strict=False)
 print(data.get('field_id') or '', end='')
-" 2>/dev/null || true)
-  option_id=$(printf '%s' "$field_json" | python3 -c "
+" 2>/dev/null); then
+    echo "Warning: could not parse Type field metadata; skipping tracker Type update."
+    return 0
+  fi
+  if ! option_id=$(printf '%s' "$field_json" | python3 -c "
 import json, sys
 data = json.loads(sys.stdin.read(), strict=False)
 print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
-" "$type_label" 2>/dev/null || true)
+" "$type_label" 2>/dev/null); then
+    echo "Warning: could not parse Type option '${type_label}'; skipping tracker Type update."
+    return 0
+  fi
   if [ -z "$field_id" ] || [ -z "$option_id" ]; then
     echo "Warning: could not resolve Type field or option '${type_label}'; skipping tracker Type update."
     return 0
