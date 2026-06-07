@@ -7,7 +7,7 @@
 
 ## Summary
 
-**Approach**: Extend Protocol 90's existing tool-fix ordering hazard section with merge-ordering guidance for foundational reviewer-tool fixes. The implementation is documentation-only: define detection signals, hold behavior, resume behavior after foundational merge, and required batch-summary output.
+**Approach**: Extend the batch orchestration protocol's existing tool-fix ordering hazard section with merge-ordering guidance for foundational reviewer-tool fixes. The implementation is documentation-only: define detection signals, hold behavior, resume behavior after foundational merge, and required batch-summary output.
 
 **Estimated complexity**: S
 
@@ -22,7 +22,7 @@
 | Check | Command / query | Result |
 | --- | --- | --- |
 | Repo revision | `git rev-parse --short HEAD` | `0b52d0d` |
-| Existing tool-fix ordering text | `rg -n "tool-fix|Serialize-first|foundational|dependent|reviewer tooling|rebase" docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md docs/testing/workflow` | Protocol 90 already owns the same-batch tool-fix serialize-first rule; no existing foundational-merge guidance is present. |
+| Existing tool-fix ordering text | `rg -n "tool-fix|Serialize-first|foundational|dependent|reviewer tooling|rebase" docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md docs/testing/workflow` | The batch orchestration protocol already owns the same-batch tool-fix serialize-first rule; no existing foundational-merge guidance is present. |
 | Script change scope check | `rg -n "TOOL_FIX|TOOL_FIX_FILES|detect_file_conflicts|workflow-batch-plan" scripts/development-workflow docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` | `workflow-batch-plan.sh` already emits tool-fix classification; the requested behavior can be expressed as orchestrator protocol guidance without changing helper output. |
 
 ---
@@ -44,7 +44,7 @@
 
 ### Tests and Smoke Runbooks
 
-- [ ] `docs/testing/workflow/tool-fix-merge-ordering.smoke-test.md` — add a manual smoke runbook that verifies Protocol 90 includes detection, hold, merge-first, update/reloop, stale-escalation, summary, and human-merge-approval guidance.
+- [ ] `docs/testing/workflow/tool-fix-merge-ordering.smoke-test.md` — add a manual smoke runbook that verifies the batch orchestration protocol includes detection, hold, merge-first, update/reloop, stale-escalation, summary, and human-merge-approval guidance.
 
 ---
 
@@ -54,8 +54,8 @@
 
 **Key scenarios to test**:
 
-1. Protocol 90 explains why dispatch serialization alone is insufficient for dependent reviewer-tool fixes — maps to AC1.
-2. Protocol 90 instructs the orchestrator to identify foundational reviewer-tool fixes — maps to AC2.
+1. The batch orchestration protocol explains why dispatch serialization alone is insufficient for dependent reviewer-tool fixes — maps to AC1.
+2. The batch orchestration protocol instructs the orchestrator to identify foundational reviewer-tool fixes — maps to AC2.
 3. Dependent tool-fix items are held until the foundational PR is merged — maps to AC3.
 4. Dependent branches are updated from target base and rerun through reviewer loop/CI after foundational merge — maps to AC4.
 5. Pre-foundational-merge escalations are treated as stale until post-update review runs — maps to AC5.
@@ -100,7 +100,7 @@ No production code samples are required.
 
 ## Implementation Order
 
-1. Update Protocol 90's same-batch tool-fix ordering section with the foundational reviewer-tool merge-ordering subsection.
+1. Update the batch orchestration protocol's same-batch tool-fix ordering section with the foundational reviewer-tool merge-ordering subsection.
 2. Add summary-output requirements for foundational item, held dependents, merge-ordering reason, stale escalation treatment, and resume condition.
 3. Add `docs/testing/workflow/tool-fix-merge-ordering.smoke-test.md` with the seven Testing Strategy scenarios.
 4. Update `CHANGELOG.md` with the entry listed in **Documentation Updates**.
