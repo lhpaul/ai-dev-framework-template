@@ -940,7 +940,7 @@ workflow_github_project_type_field_json() {
         '
       )
 
-      if ! response=$(gh "${graphql_args[@]}" 2>/dev/null); then
+      if ! response=$(gh "${graphql_args[@]}"); then
         echo "Warning: GraphQL project Type field lookup failed for project '${project_id}'." >&2
         printf ''
         return 1
@@ -968,7 +968,7 @@ end_cursor = page_info.get('endCursor') or ''
 print('FIELD_JSON=' + field_json)
 print('HAS_NEXT=' + has_next)
 print('END_CURSOR=' + end_cursor)
-" 2>/dev/null)"; then
+")"; then
         echo "Warning: could not parse GraphQL project Type field response for project '${project_id}'." >&2
         printf ''
         return 1
@@ -1001,6 +1001,11 @@ EOF
       fi
       cursor="$end_cursor"
     done
+    if [ -z "$__workflow_project_type_field_cache_json" ]; then
+      echo "Warning: project Type field not found for project '${project_id}'." >&2
+      printf ''
+      return 1
+    fi
     __workflow_project_type_field_cache_project_id="$project_id"
   fi
 
@@ -1085,7 +1090,7 @@ get_tracker_type_for_issue() {
 import json, sys
 item = json.loads(sys.stdin.read(), strict=False)
 print(item.get('type') or '', end='')
-" 2>/dev/null); then
+"); then
     echo "Warning: could not parse project item Type for issue #${issue_number}." >&2
     printf ''
     return 1
@@ -1282,7 +1287,7 @@ update_tracker_type_best_effort() {
 import json, sys
 item = json.loads(sys.stdin.read(), strict=False)
 print(item.get('item_id') or '', end='')
-" 2>/dev/null); then
+"); then
     echo "Warning: could not parse project item ID for issue #${issue_number}; skipping tracker Type update."
     return 0
   fi
@@ -1290,7 +1295,7 @@ print(item.get('item_id') or '', end='')
 import json, sys
 item = json.loads(sys.stdin.read(), strict=False)
 print(item.get('project_id') or '', end='')
-" 2>/dev/null); then
+"); then
     echo "Warning: could not parse project ID for issue #${issue_number}; skipping tracker Type update."
     return 0
   fi
@@ -1311,7 +1316,7 @@ print(item.get('project_id') or '', end='')
 import json, sys
 data = json.loads(sys.stdin.read(), strict=False)
 print(data.get('field_id') or '', end='')
-" 2>/dev/null); then
+"); then
     echo "Warning: could not parse Type field metadata; skipping tracker Type update."
     return 0
   fi
@@ -1319,7 +1324,7 @@ print(data.get('field_id') or '', end='')
 import json, sys
 data = json.loads(sys.stdin.read(), strict=False)
 print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
-" "$type_label" 2>/dev/null); then
+" "$type_label"); then
     echo "Warning: could not parse Type option '${type_label}'; skipping tracker Type update."
     return 0
   fi
