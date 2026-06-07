@@ -41,7 +41,7 @@ run_test() {
 #            $pr (PR number string for run-name scoping)
 # ---------------------------------------------------------------------------
 RUN_POLL_FILTER='# Candidate set: workflow-file + timestamp match
-         (.workflow_runs // []) as $all |
+         [.[] | .workflow_runs[]?] as $all |
          [$all[] | select((.path | endswith($wf)) and .created_at >= $poll_after)] as $candidates |
          # PR-scoping via run-name (#808): if any candidate has a "PR #N"-style name
          # (indicating the workflow uses run-name), require name match for THIS PR to
@@ -58,6 +58,7 @@ RUN_POLL_FILTER='# Candidate set: workflow-file + timestamp match
 run_filter() {
   local json="$1" wf="$2" poll_after="$3" pr="${4:-808}"
   printf '%s\n' "$json" | jq -r \
+    --slurp \
     --arg wf "$wf" \
     --arg poll_after "$poll_after" \
     --arg pr "$pr" \
@@ -246,7 +247,34 @@ _id=$(printf '%s\n' "$_result" | jq -r '.id')
 run_test "two_runs_same_pr_most_recent_selected" "830" "$_id"
 unset _json _result _id
 
-# Test 5.6: Backward compat — old workflow (no run-name, generic names) falls back
+# Test 5.6: Runs can arrive out of timestamp order — newest created_at wins
+# This fails without `sort_by(.created_at) | reverse | first` because the first
+# input item is intentionally older than the later candidate for the same PR.
+_json='{"workflow_runs":[
+  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":840},
+  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:03:00Z","status":"completed","conclusion":"success","html_url":"https://b","id":843},
+  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:01:00Z","status":"completed","conclusion":"success","html_url":"https://c","id":841}
+]}'
+_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
+_id=$(printf '%s\n' "$_result" | jq -r '.id')
+run_test "out_of_order_runs_newest_created_at_selected" "843" "$_id"
+unset _json _result _id
+
+# Test 5.7: Paginated workflow-run responses are flattened before selection
+# The production poller uses `gh api --paginate` and slurps all page objects
+# before applying the same filter. This guards against selecting only page 1.
+_json='{"workflow_runs":[
+  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"failure","html_url":"https://page1","id":850}
+]}
+{"workflow_runs":[
+  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:04:00Z","status":"completed","conclusion":"success","html_url":"https://page2","id":854}
+]}'
+_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
+_id=$(printf '%s\n' "$_result" | jq -r '.id')
+run_test "paginated_runs_flattened_newest_selected" "854" "$_id"
+unset _json _result _id
+
+# Test 5.8: Backward compat — old workflow (no run-name, generic names) falls back
 # to timestamp-only selection. When no candidate has a "PR #N"-style name, the
 # filter uses all candidates. The most recent one is selected regardless of name.
 # This covers the transition period before the new workflow is deployed to main.
@@ -258,6 +286,31 @@ _result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "8
 _id=$(printf '%s\n' "$_result" | jq -r '.id')
 run_test "backward_compat_generic_name_falls_back_to_newest" "901" "$_id"
 unset _json _result _id
+
+# ---------------------------------------------------------------------------
+# Area 6: epoch→ISO8601 conversion fallback
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 6: epoch→ISO8601 conversion fallback ==="
+
+_date_mock_dir="$(mktemp -d)"
+cat > "$_date_mock_dir/date" <<'MOCK_DATE'
+#!/usr/bin/env bash
+exit 1
+MOCK_DATE
+chmod +x "$_date_mock_dir/date"
+
+_epoch_to_iso_with_python_fallback() {
+  local epoch="$1"
+  PATH="$_date_mock_dir:$PATH" date -u -r "$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
+    PATH="$_date_mock_dir:$PATH" date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
+    python3 -c "import datetime,sys; print(datetime.datetime.fromtimestamp(int(sys.argv[1]), datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))" "$epoch"
+}
+
+_iso="$(_epoch_to_iso_with_python_fallback 1700000000)"
+run_test "python_fallback_epoch_to_iso" "2023-11-14T22:13:20Z" "$_iso"
+rm -rf "$_date_mock_dir"
+unset _date_mock_dir _iso
 
 # ---------------------------------------------------------------------------
 # Summary
