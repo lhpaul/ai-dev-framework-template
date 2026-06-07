@@ -13,7 +13,7 @@ For information about Haystack's local git hooks (truncation checker, LLM_RULES.
 Key properties:
 
 - **Poll-retry on pending**: When `haystack triage` returns `status=pending` (analysis still in progress), `haystack-reviewer.sh` waits `HAYSTACK_POLL_INTERVAL` seconds (default: 15) and retries automatically until the analysis completes or the overall `HAYSTACK_REVIEWER_TIMEOUT` budget is exhausted. This eliminates the timing-gap false-negative where the reviewer loop ran within the first 2–4 minutes of a PR push and silently skipped findings.
-- **Policy-verdict visibility**: After triage completes, `haystack-reviewer.sh` also reads `haystack pr-status <PR> --json`. When Haystack reports `needsHumanReview: true` or `analysisVerdict: "needs-review"`, the reviewer loop keeps the result non-blocking if there are no blocking findings but displays `haystack (needs-review: policy)` in the PR summary instead of `haystack (clean)`.
+- **Policy-verdict visibility**: After triage completes, `haystack-reviewer.sh` also reads `haystack pr-status <PR> --json`. When Haystack reports `needsHumanReview: true` or `analysisVerdict: "needs-review"`, the reviewer loop keeps the result non-blocking if there are no blocking findings but displays `haystack (needs-review: policy)` in the PR summary instead of `haystack (clean)`. The summary also records the Haystack bucket, `needsHumanReview`, and a disposition such as `blocking`, `policy-human-review`, `advisory-only`, or `good-to-merge`.
 - **No per-hour rate cap**: Unlike some hosted review services, Haystack triage is not subject to hourly review limits (as of the time of writing).
 - **Graceful degradation**: If the `haystack` CLI is absent or unauthenticated, the reviewer exits with `UNAVAILABLE` and the review loop continues with the remaining configured platforms.
 - **No GitHub App required**: This integration uses the CLI only. Haystack does not post inline GitHub review threads in this MVP — findings are reported locally via the key-value output.
@@ -110,7 +110,9 @@ When `pr-status` reports `needsHumanReview: true` or
 ```text
 POLICY_STATUS_AVAILABLE=1
 POLICY_REVIEW_REQUIRED=1
+POLICY_DISPOSITION=policy-human-review
 POLICY_VERDICT=needs-review
+POLICY_NEEDS_HUMAN=true
 DISPLAY_RESULT=needs-review: policy
 ```
 
@@ -119,6 +121,13 @@ triage result with a policy verdict appears as:
 
 ```text
 haystack (needs-review: policy)
+```
+
+The same summary comment includes an explicit status handoff:
+
+```text
+Review policy status:
+- haystack: bucket=needs-assignment; needsHumanReview=true; disposition=policy-human-review; verdict=needs-review; analysisStatus=ready; rating=5; hasReviewer=false;
 ```
 
 This is intentionally advisory: the workflow already routes ready PRs to human

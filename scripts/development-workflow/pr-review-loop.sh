@@ -4119,8 +4119,11 @@ aggregate_advisory_labels=""
 reviewer_failed_required=0
 declare -a compare_verdicts=()
 # Per-platform result tokens for the PR summary comment.
-# Each entry is "platform_name=display_token" (e.g. "haystack=unavailable").
+# Each entry is "platform_name:display_token" (e.g. "haystack:unavailable").
 declare -a platform_result_tokens=()
+# Per-platform review-policy status notes for the PR summary comment. Haystack
+# emits these from `pr-status`; other platforms normally leave this empty.
+declare -a platform_policy_status_notes=()
 # Compare-mode: track the first blocking platform seen so later clean platforms
 # do not overwrite the aggregate. These variables are set once and never reset.
 compare_first_blocking_result=""
@@ -4232,7 +4235,30 @@ for index in "${!platforms[@]}"; do
     esac
   fi
   platform_result_tokens+=("${platform_name}:${_prt_disp}")
+
+  _policy_status_available="$(kv_value_default POLICY_STATUS_AVAILABLE "$platform_output" 0)"
+  if [ "$_policy_status_available" = "1" ]; then
+    _policy_bucket="$(kv_value_default POLICY_BUCKET "$platform_output" "")"
+    _policy_needs_human="$(kv_value_default POLICY_NEEDS_HUMAN "$platform_output" "")"
+    _policy_disposition="$(kv_value_default POLICY_DISPOSITION "$platform_output" "")"
+    _policy_verdict="$(kv_value_default POLICY_VERDICT "$platform_output" "")"
+    _policy_analysis_status="$(kv_value_default POLICY_ANALYSIS_STATUS "$platform_output" "")"
+    _policy_rating="$(kv_value_default POLICY_RATING "$platform_output" "")"
+    _policy_has_reviewer="$(kv_value_default POLICY_HAS_REVIEWER "$platform_output" "")"
+    _policy_note="${platform_name}:"
+    [ -n "$_policy_bucket" ] && _policy_note="${_policy_note} bucket=${_policy_bucket};"
+    [ -n "$_policy_needs_human" ] && _policy_note="${_policy_note} needsHumanReview=${_policy_needs_human};"
+    [ -n "$_policy_disposition" ] && _policy_note="${_policy_note} disposition=${_policy_disposition};"
+    [ -n "$_policy_verdict" ] && _policy_note="${_policy_note} verdict=${_policy_verdict};"
+    [ -n "$_policy_analysis_status" ] && _policy_note="${_policy_note} analysisStatus=${_policy_analysis_status};"
+    [ -n "$_policy_rating" ] && _policy_note="${_policy_note} rating=${_policy_rating};"
+    [ -n "$_policy_has_reviewer" ] && _policy_note="${_policy_note} hasReviewer=${_policy_has_reviewer};"
+    platform_policy_status_notes+=("$_policy_note")
+  fi
   unset _prt_reason _prt_display_override _prt_disp
+  unset _policy_status_available _policy_bucket _policy_needs_human
+  unset _policy_disposition _policy_verdict _policy_analysis_status
+  unset _policy_rating _policy_has_reviewer _policy_note
 
   # In compare mode, record a normalized verdict for each platform before
   # deciding whether to break. The normalized verdict captures clean / blocking /
@@ -4499,12 +4525,24 @@ Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs afte
 **After-clean platforms:** ${phase_platform_list:-none}"
   fi
 
+  local policy_status_section=""
+  if declare -p platform_policy_status_notes >/dev/null 2>&1 \
+      && [ "${#platform_policy_status_notes[@]}" -gt 0 ]; then
+    local _policy_status_note
+    policy_status_section="
+**Review policy status:**"
+    for _policy_status_note in "${platform_policy_status_notes[@]}"; do
+      policy_status_section="${policy_status_section}
+- ${_policy_status_note}"
+    done
+  fi
+
   local comment_body
   comment_body="$(cat <<EOF
 ### Automated Reviewer Loop Summary
 
 **Result:** ${result_line}
-**Platforms:** ${platform_list:-none}
+**Platforms:** ${platform_list:-none}${policy_status_section}
 **Findings:** ${blocking} blocking, ${suggestions} suggestions${phase_section}${compare_section}${advisory_section}${regression_label_section}
 
 *Posted automatically by \`pr-review-loop.sh\`.*
