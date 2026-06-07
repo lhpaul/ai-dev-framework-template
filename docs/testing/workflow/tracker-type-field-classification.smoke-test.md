@@ -42,14 +42,24 @@ classification labels.
 
 1. Set the first temporary issue's project Type to `Workflow`.
 2. Set the second temporary issue's project Type to `Bug`.
-3. Read each issue back through the workflow helper or documented GraphQL query.
+3. Read each issue back through the workflow helper:
+
+   ```bash
+   bash -lc "source scripts/development-workflow/workflow-lib.sh; update_tracker_type_best_effort '$WORKFLOW_ISSUE' 'Workflow'; update_tracker_type_best_effort '$BUG_ISSUE' 'Bug'"
+   bash -lc "source scripts/development-workflow/workflow-lib.sh; get_tracker_type_for_issue '$WORKFLOW_ISSUE'; echo; get_tracker_type_for_issue '$BUG_ISSUE'"
+   ```
 
 **Expected result**: The first issue reports Type `Workflow`; the second reports
 Type `Bug`.
 
 ### Step 3: Verify Workflow Type discovery
 
-1. Run the Workflow Type discovery helper or the documented equivalent command.
+1. Run the Workflow Type discovery helper:
+
+   ```bash
+   bash -lc 'source scripts/development-workflow/workflow-lib.sh; list_open_workflow_type_issues'
+   ```
+
 2. Confirm the output includes the temporary Workflow issue.
 3. Confirm the output does not include the temporary Bug issue.
 

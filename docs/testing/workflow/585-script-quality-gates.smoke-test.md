@@ -138,9 +138,11 @@ callout, not buried in existing prose.
    Step 7.3.
 
 **Expected result**: Step 7.3 contains an explicit instruction to check for open GitHub
-issues from downstream sync retrospectives (labeled `workflow`) before labeling the
-production PR `ready-for-human-review`. The instruction includes or references a `gh
-issue list` command or equivalent guidance.
+issues from downstream sync retrospectives before labeling the production PR
+`ready-for-human-review`. For GitHub Projects, the instruction uses Type
+`Workflow`; for GitHub Issues-only setups, it allows the repository's legacy
+workflow label/tag convention. The instruction includes or references a helper
+command or equivalent guidance.
 
 ---
 

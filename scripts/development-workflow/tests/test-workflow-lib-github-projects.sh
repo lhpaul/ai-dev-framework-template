@@ -5,6 +5,7 @@
 #   1. get_tracker_status_for_issue uses targeted issue->projectItems GraphQL
 #   2. ensure_on_project_board checks membership without full-board pagination
 #   3. update_tracker_status_best_effort resolves item/status IDs without item-list
+#   4. Type helpers read/update project Type and discover open Workflow items
 #
 # Usage: bash scripts/development-workflow/tests/test-workflow-lib-github-projects.sh
 
@@ -54,27 +55,40 @@ JSON
 	          case "$*" in
 	            *"after=cursor_page_1"*)
 	              cat <<'JSON'
-	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"fieldValueByName":{"name":"Spec Ready"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
+	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"status":{"name":"Spec Ready"},"type":{"name":"Workflow"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
 JSON
 	              ;;
 	            *)
 	              cat <<'JSON'
-	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_other","project":{"id":"PVT_other","number":99},"fieldValueByName":{"name":"Backlog"}}],"pageInfo":{"hasNextPage":true,"endCursor":"cursor_page_1"}}}}}}
+	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_other","project":{"id":"PVT_other","number":99},"status":{"name":"Backlog"},"type":{"name":"Bug"}}],"pageInfo":{"hasNextPage":true,"endCursor":"cursor_page_1"}}}}}}
 JSON
 	              ;;
 	          esac
+	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "legacy_field_value" ]; then
+	          cat <<'JSON'
+	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"fieldValueByName":{"name":"Spec Ready"},"type":{"name":"Workflow"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
+JSON
 	        else
 	          cat <<'JSON'
-	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"fieldValueByName":{"name":"Spec Ready"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
+	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"status":{"name":"Spec Ready"},"type":{"name":"Workflow"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
 JSON
 	        fi
 	        ;;
       *"fields(first:"*)
-        if [ "${MOCK_STATUS_FIELD_MODE:-existing}" = "paginated" ]; then
+        if [ "${MOCK_STATUS_FIELD_MODE:-existing}" = "graphql_fail" ]; then
+          printf 'GraphQL failure\n' >&2
+          exit 42
+        elif [ "${MOCK_STATUS_FIELD_MODE:-existing}" = "invalid_json" ]; then
+          printf 'not json\n'
+        elif [[ "$*" == *"projectId=PVT_project_2"* ]]; then
+          cat <<'JSON'
+{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_type_project_2","name":"Type","options":[{"id":"OPT_workflow_project_2","name":"Workflow"},{"id":"OPT_bug_project_2","name":"Bug"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
+JSON
+        elif [ "${MOCK_STATUS_FIELD_MODE:-existing}" = "paginated" ]; then
           case "$*" in
             *"after=cursor_field_1"*)
               cat <<'JSON'
-{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_status","name":"Status","options":[{"id":"OPT_spec_ready","name":"Spec Ready"},{"id":"OPT_in_development","name":"In Development"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
+{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_status","name":"Status","options":[{"id":"OPT_spec_ready","name":"Spec Ready"},{"id":"OPT_in_development","name":"In Development"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_workflow","name":"Workflow"},{"id":"OPT_bug","name":"Bug"},{"id":"OPT_refactor","name":"Refactor"},{"id":"OPT_feature","name":"Feature"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
 JSON
               ;;
             *)
@@ -85,7 +99,7 @@ JSON
           esac
         else
           cat <<'JSON'
-{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_status","name":"Status","options":[{"id":"OPT_spec_ready","name":"Spec Ready"},{"id":"OPT_in_development","name":"In Development"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
+{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_status","name":"Status","options":[{"id":"OPT_spec_ready","name":"Spec Ready"},{"id":"OPT_in_development","name":"In Development"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_workflow","name":"Workflow"},{"id":"OPT_bug","name":"Bug"},{"id":"OPT_refactor","name":"Refactor"},{"id":"OPT_feature","name":"Feature"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
 JSON
         fi
         ;;
@@ -98,6 +112,16 @@ JSON
         printf '{}\n'
         ;;
     esac
+    ;;
+  "issue list --repo lhpaul/ai-dev-framework-template --state open --limit 1000 --json number,title,labels,createdAt,url")
+    cat <<'JSON'
+[{"number":824,"title":"Workflow helper issue","labels":[],"createdAt":"2026-06-04T00:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/824"},{"number":825,"title":"Bug helper issue","labels":[],"createdAt":"2026-06-04T01:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/825"},{"number":826,"title":"Done workflow helper issue","labels":[],"createdAt":"2026-06-04T02:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/826"},{"number":827,"title":"Merged workflow helper issue","labels":[],"createdAt":"2026-06-04T03:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/827"},{"number":828,"title":"Released workflow helper issue","labels":[],"createdAt":"2026-06-04T04:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/828"},{"number":829,"title":"Cancelled workflow helper issue","labels":[],"createdAt":"2026-06-04T05:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/829"}]
+JSON
+    ;;
+  "project item-list 1 --owner lhpaul --limit 1000 --format json")
+    cat <<'JSON'
+{"items":[{"content":{"number":824},"status":"Backlog","priority":"High","type":"Workflow","title":"Workflow helper issue"},{"content":{"number":825},"status":"Backlog","priority":"High","type":"Bug","title":"Bug helper issue"},{"content":{"number":826},"status":"Done","priority":"High","type":"Workflow","title":"Done workflow helper issue"},{"content":{"number":827},"status":"Merged","priority":"High","type":"Workflow","title":"Merged workflow helper issue"},{"content":{"number":828},"status":"Released","priority":"High","type":"Workflow","title":"Released workflow helper issue"},{"content":{"number":829},"status":"Cancelled","priority":"High","type":"Workflow","title":"Cancelled workflow helper issue"}]}
+JSON
     ;;
   "project item-add "*)
     printf 'PVTI_added\n'
@@ -117,6 +141,14 @@ export GITHUB_PROJECT_NUMBER="1"
 
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh"
+
+workflow_issue_tracker_provider_raw() {
+  printf '%s\n' "${MOCK_TRACKER_PROVIDER:-github_projects}"
+}
+
+workflow_issue_tracker_project_number() {
+  printf '%s\n' "${MOCK_TRACKER_PROJECT_NUMBER-1}"
+}
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -156,12 +188,26 @@ run_test "targeted_status_read" "Spec Ready" "$status"
 run_test "status_read_avoids_full_board_scan" "" "$(forbidden_project_reads)"
 
 reset_log
+tracker_type="$(get_tracker_type_for_issue 824)"
+run_test "targeted_type_read" "Workflow" "$tracker_type"
+run_test "type_read_avoids_full_board_scan" "" "$(forbidden_project_reads)"
+
+reset_log
 export MOCK_PROJECT_ITEM_MODE=paginated
 status="$(get_tracker_status_for_issue 824)"
 unset MOCK_PROJECT_ITEM_MODE
 run_test "targeted_status_read_paginates" "Spec Ready" "$status"
 run_test "paginated_status_uses_two_item_queries" "2" "$(count_log_matches 'projectItems')"
 run_test "paginated_status_avoids_full_board_scan" "" "$(forbidden_project_reads)"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=legacy_field_value
+status="$(get_tracker_status_for_issue 824)"
+tracker_type="$(get_tracker_type_for_issue 824)"
+unset MOCK_PROJECT_ITEM_MODE
+run_test "legacy_field_value_status_fallback" "Spec Ready" "$status"
+run_test "legacy_field_value_type_alias_read" "Workflow" "$tracker_type"
+run_test "legacy_field_value_avoids_full_board_scan" "" "$(forbidden_project_reads)"
 
 reset_log
 invalid_item="$(workflow_github_project_item_for_issue "not-a-number" "1" 2>/dev/null)"
@@ -211,6 +257,131 @@ esac
 run_test "status_update_field_lookup_paginates" "updated" "$update_result"
 run_test "status_update_field_lookup_uses_two_field_queries" "2" "$(count_log_matches 'fields')"
 run_test "status_update_field_lookup_avoids_full_board_scan" "" "$(forbidden_project_reads)"
+
+reset_log
+type_update_output="$(update_tracker_type_best_effort 824 "Workflow")"
+case "$type_update_output" in
+  *"Updating tracker Type for issue #824 to 'Workflow'"*) type_update_result="updated" ;;
+  *) type_update_result="$type_update_output" ;;
+esac
+run_test "type_update_runs" "updated" "$type_update_result"
+run_test "type_update_avoids_full_board_scan" "" "$(forbidden_project_reads)"
+run_test "type_update_mutates_project_item" "1" "$(count_log_matches 'api graphql' | awk '{print ($1 >= 3) ? 1 : 0}')"
+
+reset_log
+__workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_json=""
+export MOCK_STATUS_FIELD_MODE=paginated
+type_field_json="$(workflow_github_project_type_field_json "PVT_project_1")"
+unset MOCK_STATUS_FIELD_MODE
+type_field_id="$(printf '%s' "$type_field_json" | jq -r '.field_id // empty')"
+run_test "type_field_lookup_paginates" "PVTSSF_type" "$type_field_id"
+run_test "type_field_lookup_uses_two_field_queries" "2" "$(count_log_matches 'fields')"
+
+reset_log
+type_field_output=""
+type_field_exit=0
+type_field_output="$(workflow_github_project_type_field_json "" 2>/dev/null)" || type_field_exit=$?
+run_test "type_field_empty_project_id_returns_nonzero" "1" "$type_field_exit"
+run_test "type_field_empty_project_id_empty_output" "" "$type_field_output"
+run_test "type_field_empty_project_id_avoids_graphql" "0" "$(count_log_matches 'api graphql')"
+
+reset_log
+__workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_json=""
+type_field_json="$(workflow_github_project_type_field_json "PVT_project_1")"
+type_field_id_one="$(printf '%s' "$type_field_json" | jq -r '.field_id // empty')"
+type_field_json="$(workflow_github_project_type_field_json "PVT_project_2")"
+type_field_id_two="$(printf '%s' "$type_field_json" | jq -r '.field_id // empty')"
+run_test "type_field_cache_project_one_id" "PVTSSF_type" "$type_field_id_one"
+run_test "type_field_cache_project_two_id" "PVTSSF_type_project_2" "$type_field_id_two"
+run_test "type_field_cache_scoped_by_project" "2" "$(count_log_matches 'fields')"
+
+reset_log
+__workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_json=""
+export MOCK_STATUS_FIELD_MODE=graphql_fail
+type_field_output=""
+type_field_exit=0
+type_field_output="$(workflow_github_project_type_field_json "PVT_project_1" 2>/dev/null)" || type_field_exit=$?
+unset MOCK_STATUS_FIELD_MODE
+run_test "type_field_graphql_failure_returns_nonzero" "1" "$type_field_exit"
+run_test "type_field_graphql_failure_empty_output" "" "$type_field_output"
+run_test "type_field_graphql_failure_no_cache" "" "$__workflow_project_type_field_cache_json"
+
+reset_log
+__workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_json=""
+export MOCK_STATUS_FIELD_MODE=invalid_json
+type_update_output="$(update_tracker_type_best_effort 824 "Workflow" 2>&1)"
+unset MOCK_STATUS_FIELD_MODE
+case "$type_update_output" in
+  *"could not read project Type field metadata"*) type_update_result="metadata-failed" ;;
+  *) type_update_result="$type_update_output" ;;
+esac
+run_test "type_update_metadata_parse_failure_warns" "metadata-failed" "$type_update_result"
+run_test "type_update_metadata_parse_failure_no_mutation" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+
+reset_log
+workflow_issues="$(list_open_workflow_type_issues)"
+workflow_issue_numbers="$(printf '%s' "$workflow_issues" | jq -r '.[].number' | tr '\n' ' ' | sed 's/ $//')"
+run_test "workflow_type_discovery_filters_open_type" "824" "$workflow_issue_numbers"
+run_test "workflow_type_discovery_filters_terminal_statuses" "824" "$workflow_issue_numbers"
+run_test "workflow_type_discovery_uses_single_board_scan" "1" "$(count_log_matches 'project item-list')"
+
+reset_log
+export MOCK_TRACKER_PROVIDER=linear
+tracker_type="$(get_tracker_type_for_issue 824)"
+type_update_output="$(update_tracker_type_best_effort 824 "Workflow" 2>&1)"
+workflow_issues="$(list_open_workflow_type_issues)"
+unset MOCK_TRACKER_PROVIDER
+run_test "type_helpers_wrong_provider_empty_read" "" "$tracker_type"
+case "$type_update_output" in
+  *"does not support GitHub Projects Type updates"*) provider_guard_result="warned" ;;
+  *) provider_guard_result="$type_update_output" ;;
+esac
+run_test "type_helpers_wrong_provider_warns" "warned" "$provider_guard_result"
+run_test "type_helpers_wrong_provider_empty_list" "[]" "$(printf '%s' "$workflow_issues" | jq -c '.')"
+run_test "type_helpers_wrong_provider_avoids_api" "0" "$(count_log_matches 'api graphql|issue list|project item-list')"
+
+reset_log
+old_project_number="${GITHUB_PROJECT_NUMBER:-}"
+unset GITHUB_PROJECT_NUMBER
+MOCK_TRACKER_PROJECT_NUMBER=""
+tracker_type="$(get_tracker_type_for_issue 824)"
+type_update_output="$(update_tracker_type_best_effort 824 "Workflow" 2>&1)"
+workflow_issues="$(list_open_workflow_type_issues 2>/dev/null)"
+MOCK_TRACKER_PROJECT_NUMBER="not-a-number"
+invalid_type_update_output="$(update_tracker_type_best_effort 824 "Workflow" 2>&1)"
+invalid_workflow_issues="$(list_open_workflow_type_issues 2>/dev/null)"
+export GITHUB_PROJECT_NUMBER="$old_project_number"
+unset MOCK_TRACKER_PROJECT_NUMBER
+run_test "type_helpers_missing_project_empty_read" "" "$tracker_type"
+case "$type_update_output" in
+  *"GITHUB_PROJECT_NUMBER not set"*) project_guard_result="warned" ;;
+  *) project_guard_result="$type_update_output" ;;
+esac
+run_test "type_helpers_missing_project_warns" "warned" "$project_guard_result"
+run_test "type_helpers_missing_project_empty_list" "[]" "$(printf '%s' "$workflow_issues" | jq -c '.')"
+case "$invalid_type_update_output" in
+  *"project number 'not-a-number' is not numeric"*) invalid_project_guard_result="warned" ;;
+  *) invalid_project_guard_result="$invalid_type_update_output" ;;
+esac
+run_test "type_helpers_invalid_project_warns" "warned" "$invalid_project_guard_result"
+run_test "type_helpers_invalid_project_empty_list" "[]" "$(printf '%s' "$invalid_workflow_issues" | jq -c '.')"
+run_test "type_helpers_missing_invalid_project_avoids_api" "0" "$(count_log_matches 'api graphql|issue list|project item-list')"
+
+reset_log
+workflow_github_project_item_for_issue() {
+  printf 'not json'
+}
+type_update_output="$(update_tracker_type_best_effort 824 "Workflow" 2>&1)"
+case "$type_update_output" in
+  *"could not parse project item ID"*) type_update_result="item-parse-failed" ;;
+  *) type_update_result="$type_update_output" ;;
+esac
+run_test "type_update_item_parse_failure_warns" "item-parse-failed" "$type_update_result"
+run_test "type_update_item_parse_failure_no_mutation" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
 
 echo ""
 echo "Test summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"
