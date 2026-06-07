@@ -504,9 +504,12 @@ echo "INFO: findings parsed — blocking: $BLOCKING_COUNT, advisory: $SUGGESTION
 POLICY_STATUS_AVAILABLE=0
 POLICY_REVIEW_REQUIRED=0
 POLICY_VERDICT=""
+POLICY_ANALYSIS_STATUS=""
 POLICY_BUCKET=""
 POLICY_RATING=""
 POLICY_HAS_REVIEWER=""
+POLICY_NEEDS_HUMAN=""
+POLICY_DISPOSITION="good-to-merge"
 
 if [ "$PR_STATUS_CHECK" != "0" ]; then
   PR_STATUS_OUTPUT=""
@@ -570,26 +573,65 @@ if [ "$PR_STATUS_CHECK" != "0" ]; then
   rm -f "$PR_STATUS_STDERR"
 
   if [ "$PR_STATUS_EXIT" -eq 0 ] && printf '%s\n' "$PR_STATUS_OUTPUT" | jq -e . >/dev/null 2>&1; then
-    POLICY_STATUS_AVAILABLE=1
-    POLICY_BUCKET="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '.bucket // ""')"
-    POLICY_VERDICT="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '.inputs.analysisVerdict // .analysisVerdict // ""')"
-    POLICY_RATING="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '(.inputs.haystackRating // .haystackRating // "") | tostring')"
-    POLICY_HAS_REVIEWER="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r 'if (.inputs? | type == "object" and has("hasReviewer")) then .inputs.hasReviewer elif has("hasReviewer") then .hasReviewer else "" end | tostring')"
-    POLICY_NEEDS_HUMAN="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '(.inputs.needsHumanReview // .needsHumanReview // false) | tostring')"
-    case "$POLICY_VERDICT" in
-      ''|pass|passed|clean|approved)
-        POLICY_VERDICT_REQUIRES_REVIEW=0
-        ;;
-      *)
-        POLICY_VERDICT_REQUIRES_REVIEW=1
-        ;;
-    esac
-    if [ "$POLICY_NEEDS_HUMAN" = "true" ] || [ "$POLICY_VERDICT_REQUIRES_REVIEW" -eq 1 ]; then
-      POLICY_REVIEW_REQUIRED=1
+    POLICY_PARSE_FAILED=0
+    if ! POLICY_BUCKET="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '.bucket // ""')"; then
+      POLICY_PARSE_FAILED=1
+    fi
+    if ! POLICY_ANALYSIS_STATUS="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '(.inputs.analysisStatus // .analysisStatus // "") | tostring')"; then
+      POLICY_PARSE_FAILED=1
+    fi
+    if ! POLICY_VERDICT="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '.inputs.analysisVerdict // .analysisVerdict // ""')"; then
+      POLICY_PARSE_FAILED=1
+    fi
+    if ! POLICY_RATING="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '(.inputs.haystackRating // .haystackRating // "") | tostring')"; then
+      POLICY_PARSE_FAILED=1
+    fi
+    if ! POLICY_HAS_REVIEWER="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r 'if (.inputs? | type == "object" and has("hasReviewer")) then .inputs.hasReviewer elif has("hasReviewer") then .hasReviewer else "" end | tostring')"; then
+      POLICY_PARSE_FAILED=1
+    fi
+    if ! POLICY_NEEDS_HUMAN="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '(.inputs.needsHumanReview // .needsHumanReview // false) | tostring')"; then
+      POLICY_PARSE_FAILED=1
+    fi
+    if [ "$POLICY_PARSE_FAILED" -eq 0 ]; then
+      POLICY_STATUS_AVAILABLE=1
+      case "$POLICY_VERDICT" in
+        ''|pass|passed|clean|approved)
+          POLICY_VERDICT_REQUIRES_REVIEW=0
+          ;;
+        *)
+          POLICY_VERDICT_REQUIRES_REVIEW=1
+          ;;
+      esac
+      if [ "$POLICY_NEEDS_HUMAN" = "true" ] || [ "$POLICY_VERDICT_REQUIRES_REVIEW" -eq 1 ]; then
+        POLICY_REVIEW_REQUIRED=1
+      fi
+    else
+      echo "ERROR: haystack pr-status field parse failed — failing closed" >&2
+      printf 'RESULT=needs_fixes\n'
+      printf 'REASON=policy_status_parse_failed\n'
+      printf 'BLOCKING_COUNT=1\n'
+      printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
+      printf 'COMMENT_COUNT=%d\n' "$((SUGGESTION_COUNT + 1))"
+      printf 'POLICY_STATUS_AVAILABLE=0\n'
+      printf 'POLICY_REVIEW_REQUIRED=0\n'
+      printf 'POLICY_DISPOSITION=blocking\n'
+      printf 'POLICY_ANALYSIS_STATUS=%s\n' "$POLICY_ANALYSIS_STATUS"
+      printf 'POLICY_NEEDS_HUMAN=%s\n' "$POLICY_NEEDS_HUMAN"
+      exit 1
     fi
   else
     echo "INFO: haystack pr-status unavailable or invalid — policy verdict not surfaced" >&2
   fi
+fi
+
+if [ "$BLOCKING_COUNT" -gt 0 ]; then
+  POLICY_DISPOSITION="blocking"
+elif [ "$POLICY_REVIEW_REQUIRED" -eq 1 ]; then
+  POLICY_DISPOSITION="policy-human-review"
+elif [ "$SUGGESTION_COUNT" -gt 0 ]; then
+  POLICY_DISPOSITION="advisory-only"
+else
+  POLICY_DISPOSITION="good-to-merge"
 fi
 
 # ── Emit result ───────────────────────────────────────────────────────────────
@@ -601,10 +643,13 @@ if [ "$BLOCKING_COUNT" -gt 0 ]; then
   printf 'COMMENT_COUNT=%d\n' "$COMMENT_COUNT"
   printf 'POLICY_STATUS_AVAILABLE=%d\n' "$POLICY_STATUS_AVAILABLE"
   printf 'POLICY_REVIEW_REQUIRED=%d\n' "$POLICY_REVIEW_REQUIRED"
+  printf 'POLICY_DISPOSITION=%s\n' "$POLICY_DISPOSITION"
   [ -n "$POLICY_VERDICT" ] && printf 'POLICY_VERDICT=%s\n' "$POLICY_VERDICT"
+  printf 'POLICY_ANALYSIS_STATUS=%s\n' "$POLICY_ANALYSIS_STATUS"
   [ -n "$POLICY_BUCKET" ] && printf 'POLICY_BUCKET=%s\n' "$POLICY_BUCKET"
   [ -n "$POLICY_RATING" ] && printf 'POLICY_RATING=%s\n' "$POLICY_RATING"
   [ -n "$POLICY_HAS_REVIEWER" ] && printf 'POLICY_HAS_REVIEWER=%s\n' "$POLICY_HAS_REVIEWER"
+  printf 'POLICY_NEEDS_HUMAN=%s\n' "$POLICY_NEEDS_HUMAN"
   exit 1
 fi
 
@@ -614,9 +659,12 @@ printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
 printf 'COMMENT_COUNT=%d\n' "$COMMENT_COUNT"
 printf 'POLICY_STATUS_AVAILABLE=%d\n' "$POLICY_STATUS_AVAILABLE"
 printf 'POLICY_REVIEW_REQUIRED=%d\n' "$POLICY_REVIEW_REQUIRED"
+printf 'POLICY_DISPOSITION=%s\n' "$POLICY_DISPOSITION"
 [ -n "$POLICY_VERDICT" ] && printf 'POLICY_VERDICT=%s\n' "$POLICY_VERDICT"
+printf 'POLICY_ANALYSIS_STATUS=%s\n' "$POLICY_ANALYSIS_STATUS"
 [ -n "$POLICY_BUCKET" ] && printf 'POLICY_BUCKET=%s\n' "$POLICY_BUCKET"
 [ -n "$POLICY_RATING" ] && printf 'POLICY_RATING=%s\n' "$POLICY_RATING"
 [ -n "$POLICY_HAS_REVIEWER" ] && printf 'POLICY_HAS_REVIEWER=%s\n' "$POLICY_HAS_REVIEWER"
+printf 'POLICY_NEEDS_HUMAN=%s\n' "$POLICY_NEEDS_HUMAN"
 [ "$POLICY_REVIEW_REQUIRED" -eq 1 ] && printf 'DISPLAY_RESULT=needs-review: policy\n'
 exit 0

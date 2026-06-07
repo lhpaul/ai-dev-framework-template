@@ -994,6 +994,39 @@ run_test "policy_review_does_not_override_needs_fixes" "blocking" "$(normalize_p
 run_test "policy_review_does_not_override_skipped" "unavailable" "$(normalize_platform_verdict skipped "$_platform_output")"
 unset _platform_output _prt_display_override _prt_disp
 
+# Test 10.1c: policy metadata is rendered as an explicit handoff note.
+_platform_name="haystack"
+_platform_output='RESULT=clean
+POLICY_STATUS_AVAILABLE=1
+POLICY_BUCKET=needs-assignment
+POLICY_NEEDS_HUMAN=true
+POLICY_DISPOSITION=policy-human-review
+POLICY_VERDICT=needs-review
+POLICY_ANALYSIS_STATUS=ready
+POLICY_RATING=5
+POLICY_HAS_REVIEWER=false'
+_policy_note="${_platform_name}:"
+_policy_bucket="$(kv_value_default POLICY_BUCKET "$_platform_output" "")"
+_policy_needs_human="$(kv_value_default POLICY_NEEDS_HUMAN "$_platform_output" "")"
+_policy_disposition="$(kv_value_default POLICY_DISPOSITION "$_platform_output" "")"
+_policy_verdict="$(kv_value_default POLICY_VERDICT "$_platform_output" "")"
+_policy_analysis_status="$(kv_value_default POLICY_ANALYSIS_STATUS "$_platform_output" "")"
+_policy_rating="$(kv_value_default POLICY_RATING "$_platform_output" "")"
+_policy_has_reviewer="$(kv_value_default POLICY_HAS_REVIEWER "$_platform_output" "")"
+[ -n "$_policy_bucket" ] && _policy_note="${_policy_note} bucket=${_policy_bucket};"
+[ -n "$_policy_needs_human" ] && _policy_note="${_policy_note} needsHumanReview=${_policy_needs_human};"
+[ -n "$_policy_disposition" ] && _policy_note="${_policy_note} disposition=${_policy_disposition};"
+[ -n "$_policy_verdict" ] && _policy_note="${_policy_note} verdict=${_policy_verdict};"
+[ -n "$_policy_analysis_status" ] && _policy_note="${_policy_note} analysisStatus=${_policy_analysis_status};"
+[ -n "$_policy_rating" ] && _policy_note="${_policy_note} rating=${_policy_rating};"
+[ -n "$_policy_has_reviewer" ] && _policy_note="${_policy_note} hasReviewer=${_policy_has_reviewer};"
+run_test "summary_policy_status_note" \
+  "haystack: bucket=needs-assignment; needsHumanReview=true; disposition=policy-human-review; verdict=needs-review; analysisStatus=ready; rating=5; hasReviewer=false;" \
+  "$_policy_note"
+unset _platform_name _platform_output _policy_note _policy_bucket
+unset _policy_needs_human _policy_disposition _policy_verdict
+unset _policy_analysis_status _policy_rating _policy_has_reviewer
+
 # Test 10.2: _summary_platform_list is "none" when token list is empty
 _test_tokens=()
 _test_spl=""
@@ -1020,6 +1053,18 @@ else
 fi
 run_test "summary_result_line_skipped" "1" "$_skipped_constant_count"
 unset _skipped_constant_count
+
+# Test 10.4: _post_review_summary source renders policy-status details.
+if grep -qF '**Review policy status:**' \
+    "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" \
+    && grep -qF 'platform_policy_status_notes' \
+      "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"; then
+  _policy_status_summary_count=1
+else
+  _policy_status_summary_count=0
+fi
+run_test "summary_policy_status_section" "1" "$_policy_status_summary_count"
+unset _policy_status_summary_count
 
 # ---------------------------------------------------------------------------
 # Area 11: Step 7b regression-label auto-restore (Option C, issue #805)
