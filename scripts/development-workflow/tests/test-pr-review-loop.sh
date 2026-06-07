@@ -1365,7 +1365,7 @@ unset MOCK_GH_EXIT MOCK_GH_LABEL_VIEW_EXIT MOCK_GH_LABEL_CREATE_EXIT MOCK_GH_PR_
 echo ""
 echo "=== Area 13: PR #801 reviewer-loop failure paths ==="
 
-_unlock_pr="80213"
+_unlock_pr="80213$$"
 _unlock_lock_dir="/tmp/pr-review-loop-${_unlock_pr}.lockdir"
 rm -rf "$_unlock_lock_dir"
 mkdir -p "$_unlock_lock_dir/pid"
@@ -1382,7 +1382,7 @@ run_test "unlock_unreadable_pid_error" "yes" "$_unlock_error_seen"
 rm -rf "$_unlock_lock_dir"
 unset _unlock_output _unlock_exit _unlock_error_seen
 
-_unlock_pr="80313"
+_unlock_pr="80313$$"
 _unlock_lock_dir="/tmp/pr-review-loop-${_unlock_pr}.lockdir"
 rm -rf "$_unlock_lock_dir"
 mkdir -p "$_unlock_lock_dir/cmd"
