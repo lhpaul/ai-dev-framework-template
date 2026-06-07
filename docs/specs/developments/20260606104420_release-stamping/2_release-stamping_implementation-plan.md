@@ -1,6 +1,6 @@
 # Release Stamping for Shipped Issues — Implementation Plan
 
-**Spec**: [1_release-stamping_specs.md](1_release-stamping_specs.md)
+**Spec**: [1_release-stamping_specs.md](/docs/specs/developments/20260606104420_release-stamping/1_release-stamping_specs.md)
 **Smoke test runbook**: [release-stamping.smoke-test.md](../../../testing/workflow/release-stamping.smoke-test.md)
 
 ---
