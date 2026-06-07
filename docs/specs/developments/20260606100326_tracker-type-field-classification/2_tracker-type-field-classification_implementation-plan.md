@@ -103,9 +103,9 @@ targeted GitHub Projects lookups rather than repeated full-board scans.
 - [ ] Do not update `.codex/skills/workflow-item-orchestrator/SKILL.md`; it
       delegates to Protocol 91 and contains no direct classification-label
       instruction.
-- [ ] Do not update Claude/Cursor agent docs; the plan-time search found no
-      direct `workflow` classification label application in `.claude/agents/` or
-      `.cursor/agents/`.
+- [ ] Update Claude/Cursor orchestrator and run-work entry points to mirror the
+      tracker classification rule from `AGENTS.md`, because those entry points
+      read and route Backlog work directly.
 
 ### Tests and Smoke Runbooks
 

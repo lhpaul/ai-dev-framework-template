@@ -895,6 +895,12 @@ EOF
   printf '%s' "$__workflow_project_status_field_cache_json"
 }
 
+# workflow_github_project_type_field_json <project_id>
+#
+# Prints compact JSON for the GitHub Projects Type field metadata. Returns
+# non-zero when the project ID is missing, the GraphQL fetch fails, the response
+# cannot be parsed, pagination exceeds the guard limit, or the Type field is
+# absent. Callers must treat those cases as explicit lookup failures.
 workflow_github_project_type_field_json() {
   local project_id="$1"
   local response cursor page_state field_json has_next end_cursor page_count line
@@ -1062,8 +1068,9 @@ print(item.get('status') or '', end='')
 # get_tracker_type_for_issue <issue_number>
 #
 # Queries the configured GitHub Projects tracker for the current Type of the
-# given issue. Prints an empty string when Type cannot be read. Returns 0 in all
-# cases so callers can fail open.
+# given issue. Prints an empty string for unsupported providers, missing project
+# configuration, or a missing project item. Returns non-zero when project item
+# JSON exists but cannot be parsed.
 get_tracker_type_for_issue() {
   local issue_number="$1"
   local project_number item_json current_type
