@@ -901,8 +901,9 @@ workflow_github_project_type_field_json() {
   local -a graphql_args
 
   if [ -z "$project_id" ]; then
+    echo "Warning: project ID is empty; project Type field lookup cannot run." >&2
     printf ''
-    return 0
+    return 1
   fi
 
   if [ "$__workflow_project_type_field_cache_project_id" != "$project_id" ] || \

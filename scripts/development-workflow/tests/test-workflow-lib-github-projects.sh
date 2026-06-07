@@ -262,6 +262,14 @@ run_test "type_field_lookup_paginates" "PVTSSF_type" "$type_field_id"
 run_test "type_field_lookup_uses_two_field_queries" "2" "$(count_log_matches 'fields')"
 
 reset_log
+type_field_output=""
+type_field_exit=0
+type_field_output="$(workflow_github_project_type_field_json "" 2>/dev/null)" || type_field_exit=$?
+run_test "type_field_empty_project_id_returns_nonzero" "1" "$type_field_exit"
+run_test "type_field_empty_project_id_empty_output" "" "$type_field_output"
+run_test "type_field_empty_project_id_avoids_graphql" "0" "$(count_log_matches 'api graphql')"
+
+reset_log
 __workflow_project_type_field_cache_project_id=""
 __workflow_project_type_field_cache_json=""
 export MOCK_STATUS_FIELD_MODE=graphql_fail
