@@ -289,7 +289,10 @@ gh api graphql \
             nodes {
               id
               project { id number }
-              fieldValueByName(name: "Status") {
+              status: fieldValueByName(name: "Status") {
+                ... on ProjectV2ItemFieldSingleSelectValue { name }
+              }
+              type: fieldValueByName(name: "Type") {
                 ... on ProjectV2ItemFieldSingleSelectValue { name }
               }
             }
@@ -300,7 +303,7 @@ gh api graphql \
   | jq --argjson projectNumber <PROJECT_NUMBER> \
     '.data.repository.issue.projectItems.nodes[]
      | select(.project.number == $projectNumber)
-     | {item_id: .id, project_id: .project.id, status: .fieldValueByName.name}'
+     | {item_id: .id, project_id: .project.id, status: .status.name, type: .type.name}'
 ```
 
 Then use the returned `project_id` with a Status field/option lookup and apply the mutation:
