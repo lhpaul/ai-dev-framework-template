@@ -57,7 +57,8 @@ Milestones as the GitHub Issues / GitHub Projects release primitive.
 2. Verify no duplicate milestone was created:
 
    ```bash
-   gh api repos/:owner/:repo/milestones --jq '[.[] | select(.title == "v999.999.999-smoke")] | length'
+   gh api repos/:owner/:repo/milestones --paginate \
+     --jq '[.[] | select(.title == "v999.999.999-smoke")] | length'
    ```
 
    Expected result: `1`.
@@ -89,7 +90,7 @@ Milestones as the GitHub Issues / GitHub Projects release primitive.
 2. Close or delete the temporary milestone according to repository policy:
 
    ```bash
-   gh api repos/:owner/:repo/milestones \
+   gh api repos/:owner/:repo/milestones --paginate \
      --jq '.[] | select(.title == "v999.999.999-smoke") | .number'
    ```
 
