@@ -68,6 +68,10 @@ JSON
 	          cat <<'JSON'
 	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"fieldValueByName":{"name":"Spec Ready"},"type":{"name":"Workflow"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
 JSON
+	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "released" ]; then
+	          cat <<'JSON'
+	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"status":{"name":"Released"},"type":{"name":"Workflow"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
+JSON
 	        else
 	          cat <<'JSON'
 	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"status":{"name":"Spec Ready"},"type":{"name":"Workflow"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
@@ -88,7 +92,7 @@ JSON
           case "$*" in
             *"after=cursor_field_1"*)
               cat <<'JSON'
-{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_status","name":"Status","options":[{"id":"OPT_spec_ready","name":"Spec Ready"},{"id":"OPT_in_development","name":"In Development"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_workflow","name":"Workflow"},{"id":"OPT_bug","name":"Bug"},{"id":"OPT_refactor","name":"Refactor"},{"id":"OPT_feature","name":"Feature"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
+{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_status","name":"Status","options":[{"id":"OPT_spec_ready","name":"Spec Ready"},{"id":"OPT_in_development","name":"In Development"},{"id":"OPT_merged","name":"Merged"},{"id":"OPT_released","name":"Released"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_workflow","name":"Workflow"},{"id":"OPT_bug","name":"Bug"},{"id":"OPT_refactor","name":"Refactor"},{"id":"OPT_feature","name":"Feature"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
 JSON
               ;;
             *)
@@ -99,7 +103,7 @@ JSON
           esac
         else
           cat <<'JSON'
-{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_status","name":"Status","options":[{"id":"OPT_spec_ready","name":"Spec Ready"},{"id":"OPT_in_development","name":"In Development"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_workflow","name":"Workflow"},{"id":"OPT_bug","name":"Bug"},{"id":"OPT_refactor","name":"Refactor"},{"id":"OPT_feature","name":"Feature"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
+{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_status","name":"Status","options":[{"id":"OPT_spec_ready","name":"Spec Ready"},{"id":"OPT_in_development","name":"In Development"},{"id":"OPT_merged","name":"Merged"},{"id":"OPT_released","name":"Released"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_workflow","name":"Workflow"},{"id":"OPT_bug","name":"Bug"},{"id":"OPT_refactor","name":"Refactor"},{"id":"OPT_feature","name":"Feature"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
 JSON
         fi
         ;;
@@ -257,6 +261,26 @@ esac
 run_test "status_update_field_lookup_paginates" "updated" "$update_result"
 run_test "status_update_field_lookup_uses_two_field_queries" "2" "$(count_log_matches 'fields')"
 run_test "status_update_field_lookup_avoids_full_board_scan" "" "$(forbidden_project_reads)"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=released
+update_output="$(update_tracker_status_best_effort 824 "Merged")"
+case "$update_output" in
+  *"already at status 'Released' (more advanced than 'Merged'); skipping rollback"*) update_result="rollback-skipped" ;;
+  *) update_result="$update_output" ;;
+esac
+run_test "status_update_blocks_backward_move_by_default" "rollback-skipped" "$update_result"
+run_test "status_update_default_backward_no_mutation" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+
+reset_log
+update_output="$(update_tracker_status_best_effort 824 "Merged" "" "allow-backward")"
+unset MOCK_PROJECT_ITEM_MODE
+case "$update_output" in
+  *"Updating tracker status for issue #824 to 'Merged'"*) update_result="updated" ;;
+  *) update_result="$update_output" ;;
+esac
+run_test "status_update_allows_explicit_backward_move" "updated" "$update_result"
+run_test "status_update_explicit_backward_mutates_project_item" "1" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
 
 reset_log
 type_update_output="$(update_tracker_type_best_effort 824 "Workflow")"

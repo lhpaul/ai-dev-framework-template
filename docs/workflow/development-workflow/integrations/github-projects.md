@@ -72,15 +72,17 @@ that workflow so it does not override the AI development workflow's merge state:
 
 Implementation PR merges follow this sequence:
 
-1. `update-tracker-on-merge.yml` or `post-merge-cleanup.sh` sets the issue's
-   project Status to `Merged`.
-2. The workflow closes the GitHub issue for the merged implementation branch.
+1. The workflow closes the GitHub issue for the merged implementation branch.
+2. `update-tracker-on-merge.yml` or `post-merge-cleanup.sh` sets the issue's
+   project Status to `Merged` after the close action, so this repo-owned update
+   is the last write in the normal merge path.
 3. A later release workflow moves shipped issues from `Merged` to `Released`.
 
 If the built-in "item closed" workflow sets Status to `Released`, it races with
 and overrides the intended `Merged` status immediately after every implementation
-merge. The board then incorrectly shows unreleased work as released, and operators
-must manually correct each item before preparing a release.
+merge. The repository merge-cleanup paths now compensate by reasserting `Merged`
+after closing implementation issues, but the Project workflow should still be
+configured correctly so UI-driven closes and downstream projects do not drift.
 
 ### 3. Add Custom Fields
 
@@ -426,7 +428,9 @@ update logic. They are complementary:
   also handles local branch deletion and `develop` pull
 
 If both are active, the tracker update from `post-merge-cleanup` is idempotent (same status
-written twice is harmless).
+written twice is harmless). For implementation branches, cleanup also reasserts `Merged` after
+closing the issue so a built-in "item closed" Project workflow cannot leave the item at
+`Released`.
 
 ---
 
@@ -438,7 +442,7 @@ When a PR is merged, the `post-merge-cleanup` command will:
 2. Apply the action appropriate for the branch type:
    - `spec/*`: issue stays open; update project item Status to **Spec Ready**
    - `implementation-plan/*`: issue stays open; update project item Status to **Plan Ready**
-   - `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`: close the GitHub issue (`gh issue close 42`) and update project item Status to **Merged**
+   - `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`: close the GitHub issue (`gh issue close 42`) and update project item Status to **Merged** after close
 3. Each tracker update is best-effort: if `GITHUB_PROJECT_NUMBER` is unset or the API call fails, a warning is logged and the script continues without aborting
 
 ---

@@ -1155,7 +1155,7 @@ ensure_on_project_board() {
   update_tracker_status_best_effort "$issue_number" "$initial_status"
 }
 
-# update_tracker_status_best_effort <issue_number> <status_label> [required_current_status]
+# update_tracker_status_best_effort <issue_number> <status_label> [required_current_status] [allow-backward]
 #
 # Best-effort update for the configured issue tracker's Status field.
 # Supports GitHub Projects (provider: github_projects) and emits actionable
@@ -1170,6 +1170,7 @@ update_tracker_status_best_effort() {
   local issue_number="$1"
   local status_label="$2"
   local required_current_status="${3:-}"
+  local allow_backward="${4:-false}"
   local project_number project_id field_json field_id option_id item_json item_id current_status
   local target_order current_order
 
@@ -1240,7 +1241,7 @@ print(item.get('status') or '', end='')
     echo "Warning: Issue #${issue_number} current status '${current_status}' is unrecognized; skipping update to '${status_label}' to avoid silent state corruption. Provide required_current_status to proceed anyway."
     return 0
   fi
-  if [ "$target_order" -ge 0 ] && [ "$current_order" -gt "$target_order" ]; then
+  if [ "$target_order" -ge 0 ] && [ "$current_order" -gt "$target_order" ] && [ "$allow_backward" != "allow-backward" ]; then
     echo "Issue #${issue_number} is already at status '${current_status}' (more advanced than '${status_label}'); skipping rollback."
     return 0
   fi

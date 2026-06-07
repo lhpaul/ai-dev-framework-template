@@ -103,13 +103,36 @@ jobs:
             exit 0
           fi
 
-          echo "branch_type=$BRANCH_TYPE"     >> "$GITHUB_OUTPUT"
-          echo "target_status=$TARGET_STATUS" >> "$GITHUB_OUTPUT"
-          echo "issue_number=$ISSUE_NUMBER"   >> "$GITHUB_OUTPUT"
-          echo "skip=false"                   >> "$GITHUB_OUTPUT"
+          {
+            echo "branch_type=$BRANCH_TYPE"
+            echo "target_status=$TARGET_STATUS"
+            echo "issue_number=$ISSUE_NUMBER"
+            echo "skip=false"
+          } >> "$GITHUB_OUTPUT"
           echo "Detected: type=$BRANCH_TYPE, issue=$ISSUE_NUMBER, status=$TARGET_STATUS"
 
-      - name: Update GitHub Projects status
+      - name: Close issue for impl branches
+        if: >
+          steps.detect.outputs.skip == 'false' &&
+          steps.detect.outputs.branch_type == 'impl'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ steps.detect.outputs.issue_number }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          ISSUE_STATE=$(gh issue view "$ISSUE_NUMBER" --repo "$GH_REPO" --json state --jq '.state')
+          if [ "$ISSUE_STATE" = "CLOSED" ]; then
+            echo "Issue #${ISSUE_NUMBER} is already closed; skipping close."
+            exit 0
+          fi
+
+          echo "Closing issue #${ISSUE_NUMBER} (implementation PR merged)..."
+          gh issue close "$ISSUE_NUMBER" --repo "$GH_REPO" \
+            --comment "Closed automatically: implementation PR merged to develop."
+
+      - name: Update GitHub Projects status after close
         if: steps.detect.outputs.skip == 'false'
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
         env:
@@ -125,6 +148,9 @@ jobs:
             const targetStatus = process.env.TARGET_STATUS;
             const issueNumber = parseInt(process.env.ISSUE_NUMBER, 10);
 
+            // This step intentionally runs after the issue-close step. For
+            // implementation branches, writing Merged after close compensates
+            // for built-in Project "item closed" workflows that set Released.
             if (!projectNumber) {
               core.warning('PROJECT_NUMBER variable is not set — skipping tracker update.');
               return;
@@ -253,20 +279,6 @@ jobs:
             });
 
             core.info(`Successfully updated issue #${issueNumber} status to "${targetStatus}".`);
-
-      - name: Close issue for impl branches
-        if: >
-          steps.detect.outputs.skip == 'false' &&
-          steps.detect.outputs.branch_type == 'impl'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ISSUE_NUMBER: ${{ steps.detect.outputs.issue_number }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          echo "Closing issue #${ISSUE_NUMBER} (implementation PR merged)..."
-          gh issue close "$ISSUE_NUMBER" --repo "$GH_REPO" \
-            --comment "Closed automatically: implementation PR merged to develop." \
-            || echo "WARNING: gh issue close failed (issue may already be closed or not exist) — continuing."
 
       - name: Log branch-type to tracker-status mapping summary
         run: |
