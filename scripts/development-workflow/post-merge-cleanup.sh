@@ -193,7 +193,12 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
         if [ -n "$MERGED_PR" ]; then
           CLOSE_COMMENT="Closed by PR #${MERGED_PR}."
           echo "Closing issue #$ISSUE_NUMBER..."
-          gh issue close "$ISSUE_NUMBER" --comment "$CLOSE_COMMENT" 2>/dev/null || echo "Warning: could not close issue #$ISSUE_NUMBER"
+          if gh issue close "$ISSUE_NUMBER" --comment "$CLOSE_COMMENT"; then
+            echo "Reasserting issue #$ISSUE_NUMBER tracker status as Merged after close..."
+            update_tracker_status_best_effort "$ISSUE_NUMBER" "Merged" "" "allow-backward"
+          else
+            echo "Warning: could not close issue #$ISSUE_NUMBER"
+          fi
         else
           echo "No merged PR found for branch '$TO_DELETE'; leaving issue #$ISSUE_NUMBER open."
         fi
