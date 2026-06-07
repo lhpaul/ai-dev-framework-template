@@ -1360,6 +1360,123 @@ unset _reviewer_failed_required _reviewer_failed_fn_line _sync_fn_line _harness_
 unset MOCK_GH_EXIT MOCK_GH_LABEL_VIEW_EXIT MOCK_GH_LABEL_CREATE_EXIT MOCK_GH_PR_EDIT_EXIT
 
 # ---------------------------------------------------------------------------
+# Area 13: PR #801 follow-up coverage for reviewer-loop failure paths
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 13: PR #801 reviewer-loop failure paths ==="
+
+_unlock_pr="80213$$"
+_unlock_lock_dir="/tmp/pr-review-loop-${_unlock_pr}.lockdir"
+rm -rf "$_unlock_lock_dir"
+mkdir -p "$_unlock_lock_dir/pid"
+printf '%s\n' "pr-review-loop.sh" > "$_unlock_lock_dir/cmd"
+_unlock_exit=0
+_unlock_output="$("$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" unlock "$_unlock_pr" 2>&1)" || _unlock_exit=$?
+run_test "unlock_unreadable_pid_exits_1" "1" "$_unlock_exit"
+if printf '%s\n' "$_unlock_output" | grep -q "could not read lock PID"; then
+  _unlock_error_seen="yes"
+else
+  _unlock_error_seen="no"
+fi
+run_test "unlock_unreadable_pid_error" "yes" "$_unlock_error_seen"
+rm -rf "$_unlock_lock_dir"
+unset _unlock_output _unlock_exit _unlock_error_seen
+
+_unlock_pr="80313$$"
+_unlock_lock_dir="/tmp/pr-review-loop-${_unlock_pr}.lockdir"
+rm -rf "$_unlock_lock_dir"
+mkdir -p "$_unlock_lock_dir/cmd"
+printf '%s\n' "999999" > "$_unlock_lock_dir/pid"
+_unlock_exit=0
+_unlock_output="$("$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" unlock "$_unlock_pr" 2>&1)" || _unlock_exit=$?
+run_test "unlock_unreadable_cmd_exits_1" "1" "$_unlock_exit"
+if printf '%s\n' "$_unlock_output" | grep -q "could not read lock cmd"; then
+  _unlock_error_seen="yes"
+else
+  _unlock_error_seen="no"
+fi
+run_test "unlock_unreadable_cmd_error" "yes" "$_unlock_error_seen"
+rm -rf "$_unlock_lock_dir"
+unset _unlock_pr _unlock_lock_dir _unlock_output _unlock_exit _unlock_error_seen
+
+_codex_overrides='
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  require_gh() { :; }
+  check_unresolved_threads() { return 3; }
+'
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_codex_overrides"
+  _ec=0
+  run_codex_github_review "42" "fix/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "codex_thread_check_failure_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "codex_thread_check_failure_reason" "REASON=thread-check-failed" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "codex_thread_check_failure_exit_code" "2" "$actual_exit"
+unset _codex_overrides actual_output actual_exit
+
+_post_summary_source="$(awk '/^_post_review_summary\(\)/,/^}$/' \
+  "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
+eval "$_post_summary_source"
+# shellcheck disable=SC2329 # Invoked indirectly by the eval-loaded function.
+repo_slug() { printf "owner/repo\n"; }
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+compare_mode=0
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+compare_verdicts=()
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+platform_policy_status_notes=()
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+pr_number=42
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+branch_name="fix/42-summary"
+MOCK_GH_COMMENTS_OUTPUT='[]'
+export MOCK_GH_COMMENTS_OUTPUT
+
+_summary_call_log="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_summary_call_log"
+MOCK_GH_EXIT=0
+export MOCK_GH_EXIT
+_post_review_summary "escalate" "thread-check-failed" "codex-github" "0" "0"
+_body_file="$(awk '/pr comment 42 --body-file / {print $NF}' "$_summary_call_log" | tail -n 1)"
+if [ -n "$_body_file" ]; then
+  _body_file_used="yes"
+else
+  _body_file_used="no"
+fi
+run_test "post_summary_uses_body_file" "yes" "$_body_file_used"
+if [ -n "$_body_file" ] && [ ! -e "$_body_file" ]; then
+  _body_file_removed="yes"
+else
+  _body_file_removed="no"
+fi
+run_test "post_summary_removes_body_file_on_success" "yes" "$_body_file_removed"
+rm -f "$_summary_call_log"
+
+_summary_call_log="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_summary_call_log"
+MOCK_GH_EXIT=1
+export MOCK_GH_EXIT
+_post_review_summary "escalate" "thread-check-failed" "codex-github" "0" "0" 2>/dev/null
+_body_file="$(awk '/pr comment 42 --body-file / {print $NF}' "$_summary_call_log" | tail -n 1)"
+if [ -n "$_body_file" ] && [ ! -e "$_body_file" ]; then
+  _body_file_removed="yes"
+else
+  _body_file_removed="no"
+fi
+run_test "post_summary_removes_body_file_on_failure" "yes" "$_body_file_removed"
+rm -f "$_summary_call_log"
+unset MOCK_GH_CALL_LOG MOCK_GH_EXIT MOCK_GH_COMMENTS_OUTPUT
+unset _post_summary_source _summary_call_log _body_file _body_file_used _body_file_removed
+unset -f _post_review_summary repo_slug
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

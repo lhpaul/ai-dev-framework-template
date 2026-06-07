@@ -164,8 +164,9 @@ dispatches. The companion script polls the Actions API for the run triggered
 after the workflow was dispatched:
 
 ```bash
-run_status=$(gh api "repos/$OWNER/$REPO/actions/runs" \
-  --jq ".workflow_runs | map(select(.event == \"workflow_dispatch\")) | .[0].status")
+run_status=$(gh api --paginate \
+  "repos/$OWNER/$REPO/actions/runs?event=workflow_dispatch&per_page=100" \
+  | jq -sr '[.[] | .workflow_runs[]?] | sort_by(.created_at) | reverse | .[0].status')
 ```
 
 | Result                                           | Action                                                                |

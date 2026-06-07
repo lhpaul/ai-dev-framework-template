@@ -179,11 +179,11 @@ echo "INFO: Bot login (plain, for review matching): $BOT_LOGIN_PLAIN"
 _DISPATCH_EPOCH=$(date -u +%s)
 DISPATCH_TIME=$(date -u -r "$_DISPATCH_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
   date -u -d "@$_DISPATCH_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
-  python3 -c "import datetime,sys; print(datetime.datetime.utcfromtimestamp(int(sys.argv[1])).strftime('%Y-%m-%dT%H:%M:%SZ'))" "$_DISPATCH_EPOCH")
+  python3 -c "import datetime,sys; print(datetime.datetime.fromtimestamp(int(sys.argv[1]), datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))" "$_DISPATCH_EPOCH")
 _POLL_EPOCH=$((_DISPATCH_EPOCH - 10))
 POLL_AFTER_TIME=$(date -u -r "$_POLL_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
   date -u -d "@$_POLL_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
-  python3 -c "import datetime,sys; print(datetime.datetime.utcfromtimestamp(int(sys.argv[1])).strftime('%Y-%m-%dT%H:%M:%SZ'))" "$_POLL_EPOCH")
+  python3 -c "import datetime,sys; print(datetime.datetime.fromtimestamp(int(sys.argv[1]), datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))" "$_POLL_EPOCH")
 unset _DISPATCH_EPOCH _POLL_EPOCH
 echo "INFO: dispatch time (pre-dispatch): $DISPATCH_TIME"
 echo "INFO: poll filter time (with 10s clock-skew buffer): $POLL_AFTER_TIME"
@@ -257,12 +257,12 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
   RUN_POLL_STDERR=$(mktemp)
   RUN_POLL_TMPFILE=$(mktemp)
   POLL_STATUS=0
-  gh api "repos/$OWNER/$REPO/actions/runs?event=workflow_dispatch&per_page=20" \
+  gh api --paginate "repos/$OWNER/$REPO/actions/runs?event=workflow_dispatch&per_page=100" \
     2>"$RUN_POLL_STDERR" \
-    | jq -r --arg wf "$WORKFLOW_FILE" --arg poll_after "$POLL_AFTER_TIME" \
+    | jq -sr --arg wf "$WORKFLOW_FILE" --arg poll_after "$POLL_AFTER_TIME" \
         --arg pr "$PR_NUMBER" \
         '# Candidate set: workflow-file + timestamp match
-         (.workflow_runs // []) as $all |
+         [.[] | .workflow_runs[]?] as $all |
          [$all[] | select((.path | endswith($wf)) and .created_at >= $poll_after)] as $candidates |
          # PR-scoping via run-name (#808): if any candidate has a "PR #N"-style name
          # (indicating the workflow uses run-name), require name match for THIS PR to

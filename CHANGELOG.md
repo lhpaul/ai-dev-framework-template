@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Reviewer-loop follow-up test coverage** (#802, #803) — adds regression
+  coverage for `pr-review-loop.sh` lock-unlock failure handling, Codex thread
+  audit escalation, reviewer-summary temp-file cleanup, and
+  `claude-code-action-reviewer.sh` timestamp fallback plus paginated Actions run
+  selection.
 - **Haystack doc-branch reviewer timeout** (#851) — raises the reviewer-loop
   default wait budget for `spec/*` and `implementation-plan/*` branches to 180s,
   exposes `PR_REVIEW_LOOP_DOC_MAX_WAIT` for operators, and preserves explicit
