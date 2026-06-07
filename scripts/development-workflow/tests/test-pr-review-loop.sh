@@ -1056,9 +1056,9 @@ unset _skipped_constant_count
 
 # Test 10.4: _post_review_summary source renders policy-status details.
 if grep -qF '**Review policy status:**' \
-    "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null \
+    "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" \
     && grep -qF 'platform_policy_status_notes' \
-      "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null; then
+      "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"; then
   _policy_status_summary_count=1
 else
   _policy_status_summary_count=0

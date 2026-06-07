@@ -573,12 +573,26 @@ if [ "$PR_STATUS_CHECK" != "0" ]; then
   rm -f "$PR_STATUS_STDERR"
 
   if [ "$PR_STATUS_EXIT" -eq 0 ] && printf '%s\n' "$PR_STATUS_OUTPUT" | jq -e . >/dev/null 2>&1; then
-    if POLICY_BUCKET="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '.bucket // ""')" \
-        && POLICY_ANALYSIS_STATUS="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '(.inputs.analysisStatus // .analysisStatus // "") | tostring')" \
-        && POLICY_VERDICT="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '.inputs.analysisVerdict // .analysisVerdict // ""')" \
-        && POLICY_RATING="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '(.inputs.haystackRating // .haystackRating // "") | tostring')" \
-        && POLICY_HAS_REVIEWER="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r 'if (.inputs? | type == "object" and has("hasReviewer")) then .inputs.hasReviewer elif has("hasReviewer") then .hasReviewer else "" end | tostring')" \
-        && POLICY_NEEDS_HUMAN="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '(.inputs.needsHumanReview // .needsHumanReview // false) | tostring')"; then
+    POLICY_PARSE_FAILED=0
+    if ! POLICY_BUCKET="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '.bucket // ""')"; then
+      POLICY_PARSE_FAILED=1
+    fi
+    if ! POLICY_ANALYSIS_STATUS="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '(.inputs.analysisStatus // .analysisStatus // "") | tostring')"; then
+      POLICY_PARSE_FAILED=1
+    fi
+    if ! POLICY_VERDICT="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '.inputs.analysisVerdict // .analysisVerdict // ""')"; then
+      POLICY_PARSE_FAILED=1
+    fi
+    if ! POLICY_RATING="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '(.inputs.haystackRating // .haystackRating // "") | tostring')"; then
+      POLICY_PARSE_FAILED=1
+    fi
+    if ! POLICY_HAS_REVIEWER="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r 'if (.inputs? | type == "object" and has("hasReviewer")) then .inputs.hasReviewer elif has("hasReviewer") then .hasReviewer else "" end | tostring')"; then
+      POLICY_PARSE_FAILED=1
+    fi
+    if ! POLICY_NEEDS_HUMAN="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '(.inputs.needsHumanReview // .needsHumanReview // false) | tostring')"; then
+      POLICY_PARSE_FAILED=1
+    fi
+    if [ "$POLICY_PARSE_FAILED" -eq 0 ]; then
       POLICY_STATUS_AVAILABLE=1
       case "$POLICY_VERDICT" in
         ''|pass|passed|clean|approved)
@@ -592,7 +606,18 @@ if [ "$PR_STATUS_CHECK" != "0" ]; then
         POLICY_REVIEW_REQUIRED=1
       fi
     else
-      echo "INFO: haystack pr-status field parse failed — policy verdict not surfaced" >&2
+      echo "ERROR: haystack pr-status field parse failed — failing closed" >&2
+      printf 'RESULT=needs_fixes\n'
+      printf 'REASON=policy_status_parse_failed\n'
+      printf 'BLOCKING_COUNT=1\n'
+      printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
+      printf 'COMMENT_COUNT=%d\n' "$((SUGGESTION_COUNT + 1))"
+      printf 'POLICY_STATUS_AVAILABLE=0\n'
+      printf 'POLICY_REVIEW_REQUIRED=0\n'
+      printf 'POLICY_DISPOSITION=blocking\n'
+      printf 'POLICY_ANALYSIS_STATUS=%s\n' "$POLICY_ANALYSIS_STATUS"
+      printf 'POLICY_NEEDS_HUMAN=%s\n' "$POLICY_NEEDS_HUMAN"
+      exit 1
     fi
   else
     echo "INFO: haystack pr-status unavailable or invalid — policy verdict not surfaced" >&2
