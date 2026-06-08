@@ -34,9 +34,15 @@ printf '%s\n' "$*" >> "$MOCK_GH_CALL_LOG"
 
 case "$*" in
   "repo view --json owner --jq .owner.login")
+    if [ "${MOCK_REPO_VIEW_MODE:-ok}" = "fail" ]; then
+      exit 42
+    fi
     printf 'lhpaul\n'
     ;;
   "repo view --json name --jq .name")
+    if [ "${MOCK_REPO_VIEW_MODE:-ok}" = "fail" ]; then
+      exit 42
+    fi
     printf 'ai-dev-framework-template\n'
     ;;
   *"api graphql"* )
@@ -67,6 +73,10 @@ JSON
 	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "legacy_field_value" ]; then
 	          cat <<'JSON'
 	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"fieldValueByName":{"name":"Spec Ready"},"type":{"name":"Workflow"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
+JSON
+	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "missing_fields" ]; then
+	          cat <<'JSON'
+	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
 JSON
 	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "released" ]; then
 	          cat <<'JSON'
@@ -214,6 +224,16 @@ run_test "legacy_field_value_type_alias_read" "Workflow" "$tracker_type"
 run_test "legacy_field_value_avoids_full_board_scan" "" "$(forbidden_project_reads)"
 
 reset_log
+export MOCK_PROJECT_ITEM_MODE=missing_fields
+missing_fields_stderr="$(workflow_github_project_item_for_issue 824 1 2>&1 >/dev/null || true)"
+unset MOCK_PROJECT_ITEM_MODE
+case "$missing_fields_stderr" in
+  *"named exactly 'Status'"*"named exactly 'Type'"*) missing_fields_result="warned" ;;
+  *) missing_fields_result="$missing_fields_stderr" ;;
+esac
+run_test "project_item_missing_named_fields_warns" "warned" "$missing_fields_result"
+
+reset_log
 invalid_item="$(workflow_github_project_item_for_issue "not-a-number" "1" 2>/dev/null)"
 run_test "invalid_issue_number_returns_empty" "" "$invalid_item"
 run_test "invalid_issue_number_avoids_graphql" "0" "$(count_log_matches 'api graphql')"
@@ -336,6 +356,32 @@ run_test "type_field_graphql_failure_no_cache" "" "$__workflow_project_type_fiel
 reset_log
 __workflow_project_type_field_cache_project_id=""
 __workflow_project_type_field_cache_json=""
+export MOCK_STATUS_FIELD_MODE=graphql_fail
+type_field_stderr=""
+type_field_stderr="$(workflow_github_project_type_field_json "PVT_project_1" 2>&1 >/dev/null)" || true
+unset MOCK_STATUS_FIELD_MODE
+case "$type_field_stderr" in
+  *"GraphQL project Type field lookup failed"*"  gh: GraphQL failure"*) type_field_stderr_result="captured" ;;
+  *) type_field_stderr_result="$type_field_stderr" ;;
+esac
+run_test "type_field_graphql_failure_reports_captured_gh_stderr" "captured" "$type_field_stderr_result"
+
+reset_log
+__workflow_project_status_field_cache_project_id=""
+__workflow_project_status_field_cache_json=""
+export MOCK_STATUS_FIELD_MODE=graphql_fail
+status_field_stderr=""
+status_field_stderr="$(workflow_github_project_status_field_json "PVT_project_1" 2>&1 >/dev/null)" || true
+unset MOCK_STATUS_FIELD_MODE
+case "$status_field_stderr" in
+  *"GraphQL project Status field lookup failed"*"  gh: GraphQL failure"*) status_field_stderr_result="captured" ;;
+  *) status_field_stderr_result="$status_field_stderr" ;;
+esac
+run_test "status_field_graphql_failure_reports_captured_gh_stderr" "captured" "$status_field_stderr_result"
+
+reset_log
+__workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_json=""
 export MOCK_STATUS_FIELD_MODE=invalid_json
 type_update_output="$(update_tracker_type_best_effort 824 "Workflow" 2>&1)"
 unset MOCK_STATUS_FIELD_MODE
@@ -394,6 +440,44 @@ esac
 run_test "type_helpers_invalid_project_warns" "warned" "$invalid_project_guard_result"
 run_test "type_helpers_invalid_project_empty_list" "[]" "$(printf '%s' "$invalid_workflow_issues" | jq -c '.')"
 run_test "type_helpers_missing_invalid_project_avoids_api" "0" "$(count_log_matches 'api graphql|issue list|project item-list')"
+
+resolve_owner_from_remote() {
+  local remote_url="$1"
+  local tmp_repo owner
+  tmp_repo="$(mktemp -d)"
+  (
+    export MOCK_REPO_VIEW_MODE=fail
+    cd "$tmp_repo"
+    git init -q
+    git remote add origin "$remote_url"
+    owner="$(workflow_resolve_github_repo_owner 2>/dev/null)"
+    printf '%s' "$owner"
+  )
+  rm -rf "$tmp_repo"
+}
+
+resolve_repo_from_remote() {
+  local remote_url="$1"
+  local tmp_repo repo_name
+  tmp_repo="$(mktemp -d)"
+  (
+    export MOCK_REPO_VIEW_MODE=fail
+    cd "$tmp_repo"
+    git init -q
+    git remote add origin "$remote_url"
+    repo_name="$(workflow_resolve_github_repo_name 2>/dev/null)"
+    printf '%s' "$repo_name"
+  )
+  rm -rf "$tmp_repo"
+}
+
+reset_log
+run_test "remote_owner_https_fallback_validates_github_host" "lhpaul" "$(resolve_owner_from_remote "https://github.com/lhpaul/ai-dev-framework-template.git")"
+run_test "remote_repo_https_fallback_validates_github_host" "ai-dev-framework-template" "$(resolve_repo_from_remote "https://github.com/lhpaul/ai-dev-framework-template.git")"
+run_test "remote_owner_fallback_rejects_non_github_host" "" "$(resolve_owner_from_remote "https://github.com.evil/lhpaul/ai-dev-framework-template.git")"
+run_test "remote_repo_fallback_rejects_extra_path_segments" "" "$(resolve_repo_from_remote "https://github.com/lhpaul/ai-dev-framework-template/extra.git")"
+run_test "remote_owner_fallback_rejects_invalid_owner" "" "$(resolve_owner_from_remote "git@github.com:bad_owner/ai-dev-framework-template.git")"
+run_test "remote_repo_fallback_rejects_invalid_repo" "" "$(resolve_repo_from_remote "git@github.com:lhpaul/bad!repo.git")"
 
 reset_log
 workflow_github_project_item_for_issue() {
