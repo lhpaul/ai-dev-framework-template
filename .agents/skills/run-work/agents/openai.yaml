@@ -1,0 +1,7 @@
+interface:
+  display_name: "Run work"
+  short_description: "Inspect workflow state and propose or advance safe batches."
+  default_prompt: "Use $run-work to inspect workflow state, advance deterministic in-flight work, and propose the largest safe Backlog start batch by priority and parallelization feasibility before asking for approval."
+
+policy:
+  allow_implicit_invocation: false

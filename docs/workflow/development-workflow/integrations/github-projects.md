@@ -60,19 +60,55 @@ GitHub Projects v2 creates a default **Status** single-select field. Configure i
 
 To add or rename status options, use the project settings UI at `https://github.com/users/<OWNER>/projects/<NUMBER>/settings` (or the equivalent org URL).
 
+### 2.1 Configure Built-In Project Workflows
+
+GitHub Projects can run its own built-in workflow when an item is closed. Configure
+that workflow so it does not override the AI development workflow's merge state:
+
+- Preferred: set the built-in "item closed" workflow to update Status to `Merged`.
+- Also acceptable: disable the built-in "item closed" Status update entirely.
+- Do not configure the built-in workflow to set Status to `Released` when an item
+  is closed.
+
+Implementation PR merges follow this sequence:
+
+1. The workflow closes the GitHub issue for the merged implementation branch.
+2. `update-tracker-on-merge.yml` or `post-merge-cleanup.sh` sets the issue's
+   project Status to `Merged` after the close action, so this repo-owned update
+   is the last write in the normal merge path.
+3. A later release workflow moves shipped issues from `Merged` to `Released`.
+
+If the built-in "item closed" workflow sets Status to `Released`, it races with
+and overrides the intended `Merged` status immediately after every implementation
+merge. The repository merge-cleanup paths now compensate by reasserting `Merged`
+after closing implementation issues, but the Project workflow should still be
+configured correctly so UI-driven closes and downstream projects do not drift.
+
 ### 3. Add Custom Fields
 
 Add these custom fields to the project (via project settings UI or GraphQL):
 
-| Field    | Type                                             | Purpose                                                        |
-| -------- | ------------------------------------------------ | -------------------------------------------------------------- |
-| Priority | Single select: `Urgent`, `High`, `Normal`, `Low` | Drives orchestrator prioritization                             |
-| Due date | Date                                             | Items due within 2 weeks get priority boost                    |
-| Type     | Single select: `Feature`, `Bug`, `Refactor`      | Maps to workflow path (Full Pipeline, Refactor, or Fast Track) |
+| Field    | Type                                                         | Purpose                                                                                 |
+| -------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| Priority | Single select: `Urgent`, `High`, `Normal`, `Low`             | Drives orchestrator prioritization                                                      |
+| Due date | Date                                                         | Items due within 2 weeks get priority boost                                             |
+| Type     | Single select: `Feature`, `Bug`, `Refactor`, `Workflow`      | Source of truth for work-item classification and workflow path routing                  |
+
+The **Type** field is the classification source of truth for GitHub Projects
+integrations:
+
+- `Feature` routes through the full pipeline: spec, plan, implementation.
+- `Bug` routes through the fast-track fix path when the scope check allows it.
+- `Refactor` routes through the plan-only refactor path.
+- `Workflow` marks AI-development-framework/tooling work. In downstream product
+  repositories, reserve `Feature` and `Bug` for product work and use `Workflow`
+  for framework/process/tooling items. In this template repository, workflow
+  framework work also uses `Workflow`.
 
 ### 4. Issue Labels (on the Repository)
 
-Labels live on the repository, not the project. Create labels for scope:
+Labels live on the repository, not the project. Keep labels for operational
+automation and optional scope markers:
 
 ```bash
 gh label create "scope:api" --description "API / backend"
@@ -80,13 +116,23 @@ gh label create "scope:frontend" --description "Frontend / UI"
 # Add more as needed for your project's components
 ```
 
-Type labels are optional if you use the project-level **Type** field instead. If you prefer labels:
+Operational labels such as `ready-for-human-review`, `needs-fixes`,
+`ready-for-regression`, `reviewer-failed`, `feedback-staging`, and
+`integration-branch:<slug>` remain labels because workflow automation consumes
+them directly.
 
-```bash
-gh label create "type:feature" --description "New capability"
-gh label create "type:bug" --description "Something broken"
-gh label create "type:refactor" --description "Code restructuring or tech-debt cleanup"
-```
+Do **not** use repository labels as classification source of truth when
+GitHub Projects is configured. Labels such as `bug`, `enhancement`,
+`type:feature`, `type:bug`, `type:refactor`, and `workflow` are legacy
+classification labels; new workflow automation should set/read the project
+**Type** field instead.
+
+Migration checklist:
+
+1. Add the `Workflow` option to the project **Type** field.
+2. Backfill Type values for open items from current labels and issue context.
+3. Verify open workflow/framework items have `Type = Workflow`.
+4. Remove retired classification labels from open issues after Type is set.
 
 ---
 
@@ -120,44 +166,39 @@ The function is **fail-open**: if the issue is already on the board it returns 0
 
 ### One-shot status update (recommended pattern)
 
-Use the following script pattern when a stage completes and the tracker status must advance. Replace the placeholder values below with your project owner and number, or set `GITHUB_PROJECT_OWNER` and `GITHUB_PROJECT_NUMBER` environment variables if preferred.
+Use the shared helper when a stage completes and the tracker status must advance. It performs a targeted `repository.issue(...).projectItems` lookup for the single issue and avoids `gh project item-list`, which paginates the whole board and can drain the GraphQL rate-limit bucket.
 
 ```bash
-PROJECT_OWNER="${GITHUB_PROJECT_OWNER:-<OWNER>}"   # GitHub user or org owning the project
-PROJECT_NUMBER="${GITHUB_PROJECT_NUMBER:-<NUMBER>}" # GitHub project number (from URL or `gh project list`)
-ISSUE_NUMBER=<ISSUE>      # GitHub issue number to update
+# Source workflow-lib.sh to get the targeted GitHub Projects helpers.
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source scripts/development-workflow/workflow-lib.sh
 
-# 1. Get the project node ID
-PROJECT_ID=$(gh project view "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json --jq '.id')
+ISSUE_NUMBER=<ISSUE>                         # GitHub issue number to update
+TARGET_STATUS="Development in Review"        # Use a value from the table below
 
-# 2. Get the item ID for this issue
-ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --limit 10000 --format json \
-  | jq -r --argjson n "$ISSUE_NUMBER" '.items[] | select(.content.number == $n) | .id')
-
-# 3. Get the Status field ID
-STATUS_FIELD_ID=$(gh project field-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json \
-  | jq -r '.fields[] | select(.name == "Status") | .id')
-
-# 4. Get the option ID for the target status
-# (Use the appropriate value from the table in "Status values by workflow stage" below)
-TARGET_STATUS="Development in Review"  # Example for feature/*/fix/*/refactor/*/hotfix/* PR
-OPTION_ID=$(gh project field-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json \
-  | jq -r --arg s "$TARGET_STATUS" \
-    '.fields[] | select(.name == "Status") | .options[] | select(.name == $s) | .id')
-
-# 5. Apply the update
-gh api graphql -f query="
-  mutation {
-    updateProjectV2ItemFieldValue(input: {
-      projectId: \"$PROJECT_ID\"
-      itemId: \"$ITEM_ID\"
-      fieldId: \"$STATUS_FIELD_ID\"
-      value: { singleSelectOptionId: \"$OPTION_ID\" }
-    }) {
-      projectV2Item { id }
-    }
-  }"
+update_tracker_status_best_effort "$ISSUE_NUMBER" "$TARGET_STATUS"
 ```
+
+For manual debugging, call `workflow_github_project_item_for_issue <issue> <project-number>` after sourcing `workflow-lib.sh`; it returns the project item ID, project ID, current Status, and current Type for exactly one issue.
+
+### One-shot Type update and discovery
+
+Use the shared Type helpers when GitHub Projects is the configured tracker:
+
+```bash
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source scripts/development-workflow/workflow-lib.sh
+
+get_tracker_type_for_issue "$ISSUE_NUMBER"
+update_tracker_type_best_effort "$ISSUE_NUMBER" "Workflow"
+list_open_workflow_type_issues
+```
+
+`get_tracker_type_for_issue` and `update_tracker_type_best_effort` use the same
+targeted `repository.issue(...).projectItems` lookup as the Status helpers.
+`list_open_workflow_type_issues` fetches open issues first and then
+cross-references a single project item-list result, so callers do not perform
+one full-board scan per issue.
 
 ### Status values by workflow stage (Step 8b targets)
 
@@ -169,13 +210,12 @@ gh api graphql -f query="
 
 ### Caching field and option IDs
 
-Field IDs and option IDs are stable within a project. To avoid repeated `field-list` calls, agents may cache them in a `.tmp/github-project-ids.json` file (gitignored path) at the start of a session:
-
-```bash
-gh project field-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json > .tmp/github-project-ids.json
-```
-
-Re-fetch if the file is missing or older than 24 hours.
+Field IDs and option IDs are stable within a project.
+`update_tracker_status_best_effort` and `update_tracker_type_best_effort` cache
+field metadata in memory for the current shell process after the first targeted
+lookup, so repeated updates in the same run do not need repeated field metadata
+queries. Re-run the helper in a fresh shell if the project field configuration
+changes.
 
 ---
 
@@ -233,20 +273,44 @@ and report the reset time. See Protocol 90 Step 1a for the full rate-limit guida
 
 ### Updating Status via GraphQL
 
-Updating project item fields requires GraphQL. The general pattern:
+Updating project item fields requires GraphQL. For agent and script use, prefer `update_tracker_status_best_effort` from `workflow-lib.sh`; it resolves the item ID through a targeted single-issue query and caches Status field metadata for the run.
+
+If you must issue the GraphQL manually, do not use `gh project item-list` for a single issue. Resolve the item through the issue's projectItems connection:
 
 ```bash
-# 1. Get the project node ID
-PROJECT_ID=$(gh project view <PROJECT_NUMBER> --owner <OWNER> --format json | jq -r '.id')
+gh api graphql \
+  -f owner=<REPO_OWNER> \
+  -f repo=<REPO_NAME> \
+  -F issueNumber=<ISSUE_NUMBER> \
+  -F projectNumber=<PROJECT_NUMBER> \
+  -f query='
+    query($owner: String!, $repo: String!, $issueNumber: Int!, $projectNumber: Int!) {
+      repository(owner: $owner, name: $repo) {
+        issue(number: $issueNumber) {
+          projectItems(first: 50) {
+            nodes {
+              id
+              project { id number }
+              status: fieldValueByName(name: "Status") {
+                ... on ProjectV2ItemFieldSingleSelectValue { name }
+              }
+              type: fieldValueByName(name: "Type") {
+                ... on ProjectV2ItemFieldSingleSelectValue { name }
+              }
+            }
+          }
+        }
+      }
+    }' \
+  | jq --argjson projectNumber <PROJECT_NUMBER> \
+    '.data.repository.issue.projectItems.nodes[]
+     | select(.project.number == $projectNumber)
+     | {item_id: .id, project_id: .project.id, status: .status.name, type: .type.name}'
+```
 
-# 2. Get the Status field ID and option IDs
-gh project field-list <PROJECT_NUMBER> --owner <OWNER> --format json
+Then use the returned `project_id` with a Status field/option lookup and apply the mutation:
 
-# 3. Get the item ID for the issue
-ITEM_ID=$(gh project item-list <PROJECT_NUMBER> --owner <OWNER> --format json \
-  | jq -r '.items[] | select(.content.number == <ISSUE_NUMBER>) | .id')
-
-# 4. Update the status
+```bash
 gh api graphql -f query='
   mutation {
     updateProjectV2ItemFieldValue(input: {
@@ -364,7 +428,9 @@ update logic. They are complementary:
   also handles local branch deletion and `develop` pull
 
 If both are active, the tracker update from `post-merge-cleanup` is idempotent (same status
-written twice is harmless).
+written twice is harmless). For implementation branches, cleanup also reasserts `Merged` after
+closing the issue so a built-in "item closed" Project workflow cannot leave the item at
+`Released`.
 
 ---
 
@@ -376,7 +442,7 @@ When a PR is merged, the `post-merge-cleanup` command will:
 2. Apply the action appropriate for the branch type:
    - `spec/*`: issue stays open; update project item Status to **Spec Ready**
    - `implementation-plan/*`: issue stays open; update project item Status to **Plan Ready**
-   - `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`: close the GitHub issue (`gh issue close 42`) and update project item Status to **Merged**
+   - `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`: close the GitHub issue (`gh issue close 42`) and update project item Status to **Merged** after close
 3. Each tracker update is best-effort: if `GITHUB_PROJECT_NUMBER` is unset or the API call fails, a warning is logged and the script continues without aborting
 
 ---

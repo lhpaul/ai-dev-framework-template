@@ -183,7 +183,7 @@ For each human-approved escalated finding (items the human chose **Create backlo
 
 **If expanding an existing issue**: append the escalated finding as an additional observation. Use the same `gh issue edit` flow as `06-retrospective-protocol.md` Step 5 (Add to backlog — Expand existing path).
 
-**If creating a new issue**: use the same `gh issue create` flow as `06-retrospective-protocol.md` Step 5 (Add to backlog — Create new path), with label `workflow`. Use this issue body format:
+**If creating a new issue**: use the same `gh issue create` flow as `06-retrospective-protocol.md` Step 5 (Add to backlog — Create new path). For GitHub Projects, add the issue to the project and set Type `Workflow`; for GitHub Issues without a project board, use the repository's configured workflow label/tag convention. Use this issue body format:
 
 ```markdown
 ## Observed

@@ -10,17 +10,27 @@
 # In-scope branch prefixes (configurable via IN_SCOPE_PREFIXES env var):
 #   feature/  fix/  refactor/  hotfix/
 #
-# Grace-period polling (configurable via env vars):
-#   GUARD_MAX_POLLS     — number of poll attempts before failing (default: 3)
+# Explicit comment-existence polling (configurable via env vars):
+#   GUARD_MAX_WAIT      — total seconds to wait for the summary comment (default: 600)
 #   GUARD_POLL_INTERVAL — seconds to wait between polls (default: 30)
-#   Together these give up to (GUARD_MAX_POLLS - 1) × GUARD_POLL_INTERVAL seconds of
-#   grace so pr-review-loop.sh can finish posting its summary before the guard fails.
-#   (The loop sleeps only between attempts, not after the final attempt.)
+#   Together these allow up to GUARD_MAX_WAIT seconds of polling so
+#   pr-review-loop.sh can finish posting its summary before the guard fails.
+#   The guard polls repeatedly until either the comment is found or GUARD_MAX_WAIT
+#   seconds have elapsed. This explicit comment-existence check is robust regardless
+#   of how long pr-review-loop.sh takes to post — it eliminates the timing race
+#   that occurred with the previous fixed-count grace-period approach.
 #
 # Branches outside the in-scope list always pass (status set to success).
 #
-# The commit-status context name "Reviewer-loop completion guard" can be added
-# to branch-protection required checks so the guard is enforced at merge time.
+# The commit-status context name uses a PR-number suffix
+# ("Reviewer-loop completion guard (#<PR_NUMBER>)") to prevent two PRs that
+# share the same commit SHA (e.g. a main PR and its backport) from
+# overwriting each other's guard result.
+#
+# Branch-protection required checks: add the expected context name for each
+# PR number you want to enforce, or use a wildcard pattern if your provider
+# supports it. In practice, most teams enable the guard via a status-check
+# pattern rule rather than a fixed context string.
 # See docs/workflow/development-workflow/integrations/ci-enforcement.md for setup.
 #
 # Downstream override: edit IN_SCOPE_PREFIXES to change the in-scope prefix list.
@@ -66,6 +76,11 @@ jobs:
             fi
           done
 
+          # Build the PR-specific context name: including the PR number prevents two
+          # PRs that share the same commit SHA (e.g. a release PR and its backport)
+          # from overwriting each other's guard result.
+          GUARD_CONTEXT="Reviewer-loop completion guard (#${PR_NUMBER})"
+
           if [ "$in_scope" = "false" ]; then
             echo "Branch '${BRANCH}' is not in scope — posting success status (guard skipped)."
             gh api \
@@ -73,7 +88,7 @@ jobs:
               "repos/$REPO/statuses/$HEAD_SHA" \
               -f state="success" \
               -f description="Not an implementation branch; guard skipped." \
-              -f context="Reviewer-loop completion guard"
+              -f context="$GUARD_CONTEXT"
             exit 0
           fi
 
@@ -88,24 +103,32 @@ jobs:
           # shellcheck disable=SC2016
           MARKER2='*Posted automatically by `pr-review-loop.sh`.*'
 
-          # Grace-period polling: pr-review-loop.sh posts its summary asynchronously
-          # and may not have finished when this guard first fires. Poll up to
-          # GUARD_MAX_POLLS times with GUARD_POLL_INTERVAL seconds between each
-          # attempt before giving up. Defaults: 3 polls × 30 s = up to 90 s wait.
-          GUARD_MAX_POLLS="${GUARD_MAX_POLLS:-3}"
+          # Explicit comment-existence polling: pr-review-loop.sh posts its summary
+          # after the reviewer loop finishes, which can take several minutes on slow
+          # runners or when reviewer bots take time to respond. The previous fixed-count
+          # grace period (3 × 30 s = 90 s) proved insufficient across multiple batches.
+          #
+          # This loop polls every GUARD_POLL_INTERVAL seconds until either:
+          #   (a) the summary comment is found — guard passes immediately, or
+          #   (b) GUARD_MAX_WAIT total seconds have elapsed — guard fails.
+          #
+          # Defaults: 30 s interval, 600 s max wait (up to 21 poll attempts).
+          # Override via env vars in the workflow dispatch or repository variables.
+          GUARD_MAX_WAIT="${GUARD_MAX_WAIT:-600}"
           GUARD_POLL_INTERVAL="${GUARD_POLL_INTERVAL:-30}"
-          case "$GUARD_MAX_POLLS" in
-            ''|0|*[!0-9]*) echo "ERROR: GUARD_MAX_POLLS must be a positive integer (got: '$GUARD_MAX_POLLS')" >&2; exit 1 ;;
+          case "$GUARD_MAX_WAIT" in
+            ''|0|*[!0-9]*) echo "ERROR: GUARD_MAX_WAIT must be a positive integer (got: '$GUARD_MAX_WAIT')" >&2; exit 1 ;;
           esac
           case "$GUARD_POLL_INTERVAL" in
             ''|0|*[!0-9]*) echo "ERROR: GUARD_POLL_INTERVAL must be a positive integer (got: '$GUARD_POLL_INTERVAL')" >&2; exit 1 ;;
           esac
 
           FOUND=0
+          elapsed=0
           poll=0
-          while [ "$poll" -lt "$GUARD_MAX_POLLS" ]; do
+          while true; do
             poll=$((poll + 1))
-            echo "Poll attempt ${poll}/${GUARD_MAX_POLLS}: fetching PR comments..."
+            echo "Poll attempt ${poll} (elapsed: ${elapsed}s / max: ${GUARD_MAX_WAIT}s): fetching PR comments..."
             # gh api --paginate | jq -s produces [[page1_items], [page2_items], ...].
             # Use 'add // []' to flatten pages before selecting comment objects.
             FOUND=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
@@ -122,17 +145,27 @@ jobs:
                 "repos/$REPO/statuses/$HEAD_SHA" \
                 -f state="failure" \
                 -f description="Could not fetch PR comments. Re-run the workflow to retry." \
-                -f context="Reviewer-loop completion guard"
+                -f context="$GUARD_CONTEXT"
               exit 1
             }
             echo "Reviewer-loop summary comments found: ${FOUND}"
             if [ "${FOUND:-0}" -gt 0 ]; then
               break
             fi
-            if [ "$poll" -lt "$GUARD_MAX_POLLS" ]; then
-              echo "Summary not yet present — waiting ${GUARD_POLL_INTERVAL}s before next poll (${poll}/${GUARD_MAX_POLLS} done)."
-              sleep "$GUARD_POLL_INTERVAL"
+            # Check whether we have exceeded the maximum wait time
+            if [ "$elapsed" -ge "$GUARD_MAX_WAIT" ]; then
+              echo "Maximum wait time (${GUARD_MAX_WAIT}s) exceeded without finding the summary comment."
+              break
             fi
+            # Sleep for the poll interval, but not longer than the remaining wait budget
+            remaining=$((GUARD_MAX_WAIT - elapsed))
+            sleep_time=$GUARD_POLL_INTERVAL
+            if [ "$sleep_time" -gt "$remaining" ]; then
+              sleep_time=$remaining
+            fi
+            echo "Summary not yet present — waiting ${sleep_time}s before next poll."
+            sleep "$sleep_time"
+            elapsed=$((elapsed + sleep_time))
           done
 
           if [ "${FOUND:-0}" -gt 0 ]; then
@@ -140,7 +173,7 @@ jobs:
             DESCRIPTION="Reviewer-loop summary present."
           else
             STATE="failure"
-            DESCRIPTION="No reviewer-loop summary found after ${GUARD_MAX_POLLS} poll(s). Run the automated reviewer loop before merging."
+            DESCRIPTION="No reviewer-loop summary found after ${elapsed}s. Run the automated reviewer loop before merging."
           fi
 
           gh api \
@@ -148,9 +181,9 @@ jobs:
             "repos/$REPO/statuses/$HEAD_SHA" \
             -f state="$STATE" \
             -f description="$DESCRIPTION" \
-            -f context="Reviewer-loop completion guard"
+            -f context="$GUARD_CONTEXT"
 
-          echo "Posted commit status '${STATE}' for SHA ${HEAD_SHA}."
+          echo "Posted commit status '${STATE}' for SHA ${HEAD_SHA} with context '${GUARD_CONTEXT}'."
 
           if [ "$STATE" = "failure" ]; then
             echo "Guard FAILED: the automated reviewer loop must run to completion before this PR is treated as ready."

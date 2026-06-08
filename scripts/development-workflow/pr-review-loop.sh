@@ -36,10 +36,14 @@ if [ "${1:-}" = "unlock" ]; then
   _UNLOCK_CMD=""
   if [ -d "$_UNLOCK_LOCK_DIR" ]; then
     if ! _UNLOCK_PID="$(cat "$_UNLOCK_LOCK_DIR/pid" 2>/dev/null)"; then
-      echo "WARN: could not read lock PID from $_UNLOCK_LOCK_DIR/pid" >&2
+      echo "ERROR: could not read lock PID from $_UNLOCK_LOCK_DIR/pid — cannot verify ownership." >&2
+      echo "  If you are certain no process holds this lock, remove it manually: rm -rf $_UNLOCK_LOCK_DIR" >&2
+      exit 1
     fi
     if ! _UNLOCK_CMD="$(cat "$_UNLOCK_LOCK_DIR/cmd" 2>/dev/null)"; then
-      echo "WARN: could not read lock cmd from $_UNLOCK_LOCK_DIR/cmd" >&2
+      echo "ERROR: could not read lock cmd from $_UNLOCK_LOCK_DIR/cmd — cannot verify ownership." >&2
+      echo "  If you are certain no process holds this lock, remove it manually: rm -rf $_UNLOCK_LOCK_DIR" >&2
+      exit 1
     fi
   fi
   if [ -n "$_UNLOCK_PID" ] && kill -0 "$_UNLOCK_PID" 2>/dev/null && [ "$_UNLOCK_CMD" = "$(basename "$0")" ]; then
@@ -228,13 +232,14 @@ Platform selection (in priority order):
 Branch-type-aware default timeout:
   On spec/* and implementation-plan/* branches, Devin has no trigger condition and
   exits immediately with REASON=no_check_run. To avoid wasting the full 20-minute
-  default wait budget on these branches, the script automatically reduces --max-wait
-  to 60 s and --poll-interval to 30 s when the branch matches spec/* or
-  implementation-plan/* and the caller did not pass the respective flag explicitly.
-  poll_interval is also reduced so it stays below max_wait — the per-loop timeout
-  check requires elapsed >= max_wait, which can only fire after at least one
-  poll_interval has elapsed. Pass --max-wait and/or --poll-interval explicitly to
-  override either value.
+  default wait budget on these branches, the script automatically reduces
+  --max-wait to PR_REVIEW_LOOP_DOC_MAX_WAIT seconds (default: 180) and
+  --poll-interval to 30 s when the branch matches spec/* or
+  implementation-plan/* and the caller did not pass the respective flag
+  explicitly. poll_interval is also reduced when needed so it stays below
+  max_wait — the per-loop timeout check requires elapsed >= max_wait, which can
+  only fire after at least one poll_interval has elapsed. Pass --max-wait and/or
+  --poll-interval explicitly to override either value.
 
 Large-diff poll-window extension:
   CodeRabbit takes significantly longer to post its review on PRs with a large
@@ -711,6 +716,16 @@ run_codex_github_review() {
   set -e
   if [ "$thread_check_status" -eq 0 ]; then
     unresolved_count="$thread_check_output"
+  else
+    # Thread check failed — escalate rather than proceeding with stale unresolved_count=0,
+    # which would dispatch a new review even if blocking threads already exist.
+    print_kv RESULT escalate
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv REASON thread-check-failed
+    return 2
   fi
 
   if [ "$unresolved_count" -gt 0 ]; then
@@ -1024,14 +1039,36 @@ run_copilot_review() {
         return 0
         ;;
       CHANGES_REQUESTED)
+        # Fetch the actual review-comment count so COMMENT_COUNT/BLOCKING_COUNT
+        # reflect how many inline findings Copilot posted, not just "at least 1".
+        local _copilot_review_id _copilot_comment_count
+        _copilot_review_id=""
+        _copilot_comment_count=0
+        set +e
+        _copilot_review_id="$(gh api --paginate \
+          "repos/$owner/$repo_name/pulls/$pr_number/reviews" 2>/dev/null \
+          | jq -rs --arg login "$bot_login" --arg sha "$current_sha" \
+            '[ .[] | .[] | select(.user.login == $login and .commit_id == $sha) ] | last | .id // empty')"
+        if [ -n "$_copilot_review_id" ]; then
+          local _cnt
+          _cnt="$(gh api --paginate \
+            "repos/$owner/$repo_name/pulls/$pr_number/reviews/$_copilot_review_id/comments" \
+            2>/dev/null | jq -rs '[ .[] | .[] ] | length' 2>/dev/null)"
+          [ -n "$_cnt" ] && [ "$_cnt" -gt 0 ] && _copilot_comment_count="$_cnt"
+        fi
+        set -e
+        # Copilot may place findings in the review body rather than as inline
+        # comments. Ensure BLOCKING_COUNT >= 1 so callers always see at least
+        # one blocking finding when the verdict is CHANGES_REQUESTED.
+        [ "$_copilot_comment_count" -eq 0 ] && _copilot_comment_count=1
         print_kv RESULT needs_fixes
         print_kv PLATFORM "$platform"
         print_kv PR_NUMBER "$pr_number"
         print_kv BRANCH "$branch_name"
         print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
         print_kv REASON changes_requested
-        print_kv COMMENT_COUNT 1
-        print_kv BLOCKING_COUNT 1
+        print_kv COMMENT_COUNT "$_copilot_comment_count"
+        print_kv BLOCKING_COUNT "$_copilot_comment_count"
         print_kv SUGGESTION_COUNT 0
         return 1
         ;;
@@ -1046,6 +1083,12 @@ run_copilot_review() {
         print_kv BLOCKING_COUNT 0
         print_kv SUGGESTION_COUNT 1
         return 0
+        ;;
+      "")
+        # review_state is empty — gh api or jq failed under set +e.
+        # Log a warning so the failure is visible; continue polling rather
+        # than escalating on a single transient error.
+        echo "WARN: review state API call returned empty for PR $pr_number SHA $current_sha — retrying in ${effective_poll_interval}s" >&2
         ;;
     esac
 
@@ -1067,18 +1110,21 @@ run_haystack_review() {
   # Runs haystack-reviewer.sh for the given PR and maps its exit codes to the
   # standard pr-review-loop key-value output contract.
   #
-  # Haystack triage runs synchronously (no polling loop required). The companion
-  # script handles the timeout internally via a configurable env var or --timeout flag.
+  # The companion script polls haystack triage internally (poll-retry loop for
+  # status=pending). The timeout is passed via --timeout.
   #
   # Exit code mapping from haystack-reviewer.sh:
   #   0 → RESULT=clean    (no blocking findings)
   #   1 → RESULT=needs_fixes (one or more blocking findings)
-  #   2 → RESULT=skipped / REASON=timeout → propagated as RESULT=escalate
+  #   2 → RESULT=escalate; REASON forwarded from companion script:
+  #         REASON=timeout         — per-call OS timeout exhausted budget
+  #         REASON=pending_timeout — analysis stayed pending past timeout budget
   #   3 → RESULT=skipped / REASON=unavailable → propagated as RESULT=skipped
   local pr_number="$1"
   local branch_name="$2"
-  # poll_interval and max_wait passed for interface consistency; haystack runs
-  # synchronously so poll_interval is not used. max_wait is passed as --timeout.
+  # poll_interval and max_wait passed for interface consistency; haystack-reviewer.sh
+  # manages its own internal poll interval (HAYSTACK_POLL_INTERVAL env var), so
+  # poll_interval from the caller is not used here. max_wait is passed as --timeout.
   local poll_interval="$3"
   local max_wait="$4"
   local platform="haystack"
@@ -1099,21 +1145,33 @@ run_haystack_review() {
   owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
   repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
 
-  # Haystack runs synchronously; honor the caller-provided max_wait budget directly.
-  # (No poll_interval floor needed — unlike polling-based reviewers, haystack triage
-  # completes in a single invocation.)
+  # Haystack-reviewer.sh manages its own poll-retry loop internally; honor the
+  # caller-provided max_wait budget as the overall timeout.
   local effective_timeout
   effective_timeout="$max_wait"
 
+  local haystack_stderr_file
+  haystack_stderr_file="$(mktemp)"
+  trap 'rm -f "${haystack_stderr_file:-}"' RETURN
+
   set +e
-  script_output="$("$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$effective_timeout" 2>/dev/null)"
+  script_output="$("$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$effective_timeout" 2>"$haystack_stderr_file")"
   script_exit=$?
   set -e
 
+  # Surface haystack-reviewer.sh stderr (INFO: diagnostics) to our own stderr so
+  # callers can determine why a result was returned (e.g. status=pending, unavailable,
+  # auth failure, CLI not installed).
+  if [ -s "$haystack_stderr_file" ]; then
+    echo "INFO: haystack-reviewer.sh stderr:" >&2
+    cat "$haystack_stderr_file" >&2
+  fi
+  rm -f "$haystack_stderr_file"
+
   # Parse output from the companion script (key=value lines on stdout).
-  blocking_count="$(printf '%s\n' "$script_output" | grep '^BLOCKING_COUNT=' | cut -d= -f2 | head -1)"
-  suggestion_count="$(printf '%s\n' "$script_output" | grep '^SUGGESTION_COUNT=' | cut -d= -f2 | head -1)"
-  comment_count="$(printf '%s\n' "$script_output" | grep '^COMMENT_COUNT=' | cut -d= -f2 | head -1)"
+  blocking_count="$(printf '%s\n' "$script_output" | grep '^BLOCKING_COUNT=' | cut -d= -f2 | head -n 1)"
+  suggestion_count="$(printf '%s\n' "$script_output" | grep '^SUGGESTION_COUNT=' | cut -d= -f2 | head -n 1)"
+  comment_count="$(printf '%s\n' "$script_output" | grep '^COMMENT_COUNT=' | cut -d= -f2 | head -n 1)"
 
   # Default to 0 if any field is missing.
   blocking_count="${blocking_count:-0}"
@@ -1150,8 +1208,12 @@ run_haystack_review() {
       return 1
       ;;
     2)
+      # Forward the REASON from the companion script (timeout or pending_timeout).
+      local haystack_reason
+      haystack_reason="$(printf '%s\n' "$script_output" | grep '^REASON=' | cut -d= -f2 | head -n 1)"
+      haystack_reason="${haystack_reason:-timeout}"  # default to timeout if missing
       print_kv RESULT escalate
-      print_kv REASON timeout
+      print_kv REASON "$haystack_reason"
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
@@ -3417,6 +3479,30 @@ run_platform_review() {
   esac
 }
 
+ensure_pr_ready_for_after_clean() {
+  # After-clean platforms are intended to run only once draft-compatible
+  # reviewers have cleared. Some external reviewers, including Haystack triage,
+  # do not reliably complete while the PR is still draft, so convert the PR to
+  # ready before dispatching the first after-clean platform.
+  local pr_number="$1"
+  local is_draft
+
+  if ! is_draft="$(gh pr view "$pr_number" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+    echo "WARN: could not determine draft state for PR #$pr_number before after-clean phase" >&2
+    return 2
+  fi
+
+  if [ "$is_draft" = "true" ]; then
+    echo "INFO: converting PR #$pr_number to ready before after-clean reviewers" >&2
+    if ! gh pr ready "$pr_number" >/dev/null 2>&1; then
+      echo "WARN: failed to mark PR #$pr_number ready before after-clean phase" >&2
+      return 2
+    fi
+  fi
+
+  return 0
+}
+
 # --- Compare-mode helpers ---
 # These functions are defined here (before the main execution block) so that
 # the test harness can load them via HARNESS_MODE=1 sourcing without executing
@@ -3431,6 +3517,10 @@ normalize_platform_verdict() {
   local output="${2:-}"
   local reason
   reason="$(kv_value_default REASON "$output" "")"
+  if [ "$result" = "clean" ] && [ "$(kv_value_default POLICY_REVIEW_REQUIRED "$output" 0)" = "1" ]; then
+    printf 'advisory'
+    return
+  fi
   case "$result" in
     clean)       printf 'clean' ;;
     needs_fixes) printf 'blocking' ;;
@@ -3440,7 +3530,7 @@ normalize_platform_verdict() {
     escalate)
       # Distinguish timeout from service-unavailable via REASON.
       case "$reason" in
-        timeout|timed_out|max_wait_exceeded|no_response|rate_limit_max_retries)
+        timeout|timed_out|max_wait_exceeded|no_response|rate_limit_max_retries|pending_timeout)
           printf 'timed out' ;;
         *)
           printf 'unavailable' ;;
@@ -3448,6 +3538,85 @@ normalize_platform_verdict() {
       ;;
     *)           printf 'unavailable' ;;
   esac
+}
+
+REVIEWER_FAILED_LABEL="reviewer-failed"
+REVIEWER_FAILED_LABEL_COLOR="b60205"
+REVIEWER_FAILED_LABEL_DESCRIPTION="Automated reviewer platform failed, timed out, or was unavailable"
+
+reviewer_failed_label_required_for_result() {
+  local result="$1"
+  local reason="${2:-}"
+
+  case "$result" in
+    escalate)
+      return 0
+      ;;
+    skipped)
+      case "$reason" in
+        unavailable|timeout|thread-check-failed|pending_timeout)
+          return 0
+          ;;
+      esac
+      ;;
+  esac
+
+  return 1
+}
+
+ensure_reviewer_failed_label_exists() {
+  if gh label view "$REVIEWER_FAILED_LABEL" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if ! gh label create "$REVIEWER_FAILED_LABEL" \
+      --color "$REVIEWER_FAILED_LABEL_COLOR" \
+      --description "$REVIEWER_FAILED_LABEL_DESCRIPTION" >/dev/null; then
+    echo "WARN: failed to create ${REVIEWER_FAILED_LABEL} label; proceeding with reviewer loop" >&2
+  fi
+
+  return 0
+}
+
+pr_has_reviewer_failed_label() {
+  local pr_number_arg="$1"
+  local labels
+
+  if ! labels="$(gh pr view "$pr_number_arg" --json labels --jq '.labels[].name' 2>/dev/null)"; then
+    return 2
+  fi
+
+  printf '%s\n' "$labels" | grep -Fxq "$REVIEWER_FAILED_LABEL"
+}
+
+sync_reviewer_failed_label() {
+  local pr_number_arg="$1"
+  local required="$2"
+  local label_check_status
+
+  [ -n "${pr_number_arg:-}" ] || return 0
+
+  if [ "$required" = "1" ]; then
+    ensure_reviewer_failed_label_exists
+    if ! gh pr edit "$pr_number_arg" --add-label "$REVIEWER_FAILED_LABEL" >/dev/null; then
+      echo "WARN: failed to apply ${REVIEWER_FAILED_LABEL} label to PR #${pr_number_arg}; proceeding with reviewer loop" >&2
+    fi
+  else
+    label_check_status=1
+    if pr_has_reviewer_failed_label "$pr_number_arg"; then
+      label_check_status=0
+    else
+      label_check_status=$?
+    fi
+    if [ "$label_check_status" -eq 1 ]; then
+      return 0
+    fi
+    if ! gh pr edit "$pr_number_arg" --remove-label "$REVIEWER_FAILED_LABEL" >/dev/null; then
+      echo "WARN: failed to remove ${REVIEWER_FAILED_LABEL} label from PR #${pr_number_arg}; proceeding with reviewer loop" >&2
+    fi
+  fi
+
+  return 0
 }
 
 # append_compare_metrics_row: append one structured row to the platform metrics log.
@@ -3598,10 +3767,125 @@ METRICS_HEADER
     >> "$metrics_file"
 }
 
+# restore_regression_label_if_missing — Step 7b regression-label auto-restore.
+# Re-applies the ready-for-regression label at the start of every pr-review-loop.sh
+# invocation for implementation branches so the label is always present when the CI
+# loop (Step 8) begins — eliminating the recurring manual re-application pattern.
+#
+# Arguments:
+#   $1  pr_number   — numeric PR number
+#   $2  branch_name — full branch ref (e.g. fix/805-slug)
+#
+# Behaviour:
+#   - Runs only for feature/*, fix/*, refactor/*, hotfix/* branches.
+#   - Checks current label state via `gh pr view --json labels`.
+#     On gh failure the check is skipped (fail-open; WARN emitted to stderr).
+#   - When the label is absent, gates the restore on prior-loop evidence:
+#     checks whether an "Automated Reviewer Loop Summary" comment already exists
+#     on the PR via `gh api repos/.../issues/.../comments --paginate`.
+#       • summary comment PRESENT + label missing  → RESTORE.
+#         Within the reviewer-loop operating model, ready-for-regression is
+#         owned by the loop and should be present whenever the loop runs after
+#         the first summary comment. A label drop after the summary comment exists
+#         means remove-regression-label-on-push.yml fired (the #805 scenario), so
+#         restoring here is correct.
+#       • summary comment ABSENT + label missing   → do NOT restore.
+#         This is the normal initial state (loop has never run), and the only
+#         window in which a human intentional removal is unambiguous. A deliberate
+#         removal AFTER the loop has run while still re-invoking the loop is
+#         treated as out-of-model (the loop will re-apply on the next invocation).
+#     The summary-comment gate prevents overriding an intentional removal that
+#     occurs before the loop has ever applied the label.
+#   - If the comment-presence query fails (gh/API error): fail-open — the restore
+#     IS attempted and a WARN is emitted. This mirrors the higher-frequency
+#     real-world failure (#805) being more harmful than a spurious re-apply.
+#   - The operation is idempotent: if the label is already present, gh pr edit
+#     --add-label is a documented no-op.
+#   - Marker: "### Automated Reviewer Loop Summary" (author-agnostic; the comment
+#     is posted by the maintainer's gh token when run locally, not necessarily by
+#     a bot account). Do NOT scope by [bot] — that silently misses local-run cases.
+#
+# Returns 0 in all cases (best-effort; never aborts the caller).
+restore_regression_label_if_missing() {
+  local pr_number="$1"
+  local branch_name="$2"
+  case "${branch_name:-}" in
+    feature/*|fix/*|refactor/*|hotfix/*)
+      local _rfr_has_label=""
+      # pipefail is needed here: if gh fails, jq would still see empty input and
+      # output "false", causing a spurious re-apply. Use command substitution with
+      # explicit exit-code capture instead, equivalent to pipefail on a single-stage
+      # pipeline (gh --jq is one command, not a pipe).
+      if ! _rfr_has_label="$(gh pr view "$pr_number" --json labels \
+          --jq '[.labels[].name] | any(. == "ready-for-regression")')"; then
+        echo "WARN: gh pr view failed for regression-label auto-restore (PR ${pr_number}); skipping" >&2
+        return 0
+      fi
+      if [ "${_rfr_has_label:-}" = "false" ]; then
+        # Gate the restore on prior-loop evidence: only restore when an
+        # "Automated Reviewer Loop Summary" comment already exists on the PR.
+        # This prevents overriding a human intentional label removal that occurs
+        # before the loop has ever applied the label.
+        local _rfr_repo=""
+        # repo_slug failure is handled explicitly below: an empty slug falls
+        # into the else branch (fail-open WARN + restore). Do not use || true
+        # here — capture the exit code and let the if-condition detect the
+        # empty string rather than masking the failure.
+        if ! _rfr_repo="$(repo_slug 2>/dev/null)"; then
+          _rfr_repo=""
+        fi
+        local _rfr_loop_comment=0
+        local _rfr_comments_raw=""
+        if [ -n "${_rfr_repo:-}" ] && _rfr_comments_raw="$(gh api \
+            "repos/${_rfr_repo}/issues/${pr_number}/comments" \
+            --paginate 2>/dev/null)"; then
+          _rfr_loop_comment="$(printf '%s\n' "$_rfr_comments_raw" \
+            | jq -rs 'add // [] | [.[] | select(
+                (.body // "" | contains("### Automated Reviewer Loop Summary"))
+              )] | length' 2>/dev/null)" || _rfr_loop_comment=0
+        else
+          echo "WARN: gh api failed for summary-comment gate on PR ${pr_number}; failing open — restoring label." >&2
+          _rfr_loop_comment=1
+        fi
+        if [ "${_rfr_loop_comment:-0}" -gt 0 ]; then
+          echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); reviewer loop summary comment found — restoring before loop runs." >&2
+          # Do NOT redirect stderr here: surface gh errors so failures are observable
+          # rather than silently swallowed. The || branch handles the non-zero exit.
+          if ! gh pr edit "$pr_number" --add-label "ready-for-regression"; then
+            echo "WARN: failed to restore ready-for-regression label on PR #${pr_number}; proceeding without it" >&2
+          fi
+        else
+          echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); no reviewer loop summary comment found — skipping restore (label not yet applied by loop)." >&2
+        fi
+      fi
+      ;;
+  esac
+  return 0
+}
+
+doc_branch_default_max_wait() {
+  local configured="${PR_REVIEW_LOOP_DOC_MAX_WAIT:-180}"
+  if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]]; then
+    echo "WARN: PR_REVIEW_LOOP_DOC_MAX_WAIT must be a positive integer; defaulting to 180" >&2
+    configured=180
+  fi
+  printf '%s\n' "$configured"
+}
+
+doc_branch_default_poll_interval() {
+  local max_wait="$1"
+  local interval=30
+  if [ "$interval" -ge "$max_wait" ]; then
+    interval=$((max_wait / 2))
+    [ "$interval" -lt 1 ] && interval=1
+  fi
+  printf '%s\n' "$interval"
+}
+
 # Skip the main execution block when sourced in test-harness mode.
-# All function definitions above (including normalize_platform_verdict and
-# append_compare_metrics_row) are loaded; only the argument-parsing and
-# execution sections below are skipped.
+# All function definitions above (including normalize_platform_verdict,
+# append_compare_metrics_row, and restore_regression_label_if_missing) are
+# loaded; only the argument-parsing and execution sections below are skipped.
 [ "$_HARNESS_MODE_EFFECTIVE" -eq 1 ] && return 0 2>/dev/null || true
 
 if [ "$#" -lt 1 ]; then
@@ -3751,15 +4035,15 @@ fi
 # Branch-type-aware timeout: spec/* and implementation-plan/* branches produce
 # REASON=no_check_run immediately when Devin has no trigger condition (non-implementation
 # branches). Waiting the full 1200-second default wastes orchestrator budget.
-# Apply a short max_wait=60 / poll_interval=30 default when the caller did not pass
-# --max-wait / --poll-interval explicitly. poll_interval must be less than max_wait
-# so the per-loop timeout check can fire within the budget.
+# Apply a bounded doc-branch max_wait / poll_interval=30 default when the caller
+# did not pass --max-wait / --poll-interval explicitly. poll_interval must be
+# less than max_wait so the per-loop timeout check can fire within the budget.
 if [ "$max_wait_explicit" -eq 0 ]; then
   case "$branch_name" in
     spec/*|implementation-plan/*)
-      max_wait=60
+      max_wait="$(doc_branch_default_max_wait)"
       if [ "$poll_interval_explicit" -eq 0 ]; then
-        poll_interval=30
+        poll_interval="$(doc_branch_default_poll_interval "$max_wait")"
       fi
       ;;
   esac
@@ -3776,7 +4060,7 @@ fi
 # count and extend max_wait to LARGE_DIFF_MAX_WAIT (default 2400 s) when the count
 # exceeds LARGE_DIFF_THRESHOLD (default 50 files). A case guard excludes spec/* and
 # implementation-plan/* branches — those are already handled by the branch-type-aware
-# timeout block above and must not have their 60-second budget overridden.
+# timeout block above and must not have their bounded doc-branch budget overridden.
 large_diff_threshold="${LARGE_DIFF_THRESHOLD:-50}"
 large_diff_max_wait="${LARGE_DIFF_MAX_WAIT:-2400}"
 if ! [[ "$large_diff_threshold" =~ ^[1-9][0-9]*$ ]]; then
@@ -3816,6 +4100,13 @@ if [ "$max_wait_explicit" -eq 0 ]; then
   esac
 fi
 
+# Step 7b regression-label auto-restore (implementation PRs only).
+# Delegates to restore_regression_label_if_missing() (defined in the function
+# section above) so the logic can be unit-tested in harness mode.
+if [ -n "$pr_number" ] && [ "${#platforms[@]}" -gt 0 ]; then
+  restore_regression_label_if_missing "$pr_number" "${branch_name:-}"
+fi
+
 aggregate_result="skipped"
 aggregate_reason=""
 last_platform=""
@@ -3825,10 +4116,14 @@ total_comment_count=0
 total_blocking_count=0
 total_suggestion_count=0
 aggregate_advisory_labels=""
+reviewer_failed_required=0
 declare -a compare_verdicts=()
 # Per-platform result tokens for the PR summary comment.
-# Each entry is "platform_name=display_token" (e.g. "haystack=unavailable").
+# Each entry is "platform_name:display_token" (e.g. "haystack:unavailable").
 declare -a platform_result_tokens=()
+# Per-platform review-policy status notes for the PR summary comment. Haystack
+# emits these from `pr-status`; other platforms normally leave this empty.
+declare -a platform_policy_status_notes=()
 # Compare-mode: track the first blocking platform seen so later clean platforms
 # do not overwrite the aggregate. These variables are set once and never reset.
 compare_first_blocking_result=""
@@ -3868,6 +4163,22 @@ for index in "${!platforms[@]}"; do
       && [ "$phase_after_clean_started" -eq 0 ] \
       && is_phase_after_clean_platform "$platform_name"; then
     if [ "$compare_mode" -eq 0 ] || [ -z "$compare_first_blocking_result" ]; then
+      set +e
+      ensure_pr_ready_for_after_clean "$pr_number"
+      ready_status=$?
+      set -e
+      if [ "$ready_status" -ne 0 ]; then
+        phase_after_clean_started=1
+        phase_after_clean_gate_result="ready_failed"
+        phase_after_clean_net_new_blocker=1
+        phase_after_clean_blocking_platform="ready_for_review"
+        aggregate_result="escalate"
+        aggregate_reason="ready_for_review_failed"
+        aggregate_output="$(printf 'RESULT=escalate\nREASON=ready_for_review_failed\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+        aggregate_status=2
+        break
+      fi
+      unset ready_status
       phase_after_clean_started=1
       phase_after_clean_gate_result="clean"
     fi
@@ -3883,6 +4194,10 @@ for index in "${!platforms[@]}"; do
   platform_blocking_count="$(kv_value_default BLOCKING_COUNT "$platform_output" 0)"
   platform_suggestion_count="$(kv_value_default SUGGESTION_COUNT "$platform_output" 0)"
   platform_advisory_labels="$(kv_value_default ADVISORY_LABELS "$platform_output" "")"
+  platform_reason="$(kv_value_default REASON "$platform_output" "")"
+  if reviewer_failed_label_required_for_result "$platform_result" "$platform_reason"; then
+    reviewer_failed_required=1
+  fi
 
   total_comment_count=$((total_comment_count + platform_comment_count))
   total_blocking_count=$((total_blocking_count + platform_blocking_count))
@@ -3900,22 +4215,50 @@ for index in "${!platforms[@]}"; do
   print_kv "PLATFORM_${platform_index}_RESULT" "$platform_result"
   emit_prefixed_platform_output "$platform_index" "$platform_output"
   # Record a human-readable display token for the PR summary comment.
-  _prt_reason="$(kv_value_default REASON "$platform_output" "")"
-  case "$platform_result" in
-    clean)      _prt_disp="clean" ;;
-    skipped)
-      if [ "$_prt_reason" = "unavailable" ] || [ "$_prt_reason" = "not_configured" ]; then
-        _prt_disp="unavailable"
-      else
-        _prt_disp="skipped"
-      fi
-      ;;
-    escalate)   _prt_disp="escalated (${_prt_reason:-unknown})" ;;
-    needs_fixes) _prt_disp="needs_fixes" ;;
-    *)           _prt_disp="$platform_result" ;;
-  esac
+  _prt_reason="$platform_reason"
+  _prt_display_override="$(kv_value_default DISPLAY_RESULT "$platform_output" "")"
+  if [ -n "$_prt_display_override" ]; then
+    _prt_disp="$_prt_display_override"
+  else
+    case "$platform_result" in
+      clean)      _prt_disp="clean" ;;
+      skipped)
+        if [ "$_prt_reason" = "unavailable" ] || [ "$_prt_reason" = "not_configured" ]; then
+          _prt_disp="unavailable"
+        else
+          _prt_disp="skipped"
+        fi
+        ;;
+      escalate)   _prt_disp="escalated (${_prt_reason:-unknown})" ;;
+      needs_fixes) _prt_disp="needs_fixes" ;;
+      *)           _prt_disp="$platform_result" ;;
+    esac
+  fi
   platform_result_tokens+=("${platform_name}:${_prt_disp}")
-  unset _prt_reason _prt_disp
+
+  _policy_status_available="$(kv_value_default POLICY_STATUS_AVAILABLE "$platform_output" 0)"
+  if [ "$_policy_status_available" = "1" ]; then
+    _policy_bucket="$(kv_value_default POLICY_BUCKET "$platform_output" "")"
+    _policy_needs_human="$(kv_value_default POLICY_NEEDS_HUMAN "$platform_output" "")"
+    _policy_disposition="$(kv_value_default POLICY_DISPOSITION "$platform_output" "")"
+    _policy_verdict="$(kv_value_default POLICY_VERDICT "$platform_output" "")"
+    _policy_analysis_status="$(kv_value_default POLICY_ANALYSIS_STATUS "$platform_output" "")"
+    _policy_rating="$(kv_value_default POLICY_RATING "$platform_output" "")"
+    _policy_has_reviewer="$(kv_value_default POLICY_HAS_REVIEWER "$platform_output" "")"
+    _policy_note="${platform_name}:"
+    [ -n "$_policy_bucket" ] && _policy_note="${_policy_note} bucket=${_policy_bucket};"
+    [ -n "$_policy_needs_human" ] && _policy_note="${_policy_note} needsHumanReview=${_policy_needs_human};"
+    [ -n "$_policy_disposition" ] && _policy_note="${_policy_note} disposition=${_policy_disposition};"
+    [ -n "$_policy_verdict" ] && _policy_note="${_policy_note} verdict=${_policy_verdict};"
+    [ -n "$_policy_analysis_status" ] && _policy_note="${_policy_note} analysisStatus=${_policy_analysis_status};"
+    [ -n "$_policy_rating" ] && _policy_note="${_policy_note} rating=${_policy_rating};"
+    [ -n "$_policy_has_reviewer" ] && _policy_note="${_policy_note} hasReviewer=${_policy_has_reviewer};"
+    platform_policy_status_notes+=("$_policy_note")
+  fi
+  unset _prt_reason _prt_display_override _prt_disp
+  unset _policy_status_available _policy_bucket _policy_needs_human
+  unset _policy_disposition _policy_verdict _policy_analysis_status
+  unset _policy_rating _policy_has_reviewer _policy_note
 
   # In compare mode, record a normalized verdict for each platform before
   # deciding whether to break. The normalized verdict captures clean / blocking /
@@ -4182,12 +4525,24 @@ Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs afte
 **After-clean platforms:** ${phase_platform_list:-none}"
   fi
 
+  local policy_status_section=""
+  if declare -p platform_policy_status_notes >/dev/null 2>&1 \
+      && [ "${#platform_policy_status_notes[@]}" -gt 0 ]; then
+    local _policy_status_note
+    policy_status_section="
+**Review policy status:**"
+    for _policy_status_note in "${platform_policy_status_notes[@]}"; do
+      policy_status_section="${policy_status_section}
+- ${_policy_status_note}"
+    done
+  fi
+
   local comment_body
   comment_body="$(cat <<EOF
 ### Automated Reviewer Loop Summary
 
 **Result:** ${result_line}
-**Platforms:** ${platform_list:-none}
+**Platforms:** ${platform_list:-none}${policy_status_section}
 **Findings:** ${blocking} blocking, ${suggestions} suggestions${phase_section}${compare_section}${advisory_section}${regression_label_section}
 
 *Posted automatically by \`pr-review-loop.sh\`.*
@@ -4244,9 +4599,13 @@ EOF
     fi
   fi
   if [ "$_comment_posted" -eq 0 ]; then
-    if ! gh pr comment "$pr_number" --body "$comment_body" >/dev/null 2>&1; then
+    local _body_tmpfile
+    _body_tmpfile="$(mktemp)"
+    printf '%s' "$comment_body" > "$_body_tmpfile"
+    if ! gh pr comment "$pr_number" --body-file "$_body_tmpfile" >/dev/null 2>&1; then
       echo "WARN: failed to post reviewer loop summary comment for PR ${pr_number}" >&2
     fi
+    rm -f "$_body_tmpfile"
   fi
 
   set -e
@@ -4261,6 +4620,7 @@ if [ -z "$last_platform" ]; then
   print_kv SUGGESTION_COUNT 0
   print_kv UNRESOLVED_THREAD_COUNT 0
   _post_review_summary "skipped" "not_configured" "none" "0" "0" "" "" "0" "" "0" "0" "" "0"
+  sync_reviewer_failed_label "$pr_number" 0
   exit 0
 fi
 
@@ -4485,6 +4845,11 @@ if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
     echo "WARN: append_compare_metrics_row failed — metrics row not written" >&2
   set -e
 fi
+
+if reviewer_failed_label_required_for_result "$aggregate_result" "$aggregate_reason"; then
+  reviewer_failed_required=1
+fi
+sync_reviewer_failed_label "$pr_number" "$reviewer_failed_required"
 
 print_kv RESULT "$aggregate_result"
 print_kv PLATFORM "$last_platform"

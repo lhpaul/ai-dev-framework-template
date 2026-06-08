@@ -191,7 +191,7 @@ Use the orchestrator agent to inspect this repository's AI development workflow 
 ```
 
 ```text
-Use the orchestrator agent to review the current backlog, specs, plans, branches, and open PRs in this repository, then keep advancing eligible work until each item reaches a real terminal condition. Minimize human interaction, but stop for human decisions, merge review, blocked dependencies, or escalations.
+Use the orchestrator agent to review the current backlog, specs, plans, branches, and open PRs in this repository. Advance deterministic in-flight work, and when Backlog work is next, propose the largest safe start batch by priority and parallelization feasibility before asking for approval. Minimize human interaction, but stop for human decisions, merge review, blocked dependencies, or escalations.
 ```
 
 ```text
@@ -212,7 +212,7 @@ Example commands:
 ```
 
 ```text
-/run-work Review the current backlog, specs, plans, branches, and open PRs in this repository, then keep advancing eligible work until each item reaches a real terminal condition. Minimize human interaction, but stop for human decisions, merge review, blocked dependencies, or escalations.
+/run-work Review the current backlog, specs, plans, branches, and open PRs in this repository. Advance deterministic in-flight work, and when Backlog work is next, propose the largest safe start batch by priority and parallelization feasibility before asking for approval. Minimize human interaction, but stop for human decisions, merge review, blocked dependencies, or escalations.
 ```
 
 ```text
@@ -240,7 +240,7 @@ Use $workflow-orchestrator to inspect this repository's AI development workflow 
 ```
 
 ```text
-Use $workflow-orchestrator to review the current backlog, specs, plans, branches, and open PRs in this repository, then keep advancing eligible work until each item reaches a real terminal condition. Minimize human interaction, but stop for human decisions, merge review, blocked dependencies, or escalations.
+Use $workflow-orchestrator to review the current backlog, specs, plans, branches, and open PRs in this repository. Advance deterministic in-flight work, and when Backlog work is next, propose the largest safe start batch by priority and parallelization feasibility before asking for approval. Minimize human interaction, but stop for human decisions, merge review, blocked dependencies, or escalations.
 ```
 
 ```text

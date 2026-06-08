@@ -1,0 +1,7 @@
+interface:
+  display_name: "Prepare release"
+  short_description: "Prepare release PRs and drive them to readiness."
+  default_prompt: "Use $prepare-release to run the release preparation workflow for this repository."
+
+policy:
+  allow_implicit_invocation: false

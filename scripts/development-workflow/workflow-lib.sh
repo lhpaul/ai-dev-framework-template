@@ -3,6 +3,10 @@
 set -euo pipefail
 
 workflow_script_dir() {
+  if [[ -z "${BASH_SOURCE[0]:-}" ]]; then
+    printf 'ERROR: BASH_SOURCE[0] is unset — source workflow-lib.sh from a Bash script or via:\n  bash -c "source scripts/development-workflow/workflow-lib.sh"\n' >&2
+    return 1
+  fi
   CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd
 }
 
@@ -371,6 +375,76 @@ workflow_resolve_github_project_owner() {
   return 0
 }
 
+workflow_resolve_github_repo_owner() {
+  local owner
+  if ! owner="$(gh repo view --json owner --jq '.owner.login' 2>/dev/null)"; then
+    owner=""
+  fi
+  if [ -n "$owner" ]; then
+    printf '%s' "$owner"
+    return 0
+  fi
+
+  local remote_url
+  if ! remote_url="$(git remote get-url origin 2>/dev/null)"; then
+    remote_url=""
+  fi
+  if [ -n "$remote_url" ]; then
+    case "$remote_url" in
+      https://*github.com/*)
+        owner="${remote_url#https://}"
+        owner="${owner#*@}"
+        owner="${owner#github.com/}"
+        owner="${owner%%/*}"
+        ;;
+      git@github.com:*)
+        owner="${remote_url#git@github.com:}"
+        owner="${owner%%/*}"
+        ;;
+      ssh://git@github.com/*)
+        owner="${remote_url#ssh://git@github.com/}"
+        owner="${owner%%/*}"
+        ;;
+    esac
+    if [ -n "$owner" ]; then
+      printf '%s' "$owner"
+      return 0
+    fi
+  fi
+
+  echo "Warning: could not resolve GitHub repository owner from 'gh repo view' or git remote URL." >&2
+  printf ''
+  return 0
+}
+
+workflow_resolve_github_repo_name() {
+  local repo_name
+  if ! repo_name="$(gh repo view --json name --jq '.name' 2>/dev/null)"; then
+    repo_name=""
+  fi
+  if [ -n "$repo_name" ]; then
+    printf '%s' "$repo_name"
+    return 0
+  fi
+
+  local remote_url
+  if ! remote_url="$(git remote get-url origin 2>/dev/null)"; then
+    remote_url=""
+  fi
+  if [ -n "$remote_url" ]; then
+    repo_name="${remote_url##*/}"
+    repo_name="${repo_name%.git}"
+    if [ -n "$repo_name" ]; then
+      printf '%s' "$repo_name"
+      return 0
+    fi
+  fi
+
+  echo "Warning: could not resolve GitHub repository name from 'gh repo view' or git remote URL." >&2
+  printf ''
+  return 0
+}
+
 # workflow_issue_tracker_custom_field <key> [config_file]
 #
 # Reads issue_tracker.custom_fields.<key> from .ai-dev-workflow.yaml.
@@ -492,12 +566,458 @@ is_terminal_tracker_status() {
   esac
 }
 
-# Script-level cache for get_tracker_status_for_issue.
-# Populated on the first call for a given owner+project pair; reused on all
-# subsequent calls within the same script run — avoiding repeated full-board scans.
-__workflow_tracker_cache_owner=""
-__workflow_tracker_cache_project=""
-__workflow_tracker_cache_json=""
+# Script-level cache for GitHub Projects Status field metadata.
+__workflow_github_project_id_cache_owner=""
+__workflow_github_project_id_cache_number=""
+__workflow_github_project_id_cache_id=""
+__workflow_project_status_field_cache_project_id=""
+__workflow_project_status_field_cache_json=""
+__workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_json=""
+
+workflow_github_project_id() {
+  local project_owner="$1"
+  local project_number="$2"
+  local response project_id
+
+  if [ -z "$project_owner" ] || [ -z "$project_number" ]; then
+    printf ''
+    return 0
+  fi
+
+  if [ "$__workflow_github_project_id_cache_owner" != "$project_owner" ] || \
+     [ "$__workflow_github_project_id_cache_number" != "$project_number" ] || \
+     [ -z "$__workflow_github_project_id_cache_id" ]; then
+    # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
+    response=$(gh api graphql \
+      -f owner="$project_owner" \
+      -F projectNumber="$project_number" \
+      -f query='
+        query($owner: String!, $projectNumber: Int!) {
+          user(login: $owner) { projectV2(number: $projectNumber) { id } }
+        }
+      ' 2>/dev/null || true)
+
+    project_id="$(printf '%s' "$response" | python3 -c "
+import json, sys
+try:
+    data = json.loads(sys.stdin.read(), strict=False)
+except Exception:
+    sys.exit(0)
+project = ((data.get('data') or {}).get('user') or {}).get('projectV2') or {}
+print(project.get('id') or '', end='')
+" 2>/dev/null || true)"
+
+    if [ -z "$project_id" ]; then
+      # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
+      response=$(gh api graphql \
+        -f owner="$project_owner" \
+        -F projectNumber="$project_number" \
+        -f query='
+          query($owner: String!, $projectNumber: Int!) {
+            organization(login: $owner) { projectV2(number: $projectNumber) { id } }
+          }
+        ' 2>/dev/null || true)
+
+      project_id="$(printf '%s' "$response" | python3 -c "
+import json, sys
+try:
+    data = json.loads(sys.stdin.read(), strict=False)
+except Exception:
+    sys.exit(0)
+project = ((data.get('data') or {}).get('organization') or {}).get('projectV2') or {}
+print(project.get('id') or '', end='')
+" 2>/dev/null || true)"
+    fi
+
+    __workflow_github_project_id_cache_owner="$project_owner"
+    __workflow_github_project_id_cache_number="$project_number"
+    __workflow_github_project_id_cache_id="$project_id"
+  fi
+
+  printf '%s' "$__workflow_github_project_id_cache_id"
+}
+
+# workflow_github_project_item_for_issue <issue_number> <project_number>
+#
+# Prints compact JSON with project item details for one issue in one project:
+#   {"item_id":"...","project_id":"...","status":"...","type":"..."}
+#
+# This intentionally uses repository.issue(...).projectItems instead of
+# `gh project item-list` so single-item status reads/updates do not paginate the
+# entire board and drain the GraphQL budget.
+workflow_github_project_item_for_issue() {
+  local issue_number="$1"
+  local project_number="$2"
+  local project_owner project_id repo_owner repo_name response
+  local cursor page_state item_json has_next end_cursor page_count line
+  local -a graphql_args
+
+  case "$issue_number" in
+    ''|*[!0-9]*)
+      echo "Warning: issue number '${issue_number}' is not numeric; tracker status not read." >&2
+      printf ''
+      return 0
+      ;;
+  esac
+  case "$project_number" in
+    ''|*[!0-9]*)
+      echo "Warning: project number '${project_number}' is not numeric; tracker status not read." >&2
+      printf ''
+      return 0
+      ;;
+  esac
+
+  project_owner="$(workflow_resolve_github_project_owner)"
+  project_id="$(workflow_github_project_id "$project_owner" "$project_number")"
+  repo_owner="$(workflow_resolve_github_repo_owner)"
+  repo_name="$(workflow_resolve_github_repo_name)"
+  if [ -z "$project_id" ] || [ -z "$repo_owner" ] || [ -z "$repo_name" ]; then
+    printf ''
+    return 0
+  fi
+
+  cursor=""
+  page_count=0
+  while :; do
+    graphql_args=(
+      api graphql
+      -f owner="$repo_owner"
+      -f repo="$repo_name"
+      -F issueNumber="$issue_number"
+    )
+    if [ -n "$cursor" ]; then
+      graphql_args+=(-f after="$cursor")
+    fi
+    # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
+    graphql_args+=(
+      -f query='
+        query($owner: String!, $repo: String!, $issueNumber: Int!, $after: String) {
+          repository(owner: $owner, name: $repo) {
+            issue(number: $issueNumber) {
+              projectItems(first: 100, after: $after) {
+                nodes {
+                  id
+                  project { id number }
+                  status: fieldValueByName(name: "Status") {
+                    ... on ProjectV2ItemFieldSingleSelectValue { name }
+                  }
+                  type: fieldValueByName(name: "Type") {
+                    ... on ProjectV2ItemFieldSingleSelectValue { name }
+                  }
+                }
+                pageInfo { hasNextPage endCursor }
+              }
+            }
+          }
+        }
+      '
+    )
+
+    if ! response=$(gh "${graphql_args[@]}" 2>/dev/null); then
+      echo "Warning: GraphQL project item lookup failed for issue #${issue_number}; tracker status not read." >&2
+      printf ''
+      return 0
+    fi
+
+    if ! page_state="$(printf '%s' "$response" | python3 -c "
+import json, sys
+project_id = sys.argv[1]
+try:
+    data = json.loads(sys.stdin.read(), strict=False)
+except Exception:
+    sys.exit(2)
+issue = (((data.get('data') or {}).get('repository') or {}).get('issue') or {})
+project_items = issue.get('projectItems') or {}
+match = ''
+for item in project_items.get('nodes') or []:
+    project = item.get('project') or {}
+    if project.get('id') == project_id:
+        status_value = item.get('status') or item.get('fieldValueByName') or {}
+        type_value = item.get('type') or {}
+        match = json.dumps({
+            'item_id': item.get('id') or '',
+            'project_id': project.get('id') or '',
+            'status': status_value.get('name') or '',
+            'type': type_value.get('name') or '',
+        }, separators=(',', ':'))
+        break
+page_info = project_items.get('pageInfo') or {}
+has_next = 'true' if page_info.get('hasNextPage') else 'false'
+end_cursor = page_info.get('endCursor') or ''
+print('ITEM=' + match)
+print('HAS_NEXT=' + has_next)
+print('END_CURSOR=' + end_cursor)
+" "$project_id" 2>/dev/null)"; then
+      echo "Warning: could not parse GraphQL project item response for issue #${issue_number}; tracker status not read." >&2
+      printf ''
+      return 0
+    fi
+
+    item_json=""
+    has_next="false"
+    end_cursor=""
+    while IFS= read -r line; do
+      case "$line" in
+        ITEM=*) item_json="${line#ITEM=}" ;;
+        HAS_NEXT=*) has_next="${line#HAS_NEXT=}" ;;
+        END_CURSOR=*) end_cursor="${line#END_CURSOR=}" ;;
+      esac
+    done <<EOF
+$page_state
+EOF
+    if [ -n "$item_json" ]; then
+      printf '%s' "$item_json"
+      return 0
+    fi
+    if [ "$has_next" != "true" ] || [ -z "$end_cursor" ]; then
+      break
+    fi
+    page_count=$((page_count + 1))
+    if [ "$page_count" -ge 20 ]; then
+      echo "Warning: project item lookup exceeded pagination limit for issue #${issue_number}; tracker status not read." >&2
+      break
+    fi
+    cursor="$end_cursor"
+  done
+
+  printf ''
+}
+
+workflow_github_project_status_field_json() {
+  local project_id="$1"
+  local response cursor page_state field_json has_next end_cursor page_count line
+  local -a graphql_args
+
+  if [ -z "$project_id" ]; then
+    printf ''
+    return 0
+  fi
+
+  if [ "$__workflow_project_status_field_cache_project_id" != "$project_id" ] || \
+     [ -z "$__workflow_project_status_field_cache_json" ]; then
+    __workflow_project_status_field_cache_json=""
+    cursor=""
+    page_count=0
+    while :; do
+      graphql_args=(
+        api graphql
+        -f projectId="$project_id"
+      )
+      if [ -n "$cursor" ]; then
+        graphql_args+=(-f after="$cursor")
+      fi
+      # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
+      graphql_args+=(
+        -f query='
+          query($projectId: ID!, $after: String) {
+            node(id: $projectId) {
+              ... on ProjectV2 {
+                fields(first: 100, after: $after) {
+                  nodes {
+                    ... on ProjectV2SingleSelectField {
+                      id
+                      name
+                      options { id name }
+                    }
+                  }
+                  pageInfo { hasNextPage endCursor }
+                }
+              }
+            }
+          }
+        '
+      )
+
+      if ! response=$(gh "${graphql_args[@]}" 2>/dev/null); then
+        echo "Warning: GraphQL project Status field lookup failed for project '${project_id}'." >&2
+        printf ''
+        return 0
+      fi
+
+      if ! page_state="$(printf '%s' "$response" | python3 -c "
+import json, sys
+try:
+    data = json.loads(sys.stdin.read(), strict=False)
+except Exception:
+    sys.exit(2)
+field_connection = (((data.get('data') or {}).get('node') or {}).get('fields') or {})
+fields = field_connection.get('nodes') or []
+field_json = ''
+for field in fields:
+    if field.get('name') == 'Status':
+        field_json = json.dumps({
+            'field_id': field.get('id') or '',
+            'options': {option.get('name') or '': option.get('id') or '' for option in field.get('options') or []},
+        }, separators=(',', ':'))
+        break
+page_info = field_connection.get('pageInfo') or {}
+has_next = 'true' if page_info.get('hasNextPage') else 'false'
+end_cursor = page_info.get('endCursor') or ''
+print('FIELD_JSON=' + field_json)
+print('HAS_NEXT=' + has_next)
+print('END_CURSOR=' + end_cursor)
+" 2>/dev/null)"; then
+        echo "Warning: could not parse GraphQL project Status field response for project '${project_id}'." >&2
+        printf ''
+        return 0
+      fi
+
+      field_json=""
+      has_next="false"
+      end_cursor=""
+      while IFS= read -r line; do
+        case "$line" in
+          FIELD_JSON=*) field_json="${line#FIELD_JSON=}" ;;
+          HAS_NEXT=*) has_next="${line#HAS_NEXT=}" ;;
+          END_CURSOR=*) end_cursor="${line#END_CURSOR=}" ;;
+        esac
+      done <<EOF
+$page_state
+EOF
+      if [ -n "$field_json" ]; then
+        __workflow_project_status_field_cache_json="$field_json"
+        break
+      fi
+      if [ "$has_next" != "true" ] || [ -z "$end_cursor" ]; then
+        break
+      fi
+      page_count=$((page_count + 1))
+      if [ "$page_count" -ge 20 ]; then
+        echo "Warning: project Status field lookup exceeded pagination limit for project '${project_id}'." >&2
+        break
+      fi
+      cursor="$end_cursor"
+    done
+    __workflow_project_status_field_cache_project_id="$project_id"
+  fi
+
+  printf '%s' "$__workflow_project_status_field_cache_json"
+}
+
+# workflow_github_project_type_field_json <project_id>
+#
+# Prints compact JSON for the GitHub Projects Type field metadata. Returns
+# non-zero when the project ID is missing, the GraphQL fetch fails, the response
+# cannot be parsed, pagination exceeds the guard limit, or the Type field is
+# absent. Callers must treat those cases as explicit lookup failures.
+workflow_github_project_type_field_json() {
+  local project_id="$1"
+  local response cursor page_state field_json has_next end_cursor page_count line
+  local -a graphql_args
+
+  if [ -z "$project_id" ]; then
+    echo "Warning: project ID is empty; project Type field lookup cannot run." >&2
+    printf ''
+    return 1
+  fi
+
+  if [ "$__workflow_project_type_field_cache_project_id" != "$project_id" ] || \
+     [ -z "$__workflow_project_type_field_cache_json" ]; then
+    __workflow_project_type_field_cache_json=""
+    cursor=""
+    page_count=0
+    while :; do
+      graphql_args=(
+        api graphql
+        -f projectId="$project_id"
+      )
+      if [ -n "$cursor" ]; then
+        graphql_args+=(-f after="$cursor")
+      fi
+      # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
+      graphql_args+=(
+        -f query='
+          query($projectId: ID!, $after: String) {
+            node(id: $projectId) {
+              ... on ProjectV2 {
+                fields(first: 100, after: $after) {
+                  nodes {
+                    ... on ProjectV2SingleSelectField {
+                      id
+                      name
+                      options { id name }
+                    }
+                  }
+                  pageInfo { hasNextPage endCursor }
+                }
+              }
+            }
+          }
+        '
+      )
+
+      if ! response=$(gh "${graphql_args[@]}"); then
+        echo "Warning: GraphQL project Type field lookup failed for project '${project_id}'." >&2
+        printf ''
+        return 1
+      fi
+
+      if ! page_state="$(printf '%s' "$response" | python3 -c "
+import json, sys
+try:
+    data = json.loads(sys.stdin.read(), strict=False)
+except Exception:
+    sys.exit(2)
+field_connection = (((data.get('data') or {}).get('node') or {}).get('fields') or {})
+fields = field_connection.get('nodes') or []
+field_json = ''
+for field in fields:
+    if field.get('name') == 'Type':
+        field_json = json.dumps({
+            'field_id': field.get('id') or '',
+            'options': {option.get('name') or '': option.get('id') or '' for option in field.get('options') or []},
+        }, separators=(',', ':'))
+        break
+page_info = field_connection.get('pageInfo') or {}
+has_next = 'true' if page_info.get('hasNextPage') else 'false'
+end_cursor = page_info.get('endCursor') or ''
+print('FIELD_JSON=' + field_json)
+print('HAS_NEXT=' + has_next)
+print('END_CURSOR=' + end_cursor)
+")"; then
+        echo "Warning: could not parse GraphQL project Type field response for project '${project_id}'." >&2
+        printf ''
+        return 1
+      fi
+
+      field_json=""
+      has_next="false"
+      end_cursor=""
+      while IFS= read -r line; do
+        case "$line" in
+          FIELD_JSON=*) field_json="${line#FIELD_JSON=}" ;;
+          HAS_NEXT=*) has_next="${line#HAS_NEXT=}" ;;
+          END_CURSOR=*) end_cursor="${line#END_CURSOR=}" ;;
+        esac
+      done <<EOF
+$page_state
+EOF
+      if [ -n "$field_json" ]; then
+        __workflow_project_type_field_cache_json="$field_json"
+        break
+      fi
+      if [ "$has_next" != "true" ] || [ -z "$end_cursor" ]; then
+        break
+      fi
+      page_count=$((page_count + 1))
+      if [ "$page_count" -ge 20 ]; then
+        echo "Warning: project Type field lookup exceeded pagination limit for project '${project_id}'." >&2
+        printf ''
+        return 1
+      fi
+      cursor="$end_cursor"
+    done
+    if [ -z "$__workflow_project_type_field_cache_json" ]; then
+      echo "Warning: project Type field not found for project '${project_id}'." >&2
+      printf ''
+      return 1
+    fi
+    __workflow_project_type_field_cache_project_id="$project_id"
+  fi
+
+  printf '%s' "$__workflow_project_type_field_cache_json"
+}
 
 # get_tracker_status_for_issue <issue_number>
 #
@@ -509,15 +1029,12 @@ __workflow_tracker_cache_json=""
 #   - The issue is not found in the project
 #   - Any API call fails
 # Returns 0 in all cases (non-blocking).
-# Owner is resolved via workflow_resolve_github_project_owner (see that function
-# for the tiered fallback chain: env var → gh repo view → git remote URL).
+# Repository owner/name are resolved from `gh repo view` with a git-remote
+# fallback; project ownership is not needed for the targeted item lookup.
 # project_number falls back to issue_tracker.project_number in .ai-dev-workflow.yaml.
-#
-# The full project item list is fetched once per owner+project pair and cached
-# in script-level variables to avoid a full-board scan on every call.
 get_tracker_status_for_issue() {
   local issue_number="$1"
-  local owner project_number item_json current_status
+  local project_number item_json current_status
 
   # Provider routing: Linear status reads require MCP/API and cannot be
   # performed by this shell function. Return empty (caller treats as unknown).
@@ -533,36 +1050,8 @@ get_tracker_status_for_issue() {
     printf ''
     return 0
   fi
-  owner="$(workflow_resolve_github_project_owner)"
-  if [ -z "$owner" ]; then
-    printf ''
-    return 0
-  fi
 
-  # Populate cache on first call or when owner/project changes.
-  if [ "$__workflow_tracker_cache_owner" != "$owner" ] || \
-     [ "$__workflow_tracker_cache_project" != "$project_number" ] || \
-     [ -z "$__workflow_tracker_cache_json" ]; then
-    __workflow_tracker_cache_json="$(gh project item-list "$project_number" --owner "$owner" --limit 10000 --format json 2>/dev/null || true)"
-    __workflow_tracker_cache_owner="$owner"
-    __workflow_tracker_cache_project="$project_number"
-  fi
-
-  # Use Python3 to parse the JSON to handle issue bodies that contain literal
-  # control characters (U+0000–U+001F), which cause jq parse errors (#375).
-  # strict=False allows Python3's json decoder to accept unescaped control chars.
-  # issue_number is passed via sys.argv[1] (not interpolated into source code) to
-  # avoid shell-variable-into-Python-source injection.
-  item_json=$(printf '%s' "$__workflow_tracker_cache_json" \
-    | python3 -c "
-import json, sys
-num = int(sys.argv[1])
-data = json.loads(sys.stdin.read(), strict=False)
-for item in data.get('items', []):
-    if item.get('content', {}).get('number') == num:
-        print(json.dumps(item))
-        break
-" "$issue_number" 2>/dev/null || true)
+  item_json="$(workflow_github_project_item_for_issue "$issue_number" "$project_number")"
   if [ -z "$item_json" ]; then
     printf ''
     return 0
@@ -576,6 +1065,47 @@ print(item.get('status') or '', end='')
   printf '%s' "${current_status:-}"
 }
 
+# get_tracker_type_for_issue <issue_number>
+#
+# Queries the configured GitHub Projects tracker for the current Type of the
+# given issue. Prints an empty string for unsupported providers, missing project
+# configuration, or a missing project item. Returns non-zero when project item
+# JSON exists but cannot be parsed.
+get_tracker_type_for_issue() {
+  local issue_number="$1"
+  local project_number item_json current_type
+
+  local _gtt_provider
+  _gtt_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+  if [ "$_gtt_provider" != "github_projects" ]; then
+    printf ''
+    return 0
+  fi
+
+  project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
+  if [ -z "$project_number" ]; then
+    printf ''
+    return 0
+  fi
+
+  item_json="$(workflow_github_project_item_for_issue "$issue_number" "$project_number")"
+  if [ -z "$item_json" ]; then
+    printf ''
+    return 0
+  fi
+
+  if ! current_type=$(printf '%s' "$item_json" | python3 -c "
+import json, sys
+item = json.loads(sys.stdin.read(), strict=False)
+print(item.get('type') or '', end='')
+"); then
+    echo "Warning: could not parse project item Type for issue #${issue_number}." >&2
+    printf ''
+    return 1
+  fi
+  printf '%s' "${current_type:-}"
+}
+
 # ensure_on_project_board <issue_number> <initial_status>
 #
 # Idempotently ensures a GitHub issue is registered on the configured project board.
@@ -587,46 +1117,37 @@ print(item.get('status') or '', end='')
 ensure_on_project_board() {
   local issue_number="$1"
   local initial_status="$2"
-  local owner project_number item_json repo_url
+  local owner project_number item_json repo_owner repo_name repo_url
 
   project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
   if [ -z "$project_number" ]; then
     echo "Warning: GITHUB_PROJECT_NUMBER not set and no project_number in .ai-dev-workflow.yaml; skipping board-membership check for issue #${issue_number}."
     return 0
   fi
-  owner="$(workflow_resolve_github_project_owner)"
-  if [ -z "$owner" ]; then
-    # workflow_resolve_github_project_owner already emitted a warning.
-    return 0
-  fi
-
-  # Check whether issue is already on the board using Python3 for control-character
-  # robustness (same pattern as update_tracker_status_best_effort).
-  item_json=$(gh project item-list "$project_number" --owner "$owner" --limit 10000 --format json 2>/dev/null \
-    | python3 -c "
-import json, sys
-num = int(sys.argv[1])
-data = json.loads(sys.stdin.read(), strict=False)
-for item in data.get('items', []):
-    if item.get('content', {}).get('number') == num:
-        print(json.dumps(item))
-        break
-" "$issue_number" || true)
-
+  item_json="$(workflow_github_project_item_for_issue "$issue_number" "$project_number")"
   if [ -n "$item_json" ]; then
     echo "Board membership check: issue #${issue_number} already on project board."
     return 0
   fi
 
   # Issue is not on the board — add it.
-  repo_url=$(gh repo view --json url --jq '.url' 2>/dev/null || true)
-  if [ -z "$repo_url" ]; then
+  repo_owner="$(workflow_resolve_github_repo_owner)"
+  repo_name="$(workflow_resolve_github_repo_name)"
+  if [ -z "$repo_owner" ] || [ -z "$repo_name" ]; then
     echo "Warning: could not resolve repo URL; skipping board-add for issue #${issue_number}."
     return 0
   fi
-  gh project item-add "$project_number" --owner "$owner" \
-    --url "${repo_url}/issues/${issue_number}" 2>/dev/null \
-    || { echo "Warning: gh project item-add failed for issue #${issue_number}; continuing."; return 0; }
+  repo_url="https://github.com/${repo_owner}/${repo_name}"
+  owner="$(workflow_resolve_github_project_owner)"
+  if [ -z "$owner" ]; then
+    owner="$repo_owner"
+  fi
+
+  if ! gh project item-add "$project_number" --owner "$owner" \
+    --url "${repo_url}/issues/${issue_number}" 2>/dev/null; then
+    echo "Warning: gh project item-add failed for issue #${issue_number}; continuing."
+    return 0
+  fi
 
   echo "Board membership check: issue #${issue_number} added to project board."
 
@@ -634,7 +1155,7 @@ for item in data.get('items', []):
   update_tracker_status_best_effort "$issue_number" "$initial_status"
 }
 
-# update_tracker_status_best_effort <issue_number> <status_label> [required_current_status]
+# update_tracker_status_best_effort <issue_number> <status_label> [required_current_status] [allow-backward]
 #
 # Best-effort update for the configured issue tracker's Status field.
 # Supports GitHub Projects (provider: github_projects) and emits actionable
@@ -649,7 +1170,8 @@ update_tracker_status_best_effort() {
   local issue_number="$1"
   local status_label="$2"
   local required_current_status="${3:-}"
-  local owner project_number project_id field_json field_id option_id item_json item_id current_status
+  local allow_backward="${4:-false}"
+  local project_number project_id field_json field_id option_id item_json item_id current_status
   local target_order current_order
 
   # Provider routing: Linear status updates require MCP/API and cannot be
@@ -667,48 +1189,40 @@ update_tracker_status_best_effort() {
     echo "Warning: GITHUB_PROJECT_NUMBER not set and no project_number in .ai-dev-workflow.yaml; skipping tracker status update."
     return 0
   fi
-  owner="$(workflow_resolve_github_project_owner)"
-  if [ -z "$owner" ]; then
-    # workflow_resolve_github_project_owner already emitted a warning.
-    return 0
-  fi
 
-  project_id=$(gh project view "$project_number" --owner "$owner" --format json 2>/dev/null | jq -r '.id // empty' || true)
-  if [ -z "$project_id" ]; then
-    echo "Warning: could not resolve project ID for project #${project_number}; skipping tracker status update."
-    return 0
-  fi
-
-  field_json=$(gh project field-list "$project_number" --owner "$owner" --format json 2>/dev/null || true)
-  field_id=$(printf '%s' "$field_json" | jq -r '.fields[] | select(.name == "Status") | .id // empty' || true)
-  option_id=$(printf '%s' "$field_json" | jq -r --arg label "$status_label" '.fields[] | select(.name == "Status") | .options[] | select(.name == $label) | .id // empty' || true)
-  if [ -z "$field_id" ] || [ -z "$option_id" ]; then
-    echo "Warning: could not resolve Status field or option '${status_label}'; skipping tracker status update."
-    return 0
-  fi
-
-  # Use Python3 to parse the JSON to handle issue bodies that contain literal
-  # control characters (U+0000–U+001F), which cause jq parse errors (#375).
-  # strict=False allows Python3's json decoder to accept unescaped control chars.
-  # issue_number is passed via sys.argv[1] (not interpolated into source code) to
-  # avoid shell-variable-into-Python-source injection.
-  item_json=$(gh project item-list "$project_number" --owner "$owner" --limit 10000 --format json 2>/dev/null \
-    | python3 -c "
-import json, sys
-num = int(sys.argv[1])
-data = json.loads(sys.stdin.read(), strict=False)
-for item in data.get('items', []):
-    if item.get('content', {}).get('number') == num:
-        print(json.dumps(item))
-        break
-" "$issue_number" || true)
+  item_json="$(workflow_github_project_item_for_issue "$issue_number" "$project_number")"
   item_id=$(printf '%s' "$item_json" | python3 -c "
 import json, sys
 item = json.loads(sys.stdin.read(), strict=False)
-print(item.get('id') or '', end='')
+print(item.get('item_id') or '', end='')
+" 2>/dev/null || true)
+  project_id=$(printf '%s' "$item_json" | python3 -c "
+import json, sys
+item = json.loads(sys.stdin.read(), strict=False)
+print(item.get('project_id') or '', end='')
 " 2>/dev/null || true)
   if [ -z "$item_id" ]; then
     echo "Warning: issue #${issue_number} not found in project #${project_number}; skipping tracker status update."
+    return 0
+  fi
+  if [ -z "$project_id" ]; then
+    echo "Warning: could not resolve project ID for issue #${issue_number}; skipping tracker status update."
+    return 0
+  fi
+
+  field_json="$(workflow_github_project_status_field_json "$project_id")"
+  field_id=$(printf '%s' "$field_json" | python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read(), strict=False)
+print(data.get('field_id') or '', end='')
+" 2>/dev/null || true)
+  option_id=$(printf '%s' "$field_json" | python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read(), strict=False)
+print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
+" "$status_label" 2>/dev/null || true)
+  if [ -z "$field_id" ] || [ -z "$option_id" ]; then
+    echo "Warning: could not resolve Status field or option '${status_label}'; skipping tracker status update."
     return 0
   fi
 
@@ -727,13 +1241,14 @@ print(item.get('status') or '', end='')
     echo "Warning: Issue #${issue_number} current status '${current_status}' is unrecognized; skipping update to '${status_label}' to avoid silent state corruption. Provide required_current_status to proceed anyway."
     return 0
   fi
-  if [ "$target_order" -ge 0 ] && [ "$current_order" -gt "$target_order" ]; then
+  if [ "$target_order" -ge 0 ] && [ "$current_order" -gt "$target_order" ] && [ "$allow_backward" != "allow-backward" ]; then
     echo "Issue #${issue_number} is already at status '${current_status}' (more advanced than '${status_label}'); skipping rollback."
     return 0
   fi
 
   echo "Updating tracker status for issue #${issue_number} to '${status_label}'..."
-  gh api graphql \
+  # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
+  if ! gh api graphql \
     -f projectId="$project_id" \
     -f itemId="$item_id" \
     -f fieldId="$field_id" \
@@ -749,5 +1264,193 @@ print(item.get('status') or '', end='')
           projectV2Item { id }
         }
       }
-    ' 2>/dev/null || echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker status not updated."
+    ' 2>/dev/null; then
+    echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker status not updated."
+  fi
+}
+
+# update_tracker_type_best_effort <issue_number> <type_label>
+#
+# Best-effort update for the GitHub Projects Type field. This intentionally
+# mirrors update_tracker_status_best_effort while avoiding status-order logic.
+update_tracker_type_best_effort() {
+  local issue_number="$1"
+  local type_label="$2"
+  local project_number project_id field_json field_id option_id item_json item_id
+
+  local _uttbe_provider
+  _uttbe_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+  if [ "$_uttbe_provider" != "github_projects" ]; then
+    echo "Warning: issue tracker provider '${_uttbe_provider:-unknown}' does not support GitHub Projects Type updates via this helper."
+    return 0
+  fi
+
+  project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
+  if [ -z "$project_number" ]; then
+    echo "Warning: GITHUB_PROJECT_NUMBER not set and no project_number in .ai-dev-workflow.yaml; skipping tracker Type update."
+    return 0
+  fi
+
+  item_json="$(workflow_github_project_item_for_issue "$issue_number" "$project_number")"
+  if ! item_id=$(printf '%s' "$item_json" | python3 -c "
+import json, sys
+item = json.loads(sys.stdin.read(), strict=False)
+print(item.get('item_id') or '', end='')
+"); then
+    echo "Warning: could not parse project item ID for issue #${issue_number}; skipping tracker Type update."
+    return 0
+  fi
+  if ! project_id=$(printf '%s' "$item_json" | python3 -c "
+import json, sys
+item = json.loads(sys.stdin.read(), strict=False)
+print(item.get('project_id') or '', end='')
+"); then
+    echo "Warning: could not parse project ID for issue #${issue_number}; skipping tracker Type update."
+    return 0
+  fi
+  if [ -z "$item_id" ]; then
+    echo "Warning: issue #${issue_number} not found in project #${project_number}; skipping tracker Type update."
+    return 0
+  fi
+  if [ -z "$project_id" ]; then
+    echo "Warning: could not resolve project ID for issue #${issue_number}; skipping tracker Type update."
+    return 0
+  fi
+
+  if ! field_json="$(workflow_github_project_type_field_json "$project_id")"; then
+    echo "Warning: could not read project Type field metadata; skipping tracker Type update."
+    return 0
+  fi
+  if ! field_id=$(printf '%s' "$field_json" | python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read(), strict=False)
+print(data.get('field_id') or '', end='')
+"); then
+    echo "Warning: could not parse Type field metadata; skipping tracker Type update."
+    return 0
+  fi
+  if ! option_id=$(printf '%s' "$field_json" | python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read(), strict=False)
+print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
+" "$type_label"); then
+    echo "Warning: could not parse Type option '${type_label}'; skipping tracker Type update."
+    return 0
+  fi
+  if [ -z "$field_id" ] || [ -z "$option_id" ]; then
+    echo "Warning: could not resolve Type field or option '${type_label}'; skipping tracker Type update."
+    return 0
+  fi
+
+  echo "Updating tracker Type for issue #${issue_number} to '${type_label}'..."
+  # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
+  if ! gh api graphql \
+    -f projectId="$project_id" \
+    -f itemId="$item_id" \
+    -f fieldId="$field_id" \
+    -f optionId="$option_id" \
+    -f query='
+      mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+        updateProjectV2ItemFieldValue(input: {
+          projectId: $projectId
+          itemId: $itemId
+          fieldId: $fieldId
+          value: { singleSelectOptionId: $optionId }
+        }) {
+          projectV2Item { id }
+        }
+      }
+    ' 2>/dev/null; then
+    echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker Type not updated."
+  fi
+}
+
+# list_open_workflow_type_issues
+#
+# Prints a JSON array of open GitHub issues whose project Type is Workflow.
+# Discovery is intentionally open-issues-first, then one project item-list
+# cross-reference, so callers avoid per-item full-board scans.
+list_open_workflow_type_issues() {
+  local project_number owner open_issues project_items repo_owner repo_name repo_slug
+
+  local _lowti_provider
+  _lowti_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+  if [ "$_lowti_provider" != "github_projects" ]; then
+    printf '[]\n'
+    return 0
+  fi
+
+  project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
+  if [ -z "$project_number" ]; then
+    echo "Warning: GITHUB_PROJECT_NUMBER not set and no project_number in .ai-dev-workflow.yaml; cannot discover Workflow Type issues." >&2
+    printf '[]\n'
+    return 0
+  fi
+  case "$project_number" in
+    *[!0-9]*)
+      echo "Warning: project number '${project_number}' is not numeric; cannot discover Workflow Type issues." >&2
+      printf '[]\n'
+      return 0
+      ;;
+  esac
+
+  owner="$(workflow_resolve_github_project_owner)"
+  if [ -z "$owner" ]; then
+    owner="$(workflow_resolve_github_repo_owner)"
+  fi
+  if [ -z "$owner" ]; then
+    echo "Warning: could not resolve GitHub Project owner; cannot discover Workflow Type issues." >&2
+    printf '[]\n'
+    return 0
+  fi
+
+  repo_owner="$(workflow_resolve_github_repo_owner)"
+  repo_name="$(workflow_resolve_github_repo_name)"
+  if [ -z "$repo_owner" ] || [ -z "$repo_name" ]; then
+    echo "Warning: could not resolve GitHub repository; cannot discover Workflow Type issues." >&2
+    printf '[]\n'
+    return 0
+  fi
+  repo_slug="${repo_owner}/${repo_name}"
+
+  if ! open_issues="$(gh issue list --repo "$repo_slug" --state open --limit 1000 --json number,title,labels,createdAt,url 2>/dev/null)"; then
+    echo "Warning: failed to list open GitHub issues; cannot discover Workflow Type issues." >&2
+    printf '[]\n'
+    return 0
+  fi
+  if [ -z "$open_issues" ]; then
+    printf '[]\n'
+    return 0
+  fi
+
+  if ! project_items="$(gh project item-list "$project_number" --owner "$owner" --limit 1000 --format json 2>/dev/null)"; then
+    echo "Warning: failed to list GitHub Project items; cannot discover Workflow Type issues." >&2
+    printf '[]\n'
+    return 0
+  fi
+
+  if ! printf '%s' "$project_items" | jq --argjson open "$open_issues" '
+    def terminal($status):
+      ($status // "") as $s
+      | ($s == "Done" or $s == "Merged" or $s == "Released" or $s == "Cancelled");
+
+    [ .items[]
+      | select((.type // "") == "Workflow")
+      | . as $item
+      | ($open[] | select(.number == $item.content.number)) as $issue
+      | select(terminal($item.status) | not)
+      | {
+          number: $issue.number,
+          title: $issue.title,
+          url: $issue.url,
+          createdAt: $issue.createdAt,
+          status: ($item.status // ""),
+          priority: ($item.priority // ""),
+          type: ($item.type // "")
+        }
+    ]
+  ' 2>/dev/null; then
+    echo "Warning: failed to parse GitHub Project items while discovering Workflow Type issues." >&2
+    printf '[]\n'
+  fi
 }

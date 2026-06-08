@@ -1,7 +1,7 @@
 # Protocol: Orchestrate Portfolio Work
 
 **Agent role**: Portfolio Orchestrator (`orchestrator`)
-**Purpose**: Discover what can advance across the portfolio, group eligible items into safe parallel batches, dispatch one Work Item Runner (`item-orchestrator`) per item, and supervise the batch until each item reaches a real terminal condition
+**Purpose**: Discover what can advance or be started across the portfolio, propose the largest safe batch that fits current priority and parallelization constraints, dispatch deterministic in-flight work through one Work Item Runner (`item-orchestrator`) per item, and supervise dispatched work until each item reaches a real terminal condition
 
 This is a **supporting protocol**. It coordinates multiple workflow items but does not execute any creator or reviewer stage directly. Stage execution belongs to the Work Item Runner (`91-orchestrate-work-protocol.md`) and the stage-specific protocols it invokes.
 
@@ -14,10 +14,10 @@ Humans normally invoke this protocol when they want portfolio-wide advancement r
 The Portfolio Orchestrator:
 
 1. Reads the current state of backlog, in-flight development folders, workflow branches, and open PRs
-2. Determines which items can safely advance now
-3. Groups eligible items into explicit parallel batches
-4. Dispatches one Work Item Runner per item in the batch
-5. Supervises until every dispatched item is waiting on a human, blocked, or escalated
+2. Determines which items can safely advance now and which Backlog items can be proposed to start
+3. Builds the largest safe batch possible, ordered by priority and constrained by dependencies, tool-fix ordering, and file-level parallelization risk
+4. Dispatches one Work Item Runner per item for deterministic in-flight/resume work, or proposes the start batch for human approval when the batch contains new Backlog starts
+5. Supervises dispatched work until every item is waiting on a human, blocked, or escalated
 
 ### Persistent orchestration contract
 
@@ -27,11 +27,13 @@ A single Portfolio Orchestrator run should keep advancing eligible items until e
 - A human product or architecture decision is required
 - The automated review loop or CI loop escalated after retry / timeout limits
 - The item is blocked by an unmet dependency
-- No eligible work remains
+- No dispatch-eligible work remains and no Backlog start batch can be proposed
+- A largest safe Backlog start batch has been proposed and is waiting for explicit human approval
 
 These are **not** terminal conditions and must not stop the run:
 
 - A batch was merely identified
+- Backlog items exist but were not evaluated into a proposed start batch
 - A subagent finished one creator or reviewer subroutine
 - A branch was pushed and still needs a PR opened
 - A PR is open but still waiting on CI or automated review
@@ -42,7 +44,7 @@ These are **not** terminal conditions and must not stop the run:
 Use this protocol when the request is portfolio-wide or multi-item, for example:
 
 - "What can advance right now?"
-- "Run all eligible work"
+- "Run all work that can safely advance, and propose the next safe start batch"
 - "Process everything that can move in parallel"
 
 If the request is explicitly about a single development, branch, or PR, skip this protocol and use `91-orchestrate-work-protocol.md` directly.
@@ -104,7 +106,7 @@ then make a single `item-list` call to fetch all project board items and cross-r
 against the open-issue list client-side:
 
 ```bash
-# Step 1: list all open issues (only open issues are eligible for advancement)
+# Step 1: list all open issues (only open issues are eligible for dispatch or start proposal)
 OPEN_ISSUES=$(gh issue list --state open --limit 1000 --json number,title,labels,createdAt)
 
 # Step 2: fetch all project board items once and filter to only open-issue candidates
@@ -230,7 +232,8 @@ After collecting the set of open `develop-<slug>` branches, run a graduation eli
 
 Combine tracker and VCS data into a portfolio map of:
 
-- Backlog items that a human explicitly requested to start
+- Backlog items that are candidates for a proposed start batch in unrestricted portfolio mode
+- Backlog items that a human explicitly requested to start in targeted or explicit-list mode
 - Work items in **Writing Spec** / **Writing Plan** / **In Development** (PR not yet human-ready), or branches/PRs still in PR-readiness loops
 - Work items in **Spec in Review** / **Plan in Review** / **Development in Review**, or PRs labeled `ready-for-human-review` (human merge queue unless `needs-fixes`)
 - Items that are **Spec Ready** or **Plan Ready** per the tracker
@@ -246,10 +249,19 @@ Combine tracker and VCS data into a portfolio map of:
 
 Use the **tracker status** as the canonical state for each item. VCS signals (branch existence, PR labels) provide supplementary detail but do not override the tracker. When no tracker is configured, fall back to VCS-derived status.
 
+Unrestricted portfolio mode has two candidate classes:
+
+- **Dispatch-eligible**: in-flight or resume work whose next deterministic action can proceed without a new human prioritization decision.
+- **Proposal-eligible**: Backlog work that can be assembled into the largest safe start batch for human approval. Backlog items are not silently started unless the human explicitly named the item(s) or approves the proposed batch in the same session.
+
+When no dispatch-eligible work exists, the orchestrator must still evaluate proposal-eligible Backlog items and present the largest safe start batch instead of reporting that no eligible work remains.
+
 | Portfolio item state (per tracker)                                                  | Can advance if...                                                   | Dispatch target                                                                 |
 | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Backlog (Feature)                                                                   | Human explicitly requested it                                       | Work Item Runner on the tracker item / brief (starts at spec stage)             |
-| Backlog (Refactor)                                                                  | Human explicitly requested it as a Refactor                         | Work Item Runner on the tracker item / brief (starts at plan stage, skips spec) |
+| Backlog (Feature)                                                                   | Human explicitly requested it, or unrestricted portfolio mode is building a proposed start batch and tracker Type/brief classifies it as Feature | Work Item Runner on the tracker item / brief after approval (starts at spec stage) |
+| Backlog (Bug)                                                                       | Human explicitly requested it as a bug / fast-track item, or unrestricted portfolio mode is building a proposed start batch and tracker Type/brief classifies it as Bug | Work Item Runner on the tracker item / brief after approval (starts at fast-track scope check) |
+| Backlog (Refactor)                                                                  | Human explicitly requested it as a Refactor, or unrestricted portfolio mode is building a proposed start batch and tracker Type/brief classifies it as Refactor | Work Item Runner on the tracker item / brief after approval (starts at plan stage, skips spec) |
+| Backlog (Workflow)                                                                  | Human explicitly requested it, or unrestricted portfolio mode is building a proposed start batch and tracker Type/brief classifies it as Workflow | Work Item Runner on the tracker item / brief after approval (route by brief: full pipeline, refactor, or fast-track) |
 | Writing Spec                                                                        | Tracker **Writing Spec**; spec PR not yet human-ready               | Work Item Runner on the tracker item / branch / PR                              |
 | Writing Plan                                                                        | Tracker **Writing Plan**; plan PR not yet human-ready               | Work Item Runner on the tracker item / branch / PR                              |
 | In Development                                                                      | Tracker **In Development**; feature/fix PR not yet human-ready      | Work Item Runner on the tracker item / branch / PR                              |
@@ -262,13 +274,35 @@ Use the **tracker status** as the canonical state for each item. VCS signals (br
 
 ### Priority order
 
-When multiple items are eligible, prioritize as follows:
+When multiple items are eligible or proposal-eligible, prioritize as follows:
 
 1. Due date within 2 weeks, earliest first
 2. Priority: Urgent → High → Normal → Low
 3. Creation date, earlier first
 
 If a due date conflicts with the abstract priority order, flag it to the human rather than silently choosing.
+
+For GitHub Projects, the project **Type** field is authoritative for Backlog
+route classification. Repository labels such as `workflow`, `bug`,
+`enhancement`, and `type:*` are legacy classification hints only; do not rely on
+them when Type is available.
+
+### Largest safe start-batch rule
+
+For unrestricted portfolio runs, the orchestrator must maximize useful parallel work within the current safety constraints:
+
+1. Start from all non-terminal open tracker items.
+2. Separate dispatch-eligible in-flight/resume items from proposal-eligible Backlog items.
+3. Apply the dependency gate to both classes.
+4. Sort remaining candidates by the priority order above.
+5. Build the largest batch whose items can safely run together:
+   - Spec-creation Backlog items are generally parallel-safe unless they share an explicit dependency or the brief says they are alternatives.
+   - Refactor Backlog items require a plan before implementation and can be proposed together when their briefs do not indicate overlapping ownership or dependency.
+   - Implementation/resume items must still pass tool-fix ordering and file-level conflict checks below.
+6. If a lower-priority item blocks a higher-priority item because of dependency, tool-fix ordering, or file conflicts, report the reason and keep the higher-priority feasible set as large as possible.
+7. Present the proposed batch with item number, title, priority, type, next stage, and parallelization notes. If Backlog items are included, stop for explicit human approval before Step 2.5 mutates tracker status or before any Work Item Runner is dispatched for those Backlog starts.
+
+This rule changes the default `/run-work` behavior from "only resume already-started items" to "resume deterministic work and, when there is no deterministic work or spare capacity remains, propose the biggest safe set of Backlog items to start next."
 
 ### Dependency gate
 
@@ -421,7 +455,7 @@ See `docs/workflow/development-workflow/integrations/github-projects.md` for the
 
 ## Step 3: Build Parallel Batches
 
-Group eligible items into explicit batches.
+Group dispatch-eligible items and approved start-batch items into explicit batches. If Backlog items have only been proposed and not yet approved, do not continue to tracker mutation or dispatch for those items.
 
 **Safe to batch together**:
 
@@ -986,14 +1020,14 @@ Verify all of the following by querying artifact state directly. If any check fa
 | Base branch                                     | `develop` (or `develop-<slug>` if the batch is targeting an integration branch) for `feature/*`, `fix/*`, `refactor/*`, `spec/*`, `implementation-plan/*`; `main` for `hotfix/*`                                                                                                                                                                                                                                          | Redispatch agent to rebase onto the correct base                                                                                                                                                                                                                                                  |
 | PR is non-draft                                 | `isDraft: false`                                                                                                                                                                                                                                                                                                                                                                                                          | Run `gh pr ready <pr_number>` directly; log as protocol deviation                                                                                                                                                                                                                                 |
 | `ready-for-human-review` label                  | Present in the `labels` array returned by `gh pr view`                                                                                                                                                                                                                                                                                                                                                                    | Apply directly: `gh pr edit <pr_number> --add-label "ready-for-human-review"` (after all other checks pass)                                                                                                                                                                                       |
-| `ready-for-regression` label                    | Present in the `labels` array on `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PRs; not required for `spec/*`, `implementation-plan/*`, or graduation PRs (head branch `develop-<slug>`, base branch `develop`)                                                                                                                                                                                                         | **Apply directly** (primary enforcement point): `gh pr edit <pr_number> --add-label "ready-for-regression"`. Log as protocol deviation: `PROTOCOL_DEVIATION: ready-for-regression was missing on PR #<N> — applied by orchestrator Step 5.1`. **Do not redispatch the agent for this gap alone.** Do not apply this remediation to graduation PRs (`develop-<slug>` → `develop`) — they are explicitly exempt (BR-6 of the graduation spec). |
+| `ready-for-regression` label                    | Present in the `labels` array on `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, and `backport/hotfix/*` PRs; not required for `spec/*`, `implementation-plan/*`, or graduation PRs (head branch `develop-<slug>`, base branch `develop`)                                                                                                                                                                                 | **Apply directly** (primary enforcement point): `gh pr edit <pr_number> --add-label "ready-for-regression"`. Log as protocol deviation: `PROTOCOL_DEVIATION: ready-for-regression was missing on PR #<N> — applied by orchestrator Step 5.1`. **Do not redispatch the agent for this gap alone.** Do not apply this remediation to graduation PRs (`develop-<slug>` → `develop`) — they are explicitly exempt (BR-6 of the graduation spec). |
 | No `needs-fixes` label                          | Absent from the `labels` array                                                                                                                                                                                                                                                                                                                                                                                            | Remove: `gh pr edit <pr_number> --remove-label "needs-fixes"` (only after CI and reviews are confirmed clean)                                                                                                                                                                                     |
-| CHANGELOG presence                              | `CHANGELOG.md` appears in the `files` array for `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PRs (i.e., `gh pr view <pr_number> --json files --jq '[.files[].path] \| any(. == "CHANGELOG.md")'` returns `true`); not required for `spec/*`, `implementation-plan/*`                                                                                                                                                   | Redispatch agent to add a CHANGELOG entry and push. Do not accept the PR as ready until `CHANGELOG.md` appears in the PR's file set.                                                                                                                                                              |
+| CHANGELOG presence                              | `CHANGELOG.md` appears in the `files` array for `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PRs (i.e., `gh pr view <pr_number> --json files --jq '[.files[].path] \| any(. == "CHANGELOG.md")'` returns `true`); not required for `spec/*`, `implementation-plan/*`, or `backport/hotfix/*` (the versioned CHANGELOG entry already exists in `main` and flows to `develop` via the merge)                              | Redispatch agent to add a CHANGELOG entry and push. Do not accept the PR as ready until `CHANGELOG.md` appears in the PR's file set.                                                                                                                                                              |
 | All automated-reviewer `reviewThreads` resolved | GraphQL `reviewThreads.nodes[].isResolved=true` (or `✅ Addressed` in body) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured)                                                                                                                                                                                               | Redispatch agent to address unresolved threads                                                                                                                                                                                                                                                    |
 | Automated reviewer loop summary comment         | At least one PR comment containing "Automated Reviewer Loop Summary", "Reviewer Loop Summary", or "No blocking PR feedback" (skip this check only when Step 7 was `skipped` because no review platforms are configured). **`pr-review-loop.sh` posts this comment automatically on `clean` and `escalate` exits** — a missing comment means the script did not run to completion or the PR used an older workflow version | Redispatch agent to run Step 7 to completion                                                                                                                                                                                                                                                      |
 | CI checks                                       | All required status checks are green (`state: SUCCESS` or `conclusion: success`)                                                                                                                                                                                                                                                                                                                                          | Redispatch agent to fix failing checks                                                                                                                                                                                                                                                            |
 
-**`ready-for-regression` direct-apply rule**: This label is the primary enforcement point for the regression CI gate. It applies to **all** implementation PR types: `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*`. If the agent applied `ready-for-human-review` but omitted `ready-for-regression` on any of these branch types, the orchestrator:
+**`ready-for-regression` direct-apply rule**: This label is the primary enforcement point for the regression CI gate. It applies to **all** implementation PR types: `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, and `backport/hotfix/*`. If the agent applied `ready-for-human-review` but omitted `ready-for-regression` on any of these branch types, the orchestrator:
 
 1. Applies the label directly: `gh pr edit <pr_number> --add-label "ready-for-regression"`
 2. Logs the deviation: `PROTOCOL_DEVIATION: ready-for-regression was missing on PR #<N> (<branch-type>) — applied by orchestrator Step 5.1`
@@ -1019,7 +1053,7 @@ Do not consider the batch complete until every dispatched item has reached a rea
 
 A PR may appear "almost ready" — non-draft, with readiness labels applied — but actually be in an incomplete state because the agent timed out before finishing Step 7 (external automated reviewers). The canonical detection heuristic depends on PR type:
 
-**Implementation PRs** (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`):
+**Implementation PRs** (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, `backport/hotfix/*`):
 
 > non-draft + `ready-for-regression` present + no reviewer loop summary comment = incomplete run
 
@@ -1035,7 +1069,7 @@ A distinct failure mode occurs when an agent times out so early that it never re
 
 > non-draft + no `ready-for-human-review` + no `ready-for-regression` (implementation PRs) + no reviewer loop summary comment = pre-label orphaned run
 
-Treat any non-draft PR on a workflow branch (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, `spec/*`, `implementation-plan/*`) that belongs to a known in-flight item and has none of the above signals as a pre-label orphaned run. Do not assume it is a fresh PR that has not yet entered the reviewer loop.
+Treat any non-draft PR on a workflow branch (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, `backport/hotfix/*`, `spec/*`, `implementation-plan/*`) that belongs to a known in-flight item and has none of the above signals as a pre-label orphaned run. Do not assume it is a fresh PR that has not yet entered the reviewer loop.
 
 Use this command to detect the incomplete state for a specific PR:
 
@@ -1047,6 +1081,31 @@ gh pr view <pr_number> --json isDraft,labels,comments \
     hasReadyLabel: ([.labels[].name] | any(. == "ready-for-human-review")),
     hasReviewSummary: ([.comments[].body] | any(test("Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback")))
   }'
+```
+
+**Summary-comment recency (verifying the summary matches the _latest_ commit)**: The presence checks above confirm a reviewer-loop summary _exists_, but to confirm Step 7 ran against the **current** head commit (e.g., after a fix push or a rebase), compare the summary comment's **`updated_at`** to the latest commit's timestamp — **never `created_at`**. `pr-review-loop.sh` maintains a **single** summary comment and **updates it in place** on each run, so `created_at` reflects the _first_ run and a `created_at`-based freshness check produces false "stale / incomplete" verdicts for PRs whose summary was legitimately refreshed. Fetch `updated_at` via REST (`gh api repos/{owner}/{repo}/issues/{n}/comments`), since `gh pr view --json comments` does not expose it:
+
+```bash
+# Newest summary comment's updated_at, normalized to epoch seconds, vs the
+# branch's latest commit time.
+COMMIT_EPOCH=$(git log -1 --format=%ct "origin/<branch>")
+SUMM_UPDATED=$(gh api "repos/<owner>/<repo>/issues/<pr_number>/comments" --paginate \
+  --jq '[.[] | select(.body | startswith("### Automated Reviewer Loop Summary"))] | sort_by(.updated_at) | last | .updated_at // ""')
+if [ -z "$SUMM_UPDATED" ]; then
+  echo "No reviewer-loop summary comment found; Step 7 has not completed for this PR." >&2
+  exit 1
+fi
+SUMM_UPDATED_EPOCH=$(python3 - "$SUMM_UPDATED" <<'PY'
+from datetime import datetime
+import sys
+
+updated_at = sys.argv[1]
+print(int(datetime.fromisoformat(updated_at.replace("Z", "+00:00")).timestamp()))
+PY
+)
+# A summary whose updated_at epoch is >= COMMIT_EPOCH corresponds to the current
+# head; an older updated_at means Step 7 has not re-run on the latest commit
+# (genuinely stale).
 ```
 
 **Classification table** (evaluate in order; first matching row wins):
@@ -1305,6 +1364,13 @@ After all currently eligible items have reached a terminal condition, provide a 
 
 - Batch 1 (parallel): [Item A], [Item B]
 - Batch 2 (serialized): [Item C] — serialized because both items touch schema migrations
+
+### Proposed Start Batch
+
+- [Issue #N] — [title] — priority: [Urgent/High/Normal/Low] — next stage: [Spec/Plan] — [parallelization note]
+- [Issue #M] — [title] — priority: [Urgent/High/Normal/Low] — next stage: [Spec/Plan] — [parallelization note]
+
+Approval required before tracker status changes or branch/PR work starts for these Backlog items.
 
 ### Ready for Human Review
 

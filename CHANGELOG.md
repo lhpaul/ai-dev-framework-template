@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-06-07
+
+### Added
+
+- **Codex command aliases**: adds repo-scoped `.agents/skills/` aliases for the main workflow commands, including `/add-backlog-item`, `/run-work`, `/run-item-work`, `/run-reviewer-loop`, `/batch-merge`, `/post-merge-cleanup`, `/prepare-release`, `/graduate-development`, `/retrospective`, and `/sync-template`.
+- **Reviewer failure labeling** (#804): adds a `reviewer-failed` PR label for automated reviewer timeouts, escalations, and unavailable reviewer platforms.
+- **Pre-submission self-review** (#799): requires implementation agents to run a pre-PR diff self-review before opening draft PRs.
+- **Workflow shell guard lint**: adds diff-based linting for unsafe `|| true` suppression in workflow shell scripts.
+
+### Changed
+
+- **GitHub Projects Type classification** (#828): makes the Project Type field the source of truth for workflow item classification and retires legacy repository classification labels.
+- **`/run-work` backlog batching** (#838): makes unrestricted portfolio orchestration propose the largest safe prioritized Backlog start batch instead of stopping when no in-flight work remains.
+- **Haystack routing and policy reporting** (#818): routes Haystack after draft cleanup, surfaces `pr-status` policy verdicts, and reports advisory human-review states without blocking clean reviewer-loop results.
+- **Hotfix backport readiness** (#783): requires reviewer-loop, regression, CI, and human-review readiness labels before merging hotfix backport PRs.
+- **Prepare-release and merge cleanup guidance** (#826): documents GitHub Projects close-workflow configuration and reasserts `Merged` after normal repo-owned merge cleanup.
+
+### Fixed
+
+- **Reviewer-loop readiness gates** (#827): blocks `ready-for-human-review` when the latest reviewer-loop summary is not clean or skipped.
+- **Reviewer-loop summary freshness** (#823): verifies updated reviewer-loop summaries by `updated_at` instead of the original comment `created_at`.
+- **GitHub Projects status reads** (#824): replaces full-board scans with targeted single-issue project item lookups to preserve GraphQL budget.
+- **Regression labels after fix commits** (#805): preserves or restores `ready-for-regression` after the reviewer loop has already run.
+- **Haystack pending and error handling** (#795, #800): poll-retries transient `pending` and `error` states and prevents incomplete analysis from producing false clean results.
+- **Haystack diagnostics and false positives** (#796, #807, #782): surfaces Haystack reviewer stderr, documents the recurring changelog rule false positive, and treats Rules violation findings as advisory.
+- **PR-Agent stuck-loop handling** (#815): distinguishes high-confidence security findings from low-confidence possible issues and escalates repeated low-confidence loops.
+- **PR-Agent fallback instructions** (#817): documents a label-only metadata path when review body access is blocked by classifier or tool policy.
+- **Claude Code Action reviewer selection** (#806, #808): removes the ineffective `inputs.pr_number` check and scopes concurrent workflow runs by PR-numbered run names.
+- **Reviewer-loop guard race** (#790, #781): waits for the actual summary comment and includes the PR number in the status context to avoid cross-PR overwrites.
+- **Copilot and reviewer-loop failure handling** (#776, #780): escalates missing head SHAs, surfaces SHA-refresh errors, and reports unreadable lock metadata.
+- **Workflow script portability and guards** (#792): allows `workflow-lib.sh` to degrade when `BASH_SOURCE` is unset in non-Bash contexts.
+- **Workflow shell guard release lint**: removes an unsafe suppressed `haystack` lookup from the Haystack reviewer test harness.
+- **Downstream sync fixes**: backports multiple shell, Copilot, CodeRabbit, summary-comment, and protocol fixes found during downstream template sync review.
+- **Reviewer-loop follow-up coverage** (#802, #803): adds regression coverage for lock-unlock failures, Codex thread audit escalation, summary temp-file cleanup, timestamp fallback, and paginated Actions run selection.
+
 ## [0.29.1] - 2026-05-28
 
 ### Fixed
@@ -842,7 +877,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.29.1...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.30.0...HEAD
+[0.30.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.29.1...v0.30.0
 [0.29.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.29.0...v0.29.1
 [0.29.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.4...v0.29.0
 [0.28.4]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.3...v0.28.4

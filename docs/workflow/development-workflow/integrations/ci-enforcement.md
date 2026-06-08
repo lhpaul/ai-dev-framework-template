@@ -47,9 +47,10 @@ every commit batch.
 
 **What it does**: Posts a GitHub commit status check (`success` or `failure`) on
 every in-scope implementation PR push to assert that the automated reviewer-loop
-summary comment is present. The check is named **"Reviewer-loop completion guard"**
-so it can be added to branch protection as a required status check by that exact
-name.
+summary comment is present. The check is named
+**"Reviewer-loop completion guard (#\<PR_NUMBER\>)"** — the PR number is included
+in the context name so that two PRs sharing the same commit SHA (e.g. a release
+PR and its backport) cannot overwrite each other's guard result.
 
 **Markers checked**: The guard looks for a comment body that contains **both**:
 - `### Automated Reviewer Loop Summary`
@@ -108,22 +109,44 @@ No other changes are required to add or remove a prefix.
 
 ## Wiring the Guard into Branch Protection (Required Status Check)
 
-To make the reviewer-loop guard a **required** status check on the integration
-branch (e.g. `develop`) or release branch (`main`), follow these steps in the
-downstream repository:
+Because the guard's context name includes the PR number
+(`"Reviewer-loop completion guard (#<PR_NUMBER>)"`), you cannot add it as a
+fixed-string required status check. Use one of the following approaches instead:
+
+**Option A — Wildcard status check pattern (recommended if your GitHub plan supports it)**
+
+Some GitHub Enterprise plans allow wildcard patterns in required status checks.
+If available, add the pattern `Reviewer-loop completion guard (#*)` to your
+branch protection rule.
+
+**Option B — GitHub Rulesets with status-check wildcards**
+
+GitHub repository rulesets (Settings → Rules → Rulesets) support
+`starts_with` and `contains` match types for required status checks. Create a
+ruleset and add a status-check requirement that matches
+`Reviewer-loop completion guard`.
+
+**Option C — Manual PR-by-PR enforcement (no branch protection)**
+
+Without wildcard support, teams rely on the commit-status badge visible in
+each PR's status summary to verify the guard passed before merging. The guard
+still posts `success`/`failure` correctly — only the automated merge-blocking
+at the branch-protection layer is unavailable.
+
+To set up a ruleset (Option B):
 
 1. Open the repository **Settings** page.
-2. Navigate to **Branches** → **Branch protection rules**.
-3. Edit or create the rule for the target branch (e.g. `develop`).
-4. Enable **"Require status checks to pass before merging"**.
-5. In the search box, type `Reviewer-loop completion guard` and select the
-   check that appears.
-6. Save the rule.
+2. Navigate to **Rules** → **Rulesets** → **New branch ruleset**.
+3. Set the target to the desired branch pattern (e.g. `develop`, `main`).
+4. Enable **"Require status checks to pass"**.
+5. Add a status check matching `Reviewer-loop completion guard` using a
+   `starts_with` or `contains` match type.
+6. Save the ruleset.
 
 Once configured, GitHub blocks merges on PRs where the guard has not yet posted
 a `success` status.
 
-> **Note**: The status check appears in the search box only after the
+> **Note**: The status check context appears in the UI only after the
 > `reviewer-loop-guard.yml` workflow has run at least once on a PR targeting
 > the protected branch. Open a test PR first if the check does not appear yet.
 

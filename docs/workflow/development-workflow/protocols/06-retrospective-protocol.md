@@ -113,11 +113,15 @@ gh issue list --state open --limit 100 --json number,title,body
 **`github_projects`**:
 
 ```bash
-# Fetch items from GitHub Project v2
-gh project item-list <PROJECT_NUMBER> --owner <OWNER> --format json --limit 50
+# Fetch open GitHub Project items whose Type is Workflow
+bash -lc 'source scripts/development-workflow/workflow-lib.sh; list_open_workflow_type_issues'
 ```
 
-Where `<PROJECT_NUMBER>` is the project number (find it via `gh project list`) and `<OWNER>` is the user or organization owning the project. This includes issues, PRs, and draft issues tracked in the project.
+The helper uses the configured project number and owner, fetches open issues
+first, and cross-references one project item-list result so the retrospective
+does not paginate the whole board once per issue. It treats the project
+**Type** field, not repository labels, as authoritative for workflow-framework
+item discovery.
 
 **`linear`**: Use the Linear MCP tool to list open issues in the relevant team or project. See [`integrations/linear.md`](../integrations/linear.md) for setup details.
 
@@ -473,13 +477,29 @@ Report the updated issue with its URL.
 **`github_issues` or `github_projects`**:
 
 ```bash
-gh issue create \
+set -euo pipefail
+
+ISSUE_NUMBER=$(gh issue create \
   --title "[Descriptive title of the improvement opportunity]" \
   --body "[Body — see format below]" \
-  --label "workflow"
+  --json number \
+  --jq '.number')
+
+source scripts/development-workflow/workflow-lib.sh
+PROVIDER="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+if [ "$PROVIDER" = "github_projects" ]; then
+  ensure_on_project_board "$ISSUE_NUMBER" "Backlog"
+  update_tracker_type_best_effort "$ISSUE_NUMBER" "Workflow"
+else
+  gh issue edit "$ISSUE_NUMBER" --add-label "workflow"
+fi
 ```
 
-**`linear`**, **`jira`**, **`clickup`**, **`notion`**: Use the respective MCP tool or API to create a new issue with an equivalent title, body, and label/tag.
+For `github_projects`, Type `Workflow` replaces the legacy `workflow` label.
+For `github_issues`, keep using the repository's configured label/tag
+convention.
+
+**`linear`**, **`jira`**, **`clickup`**, **`notion`**: Use the respective MCP tool or API to create a new issue with an equivalent title, body, and type/tag.
 
 Issue body format:
 

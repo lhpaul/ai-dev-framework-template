@@ -1,43 +1,36 @@
 # Review Policies
 
-## Reviewer and workflow automation scripts
-- **Paths**: `scripts/development-workflow/**/*.sh`
-- **Severity**: critical
-- **Reason**: These scripts drive gating, merge, labeling, and escalation decisions; subtle logic or error-handling mistakes can silently misclassify PR readiness or perform unsafe repository actions.
+## Review workflow automation scripts by hand
+- **Paths**: `scripts/development-workflow/**`, `scripts/lint/**`
+- **Severity**: high
+- **Reason**: Small shell logic changes can silently alter review gates, retries, and failure handling in ways tests may miss.
 
-## GitHub workflows security and triggering
+## Review GitHub workflow changes manually
 - **Paths**: `.github/workflows/**`
 - **Severity**: critical
-- **Reason**: Trigger, permission, concurrency, and fork-guard changes can weaken security posture or disable required automation despite passing syntax checks.
+- **Reason**: Workflow trigger, permission, or concurrency changes can weaken security or skip required checks across pull requests.
 
-## Protocols and agent guidance contracts
-- **Paths**: `docs/workflow/development-workflow/protocols/**`, `docs/workflow/development-workflow/templates/**`, `REVIEW.md`, `AGENTS.md`, `.ai-dev-workflow.yaml`, `.pr_agent.toml`
-- **Severity**: high
-- **Reason**: These files define operational contracts for humans and automation; subtle wording or ordering changes can cause systematic mis-execution not caught by linting.
-
-## Agent surface command and skill files
-- **Paths**: `.claude/**`, `.cursor/**`, `.codex/**`
+## Review protocol and agent guidance docs
+- **Paths**: `docs/workflow/**`, `docs/specs/**`, `docs/testing/workflow/**`, `.claude/commands/**`, `.cursor/commands/**`, `.claude/agents/**`, `.cursor/agents/**`, `.codex/skills/**`, `REVIEW.md`, `AGENTS.md`
 - **Severity**: medium
-- **Reason**: Edits on only one surface can create inconsistent agent behavior and broken cross-tool expectations that automated checks may not detect end-to-end.
+- **Reason**: Instruction wording changes can redirect automation behavior even when code checks still pass.
 
-## Tracker and review routing configuration
-- **Paths**: `.coderabbit.yaml`, `sync-manifest.yaml`
-- **Severity**: high
-- **Reason**: Configuration changes can silently alter reviewer coverage, routing, or sync behavior, causing skipped checks or incorrect automation decisions.
+## Review release and changelog automation
+- **Paths**: `CHANGELOG.md`, `.github/workflows/auto-tag-release.yml`
+- **Severity**: critical
+- **Reason**: Version parsing or changelog structure mistakes can create incorrect release tags that are hard to undo.
 
-## Changelog and release parsing logic
-- **Paths**: `CHANGELOG.md`, `scripts/lint/check-changelog-duplicate-headers.sh`
+## Review reviewer config coverage settings
+- **Paths**: `.coderabbit.yaml`, `.ai-dev-workflow.yaml`
 - **Severity**: high
-- **Reason**: Release/tag automation depends on strict changelog structure; malformed sections can produce incorrect versioning or failed release flows.
+- **Reason**: Config changes can silently reduce reviewer coverage or alter draft pull request gating.
 
 ## Instructions
-- If a change alters fail-open vs fail-closed behavior for review, thread, or CI gates, a human must judge whether the reliability-versus-safety tradeoff is acceptable.
-- If retry counts, polling intervals, or timeout budgets change in automation loops, a human must confirm the new timing preserves reliability without masking failures.
-- If workflow/protocol step order changes, a human must verify invariants and downstream assumptions still hold.
-- If handling of transient API/network failures is changed (degrade, retry, escalate, or continue), a human must assess false-clean and operational risk.
-- If lock, cleanup, reset, restore, unlock, or branch-deletion behavior changes, a human must validate safeguards against data loss.
-- If template/config field semantics used by downstream consumers change, a human must evaluate backward compatibility and migration impact.
-- If non-blocking findings are dismissed as false positive or out-of-scope, a human must verify the rationale and tracking are sufficient.
-- If reviewer coverage is reduced due to unavailability or environment constraints, a human must decide whether to proceed or require rerun in a fully reachable environment.
-- If a rerun is skipped because a fix is classified as trivial, a human must confirm the change is truly non-structural and does not alter control flow or protocol meaning.
-- If bot retrigger conditions across commits are changed, a human must assess the tradeoff between review completeness, CI churn, and operator load.
+- If a change removes or reorders lock, unlock, retry, or other safety guards, a human must confirm failure recovery is still safe.
+- If a change switches behavior between fail open, fail closed, warning, skip, clean, or escalate, a human must approve the risk tradeoff.
+- If a change remaps reviewer failures or timeouts to outcomes, a human must verify the operational impact is intended.
+- If retry counts, polling intervals, or wait budgets change, a human must confirm the balance between speed and missed findings.
+- If a change alters when readiness or regression labels are applied or removed, a human must confirm workflow gates still match team intent.
+- If reviewer availability drops or warn-only behavior is used, a human must decide whether reduced coverage is acceptable for that pull request.
+- If automation cannot post review summary output and manual recovery is used, a human must confirm the evidence is sufficient to proceed.
+- If a pull request expands beyond approved scope or defers advisory findings, a human must decide whether the remaining risk is acceptable.

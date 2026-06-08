@@ -23,7 +23,24 @@
 #   BLOCKING_COUNT=<n>
 #   SUGGESTION_COUNT=<n>
 #   COMMENT_COUNT=<n>
-#   REASON=<value>   (only when RESULT=skipped — values: unavailable, timeout)
+#   DISPLAY_RESULT=<value> (optional; used by pr-review-loop.sh summaries)
+#   POLICY_REVIEW_REQUIRED=0|1 (optional; present when pr-status is available)
+#   REASON=<value>   (only when RESULT=skipped — values: unavailable, timeout,
+#                     pending_timeout)
+#
+# Polling behaviour for transient states (status=pending, status=error, etc.):
+#   When `haystack triage --no-wait` returns ANY non-empty status value other
+#   than "none" (e.g. status=pending, status=error, "Rating synthesis not
+#   available"), the analysis is still in progress.  The script polls every
+#   HAYSTACK_POLL_INTERVAL seconds (default: 15) until a genuinely completed
+#   result is returned (no "status" field in the JSON) or the overall TIMEOUT
+#   budget is exhausted.  A completed result is signalled by the ABSENCE of a
+#   "status" field — this is the only condition under which RESULT=clean may be
+#   emitted.  If the budget is exhausted while the analysis is still transient,
+#   RESULT=skipped is emitted with REASON=pending_timeout (distinct from
+#   REASON=unavailable, which means the CLI is absent or authentication failed,
+#   and REASON=timeout, which means a single haystack triage call exceeded the
+#   per-call OS timeout).
 #
 # Confirmed JSON schema (haystack triage <PR> --json as of 2026-05-25):
 #   {
@@ -47,7 +64,7 @@
 # Severity mapping (based on confirmed schema — .findings[].category):
 #   Blocking:  "Logic error", "Critical", any unrecognised value (safe-fail)
 #   Advisory:  "Major" (conservative — see note), "Minor", "Advisory",
-#              "Nitpick", "Trivial", "Weak test coverage"
+#              "Nitpick", "Trivial", "Weak test coverage", "Rules violation"
 #
 # NOTE on "Major": The spec marks "Major" as blocking (conservative safe-fail).
 # However, Haystack uses "Major" for findings like "Weak test coverage" that are
@@ -55,6 +72,28 @@
 # spec, only "Logic error" and "Critical" are formally blocking; "Major" is treated
 # as advisory here to avoid false-positive blocks on style/coverage findings.
 # If your team wants "Major" to be blocking, set HAYSTACK_MAJOR_IS_BLOCKING=1.
+#
+# NOTE on "Rules violation": Haystack uses this category for custom rule findings
+# such as CHANGELOG structure checks (rule: keep-changelog-unreleased-structure-canonical).
+# This produces false positives in two known scenarios:
+#
+#   1. Regular PRs with correctly-formatted CHANGELOG entries under [Unreleased] ->
+#      ### Fixed (or other subsections). Haystack's LLM checker misidentifies the
+#      diff context and flags the entry as appended outside the section. This has
+#      recurred across multiple batches (Batches 34, 35, 55, and PR #801).
+#
+#   2. Hotfix backport PRs (where the diff against develop shows an empty [Unreleased]
+#      section from main, which Haystack misidentifies as a structural violation).
+#
+# IMPORTANT for agents: When you see a "Rules violation" finding for CHANGELOG
+# structure, do NOT attempt to restructure the CHANGELOG. The finding is a known
+# false positive. The current format is correct; restructuring will introduce a
+# real regression. See haystack-triage.md for the full guidance and dismissal procedure.
+#
+# "Rules violation" is treated as advisory here because it is not a code logic error
+# or security issue; genuine CHANGELOG structure problems are caught by the
+# markdownlint CI check and check-changelog-duplicate-headers.sh, which are not
+# subject to the same diff-interpretation issue.
 #
 # Unrecognised categories are treated as blocking (conservative safe-fail per spec).
 
@@ -94,6 +133,8 @@ esac
 
 # Parse optional flags
 TIMEOUT="${HAYSTACK_REVIEWER_TIMEOUT:-120}"
+POLL_INTERVAL="${HAYSTACK_POLL_INTERVAL:-15}"
+PR_STATUS_CHECK="${HAYSTACK_PR_STATUS_CHECK:-1}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -109,6 +150,14 @@ done
 case "$TIMEOUT" in
   ''|0|*[!0-9]*)
     echo "ERROR: --timeout value '$TIMEOUT' is not a positive integer (must be >= 1)" >&2
+    exit 3
+    ;;
+esac
+
+# Validate poll interval
+case "$POLL_INTERVAL" in
+  ''|0|*[!0-9]*)
+    echo "ERROR: HAYSTACK_POLL_INTERVAL value '$POLL_INTERVAL' is not a positive integer (must be >= 1)" >&2
     exit 3
     ;;
 esac
@@ -136,55 +185,231 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 echo "INFO: haystack CLI found: $(command -v haystack)" >&2
-echo "INFO: running: haystack triage ${OWNER}/${REPO}#${PR_NUMBER} --json --no-wait (timeout: ${TIMEOUT}s)" >&2
+echo "INFO: poll-retry loop — polling every ${POLL_INTERVAL}s, overall timeout: ${TIMEOUT}s" >&2
 
-# ── Run triage with timeout ───────────────────────────────────────────────────
+# ── Poll-retry loop ───────────────────────────────────────────────────────────
+#
+# Each iteration calls `haystack triage ... --json --no-wait` (which returns
+# immediately). If the JSON response carries status=pending, the loop sleeps
+# POLL_INTERVAL seconds and retries until the analysis completes or the overall
+# TIMEOUT budget is exhausted.
+#
+# POLL_CALL_TIMEOUT is the per-call timeout used to guard each individual
+# invocation of `haystack triage` against a hung network call. It is capped to
+# at most half the remaining budget so the loop always gets at least one retry
+# after a timed-out call.
 
-TRIAGE_STDERR=$(mktemp)
 TRIAGE_OUTPUT=""
 TRIAGE_EXIT=0
+elapsed=0
+LOOP_START_TS="$(date +%s 2>/dev/null || printf '0')"
+TRIAGE_STDERR=$(mktemp)
 
-# Check for 'timeout' command availability (not always present on macOS without GNU coreutils).
-if command -v timeout >/dev/null 2>&1; then
-  set +e
-  TRIAGE_OUTPUT="$(timeout "$TIMEOUT" haystack triage "${OWNER}/${REPO}#${PR_NUMBER}" --json --no-wait 2>"$TRIAGE_STDERR")"
-  TRIAGE_EXIT=$?
-  set -e
-else
-  # Fallback: background process + wait with a kill after TIMEOUT seconds.
-  echo "INFO: 'timeout' command not available; using background-process fallback" >&2
-  set +e
-  haystack triage "${OWNER}/${REPO}#${PR_NUMBER}" --json --no-wait >"$TRIAGE_STDERR.stdout" 2>"$TRIAGE_STDERR" &
-  TRIAGE_PID=$!
-  # Poll until TIMEOUT or process exits
-  elapsed=0
-  while kill -0 "$TRIAGE_PID" 2>/dev/null && [ "$elapsed" -lt "$TIMEOUT" ]; do
-    sleep 1
-    elapsed=$((elapsed + 1))
-  done
-  if kill -0 "$TRIAGE_PID" 2>/dev/null; then
-    kill "$TRIAGE_PID" 2>/dev/null || true
-    wait "$TRIAGE_PID" 2>/dev/null || true
-    TRIAGE_EXIT=124  # same as GNU timeout exit code on kill
-  else
-    wait "$TRIAGE_PID" 2>/dev/null
-    TRIAGE_EXIT=$?
-    TRIAGE_OUTPUT="$(cat "$TRIAGE_STDERR.stdout" 2>/dev/null || true)"
+while true; do
+  rm -f "$TRIAGE_STDERR"
+  TRIAGE_STDERR=$(mktemp)
+  TRIAGE_OUTPUT=""
+  TRIAGE_EXIT=0
+
+  # Compute actual elapsed seconds using wall-clock timestamps so the budget
+  # tracking reflects real time, not just accumulated sleep intervals.
+  NOW_TS="$(date +%s 2>/dev/null || printf '0')"
+  if [ "$LOOP_START_TS" -gt 0 ] && [ "$NOW_TS" -ge "$LOOP_START_TS" ]; then
+    elapsed=$((NOW_TS - LOOP_START_TS))
   fi
-  set -e
-  rm -f "$TRIAGE_STDERR.stdout"
-fi
 
-# Log stderr output for debugging
-if [ -s "$TRIAGE_STDERR" ]; then
-  echo "INFO: haystack triage stderr output:" >&2
-  cat "$TRIAGE_STDERR" >&2
-fi
+  # Per-call timeout: half of the remaining budget (minimum 1s).
+  remaining=$((TIMEOUT - elapsed))
+  if [ "$remaining" -le 0 ]; then
+    # Budget exhausted before this iteration — handle below as pending_timeout.
+    TRIAGE_EXIT=200  # sentinel: budget exhausted
+    break
+  fi
+  POLL_CALL_TIMEOUT=$(( remaining / 2 ))
+  [ "$POLL_CALL_TIMEOUT" -lt 1 ] && POLL_CALL_TIMEOUT=1
+
+  echo "INFO: running: haystack triage ${OWNER}/${REPO}#${PR_NUMBER} --json --no-wait (elapsed: ${elapsed}s, per-call timeout: ${POLL_CALL_TIMEOUT}s)" >&2
+
+  # Check for 'timeout' command availability (not always present on macOS without GNU coreutils).
+  if command -v timeout >/dev/null 2>&1; then
+    set +e
+    TRIAGE_OUTPUT="$(timeout "$POLL_CALL_TIMEOUT" haystack triage "${OWNER}/${REPO}#${PR_NUMBER}" --json --no-wait 2>"$TRIAGE_STDERR")"
+    TRIAGE_EXIT=$?
+    set -e
+  else
+    # Fallback: background process + wait with a kill after POLL_CALL_TIMEOUT seconds.
+    echo "INFO: 'timeout' command not available; using background-process fallback" >&2
+    set +e
+    haystack triage "${OWNER}/${REPO}#${PR_NUMBER}" --json --no-wait >"$TRIAGE_STDERR.stdout" 2>"$TRIAGE_STDERR" &
+    TRIAGE_PID=$!
+    poll_elapsed=0
+    while kill -0 "$TRIAGE_PID" 2>/dev/null && [ "$poll_elapsed" -lt "$POLL_CALL_TIMEOUT" ]; do
+      sleep 1
+      poll_elapsed=$((poll_elapsed + 1))
+    done
+    if kill -0 "$TRIAGE_PID" 2>/dev/null; then
+      kill "$TRIAGE_PID" 2>/dev/null || true
+      wait "$TRIAGE_PID" 2>/dev/null || true
+      TRIAGE_EXIT=124  # same as GNU timeout exit code on kill
+    else
+      wait "$TRIAGE_PID" 2>/dev/null
+      TRIAGE_EXIT=$?
+      TRIAGE_OUTPUT="$(cat "$TRIAGE_STDERR.stdout" 2>/dev/null || true)"
+    fi
+    set -e
+    rm -f "$TRIAGE_STDERR.stdout"
+  fi
+
+  # Log stderr output for debugging.
+  if [ -s "$TRIAGE_STDERR" ]; then
+    echo "INFO: haystack triage stderr output:" >&2
+    cat "$TRIAGE_STDERR" >&2
+  fi
+
+  # ── Handle per-call timeout ─────────────────────────────────────────────────
+  if [ "$TRIAGE_EXIT" -eq 124 ]; then
+    # Recompute elapsed from wall-clock before the next budget check.
+    NOW_TS="$(date +%s 2>/dev/null || printf '0')"
+    if [ "$LOOP_START_TS" -gt 0 ] && [ "$NOW_TS" -ge "$LOOP_START_TS" ]; then
+      elapsed=$((NOW_TS - LOOP_START_TS))
+    fi
+    echo "INFO: haystack triage per-call timeout (total elapsed: ${elapsed}s)" >&2
+    if [ "$elapsed" -ge "$TIMEOUT" ]; then
+      TRIAGE_EXIT=124  # propagate timeout sentinel
+      break
+    fi
+    # Retry immediately (the per-call timeout already consumed the sleep budget).
+    continue
+  fi
+
+  # ── Handle other non-zero exit codes ────────────────────────────────────────
+  #
+  # Some versions of the haystack CLI return a non-zero exit code even when
+  # stdout contains a valid completed-analysis JSON payload (e.g. a payload with
+  # findings, or one where status=pending when analysis is still in progress).
+  # Treating every non-zero exit as UNAVAILABLE silently drops completed results
+  # and prevents the poll-retry loop from retrying pending analyses — the root
+  # cause of issue #800 (Haystack reported unavailable while analysis completed
+  # on the platform).
+  #
+  # Recovery strategy: when TRIAGE_EXIT is non-zero, inspect stdout before giving
+  # up.  Three sub-cases:
+  #   a) Empty or non-JSON output → genuine unavailability, exit UNAVAILABLE.
+  #   b) Valid JSON with status=pending → transient; the CLI exited non-zero but
+  #      the analysis is still running.  Fall through to the status-check block
+  #      below so the poll-retry loop can sleep and retry (same path as exit 0 +
+  #      pending).
+  #   c) Valid JSON with a completed result (no status / unknown status) → the
+  #      CLI exited non-zero but produced a usable result.  Log a warning (so the
+  #      non-zero exit is not silent) and fall through to findings parsing.
+  #   d) Valid JSON with status=none → permanent unavailability; fall through to
+  #      the status-check block which handles this case.
+  if [ "$TRIAGE_EXIT" -ne 0 ]; then
+    echo "INFO: haystack triage exited with code $TRIAGE_EXIT — inspecting stdout before deciding outcome" >&2
+    if [ -z "$TRIAGE_OUTPUT" ] || ! printf '%s\n' "$TRIAGE_OUTPUT" | jq -e . >/dev/null 2>&1; then
+      # Sub-case (a): empty or invalid JSON → genuinely unavailable.
+      echo "INFO: haystack triage non-zero exit AND empty/invalid stdout — treating as UNAVAILABLE" >&2
+      rm -f "$TRIAGE_STDERR"
+      printf 'RESULT=skipped\n'
+      printf 'REASON=unavailable\n'
+      printf 'BLOCKING_COUNT=0\n'
+      printf 'SUGGESTION_COUNT=0\n'
+      printf 'COMMENT_COUNT=0\n'
+      exit 3
+    fi
+    # Sub-cases (b), (c), (d): stdout is valid JSON — fall through to status check
+    # and findings parsing.  The status-check block below will handle pending,
+    # none, and completed outcomes identically to the exit-0 path.
+    echo "INFO: haystack triage non-zero exit (code $TRIAGE_EXIT) but stdout is valid JSON — proceeding to status/findings parsing (non-zero exit may be a haystack CLI version quirk)" >&2
+  fi
+
+  # ── Validate JSON output ─────────────────────────────────────────────────────
+  if [ -z "$TRIAGE_OUTPUT" ]; then
+    echo "INFO: haystack triage returned empty output — treating as UNAVAILABLE" >&2
+    rm -f "$TRIAGE_STDERR"
+    printf 'RESULT=skipped\n'
+    printf 'REASON=unavailable\n'
+    printf 'BLOCKING_COUNT=0\n'
+    printf 'SUGGESTION_COUNT=0\n'
+    printf 'COMMENT_COUNT=0\n'
+    exit 3
+  fi
+
+  # Validate that TRIAGE_OUTPUT is well-formed JSON before parsing.
+  if ! printf '%s\n' "$TRIAGE_OUTPUT" | jq -e . >/dev/null 2>&1; then
+    echo "INFO: haystack triage returned invalid JSON — treating as UNAVAILABLE" >&2
+    rm -f "$TRIAGE_STDERR"
+    printf 'RESULT=skipped\n'
+    printf 'REASON=unavailable\n'
+    printf 'BLOCKING_COUNT=0\n'
+    printf 'SUGGESTION_COUNT=0\n'
+    printf 'COMMENT_COUNT=0\n'
+    exit 3
+  fi
+
+  # ── Check status field ───────────────────────────────────────────────────────
+  #
+  # Empirical signal for a genuinely completed analysis (confirmed 2026-06-02):
+  #   - COMPLETED:  the JSON has NO "status" field at all (.status // empty
+  #                 returns empty string).  This is the only condition that
+  #                 produces a usable findings payload.
+  #   - TRANSIENT:  the JSON has a "status" field with any value (pending,
+  #                 error, "Rating synthesis not available", or any other
+  #                 non-null, non-"none" string).  These are still-synthesizing
+  #                 states and must be retried.
+  #   - PERMANENT:  status=none — no analysis was ever submitted for this PR.
+  #
+  # Mapping ANY non-empty, non-"none" status value to "completed" (the previous
+  # *) catch-all behaviour) was the root cause of the Batch 71 false-clean bug:
+  # status=error / "Rating synthesis not available" was treated as terminal,
+  # findings parsing found zero findings, and RESULT=clean was emitted — silently
+  # masking real findings that appeared on the web UI once synthesis finished.
+  STATUS_VALUE="$(printf '%s\n' "$TRIAGE_OUTPUT" | jq -r '.status // empty' 2>/dev/null || true)"
+
+  case "$STATUS_VALUE" in
+    none)
+      # Permanent: no analysis was ever submitted for this PR.
+      echo "INFO: haystack triage returned status=none (no analysis available for this PR) — treating as UNAVAILABLE" >&2
+      rm -f "$TRIAGE_STDERR"
+      printf 'RESULT=skipped\n'
+      printf 'REASON=unavailable\n'
+      printf 'BLOCKING_COUNT=0\n'
+      printf 'SUGGESTION_COUNT=0\n'
+      printf 'COMMENT_COUNT=0\n'
+      exit 3
+      ;;
+    "")
+      # Empty status field = no "status" key in the JSON = genuinely completed
+      # analysis.  Exit the loop and proceed to findings parsing.
+      break
+      ;;
+    *)
+      # Non-empty, non-"none" status value (e.g. "pending", "error",
+      # "Rating synthesis not available", or any future transient state).
+      # Treat as transient — poll-retry after POLL_INTERVAL.
+      # NEVER map an unknown or error status to "clean"; only a genuinely
+      # completed result (empty STATUS_VALUE above) may yield RESULT=clean.
+      echo "INFO: status='${STATUS_VALUE}' — still synthesizing; waiting ${POLL_INTERVAL}s before retry (${elapsed}s elapsed of ${TIMEOUT}s budget)" >&2
+      # Check budget BEFORE sleeping so we don't overshoot the timeout.
+      if [ $((elapsed + POLL_INTERVAL)) -ge "$TIMEOUT" ]; then
+        # Sleeping would exhaust the budget — exit now with pending_timeout.
+        TRIAGE_EXIT=200  # sentinel: pending_timeout
+        break
+      fi
+      sleep "$POLL_INTERVAL"
+      # Wall-clock elapsed will be recomputed at the top of the next iteration.
+      continue
+      ;;
+  esac
+done
+
 rm -f "$TRIAGE_STDERR"
 
-# ── Handle timeout ────────────────────────────────────────────────────────────
+# ── Handle loop exit conditions ───────────────────────────────────────────────
 
 if [ "$TRIAGE_EXIT" -eq 124 ]; then
+  # A single haystack triage call exceeded its per-call OS timeout and the
+  # overall budget was exhausted.
   echo "INFO: haystack triage timed out after ${TIMEOUT}s" >&2
   printf 'RESULT=skipped\n'
   printf 'REASON=timeout\n'
@@ -194,69 +419,21 @@ if [ "$TRIAGE_EXIT" -eq 124 ]; then
   exit 2
 fi
 
-# ── Handle other non-zero exit codes ─────────────────────────────────────────
-
-if [ "$TRIAGE_EXIT" -ne 0 ]; then
-  echo "INFO: haystack triage exited with code $TRIAGE_EXIT — treating as UNAVAILABLE" >&2
+if [ "$TRIAGE_EXIT" -eq 200 ]; then
+  # Budget exhausted while the analysis was still in a transient state
+  # (status=pending, status=error, "Rating synthesis not available", or any
+  # other non-empty non-"none" status value) — analysis never produced a
+  # completed result within the timeout window. This is distinct from
+  # REASON=unavailable (CLI not found / auth failure) and REASON=timeout
+  # (per-call OS timeout).
+  echo "INFO: haystack triage transient state persisted — budget exhausted after ${TIMEOUT}s (pending_timeout)" >&2
   printf 'RESULT=skipped\n'
-  printf 'REASON=unavailable\n'
+  printf 'REASON=pending_timeout\n'
   printf 'BLOCKING_COUNT=0\n'
   printf 'SUGGESTION_COUNT=0\n'
   printf 'COMMENT_COUNT=0\n'
-  exit 3
+  exit 2
 fi
-
-# ── Validate JSON output ──────────────────────────────────────────────────────
-
-if [ -z "$TRIAGE_OUTPUT" ]; then
-  echo "INFO: haystack triage returned empty output — treating as UNAVAILABLE" >&2
-  printf 'RESULT=skipped\n'
-  printf 'REASON=unavailable\n'
-  printf 'BLOCKING_COUNT=0\n'
-  printf 'SUGGESTION_COUNT=0\n'
-  printf 'COMMENT_COUNT=0\n'
-  exit 3
-fi
-
-# Validate that TRIAGE_OUTPUT is well-formed JSON before parsing.
-# jq errors would otherwise be silenced by the 2>/dev/null guards below,
-# causing STATUS_VALUE/CATEGORIES to be empty and the script to fall through
-# to RESULT=clean on malformed output.
-if ! printf '%s\n' "$TRIAGE_OUTPUT" | jq -e . >/dev/null 2>&1; then
-  echo "INFO: haystack triage returned invalid JSON — treating as UNAVAILABLE" >&2
-  printf 'RESULT=skipped\n'
-  printf 'REASON=unavailable\n'
-  printf 'BLOCKING_COUNT=0\n'
-  printf 'SUGGESTION_COUNT=0\n'
-  printf 'COMMENT_COUNT=0\n'
-  exit 3
-fi
-
-# Check for status values that indicate no completed analysis is available.
-# - status=none: no analysis for this PR (not submitted via haystack)
-# - status=pending: analysis in progress (--no-wait exited before completion)
-# In both cases, treat as UNAVAILABLE so the caller can skip or escalate.
-STATUS_VALUE="$(printf '%s\n' "$TRIAGE_OUTPUT" | jq -r '.status // empty' 2>/dev/null || true)"
-case "$STATUS_VALUE" in
-  none)
-    echo "INFO: haystack triage returned status=none (no analysis available for this PR) — treating as UNAVAILABLE" >&2
-    printf 'RESULT=skipped\n'
-    printf 'REASON=unavailable\n'
-    printf 'BLOCKING_COUNT=0\n'
-    printf 'SUGGESTION_COUNT=0\n'
-    printf 'COMMENT_COUNT=0\n'
-    exit 3
-    ;;
-  pending)
-    echo "INFO: haystack triage returned status=pending (analysis still in progress — use --no-wait=false to poll) — treating as UNAVAILABLE" >&2
-    printf 'RESULT=skipped\n'
-    printf 'REASON=unavailable\n'
-    printf 'BLOCKING_COUNT=0\n'
-    printf 'SUGGESTION_COUNT=0\n'
-    printf 'COMMENT_COUNT=0\n'
-    exit 3
-    ;;
-esac
 
 echo "INFO: haystack triage raw output:" >&2
 printf '%s\n' "$TRIAGE_OUTPUT" >&2
@@ -300,7 +477,7 @@ if [ -n "$CATEGORIES" ]; then
           SUGGESTION_COUNT=$((SUGGESTION_COUNT + 1))
         fi
         ;;
-      "Minor"|"Advisory"|"Nitpick"|"Trivial"|"Weak test coverage")
+      "Minor"|"Advisory"|"Nitpick"|"Trivial"|"Weak test coverage"|"Rules violation")
         SUGGESTION_COUNT=$((SUGGESTION_COUNT + 1))
         ;;
       "__UNKNOWN__"|*)
@@ -318,6 +495,145 @@ COMMENT_COUNT=$((BLOCKING_COUNT + SUGGESTION_COUNT))
 
 echo "INFO: findings parsed — blocking: $BLOCKING_COUNT, advisory: $SUGGESTION_COUNT, total: $COMMENT_COUNT" >&2
 
+# ── Parse review-policy verdict from haystack pr-status ──────────────────────
+#
+# haystack triage --json reports code-review findings, but policy verdicts live
+# in haystack pr-status --json. Keep the verdict advisory for loop control while
+# making it visible to humans in pr-review-loop.sh summaries.
+
+POLICY_STATUS_AVAILABLE=0
+POLICY_REVIEW_REQUIRED=0
+POLICY_VERDICT=""
+POLICY_ANALYSIS_STATUS=""
+POLICY_BUCKET=""
+POLICY_RATING=""
+POLICY_HAS_REVIEWER=""
+POLICY_NEEDS_HUMAN=""
+POLICY_DISPOSITION="good-to-merge"
+
+if [ "$PR_STATUS_CHECK" != "0" ]; then
+  PR_STATUS_OUTPUT=""
+  PR_STATUS_EXIT=0
+  PR_STATUS_STDERR="$(mktemp)"
+  PR_STATUS_TIMEOUT="$TIMEOUT"
+  case "$PR_STATUS_TIMEOUT" in
+    ''|0|*[!0-9]*)
+      echo "ERROR: internal pr-status timeout '$PR_STATUS_TIMEOUT' is not a positive integer" >&2
+      rm -f "$PR_STATUS_STDERR"
+      exit 3
+      ;;
+  esac
+  [ "$PR_STATUS_TIMEOUT" -gt 30 ] && PR_STATUS_TIMEOUT=30
+
+  echo "INFO: running: haystack pr-status ${OWNER}/${REPO}#${PR_NUMBER} --json" >&2
+  if command -v timeout >/dev/null 2>&1; then
+    set +e
+    PR_STATUS_OUTPUT="$(timeout "$PR_STATUS_TIMEOUT" haystack pr-status "${OWNER}/${REPO}#${PR_NUMBER}" --json 2>"$PR_STATUS_STDERR")"
+    PR_STATUS_EXIT=$?
+    set -e
+  else
+    echo "INFO: 'timeout' command not available; using pr-status background-process fallback" >&2
+    set +e
+    haystack pr-status "${OWNER}/${REPO}#${PR_NUMBER}" --json >"$PR_STATUS_STDERR.stdout" 2>"$PR_STATUS_STDERR" &
+    PR_STATUS_PID=$!
+    pr_status_elapsed=0
+    while kill -0 "$PR_STATUS_PID" 2>/dev/null && [ "$pr_status_elapsed" -lt "$PR_STATUS_TIMEOUT" ]; do
+      sleep 1
+      pr_status_elapsed=$((pr_status_elapsed + 1))
+    done
+    if kill -0 "$PR_STATUS_PID" 2>/dev/null; then
+      if ! kill "$PR_STATUS_PID" 2>/dev/null; then
+        echo "WARN: failed to terminate timed-out haystack pr-status process $PR_STATUS_PID" >&2
+      fi
+      wait "$PR_STATUS_PID" 2>/dev/null
+      pr_status_wait_exit=$?
+      case "$pr_status_wait_exit" in
+        0|130|137|143) ;;
+        *)
+          echo "WARN: haystack pr-status process $PR_STATUS_PID exited with status $pr_status_wait_exit after timeout cleanup" >&2
+          ;;
+      esac
+      PR_STATUS_EXIT=124
+    else
+      wait "$PR_STATUS_PID" 2>/dev/null
+      PR_STATUS_EXIT=$?
+      if ! PR_STATUS_OUTPUT="$(cat "$PR_STATUS_STDERR.stdout" 2>/dev/null)"; then
+        echo "WARN: failed to read haystack pr-status stdout capture" >&2
+        PR_STATUS_OUTPUT=""
+      fi
+    fi
+    set -e
+    rm -f "$PR_STATUS_STDERR.stdout"
+  fi
+
+  if [ -s "$PR_STATUS_STDERR" ]; then
+    echo "INFO: haystack pr-status stderr output:" >&2
+    cat "$PR_STATUS_STDERR" >&2
+  fi
+  rm -f "$PR_STATUS_STDERR"
+
+  if [ "$PR_STATUS_EXIT" -eq 0 ] && printf '%s\n' "$PR_STATUS_OUTPUT" | jq -e . >/dev/null 2>&1; then
+    POLICY_PARSE_FAILED=0
+    if ! POLICY_BUCKET="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '.bucket // ""')"; then
+      POLICY_PARSE_FAILED=1
+    fi
+    if ! POLICY_ANALYSIS_STATUS="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '(.inputs.analysisStatus // .analysisStatus // "") | tostring')"; then
+      POLICY_PARSE_FAILED=1
+    fi
+    if ! POLICY_VERDICT="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '.inputs.analysisVerdict // .analysisVerdict // ""')"; then
+      POLICY_PARSE_FAILED=1
+    fi
+    if ! POLICY_RATING="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '(.inputs.haystackRating // .haystackRating // "") | tostring')"; then
+      POLICY_PARSE_FAILED=1
+    fi
+    if ! POLICY_HAS_REVIEWER="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r 'if (.inputs? | type == "object" and has("hasReviewer")) then .inputs.hasReviewer elif has("hasReviewer") then .hasReviewer else "" end | tostring')"; then
+      POLICY_PARSE_FAILED=1
+    fi
+    if ! POLICY_NEEDS_HUMAN="$(printf '%s\n' "$PR_STATUS_OUTPUT" | jq -r '(.inputs.needsHumanReview // .needsHumanReview // false) | tostring')"; then
+      POLICY_PARSE_FAILED=1
+    fi
+    if [ "$POLICY_PARSE_FAILED" -eq 0 ]; then
+      POLICY_STATUS_AVAILABLE=1
+      case "$POLICY_VERDICT" in
+        ''|pass|passed|clean|approved)
+          POLICY_VERDICT_REQUIRES_REVIEW=0
+          ;;
+        *)
+          POLICY_VERDICT_REQUIRES_REVIEW=1
+          ;;
+      esac
+      if [ "$POLICY_NEEDS_HUMAN" = "true" ] || [ "$POLICY_VERDICT_REQUIRES_REVIEW" -eq 1 ]; then
+        POLICY_REVIEW_REQUIRED=1
+      fi
+    else
+      echo "ERROR: haystack pr-status field parse failed — failing closed" >&2
+      printf 'RESULT=needs_fixes\n'
+      printf 'REASON=policy_status_parse_failed\n'
+      printf 'BLOCKING_COUNT=1\n'
+      printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
+      printf 'COMMENT_COUNT=%d\n' "$((SUGGESTION_COUNT + 1))"
+      printf 'POLICY_STATUS_AVAILABLE=0\n'
+      printf 'POLICY_REVIEW_REQUIRED=0\n'
+      printf 'POLICY_DISPOSITION=blocking\n'
+      printf 'POLICY_ANALYSIS_STATUS=%s\n' "$POLICY_ANALYSIS_STATUS"
+      printf 'POLICY_NEEDS_HUMAN=%s\n' "$POLICY_NEEDS_HUMAN"
+      exit 1
+    fi
+  else
+    echo "INFO: haystack pr-status unavailable or invalid — policy verdict not surfaced" >&2
+  fi
+fi
+
+if [ "$BLOCKING_COUNT" -gt 0 ]; then
+  POLICY_DISPOSITION="blocking"
+elif [ "$POLICY_REVIEW_REQUIRED" -eq 1 ]; then
+  POLICY_DISPOSITION="policy-human-review"
+elif [ "$SUGGESTION_COUNT" -gt 0 ]; then
+  POLICY_DISPOSITION="advisory-only"
+else
+  POLICY_DISPOSITION="good-to-merge"
+fi
+
 # ── Emit result ───────────────────────────────────────────────────────────────
 
 if [ "$BLOCKING_COUNT" -gt 0 ]; then
@@ -325,6 +641,15 @@ if [ "$BLOCKING_COUNT" -gt 0 ]; then
   printf 'BLOCKING_COUNT=%d\n' "$BLOCKING_COUNT"
   printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
   printf 'COMMENT_COUNT=%d\n' "$COMMENT_COUNT"
+  printf 'POLICY_STATUS_AVAILABLE=%d\n' "$POLICY_STATUS_AVAILABLE"
+  printf 'POLICY_REVIEW_REQUIRED=%d\n' "$POLICY_REVIEW_REQUIRED"
+  printf 'POLICY_DISPOSITION=%s\n' "$POLICY_DISPOSITION"
+  [ -n "$POLICY_VERDICT" ] && printf 'POLICY_VERDICT=%s\n' "$POLICY_VERDICT"
+  printf 'POLICY_ANALYSIS_STATUS=%s\n' "$POLICY_ANALYSIS_STATUS"
+  [ -n "$POLICY_BUCKET" ] && printf 'POLICY_BUCKET=%s\n' "$POLICY_BUCKET"
+  [ -n "$POLICY_RATING" ] && printf 'POLICY_RATING=%s\n' "$POLICY_RATING"
+  [ -n "$POLICY_HAS_REVIEWER" ] && printf 'POLICY_HAS_REVIEWER=%s\n' "$POLICY_HAS_REVIEWER"
+  printf 'POLICY_NEEDS_HUMAN=%s\n' "$POLICY_NEEDS_HUMAN"
   exit 1
 fi
 
@@ -332,4 +657,14 @@ printf 'RESULT=clean\n'
 printf 'BLOCKING_COUNT=0\n'
 printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
 printf 'COMMENT_COUNT=%d\n' "$COMMENT_COUNT"
+printf 'POLICY_STATUS_AVAILABLE=%d\n' "$POLICY_STATUS_AVAILABLE"
+printf 'POLICY_REVIEW_REQUIRED=%d\n' "$POLICY_REVIEW_REQUIRED"
+printf 'POLICY_DISPOSITION=%s\n' "$POLICY_DISPOSITION"
+[ -n "$POLICY_VERDICT" ] && printf 'POLICY_VERDICT=%s\n' "$POLICY_VERDICT"
+printf 'POLICY_ANALYSIS_STATUS=%s\n' "$POLICY_ANALYSIS_STATUS"
+[ -n "$POLICY_BUCKET" ] && printf 'POLICY_BUCKET=%s\n' "$POLICY_BUCKET"
+[ -n "$POLICY_RATING" ] && printf 'POLICY_RATING=%s\n' "$POLICY_RATING"
+[ -n "$POLICY_HAS_REVIEWER" ] && printf 'POLICY_HAS_REVIEWER=%s\n' "$POLICY_HAS_REVIEWER"
+printf 'POLICY_NEEDS_HUMAN=%s\n' "$POLICY_NEEDS_HUMAN"
+[ "$POLICY_REVIEW_REQUIRED" -eq 1 ] && printf 'DISPLAY_RESULT=needs-review: policy\n'
 exit 0

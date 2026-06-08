@@ -62,6 +62,22 @@ if [ -n "${MOCK_GH_CALL_LOG:-}" ]; then
 fi
 # Differentiate call types.
 case "$*" in
+  *"pr ready"*)
+    printf '%s\n' "${MOCK_GH_READY_OUTPUT:-{}}"
+    exit "${MOCK_GH_READY_EXIT:-${MOCK_GH_EXIT:-0}}"
+    ;;
+  *"label view"*)
+    printf '%s\n' "${MOCK_GH_LABEL_VIEW_OUTPUT:-${MOCK_GH_OUTPUT:-{}}}"
+    exit "${MOCK_GH_LABEL_VIEW_EXIT:-${MOCK_GH_EXIT:-0}}"
+    ;;
+  *"label create"*)
+    printf '%s\n' "${MOCK_GH_LABEL_CREATE_OUTPUT:-${MOCK_GH_OUTPUT:-{}}}"
+    exit "${MOCK_GH_LABEL_CREATE_EXIT:-${MOCK_GH_EXIT:-0}}"
+    ;;
+  *"pr edit"*)
+    printf '%s\n' "${MOCK_GH_PR_EDIT_OUTPUT:-${MOCK_GH_OUTPUT:-{}}}"
+    exit "${MOCK_GH_PR_EDIT_EXIT:-${MOCK_GH_EXIT:-0}}"
+    ;;
   *"--method POST"*)
     printf '%s\n' "${MOCK_GH_POST_OUTPUT:-{}}"
     exit "${MOCK_GH_POST_EXIT:-${MOCK_GH_EXIT:-0}}"
@@ -72,6 +88,15 @@ case "$*" in
   *"headRefOid"*)
     printf '%s\n' "${MOCK_GH_HEAD_SHA:-}"
     exit "${MOCK_GH_EXIT:-0}"
+    ;;
+  # gh api repos/.../issues/.../comments — used by restore_regression_label_if_missing
+  # to check for prior reviewer-loop summary comments (Area 11 summary-comment gate).
+  # Tests set MOCK_GH_COMMENTS_OUTPUT to control the returned JSON; defaults to an
+  # empty JSON array (no comments — loop has never run). Tests set
+  # MOCK_GH_COMMENTS_EXIT to simulate an API failure independently of MOCK_GH_EXIT.
+  *"issues/"*"/comments"*)
+    printf '%s\n' "${MOCK_GH_COMMENTS_OUTPUT:-[]}"
+    exit "${MOCK_GH_COMMENTS_EXIT:-${MOCK_GH_EXIT:-0}}"
     ;;
   *)
     printf '%s\n' "${MOCK_GH_OUTPUT:-[]}"
@@ -194,6 +219,30 @@ run_test "pre_after_clean_only_filters_phase_platform" "pr-agent" "${platforms[0
 run_test "pre_after_clean_only_platform_count" "1" "${#platforms[@]}"
 
 # ---------------------------------------------------------------------------
+# Area 0b: doc branch timeout defaults
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 0b: doc branch timeout defaults ==="
+
+unset PR_REVIEW_LOOP_DOC_MAX_WAIT
+run_test "doc_branch_default_max_wait" "180" "$(doc_branch_default_max_wait)"
+
+PR_REVIEW_LOOP_DOC_MAX_WAIT=240
+export PR_REVIEW_LOOP_DOC_MAX_WAIT
+run_test "doc_branch_env_override_max_wait" "240" "$(doc_branch_default_max_wait)"
+
+PR_REVIEW_LOOP_DOC_MAX_WAIT=abc
+export PR_REVIEW_LOOP_DOC_MAX_WAIT
+_doc_timeout_output="$(doc_branch_default_max_wait 2>/dev/null)"
+run_test "doc_branch_invalid_env_falls_back" "180" "$_doc_timeout_output"
+
+run_test "doc_branch_poll_interval_default" "30" "$(doc_branch_default_poll_interval 180)"
+run_test "doc_branch_poll_interval_equal_clamps" "15" "$(doc_branch_default_poll_interval 30)"
+run_test "doc_branch_poll_interval_greater_clamps" "10" "$(doc_branch_default_poll_interval 20)"
+
+unset PR_REVIEW_LOOP_DOC_MAX_WAIT _doc_timeout_output
+
+# ---------------------------------------------------------------------------
 # Area 1: normalize_platform_verdict
 # ---------------------------------------------------------------------------
 echo ""
@@ -228,6 +277,9 @@ run_test "verdict_escalate_no_response" "timed out" "$actual"
 
 actual="$(normalize_platform_verdict "escalate" "REASON=rate_limit_max_retries")"
 run_test "verdict_escalate_rate_limit_max_retries" "timed out" "$actual"
+
+actual="$(normalize_platform_verdict "escalate" "REASON=pending_timeout")"
+run_test "verdict_escalate_pending_timeout" "timed out" "$actual"
 
 actual="$(normalize_platform_verdict "escalate" "REASON=service_error")"
 run_test "verdict_escalate_unknown" "unavailable" "$actual"
@@ -684,10 +736,14 @@ run_test "copilot_clean_blocking_count" "BLOCKING_COUNT=0" \
   "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
 run_test "copilot_clean_exit_code" "0" "$actual_exit"
 
-# Test 8.2: needs_fixes path — Copilot posts CHANGES_REQUESTED review
+# Test 8.2: needs_fixes path — Copilot posts CHANGES_REQUESTED review.
+# The mock review includes an id (456) so the review-comments API call is
+# exercised. The mock gh returns the same MOCK_GH_OUTPUT for all GET calls,
+# so the review-comments endpoint returns one element (the review object) —
+# length=1. BLOCKING_COUNT should equal 1 (the actual inline count).
 export MOCK_GH_POST_OUTPUT='{}'
 export MOCK_GH_HEAD_SHA='abc123sha'
-export MOCK_GH_OUTPUT='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"state":"CHANGES_REQUESTED","commit_id":"abc123sha"}]'
+export MOCK_GH_OUTPUT='[{"id":456,"user":{"login":"copilot-pull-request-reviewer[bot]"},"state":"CHANGES_REQUESTED","commit_id":"abc123sha"}]'
 unset COPILOT_BOT_LOGIN
 actual_output=""
 actual_exit=0
@@ -851,6 +907,53 @@ run_test "run_platform_review_routes_to_run_haystack_review" "1" "$_haystack_dis
 unset -f run_haystack_review
 unset _haystack_dispatch_called
 
+# test: ensure_pr_ready_for_after_clean converts draft PRs before after-clean reviewers
+_call_log="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log"
+MOCK_GH_OUTPUT="true"
+MOCK_GH_EXIT=0
+export MOCK_GH_OUTPUT MOCK_GH_EXIT
+ensure_pr_ready_for_after_clean "999" >/dev/null 2>&1
+ready_calls="$(grep -c -- 'pr ready 999' "$_call_log" 2>/dev/null || true)"
+run_test "after_clean_ready_converts_draft_pr" "1" "$ready_calls"
+rm -f "$_call_log"
+unset MOCK_GH_CALL_LOG MOCK_GH_OUTPUT MOCK_GH_EXIT ready_calls
+
+# test: ensure_pr_ready_for_after_clean leaves non-draft PRs unchanged
+_call_log="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log"
+MOCK_GH_OUTPUT="false"
+MOCK_GH_EXIT=0
+export MOCK_GH_OUTPUT MOCK_GH_EXIT
+ensure_pr_ready_for_after_clean "999" >/dev/null 2>&1
+ready_calls="$(grep -c -- 'pr ready 999' "$_call_log" 2>/dev/null || true)"
+run_test "after_clean_ready_skips_non_draft_pr" "0" "$ready_calls"
+rm -f "$_call_log"
+unset MOCK_GH_CALL_LOG MOCK_GH_OUTPUT MOCK_GH_EXIT ready_calls
+
+# test: ensure_pr_ready_for_after_clean fails closed when draft state cannot be read
+MOCK_GH_OUTPUT=""
+MOCK_GH_EXIT=1
+export MOCK_GH_OUTPUT MOCK_GH_EXIT
+set +e
+ensure_pr_ready_for_after_clean "999" >/dev/null 2>&1
+ready_status=$?
+set -e
+run_test "after_clean_ready_fails_closed_on_state_error" "2" "$ready_status"
+unset MOCK_GH_OUTPUT MOCK_GH_EXIT ready_status
+
+# test: ensure_pr_ready_for_after_clean fails closed when gh pr ready fails
+MOCK_GH_OUTPUT="true"
+MOCK_GH_EXIT=0
+MOCK_GH_READY_EXIT=1
+export MOCK_GH_OUTPUT MOCK_GH_EXIT MOCK_GH_READY_EXIT
+set +e
+ensure_pr_ready_for_after_clean "999" >/dev/null 2>&1
+ready_status=$?
+set -e
+run_test "after_clean_ready_fails_closed_on_ready_error" "2" "$ready_status"
+unset MOCK_GH_OUTPUT MOCK_GH_EXIT MOCK_GH_READY_EXIT ready_status
+
 # ---------------------------------------------------------------------------
 # Area 10: per-platform result tokens in summary comment (#755)
 #
@@ -874,6 +977,55 @@ run_test "summary_platform_list_format" \
   "pr-agent (clean), haystack (unavailable), claude-code-action (escalated (timeout))" \
   "$_test_spl"
 unset _test_tokens _test_spl _sprt _spname _spdisp
+
+# Test 10.1b: display override allows Haystack policy verdicts to avoid reading as clean
+_platform_output='RESULT=clean
+DISPLAY_RESULT=needs-review: policy
+POLICY_REVIEW_REQUIRED=1'
+_prt_display_override="$(kv_value_default DISPLAY_RESULT "$_platform_output" "")"
+if [ -n "$_prt_display_override" ]; then
+  _prt_disp="$_prt_display_override"
+else
+  _prt_disp="clean"
+fi
+run_test "summary_platform_display_override" "needs-review: policy" "$_prt_disp"
+run_test "policy_review_compare_verdict" "advisory" "$(normalize_platform_verdict clean "$_platform_output")"
+run_test "policy_review_does_not_override_needs_fixes" "blocking" "$(normalize_platform_verdict needs_fixes "$_platform_output")"
+run_test "policy_review_does_not_override_skipped" "unavailable" "$(normalize_platform_verdict skipped "$_platform_output")"
+unset _platform_output _prt_display_override _prt_disp
+
+# Test 10.1c: policy metadata is rendered as an explicit handoff note.
+_platform_name="haystack"
+_platform_output='RESULT=clean
+POLICY_STATUS_AVAILABLE=1
+POLICY_BUCKET=needs-assignment
+POLICY_NEEDS_HUMAN=true
+POLICY_DISPOSITION=policy-human-review
+POLICY_VERDICT=needs-review
+POLICY_ANALYSIS_STATUS=ready
+POLICY_RATING=5
+POLICY_HAS_REVIEWER=false'
+_policy_note="${_platform_name}:"
+_policy_bucket="$(kv_value_default POLICY_BUCKET "$_platform_output" "")"
+_policy_needs_human="$(kv_value_default POLICY_NEEDS_HUMAN "$_platform_output" "")"
+_policy_disposition="$(kv_value_default POLICY_DISPOSITION "$_platform_output" "")"
+_policy_verdict="$(kv_value_default POLICY_VERDICT "$_platform_output" "")"
+_policy_analysis_status="$(kv_value_default POLICY_ANALYSIS_STATUS "$_platform_output" "")"
+_policy_rating="$(kv_value_default POLICY_RATING "$_platform_output" "")"
+_policy_has_reviewer="$(kv_value_default POLICY_HAS_REVIEWER "$_platform_output" "")"
+[ -n "$_policy_bucket" ] && _policy_note="${_policy_note} bucket=${_policy_bucket};"
+[ -n "$_policy_needs_human" ] && _policy_note="${_policy_note} needsHumanReview=${_policy_needs_human};"
+[ -n "$_policy_disposition" ] && _policy_note="${_policy_note} disposition=${_policy_disposition};"
+[ -n "$_policy_verdict" ] && _policy_note="${_policy_note} verdict=${_policy_verdict};"
+[ -n "$_policy_analysis_status" ] && _policy_note="${_policy_note} analysisStatus=${_policy_analysis_status};"
+[ -n "$_policy_rating" ] && _policy_note="${_policy_note} rating=${_policy_rating};"
+[ -n "$_policy_has_reviewer" ] && _policy_note="${_policy_note} hasReviewer=${_policy_has_reviewer};"
+run_test "summary_policy_status_note" \
+  "haystack: bucket=needs-assignment; needsHumanReview=true; disposition=policy-human-review; verdict=needs-review; analysisStatus=ready; rating=5; hasReviewer=false;" \
+  "$_policy_note"
+unset _platform_name _platform_output _policy_note _policy_bucket
+unset _policy_needs_human _policy_disposition _policy_verdict
+unset _policy_analysis_status _policy_rating _policy_has_reviewer
 
 # Test 10.2: _summary_platform_list is "none" when token list is empty
 _test_tokens=()
@@ -901,6 +1053,428 @@ else
 fi
 run_test "summary_result_line_skipped" "1" "$_skipped_constant_count"
 unset _skipped_constant_count
+
+# Test 10.4: _post_review_summary source renders policy-status details.
+if grep -qF '**Review policy status:**' \
+    "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" \
+    && grep -qF 'platform_policy_status_notes' \
+      "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"; then
+  _policy_status_summary_count=1
+else
+  _policy_status_summary_count=0
+fi
+run_test "summary_policy_status_section" "1" "$_policy_status_summary_count"
+unset _policy_status_summary_count
+
+# ---------------------------------------------------------------------------
+# Area 11: Step 7b regression-label auto-restore (Option C, issue #805)
+#
+# restore_regression_label_if_missing() is defined before the HARNESS_MODE
+# return point and is therefore callable directly from the test harness.
+# These tests exercise the actual function (not source-string grep) so that
+# runtime regressions — e.g. a mis-scoped case branch, a missing label
+# check, or a silent gh failure — are detected.
+#
+# The mock gh stub (already on PATH) is driven by:
+#   MOCK_GH_OUTPUT       — `gh pr view` label-check result ("true"/"false")
+#   MOCK_GH_COMMENTS_OUTPUT — `gh api .../comments` result (JSON array; controls
+#                             summary-comment gate)
+#   MOCK_GH_CALL_LOG     — records every `gh pr edit --add-label` call
+#   MOCK_GH_EXIT         — controls whether gh exits with an error (all calls)
+#   MOCK_GH_COMMENTS_EXIT — controls whether the comments API call exits with
+#                           an error independently of MOCK_GH_EXIT
+#
+# Summary-comment gate (issue #805 Haystack finding):
+#   label missing + summary PRESENT → restore IS called
+#   label missing + summary ABSENT  → restore NOT called
+#   comments API fails              → fail-open: restore IS called + WARN emitted
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 11: regression-label auto-restore (Option C, issue #805) ==="
+
+# Reset mock vars from earlier areas.
+unset MOCK_GH_POST_EXIT MOCK_GH_POST_OUTPUT MOCK_GH_CALL_LOG MOCK_GH_EXIT
+unset MOCK_GH_COMMENTS_OUTPUT MOCK_GH_COMMENTS_EXIT
+
+# JSON payload used by tests that require a summary comment to be "present".
+_SUMMARY_COMMENT_JSON='[{"id":1,"body":"### Automated Reviewer Loop Summary\nAll platforms clean."}]'
+
+# Test 11.1: label absent + summary comment PRESENT on an implementation branch
+# → gh pr edit IS called (the #805 scenario: loop ran before, label was dropped
+# by a push, restore is correct).
+_call_log_11="$(mktemp)"
+export MOCK_GH_OUTPUT="false"
+export MOCK_GH_COMMENTS_OUTPUT="$_SUMMARY_COMMENT_JSON"
+export MOCK_GH_CALL_LOG="$_call_log_11"
+restore_regression_label_if_missing "42" "fix/42-my-fix" 2>/dev/null
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
+run_test "restore_label_absent_summary_present_calls_gh_edit" "1" "$_edit_calls"
+rm -f "$_call_log_11"
+unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT
+
+# Test 11.2: label already present on an implementation branch → NO gh pr edit.
+# MOCK_GH_OUTPUT is "true" (label present); summary-comment gate is not reached.
+_call_log_11="$(mktemp)"
+export MOCK_GH_OUTPUT="true"
+export MOCK_GH_CALL_LOG="$_call_log_11"
+restore_regression_label_if_missing "42" "feature/42-my-feature" 2>/dev/null
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
+run_test "restore_label_already_present_no_gh_edit" "0" "$_edit_calls"
+rm -f "$_call_log_11"
+unset MOCK_GH_CALL_LOG
+
+# Test 11.3: non-implementation branch (spec/) → NO gh pr edit regardless of
+# label state or summary-comment presence.
+_call_log_11="$(mktemp)"
+export MOCK_GH_OUTPUT="false"
+export MOCK_GH_COMMENTS_OUTPUT="$_SUMMARY_COMMENT_JSON"
+export MOCK_GH_CALL_LOG="$_call_log_11"
+restore_regression_label_if_missing "42" "spec/42-my-spec" 2>/dev/null
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
+run_test "restore_label_non_impl_branch_no_gh_edit" "0" "$_edit_calls"
+rm -f "$_call_log_11"
+unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT
+
+# Test 11.4: gh pr view failure (API error) → function returns 0 (fail-open),
+# gh pr edit is NOT called (no false re-apply on unknown label state).
+# Note: MOCK_GH_EXIT=1 affects the label-check `gh pr view` call; the function
+# returns early before reaching the summary-comment gate.
+_call_log_11="$(mktemp)"
+export MOCK_GH_EXIT=1
+export MOCK_GH_CALL_LOG="$_call_log_11"
+_restore_exit=0
+restore_regression_label_if_missing "42" "fix/42-api-fail" 2>/dev/null || _restore_exit=$?
+run_test "restore_label_gh_view_fail_returns_0" "0" "$_restore_exit"
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
+run_test "restore_label_gh_view_fail_no_gh_edit" "0" "$_edit_calls"
+rm -f "$_call_log_11"
+unset MOCK_GH_CALL_LOG MOCK_GH_EXIT
+
+# Test 11.5: hotfix/* branch + label absent + summary comment PRESENT
+# → gh pr edit called (hotfix is an implementation branch; must be in scope).
+_call_log_11="$(mktemp)"
+export MOCK_GH_OUTPUT="false"
+export MOCK_GH_COMMENTS_OUTPUT="$_SUMMARY_COMMENT_JSON"
+export MOCK_GH_CALL_LOG="$_call_log_11"
+restore_regression_label_if_missing "99" "hotfix/99-critical" 2>/dev/null
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
+run_test "restore_label_hotfix_branch_calls_gh_edit" "1" "$_edit_calls"
+rm -f "$_call_log_11"
+unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT
+
+# Test 11.6: restore function is defined before the HARNESS_MODE return point
+# (source-level ordering check — ensures the function remains testable after
+# future refactors move it).
+_restore_fn_line="$(grep -n 'restore_regression_label_if_missing()' \
+  "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null \
+  | head -1 | cut -d: -f1)"
+_harness_return_line="$(grep -n '_HARNESS_MODE_EFFECTIVE.*return 0' \
+  "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null \
+  | head -1 | cut -d: -f1)"
+if [ -n "$_restore_fn_line" ] && [ -n "$_harness_return_line" ] \
+    && [ "$_restore_fn_line" -lt "$_harness_return_line" ]; then
+  _fn_ordering_ok="yes"
+else
+  _fn_ordering_ok="no"
+fi
+run_test "restore_fn_defined_before_harness_return" "yes" "$_fn_ordering_ok"
+unset _restore_fn_line _harness_return_line _fn_ordering_ok
+
+# Test 11.7: label absent + summary comment ABSENT → gh pr edit NOT called.
+# This is the normal initial state (loop has never run) or the window in which
+# a human intentional removal is unambiguous. The restore must be suppressed.
+_call_log_11="$(mktemp)"
+export MOCK_GH_OUTPUT="false"
+export MOCK_GH_COMMENTS_OUTPUT="[]"
+export MOCK_GH_CALL_LOG="$_call_log_11"
+restore_regression_label_if_missing "42" "fix/42-no-summary" 2>/dev/null
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
+run_test "restore_label_absent_summary_absent_no_gh_edit" "0" "$_edit_calls"
+rm -f "$_call_log_11"
+unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT
+
+# Test 11.8: label absent + comments API failure → fail-open: gh pr edit IS called
+# and a WARN is emitted. Rationale: the #805 regression (label silently dropped
+# after loop ran) is the higher-frequency real-world failure; when we cannot
+# determine whether the loop ran, restoring is the safer choice.
+_call_log_11="$(mktemp)"
+export MOCK_GH_OUTPUT="false"
+export MOCK_GH_COMMENTS_EXIT=1
+export MOCK_GH_CALL_LOG="$_call_log_11"
+_warn_output="$(restore_regression_label_if_missing "42" "fix/42-comments-fail" 2>&1)"
+_edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
+run_test "restore_label_comments_api_fail_failopen_calls_gh_edit" "1" "$_edit_calls"
+# Verify WARN is emitted (not silent).
+if printf '%s\n' "$_warn_output" | grep -q "WARN"; then
+  _warn_emitted="yes"
+else
+  _warn_emitted="no"
+fi
+run_test "restore_label_comments_api_fail_warn_emitted" "yes" "$_warn_emitted"
+rm -f "$_call_log_11"
+unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_EXIT _warn_output
+
+# Reset mock state.
+export MOCK_GH_OUTPUT='[]'
+unset MOCK_GH_EXIT MOCK_GH_COMMENTS_OUTPUT MOCK_GH_COMMENTS_EXIT
+unset _SUMMARY_COMMENT_JSON
+
+# ---------------------------------------------------------------------------
+# Area 12: reviewer-failed label sync (issue #804)
+#
+# reviewer_failed_label_required_for_result(), ensure_reviewer_failed_label_exists(),
+# and sync_reviewer_failed_label() are defined before the HARNESS_MODE return point
+# and are therefore callable directly from the test harness.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 12: reviewer-failed label sync (issue #804) ==="
+
+_reviewer_failed_required() {
+  if reviewer_failed_label_required_for_result "$1" "${2:-}"; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+}
+
+run_test "reviewer_failed_escalate_timeout" "yes" "$(_reviewer_failed_required escalate timeout)"
+run_test "reviewer_failed_escalate_empty_reason" "yes" "$(_reviewer_failed_required escalate '')"
+run_test "reviewer_failed_escalate_pending_timeout" "yes" "$(_reviewer_failed_required escalate pending_timeout)"
+run_test "reviewer_failed_skipped_unavailable" "yes" "$(_reviewer_failed_required skipped unavailable)"
+run_test "reviewer_failed_skipped_thread_check_failed" "yes" "$(_reviewer_failed_required skipped thread-check-failed)"
+run_test "reviewer_failed_skipped_not_configured" "no" "$(_reviewer_failed_required skipped not_configured)"
+run_test "reviewer_failed_clean_no" "no" "$(_reviewer_failed_required clean timeout)"
+run_test "reviewer_failed_needs_fixes_no" "no" "$(_reviewer_failed_required needs_fixes '')"
+run_test "reviewer_failed_needs_rerun_no" "no" "$(_reviewer_failed_required needs_rerun '')"
+
+_rf_accumulated=0
+if reviewer_failed_label_required_for_result clean ""; then
+  _rf_accumulated=1
+fi
+if reviewer_failed_label_required_for_result skipped unavailable; then
+  _rf_accumulated=1
+fi
+if reviewer_failed_label_required_for_result clean ""; then
+  _rf_accumulated=1
+fi
+run_test "reviewer_failed_accumulator_or" "1" "$_rf_accumulated"
+unset _rf_accumulated
+
+unset MOCK_GH_CALL_LOG MOCK_GH_EXIT MOCK_GH_LABEL_VIEW_EXIT MOCK_GH_LABEL_CREATE_EXIT MOCK_GH_PR_EDIT_EXIT
+
+_call_log_12="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log_12"
+export MOCK_GH_LABEL_VIEW_EXIT=1
+sync_reviewer_failed_label "42" "1" 2>/dev/null
+_create_calls="$(grep -c -- 'label create reviewer-failed' "$_call_log_12" 2>/dev/null)" || _create_calls="0"
+_add_calls="$(grep -c -- 'pr edit 42 --add-label reviewer-failed' "$_call_log_12" 2>/dev/null)" || _add_calls="0"
+run_test "reviewer_failed_required_creates_missing_label" "1" "$_create_calls"
+run_test "reviewer_failed_required_adds_label" "1" "$_add_calls"
+rm -f "$_call_log_12"
+unset MOCK_GH_CALL_LOG MOCK_GH_LABEL_VIEW_EXIT
+
+_call_log_12="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log_12"
+export MOCK_GH_LABEL_VIEW_EXIT=0
+sync_reviewer_failed_label "42" "1" 2>/dev/null
+_create_calls="$(grep -c -- 'label create reviewer-failed' "$_call_log_12" 2>/dev/null)" || _create_calls="0"
+_add_calls="$(grep -c -- 'pr edit 42 --add-label reviewer-failed' "$_call_log_12" 2>/dev/null)" || _add_calls="0"
+run_test "reviewer_failed_existing_label_no_create" "0" "$_create_calls"
+run_test "reviewer_failed_existing_label_adds_label" "1" "$_add_calls"
+rm -f "$_call_log_12"
+unset MOCK_GH_CALL_LOG MOCK_GH_LABEL_VIEW_EXIT
+
+_call_log_12="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log_12"
+export MOCK_GH_OUTPUT='reviewer-failed'
+sync_reviewer_failed_label "42" "0" 2>/dev/null
+_remove_calls="$(grep -c -- 'pr edit 42 --remove-label reviewer-failed' "$_call_log_12" 2>/dev/null)" || _remove_calls="0"
+run_test "reviewer_failed_not_required_removes_present_label" "1" "$_remove_calls"
+rm -f "$_call_log_12"
+unset MOCK_GH_CALL_LOG MOCK_GH_OUTPUT
+
+_call_log_12="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log_12"
+export MOCK_GH_OUTPUT='some-other-label'
+sync_reviewer_failed_label "42" "0" 2>/dev/null
+_remove_calls="$(grep -c -- 'pr edit 42 --remove-label reviewer-failed' "$_call_log_12" 2>/dev/null)" || _remove_calls="0"
+run_test "reviewer_failed_not_required_absent_noop" "0" "$_remove_calls"
+rm -f "$_call_log_12"
+unset MOCK_GH_CALL_LOG MOCK_GH_OUTPUT
+
+_call_log_12="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log_12"
+export MOCK_GH_EXIT=1
+export MOCK_GH_PR_EDIT_EXIT=0
+sync_reviewer_failed_label "42" "0" 2>/dev/null
+_remove_calls="$(grep -c -- 'pr edit 42 --remove-label reviewer-failed' "$_call_log_12" 2>/dev/null)" || _remove_calls="0"
+run_test "reviewer_failed_not_required_view_failure_attempts_remove" "1" "$_remove_calls"
+rm -f "$_call_log_12"
+unset MOCK_GH_CALL_LOG MOCK_GH_EXIT MOCK_GH_PR_EDIT_EXIT
+
+_call_log_12="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log_12"
+export MOCK_GH_LABEL_VIEW_EXIT=1
+export MOCK_GH_LABEL_CREATE_EXIT=1
+_sync_exit=0
+_warn_output="$(sync_reviewer_failed_label "42" "1" 2>&1)" || _sync_exit=$?
+_add_calls="$(grep -c -- 'pr edit 42 --add-label reviewer-failed' "$_call_log_12" 2>/dev/null)" || _add_calls="0"
+run_test "reviewer_failed_create_failure_returns_0" "0" "$_sync_exit"
+run_test "reviewer_failed_create_failure_still_attempts_add" "1" "$_add_calls"
+if printf '%s\n' "$_warn_output" | grep -q "WARN"; then
+  _warn_emitted="yes"
+else
+  _warn_emitted="no"
+fi
+run_test "reviewer_failed_create_failure_warns" "yes" "$_warn_emitted"
+rm -f "$_call_log_12"
+unset MOCK_GH_CALL_LOG MOCK_GH_LABEL_VIEW_EXIT MOCK_GH_LABEL_CREATE_EXIT _warn_output _sync_exit
+
+_call_log_12="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log_12"
+sync_reviewer_failed_label "42" "1" 2>/dev/null
+_ready_label_mentions="$(grep -c -- 'ready-for-human-review' "$_call_log_12" 2>/dev/null)" || _ready_label_mentions="0"
+run_test "reviewer_failed_does_not_touch_ready_label" "0" "$_ready_label_mentions"
+rm -f "$_call_log_12"
+unset MOCK_GH_CALL_LOG
+
+_reviewer_failed_fn_line="$(grep -n 'reviewer_failed_label_required_for_result()' \
+  "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null \
+  | head -1 | cut -d: -f1)"
+_sync_fn_line="$(grep -n 'sync_reviewer_failed_label()' \
+  "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null \
+  | head -1 | cut -d: -f1)"
+_harness_return_line="$(grep -n '_HARNESS_MODE_EFFECTIVE.*return 0' \
+  "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null \
+  | head -1 | cut -d: -f1)"
+if [ -n "$_reviewer_failed_fn_line" ] && [ -n "$_sync_fn_line" ] \
+    && [ -n "$_harness_return_line" ] \
+    && [ "$_reviewer_failed_fn_line" -lt "$_harness_return_line" ] \
+    && [ "$_sync_fn_line" -lt "$_harness_return_line" ]; then
+  _reviewer_failed_ordering_ok="yes"
+else
+  _reviewer_failed_ordering_ok="no"
+fi
+run_test "reviewer_failed_helpers_before_harness_return" "yes" "$_reviewer_failed_ordering_ok"
+unset _reviewer_failed_required _reviewer_failed_fn_line _sync_fn_line _harness_return_line _reviewer_failed_ordering_ok
+unset MOCK_GH_EXIT MOCK_GH_LABEL_VIEW_EXIT MOCK_GH_LABEL_CREATE_EXIT MOCK_GH_PR_EDIT_EXIT
+
+# ---------------------------------------------------------------------------
+# Area 13: PR #801 follow-up coverage for reviewer-loop failure paths
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 13: PR #801 reviewer-loop failure paths ==="
+
+_unlock_pr="80213$$"
+_unlock_lock_dir="/tmp/pr-review-loop-${_unlock_pr}.lockdir"
+rm -rf "$_unlock_lock_dir"
+mkdir -p "$_unlock_lock_dir/pid"
+printf '%s\n' "pr-review-loop.sh" > "$_unlock_lock_dir/cmd"
+_unlock_exit=0
+_unlock_output="$("$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" unlock "$_unlock_pr" 2>&1)" || _unlock_exit=$?
+run_test "unlock_unreadable_pid_exits_1" "1" "$_unlock_exit"
+if printf '%s\n' "$_unlock_output" | grep -q "could not read lock PID"; then
+  _unlock_error_seen="yes"
+else
+  _unlock_error_seen="no"
+fi
+run_test "unlock_unreadable_pid_error" "yes" "$_unlock_error_seen"
+rm -rf "$_unlock_lock_dir"
+unset _unlock_output _unlock_exit _unlock_error_seen
+
+_unlock_pr="80313$$"
+_unlock_lock_dir="/tmp/pr-review-loop-${_unlock_pr}.lockdir"
+rm -rf "$_unlock_lock_dir"
+mkdir -p "$_unlock_lock_dir/cmd"
+printf '%s\n' "999999" > "$_unlock_lock_dir/pid"
+_unlock_exit=0
+_unlock_output="$("$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" unlock "$_unlock_pr" 2>&1)" || _unlock_exit=$?
+run_test "unlock_unreadable_cmd_exits_1" "1" "$_unlock_exit"
+if printf '%s\n' "$_unlock_output" | grep -q "could not read lock cmd"; then
+  _unlock_error_seen="yes"
+else
+  _unlock_error_seen="no"
+fi
+run_test "unlock_unreadable_cmd_error" "yes" "$_unlock_error_seen"
+rm -rf "$_unlock_lock_dir"
+unset _unlock_pr _unlock_lock_dir _unlock_output _unlock_exit _unlock_error_seen
+
+_codex_overrides='
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  require_gh() { :; }
+  check_unresolved_threads() { return 3; }
+'
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_codex_overrides"
+  _ec=0
+  run_codex_github_review "42" "fix/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "codex_thread_check_failure_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "codex_thread_check_failure_reason" "REASON=thread-check-failed" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "codex_thread_check_failure_exit_code" "2" "$actual_exit"
+unset _codex_overrides actual_output actual_exit
+
+_post_summary_source="$(awk '/^_post_review_summary\(\)/,/^}$/' \
+  "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
+eval "$_post_summary_source"
+# shellcheck disable=SC2329 # Invoked indirectly by the eval-loaded function.
+repo_slug() { printf "owner/repo\n"; }
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+compare_mode=0
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+compare_verdicts=()
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+platform_policy_status_notes=()
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+pr_number=42
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+branch_name="fix/42-summary"
+MOCK_GH_COMMENTS_OUTPUT='[]'
+export MOCK_GH_COMMENTS_OUTPUT
+
+_summary_call_log="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_summary_call_log"
+MOCK_GH_EXIT=0
+export MOCK_GH_EXIT
+_post_review_summary "escalate" "thread-check-failed" "codex-github" "0" "0"
+_body_file="$(awk '/pr comment 42 --body-file / {print $NF}' "$_summary_call_log" | tail -n 1)"
+if [ -n "$_body_file" ]; then
+  _body_file_used="yes"
+else
+  _body_file_used="no"
+fi
+run_test "post_summary_uses_body_file" "yes" "$_body_file_used"
+if [ -n "$_body_file" ] && [ ! -e "$_body_file" ]; then
+  _body_file_removed="yes"
+else
+  _body_file_removed="no"
+fi
+run_test "post_summary_removes_body_file_on_success" "yes" "$_body_file_removed"
+rm -f "$_summary_call_log"
+
+_summary_call_log="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_summary_call_log"
+MOCK_GH_EXIT=1
+export MOCK_GH_EXIT
+_post_review_summary "escalate" "thread-check-failed" "codex-github" "0" "0" 2>/dev/null
+_body_file="$(awk '/pr comment 42 --body-file / {print $NF}' "$_summary_call_log" | tail -n 1)"
+if [ -n "$_body_file" ] && [ ! -e "$_body_file" ]; then
+  _body_file_removed="yes"
+else
+  _body_file_removed="no"
+fi
+run_test "post_summary_removes_body_file_on_failure" "yes" "$_body_file_removed"
+rm -f "$_summary_call_log"
+unset MOCK_GH_CALL_LOG MOCK_GH_EXIT MOCK_GH_COMMENTS_OUTPUT
+unset _post_summary_source _summary_call_log _body_file _body_file_used _body_file_removed
+unset -f _post_review_summary repo_slug
 
 # ---------------------------------------------------------------------------
 # Summary

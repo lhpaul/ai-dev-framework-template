@@ -468,6 +468,17 @@ Use the **PR feedback ledger** (keyed by `(platform, path, body_snippet)`) to de
 
 3. **Maximum cycle count**: As specified in `91-orchestrate-work-protocol.md`, escalate when `cycle >= max_cycles` (default: 10). This is a hard limit independent of finding counts.
 
+4. **PR-Agent low-confidence Security Concern loop**: If PR-Agent applies
+   `Security Concern` in two or more consecutive cycles while another configured
+   reviewer is clean, inspect the PR-Agent finding text before dispatching another
+   fix pass. When the finding text itself describes the concern as theoretical,
+   unlikely, technically correct, low risk, or not a vulnerability, treat the loop
+   as stuck and escalate with that evidence instead of making non-substantive code
+   changes. PR-Agent is configured to reserve `Security Concern` for
+   high-confidence actionable defects and to use `Possible Issue` for these
+   low-confidence cases; repeated low-confidence security labels indicate reviewer
+   calibration drift, not necessarily a code defect.
+
 #### Escalation trigger
 
 Stop the loop and escalate to human when any of the above conditions are met. In the final summary comment (see "PR feedback tracking and comments" below), include:
@@ -672,6 +683,51 @@ fabricated summary:
 
 This fallback is always safe to post. It does not make a false claim and does not block
 the PR from proceeding; human reviewers can read the platform comments directly.
+
+#### Classifier-safe label-only fallback for PR-Agent comments
+
+If the runner's safety classifier or tool policy blocks the agent from reading a full
+PR-Agent review body, **do not hand off to a human immediately**. Reading reviewer
+comments is a normal Protocol 93 operation, and PR-Agent's structured HTML can trip
+classifiers even when the underlying operation is routine. Use the label-only path below
+before escalating:
+
+1. Re-run the PR-Agent platform through the repository helper and consume only its
+   key-value output:
+
+   ```bash
+   set -euo pipefail
+
+   ./scripts/development-workflow/pr-review-loop.sh <pr_number> \
+     --branch <branch_name> \
+     --platform pr-agent \
+     --max-wait 600
+   ```
+
+   Treat `RESULT`, `BLOCKING_COUNT`, `SUGGESTION_COUNT`, and any
+   `ADVISORY_LABELS`/`POSSIBLE_ISSUE_EVAL_OUTCOME` lines as the authoritative
+   classification for this pass. Do not attempt to quote or paraphrase the PR-Agent
+   body if the classifier blocked body access.
+
+2. If a traceable URL is needed, fetch metadata without printing the review body:
+
+   ```bash
+   gh api repos/{owner}/{repo}/issues/{pr_number}/comments \
+     --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | contains("PR Reviewer Guide"))) | {id, html_url, created_at, updated_at}] | last'
+   ```
+
+3. Continue the reviewer loop from the helper result:
+   - `RESULT=clean` → proceed normally; mention only that PR-Agent was clean or
+     advisory-only per the helper output.
+   - `RESULT=needs_fixes` → dispatch the fixer using the label/category surfaced by
+     the helper output; avoid reading the blocked body unless a human explicitly
+     provides the excerpt.
+   - `RESULT=escalate` / `RESULT=skipped` with repeated fetch failures → escalate
+     with the helper output and metadata URL.
+
+Only escalate for human handoff after the label-only path also fails or returns an
+unfixable/blocking state. A classifier block on the raw PR-Agent body alone is not a
+terminal condition.
 
 **Escalation on repeated transcript unavailability.**
 

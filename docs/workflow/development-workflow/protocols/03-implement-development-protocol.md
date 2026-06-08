@@ -384,6 +384,31 @@ This checklist does not require a full script audit — only the specific claims
 
 ---
 
+## Pre-Submission Self-Review Pass
+
+Complete this pass after implementation, verification, CHANGELOG work, commit, and push, but before board membership checks or `gh pr create`. If the pass finds a gap, fix it, commit the fix, push it, and re-run the affected check before opening the draft PR.
+
+Use `git diff <base-branch>...HEAD` to review the exact PR diff. This is the required three-dot form. For a normal `develop`-target implementation branch, this means `git diff develop...HEAD`. Resolve `<base-branch>` from the actual PR target:
+
+- `develop` by default for Full Pipeline, Refactor, and Fast Track Fix work.
+- `develop-<slug>` when the work item carries an `integration-branch:<slug>` label.
+- `main` for hotfixes.
+
+Complete all applicable checks:
+
+1. **Stale-marker check**: inspect the diff for newly introduced debug comments, `TODO`, `FIXME`, temporary-workaround notes, review-marker comments, or similar scaffolding that should not ship. Remove or rewrite stale markers before opening the PR.
+2. **Sibling/caller consistency check**: inspect changed files and changed call sites visible in the diff. Confirm renamed APIs, updated workflow rules, contract changes, status names, labels, and examples are consistent with their sibling references. This check is scoped to the changed files and call sites visible in `git diff <base-branch>...HEAD`; broad caller discovery outside the diff is not required unless another checklist already requires it.
+3. **Coverage check**:
+   - Full Pipeline: confirm every spec acceptance criterion is implemented or explicitly documented as an approved deviation.
+   - Refactor: confirm every implementation-plan acceptance criterion is addressed.
+   - Fast Track Fix and Hotfix: confirm the diff addresses the issue body's stated problem and proposed fix.
+
+If the implementation includes any test script, test function, or validation harness, the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) also applies. The pre-submission pass reviews the broader PR diff; it does not replace the harness-specific checklist from #614.
+
+Append a brief self-review log to the draft PR description. If all checks are clean, one line is enough, for example: `Pre-submission self-review: stale markers — none, caller consistency — verified, coverage — all acceptance criteria addressed.` If the pass found and fixed a gap, note the finding and the commit that addressed it.
+
+---
+
 ## Path 1: Full Pipeline
 
 ### Step 1: Non-Negotiable Prep
@@ -498,6 +523,18 @@ Before committing, verify:
 
 **Script-Accuracy Self-Check Checklist (if this PR is a documentation PR that describes script behavior)**: Complete the [Script-Accuracy Self-Check Checklist](#script-accuracy-self-check-checklist) before opening the PR. Verify each documented claim about input/output format, exit codes, option flags, and API calls against the actual script source.
 
+**Renamed-string downstream scan (if any literal string, identifier, context name, or signal value was renamed or changed in this PR)**: Before committing, run a full-repository grep for every old string that was renamed. This catches downstream references in fixture files, test files, documentation, shell scripts, and CI workflows that were not part of the primary edit.
+
+```bash
+# Replace "old_string" with each literal string you renamed.
+# Run once per renamed string — do not skip because you "only changed one file."
+grep -r "old_string" . --exclude-dir=".git" --exclude-dir="worktrees" \
+  --include="*.md" --include="*.mdc" --include="*.yaml" --include="*.yml" \
+  --include="*.sh" --include="*.ts" --include="*.js" --include="*.json"
+```
+
+Expected output: empty, or only files where the old string appears intentionally (e.g., a CHANGELOG entry describing the rename, a comment explaining the old value). For each file listed: open it, confirm whether the occurrence is intentional or a missed substitution, and fix every missed substitution before staging. Re-run until the output contains only intentional occurrences.
+
 **ShellCheck (if any `.sh` files were modified)**:
 
 ```bash
@@ -592,6 +629,8 @@ git push -u origin feature/[slug]
 Use Conventional Commits (see `docs/best-practices/2-version-control.md`).
 
 ### Step 8: Open PR (Draft)
+
+**Pre-Submission Self-Review Pass (mandatory — before opening the PR)**: Complete the [Pre-Submission Self-Review Pass](#pre-submission-self-review-pass) using `git diff develop...HEAD` for normal `develop`-target work, or `git diff develop-<slug>...HEAD` for integration-branch items. For Full Pipeline work, the coverage check must confirm every spec acceptance criterion is addressed. This pass complements, and does not replace, the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) when a test harness is involved. Add the self-review log to the PR description.
 
 **Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
 
@@ -824,6 +863,18 @@ git checkout -b refactor/[branch-slug]
 
    **Script-Accuracy Self-Check Checklist (if this PR is a documentation PR that describes script behavior)**: Complete the [Script-Accuracy Self-Check Checklist](#script-accuracy-self-check-checklist) before opening the PR. Verify each documented claim about input/output format, exit codes, option flags, and API calls against the actual script source.
 
+   **Renamed-string downstream scan (if any literal string, identifier, context name, or signal value was renamed or changed in this PR)**: Before committing, run a full-repository grep for every old string that was renamed. This catches downstream references in fixture files, test files, documentation, shell scripts, and CI workflows that were not part of the primary edit. The [Mass-rename sub-step](#refactor-steps) above covers the primary substitution; this check is the final catch-all before staging.
+
+   ```bash
+   # Replace "old_string" with each literal string you renamed.
+   # Run once per renamed string — do not skip because you "only changed one file."
+   grep -r "old_string" . --exclude-dir=".git" --exclude-dir="worktrees" \
+     --include="*.md" --include="*.mdc" --include="*.yaml" --include="*.yml" \
+     --include="*.sh" --include="*.ts" --include="*.js" --include="*.json"
+   ```
+
+   Expected output: empty, or only files where the old string appears intentionally (e.g., a CHANGELOG entry describing the rename, a comment explaining the old value). For each file listed: open it, confirm whether the occurrence is intentional or a missed substitution, and fix every missed substitution before staging. Re-run until the output contains only intentional occurrences.
+
    If any `.sh` files were modified, run ShellCheck before committing:
 
    ```bash
@@ -872,8 +923,9 @@ git checkout -b refactor/[branch-slug]
 
 7. Commit: `refactor([scope]): [description]`
 8. Push branch to remote
-9. **Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
-10. Open a **draft** PR targeting `develop` with refactor-appropriate metadata (do **not** reuse Path 1 Step 8 verbatim — that path uses `feat(...)` and a spec link):
+9. **Pre-Submission Self-Review Pass (mandatory — before opening the PR)**: Complete the [Pre-Submission Self-Review Pass](#pre-submission-self-review-pass) using `git diff develop...HEAD` for normal `develop`-target work, or `git diff develop-<slug>...HEAD` for integration-branch items. For Refactor work, the coverage check must confirm every implementation-plan acceptance criterion is addressed. This pass complements, and does not replace, the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) when a test harness is involved. Add the self-review log to the PR description.
+10. **Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
+11. Open a **draft** PR targeting `develop` with refactor-appropriate metadata (do **not** reuse Path 1 Step 8 verbatim — that path uses `feat(...)` and a spec link):
     - **Title**: `refactor([scope]): [short description]`
     - **Description**:
       - What was refactored and why
@@ -911,7 +963,7 @@ echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
 
 **Important**: Always use `--base develop` to explicitly target the `develop` branch. The pre-create guard and post-create assertion above are the enforcement mechanism — do not skip them.
 
-11. Hand off to the Work Item Runner with the same lifecycle expectations as Path 1 Step 9 (internal review gate, automated reviewer loop, CI, labels). **Label derivation rule**: `refactor/*` branches always require `ready-for-regression` based on branch prefix, not content type. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table. See `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
+12. Hand off to the Work Item Runner with the same lifecycle expectations as Path 1 Step 9 (internal review gate, automated reviewer loop, CI, labels). **Label derivation rule**: `refactor/*` branches always require `ready-for-regression` based on branch prefix, not content type. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table. See `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
 
 ---
 
@@ -1022,6 +1074,18 @@ Verify: build, lint, tests pass; run e2e suite if a spec exists for the affected
 
 **Script-Accuracy Self-Check Checklist (if this PR is a documentation PR that describes script behavior)**: Complete the [Script-Accuracy Self-Check Checklist](#script-accuracy-self-check-checklist) before opening the PR. Verify each documented claim about input/output format, exit codes, option flags, and API calls against the actual script source.
 
+**Renamed-string downstream scan (if any literal string, identifier, context name, or signal value was renamed or changed in this PR)**: Before committing, run a full-repository grep for every old string that was renamed. This catches downstream references in fixture files, test files, documentation, shell scripts, and CI workflows that were not part of the primary edit.
+
+```bash
+# Replace "old_string" with each literal string you renamed.
+# Run once per renamed string — do not skip because you "only changed one file."
+grep -r "old_string" . --exclude-dir=".git" --exclude-dir="worktrees" \
+  --include="*.md" --include="*.mdc" --include="*.yaml" --include="*.yml" \
+  --include="*.sh" --include="*.ts" --include="*.js" --include="*.json"
+```
+
+Expected output: empty, or only files where the old string appears intentionally (e.g., a CHANGELOG entry describing the rename, a comment explaining the old value). For each file listed: open it, confirm whether the occurrence is intentional or a missed substitution, and fix every missed substitution before staging. Re-run until the output contains only intentional occurrences.
+
 **ShellCheck (if any `.sh` files were modified)**:
 
 ```bash
@@ -1080,6 +1144,8 @@ git push -u origin fix/[branch-slug]
 ```
 
 ### Step 8: Open PR (Draft)
+
+**Pre-Submission Self-Review Pass (mandatory — before opening the PR)**: Complete the [Pre-Submission Self-Review Pass](#pre-submission-self-review-pass) using `git diff develop...HEAD` for normal `develop`-target work, or `git diff develop-<slug>...HEAD` for integration-branch items. For Fast Track Fix work, the coverage check must confirm the diff addresses the issue body's stated problem and proposed fix. This pass complements, and does not replace, the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) when a test harness is involved. Add the self-review log to the PR description.
 
 **Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
 
@@ -1248,6 +1314,18 @@ Verify: build, lint, tests pass.
 
 **Script-Accuracy Self-Check Checklist (if this PR is a documentation PR that describes script behavior)**: Complete the [Script-Accuracy Self-Check Checklist](#script-accuracy-self-check-checklist) before opening the PR. Verify each documented claim about input/output format, exit codes, option flags, and API calls against the actual script source.
 
+**Renamed-string downstream scan (if any literal string, identifier, context name, or signal value was renamed or changed in this PR)**: Before committing, run a full-repository grep for every old string that was renamed. This catches downstream references in fixture files, test files, documentation, shell scripts, and CI workflows that were not part of the primary edit.
+
+```bash
+# Replace "old_string" with each literal string you renamed.
+# Run once per renamed string — do not skip because you "only changed one file."
+grep -r "old_string" . --exclude-dir=".git" --exclude-dir="worktrees" \
+  --include="*.md" --include="*.mdc" --include="*.yaml" --include="*.yml" \
+  --include="*.sh" --include="*.ts" --include="*.js" --include="*.json"
+```
+
+Expected output: empty, or only files where the old string appears intentionally (e.g., a CHANGELOG entry describing the rename, a comment explaining the old value). For each file listed: open it, confirm whether the occurrence is intentional or a missed substitution, and fix every missed substitution before staging. Re-run until the output contains only intentional occurrences.
+
 **ShellCheck (if any `.sh` files were modified)**:
 
 ```bash
@@ -1327,6 +1405,8 @@ git push -u origin hotfix/[branch-slug]
 ```
 
 ### Step 8: Open PR (Draft)
+
+**Pre-Submission Self-Review Pass (mandatory — before opening the PR)**: Complete the [Pre-Submission Self-Review Pass](#pre-submission-self-review-pass) using `git diff main...HEAD`. For Hotfix work, the coverage check must confirm the diff addresses the incident issue body's stated problem and proposed fix. This pass complements, and does not replace, the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) when a test harness is involved. Add the self-review log to the PR description.
 
 **Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
 
@@ -1409,11 +1489,39 @@ fi
 echo "Post-create assertion passed: backport PR base is '$ACTUAL_BASE'"
 ```
 
-**Automated reviewer loop exemption for identical cherry-pick backports**: For identical cherry-pick backport PRs (no changes beyond what was reviewed on the main hotfix PR), running the full automated reviewer loop is optional. If the automated reviewers (PR-Agent, Codex) post a clean result or no result, proceeding directly to merge is acceptable. If any reviewer posts a blocking finding on the backport PR, it must be addressed before merge.
+**Backport PR readiness steps (mandatory — mirrors the main hotfix PR path)**:
 
-If the backport PR introduces any changes beyond a plain cherry-pick (e.g., conflict resolution changes, develop-only fixups), treat it as a normal implementation PR and run the full internal review gate, automated reviewer loop, and CI loop.
+**Haystack "Rules violation" false positive on backport PRs**: When Haystack is configured in `review.platforms`, it may flag a `Rules violation` finding on the backport PR related to CHANGELOG structure. This is a known false positive: the diff of the backport branch against `develop` shows an empty `[Unreleased]` section (from `main`'s CHANGELOG), which Haystack misidentifies as a structure violation. As of v0.29.2, `haystack-reviewer.sh` classifies `Rules violation` as advisory (non-blocking), so this finding will not block the reviewer loop. If you see it reported as a suggestion, verify that `develop`'s `[Unreleased]` section is also empty or equivalent, confirming the merged result will be structurally correct. See [`haystack-triage.md`](../integrations/haystack-triage.md) for details.
 
-Apply `ready-for-regression` and `ready-for-human-review` labels when the PR is clean. The backport PR can be merged by the human alongside or after the main hotfix review.
+Regardless of whether the backport is an identical cherry-pick or introduces conflict-resolution changes, the following steps are required before the human merges:
+
+1. **Run `gh pr ready <backport_pr_number>`** to convert the draft PR to non-draft.
+
+2. **Run the automated reviewer loop**:
+
+   ```bash
+   ./scripts/development-workflow/pr-review-loop.sh <backport_pr_number> --branch backport/hotfix/[slug]
+   ```
+
+   For identical cherry-pick backports (no changes beyond what was reviewed on the main hotfix PR), the reviewer loop is abbreviated: if all configured reviewers post a clean result or no result, the PR is considered clean. If any reviewer posts a blocking finding, it must be addressed before proceeding.
+
+   If the backport PR introduces any changes beyond a plain cherry-pick (e.g., conflict resolution changes, develop-only fixups), treat it as a normal implementation PR and run the full internal review gate (Step 7a), automated reviewer loop (Step 7), and CI loop (Step 8) per Protocol 91.
+
+3. **Apply `ready-for-regression`** after the reviewer loop is clean:
+
+   ```bash
+   gh pr edit <backport_pr_number> --add-label "ready-for-regression"
+   ```
+
+4. **Verify CI is green** using `pr-ci-loop.sh` or by checking the PR's status checks.
+
+5. **Apply `ready-for-human-review`** after CI is green and all reviewer loop threads are resolved:
+
+   ```bash
+   gh pr edit <backport_pr_number> --add-label "ready-for-human-review"
+   ```
+
+Both `ready-for-regression` and `ready-for-human-review` are required on the backport PR before the human merges it. The orchestrator's Step 5.1 verification (Protocol 91) checks for these labels on `backport/hotfix/*` branches and will flag missing labels as a protocol deviation. The backport PR can be merged by the human alongside or after the main hotfix review.
 
 **Branch lifecycle summary**:
 
