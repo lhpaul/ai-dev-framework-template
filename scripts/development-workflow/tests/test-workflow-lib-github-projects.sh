@@ -361,15 +361,23 @@ type_field_stderr=""
 type_field_stderr="$(workflow_github_project_type_field_json "PVT_project_1" 2>&1 >/dev/null)" || true
 unset MOCK_STATUS_FIELD_MODE
 case "$type_field_stderr" in
-  *"GraphQL project Type field lookup failed"* )
-    case "$type_field_stderr" in
-      *"GraphQL failure"*) type_field_stderr_result="$type_field_stderr" ;;
-      *) type_field_stderr_result="suppressed" ;;
-    esac
-    ;;
+  *"GraphQL project Type field lookup failed"*"  gh: GraphQL failure"*) type_field_stderr_result="captured" ;;
   *) type_field_stderr_result="$type_field_stderr" ;;
 esac
-run_test "type_field_graphql_failure_suppresses_raw_gh_stderr" "suppressed" "$type_field_stderr_result"
+run_test "type_field_graphql_failure_reports_captured_gh_stderr" "captured" "$type_field_stderr_result"
+
+reset_log
+__workflow_project_status_field_cache_project_id=""
+__workflow_project_status_field_cache_json=""
+export MOCK_STATUS_FIELD_MODE=graphql_fail
+status_field_stderr=""
+status_field_stderr="$(workflow_github_project_status_field_json "PVT_project_1" 2>&1 >/dev/null)" || true
+unset MOCK_STATUS_FIELD_MODE
+case "$status_field_stderr" in
+  *"GraphQL project Status field lookup failed"*"  gh: GraphQL failure"*) status_field_stderr_result="captured" ;;
+  *) status_field_stderr_result="$status_field_stderr" ;;
+esac
+run_test "status_field_graphql_failure_reports_captured_gh_stderr" "captured" "$status_field_stderr_result"
 
 reset_log
 __workflow_project_type_field_cache_project_id=""

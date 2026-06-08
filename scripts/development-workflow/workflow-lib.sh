@@ -638,6 +638,36 @@ __workflow_project_status_field_cache_project_id=""
 __workflow_project_status_field_cache_json=""
 __workflow_project_type_field_cache_project_id=""
 __workflow_project_type_field_cache_json=""
+__workflow_last_gh_stdout=""
+__workflow_last_gh_stderr=""
+
+workflow_run_gh_capture_stderr() {
+  local stderr_file
+  __workflow_last_gh_stdout=""
+  __workflow_last_gh_stderr=""
+
+  if ! stderr_file="$(mktemp "${TMPDIR:-/tmp}/workflow-gh-stderr.XXXXXX")"; then
+    if __workflow_last_gh_stdout="$(gh "$@")"; then
+      return 0
+    fi
+    return 1
+  fi
+
+  if __workflow_last_gh_stdout="$(gh "$@" 2>"$stderr_file")"; then
+    rm -f "$stderr_file"
+    return 0
+  fi
+
+  __workflow_last_gh_stderr="$(cat "$stderr_file" 2>/dev/null || true)"
+  rm -f "$stderr_file"
+  return 1
+}
+
+workflow_print_captured_gh_stderr() {
+  if [ -n "$__workflow_last_gh_stderr" ]; then
+    printf '%s\n' "$__workflow_last_gh_stderr" | sed 's/^/  gh: /' >&2
+  fi
+}
 
 workflow_github_project_id() {
   local project_owner="$1"
@@ -778,11 +808,13 @@ workflow_github_project_item_for_issue() {
       '
     )
 
-    if ! response=$(gh "${graphql_args[@]}" 2>/dev/null); then
+    if ! workflow_run_gh_capture_stderr "${graphql_args[@]}"; then
       echo "Warning: GraphQL project item lookup failed for issue #${issue_number}; tracker status not read." >&2
+      workflow_print_captured_gh_stderr
       printf ''
       return 0
     fi
+    response="$__workflow_last_gh_stdout"
 
     if ! page_state="$(printf '%s' "$response" | python3 -c "
 import json, sys
@@ -913,11 +945,13 @@ workflow_github_project_status_field_json() {
         '
       )
 
-      if ! response=$(gh "${graphql_args[@]}" 2>/dev/null); then
+      if ! workflow_run_gh_capture_stderr "${graphql_args[@]}"; then
         echo "Warning: GraphQL project Status field lookup failed for project '${project_id}'." >&2
+        workflow_print_captured_gh_stderr
         printf ''
         return 0
       fi
+      response="$__workflow_last_gh_stdout"
 
       if ! page_state="$(printf '%s' "$response" | python3 -c "
 import json, sys
@@ -1031,11 +1065,13 @@ workflow_github_project_type_field_json() {
         '
       )
 
-      if ! response=$(gh "${graphql_args[@]}" 2>/dev/null); then
+      if ! workflow_run_gh_capture_stderr "${graphql_args[@]}"; then
         echo "Warning: GraphQL project Type field lookup failed for project '${project_id}'." >&2
+        workflow_print_captured_gh_stderr
         printf ''
         return 1
       fi
+      response="$__workflow_last_gh_stdout"
 
       if ! page_state="$(printf '%s' "$response" | python3 -c "
 import json, sys
