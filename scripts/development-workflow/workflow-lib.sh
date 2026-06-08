@@ -672,7 +672,7 @@ workflow_print_captured_gh_stderr() {
 workflow_github_project_id() {
   local project_owner="$1"
   local project_number="$2"
-  local response project_id
+  local response project_id user_lookup_stderr org_lookup_stderr
 
   if [ -z "$project_owner" ] || [ -z "$project_number" ]; then
     printf ''
@@ -683,14 +683,19 @@ workflow_github_project_id() {
      [ "$__workflow_github_project_id_cache_number" != "$project_number" ] || \
      [ -z "$__workflow_github_project_id_cache_id" ]; then
     # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
-    response=$(gh api graphql \
+    if workflow_run_gh_capture_stderr api graphql \
       -f owner="$project_owner" \
       -F projectNumber="$project_number" \
       -f query='
         query($owner: String!, $projectNumber: Int!) {
           user(login: $owner) { projectV2(number: $projectNumber) { id } }
         }
-      ' 2>/dev/null || true)
+      '; then
+      response="$__workflow_last_gh_stdout"
+    else
+      user_lookup_stderr="$__workflow_last_gh_stderr"
+      response=""
+    fi
 
     project_id="$(printf '%s' "$response" | python3 -c "
 import json, sys
@@ -704,14 +709,19 @@ print(project.get('id') or '', end='')
 
     if [ -z "$project_id" ]; then
       # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
-      response=$(gh api graphql \
+      if workflow_run_gh_capture_stderr api graphql \
         -f owner="$project_owner" \
         -F projectNumber="$project_number" \
         -f query='
           query($owner: String!, $projectNumber: Int!) {
             organization(login: $owner) { projectV2(number: $projectNumber) { id } }
           }
-        ' 2>/dev/null || true)
+        '; then
+        response="$__workflow_last_gh_stdout"
+      else
+        org_lookup_stderr="$__workflow_last_gh_stderr"
+        response=""
+      fi
 
       project_id="$(printf '%s' "$response" | python3 -c "
 import json, sys
@@ -722,6 +732,16 @@ except Exception:
 project = ((data.get('data') or {}).get('organization') or {}).get('projectV2') or {}
 print(project.get('id') or '', end='')
 " 2>/dev/null || true)"
+    fi
+
+    if [ -z "$project_id" ] && { [ -n "${user_lookup_stderr:-}" ] || [ -n "${org_lookup_stderr:-}" ]; }; then
+      echo "Warning: GraphQL project ID lookup failed for project owner '${project_owner}' and project #${project_number}." >&2
+      if [ -n "${user_lookup_stderr:-}" ]; then
+        printf '%s\n' "$user_lookup_stderr" | sed 's/^/  gh user: /' >&2
+      fi
+      if [ -n "${org_lookup_stderr:-}" ]; then
+        printf '%s\n' "$org_lookup_stderr" | sed 's/^/  gh org: /' >&2
+      fi
     fi
 
     __workflow_github_project_id_cache_owner="$project_owner"
@@ -1368,7 +1388,7 @@ print(item.get('status') or '', end='')
 
   echo "Updating tracker status for issue #${issue_number} to '${status_label}'..."
   # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
-  if ! gh api graphql \
+  if workflow_run_gh_capture_stderr api graphql \
     -f projectId="$project_id" \
     -f itemId="$item_id" \
     -f fieldId="$field_id" \
@@ -1384,8 +1404,11 @@ print(item.get('status') or '', end='')
           projectV2Item { id }
         }
       }
-    ' 2>/dev/null; then
+    '; then
+    printf '%s' "$__workflow_last_gh_stdout"
+  else
     echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker status not updated."
+    workflow_print_captured_gh_stderr
   fi
 }
 
@@ -1464,7 +1487,7 @@ print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
 
   echo "Updating tracker Type for issue #${issue_number} to '${type_label}'..."
   # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
-  if ! gh api graphql \
+  if workflow_run_gh_capture_stderr api graphql \
     -f projectId="$project_id" \
     -f itemId="$item_id" \
     -f fieldId="$field_id" \
@@ -1480,8 +1503,11 @@ print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
           projectV2Item { id }
         }
       }
-    ' 2>/dev/null; then
+    '; then
+    printf '%s' "$__workflow_last_gh_stdout"
+  else
     echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker Type not updated."
+    workflow_print_captured_gh_stderr
   fi
 }
 
