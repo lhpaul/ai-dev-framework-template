@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.1] - 2026-06-08
+
+### Fixed
+
+- **Template sync hotfixes** (#858, #859) (hotfix): hardens GitHub Projects helper diagnostics and fallback remote parsing, and syncs lint helpers referenced by workflow protocols.
+
 ## [0.30.0] - 2026-06-07
 
 ### Added
@@ -877,7 +883,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.30.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.30.1...HEAD
+[0.30.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.30.0...v0.30.1
 [0.30.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.29.1...v0.30.0
 [0.29.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.29.0...v0.29.1
 [0.29.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.28.4...v0.29.0

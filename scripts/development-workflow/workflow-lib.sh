@@ -390,23 +390,24 @@ workflow_resolve_github_repo_owner() {
     remote_url=""
   fi
   if [ -n "$remote_url" ]; then
+    local remote_path
+    remote_path=""
     case "$remote_url" in
-      https://*github.com/*)
-        owner="${remote_url#https://}"
-        owner="${owner#*@}"
-        owner="${owner#github.com/}"
-        owner="${owner%%/*}"
+      https://github.com/*)
+        remote_path="${remote_url#https://github.com/}"
+        ;;
+      https://*@github.com/*)
+        remote_path="${remote_url#https://*@github.com/}"
         ;;
       git@github.com:*)
-        owner="${remote_url#git@github.com:}"
-        owner="${owner%%/*}"
+        remote_path="${remote_url#git@github.com:}"
         ;;
       ssh://git@github.com/*)
-        owner="${remote_url#ssh://git@github.com/}"
-        owner="${owner%%/*}"
+        remote_path="${remote_url#ssh://git@github.com/}"
         ;;
     esac
-    if [ -n "$owner" ]; then
+    owner="${remote_path%%/*}"
+    if workflow_is_valid_github_owner "$owner" && workflow_remote_path_has_single_repo "$remote_path"; then
       printf '%s' "$owner"
       return 0
     fi
@@ -432,9 +433,25 @@ workflow_resolve_github_repo_name() {
     remote_url=""
   fi
   if [ -n "$remote_url" ]; then
-    repo_name="${remote_url##*/}"
-    repo_name="${repo_name%.git}"
-    if [ -n "$repo_name" ]; then
+    local remote_path path_remainder
+    remote_path=""
+    case "$remote_url" in
+      https://github.com/*)
+        remote_path="${remote_url#https://github.com/}"
+        ;;
+      https://*@github.com/*)
+        remote_path="${remote_url#https://*@github.com/}"
+        ;;
+      git@github.com:*)
+        remote_path="${remote_url#git@github.com:}"
+        ;;
+      ssh://git@github.com/*)
+        remote_path="${remote_url#ssh://git@github.com/}"
+        ;;
+    esac
+    path_remainder="${remote_path#*/}"
+    repo_name="${path_remainder%.git}"
+    if workflow_remote_path_has_single_repo "$remote_path" && workflow_is_valid_github_repo_name "$repo_name"; then
       printf '%s' "$repo_name"
       return 0
     fi
@@ -442,6 +459,53 @@ workflow_resolve_github_repo_name() {
 
   echo "Warning: could not resolve GitHub repository name from 'gh repo view' or git remote URL." >&2
   printf ''
+  return 0
+}
+
+workflow_remote_path_has_single_repo() {
+  local remote_path="$1"
+  local path_remainder
+
+  case "$remote_path" in
+    ''|*'?'*|*'#'*)
+      return 1
+      ;;
+  esac
+  case "$remote_path" in
+    */*)
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  path_remainder="${remote_path#*/}"
+  case "$path_remainder" in
+    ''|*/*)
+      return 1
+      ;;
+  esac
+
+  return 0
+}
+
+workflow_is_valid_github_owner() {
+  local owner="$1"
+  case "$owner" in
+    ''|-*|*-|*[!A-Za-z0-9-]*)
+      return 1
+      ;;
+  esac
+  return 0
+}
+
+workflow_is_valid_github_repo_name() {
+  local repo_name="$1"
+  case "$repo_name" in
+    ''|'.'|'..'|*[!A-Za-z0-9._-]*)
+      return 1
+      ;;
+  esac
   return 0
 }
 
@@ -574,11 +638,47 @@ __workflow_project_status_field_cache_project_id=""
 __workflow_project_status_field_cache_json=""
 __workflow_project_type_field_cache_project_id=""
 __workflow_project_type_field_cache_json=""
+__workflow_last_gh_stdout=""
+__workflow_last_gh_stderr=""
+
+workflow_run_gh_capture_stderr() {
+  local stderr_file
+  __workflow_last_gh_stdout=""
+  __workflow_last_gh_stderr=""
+
+  if ! stderr_file="$(mktemp "${TMPDIR:-/tmp}/workflow-gh-stderr.XXXXXX")"; then
+    if __workflow_last_gh_stdout="$(gh "$@")"; then
+      return 0
+    fi
+    return 1
+  fi
+
+  if __workflow_last_gh_stdout="$(gh "$@" 2>"$stderr_file")"; then
+    rm -f "$stderr_file"
+    return 0
+  fi
+
+  if [ -f "$stderr_file" ]; then
+    if ! __workflow_last_gh_stderr="$(cat "$stderr_file")"; then
+      __workflow_last_gh_stderr="could not read captured gh stderr file '${stderr_file}'"
+    fi
+  else
+    __workflow_last_gh_stderr="captured gh stderr file '${stderr_file}' is missing"
+  fi
+  rm -f "$stderr_file"
+  return 1
+}
+
+workflow_print_captured_gh_stderr() {
+  if [ -n "$__workflow_last_gh_stderr" ]; then
+    printf '%s\n' "$__workflow_last_gh_stderr" | sed 's/^/  gh: /' >&2
+  fi
+}
 
 workflow_github_project_id() {
   local project_owner="$1"
   local project_number="$2"
-  local response project_id
+  local response project_id user_lookup_stderr org_lookup_stderr
 
   if [ -z "$project_owner" ] || [ -z "$project_number" ]; then
     printf ''
@@ -589,14 +689,19 @@ workflow_github_project_id() {
      [ "$__workflow_github_project_id_cache_number" != "$project_number" ] || \
      [ -z "$__workflow_github_project_id_cache_id" ]; then
     # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
-    response=$(gh api graphql \
+    if workflow_run_gh_capture_stderr api graphql \
       -f owner="$project_owner" \
       -F projectNumber="$project_number" \
       -f query='
         query($owner: String!, $projectNumber: Int!) {
           user(login: $owner) { projectV2(number: $projectNumber) { id } }
         }
-      ' 2>/dev/null || true)
+      '; then
+      response="$__workflow_last_gh_stdout"
+    else
+      user_lookup_stderr="$__workflow_last_gh_stderr"
+      response=""
+    fi
 
     project_id="$(printf '%s' "$response" | python3 -c "
 import json, sys
@@ -610,14 +715,19 @@ print(project.get('id') or '', end='')
 
     if [ -z "$project_id" ]; then
       # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
-      response=$(gh api graphql \
+      if workflow_run_gh_capture_stderr api graphql \
         -f owner="$project_owner" \
         -F projectNumber="$project_number" \
         -f query='
           query($owner: String!, $projectNumber: Int!) {
             organization(login: $owner) { projectV2(number: $projectNumber) { id } }
           }
-        ' 2>/dev/null || true)
+        '; then
+        response="$__workflow_last_gh_stdout"
+      else
+        org_lookup_stderr="$__workflow_last_gh_stderr"
+        response=""
+      fi
 
       project_id="$(printf '%s' "$response" | python3 -c "
 import json, sys
@@ -628,6 +738,16 @@ except Exception:
 project = ((data.get('data') or {}).get('organization') or {}).get('projectV2') or {}
 print(project.get('id') or '', end='')
 " 2>/dev/null || true)"
+    fi
+
+    if [ -z "$project_id" ] && { [ -n "${user_lookup_stderr:-}" ] || [ -n "${org_lookup_stderr:-}" ]; }; then
+      echo "Warning: GraphQL project ID lookup failed for project owner '${project_owner}' and project #${project_number}." >&2
+      if [ -n "${user_lookup_stderr:-}" ]; then
+        printf '%s\n' "$user_lookup_stderr" | sed 's/^/  gh user: /' >&2
+      fi
+      if [ -n "${org_lookup_stderr:-}" ]; then
+        printf '%s\n' "$org_lookup_stderr" | sed 's/^/  gh org: /' >&2
+      fi
     fi
 
     __workflow_github_project_id_cache_owner="$project_owner"
@@ -650,7 +770,7 @@ workflow_github_project_item_for_issue() {
   local issue_number="$1"
   local project_number="$2"
   local project_owner project_id repo_owner repo_name response
-  local cursor page_state item_json has_next end_cursor page_count line
+  local cursor page_state item_json has_next end_cursor page_count line missing_fields
   local -a graphql_args
 
   case "$issue_number" in
@@ -714,11 +834,13 @@ workflow_github_project_item_for_issue() {
       '
     )
 
-    if ! response=$(gh "${graphql_args[@]}" 2>/dev/null); then
+    if ! workflow_run_gh_capture_stderr "${graphql_args[@]}"; then
       echo "Warning: GraphQL project item lookup failed for issue #${issue_number}; tracker status not read." >&2
+      workflow_print_captured_gh_stderr
       printf ''
       return 0
     fi
+    response="$__workflow_last_gh_stdout"
 
     if ! page_state="$(printf '%s' "$response" | python3 -c "
 import json, sys
@@ -730,11 +852,18 @@ except Exception:
 issue = (((data.get('data') or {}).get('repository') or {}).get('issue') or {})
 project_items = issue.get('projectItems') or {}
 match = ''
+missing_fields = ''
 for item in project_items.get('nodes') or []:
     project = item.get('project') or {}
     if project.get('id') == project_id:
         status_value = item.get('status') or item.get('fieldValueByName') or {}
         type_value = item.get('type') or {}
+        missing = []
+        if not status_value.get('name'):
+            missing.append('Status')
+        if not type_value.get('name'):
+            missing.append('Type')
+        missing_fields = ','.join(missing)
         match = json.dumps({
             'item_id': item.get('id') or '',
             'project_id': project.get('id') or '',
@@ -746,6 +875,7 @@ page_info = project_items.get('pageInfo') or {}
 has_next = 'true' if page_info.get('hasNextPage') else 'false'
 end_cursor = page_info.get('endCursor') or ''
 print('ITEM=' + match)
+print('MISSING_FIELDS=' + missing_fields)
 print('HAS_NEXT=' + has_next)
 print('END_CURSOR=' + end_cursor)
 " "$project_id" 2>/dev/null)"; then
@@ -757,9 +887,11 @@ print('END_CURSOR=' + end_cursor)
     item_json=""
     has_next="false"
     end_cursor=""
+    missing_fields=""
     while IFS= read -r line; do
       case "$line" in
         ITEM=*) item_json="${line#ITEM=}" ;;
+        MISSING_FIELDS=*) missing_fields="${line#MISSING_FIELDS=}" ;;
         HAS_NEXT=*) has_next="${line#HAS_NEXT=}" ;;
         END_CURSOR=*) end_cursor="${line#END_CURSOR=}" ;;
       esac
@@ -767,6 +899,16 @@ print('END_CURSOR=' + end_cursor)
 $page_state
 EOF
     if [ -n "$item_json" ]; then
+      case ",$missing_fields," in
+        *",Status,"*)
+          echo "Warning: project item for issue #${issue_number} has no Status value. The workflow expects a single-select field named exactly 'Status'." >&2
+          ;;
+      esac
+      case ",$missing_fields," in
+        *",Type,"*)
+          echo "Warning: project item for issue #${issue_number} has no Type value. The workflow expects a single-select field named exactly 'Type'." >&2
+          ;;
+      esac
       printf '%s' "$item_json"
       return 0
     fi
@@ -829,11 +971,13 @@ workflow_github_project_status_field_json() {
         '
       )
 
-      if ! response=$(gh "${graphql_args[@]}" 2>/dev/null); then
+      if ! workflow_run_gh_capture_stderr "${graphql_args[@]}"; then
         echo "Warning: GraphQL project Status field lookup failed for project '${project_id}'." >&2
+        workflow_print_captured_gh_stderr
         printf ''
         return 0
       fi
+      response="$__workflow_last_gh_stdout"
 
       if ! page_state="$(printf '%s' "$response" | python3 -c "
 import json, sys
@@ -947,11 +1091,13 @@ workflow_github_project_type_field_json() {
         '
       )
 
-      if ! response=$(gh "${graphql_args[@]}"); then
+      if ! workflow_run_gh_capture_stderr "${graphql_args[@]}"; then
         echo "Warning: GraphQL project Type field lookup failed for project '${project_id}'." >&2
+        workflow_print_captured_gh_stderr
         printf ''
         return 1
       fi
+      response="$__workflow_last_gh_stdout"
 
       if ! page_state="$(printf '%s' "$response" | python3 -c "
 import json, sys
@@ -975,7 +1121,7 @@ end_cursor = page_info.get('endCursor') or ''
 print('FIELD_JSON=' + field_json)
 print('HAS_NEXT=' + has_next)
 print('END_CURSOR=' + end_cursor)
-")"; then
+" 2>/dev/null)"; then
         echo "Warning: could not parse GraphQL project Type field response for project '${project_id}'." >&2
         printf ''
         return 1
@@ -1248,7 +1394,7 @@ print(item.get('status') or '', end='')
 
   echo "Updating tracker status for issue #${issue_number} to '${status_label}'..."
   # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
-  if ! gh api graphql \
+  if workflow_run_gh_capture_stderr api graphql \
     -f projectId="$project_id" \
     -f itemId="$item_id" \
     -f fieldId="$field_id" \
@@ -1264,8 +1410,11 @@ print(item.get('status') or '', end='')
           projectV2Item { id }
         }
       }
-    ' 2>/dev/null; then
+    '; then
+    printf '%s' "$__workflow_last_gh_stdout"
+  else
     echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker status not updated."
+    workflow_print_captured_gh_stderr
   fi
 }
 
@@ -1344,7 +1493,7 @@ print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
 
   echo "Updating tracker Type for issue #${issue_number} to '${type_label}'..."
   # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
-  if ! gh api graphql \
+  if workflow_run_gh_capture_stderr api graphql \
     -f projectId="$project_id" \
     -f itemId="$item_id" \
     -f fieldId="$field_id" \
@@ -1360,8 +1509,11 @@ print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
           projectV2Item { id }
         }
       }
-    ' 2>/dev/null; then
+    '; then
+    printf '%s' "$__workflow_last_gh_stdout"
+  else
     echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker Type not updated."
+    workflow_print_captured_gh_stderr
   fi
 }
 
