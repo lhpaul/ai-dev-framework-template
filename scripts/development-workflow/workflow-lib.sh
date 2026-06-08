@@ -658,7 +658,13 @@ workflow_run_gh_capture_stderr() {
     return 0
   fi
 
-  __workflow_last_gh_stderr="$(cat "$stderr_file" 2>/dev/null || true)"
+  if [ -f "$stderr_file" ]; then
+    if ! __workflow_last_gh_stderr="$(cat "$stderr_file")"; then
+      __workflow_last_gh_stderr="could not read captured gh stderr file '${stderr_file}'"
+    fi
+  else
+    __workflow_last_gh_stderr="captured gh stderr file '${stderr_file}' is missing"
+  fi
   rm -f "$stderr_file"
   return 1
 }
