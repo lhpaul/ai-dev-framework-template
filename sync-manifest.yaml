@@ -63,6 +63,9 @@ categories:
     - path: scripts/development-workflow/
       glob: "**/*"
       note: workflow helper scripts (state inspection, PR/CI loops, etc.)
+    - path: scripts/lint/
+      glob: "**/*"
+      note: lint helpers referenced by workflow protocols and best-practice docs
     - path: scripts/README.md
       note: purpose and usage of scripts in scripts/
     - path: docs/best-practices/1-general.md

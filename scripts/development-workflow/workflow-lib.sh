@@ -390,23 +390,24 @@ workflow_resolve_github_repo_owner() {
     remote_url=""
   fi
   if [ -n "$remote_url" ]; then
+    local remote_path
+    remote_path=""
     case "$remote_url" in
-      https://*github.com/*)
-        owner="${remote_url#https://}"
-        owner="${owner#*@}"
-        owner="${owner#github.com/}"
-        owner="${owner%%/*}"
+      https://github.com/*)
+        remote_path="${remote_url#https://github.com/}"
+        ;;
+      https://*@github.com/*)
+        remote_path="${remote_url#https://*@github.com/}"
         ;;
       git@github.com:*)
-        owner="${remote_url#git@github.com:}"
-        owner="${owner%%/*}"
+        remote_path="${remote_url#git@github.com:}"
         ;;
       ssh://git@github.com/*)
-        owner="${remote_url#ssh://git@github.com/}"
-        owner="${owner%%/*}"
+        remote_path="${remote_url#ssh://git@github.com/}"
         ;;
     esac
-    if [ -n "$owner" ]; then
+    owner="${remote_path%%/*}"
+    if workflow_is_valid_github_owner "$owner" && workflow_remote_path_has_single_repo "$remote_path"; then
       printf '%s' "$owner"
       return 0
     fi
@@ -432,9 +433,25 @@ workflow_resolve_github_repo_name() {
     remote_url=""
   fi
   if [ -n "$remote_url" ]; then
-    repo_name="${remote_url##*/}"
-    repo_name="${repo_name%.git}"
-    if [ -n "$repo_name" ]; then
+    local remote_path path_remainder
+    remote_path=""
+    case "$remote_url" in
+      https://github.com/*)
+        remote_path="${remote_url#https://github.com/}"
+        ;;
+      https://*@github.com/*)
+        remote_path="${remote_url#https://*@github.com/}"
+        ;;
+      git@github.com:*)
+        remote_path="${remote_url#git@github.com:}"
+        ;;
+      ssh://git@github.com/*)
+        remote_path="${remote_url#ssh://git@github.com/}"
+        ;;
+    esac
+    path_remainder="${remote_path#*/}"
+    repo_name="${path_remainder%.git}"
+    if workflow_remote_path_has_single_repo "$remote_path" && workflow_is_valid_github_repo_name "$repo_name"; then
       printf '%s' "$repo_name"
       return 0
     fi
@@ -442,6 +459,53 @@ workflow_resolve_github_repo_name() {
 
   echo "Warning: could not resolve GitHub repository name from 'gh repo view' or git remote URL." >&2
   printf ''
+  return 0
+}
+
+workflow_remote_path_has_single_repo() {
+  local remote_path="$1"
+  local path_remainder
+
+  case "$remote_path" in
+    ''|*'?'*|*'#'*)
+      return 1
+      ;;
+  esac
+  case "$remote_path" in
+    */*)
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  path_remainder="${remote_path#*/}"
+  case "$path_remainder" in
+    ''|*/*)
+      return 1
+      ;;
+  esac
+
+  return 0
+}
+
+workflow_is_valid_github_owner() {
+  local owner="$1"
+  case "$owner" in
+    ''|-*|*-|*[!A-Za-z0-9-]*)
+      return 1
+      ;;
+  esac
+  return 0
+}
+
+workflow_is_valid_github_repo_name() {
+  local repo_name="$1"
+  case "$repo_name" in
+    ''|'.'|'..'|*[!A-Za-z0-9._-]*)
+      return 1
+      ;;
+  esac
   return 0
 }
 
@@ -650,7 +714,7 @@ workflow_github_project_item_for_issue() {
   local issue_number="$1"
   local project_number="$2"
   local project_owner project_id repo_owner repo_name response
-  local cursor page_state item_json has_next end_cursor page_count line
+  local cursor page_state item_json has_next end_cursor page_count line missing_fields
   local -a graphql_args
 
   case "$issue_number" in
@@ -730,11 +794,18 @@ except Exception:
 issue = (((data.get('data') or {}).get('repository') or {}).get('issue') or {})
 project_items = issue.get('projectItems') or {}
 match = ''
+missing_fields = ''
 for item in project_items.get('nodes') or []:
     project = item.get('project') or {}
     if project.get('id') == project_id:
         status_value = item.get('status') or item.get('fieldValueByName') or {}
         type_value = item.get('type') or {}
+        missing = []
+        if not status_value.get('name'):
+            missing.append('Status')
+        if not type_value.get('name'):
+            missing.append('Type')
+        missing_fields = ','.join(missing)
         match = json.dumps({
             'item_id': item.get('id') or '',
             'project_id': project.get('id') or '',
@@ -746,6 +817,7 @@ page_info = project_items.get('pageInfo') or {}
 has_next = 'true' if page_info.get('hasNextPage') else 'false'
 end_cursor = page_info.get('endCursor') or ''
 print('ITEM=' + match)
+print('MISSING_FIELDS=' + missing_fields)
 print('HAS_NEXT=' + has_next)
 print('END_CURSOR=' + end_cursor)
 " "$project_id" 2>/dev/null)"; then
@@ -757,9 +829,11 @@ print('END_CURSOR=' + end_cursor)
     item_json=""
     has_next="false"
     end_cursor=""
+    missing_fields=""
     while IFS= read -r line; do
       case "$line" in
         ITEM=*) item_json="${line#ITEM=}" ;;
+        MISSING_FIELDS=*) missing_fields="${line#MISSING_FIELDS=}" ;;
         HAS_NEXT=*) has_next="${line#HAS_NEXT=}" ;;
         END_CURSOR=*) end_cursor="${line#END_CURSOR=}" ;;
       esac
@@ -767,6 +841,16 @@ print('END_CURSOR=' + end_cursor)
 $page_state
 EOF
     if [ -n "$item_json" ]; then
+      case ",$missing_fields," in
+        *",Status,"*)
+          echo "Warning: project item for issue #${issue_number} has no Status value. The workflow expects a single-select field named exactly 'Status'." >&2
+          ;;
+      esac
+      case ",$missing_fields," in
+        *",Type,"*)
+          echo "Warning: project item for issue #${issue_number} has no Type value. The workflow expects a single-select field named exactly 'Type'." >&2
+          ;;
+      esac
       printf '%s' "$item_json"
       return 0
     fi
@@ -947,7 +1031,7 @@ workflow_github_project_type_field_json() {
         '
       )
 
-      if ! response=$(gh "${graphql_args[@]}"); then
+      if ! response=$(gh "${graphql_args[@]}" 2>/dev/null); then
         echo "Warning: GraphQL project Type field lookup failed for project '${project_id}'." >&2
         printf ''
         return 1
@@ -975,7 +1059,7 @@ end_cursor = page_info.get('endCursor') or ''
 print('FIELD_JSON=' + field_json)
 print('HAS_NEXT=' + has_next)
 print('END_CURSOR=' + end_cursor)
-")"; then
+" 2>/dev/null)"; then
         echo "Warning: could not parse GraphQL project Type field response for project '${project_id}'." >&2
         printf ''
         return 1
