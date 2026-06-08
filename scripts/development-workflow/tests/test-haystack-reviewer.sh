@@ -345,7 +345,15 @@ if command -v jq >/dev/null 2>&1; then
 fi
 # bash itself must be resolvable; we expose only the full PATH minus any haystack.
 # Use the system PATH but exclude the directory containing the real haystack.
-_SAFE_PATH="$(echo "$PATH" | tr ':' '\n' | grep -v "$(dirname "$(command -v haystack 2>/dev/null || true)")" | tr '\n' ':' | sed 's/:$//')"
+_HAYSTACK_BIN_DIR=""
+if _HAYSTACK_PATH="$(command -v haystack 2>/dev/null)"; then
+  _HAYSTACK_BIN_DIR="$(dirname "$_HAYSTACK_PATH")"
+fi
+if [ -n "$_HAYSTACK_BIN_DIR" ]; then
+  _SAFE_PATH="$(echo "$PATH" | tr ':' '\n' | grep -v -F -x "$_HAYSTACK_BIN_DIR" | tr '\n' ':' | sed 's/:$//')"
+else
+  _SAFE_PATH="$PATH"
+fi
 _SAFE_PATH="$_ISOLATED_BIN:$_SAFE_PATH"
 
 set +e
