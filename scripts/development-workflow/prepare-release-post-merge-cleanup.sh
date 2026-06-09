@@ -305,36 +305,33 @@ for issue in "${ISSUE_NUMBERS[@]}"; do
   fi
 done
 
-if [ "$RELEASE_STAMPED" -gt 0 ]; then
-  finalize_release_marker_best_effort "$RELEASE_VERSION"
-fi
-
 echo "STAMPED=$RELEASE_STAMPED STAMP_SKIPPED=$RELEASE_STAMP_SKIPPED STAMP_FAILED=$RELEASE_STAMP_FAILED UPDATED=$TRACKER_UPDATED SKIPPED=$TRACKER_SKIPPED FAILED=$TRACKER_FAILED"
 
-if [ "$BEST_EFFORT" = "true" ]; then
-  echo "Release post-merge cleanup complete."
-  exit 0
+if [ "$BEST_EFFORT" != "true" ]; then
+  if [ "$TRACKER_FAILED" -gt 0 ]; then
+    echo "Error: $TRACKER_FAILED tracker transition(s) failed for release $RELEASE_BRANCH." >&2
+    echo "Pass --best-effort to suppress this error and exit 0 regardless of transition outcomes." >&2
+    exit 1
+  fi
+
+  if [ "$TRACKER_UPDATED" -eq 0 ]; then
+    case "$TRACKER_PROVIDER" in
+      github_projects|github-projects|github_issues|github-issues)
+        ;;
+      *)
+        echo "No shell-supported tracker transitions ran for provider '${TRACKER_PROVIDER:-none}'; release-stamp handling completed."
+        echo "Release post-merge cleanup complete."
+        exit 0
+        ;;
+    esac
+    echo "Error: no tracker transitions succeeded (UPDATED=0) for release $RELEASE_BRANCH." >&2
+    echo "Pass --best-effort to suppress this error and exit 0 regardless of transition outcomes." >&2
+    exit 1
+  fi
 fi
 
-if [ "$TRACKER_FAILED" -gt 0 ]; then
-  echo "Error: $TRACKER_FAILED tracker transition(s) failed for release $RELEASE_BRANCH." >&2
-  echo "Pass --best-effort to suppress this error and exit 0 regardless of transition outcomes." >&2
-  exit 1
-fi
-
-if [ "$TRACKER_UPDATED" -eq 0 ]; then
-  case "$TRACKER_PROVIDER" in
-    github_projects|github-projects|github_issues|github-issues)
-      ;;
-    *)
-      echo "No shell-supported tracker transitions ran for provider '${TRACKER_PROVIDER:-none}'; release-stamp handling completed."
-      echo "Release post-merge cleanup complete."
-      exit 0
-      ;;
-  esac
-  echo "Error: no tracker transitions succeeded (UPDATED=0) for release $RELEASE_BRANCH." >&2
-  echo "Pass --best-effort to suppress this error and exit 0 regardless of transition outcomes." >&2
-  exit 1
+if [ "$RELEASE_STAMPED" -gt 0 ]; then
+  finalize_release_marker_best_effort "$RELEASE_VERSION"
 fi
 
 echo "Release post-merge cleanup complete."
