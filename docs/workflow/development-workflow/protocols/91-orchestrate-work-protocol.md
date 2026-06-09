@@ -1741,11 +1741,12 @@ fi
 #
 # NOTE: Skip this check ONLY when Step 7 was 'skipped' because no review platforms are configured.
 echo "⛔ STOP: Verifying all review threads are resolved via GraphQL before applying ready-for-human-review..."
-CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-codex-ai[bot]}"
+CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
 # GraphQL author.login omits the "[bot]" suffix present in REST API logins; strip it.
 CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
 JQ_FILTER="[.data.repository.pullRequest.reviewThreads.nodes[]
         | select(.isResolved == false)
+        | select((.isOutdated // false) == false)
         | select(.comments.nodes[0].author.login as \$a | [\"coderabbitai\",\"devin-ai-integration\",\"greptile-apps\",\"$CODEX_BOT_LOGIN\"] | index(\$a) != null)
         | select((.comments.nodes[0].body // \"\") | test(\"✅ Addressed\") | not)] | length"
 UNRESOLVED_COUNT=$(gh api graphql -f query='
@@ -1753,7 +1754,7 @@ UNRESOLVED_COUNT=$(gh api graphql -f query='
     repository(owner:$owner, name:$repo) {
       pullRequest(number:$number) {
         reviewThreads(first: 100) {
-          nodes { isResolved comments(first: 1) { nodes { author { login } body } } }
+          nodes { isResolved isOutdated comments(first: 1) { nodes { author { login } body } } }
         }
       }
     }
@@ -1804,10 +1805,10 @@ Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asyn
 
 2. **Re-query review threads**:
 
-   Before running the query, resolve the Codex bot login. Use the value of `CODEX_GITHUB_BOT_LOGIN` if set; otherwise default to `"codex-ai[bot]"` (the default used by `codex-github-reviewer.sh`). Strip the `[bot]` suffix because GraphQL `author.login` values omit it:
+   Before running the query, resolve the Codex bot login. Use the value of `CODEX_GITHUB_BOT_LOGIN` if set; otherwise default to `"chatgpt-codex-connector[bot]"` (the default used by `codex-github-reviewer.sh`). Strip the `[bot]` suffix because GraphQL `author.login` values omit it:
 
    ```bash
-   CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-codex-ai[bot]}"
+   CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
    # GraphQL author.login omits the "[bot]" suffix present in REST API logins; strip it.
    CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
    ```
@@ -1815,6 +1816,7 @@ Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asyn
    ```bash
    JQ_FILTER="[.data.repository.pullRequest.reviewThreads.nodes[]
          | select(.isResolved == false)
+         | select((.isOutdated // false) == false)
          | select(.comments.nodes[0].author.login as \$a | [\"coderabbitai\",\"devin-ai-integration\",\"greptile-apps\",\"$CODEX_BOT_LOGIN\"] | index(\$a) != null)
          | select((.comments.nodes[0].body // \"\") | test(\"✅ Addressed\") | not)] | length"
    UNRESOLVED_RECHECK=$(gh api graphql -f query='
@@ -1822,7 +1824,7 @@ Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asyn
        repository(owner:$owner, name:$repo) {
          pullRequest(number:$number) {
            reviewThreads(first: 100) {
-             nodes { isResolved comments(first: 1) { nodes { author { login } body } } }
+             nodes { isResolved isOutdated comments(first: 1) { nodes { author { login } body } } }
            }
          }
        }
