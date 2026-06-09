@@ -196,14 +196,15 @@ codex_trigger_approval_reaction_count() {
 
   local reaction_tmpfile
   reaction_tmpfile=$(mktemp)
-  if gh api "repos/$OWNER/$REPO/issues/comments/$comment_id/reactions" \
-    2>/dev/null \
-    | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" \
-      '[.[] | select(.content == "+1" and (.user.login == $bot or .user.login == $bot_plain))] | length' \
+  if gh api "repos/$OWNER/$REPO/issues/comments/$comment_id/reactions" --paginate \
+    | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" \
+      '(add // []) | [.[] | select(.content == "+1" and (.user.login == $bot or .user.login == $bot_plain))] | length' \
     > "$reaction_tmpfile"; then
     cat "$reaction_tmpfile"
   else
-    printf '0\n'
+    rm -f "$reaction_tmpfile"
+    echo "ERROR: failed to fetch or parse Codex trigger reactions" >&2
+    return 3
   fi
   rm -f "$reaction_tmpfile"
 }
@@ -215,13 +216,14 @@ codex_inline_review_comment_count_since() {
   local review_comment_tmpfile
   review_comment_tmpfile=$(mktemp)
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments" --paginate \
-    2>/dev/null \
-    | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$trigger_time" \
-      '[.[] | select((.user.login == $bot or .user.login == $bot_plain) and .created_at > $trigger_time)] | length' \
+    | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$trigger_time" \
+      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .created_at > $trigger_time)] | length' \
     > "$review_comment_tmpfile"; then
     cat "$review_comment_tmpfile"
   else
-    printf '0\n'
+    rm -f "$review_comment_tmpfile"
+    echo "ERROR: failed to fetch or parse Codex inline review comments" >&2
+    return 3
   fi
   rm -f "$review_comment_tmpfile"
 }
@@ -255,10 +257,16 @@ rm -f "$IDEM_STDERR" "$IDEM_TMPFILE"
 
 TRIGGER_TIME=""
 if [ -n "$TRIGGER_COMMENT_INFO" ]; then
-  # jq outputs pretty-printed JSON with a space after the colon: "created_at": "..."
-  # Use ' *' to match zero or more spaces to handle both compact and pretty-print output.
-  TRIGGER_COMMENT_ID=$(echo "$TRIGGER_COMMENT_INFO" | grep -o '"id": *[0-9]*' | head -1 | sed 's/"id": *//')
-  TRIGGER_TIME=$(echo "$TRIGGER_COMMENT_INFO" | grep -o '"created_at": *"[^"]*"' | head -1 | sed 's/"created_at": *"//;s/"//')
+  if ! TRIGGER_COMMENT_ID=$(printf '%s\n' "$TRIGGER_COMMENT_INFO" | jq -re '.id | tostring'); then
+    echo "ERROR: existing trigger comment payload missing id" >&2
+    echo "VERDICT: TIMED_OUT — malformed trigger comment payload (treated as unavailable)"
+    exit 2
+  fi
+  if ! TRIGGER_TIME=$(printf '%s\n' "$TRIGGER_COMMENT_INFO" | jq -re '.created_at'); then
+    echo "ERROR: existing trigger comment payload missing created_at" >&2
+    echo "VERDICT: TIMED_OUT — malformed trigger comment payload (treated as unavailable)"
+    exit 2
+  fi
   if [ -n "$TRIGGER_TIME" ]; then
     echo "INFO: trigger comment already posted for commit $CURRENT_SHA (at $TRIGGER_TIME) — skipping duplicate post"
   fi
@@ -281,9 +289,12 @@ if [ -z "$TRIGGER_TIME" ]; then
     echo "VERDICT: TIMED_OUT — failed to post trigger comment (treated as unavailable)"
     exit 2
   fi
-  TRIGGER_TIME=$(printf '%s\n' "$TRIGGER_RESPONSE" | jq -r '.created_at // empty')
-  TRIGGER_COMMENT_ID=$(printf '%s\n' "$TRIGGER_RESPONSE" | jq -r '.id // empty')
-  if [ -z "$TRIGGER_TIME" ] || [ -z "$TRIGGER_COMMENT_ID" ]; then
+  if ! TRIGGER_TIME=$(printf '%s\n' "$TRIGGER_RESPONSE" | jq -re '.created_at'); then
+    echo "ERROR: trigger comment response missing created_at" >&2
+    echo "VERDICT: TIMED_OUT — malformed trigger comment response (treated as unavailable)"
+    exit 2
+  fi
+  if ! TRIGGER_COMMENT_ID=$(printf '%s\n' "$TRIGGER_RESPONSE" | jq -re '.id | tostring'); then
     echo "ERROR: trigger comment response missing id or created_at" >&2
     echo "VERDICT: TIMED_OUT — malformed trigger comment response (treated as unavailable)"
     exit 2
@@ -369,14 +380,20 @@ while true; do
     rm -f "$REVIEW_TMPFILE"
   fi
 
-  INLINE_REVIEW_COMMENT_COUNT=$(codex_inline_review_comment_count_since "$TRIGGER_TIME")
+  if ! INLINE_REVIEW_COMMENT_COUNT=$(codex_inline_review_comment_count_since "$TRIGGER_TIME"); then
+    echo "VERDICT: TIMED_OUT — failed to fetch Codex inline review comments (treated as unavailable)"
+    exit 2
+  fi
   if [ "$INLINE_REVIEW_COMMENT_COUNT" -gt 0 ]; then
     echo "VERDICT: NEEDS_REVISION"
     echo "INFO: detected $INLINE_REVIEW_COMMENT_COUNT Codex inline review comment(s) after trigger"
     exit 1
   fi
 
-  APPROVAL_REACTION_COUNT=$(codex_trigger_approval_reaction_count "$TRIGGER_COMMENT_ID")
+  if ! APPROVAL_REACTION_COUNT=$(codex_trigger_approval_reaction_count "$TRIGGER_COMMENT_ID"); then
+    echo "VERDICT: TIMED_OUT — failed to fetch Codex trigger reactions (treated as unavailable)"
+    exit 2
+  fi
   if [ "$APPROVAL_REACTION_COUNT" -gt 0 ]; then
     echo "VERDICT: APPROVED"
     echo "INFO: detected Codex thumbs-up reaction on trigger comment $TRIGGER_COMMENT_ID"
@@ -456,9 +473,12 @@ while true; do
       echo "VERDICT: TIMED_OUT — failed to post retrigger comment (treated as unavailable)"
       exit 2
     fi
-    TRIGGER_TIME=$(printf '%s\n' "$TRIGGER_RESPONSE" | jq -r '.created_at // empty')
-    TRIGGER_COMMENT_ID=$(printf '%s\n' "$TRIGGER_RESPONSE" | jq -r '.id // empty')
-    if [ -z "$TRIGGER_TIME" ] || [ -z "$TRIGGER_COMMENT_ID" ]; then
+    if ! TRIGGER_TIME=$(printf '%s\n' "$TRIGGER_RESPONSE" | jq -re '.created_at'); then
+      echo "ERROR: retrigger comment response missing created_at" >&2
+      echo "VERDICT: TIMED_OUT — malformed retrigger comment response (treated as unavailable)"
+      exit 2
+    fi
+    if ! TRIGGER_COMMENT_ID=$(printf '%s\n' "$TRIGGER_RESPONSE" | jq -re '.id | tostring'); then
       echo "ERROR: retrigger comment response missing id or created_at" >&2
       echo "VERDICT: TIMED_OUT — malformed retrigger comment response (treated as unavailable)"
       exit 2
