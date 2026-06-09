@@ -86,8 +86,10 @@ review:
   #   runners (Claude Code subagents, Cursor subagents, or any headless
   #   environment). It is typically only reachable when Codex is the top-level
   #   runner itself. Protocol 91 Step 7a will classify 'codex' as unreachable in
-  #   these contexts and emit a warning comment on the PR. This is expected
-  #   behaviour — not a misconfiguration.
+  #   these contexts. Because 'codex' is the only default internal reviewer, that
+  #   means zero reviewers are reachable and the gate hard-fails until the run is
+  #   retried from Codex or a local override selects a reachable reviewer. This is
+  #   expected behaviour — not a misconfiguration.
   #
   # Local override: developers who need a different top-level review runner can
   # override this list locally by creating .tmp/template-config.json in the
