@@ -502,11 +502,20 @@ echo "INFO: poll budget exhausted; waiting ${POLL_INTERVAL}s for late async resp
 
 if [ "$MAX_RETRIGGERS" -gt 0 ]; then
   echo "INFO: posting async-arrival trigger comment..."
-  if ! gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
+  if ! TRIGGER_RESPONSE=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
     --method POST \
-    --raw-field body="$TRIGGER_PHRASE — async-arrival check after poll-window expiry (sha: $CURRENT_SHA)" \
-    --jq '.created_at' >/dev/null; then
+    --raw-field body="$TRIGGER_PHRASE — async-arrival check after poll-window expiry (sha: $CURRENT_SHA)"); then
     echo "WARNING: failed to post async-arrival trigger comment; continuing with grace poll from existing trigger time" >&2
+  else
+    if ! TRIGGER_TIME=$(printf '%s\n' "$TRIGGER_RESPONSE" | jq -re '.created_at'); then
+      echo "VERDICT: TIMED_OUT — malformed async trigger comment response (treated as unavailable)"
+      exit 2
+    fi
+    if ! TRIGGER_COMMENT_ID=$(printf '%s\n' "$TRIGGER_RESPONSE" | jq -re '.id | tostring'); then
+      echo "VERDICT: TIMED_OUT — malformed async trigger comment response (treated as unavailable)"
+      exit 2
+    fi
+    echo "INFO: async-arrival trigger comment posted at $TRIGGER_TIME"
   fi
 else
   echo "INFO: MAX_RETRIGGERS=0 — skipping async-arrival trigger comment; grace poll will use existing trigger time"
@@ -517,6 +526,26 @@ sleep "$POLL_INTERVAL"
 
 # Single grace poll: check both PR comments and PR reviews
 ASYNC_BOT_RESPONSE=""
+
+if ! ASYNC_INLINE_REVIEW_COMMENT_COUNT=$(codex_inline_review_comment_count_since "$TRIGGER_TIME"); then
+  echo "VERDICT: TIMED_OUT — failed to fetch Codex inline review comments during async grace period (treated as unavailable)"
+  exit 2
+fi
+if [ "$ASYNC_INLINE_REVIEW_COMMENT_COUNT" -gt 0 ]; then
+  echo "VERDICT: NEEDS_REVISION"
+  echo "INFO: detected $ASYNC_INLINE_REVIEW_COMMENT_COUNT Codex inline review comment(s) during async grace period"
+  exit 1
+fi
+
+if ! ASYNC_APPROVAL_REACTION_COUNT=$(codex_trigger_approval_reaction_count "$TRIGGER_COMMENT_ID"); then
+  echo "VERDICT: TIMED_OUT — failed to fetch Codex trigger reactions during async grace period (treated as unavailable)"
+  exit 2
+fi
+if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
+  echo "VERDICT: APPROVED"
+  echo "INFO: detected Codex thumbs-up reaction on trigger comment $TRIGGER_COMMENT_ID during async grace period"
+  exit 0
+fi
 
 ASYNC_POLL_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
