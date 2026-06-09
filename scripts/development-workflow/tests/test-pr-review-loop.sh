@@ -1365,6 +1365,69 @@ unset MOCK_GH_EXIT MOCK_GH_LABEL_VIEW_EXIT MOCK_GH_LABEL_CREATE_EXIT MOCK_GH_PR_
 echo ""
 echo "=== Area 13: PR #801 reviewer-loop failure paths ==="
 
+export MOCK_GH_OUTPUT='{
+  "pageInfo": {"hasNextPage": false, "endCursor": null},
+  "nodes": [
+    {
+      "id": "thread-outdated",
+      "isResolved": false,
+      "isOutdated": true,
+      "comments": {
+        "nodes": [
+          {
+            "author": {"login": "chatgpt-codex-connector"},
+            "body": "stale Codex finding"
+          }
+        ]
+      }
+    },
+    {
+      "id": "thread-active",
+      "isResolved": false,
+      "isOutdated": false,
+      "comments": {
+        "nodes": [
+          {
+            "author": {"login": "chatgpt-codex-connector"},
+            "body": "active Codex finding"
+          }
+        ]
+      }
+    }
+  ]
+}'
+run_test "codex_thread_audit_ignores_outdated" "1" \
+  "$(check_unresolved_threads "42" "owner/repo" "chatgpt-codex-connector")"
+export MOCK_GH_OUTPUT='{
+  "pageInfo": {"hasNextPage": false, "endCursor": null},
+  "nodes": [
+    {
+      "id": "thread-outdated",
+      "isResolved": false,
+      "isOutdated": true,
+      "comments": {
+        "nodes": [
+          {
+            "author": {"login": "chatgpt-codex-connector"},
+            "body": "stale Codex finding"
+          }
+        ]
+      }
+    }
+  ]
+}'
+run_test "codex_thread_audit_all_outdated_clean" "0" \
+  "$(check_unresolved_threads "42" "owner/repo" "chatgpt-codex-connector")"
+unset MOCK_GH_OUTPUT
+if grep -q "If Codex has suggestions, it will comment; otherwise it will react with" \
+    "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh"; then
+  _codex_clean_boilerplate_signal="yes"
+else
+  _codex_clean_boilerplate_signal="no"
+fi
+run_test "codex_reviewer_clean_boilerplate_signal" "yes" "$_codex_clean_boilerplate_signal"
+unset _codex_clean_boilerplate_signal
+
 _unlock_pr="80213$$"
 _unlock_lock_dir="/tmp/pr-review-loop-${_unlock_pr}.lockdir"
 rm -rf "$_unlock_lock_dir"

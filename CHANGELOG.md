@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Codex GitHub reviewer loop**: ignores outdated Codex review threads and treats Codex's no-inline-comments review boilerplate as a clean response while preserving the aggregate thread audit.
 - **Claude Code Action reviewer no-op guard** (#866): passes an explicit code-review prompt to the workflow and fails closed when a successful run log shows Claude did not actually execute.
 
 ## [0.30.2] - 2026-06-08

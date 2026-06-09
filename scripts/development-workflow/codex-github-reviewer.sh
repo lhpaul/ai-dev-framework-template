@@ -38,7 +38,8 @@
 #      "no blocking issues found"; bare "blocking" excluded (too broad).
 #   2. Approval signals present → APPROVED (exit 0)
 #      Signals (case-insensitive): "approved", "lgtm", "looks good",
-#      "didn't find any major issues", "no blocking issues" (Codex clean phrases)
+#      "didn't find any major issues", "no blocking issues", or Codex's
+#      no-inline-comments review boilerplate (thread audit catches real inline findings)
 #   3. Neither found (unrecognized format) → safe-fails to NEEDS_REVISION (exit 1)
 #
 # Response source detection (two sources polled each cycle):
@@ -341,7 +342,9 @@ while true; do
     #
     # 2. Explicit approval signals present → APPROVED (exit 0)   [checked second]
     #    Approval signals: "approved", "lgtm", "looks good",
-    #    "didn't find any major issues", "no blocking issues" (Codex clean phrases)
+    #    "didn't find any major issues", "no blocking issues", or Codex's
+    #    no-inline-comments review boilerplate. A later review-thread audit still
+    #    catches real inline findings when Codex posts them alongside the boilerplate.
     #
     # 3. Neither found (unrecognized response format) → NEEDS_REVISION (exit 1)
     #    Safe-fail: default to NEEDS_REVISION when the format is unrecognized to
@@ -361,7 +364,7 @@ while true; do
       echo "$BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
       exit 1
-    elif echo "$BOT_RESPONSE" | grep -qiE "(approved|lgtm|looks[[:space:]]+good|didn.t find[[:space:]]+any major[[:space:]]+issues|no[[:space:]]+blocking[[:space:]]+issues?)"; then
+    elif echo "$BOT_RESPONSE" | grep -qiE "(approved|lgtm|looks[[:space:]]+good|didn.t find[[:space:]]+any major[[:space:]]+issues|no[[:space:]]+blocking[[:space:]]+issues?|If Codex has suggestions, it will comment; otherwise it will react with)"; then
       echo "VERDICT: APPROVED"
       echo "---BEGIN BOT RESPONSE---"
       echo "$BOT_RESPONSE"
@@ -464,7 +467,7 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
     echo "$ASYNC_BOT_RESPONSE"
     echo "---END BOT RESPONSE---"
     exit 1
-  elif echo "$ASYNC_BOT_RESPONSE" | grep -qiE "(approved|lgtm|looks[[:space:]]+good|didn.t find[[:space:]]+any major[[:space:]]+issues|no[[:space:]]+blocking[[:space:]]+issues?)"; then
+  elif echo "$ASYNC_BOT_RESPONSE" | grep -qiE "(approved|lgtm|looks[[:space:]]+good|didn.t find[[:space:]]+any major[[:space:]]+issues|no[[:space:]]+blocking[[:space:]]+issues?|If Codex has suggestions, it will comment; otherwise it will react with)"; then
     echo "VERDICT: APPROVED"
     echo "---BEGIN BOT RESPONSE---"
     echo "$ASYNC_BOT_RESPONSE"
