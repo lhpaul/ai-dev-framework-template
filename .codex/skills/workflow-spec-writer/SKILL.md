@@ -11,6 +11,6 @@ Recommended model tier: `premium`
 2. Read `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md`.
 3. Follow that protocol exactly.
 4. Keep the spec product-focused; implementation details belong in the plan stage.
-5. For tracker-backed briefs, include the mandatory Brief Objective List, Coverage Matrix, and PR-visible Deferral Notes before moving to PR readiness.
+5. Before opening the draft spec PR, complete Protocol 01's Document Quality Gate and include the gate log in the PR description. For tracker-backed briefs, include the mandatory Brief Objective List, Coverage Matrix, and PR-visible Deferral Notes as part of that gate.
 6. Before opening the draft spec PR, call `ensure_on_project_board <issue_number> "Writing Spec"` from `scripts/development-workflow/workflow-lib.sh`. This is a no-op when the issue is already on the board.
 7. When the branch is created, continue through reviewer gate, PR creation, and PR readiness unless the protocol surfaces a real human decision.

@@ -20,7 +20,7 @@ Before finalizing Step 3, also check whether the plan introduces or modifies a c
 
 When the spec language implies pattern-based completeness, follow protocol 02's live-search vs spec-frozen enumeration rules and include a reproducible Verification Log.
 
-Before committing in Step 5, run the cross-section consistency self-check defined in protocol 02 Step 5.5. Check every item that appears more than once across plan sections: function/method names, constant names, decision index labels, file paths, directory names, and route/URL structures. Fix all inconsistencies before proceeding to the lint check — contradictions between sections (e.g., a file path described one way in "Files to modify" and a different way in "Implementation Order") cause avoidable implementation review passes.
+Before committing in Step 5, run the cross-section consistency self-check and Document Quality Gate defined in protocol 02. Check every item that appears more than once across plan sections: function/method names, constant names, decision index labels, file paths, directory names, and route/URL structures. Fix all inconsistencies before proceeding to the lint check, and include the Document Quality Gate log in the draft PR description.
 
 Before updating tracker status as part of a standalone plan completion sequence, call `ensure_on_project_board <issue_number> "Writing Plan"` (from `scripts/development-workflow/workflow-lib.sh`) to register the issue on the project board if it is not already present.
 

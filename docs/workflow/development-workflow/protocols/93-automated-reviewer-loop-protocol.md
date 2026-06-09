@@ -438,6 +438,27 @@ Execute **Step 7a: Internal Review Gate**, **Step 7: Automated Reviewer Loop**, 
 
 For each PR: run Step 7a first. Step 7a runs **all** configured internal reviewers sequentially (per the `review.internal_reviewers` list in `.ai-dev-workflow.yaml`, with `.tmp/template-config.json` local overrides taking precedence). All internal reviewers must APPROVE before proceeding. Once Step 7a produces `APPROVED` from all internal reviewers, run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then run Step 7 to completion, then Step 7b (regression label, implementation PRs only), then Step 8. Dispatch fixers and re-run as specified in 91 until the PR is clean and ready for human review or escalated. After Step 8 returns `green`, run Step 8a (label readiness checklist — this is a **hard gate** that verifies non-draft status, `ready-for-regression` label on implementation PRs, and applies `ready-for-human-review`). Once Step 8a passes, run Step 8b to update tracker status, then run Step 8c (post-label independent verification — this is a **hard gate** that independently verifies actual PR state via `gh pr view` before reporting ready). Only after Step 8c passes should the PR be reported as ready for human review.
 
+### Long spec/plan review-cycle guidance
+
+When a spec or implementation-plan PR enters repeated reviewer cycles, inspect
+the creator-stage `Document Quality Gate` log before deciding whether to keep
+looping, fix the document, or escalate. The log is diagnostic evidence, not a
+waiver for reviewer findings.
+
+Check all of the following before continuing a long document-review loop:
+
+- The PR description contains a `Document Quality Gate` section.
+- The log references the current spec or plan content, not an earlier revision.
+- `Not applicable` entries include concrete rationales.
+- Reviewer-loop summary comments and advisory dispositions are current for the
+  latest head SHA.
+- Remaining reviewer findings are either directly addressed, recorded with a
+  defensible disposition, or escalated when they require a human decision.
+
+A missing, stale, or contradictory quality-gate log should be fixed before
+another automated review cycle unless the next action is an explicit human
+escalation.
+
 ### Re-query reviewThreads after each push (mandatory)
 
 **After every push that addresses reviewer feedback — including the final push before Step 8c — you MUST re-issue the GraphQL `reviewThreads` query (as defined in Protocol 91 Step 8c) before proceeding to check readiness.**
@@ -781,7 +802,7 @@ This prevents declaring a PR "clean" while substantive reviewer findings remain 
 
 After processing the requested PR(s), report:
 
-- **Ready for human review**: PR link, branch, and that the internal review gate, every configured automated reviewer, and CI are all clean (or skipped). Confirm that `gh pr ready` was run (after Step 7a APPROVED, before Step 7) to convert the draft PR to non-draft.
+- **Ready for human review**: PR link, branch, and that the internal review gate, every configured automated reviewer, and CI are all clean (or skipped). For spec and plan PRs, mention that the `Document Quality Gate` log is present. Confirm that `gh pr ready` was run (after Step 7a APPROVED, before Step 7) to convert the draft PR to non-draft.
 - **Escalated**: PR link, reason (no progress over consecutive cycles, finding reappeared after fix, max cycles, timeout, or review platform escalate).
 - **Skipped**: If no review platform is configured, or a configured platform is currently unsupported and therefore skipped, note that in the result for the listed PR(s).
 

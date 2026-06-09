@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Document PR quality gate** (#816): adds a pre-submission quality gate for spec and implementation-plan PRs so document authors check brief coverage, consistency, behavioral guarantees, and recurring reviewer categories before opening draft PRs.
+
 ### Fixed
 
 - **Claude Code Action reviewer no-op guard** (#866): passes an explicit code-review prompt to the workflow and fails closed when a successful run log shows Claude did not actually execute.
