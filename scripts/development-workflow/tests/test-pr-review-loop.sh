@@ -1419,14 +1419,14 @@ export MOCK_GH_OUTPUT='{
 run_test "codex_thread_audit_all_outdated_clean" "0" \
   "$(check_unresolved_threads "42" "owner/repo" "chatgpt-codex-connector")"
 unset MOCK_GH_OUTPUT
-if grep -q "If Codex has suggestions, it will comment; otherwise it will react with" \
+if grep -q "Codex acknowledgement detected; waiting for thumbs-up reaction or inline review comments" \
     "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh"; then
-  _codex_clean_boilerplate_signal="yes"
+  _codex_ack_wait_signal="yes"
 else
-  _codex_clean_boilerplate_signal="no"
+  _codex_ack_wait_signal="no"
 fi
-run_test "codex_reviewer_clean_boilerplate_signal" "yes" "$_codex_clean_boilerplate_signal"
-unset _codex_clean_boilerplate_signal
+run_test "codex_reviewer_ack_wait_signal" "yes" "$_codex_ack_wait_signal"
+unset _codex_ack_wait_signal
 
 _unlock_pr="80213$$"
 _unlock_lock_dir="/tmp/pr-review-loop-${_unlock_pr}.lockdir"
