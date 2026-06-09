@@ -35,6 +35,12 @@ run_test() {
   fi
 }
 
+REVIEWER_SCRIPT="scripts/development-workflow/claude-code-action-reviewer.sh"
+CLAUDE_CODE_ACTION_REVIEWER_LIBRARY_MODE=1
+# shellcheck source=scripts/development-workflow/claude-code-action-reviewer.sh
+source "$REVIEWER_SCRIPT"
+unset CLAUDE_CODE_ACTION_REVIEWER_LIBRARY_MODE
+
 # ---------------------------------------------------------------------------
 # The run-poll jq filter (extracted verbatim from claude-code-action-reviewer.sh)
 # Arguments: $wf (workflow filename suffix), $poll_after (ISO8601 timestamp),
@@ -321,6 +327,182 @@ _iso="$(_epoch_to_iso_with_python_fallback 1700000000)"
 run_test "python_fallback_epoch_to_iso" "2023-11-14T22:13:20Z" "$_iso"
 rm -rf "$_date_mock_dir"
 unset _date_mock_dir _iso
+
+# ---------------------------------------------------------------------------
+# Area 7: Claude Code Action log execution verification
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 7: action log execution verification ==="
+
+_log_tmp="$(mktemp)" || { echo "ERROR: mktemp failed" >&2; exit 1; }
+cat > "$_log_tmp" <<'LOG'
+Claude Code Action review	UNKNOWN STEP	Context prompt: NO PROMPT
+Claude Code Action review	UNKNOWN STEP	Trigger result: false
+Claude Code Action review	UNKNOWN STEP	No trigger found, skipping remaining steps
+LOG
+_status=0
+_classification="$(classify_claude_code_action_log "$_log_tmp")" || _status=$?
+run_test "noop_log_is_not_clean_status" "1" "$_status"
+run_test "noop_log_is_classified_noop" "noop" "$_classification"
+rm -f "$_log_tmp"
+unset _log_tmp _status _classification
+
+_log_tmp="$(mktemp)" || { echo "ERROR: mktemp failed" >&2; exit 1; }
+cat > "$_log_tmp" <<'LOG'
+Claude Code Action review	UNKNOWN STEP	Context prompt: /code-review:code-review lhpaul/ai-dev-framework-template/pull/866
+Claude Code Action review	UNKNOWN STEP	Trigger result: true
+LOG
+_status=0
+_classification="$(classify_claude_code_action_log "$_log_tmp")" || _status=$?
+run_test "executed_log_is_clean_status" "0" "$_status"
+run_test "executed_log_is_classified_ran" "ran" "$_classification"
+rm -f "$_log_tmp"
+unset _log_tmp _status _classification
+
+_log_tmp="$(mktemp)" || { echo "ERROR: mktemp failed" >&2; exit 1; }
+cat > "$_log_tmp" <<'LOG'
+Claude Code Action review	UNKNOWN STEP	Mode: agent
+Claude Code Action review	UNKNOWN STEP	App token successfully obtained
+LOG
+_status=0
+_classification="$(classify_claude_code_action_log "$_log_tmp")" || _status=$?
+run_test "unknown_log_is_not_clean_status" "2" "$_status"
+run_test "unknown_log_is_classified_unknown" "unknown" "$_classification"
+rm -f "$_log_tmp"
+unset _log_tmp _status _classification
+
+_status=0
+_output="$(verify_claude_code_action_run_log "" "owner" "repo" 2>&1)" || _status=$?
+run_test "missing_run_id_returns_unavailable" "3" "$_status"
+case "$_output" in
+  *"no run id was available"*) _message_found=1 ;;
+  *) _message_found=0 ;;
+esac
+run_test "missing_run_id_message" "1" "$_message_found"
+unset _status _output _message_found
+
+_gh_mock_dir="$(mktemp -d)" || { echo "ERROR: mktemp -d failed" >&2; exit 1; }
+cat > "$_gh_mock_dir/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+echo "mock gh failure" >&2
+exit 1
+MOCK_GH
+chmod +x "$_gh_mock_dir/gh"
+_old_path="$PATH"
+PATH="$_gh_mock_dir:$PATH"
+_status=0
+_output="$(verify_claude_code_action_run_log "123" "owner" "repo" 2>&1)" || _status=$?
+PATH="$_old_path"
+run_test "gh_run_view_failure_returns_unavailable" "3" "$_status"
+case "$_output" in
+  *"log verification failed"*) _message_found=1 ;;
+  *) _message_found=0 ;;
+esac
+run_test "gh_run_view_failure_message" "1" "$_message_found"
+rm -rf "$_gh_mock_dir"
+unset _gh_mock_dir _old_path _status _output _message_found
+
+_gh_mock_dir="$(mktemp -d)" || { echo "ERROR: mktemp -d failed" >&2; exit 1; }
+cat > "$_gh_mock_dir/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+case "$3" in
+  200)
+    echo 'Claude Code Action review	UNKNOWN STEP	Context prompt: /code-review:code-review owner/repo/pull/1'
+    echo 'Claude Code Action review	UNKNOWN STEP	Trigger result: true'
+    ;;
+  201)
+    echo 'Claude Code Action review	UNKNOWN STEP	Context prompt: NO PROMPT'
+    echo 'Claude Code Action review	UNKNOWN STEP	Trigger result: false'
+    ;;
+  202)
+    echo 'Claude Code Action review	UNKNOWN STEP	Mode: agent'
+    echo 'Claude Code Action review	UNKNOWN STEP	App token successfully obtained'
+    ;;
+  *)
+    echo "unexpected run id: $3" >&2
+    exit 1
+    ;;
+esac
+MOCK_GH
+chmod +x "$_gh_mock_dir/gh"
+_old_path="$PATH"
+PATH="$_gh_mock_dir:$PATH"
+
+_status=0
+_output="$(verify_claude_code_action_run_log "200" "owner" "repo" 2>&1)" || _status=$?
+run_test "verify_run_log_executed_returns_clean" "0" "$_status"
+case "$_output" in
+  *"log verification passed (ran)"*) _message_found=1 ;;
+  *) _message_found=0 ;;
+esac
+run_test "verify_run_log_executed_message" "1" "$_message_found"
+unset _status _output _message_found
+
+_status=0
+_output="$(verify_claude_code_action_run_log "201" "owner" "repo" 2>&1)" || _status=$?
+run_test "verify_run_log_noop_returns_unavailable" "3" "$_status"
+case "$_output" in
+  *"without executing a review (noop)"*) _message_found=1 ;;
+  *) _message_found=0 ;;
+esac
+run_test "verify_run_log_noop_message" "1" "$_message_found"
+unset _status _output _message_found
+
+_status=0
+_output="$(verify_claude_code_action_run_log "202" "owner" "repo" 2>&1)" || _status=$?
+PATH="$_old_path"
+run_test "verify_run_log_unknown_returns_unavailable" "3" "$_status"
+case "$_output" in
+  *"did not contain a positive execution marker (unknown)"*) _message_found=1 ;;
+  *) _message_found=0 ;;
+esac
+run_test "verify_run_log_unknown_message" "1" "$_message_found"
+rm -rf "$_gh_mock_dir"
+unset _gh_mock_dir _old_path _status _output _message_found
+
+_mktemp_mock_dir="$(mktemp -d)" || { echo "ERROR: mktemp -d failed" >&2; exit 1; }
+cat > "$_mktemp_mock_dir/mktemp" <<'MOCK_MKTEMP'
+#!/usr/bin/env bash
+echo "mktemp unavailable" >&2
+exit 1
+MOCK_MKTEMP
+chmod +x "$_mktemp_mock_dir/mktemp"
+_old_path="$PATH"
+PATH="$_mktemp_mock_dir:$PATH"
+_status=0
+_output="$(verify_claude_code_action_run_log "203" "owner" "repo" 2>&1)" || _status=$?
+PATH="$_old_path"
+run_test "verify_run_log_mktemp_failure_returns_unavailable" "3" "$_status"
+case "$_output" in
+  *"could not create temp file"*) _message_found=1 ;;
+  *) _message_found=0 ;;
+esac
+run_test "verify_run_log_mktemp_failure_message" "1" "$_message_found"
+rm -rf "$_mktemp_mock_dir"
+unset _mktemp_mock_dir _old_path _status _output _message_found
+
+# ---------------------------------------------------------------------------
+# Area 8: workflow automation prompt configuration
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 8: workflow prompt configuration ==="
+
+_workflow_file=".github/workflows/claude-code-review.yml"
+# shellcheck disable=SC2016 # Literal GitHub expression expected in workflow YAML.
+if grep -q 'prompt: "/code-review:code-review ${{ github.repository }}/pull/${{ inputs.pr_number }}"' "$_workflow_file"; then
+  _has_prompt=1
+else
+  _has_prompt=0
+fi
+run_test "workflow_has_explicit_code_review_prompt" "1" "$_has_prompt"
+
+if grep -q 'plugins: "code-review@claude-code-plugins"' "$_workflow_file"; then
+  _has_plugin=1
+else
+  _has_plugin=0
+fi
+run_test "workflow_has_code_review_plugin" "1" "$_has_plugin"
+unset _workflow_file _has_prompt _has_plugin
 
 # ---------------------------------------------------------------------------
 # Summary
