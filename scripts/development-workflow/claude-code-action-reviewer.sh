@@ -78,6 +78,24 @@ BOT_LOGIN="${CLAUDE_CODE_ACTION_BOT_LOGIN:-claude[bot]}"
 POLL_INTERVAL=30
 MAX_WAIT=600
 
+classify_claude_code_action_log() {
+  local log_file="$1"
+
+  if grep -Eqi 'Context prompt: NO PROMPT|Trigger result: false|No trigger found, skipping remaining steps|"prompt": ""' "$log_file"; then
+    printf '%s\n' noop
+    return 1
+  fi
+
+  if grep -Eqi 'Trigger result: true|Context prompt: .+' "$log_file" \
+    && ! grep -Eqi 'Context prompt: NO PROMPT' "$log_file"; then
+    printf '%s\n' ran
+    return 0
+  fi
+
+  printf '%s\n' unknown
+  return 2
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --workflow-file)
@@ -333,6 +351,48 @@ if [ "$RUN_CONCLUSION" != "success" ]; then
 fi
 
 echo "INFO: Actions run completed with conclusion=success: $RUN_URL"
+
+# A successful Actions run is not proof that Claude actually reviewed the PR.
+# claude-code-action exits successfully when no prompt/trigger is present, logging
+# "No trigger found" and posting no review. Treat that as unavailable rather than
+# clean so the reviewer loop does not bless no-op runs.
+if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+  echo "VERDICT: UNAVAILABLE — run succeeded but no run id was available for log verification"
+  exit 3
+fi
+
+RUN_LOG_STDERR=$(mktemp)
+RUN_LOG_TMPFILE=$(mktemp)
+RUN_LOG_STATUS=0
+gh run view "$RUN_ID" --repo "$OWNER/$REPO" --log \
+  >"$RUN_LOG_TMPFILE" 2>"$RUN_LOG_STDERR" || RUN_LOG_STATUS=$?
+
+if [ "$RUN_LOG_STATUS" -ne 0 ]; then
+  RUN_LOG_ERR=$(cat "$RUN_LOG_STDERR")
+  rm -f "$RUN_LOG_STDERR" "$RUN_LOG_TMPFILE"
+  echo "WARNING: could not fetch Actions run log (exit $RUN_LOG_STATUS): $RUN_LOG_ERR" >&2
+  echo "VERDICT: UNAVAILABLE — run succeeded but log verification failed"
+  exit 3
+fi
+rm -f "$RUN_LOG_STDERR"
+
+LOG_CLASSIFICATION_STATUS=0
+LOG_CLASSIFICATION="$(classify_claude_code_action_log "$RUN_LOG_TMPFILE")" || LOG_CLASSIFICATION_STATUS=$?
+rm -f "$RUN_LOG_TMPFILE"
+
+case "$LOG_CLASSIFICATION_STATUS" in
+  0)
+    echo "INFO: Claude Code Action log verification passed ($LOG_CLASSIFICATION)"
+    ;;
+  1)
+    echo "VERDICT: UNAVAILABLE — Claude Code Action run completed without executing a review ($LOG_CLASSIFICATION)"
+    exit 3
+    ;;
+  *)
+    echo "VERDICT: UNAVAILABLE — Claude Code Action run log did not contain a positive execution marker ($LOG_CLASSIFICATION)"
+    exit 3
+    ;;
+esac
 
 # ── Phase 3 (continued): Check PR review threads ──────────────────────────────
 # After a successful run, inspect PR reviews posted by the bot after dispatch_time.

@@ -65,6 +65,24 @@ run_filter() {
     "$RUN_POLL_FILTER"
 }
 
+classify_log_fixture() {
+  local log_file="$1"
+
+  if grep -Eqi 'Context prompt: NO PROMPT|Trigger result: false|No trigger found, skipping remaining steps|"prompt": ""' "$log_file"; then
+    printf '%s\n' noop
+    return 1
+  fi
+
+  if grep -Eqi 'Trigger result: true|Context prompt: .+' "$log_file" \
+    && ! grep -Eqi 'Context prompt: NO PROMPT' "$log_file"; then
+    printf '%s\n' ran
+    return 0
+  fi
+
+  printf '%s\n' unknown
+  return 2
+}
+
 # ---------------------------------------------------------------------------
 # Area 1: Basic timestamp filtering
 # Run objects include "name" matching the dispatched PR (808) so they pass the
@@ -321,6 +339,72 @@ _iso="$(_epoch_to_iso_with_python_fallback 1700000000)"
 run_test "python_fallback_epoch_to_iso" "2023-11-14T22:13:20Z" "$_iso"
 rm -rf "$_date_mock_dir"
 unset _date_mock_dir _iso
+
+# ---------------------------------------------------------------------------
+# Area 7: Claude Code Action log execution verification
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 7: action log execution verification ==="
+
+_log_tmp="$(mktemp)"
+cat > "$_log_tmp" <<'LOG'
+Claude Code Action review	UNKNOWN STEP	Context prompt: NO PROMPT
+Claude Code Action review	UNKNOWN STEP	Trigger result: false
+Claude Code Action review	UNKNOWN STEP	No trigger found, skipping remaining steps
+LOG
+_status=0
+_classification="$(classify_log_fixture "$_log_tmp")" || _status=$?
+run_test "noop_log_is_not_clean_status" "1" "$_status"
+run_test "noop_log_is_classified_noop" "noop" "$_classification"
+rm -f "$_log_tmp"
+unset _log_tmp _status _classification
+
+_log_tmp="$(mktemp)"
+cat > "$_log_tmp" <<'LOG'
+Claude Code Action review	UNKNOWN STEP	Context prompt: /code-review:code-review lhpaul/ai-dev-framework-template/pull/866
+Claude Code Action review	UNKNOWN STEP	Trigger result: true
+LOG
+_status=0
+_classification="$(classify_log_fixture "$_log_tmp")" || _status=$?
+run_test "executed_log_is_clean_status" "0" "$_status"
+run_test "executed_log_is_classified_ran" "ran" "$_classification"
+rm -f "$_log_tmp"
+unset _log_tmp _status _classification
+
+_log_tmp="$(mktemp)"
+cat > "$_log_tmp" <<'LOG'
+Claude Code Action review	UNKNOWN STEP	Mode: agent
+Claude Code Action review	UNKNOWN STEP	App token successfully obtained
+LOG
+_status=0
+_classification="$(classify_log_fixture "$_log_tmp")" || _status=$?
+run_test "unknown_log_is_not_clean_status" "2" "$_status"
+run_test "unknown_log_is_classified_unknown" "unknown" "$_classification"
+rm -f "$_log_tmp"
+unset _log_tmp _status _classification
+
+# ---------------------------------------------------------------------------
+# Area 8: workflow automation prompt configuration
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 8: workflow prompt configuration ==="
+
+_workflow_file=".github/workflows/claude-code-review.yml"
+# shellcheck disable=SC2016 # Literal GitHub expression expected in workflow YAML.
+if grep -q 'prompt: "/code-review:code-review ${{ github.repository }}/pull/${{ inputs.pr_number }}"' "$_workflow_file"; then
+  _has_prompt=1
+else
+  _has_prompt=0
+fi
+run_test "workflow_has_explicit_code_review_prompt" "1" "$_has_prompt"
+
+if grep -q 'plugins: "code-review@claude-code-plugins"' "$_workflow_file"; then
+  _has_plugin=1
+else
+  _has_plugin=0
+fi
+run_test "workflow_has_code_review_plugin" "1" "$_has_plugin"
+unset _workflow_file _has_prompt _has_plugin
 
 # ---------------------------------------------------------------------------
 # Summary
