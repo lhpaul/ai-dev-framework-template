@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Claude Code Action reviewer no-op guard** (#866): passes an explicit code-review prompt to the workflow and fails closed when a successful run log shows Claude did not actually execute.
+- **Tool-fix merge ordering** (#825): documents that foundational reviewer-tool fixes must merge before dependent tool-fixes are trusted, and that dependents must update from the fixed base before rerunning reviewer loops.
 
 ## [0.30.2] - 2026-06-08
 
