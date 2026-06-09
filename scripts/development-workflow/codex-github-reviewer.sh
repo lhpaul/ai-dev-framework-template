@@ -591,6 +591,26 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
     exit 0
   elif echo "$ASYNC_BOT_RESPONSE" | grep -qi "If Codex has suggestions, it will comment; otherwise it will react with"; then
     echo "INFO: async-arrival Codex acknowledgement detected without approval reaction or inline comments"
+    echo "INFO: waiting ${POLL_INTERVAL}s for final Codex async signal..."
+    sleep "$POLL_INTERVAL"
+    if ! ASYNC_INLINE_REVIEW_COMMENT_COUNT=$(codex_inline_review_comment_count_since "$TRIGGER_TIME"); then
+      echo "VERDICT: TIMED_OUT — failed to fetch Codex inline review comments after async acknowledgement (treated as unavailable)"
+      exit 2
+    fi
+    if [ "$ASYNC_INLINE_REVIEW_COMMENT_COUNT" -gt 0 ]; then
+      echo "VERDICT: NEEDS_REVISION"
+      echo "INFO: detected $ASYNC_INLINE_REVIEW_COMMENT_COUNT Codex inline review comment(s) after async acknowledgement"
+      exit 1
+    fi
+    if ! ASYNC_APPROVAL_REACTION_COUNT=$(codex_trigger_approval_reaction_count "$TRIGGER_COMMENT_ID"); then
+      echo "VERDICT: TIMED_OUT — failed to fetch Codex trigger reactions after async acknowledgement (treated as unavailable)"
+      exit 2
+    fi
+    if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
+      echo "VERDICT: APPROVED"
+      echo "INFO: detected Codex thumbs-up reaction on trigger comment $TRIGGER_COMMENT_ID after async acknowledgement"
+      exit 0
+    fi
   else
     echo "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)"
     echo "---BEGIN BOT RESPONSE---"
