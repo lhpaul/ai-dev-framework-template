@@ -324,9 +324,13 @@ if [ "$BEST_EFFORT" != "true" ]; then
         exit 0
         ;;
     esac
-    echo "Error: no tracker transitions succeeded (UPDATED=0) for release $RELEASE_BRANCH." >&2
-    echo "Pass --best-effort to suppress this error and exit 0 regardless of transition outcomes." >&2
-    exit 1
+    if [ "$RELEASE_STAMPED" -gt 0 ] && [ "$TRACKER_SKIPPED" -gt 0 ] && [ "$TRACKER_FAILED" -eq 0 ]; then
+      echo "Release stamping succeeded, but tracker status transitions were skipped; treating cleanup as successful because no transition failed."
+    else
+      echo "Error: no tracker transitions succeeded (UPDATED=0) for release $RELEASE_BRANCH." >&2
+      echo "Pass --best-effort to suppress this error and exit 0 regardless of transition outcomes." >&2
+      exit 1
+    fi
   fi
 fi
 
