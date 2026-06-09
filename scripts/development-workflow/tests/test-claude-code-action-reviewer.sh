@@ -48,9 +48,9 @@ RUN_POLL_FILTER='# Candidate set: workflow-file + timestamp match
          # prevent selecting the wrong PR'\''s run under concurrent/parallel dispatch.
          # Fall back to all candidates when no run has the "PR #N" pattern — backward
          # compat with pre-#808 deployments where the workflow has no run-name yet.
-         ([$candidates[] | select((.name // "") | test("PR #[0-9]+\\b"))] | length > 0) as $name_scoped |
+         ([$candidates[] | select((.name // "") | capture("PR #(?<pr>[0-9]+)(?:[^0-9]|$)")?)] | length > 0) as $name_scoped |
          ($candidates | if $name_scoped then
-           [.[] | select((.name // "") | test("PR #" + $pr + "\\b"))]
+           [.[] | select(((.name // "") | capture("PR #(?<pr>[0-9]+)(?:[^0-9]|$)")? | .pr) == $pr)]
          else . end) |
          sort_by(.created_at) | reverse | first |
          {status: .status, conclusion: .conclusion, html_url: .html_url, id: .id}'
@@ -234,6 +234,16 @@ _json='{"workflow_runs":[
 _result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
 _id=$(printf '%s\n' "$_result" | jq -r '.id // "null"')
 run_test "pr_number_word_boundary_no_false_match" "null" "$_id"
+unset _json _result _id
+
+# Test 5.4b: Dynamic PR input is compared as data, not interpolated as regex.
+_json='{"workflow_runs":[
+  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #999","created_at":"2026-06-02T16:01:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":999},
+  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://b","id":808}
+]}'
+_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808|999")
+_id=$(printf '%s\n' "$_result" | jq -r '.id // "null"')
+run_test "pr_input_regex_metacharacters_are_literal" "null" "$_id"
 unset _json _result _id
 
 # Test 5.5: Two runs for THIS PR in the same window — most recent selected
