@@ -323,6 +323,15 @@ if [ "$TRACKER_FAILED" -gt 0 ]; then
 fi
 
 if [ "$TRACKER_UPDATED" -eq 0 ]; then
+  case "$TRACKER_PROVIDER" in
+    github_projects|github-projects|github_issues|github-issues)
+      ;;
+    *)
+      echo "No shell-supported tracker transitions ran for provider '${TRACKER_PROVIDER:-none}'; release-stamp handling completed."
+      echo "Release post-merge cleanup complete."
+      exit 0
+      ;;
+  esac
   echo "Error: no tracker transitions succeeded (UPDATED=0) for release $RELEASE_BRANCH." >&2
   echo "Pass --best-effort to suppress this error and exit 0 regardless of transition outcomes." >&2
   exit 1

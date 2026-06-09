@@ -1429,13 +1429,13 @@ workflow_github_milestone_number() {
   repo_owner="$(workflow_resolve_github_repo_owner)"
   repo_name="$(workflow_resolve_github_repo_name)"
   if [ -z "$repo_owner" ] || [ -z "$repo_name" ]; then
-    return 0
+    return 1
   fi
 
   if ! workflow_run_gh_capture_stderr api --paginate --slurp "repos/${repo_owner}/${repo_name}/milestones?state=all&per_page=100"; then
     echo "Warning: could not list GitHub milestones for release '${version}'." >&2
     workflow_print_captured_gh_stderr
-    return 0
+    return 1
   fi
   milestones="$__workflow_last_gh_stdout"
 
@@ -1474,7 +1474,9 @@ workflow_ensure_github_release_milestone() {
   local version="$1"
   local repo_owner repo_name milestone_number created_number
 
-  milestone_number="$(workflow_github_milestone_number "$version")"
+  if ! milestone_number="$(workflow_github_milestone_number "$version")"; then
+    return 1
+  fi
   if [ -n "$milestone_number" ]; then
     printf '%s' "$milestone_number"
     return 0
@@ -1572,7 +1574,10 @@ finalize_release_marker_best_effort() {
   provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
   case "$provider" in
     github_projects|github-projects|github_issues|github-issues)
-      milestone_number="$(workflow_github_milestone_number "$version")"
+      if ! milestone_number="$(workflow_github_milestone_number "$version")"; then
+        echo "Warning: could not read release milestone '${version}'; skipping finalization."
+        return 0
+      fi
       if [ -z "$milestone_number" ]; then
         echo "Warning: release milestone '${version}' not found; skipping finalization."
         return 0
