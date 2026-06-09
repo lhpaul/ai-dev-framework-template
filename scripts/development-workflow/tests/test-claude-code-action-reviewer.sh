@@ -35,6 +35,12 @@ run_test() {
   fi
 }
 
+REVIEWER_SCRIPT="scripts/development-workflow/claude-code-action-reviewer.sh"
+CLAUDE_CODE_ACTION_REVIEWER_LIBRARY_MODE=1
+# shellcheck source=scripts/development-workflow/claude-code-action-reviewer.sh
+source "$REVIEWER_SCRIPT"
+unset CLAUDE_CODE_ACTION_REVIEWER_LIBRARY_MODE
+
 # ---------------------------------------------------------------------------
 # The run-poll jq filter (extracted verbatim from claude-code-action-reviewer.sh)
 # Arguments: $wf (workflow filename suffix), $poll_after (ISO8601 timestamp),
@@ -63,24 +69,6 @@ run_filter() {
     --arg poll_after "$poll_after" \
     --arg pr "$pr" \
     "$RUN_POLL_FILTER"
-}
-
-classify_log_fixture() {
-  local log_file="$1"
-
-  if grep -Eqi 'Context prompt: NO PROMPT|Trigger result: false|No trigger found, skipping remaining steps|"prompt": ""' "$log_file"; then
-    printf '%s\n' noop
-    return 1
-  fi
-
-  if grep -Eqi 'Trigger result: true|Context prompt: .+' "$log_file" \
-    && ! grep -Eqi 'Context prompt: NO PROMPT' "$log_file"; then
-    printf '%s\n' ran
-    return 0
-  fi
-
-  printf '%s\n' unknown
-  return 2
 }
 
 # ---------------------------------------------------------------------------
@@ -346,42 +334,73 @@ unset _date_mock_dir _iso
 echo ""
 echo "=== Area 7: action log execution verification ==="
 
-_log_tmp="$(mktemp)"
+_log_tmp="$(mktemp)" || { echo "ERROR: mktemp failed" >&2; exit 1; }
 cat > "$_log_tmp" <<'LOG'
 Claude Code Action review	UNKNOWN STEP	Context prompt: NO PROMPT
 Claude Code Action review	UNKNOWN STEP	Trigger result: false
 Claude Code Action review	UNKNOWN STEP	No trigger found, skipping remaining steps
 LOG
 _status=0
-_classification="$(classify_log_fixture "$_log_tmp")" || _status=$?
+_classification="$(classify_claude_code_action_log "$_log_tmp")" || _status=$?
 run_test "noop_log_is_not_clean_status" "1" "$_status"
 run_test "noop_log_is_classified_noop" "noop" "$_classification"
 rm -f "$_log_tmp"
 unset _log_tmp _status _classification
 
-_log_tmp="$(mktemp)"
+_log_tmp="$(mktemp)" || { echo "ERROR: mktemp failed" >&2; exit 1; }
 cat > "$_log_tmp" <<'LOG'
 Claude Code Action review	UNKNOWN STEP	Context prompt: /code-review:code-review lhpaul/ai-dev-framework-template/pull/866
 Claude Code Action review	UNKNOWN STEP	Trigger result: true
 LOG
 _status=0
-_classification="$(classify_log_fixture "$_log_tmp")" || _status=$?
+_classification="$(classify_claude_code_action_log "$_log_tmp")" || _status=$?
 run_test "executed_log_is_clean_status" "0" "$_status"
 run_test "executed_log_is_classified_ran" "ran" "$_classification"
 rm -f "$_log_tmp"
 unset _log_tmp _status _classification
 
-_log_tmp="$(mktemp)"
+_log_tmp="$(mktemp)" || { echo "ERROR: mktemp failed" >&2; exit 1; }
 cat > "$_log_tmp" <<'LOG'
 Claude Code Action review	UNKNOWN STEP	Mode: agent
 Claude Code Action review	UNKNOWN STEP	App token successfully obtained
 LOG
 _status=0
-_classification="$(classify_log_fixture "$_log_tmp")" || _status=$?
+_classification="$(classify_claude_code_action_log "$_log_tmp")" || _status=$?
 run_test "unknown_log_is_not_clean_status" "2" "$_status"
 run_test "unknown_log_is_classified_unknown" "unknown" "$_classification"
 rm -f "$_log_tmp"
 unset _log_tmp _status _classification
+
+_status=0
+_output="$(verify_claude_code_action_run_log "" "owner" "repo" 2>&1)" || _status=$?
+run_test "missing_run_id_returns_unavailable" "3" "$_status"
+case "$_output" in
+  *"no run id was available"*) _message_found=1 ;;
+  *) _message_found=0 ;;
+esac
+run_test "missing_run_id_message" "1" "$_message_found"
+unset _status _output _message_found
+
+_gh_mock_dir="$(mktemp -d)" || { echo "ERROR: mktemp -d failed" >&2; exit 1; }
+cat > "$_gh_mock_dir/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+echo "mock gh failure" >&2
+exit 1
+MOCK_GH
+chmod +x "$_gh_mock_dir/gh"
+_old_path="$PATH"
+PATH="$_gh_mock_dir:$PATH"
+_status=0
+_output="$(verify_claude_code_action_run_log "123" "owner" "repo" 2>&1)" || _status=$?
+PATH="$_old_path"
+run_test "gh_run_view_failure_returns_unavailable" "3" "$_status"
+case "$_output" in
+  *"log verification failed"*) _message_found=1 ;;
+  *) _message_found=0 ;;
+esac
+run_test "gh_run_view_failure_message" "1" "$_message_found"
+rm -rf "$_gh_mock_dir"
+unset _gh_mock_dir _old_path _status _output _message_found
 
 # ---------------------------------------------------------------------------
 # Area 8: workflow automation prompt configuration

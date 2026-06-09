@@ -36,6 +36,88 @@
 
 set -euo pipefail
 
+# Defaults (overridable by flags or env vars)
+WORKFLOW_FILE="${CLAUDE_CODE_ACTION_WORKFLOW_FILE:-claude-code-review.yml}"
+BOT_LOGIN="${CLAUDE_CODE_ACTION_BOT_LOGIN:-claude[bot]}"
+POLL_INTERVAL=30
+MAX_WAIT=600
+
+classify_claude_code_action_log() {
+  local log_file="$1"
+
+  if grep -Eqi 'Context prompt: NO PROMPT|Trigger result: false|No trigger found, skipping remaining steps|"prompt": ""' "$log_file"; then
+    printf '%s\n' noop
+    return 1
+  fi
+
+  if grep -Eqi 'Trigger result: true|Context prompt: .+' "$log_file" \
+    && ! grep -Eqi 'Context prompt: NO PROMPT' "$log_file"; then
+    printf '%s\n' ran
+    return 0
+  fi
+
+  printf '%s\n' unknown
+  return 2
+}
+
+verify_claude_code_action_run_log() {
+  local run_id="$1"
+  local owner="$2"
+  local repo="$3"
+  local run_log_stderr run_log_tmpfile run_log_status run_log_err
+  local log_classification log_classification_status
+
+  if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+    echo "VERDICT: UNAVAILABLE — run succeeded but no run id was available for log verification"
+    return 3
+  fi
+
+  run_log_stderr="$(mktemp)" || {
+    echo "VERDICT: UNAVAILABLE — could not create temp file for Actions log stderr" >&2
+    return 3
+  }
+  run_log_tmpfile="$(mktemp)" || {
+    rm -f "$run_log_stderr"
+    echo "VERDICT: UNAVAILABLE — could not create temp file for Actions run log" >&2
+    return 3
+  }
+  run_log_status=0
+  gh run view "$run_id" --repo "$owner/$repo" --log \
+    >"$run_log_tmpfile" 2>"$run_log_stderr" || run_log_status=$?
+
+  if [ "$run_log_status" -ne 0 ]; then
+    run_log_err=$(cat "$run_log_stderr")
+    rm -f "$run_log_stderr" "$run_log_tmpfile"
+    echo "WARNING: could not fetch Actions run log (exit $run_log_status): $run_log_err" >&2
+    echo "VERDICT: UNAVAILABLE — run succeeded but log verification failed"
+    return 3
+  fi
+  rm -f "$run_log_stderr"
+
+  log_classification_status=0
+  log_classification="$(classify_claude_code_action_log "$run_log_tmpfile")" || log_classification_status=$?
+  rm -f "$run_log_tmpfile"
+
+  case "$log_classification_status" in
+    0)
+      echo "INFO: Claude Code Action log verification passed ($log_classification)"
+      return 0
+      ;;
+    1)
+      echo "VERDICT: UNAVAILABLE — Claude Code Action run completed without executing a review ($log_classification)"
+      return 3
+      ;;
+    *)
+      echo "VERDICT: UNAVAILABLE — Claude Code Action run log did not contain a positive execution marker ($log_classification)"
+      return 3
+      ;;
+  esac
+}
+
+if [ "${CLAUDE_CODE_ACTION_REVIEWER_LIBRARY_MODE:-0}" = "1" ]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
 if [ $# -lt 3 ]; then
@@ -71,30 +153,6 @@ case "$REPO" in
     exit 2
     ;;
 esac
-
-# Defaults (overridable by flags or env vars)
-WORKFLOW_FILE="${CLAUDE_CODE_ACTION_WORKFLOW_FILE:-claude-code-review.yml}"
-BOT_LOGIN="${CLAUDE_CODE_ACTION_BOT_LOGIN:-claude[bot]}"
-POLL_INTERVAL=30
-MAX_WAIT=600
-
-classify_claude_code_action_log() {
-  local log_file="$1"
-
-  if grep -Eqi 'Context prompt: NO PROMPT|Trigger result: false|No trigger found, skipping remaining steps|"prompt": ""' "$log_file"; then
-    printf '%s\n' noop
-    return 1
-  fi
-
-  if grep -Eqi 'Trigger result: true|Context prompt: .+' "$log_file" \
-    && ! grep -Eqi 'Context prompt: NO PROMPT' "$log_file"; then
-    printf '%s\n' ran
-    return 0
-  fi
-
-  printf '%s\n' unknown
-  return 2
-}
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -356,43 +414,7 @@ echo "INFO: Actions run completed with conclusion=success: $RUN_URL"
 # claude-code-action exits successfully when no prompt/trigger is present, logging
 # "No trigger found" and posting no review. Treat that as unavailable rather than
 # clean so the reviewer loop does not bless no-op runs.
-if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-  echo "VERDICT: UNAVAILABLE — run succeeded but no run id was available for log verification"
-  exit 3
-fi
-
-RUN_LOG_STDERR=$(mktemp)
-RUN_LOG_TMPFILE=$(mktemp)
-RUN_LOG_STATUS=0
-gh run view "$RUN_ID" --repo "$OWNER/$REPO" --log \
-  >"$RUN_LOG_TMPFILE" 2>"$RUN_LOG_STDERR" || RUN_LOG_STATUS=$?
-
-if [ "$RUN_LOG_STATUS" -ne 0 ]; then
-  RUN_LOG_ERR=$(cat "$RUN_LOG_STDERR")
-  rm -f "$RUN_LOG_STDERR" "$RUN_LOG_TMPFILE"
-  echo "WARNING: could not fetch Actions run log (exit $RUN_LOG_STATUS): $RUN_LOG_ERR" >&2
-  echo "VERDICT: UNAVAILABLE — run succeeded but log verification failed"
-  exit 3
-fi
-rm -f "$RUN_LOG_STDERR"
-
-LOG_CLASSIFICATION_STATUS=0
-LOG_CLASSIFICATION="$(classify_claude_code_action_log "$RUN_LOG_TMPFILE")" || LOG_CLASSIFICATION_STATUS=$?
-rm -f "$RUN_LOG_TMPFILE"
-
-case "$LOG_CLASSIFICATION_STATUS" in
-  0)
-    echo "INFO: Claude Code Action log verification passed ($LOG_CLASSIFICATION)"
-    ;;
-  1)
-    echo "VERDICT: UNAVAILABLE — Claude Code Action run completed without executing a review ($LOG_CLASSIFICATION)"
-    exit 3
-    ;;
-  *)
-    echo "VERDICT: UNAVAILABLE — Claude Code Action run log did not contain a positive execution marker ($LOG_CLASSIFICATION)"
-    exit 3
-    ;;
-esac
+verify_claude_code_action_run_log "$RUN_ID" "$OWNER" "$REPO" || exit $?
 
 # ── Phase 3 (continued): Check PR review threads ──────────────────────────────
 # After a successful run, inspect PR reviews posted by the bot after dispatch_time.
