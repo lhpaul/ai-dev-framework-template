@@ -3323,6 +3323,7 @@ check_unresolved_threads() {
   #
   # A thread is considered resolved when:
   #   - isResolved=true (GitHub resolved it via the Resolve button / mutation), OR
+  #   - isOutdated=true (GitHub marked it stale after a newer commit), OR
   #   - the first comment body contains "✅ Addressed" (bot self-marked it resolved)
   #
   # Only threads whose first comment was authored by a configured bot login are counted.
@@ -3361,7 +3362,7 @@ check_unresolved_threads() {
   # GraphQL query: paginate reviewThreads 100 at a time, fetch first comment per thread.
   # Using inline query string to avoid heredoc quoting issues in subshells.
   local graphql_query
-  graphql_query='query($owner:String!,$repo:String!,$pr:Int!,$cursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor}nodes{id isResolved comments(first:1){nodes{author{login}body}}}}}}}'
+  graphql_query='query($owner:String!,$repo:String!,$pr:Int!,$cursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor}nodes{id isResolved isOutdated comments(first:1){nodes{author{login}body}}}}}}}'
 
   while [ "$has_next_page" = "true" ]; do
     page=$((page + 1))
@@ -3402,8 +3403,9 @@ check_unresolved_threads() {
     while IFS= read -r thread_json; do
       [ -z "${thread_json:-}" ] && continue
 
-      local is_resolved author body
+      local is_resolved is_outdated author body
       is_resolved="$(printf '%s\n' "$thread_json" | jq -r '.isResolved')"
+      is_outdated="$(printf '%s\n' "$thread_json" | jq -r '.isOutdated // false')"
       author="$(printf '%s\n' "$thread_json" | jq -r '.comments.nodes[0].author.login // ""')"
       body="$(printf '%s\n' "$thread_json" | jq -r '.comments.nodes[0].body // ""')"
 
@@ -3416,8 +3418,9 @@ check_unresolved_threads() {
       done
       [ "$is_bot" -eq 0 ] && continue
 
-      # Thread is resolved if isResolved=true (GitHub resolved) or body contains "✅ Addressed"
+      # Thread is resolved if isResolved=true, isOutdated=true, or body contains "✅ Addressed"
       if [ "$is_resolved" = "true" ]; then continue; fi
+      if [ "$is_outdated" = "true" ]; then continue; fi
       if printf '%s\n' "$body" | grep -q "✅ Addressed"; then continue; fi
 
       unresolved_count=$((unresolved_count + 1))

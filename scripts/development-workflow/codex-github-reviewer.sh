@@ -38,7 +38,8 @@
 #      "no blocking issues found"; bare "blocking" excluded (too broad).
 #   2. Approval signals present → APPROVED (exit 0)
 #      Signals (case-insensitive): "approved", "lgtm", "looks good",
-#      "didn't find any major issues", "no blocking issues" (Codex clean phrases)
+#      "didn't find any major issues", "no blocking issues", or a Codex
+#      thumbs-up reaction on the trigger comment
 #   3. Neither found (unrecognized format) → safe-fails to NEEDS_REVISION (exit 1)
 #
 # Response source detection (two sources polled each cycle):
@@ -187,6 +188,46 @@ echo "INFO: Poll interval: ${POLL_INTERVAL}s, Max wait (total): ${MAX_WAIT}s"
 BOT_LOGIN_PLAIN="${BOT_LOGIN%\[bot\]}"
 echo "INFO: Bot login (plain, for PR-comment matching): $BOT_LOGIN_PLAIN"
 
+TRIGGER_COMMENT_ID=""
+
+codex_trigger_approval_reaction_count() {
+  local comment_id="$1"
+  [ -z "$comment_id" ] && { printf '0\n'; return 0; }
+
+  local reaction_tmpfile
+  reaction_tmpfile=$(mktemp)
+  if gh api "repos/$OWNER/$REPO/issues/comments/$comment_id/reactions" --paginate \
+    | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" \
+      '(add // []) | [.[] | select(.content == "+1" and (.user.login == $bot or .user.login == $bot_plain))] | length' \
+    > "$reaction_tmpfile"; then
+    cat "$reaction_tmpfile"
+  else
+    rm -f "$reaction_tmpfile"
+    echo "ERROR: failed to fetch or parse Codex trigger reactions" >&2
+    return 3
+  fi
+  rm -f "$reaction_tmpfile"
+}
+
+codex_inline_review_comment_count_since() {
+  local trigger_time="$1"
+  [ -z "$trigger_time" ] && { printf '0\n'; return 0; }
+
+  local review_comment_tmpfile
+  review_comment_tmpfile=$(mktemp)
+  if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments" --paginate \
+    | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$trigger_time" \
+      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .created_at > $trigger_time)] | length' \
+    > "$review_comment_tmpfile"; then
+    cat "$review_comment_tmpfile"
+  else
+    rm -f "$review_comment_tmpfile"
+    echo "ERROR: failed to fetch or parse Codex inline review comments" >&2
+    return 3
+  fi
+  rm -f "$review_comment_tmpfile"
+}
+
 # ── Idempotency guard (BR-10) ─────────────────────────────────────────────────
 # Check whether a trigger comment for the current commit SHA already exists.
 # We look for a comment body containing BOTH the trigger phrase AND the SHA to
@@ -216,9 +257,16 @@ rm -f "$IDEM_STDERR" "$IDEM_TMPFILE"
 
 TRIGGER_TIME=""
 if [ -n "$TRIGGER_COMMENT_INFO" ]; then
-  # jq outputs pretty-printed JSON with a space after the colon: "created_at": "..."
-  # Use ' *' to match zero or more spaces to handle both compact and pretty-print output.
-  TRIGGER_TIME=$(echo "$TRIGGER_COMMENT_INFO" | grep -o '"created_at": *"[^"]*"' | head -1 | sed 's/"created_at": *"//;s/"//')
+  if ! TRIGGER_COMMENT_ID=$(printf '%s\n' "$TRIGGER_COMMENT_INFO" | jq -re '.id | tostring'); then
+    echo "ERROR: existing trigger comment payload missing id" >&2
+    echo "VERDICT: TIMED_OUT — malformed trigger comment payload (treated as unavailable)"
+    exit 2
+  fi
+  if ! TRIGGER_TIME=$(printf '%s\n' "$TRIGGER_COMMENT_INFO" | jq -re '.created_at'); then
+    echo "ERROR: existing trigger comment payload missing created_at" >&2
+    echo "VERDICT: TIMED_OUT — malformed trigger comment payload (treated as unavailable)"
+    exit 2
+  fi
   if [ -n "$TRIGGER_TIME" ]; then
     echo "INFO: trigger comment already posted for commit $CURRENT_SHA (at $TRIGGER_TIME) — skipping duplicate post"
   fi
@@ -234,12 +282,21 @@ if [ -z "$TRIGGER_TIME" ]; then
   # filtered out during polling (created_at > TRIGGER_TIME would be false).
   # Guard with 'if !' to emit TIMED_OUT (exit 2) on failure instead of letting
   # set -e exit with code 1 (NEEDS_REVISION) without a VERDICT line.
-  if ! TRIGGER_TIME=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
+  if ! TRIGGER_RESPONSE=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
     --method POST \
-    --raw-field body="$TRIGGER_PHRASE (review triggered by workflow runner, commit: $CURRENT_SHA)" \
-    --jq '.created_at'); then
+    --raw-field body="$TRIGGER_PHRASE (review triggered by workflow runner, commit: $CURRENT_SHA)"); then
     echo "ERROR: failed to post trigger comment to PR #$PR_NUMBER" >&2
     echo "VERDICT: TIMED_OUT — failed to post trigger comment (treated as unavailable)"
+    exit 2
+  fi
+  if ! TRIGGER_TIME=$(printf '%s\n' "$TRIGGER_RESPONSE" | jq -re '.created_at'); then
+    echo "ERROR: trigger comment response missing created_at" >&2
+    echo "VERDICT: TIMED_OUT — malformed trigger comment response (treated as unavailable)"
+    exit 2
+  fi
+  if ! TRIGGER_COMMENT_ID=$(printf '%s\n' "$TRIGGER_RESPONSE" | jq -re '.id | tostring'); then
+    echo "ERROR: trigger comment response missing id or created_at" >&2
+    echo "VERDICT: TIMED_OUT — malformed trigger comment response (treated as unavailable)"
     exit 2
   fi
   echo "INFO: trigger comment posted at $TRIGGER_TIME (server-assigned timestamp)"
@@ -323,6 +380,26 @@ while true; do
     rm -f "$REVIEW_TMPFILE"
   fi
 
+  if ! INLINE_REVIEW_COMMENT_COUNT=$(codex_inline_review_comment_count_since "$TRIGGER_TIME"); then
+    echo "VERDICT: TIMED_OUT — failed to fetch Codex inline review comments (treated as unavailable)"
+    exit 2
+  fi
+  if [ "$INLINE_REVIEW_COMMENT_COUNT" -gt 0 ]; then
+    echo "VERDICT: NEEDS_REVISION"
+    echo "INFO: detected $INLINE_REVIEW_COMMENT_COUNT Codex inline review comment(s) after trigger"
+    exit 1
+  fi
+
+  if ! APPROVAL_REACTION_COUNT=$(codex_trigger_approval_reaction_count "$TRIGGER_COMMENT_ID"); then
+    echo "VERDICT: TIMED_OUT — failed to fetch Codex trigger reactions (treated as unavailable)"
+    exit 2
+  fi
+  if [ "$APPROVAL_REACTION_COUNT" -gt 0 ]; then
+    echo "VERDICT: APPROVED"
+    echo "INFO: detected Codex thumbs-up reaction on trigger comment $TRIGGER_COMMENT_ID"
+    exit 0
+  fi
+
   if [ -n "$BOT_RESPONSE" ]; then
     echo "INFO: bot response detected"
 
@@ -341,7 +418,8 @@ while true; do
     #
     # 2. Explicit approval signals present → APPROVED (exit 0)   [checked second]
     #    Approval signals: "approved", "lgtm", "looks good",
-    #    "didn't find any major issues", "no blocking issues" (Codex clean phrases)
+    #    "didn't find any major issues", "no blocking issues", or a Codex
+    #    thumbs-up reaction on the trigger comment (checked above).
     #
     # 3. Neither found (unrecognized response format) → NEEDS_REVISION (exit 1)
     #    Safe-fail: default to NEEDS_REVISION when the format is unrecognized to
@@ -367,6 +445,9 @@ while true; do
       echo "$BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
       exit 0
+    elif echo "$BOT_RESPONSE" | grep -qi "If Codex has suggestions, it will comment; otherwise it will react with"; then
+      echo "INFO: Codex acknowledgement detected; waiting for thumbs-up reaction or inline review comments"
+      continue
     else
       echo "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)"
       echo "---BEGIN BOT RESPONSE---"
@@ -385,12 +466,21 @@ while true; do
     echo "INFO: no response yet; re-triggering (attempt ${ATTEMPT_NUM}/${TOTAL_ATTEMPTS}, total elapsed ${TOTAL_ELAPSED}s/${MAX_WAIT}s)..."
     # --raw-field passes the body string as-is to the GitHub API without shell
     # re-interpretation, so special characters in TRIGGER_PHRASE are safe.
-    if ! TRIGGER_TIME=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
+    if ! TRIGGER_RESPONSE=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
       --method POST \
-      --raw-field body="$TRIGGER_PHRASE — retrigger ${RETRIGGER_COUNT}/${MAX_RETRIGGERS} after timeout (sha: $CURRENT_SHA)" \
-      --jq '.created_at'); then
+      --raw-field body="$TRIGGER_PHRASE — retrigger ${RETRIGGER_COUNT}/${MAX_RETRIGGERS} after timeout (sha: $CURRENT_SHA)"); then
       echo "ERROR: failed to post retrigger comment to PR #$PR_NUMBER" >&2
       echo "VERDICT: TIMED_OUT — failed to post retrigger comment (treated as unavailable)"
+      exit 2
+    fi
+    if ! TRIGGER_TIME=$(printf '%s\n' "$TRIGGER_RESPONSE" | jq -re '.created_at'); then
+      echo "ERROR: retrigger comment response missing created_at" >&2
+      echo "VERDICT: TIMED_OUT — malformed retrigger comment response (treated as unavailable)"
+      exit 2
+    fi
+    if ! TRIGGER_COMMENT_ID=$(printf '%s\n' "$TRIGGER_RESPONSE" | jq -re '.id | tostring'); then
+      echo "ERROR: retrigger comment response missing id or created_at" >&2
+      echo "VERDICT: TIMED_OUT — malformed retrigger comment response (treated as unavailable)"
       exit 2
     fi
     echo "INFO: retrigger comment posted at $TRIGGER_TIME (TRIGGER_TIME updated)"
@@ -410,13 +500,23 @@ done  # end outer retrigger loop
 
 echo "INFO: poll budget exhausted; waiting ${POLL_INTERVAL}s for late async response..."
 
+ASYNC_TRIGGER_COMMENT_ID=""
 if [ "$MAX_RETRIGGERS" -gt 0 ]; then
   echo "INFO: posting async-arrival trigger comment..."
-  if ! gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
+  if ! TRIGGER_RESPONSE=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
     --method POST \
-    --raw-field body="$TRIGGER_PHRASE — async-arrival check after poll-window expiry (sha: $CURRENT_SHA)" \
-    --jq '.created_at' >/dev/null; then
+    --raw-field body="$TRIGGER_PHRASE — async-arrival check after poll-window expiry (sha: $CURRENT_SHA)"); then
     echo "WARNING: failed to post async-arrival trigger comment; continuing with grace poll from existing trigger time" >&2
+  else
+    if ! ASYNC_TRIGGER_TIME=$(printf '%s\n' "$TRIGGER_RESPONSE" | jq -re '.created_at'); then
+      echo "VERDICT: TIMED_OUT — malformed async trigger comment response (treated as unavailable)"
+      exit 2
+    fi
+    if ! ASYNC_TRIGGER_COMMENT_ID=$(printf '%s\n' "$TRIGGER_RESPONSE" | jq -re '.id | tostring'); then
+      echo "VERDICT: TIMED_OUT — malformed async trigger comment response (treated as unavailable)"
+      exit 2
+    fi
+    echo "INFO: async-arrival trigger comment posted at $ASYNC_TRIGGER_TIME"
   fi
 else
   echo "INFO: MAX_RETRIGGERS=0 — skipping async-arrival trigger comment; grace poll will use existing trigger time"
@@ -427,6 +527,33 @@ sleep "$POLL_INTERVAL"
 
 # Single grace poll: check both PR comments and PR reviews
 ASYNC_BOT_RESPONSE=""
+
+if ! ASYNC_INLINE_REVIEW_COMMENT_COUNT=$(codex_inline_review_comment_count_since "$TRIGGER_TIME"); then
+  echo "VERDICT: TIMED_OUT — failed to fetch Codex inline review comments during async grace period (treated as unavailable)"
+  exit 2
+fi
+if [ "$ASYNC_INLINE_REVIEW_COMMENT_COUNT" -gt 0 ]; then
+  echo "VERDICT: NEEDS_REVISION"
+  echo "INFO: detected $ASYNC_INLINE_REVIEW_COMMENT_COUNT Codex inline review comment(s) during async grace period"
+  exit 1
+fi
+
+if ! ASYNC_APPROVAL_REACTION_COUNT=$(codex_trigger_approval_reaction_count "$TRIGGER_COMMENT_ID"); then
+  echo "VERDICT: TIMED_OUT — failed to fetch Codex trigger reactions during async grace period (treated as unavailable)"
+  exit 2
+fi
+if [ -n "$ASYNC_TRIGGER_COMMENT_ID" ]; then
+  if ! ASYNC_EXTRA_APPROVAL_REACTION_COUNT=$(codex_trigger_approval_reaction_count "$ASYNC_TRIGGER_COMMENT_ID"); then
+    echo "VERDICT: TIMED_OUT — failed to fetch Codex async trigger reactions during async grace period (treated as unavailable)"
+    exit 2
+  fi
+  ASYNC_APPROVAL_REACTION_COUNT=$((ASYNC_APPROVAL_REACTION_COUNT + ASYNC_EXTRA_APPROVAL_REACTION_COUNT))
+fi
+if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
+  echo "VERDICT: APPROVED"
+  echo "INFO: detected Codex thumbs-up reaction on trigger comment $TRIGGER_COMMENT_ID during async grace period"
+  exit 0
+fi
 
 ASYNC_POLL_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
@@ -470,6 +597,35 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
     echo "$ASYNC_BOT_RESPONSE"
     echo "---END BOT RESPONSE---"
     exit 0
+  elif echo "$ASYNC_BOT_RESPONSE" | grep -qi "If Codex has suggestions, it will comment; otherwise it will react with"; then
+    echo "INFO: async-arrival Codex acknowledgement detected without approval reaction or inline comments"
+    echo "INFO: waiting ${POLL_INTERVAL}s for final Codex async signal..."
+    sleep "$POLL_INTERVAL"
+    if ! ASYNC_INLINE_REVIEW_COMMENT_COUNT=$(codex_inline_review_comment_count_since "$TRIGGER_TIME"); then
+      echo "VERDICT: TIMED_OUT — failed to fetch Codex inline review comments after async acknowledgement (treated as unavailable)"
+      exit 2
+    fi
+    if [ "$ASYNC_INLINE_REVIEW_COMMENT_COUNT" -gt 0 ]; then
+      echo "VERDICT: NEEDS_REVISION"
+      echo "INFO: detected $ASYNC_INLINE_REVIEW_COMMENT_COUNT Codex inline review comment(s) after async acknowledgement"
+      exit 1
+    fi
+    if ! ASYNC_APPROVAL_REACTION_COUNT=$(codex_trigger_approval_reaction_count "$TRIGGER_COMMENT_ID"); then
+      echo "VERDICT: TIMED_OUT — failed to fetch Codex trigger reactions after async acknowledgement (treated as unavailable)"
+      exit 2
+    fi
+    if [ -n "$ASYNC_TRIGGER_COMMENT_ID" ]; then
+      if ! ASYNC_EXTRA_APPROVAL_REACTION_COUNT=$(codex_trigger_approval_reaction_count "$ASYNC_TRIGGER_COMMENT_ID"); then
+        echo "VERDICT: TIMED_OUT — failed to fetch Codex async trigger reactions after async acknowledgement (treated as unavailable)"
+        exit 2
+      fi
+      ASYNC_APPROVAL_REACTION_COUNT=$((ASYNC_APPROVAL_REACTION_COUNT + ASYNC_EXTRA_APPROVAL_REACTION_COUNT))
+    fi
+    if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
+      echo "VERDICT: APPROVED"
+      echo "INFO: detected Codex thumbs-up reaction on trigger comment $TRIGGER_COMMENT_ID after async acknowledgement"
+      exit 0
+    fi
   else
     echo "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)"
     echo "---BEGIN BOT RESPONSE---"

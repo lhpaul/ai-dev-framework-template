@@ -29,23 +29,24 @@ review:
   platforms:
     - pr-agent
     - haystack
-    - claude-code-action
+    - codex-github
   #
   # Platforms listed here are treated as "after-clean" reviewers by
   # pr-review-loop.sh: earlier platforms must reach clean before these platforms
   # are considered the value-measurement phase. The protocol keeps PRs as drafts
   # while PR-Agent clears, then converts to non-draft so Haystack and
-  # claude-code-action can run after the clean gate. Haystack triage is placed
+  # codex-github can run after the clean gate. Haystack triage is placed
   # here because it does not reliably complete analysis for draft PRs.
-  # claude-code-action requires ANTHROPIC_API_KEY in GitHub Actions secrets.
+  # codex-github requires the Codex GitHub App/connector to be available on the
+  # repository.
   phase_after_clean:
     - haystack
-    - claude-code-action
+    - codex-github # Uses CODEX_GITHUB_BOT_LOGIN default documented below.
   #
   # Configurable codex-github options (set via env vars or script flags to codex-github-reviewer.sh):
   #   CODEX_GITHUB_TRIGGER_PHRASE  — trigger phrase sent to the bot (default: "@codex review")
   #   CODEX_GITHUB_BOT_LOGIN       — GitHub login of the Codex bot account
-  #                                  (default: "codex-ai[bot]"; verify from GitHub App settings)
+  #                                  (default: "chatgpt-codex-connector[bot]"; verify from GitHub App settings)
   #
   # Additional options available as script flags to codex-github-reviewer.sh (passed via pr-review-loop.sh):
   #   --poll-interval <seconds>    — polling interval while waiting for bot response (default: 30)
@@ -80,23 +81,25 @@ review:
   #                 integrations/coderabbit.md Step 7a section for setup details.
   #
   # Runner-context constraint:
-  #   'codex' as a direct CLI reviewer is NOT reliably reachable from automated
-  #   subagent runners (Claude Code subagents, Cursor subagents, or any headless
+  #   This template defaults to 'codex' for Codex-first workflow runs. 'codex' as
+  #   a direct CLI reviewer is NOT reliably reachable from automated subagent
+  #   runners (Claude Code subagents, Cursor subagents, or any headless
   #   environment). It is typically only reachable when Codex is the top-level
   #   runner itself. Protocol 91 Step 7a will classify 'codex' as unreachable in
-  #   these contexts and emit a warning comment on the PR, then proceed with only
-  #   'claude' under the default 'warn' policy. This is expected behaviour — not
-  #   a misconfiguration.
+  #   these contexts. Because 'codex' is the only default internal reviewer, that
+  #   means zero reviewers are reachable and the gate hard-fails until the run is
+  #   retried from Codex or a local override selects a reachable reviewer. This is
+  #   expected behaviour — not a misconfiguration.
   #
-  # Local override: developers who do not have access to all tools listed here
-  # can override this list locally by creating .tmp/template-config.json in the
-  # repository root (this path is gitignored). Format:
+  # Local override: developers who need a different top-level review runner can
+  # override this list locally by creating .tmp/template-config.json in the
+  # repository root (this path is gitignored). Example for Claude Code:
   #   { "overrides": { "review": { "internal_reviewers": ["claude"] } } }
   # The overrides key takes precedence over this file for the local environment.
   # See docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
   # Step 7a for the full multi-reviewer gate procedure.
   internal_reviewers:
-    - claude
+    - codex
 
   # Optional: policy when a listed internal reviewer is unreachable from the current runner.
   # Protocol 91 Step 7a enforces this policy at runtime.
