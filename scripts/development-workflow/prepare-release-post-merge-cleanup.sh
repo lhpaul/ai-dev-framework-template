@@ -335,7 +335,10 @@ if [ "$BEST_EFFORT" != "true" ]; then
 fi
 
 if [ "$RELEASE_STAMPED" -gt 0 ]; then
-  finalize_release_marker_best_effort "$RELEASE_VERSION"
+  if ! finalize_release_marker_best_effort "$RELEASE_VERSION"; then
+    echo "Error: release marker finalization failed for $RELEASE_VERSION." >&2
+    exit 1
+  fi
 fi
 
 echo "Release post-merge cleanup complete."

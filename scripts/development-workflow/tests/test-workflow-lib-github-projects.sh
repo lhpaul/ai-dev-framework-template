@@ -519,6 +519,20 @@ run_test "release_marker_finalize_closes_milestone" "finalized" "$finalize_resul
 run_test "release_marker_finalize_calls_patch" "1" "$(count_log_matches 'api -X PATCH repos/.*/milestones/7 -f state=closed')"
 
 reset_log
+export MOCK_MILESTONE_CLOSE_MODE=fail
+if finalize_output="$(finalize_release_marker_best_effort "v1.2.3" 2>&1)"; then
+  finalize_failure_result="unexpected-success"
+else
+  case "$finalize_output" in
+    *"Warning: could not close GitHub release milestone 'v1.2.3'."*) finalize_failure_result="failed" ;;
+    *) finalize_failure_result="$finalize_output" ;;
+  esac
+fi
+unset MOCK_MILESTONE_CLOSE_MODE
+run_test "release_marker_finalize_close_failure_returns_nonzero" "failed" "$finalize_failure_result"
+run_test "release_marker_finalize_close_failure_calls_patch" "1" "$(count_log_matches 'api -X PATCH repos/.*/milestones/7 -f state=closed')"
+
+reset_log
 old_project_number="${GITHUB_PROJECT_NUMBER:-}"
 unset GITHUB_PROJECT_NUMBER
 MOCK_TRACKER_PROJECT_NUMBER=""

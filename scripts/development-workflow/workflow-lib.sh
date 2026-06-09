@@ -1565,8 +1565,8 @@ record_release_for_issue_best_effort() {
 
 # finalize_release_marker_best_effort <version>
 #
-# Best-effort lifecycle finalizer. GitHub providers close the release milestone;
-# other providers currently no-op.
+# Lifecycle finalizer. GitHub providers must close the release milestone
+# successfully; other providers currently no-op.
 finalize_release_marker_best_effort() {
   local version="$1"
   local provider repo_owner repo_name milestone_number
@@ -1576,23 +1576,24 @@ finalize_release_marker_best_effort() {
     github_projects|github-projects|github_issues|github-issues)
       if ! milestone_number="$(workflow_github_milestone_number "$version")"; then
         echo "Warning: could not read release milestone '${version}'; skipping finalization."
-        return 0
+        return 1
       fi
       if [ -z "$milestone_number" ]; then
         echo "Warning: release milestone '${version}' not found; skipping finalization."
-        return 0
+        return 1
       fi
       repo_owner="$(workflow_resolve_github_repo_owner)"
       repo_name="$(workflow_resolve_github_repo_name)"
       if [ -z "$repo_owner" ] || [ -z "$repo_name" ]; then
         echo "Warning: could not resolve GitHub repository for release marker finalization."
-        return 0
+        return 1
       fi
       if workflow_run_gh_capture_stderr api -X PATCH "repos/${repo_owner}/${repo_name}/milestones/${milestone_number}" -f state=closed; then
         echo "Release marker finalized: ${version}"
       else
         echo "Warning: could not close GitHub release milestone '${version}'."
         workflow_print_captured_gh_stderr
+        return 1
       fi
       ;;
     *)
