@@ -332,6 +332,27 @@ When a work item reaches **Merged** status, close the corresponding GitHub issue
 gh issue close <ISSUE_NUMBER>
 ```
 
+### Release Milestones
+
+For GitHub Issues and GitHub Projects providers, the release-stamp operation uses
+GitHub Milestones as the native "shipped in version" marker.
+
+Convention:
+
+- Milestone titles match production tags, for example `v1.2.0`.
+- `prepare-release-post-merge-cleanup.sh` creates a missing milestone when an
+  explicit released issue set is supplied.
+- The helper assigns the milestone to each shipped issue before or alongside the
+  `Merged` -> `Released` project Status transition.
+- After at least one issue is stamped, the helper closes the release milestone as
+  part of post-merge cleanup.
+- GitHub Projects can display the built-in Milestone field in board views, so no
+  custom project field is required to group or filter shipped issues by release.
+
+Release stamping is best effort. A milestone create or assignment failure is
+reported in the cleanup summary as `STAMP_FAILED`, but it does not block the
+existing tracker Status transition.
+
 ---
 
 ## Branch Naming with GitHub Issues

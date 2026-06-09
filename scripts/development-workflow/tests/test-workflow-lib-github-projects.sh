@@ -45,6 +45,43 @@ case "$*" in
     fi
     printf 'ai-dev-framework-template\n'
     ;;
+  "api --paginate --slurp repos/lhpaul/ai-dev-framework-template/milestones?state=all&per_page=100")
+    if [ "${MOCK_MILESTONE_MODE:-existing}" = "fail" ]; then
+      printf 'milestone list failed\n' >&2
+      exit 42
+    elif [ "${MOCK_MILESTONE_MODE:-existing}" = "missing" ]; then
+      printf '[[]]\n'
+    else
+      cat <<'JSON'
+[[{"number":7,"title":"v1.2.3","state":"open"},{"number":8,"title":"v0.1.0","state":"closed"}]]
+JSON
+    fi
+    ;;
+  "api -X POST repos/lhpaul/ai-dev-framework-template/milestones -f title=v1.2.3 -f description=Release v1.2.3")
+    if [ "${MOCK_MILESTONE_CREATE_MODE:-ok}" = "fail" ]; then
+      printf 'milestone create failed\n' >&2
+      exit 42
+    fi
+    cat <<'JSON'
+{"number":9,"title":"v1.2.3","state":"open"}
+JSON
+    ;;
+  "api -X PATCH repos/lhpaul/ai-dev-framework-template/milestones/7 -f state=closed"|"api -X PATCH repos/lhpaul/ai-dev-framework-template/milestones/9 -f state=closed")
+    if [ "${MOCK_MILESTONE_CLOSE_MODE:-ok}" = "fail" ]; then
+      printf 'milestone close failed\n' >&2
+      exit 42
+    fi
+    cat <<'JSON'
+{"number":7,"title":"v1.2.3","state":"closed"}
+JSON
+    ;;
+  "issue edit 824 --milestone v1.2.3")
+    if [ "${MOCK_ISSUE_EDIT_MODE:-ok}" = "fail" ]; then
+      printf 'issue edit failed\n' >&2
+      exit 42
+    fi
+    printf 'https://github.com/lhpaul/ai-dev-framework-template/issues/824\n'
+    ;;
   *"api graphql"* )
     case "$*" in
       *"projectV2(number:"*)
@@ -413,6 +450,73 @@ esac
 run_test "type_helpers_wrong_provider_warns" "warned" "$provider_guard_result"
 run_test "type_helpers_wrong_provider_empty_list" "[]" "$(printf '%s' "$workflow_issues" | jq -c '.')"
 run_test "type_helpers_wrong_provider_avoids_api" "0" "$(count_log_matches 'api graphql|issue list|project item-list')"
+
+reset_log
+milestone_number="$(workflow_github_milestone_number "v1.2.3")"
+run_test "release_stamp_finds_existing_milestone" "7" "$milestone_number"
+stamp_output="$(record_release_for_issue_best_effort 824 "v1.2.3" 2>&1)"
+case "$stamp_output" in
+  *"RELEASE_STAMPED issue=824 version=v1.2.3 provider=github_projects"*) stamp_result="stamped" ;;
+  *) stamp_result="$stamp_output" ;;
+esac
+run_test "release_stamp_assigns_existing_milestone" "stamped" "$stamp_result"
+run_test "release_stamp_existing_does_not_create_milestone" "0" "$(count_log_matches 'api -X POST repos/.*/milestones')"
+run_test "release_stamp_assigns_issue_milestone" "1" "$(count_log_matches 'issue edit 824 --milestone v1.2.3')"
+
+reset_log
+export MOCK_MILESTONE_MODE=missing
+stamp_output="$(record_release_for_issue_best_effort 824 "v1.2.3" 2>&1)"
+unset MOCK_MILESTONE_MODE
+case "$stamp_output" in
+  *"RELEASE_STAMPED issue=824 version=v1.2.3 provider=github_projects"*) stamp_result="stamped" ;;
+  *) stamp_result="$stamp_output" ;;
+esac
+run_test "release_stamp_creates_missing_milestone" "stamped" "$stamp_result"
+run_test "release_stamp_missing_creates_once" "1" "$(count_log_matches 'api -X POST repos/.*/milestones')"
+
+reset_log
+export MOCK_ISSUE_EDIT_MODE=fail
+stamp_output="$(record_release_for_issue_best_effort 824 "v1.2.3" 2>&1)"
+unset MOCK_ISSUE_EDIT_MODE
+case "$stamp_output" in
+  *"RELEASE_STAMP_FAILED issue=824 version=v1.2.3 provider=github_projects reason=assignment_failed"*) stamp_result="failed" ;;
+  *) stamp_result="$stamp_output" ;;
+esac
+run_test "release_stamp_assignment_failure_warns" "failed" "$stamp_result"
+
+reset_log
+export MOCK_TRACKER_PROVIDER=none
+stamp_output="$(record_release_for_issue_best_effort 824 "v1.2.3")"
+unset MOCK_TRACKER_PROVIDER
+run_test "release_stamp_provider_none_skips" "RELEASE_STAMP_SKIPPED issue=824 version=v1.2.3 provider=none reason=provider_none" "$stamp_output"
+run_test "release_stamp_provider_none_avoids_api" "0" "$(count_log_matches 'api |issue edit')"
+
+reset_log
+export MOCK_TRACKER_PROVIDER=linear
+stamp_output="$(record_release_for_issue_best_effort 824 "v1.2.3")"
+unset MOCK_TRACKER_PROVIDER
+case "$stamp_output" in
+  *"RELEASE_STAMP_SKIPPED issue=824 version=v1.2.3 provider=linear reason=mcp_required release_label=release/v1.2.3"*) stamp_result="linear-skip" ;;
+  *) stamp_result="$stamp_output" ;;
+esac
+run_test "release_stamp_linear_requires_mcp" "linear-skip" "$stamp_result"
+run_test "release_stamp_linear_avoids_api" "0" "$(count_log_matches 'api |issue edit')"
+
+reset_log
+export MOCK_TRACKER_PROVIDER=jira
+stamp_output="$(record_release_for_issue_best_effort 824 "v1.2.3")"
+unset MOCK_TRACKER_PROVIDER
+run_test "release_stamp_unsupported_provider_skips" "RELEASE_STAMP_SKIPPED issue=824 version=v1.2.3 provider=jira reason=unsupported_provider" "$stamp_output"
+run_test "release_stamp_unsupported_provider_avoids_api" "0" "$(count_log_matches 'api |issue edit')"
+
+reset_log
+finalize_output="$(finalize_release_marker_best_effort "v1.2.3" 2>&1)"
+case "$finalize_output" in
+  *"Release marker finalized: v1.2.3"*) finalize_result="finalized" ;;
+  *) finalize_result="$finalize_output" ;;
+esac
+run_test "release_marker_finalize_closes_milestone" "finalized" "$finalize_result"
+run_test "release_marker_finalize_calls_patch" "1" "$(count_log_matches 'api -X PATCH repos/.*/milestones/7 -f state=closed')"
 
 reset_log
 old_project_number="${GITHUB_PROJECT_NUMBER:-}"

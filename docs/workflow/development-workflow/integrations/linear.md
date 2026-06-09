@@ -99,11 +99,13 @@ The `[slug]` is a short kebab-case description derived from the work item title 
 
 ## Custom Fields
 
-The `issue_tracker.custom_fields` flat map in `.ai-dev-workflow.yaml` holds provider-specific fields that extend the standard `issue_tracker` configuration. For the Linear provider, the following key is recognised by workflow scripts:
+The `issue_tracker.custom_fields` flat map in `.ai-dev-workflow.yaml` holds provider-specific fields that extend the standard `issue_tracker` configuration. For the Linear provider, the following keys are recognised by workflow scripts:
 
-| Key       | Format                   | Effect                                                                                                                                                                                                            |
-| --------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `project` | Linear project ID string | When set, issue creation associates the new issue with the specified Linear project. The project ID is found in the Linear project URL (`https://linear.app/<team>/projects/<project-id>`) or via the Linear API. |
+| Key                    | Format                   | Effect                                                                                                                                                                                                            |
+| ---------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `project`              | Linear project ID string | When set, issue creation associates the new issue with the specified Linear project. The project ID is found in the Linear project URL (`https://linear.app/<team>/projects/<project-id>`) or via the Linear API. |
+| `release_field`        | Custom field key/name    | Optional future write target for recording the shipped release on a Linear issue. Shell helpers warn that MCP/API access is required.                                                                             |
+| `release_label_prefix` | Label prefix string      | Label fallback for release stamping. Defaults to `release/`, producing labels like `release/v1.2.0`. Shell helpers warn that MCP/API access is required to apply it.                                               |
 
 When `project` is absent from `custom_fields` (or `custom_fields` itself is absent), issue creation proceeds without a project association — this is the current default behaviour and is fully backward-compatible.
 
@@ -114,6 +116,7 @@ issue_tracker:
   provider: linear
   custom_fields:
     project: my-linear-project-id
+    release_label_prefix: release/
 ```
 
 Read the value in a script using the `workflow_issue_tracker_custom_field` helper:
@@ -124,6 +127,19 @@ project_id=$(workflow_issue_tracker_custom_field project)
 ```
 
 Unrecognised keys in `custom_fields` are silently ignored by all current scripts.
+
+### Release Stamping
+
+Linear has no global first-class release object. The default workflow release
+marker is a label named `release/vX.Y.Z`, using the configurable
+`release_label_prefix` above. Teams that maintain a Linear custom field for
+release tracking can set `release_field`; an MCP/API-backed implementation can
+write that field during release cleanup.
+
+Shell-only cleanup helpers cannot mutate Linear labels or custom fields directly.
+They emit release-stamp guidance and continue. The orchestrator or a Linear MCP
+runner should apply the release label/custom field and then transition shipped
+issues from `Merged` to `Released`.
 
 ---
 

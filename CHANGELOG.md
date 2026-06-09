@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Release stamping** (#829): records the production release version on shipped tracker issues using provider-native release markers such as GitHub Milestones, while failing softly for unsupported providers.
+
 ### Fixed
 
 - **Claude Code Action reviewer no-op guard** (#866): passes an explicit code-review prompt to the workflow and fails closed when a successful run log shows Claude did not actually execute.

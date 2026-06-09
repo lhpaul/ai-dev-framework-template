@@ -224,7 +224,13 @@ Confirm the release branch has:
 - One merged PR to `develop`
 - No remaining open PRs to either base
 
-If either merged PR is missing, or one PR is still open, stop. Do **not** delete the release branch and do **not** run tracker release transitions.
+If either merged PR is missing, or one PR is still open, stop. Do **not** delete the release branch and do **not** run release stamping or tracker release transitions.
+
+Before running cleanup, derive the explicit shipped issue set from the finalized
+`## [X.Y.Z]` section in `CHANGELOG.md`. Use only issue references that actually
+shipped in that release section. Keep the helper invocation explicit with
+`--issue` or `--issues`; do not ask the helper to infer release scope from the
+whole project board.
 
 ### 9.2 Preferred command (single entry point)
 
@@ -239,7 +245,8 @@ The script performs all required checks and actions in order:
 1. Verifies both merged PRs exist (`main` and `develop`) and no open PR remains.
 2. Deletes remote branch `release/v[X.Y.Z]` (or logs that it is already absent).
 3. Deletes local branch `release/v[X.Y.Z]` when safe.
-4. Transitions explicit in-scope tracker items from merged-to-integration to released-to-production.
+4. Records the production release version on each explicit in-scope tracker item.
+5. Transitions explicit in-scope tracker items from merged-to-integration to released-to-production.
 
 ### 9.3 Manual equivalent (when script cannot be used)
 
@@ -258,16 +265,23 @@ git branch -D "release/v[X.Y.Z]"
 
 If local deletion fails because the branch is checked out in another worktree, switch away in that worktree and retry.
 
-### 9.4 Tracker transition: `Merged` -> `Released` for in-scope items
+### 9.4 Release stamp + tracker transition for in-scope items
 
-Use the same GitHub Projects v2 update path documented in [`github-projects.md`](../integrations/github-projects.md). The helper script accepts explicit issue numbers (`--issue`/`--issues`) to keep scope safe.
+Use the provider-routed release-stamp operation documented in [`issue-tracker.md`](../integrations/issue-tracker.md) and the same GitHub Projects v2 status update path documented in [`github-projects.md`](../integrations/github-projects.md). The helper script accepts explicit issue numbers (`--issue`/`--issues`) to keep scope safe.
 
 - Default status names: `Merged` and `Released`
 - Optional env overrides:
   - `GITHUB_PROJECT_STATUS_MERGED`
   - `GITHUB_PROJECT_STATUS_RELEASED`
+- GitHub providers stamp releases with a Milestone named `vX.Y.Z`, assign it to each shipped issue, and close the milestone after cleanup succeeds.
+- Unsupported providers log a release-stamp skip/warning and continue; release stamping is best effort and must not block status transitions.
 
 Only transition work items explicitly confirmed as part of the shipped release. Do not bulk-move all project items in `Merged` unless a human explicitly asks for that scope.
+
+If release stamping needs manual repair, use the provider-native release marker
+for each shipped issue (for example, GitHub Milestone `vX.Y.Z`, Jira Fix
+Version/s, or a Linear `release/vX.Y.Z` label/custom field) and then rerun or
+manually complete the `Merged` -> `Released` status transition.
 
 ---
 

@@ -1418,6 +1418,185 @@ print(item.get('status') or '', end='')
   fi
 }
 
+# workflow_github_milestone_number <version>
+#
+# Prints the GitHub milestone number whose title exactly matches <version>, or
+# empty when absent/unreadable.
+workflow_github_milestone_number() {
+  local version="$1"
+  local repo_owner repo_name milestones
+
+  repo_owner="$(workflow_resolve_github_repo_owner)"
+  repo_name="$(workflow_resolve_github_repo_name)"
+  if [ -z "$repo_owner" ] || [ -z "$repo_name" ]; then
+    return 0
+  fi
+
+  if ! workflow_run_gh_capture_stderr api --paginate --slurp "repos/${repo_owner}/${repo_name}/milestones?state=all&per_page=100"; then
+    echo "Warning: could not list GitHub milestones for release '${version}'." >&2
+    workflow_print_captured_gh_stderr
+    return 0
+  fi
+  milestones="$__workflow_last_gh_stdout"
+
+  printf '%s' "$milestones" | python3 -c '
+import json
+import sys
+
+version = sys.argv[1]
+raw = sys.stdin.read()
+try:
+    pages = json.loads(raw)
+except Exception:
+    pages = []
+
+if isinstance(pages, dict):
+    pages = [pages]
+if pages and all(isinstance(item, dict) for item in pages):
+    items = pages
+else:
+    items = []
+    for page in pages if isinstance(pages, list) else []:
+        if isinstance(page, list):
+            items.extend(item for item in page if isinstance(item, dict))
+
+for item in items:
+    if item.get("title") == version:
+        print(item.get("number") or "", end="")
+        break
+' "$version"
+}
+
+# workflow_ensure_github_release_milestone <version>
+#
+# Creates the release milestone when absent and prints its number when known.
+workflow_ensure_github_release_milestone() {
+  local version="$1"
+  local repo_owner repo_name milestone_number created_number
+
+  milestone_number="$(workflow_github_milestone_number "$version")"
+  if [ -n "$milestone_number" ]; then
+    printf '%s' "$milestone_number"
+    return 0
+  fi
+
+  repo_owner="$(workflow_resolve_github_repo_owner)"
+  repo_name="$(workflow_resolve_github_repo_name)"
+  if [ -z "$repo_owner" ] || [ -z "$repo_name" ]; then
+    echo "Warning: could not resolve GitHub repository for release milestone '${version}'." >&2
+    return 1
+  fi
+
+  if ! workflow_run_gh_capture_stderr api -X POST "repos/${repo_owner}/${repo_name}/milestones" \
+    -f title="$version" \
+    -f description="Release ${version}"; then
+    echo "Warning: could not create GitHub release milestone '${version}'." >&2
+    workflow_print_captured_gh_stderr
+    return 1
+  fi
+
+  created_number=$(printf '%s' "$__workflow_last_gh_stdout" | python3 -c '
+import json
+import sys
+
+try:
+    data = json.loads(sys.stdin.read())
+except Exception:
+    data = {}
+print(data.get("number") or "", end="")
+'
+)
+  if [ -z "$created_number" ]; then
+    echo "Warning: GitHub milestone create response did not include a milestone number for '${version}'." >&2
+    return 1
+  fi
+  printf '%s' "$created_number"
+}
+
+# record_release_for_issue_best_effort <issue> <version>
+#
+# Provider-routed, fail-soft release stamp. Emits exactly one stable result line:
+#   RELEASE_STAMPED issue=<issue> version=<version> provider=<provider>
+#   RELEASE_STAMP_SKIPPED issue=<issue> version=<version> provider=<provider> reason=<reason>
+#   RELEASE_STAMP_FAILED issue=<issue> version=<version> provider=<provider> reason=<reason>
+record_release_for_issue_best_effort() {
+  local issue="$1"
+  local version="$2"
+  local provider milestone_number
+
+  provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+  case "$provider" in
+    github_projects|github-projects|github_issues|github-issues)
+      milestone_number="$(workflow_ensure_github_release_milestone "$version")"
+      if [ -z "$milestone_number" ]; then
+        echo "RELEASE_STAMP_FAILED issue=${issue} version=${version} provider=${provider} reason=milestone_unavailable"
+        return 0
+      fi
+      if workflow_run_gh_capture_stderr issue edit "$issue" --milestone "$version"; then
+        echo "RELEASE_STAMPED issue=${issue} version=${version} provider=${provider}"
+      else
+        echo "Warning: could not assign GitHub milestone '${version}' to issue '${issue}'." >&2
+        workflow_print_captured_gh_stderr
+        echo "RELEASE_STAMP_FAILED issue=${issue} version=${version} provider=${provider} reason=assignment_failed"
+      fi
+      ;;
+    ''|none)
+      echo "RELEASE_STAMP_SKIPPED issue=${issue} version=${version} provider=${provider:-none} reason=provider_none"
+      ;;
+    linear)
+      local release_field release_label_prefix
+      release_field="$(workflow_issue_tracker_custom_field release_field)"
+      release_label_prefix="$(workflow_issue_tracker_custom_field release_label_prefix)"
+      release_label_prefix="${release_label_prefix:-release/}"
+      if [ -n "$release_field" ]; then
+        echo "RELEASE_STAMP_SKIPPED issue=${issue} version=${version} provider=linear reason=mcp_required release_field=${release_field}"
+      else
+        echo "RELEASE_STAMP_SKIPPED issue=${issue} version=${version} provider=linear reason=mcp_required release_label=${release_label_prefix}${version}"
+      fi
+      ;;
+    *)
+      echo "RELEASE_STAMP_SKIPPED issue=${issue} version=${version} provider=${provider} reason=unsupported_provider"
+      ;;
+  esac
+  return 0
+}
+
+# finalize_release_marker_best_effort <version>
+#
+# Best-effort lifecycle finalizer. GitHub providers close the release milestone;
+# other providers currently no-op.
+finalize_release_marker_best_effort() {
+  local version="$1"
+  local provider repo_owner repo_name milestone_number
+
+  provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+  case "$provider" in
+    github_projects|github-projects|github_issues|github-issues)
+      milestone_number="$(workflow_github_milestone_number "$version")"
+      if [ -z "$milestone_number" ]; then
+        echo "Warning: release milestone '${version}' not found; skipping finalization."
+        return 0
+      fi
+      repo_owner="$(workflow_resolve_github_repo_owner)"
+      repo_name="$(workflow_resolve_github_repo_name)"
+      if [ -z "$repo_owner" ] || [ -z "$repo_name" ]; then
+        echo "Warning: could not resolve GitHub repository for release marker finalization."
+        return 0
+      fi
+      if workflow_run_gh_capture_stderr api -X PATCH "repos/${repo_owner}/${repo_name}/milestones/${milestone_number}" -f state=closed; then
+        echo "Release marker finalized: ${version}"
+      else
+        echo "Warning: could not close GitHub release milestone '${version}'."
+        workflow_print_captured_gh_stderr
+      fi
+      ;;
+    *)
+      echo "Release marker finalization skipped for provider '${provider:-none}'."
+      ;;
+  esac
+  return 0
+}
+
 # update_tracker_type_best_effort <issue_number> <type_label>
 #
 # Best-effort update for the GitHub Projects Type field. This intentionally

@@ -4,6 +4,7 @@
 # - verifies release PRs to main and develop are both merged
 # - deletes remote release branch (if present)
 # - deletes local release branch (switching away first if needed)
+# - optionally stamps explicit issue numbers with the release version
 # - optionally transitions explicit issue numbers from merged -> released
 #
 # Usage:
@@ -21,7 +22,8 @@
 #   1  updated==0 after processing all issues, or at least one hard failure occurred
 #
 # Output (when --issues is supplied):
-#   Emits structured key/value summary line:  UPDATED=N SKIPPED=N FAILED=N
+#   Emits structured key/value summary line:
+#   STAMPED=N STAMP_SKIPPED=N STAMP_FAILED=N UPDATED=N SKIPPED=N FAILED=N
 #
 # Env overrides:
 #   GITHUB_PROJECT_STATUS_MERGED   (default: Merged)
@@ -148,7 +150,9 @@ if [ -z "$RELEASE_INPUT" ]; then
 fi
 
 RELEASE_BRANCH="$(normalize_release_branch "$RELEASE_INPUT")"
+RELEASE_VERSION="${RELEASE_BRANCH#release/}"
 echo "Release branch: $RELEASE_BRANCH"
+echo "Release version: $RELEASE_VERSION"
 
 echo "Verifying merged PRs for release branch..."
 MAIN_PR=$(gh pr list --state merged --head "$RELEASE_BRANCH" --base main --json number --jq '.[0].number // empty')
@@ -208,22 +212,45 @@ fi
 # (they require MCP/API access). Emit per-issue manual action guidance and
 # exit cleanly rather than silently skipping or failing with UPDATED=0.
 if [ "$TRACKER_PROVIDER" = "linear" ]; then
+  echo "Recording release stamp guidance for Linear issue(s)..."
+  LINEAR_STAMP_SKIPPED=0
+  for issue in "${ISSUE_NUMBERS[@]}"; do
+    STAMP_OUT="$(record_release_for_issue_best_effort "$issue" "$RELEASE_VERSION" 2>&1)"
+    echo "$STAMP_OUT"
+    LINEAR_STAMP_SKIPPED=$((LINEAR_STAMP_SKIPPED + 1))
+  done
   echo "Linear tracker detected: automatic '$MERGED_LABEL' -> '$RELEASED_LABEL' transitions are not supported by this script."
   echo "Manually transition the following issue(s) to '$RELEASED_LABEL' in Linear (via MCP server or API):"
   for issue in "${ISSUE_NUMBERS[@]}"; do
     echo "  - Issue $issue: set status to '$RELEASED_LABEL'"
   done
   echo "See docs/workflow/development-workflow/integrations/linear.md for guidance."
+  echo "STAMPED=0 STAMP_SKIPPED=$LINEAR_STAMP_SKIPPED STAMP_FAILED=0 UPDATED=0 SKIPPED=0 FAILED=0"
   echo "Release post-merge cleanup complete."
   exit 0
 fi
 
 echo "Transitioning scoped issues from '$MERGED_LABEL' to '$RELEASED_LABEL'..."
+RELEASE_STAMPED=0
+RELEASE_STAMP_SKIPPED=0
+RELEASE_STAMP_FAILED=0
 TRACKER_UPDATED=0
 TRACKER_SKIPPED=0
 TRACKER_FAILED=0
 
 for issue in "${ISSUE_NUMBERS[@]}"; do
+  STAMP_OUT="$(record_release_for_issue_best_effort "$issue" "$RELEASE_VERSION" 2>&1)"
+  echo "$STAMP_OUT"
+  if echo "$STAMP_OUT" | grep -q "^RELEASE_STAMPED "; then
+    RELEASE_STAMPED=$((RELEASE_STAMPED + 1))
+  elif echo "$STAMP_OUT" | grep -q "^RELEASE_STAMP_FAILED "; then
+    RELEASE_STAMP_FAILED=$((RELEASE_STAMP_FAILED + 1))
+  elif echo "$STAMP_OUT" | grep -q "^RELEASE_STAMP_SKIPPED "; then
+    RELEASE_STAMP_SKIPPED=$((RELEASE_STAMP_SKIPPED + 1))
+  else
+    RELEASE_STAMP_SKIPPED=$((RELEASE_STAMP_SKIPPED + 1))
+  fi
+
   ISSUE_STATE=$(gh issue view "$issue" --json state --jq '.state' 2>/dev/null || true)
   if [ -z "$ISSUE_STATE" ]; then
     echo "Warning: could not read issue #$issue; skipping tracker update."
@@ -260,7 +287,11 @@ for issue in "${ISSUE_NUMBERS[@]}"; do
   fi
 done
 
-echo "UPDATED=$TRACKER_UPDATED SKIPPED=$TRACKER_SKIPPED FAILED=$TRACKER_FAILED"
+if [ "$RELEASE_STAMPED" -gt 0 ]; then
+  finalize_release_marker_best_effort "$RELEASE_VERSION"
+fi
+
+echo "STAMPED=$RELEASE_STAMPED STAMP_SKIPPED=$RELEASE_STAMP_SKIPPED STAMP_FAILED=$RELEASE_STAMP_FAILED UPDATED=$TRACKER_UPDATED SKIPPED=$TRACKER_SKIPPED FAILED=$TRACKER_FAILED"
 
 if [ "$BEST_EFFORT" = "true" ]; then
   echo "Release post-merge cleanup complete."
