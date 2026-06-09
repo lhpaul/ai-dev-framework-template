@@ -402,6 +402,85 @@ run_test "gh_run_view_failure_message" "1" "$_message_found"
 rm -rf "$_gh_mock_dir"
 unset _gh_mock_dir _old_path _status _output _message_found
 
+_gh_mock_dir="$(mktemp -d)" || { echo "ERROR: mktemp -d failed" >&2; exit 1; }
+cat > "$_gh_mock_dir/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+case "$3" in
+  200)
+    echo 'Claude Code Action review	UNKNOWN STEP	Context prompt: /code-review:code-review owner/repo/pull/1'
+    echo 'Claude Code Action review	UNKNOWN STEP	Trigger result: true'
+    ;;
+  201)
+    echo 'Claude Code Action review	UNKNOWN STEP	Context prompt: NO PROMPT'
+    echo 'Claude Code Action review	UNKNOWN STEP	Trigger result: false'
+    ;;
+  202)
+    echo 'Claude Code Action review	UNKNOWN STEP	Mode: agent'
+    echo 'Claude Code Action review	UNKNOWN STEP	App token successfully obtained'
+    ;;
+  *)
+    echo "unexpected run id: $3" >&2
+    exit 1
+    ;;
+esac
+MOCK_GH
+chmod +x "$_gh_mock_dir/gh"
+_old_path="$PATH"
+PATH="$_gh_mock_dir:$PATH"
+
+_status=0
+_output="$(verify_claude_code_action_run_log "200" "owner" "repo" 2>&1)" || _status=$?
+run_test "verify_run_log_executed_returns_clean" "0" "$_status"
+case "$_output" in
+  *"log verification passed (ran)"*) _message_found=1 ;;
+  *) _message_found=0 ;;
+esac
+run_test "verify_run_log_executed_message" "1" "$_message_found"
+unset _status _output _message_found
+
+_status=0
+_output="$(verify_claude_code_action_run_log "201" "owner" "repo" 2>&1)" || _status=$?
+run_test "verify_run_log_noop_returns_unavailable" "3" "$_status"
+case "$_output" in
+  *"without executing a review (noop)"*) _message_found=1 ;;
+  *) _message_found=0 ;;
+esac
+run_test "verify_run_log_noop_message" "1" "$_message_found"
+unset _status _output _message_found
+
+_status=0
+_output="$(verify_claude_code_action_run_log "202" "owner" "repo" 2>&1)" || _status=$?
+PATH="$_old_path"
+run_test "verify_run_log_unknown_returns_unavailable" "3" "$_status"
+case "$_output" in
+  *"did not contain a positive execution marker (unknown)"*) _message_found=1 ;;
+  *) _message_found=0 ;;
+esac
+run_test "verify_run_log_unknown_message" "1" "$_message_found"
+rm -rf "$_gh_mock_dir"
+unset _gh_mock_dir _old_path _status _output _message_found
+
+_mktemp_mock_dir="$(mktemp -d)" || { echo "ERROR: mktemp -d failed" >&2; exit 1; }
+cat > "$_mktemp_mock_dir/mktemp" <<'MOCK_MKTEMP'
+#!/usr/bin/env bash
+echo "mktemp unavailable" >&2
+exit 1
+MOCK_MKTEMP
+chmod +x "$_mktemp_mock_dir/mktemp"
+_old_path="$PATH"
+PATH="$_mktemp_mock_dir:$PATH"
+_status=0
+_output="$(verify_claude_code_action_run_log "203" "owner" "repo" 2>&1)" || _status=$?
+PATH="$_old_path"
+run_test "verify_run_log_mktemp_failure_returns_unavailable" "3" "$_status"
+case "$_output" in
+  *"could not create temp file"*) _message_found=1 ;;
+  *) _message_found=0 ;;
+esac
+run_test "verify_run_log_mktemp_failure_message" "1" "$_message_found"
+rm -rf "$_mktemp_mock_dir"
+unset _mktemp_mock_dir _old_path _status _output _message_found
+
 # ---------------------------------------------------------------------------
 # Area 8: workflow automation prompt configuration
 # ---------------------------------------------------------------------------
