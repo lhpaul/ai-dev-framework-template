@@ -80,23 +80,23 @@ review:
   #                 integrations/coderabbit.md Step 7a section for setup details.
   #
   # Runner-context constraint:
-  #   'codex' as a direct CLI reviewer is NOT reliably reachable from automated
-  #   subagent runners (Claude Code subagents, Cursor subagents, or any headless
+  #   This template defaults to 'codex' for Codex-first workflow runs. 'codex' as
+  #   a direct CLI reviewer is NOT reliably reachable from automated subagent
+  #   runners (Claude Code subagents, Cursor subagents, or any headless
   #   environment). It is typically only reachable when Codex is the top-level
   #   runner itself. Protocol 91 Step 7a will classify 'codex' as unreachable in
-  #   these contexts and emit a warning comment on the PR, then proceed with only
-  #   'claude' under the default 'warn' policy. This is expected behaviour — not
-  #   a misconfiguration.
+  #   these contexts and emit a warning comment on the PR. This is expected
+  #   behaviour — not a misconfiguration.
   #
-  # Local override: developers who do not have access to all tools listed here
-  # can override this list locally by creating .tmp/template-config.json in the
-  # repository root (this path is gitignored). Format:
+  # Local override: developers who need a different top-level review runner can
+  # override this list locally by creating .tmp/template-config.json in the
+  # repository root (this path is gitignored). Example for Claude Code:
   #   { "overrides": { "review": { "internal_reviewers": ["claude"] } } }
   # The overrides key takes precedence over this file for the local environment.
   # See docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
   # Step 7a for the full multi-reviewer gate procedure.
   internal_reviewers:
-    - claude
+    - codex
 
   # Optional: policy when a listed internal reviewer is unreachable from the current runner.
   # Protocol 91 Step 7a enforces this policy at runtime.
