@@ -500,6 +500,7 @@ done  # end outer retrigger loop
 
 echo "INFO: poll budget exhausted; waiting ${POLL_INTERVAL}s for late async response..."
 
+ASYNC_TRIGGER_COMMENT_ID=""
 if [ "$MAX_RETRIGGERS" -gt 0 ]; then
   echo "INFO: posting async-arrival trigger comment..."
   if ! TRIGGER_RESPONSE=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
@@ -507,15 +508,15 @@ if [ "$MAX_RETRIGGERS" -gt 0 ]; then
     --raw-field body="$TRIGGER_PHRASE — async-arrival check after poll-window expiry (sha: $CURRENT_SHA)"); then
     echo "WARNING: failed to post async-arrival trigger comment; continuing with grace poll from existing trigger time" >&2
   else
-    if ! TRIGGER_TIME=$(printf '%s\n' "$TRIGGER_RESPONSE" | jq -re '.created_at'); then
+    if ! ASYNC_TRIGGER_TIME=$(printf '%s\n' "$TRIGGER_RESPONSE" | jq -re '.created_at'); then
       echo "VERDICT: TIMED_OUT — malformed async trigger comment response (treated as unavailable)"
       exit 2
     fi
-    if ! TRIGGER_COMMENT_ID=$(printf '%s\n' "$TRIGGER_RESPONSE" | jq -re '.id | tostring'); then
+    if ! ASYNC_TRIGGER_COMMENT_ID=$(printf '%s\n' "$TRIGGER_RESPONSE" | jq -re '.id | tostring'); then
       echo "VERDICT: TIMED_OUT — malformed async trigger comment response (treated as unavailable)"
       exit 2
     fi
-    echo "INFO: async-arrival trigger comment posted at $TRIGGER_TIME"
+    echo "INFO: async-arrival trigger comment posted at $ASYNC_TRIGGER_TIME"
   fi
 else
   echo "INFO: MAX_RETRIGGERS=0 — skipping async-arrival trigger comment; grace poll will use existing trigger time"
@@ -540,6 +541,13 @@ fi
 if ! ASYNC_APPROVAL_REACTION_COUNT=$(codex_trigger_approval_reaction_count "$TRIGGER_COMMENT_ID"); then
   echo "VERDICT: TIMED_OUT — failed to fetch Codex trigger reactions during async grace period (treated as unavailable)"
   exit 2
+fi
+if [ -n "$ASYNC_TRIGGER_COMMENT_ID" ]; then
+  if ! ASYNC_EXTRA_APPROVAL_REACTION_COUNT=$(codex_trigger_approval_reaction_count "$ASYNC_TRIGGER_COMMENT_ID"); then
+    echo "VERDICT: TIMED_OUT — failed to fetch Codex async trigger reactions during async grace period (treated as unavailable)"
+    exit 2
+  fi
+  ASYNC_APPROVAL_REACTION_COUNT=$((ASYNC_APPROVAL_REACTION_COUNT + ASYNC_EXTRA_APPROVAL_REACTION_COUNT))
 fi
 if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
   echo "VERDICT: APPROVED"
@@ -605,6 +613,13 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
     if ! ASYNC_APPROVAL_REACTION_COUNT=$(codex_trigger_approval_reaction_count "$TRIGGER_COMMENT_ID"); then
       echo "VERDICT: TIMED_OUT — failed to fetch Codex trigger reactions after async acknowledgement (treated as unavailable)"
       exit 2
+    fi
+    if [ -n "$ASYNC_TRIGGER_COMMENT_ID" ]; then
+      if ! ASYNC_EXTRA_APPROVAL_REACTION_COUNT=$(codex_trigger_approval_reaction_count "$ASYNC_TRIGGER_COMMENT_ID"); then
+        echo "VERDICT: TIMED_OUT — failed to fetch Codex async trigger reactions after async acknowledgement (treated as unavailable)"
+        exit 2
+      fi
+      ASYNC_APPROVAL_REACTION_COUNT=$((ASYNC_APPROVAL_REACTION_COUNT + ASYNC_EXTRA_APPROVAL_REACTION_COUNT))
     fi
     if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
       echo "VERDICT: APPROVED"
