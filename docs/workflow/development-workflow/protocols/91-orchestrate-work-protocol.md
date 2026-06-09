@@ -1824,7 +1824,7 @@ Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asyn
        repository(owner:$owner, name:$repo) {
          pullRequest(number:$number) {
            reviewThreads(first: 100) {
-           nodes { isResolved isOutdated comments(first: 1) { nodes { author { login } body } } }
+             nodes { isResolved isOutdated comments(first: 1) { nodes { author { login } body } } }
            }
          }
        }

@@ -41,7 +41,7 @@ review:
   # repository.
   phase_after_clean:
     - haystack
-    - codex-github
+    - codex-github # Uses CODEX_GITHUB_BOT_LOGIN default documented below.
   #
   # Configurable codex-github options (set via env vars or script flags to codex-github-reviewer.sh):
   #   CODEX_GITHUB_TRIGGER_PHRASE  — trigger phrase sent to the bot (default: "@codex review")
