@@ -29,18 +29,19 @@ review:
   platforms:
     - pr-agent
     - haystack
-    - claude-code-action
+    - codex-github
   #
   # Platforms listed here are treated as "after-clean" reviewers by
   # pr-review-loop.sh: earlier platforms must reach clean before these platforms
   # are considered the value-measurement phase. The protocol keeps PRs as drafts
   # while PR-Agent clears, then converts to non-draft so Haystack and
-  # claude-code-action can run after the clean gate. Haystack triage is placed
+  # codex-github can run after the clean gate. Haystack triage is placed
   # here because it does not reliably complete analysis for draft PRs.
-  # claude-code-action requires ANTHROPIC_API_KEY in GitHub Actions secrets.
+  # codex-github requires the Codex GitHub App/connector to be available on the
+  # repository.
   phase_after_clean:
     - haystack
-    - claude-code-action
+    - codex-github
   #
   # Configurable codex-github options (set via env vars or script flags to codex-github-reviewer.sh):
   #   CODEX_GITHUB_TRIGGER_PHRASE  — trigger phrase sent to the bot (default: "@codex review")
