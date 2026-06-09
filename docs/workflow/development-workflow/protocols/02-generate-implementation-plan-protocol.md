@@ -334,7 +334,7 @@ If no blocking human decision remains:
    - Spec/brief coverage: Checked - all ACs map to implementation steps and tests.
    - Implementation-order consistency: Checked - file list and order agree.
    - Verification support: Checked - broad claims cite Verification Log evidence.
-   - Parser/concurrency checklist: Not applicable - no parser or concurrent-event signals.
+   - Parser/API/concurrency checklist: Not applicable - no parser, API-surface, snapshot, or concurrent-event signals.
    ```
 
    Before the PR is opened, verify:
@@ -347,7 +347,8 @@ If no blocking human decision remains:
      or tool semantics cite a Verification Log command or a concrete source file.
    - Behavioral guarantees: every guarantee such as idempotency, bounded retries,
      ordering, or "at most once" names the mechanism that enforces it.
-   - Parser/concurrency checklist completeness: when parser-risk or
+   - Parser/API/concurrency checklist completeness: when parser-risk,
+     API-surface, single-snapshot or consistency-semantics, or
      concurrent-event-source signals apply, the required checklist sections are
      present and mapped to tests.
    - CHANGELOG literal format: required implementation CHANGELOG entries appear

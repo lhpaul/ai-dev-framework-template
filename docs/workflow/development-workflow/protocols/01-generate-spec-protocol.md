@@ -155,7 +155,7 @@ rationale for every `Not applicable` item:
 - Brief coverage: Checked - all brief objectives map to acceptance criteria or out of scope.
 - Internal consistency: Checked - terminology and status labels are consistent.
 - Behavioral guarantees: Not applicable - this spec does not introduce guarantees beyond ACs.
-- Reviewer-risk categories: Checked - edge cases and template placeholders reviewed.
+- Reviewer-risk categories: Checked - API surface, concurrency, snapshot semantics, edge cases, and template placeholders reviewed.
 ```
 
 Before the PR is opened, verify:
@@ -169,8 +169,10 @@ Before the PR is opened, verify:
 - Behavioral guarantees: every guarantee, limit, ordering rule, or invariant is
   backed by acceptance criteria or a business rule that makes it testable.
 - Reviewer-risk categories: common high-signal reviewer concerns are checked:
-  missing edge cases, vague actors/triggers, untestable ACs, hidden dependencies,
-  accidental implementation design, and stale template content.
+  API-surface completeness, concurrency correctness, single-snapshot or
+  consistency semantics, missing edge cases, vague actors/triggers, untestable
+  ACs, hidden dependencies, accidental implementation design, and stale
+  template content.
 - Placeholder cleanup: the template-placeholder grep below returns no output.
 - Not-applicable rationale: any omitted optional section or checklist item has a
   brief rationale in the PR description log.
