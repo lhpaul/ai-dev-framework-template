@@ -217,7 +217,10 @@ if [ "$TRACKER_PROVIDER" = "linear" ]; then
   LINEAR_STAMP_SKIPPED=0
   LINEAR_STAMP_FAILED=0
   for issue in "${ISSUE_NUMBERS[@]}"; do
-    STAMP_OUT="$(record_release_for_issue_best_effort "$issue" "$RELEASE_VERSION" 2>&1)"
+    if ! STAMP_OUT="$(record_release_for_issue_best_effort "$issue" "$RELEASE_VERSION")"; then
+      echo "Warning: release-stamp helper failed for issue #$issue; counting as stamp failure."
+      STAMP_OUT="RELEASE_STAMP_FAILED issue=${issue} version=${RELEASE_VERSION} provider=${TRACKER_PROVIDER:-unknown} reason=helper_failed"
+    fi
     echo "$STAMP_OUT"
     if echo "$STAMP_OUT" | grep -q "^RELEASE_STAMPED "; then
       LINEAR_STAMPED=$((LINEAR_STAMPED + 1))
@@ -250,7 +253,10 @@ TRACKER_SKIPPED=0
 TRACKER_FAILED=0
 
 for issue in "${ISSUE_NUMBERS[@]}"; do
-  STAMP_OUT="$(record_release_for_issue_best_effort "$issue" "$RELEASE_VERSION" 2>&1)"
+  if ! STAMP_OUT="$(record_release_for_issue_best_effort "$issue" "$RELEASE_VERSION")"; then
+    echo "Warning: release-stamp helper failed for issue #$issue; counting as stamp failure."
+    STAMP_OUT="RELEASE_STAMP_FAILED issue=${issue} version=${RELEASE_VERSION} provider=${TRACKER_PROVIDER:-unknown} reason=helper_failed"
+  fi
   echo "$STAMP_OUT"
   if echo "$STAMP_OUT" | grep -q "^RELEASE_STAMPED "; then
     RELEASE_STAMPED=$((RELEASE_STAMPED + 1))
