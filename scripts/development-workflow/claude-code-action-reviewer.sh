@@ -247,8 +247,8 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
   #   wrong PR's run. To fix this, claude-code-review.yml sets
   #   `run-name: "Claude Code Review — PR #${{ inputs.pr_number }}"`, and GitHub
   #   populates that string into the .name field on Runs API objects. The filter
-  #   below prefers name-scoped runs (where .name contains "PR #<pr>" with a
-  #   word-boundary guard) and falls back to timestamp-only selection when the
+  #   below prefers name-scoped runs whose parsed "PR #<number>" token equals
+  #   this PR number, and falls back to timestamp-only selection when the
   #   workflow has not yet been updated to include run-name (backward compatibility
   #   during the transition period after #808 is merged to the default branch).
   #   The timestamp filter remains as a secondary guard in the fallback path to
@@ -269,9 +269,9 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
          # prevent selecting the wrong PR'\''s run under concurrent/parallel dispatch.
          # Fall back to all candidates when no run has the "PR #N" pattern — backward
          # compat with pre-#808 deployments where the workflow has no run-name yet.
-         ([$candidates[] | select((.name // "") | test("PR #[0-9]+\\b"))] | length > 0) as $name_scoped |
+         ([$candidates[] | select((.name // "") | capture("PR #(?<pr>[0-9]+)(?:[^0-9]|$)")?)] | length > 0) as $name_scoped |
          ($candidates | if $name_scoped then
-           [.[] | select((.name // "") | test("PR #" + $pr + "\\b"))]
+           [.[] | select(((.name // "") | capture("PR #(?<pr>[0-9]+)(?:[^0-9]|$)")? | .pr) == $pr)]
          else . end) |
          sort_by(.created_at) | reverse | first |
          {status: .status, conclusion: .conclusion, html_url: .html_url, id: .id}' \

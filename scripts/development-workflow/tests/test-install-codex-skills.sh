@@ -3,6 +3,7 @@
 #
 # Exercises the highest-risk installer behavior:
 #   1. Three-pass ordering: repo skills -> legacy canonical -> legacy aliases
+#      with canonical legacy symlinks preserved on name collision
 #   2. Skip rules: existing non-symlink destinations are not overwritten
 #   3. Source-directory validation: missing .agents/skills fails clearly
 #
@@ -109,6 +110,12 @@ run_test "legacy_run_work_alias_symlink" "yes" "$(
 run_test "legacy_workflow_canonical_symlink" "yes" "$(
   [ -L "$codex_home/skills/workflow-orchestrator" ] && echo yes || echo no
 )"
+run_test "legacy_collision_preserves_canonical" "$fixture/.codex/skills/workflow-orchestrator" "$(
+  readlink "$codex_home/skills/workflow-orchestrator"
+)"
+run_test "legacy_alias_collision_skip_message" "yes" "$(
+  grep -q 'Skipping workflow-orchestrator: .*preserving existing symlink (legacy aliases)' "$output_file" && echo yes || echo no
+)"
 
 order_actual="$(
   awk '
@@ -178,16 +185,20 @@ AGENTS_HOME="$agents_home" CODEX_HOME="$codex_home" \
 
 while IFS= read -r alias_name; do
   [ -n "$alias_name" ] || continue
-  expected_target="$REPO_ROOT/.agents/skills/$alias_name"
+  primary_expected_target="$REPO_ROOT/.agents/skills/$alias_name"
+  legacy_expected_target="$REPO_ROOT/.agents/skills/$alias_name"
+  if [ -e "$REPO_ROOT/.codex/skills/$alias_name" ]; then
+    legacy_expected_target="$REPO_ROOT/.codex/skills/$alias_name"
+  fi
 
   assert_skill_link \
     "primary_alias_${alias_name}" \
     "$agents_home/skills/$alias_name" \
-    "$expected_target"
+    "$primary_expected_target"
   assert_skill_link \
     "legacy_alias_${alias_name}" \
     "$codex_home/skills/$alias_name" \
-    "$expected_target"
+    "$legacy_expected_target"
 done <<'ALIASES'
 add-backlog-item
 batch-merge
@@ -204,16 +215,20 @@ ALIASES
 
 while IFS= read -r workflow_name; do
   [ -n "$workflow_name" ] || continue
-  expected_target="$REPO_ROOT/.agents/skills/$workflow_name"
+  primary_expected_target="$REPO_ROOT/.agents/skills/$workflow_name"
+  legacy_expected_target="$REPO_ROOT/.agents/skills/$workflow_name"
+  if [ -e "$REPO_ROOT/.codex/skills/$workflow_name" ]; then
+    legacy_expected_target="$REPO_ROOT/.codex/skills/$workflow_name"
+  fi
 
   assert_skill_link \
     "primary_workflow_${workflow_name}" \
     "$agents_home/skills/$workflow_name" \
-    "$expected_target"
+    "$primary_expected_target"
   assert_skill_link \
     "legacy_workflow_${workflow_name}" \
     "$codex_home/skills/$workflow_name" \
-    "$expected_target"
+    "$legacy_expected_target"
 done <<'WORKFLOW_SKILLS'
 workflow-code-reviewer
 workflow-implementer

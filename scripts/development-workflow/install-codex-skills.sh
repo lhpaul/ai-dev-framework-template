@@ -18,6 +18,7 @@ install_skill_tree() {
   local source_dir="$1"
   local dest_root="$2"
   local label="$3"
+  local skip_existing_symlink="${4:-false}"
 
   [ -d "$source_dir" ] || return 0
 
@@ -35,6 +36,10 @@ install_skill_tree() {
       echo "Skipping $skill_name: $dest_path exists and is not a symlink"
       continue
     fi
+    if [ "$skip_existing_symlink" = "true" ] && [ -L "$dest_path" ]; then
+      echo "Skipping $skill_name: $dest_path already installed; preserving existing symlink ($label)"
+      continue
+    fi
 
     ln -sfn "$skill_dir" "$dest_path"
     echo "Installed $skill_name -> $dest_path ($label)"
@@ -43,4 +48,6 @@ install_skill_tree() {
 
 install_skill_tree "$REPO_SKILL_SOURCE_DIR" "$PRIMARY_DEST_ROOT" "repo"
 install_skill_tree "$LEGACY_SOURCE_DIR" "$LEGACY_DEST_ROOT" "legacy canonical"
-install_skill_tree "$REPO_SKILL_SOURCE_DIR" "$LEGACY_DEST_ROOT" "legacy aliases"
+# Legacy canonical skill definitions take precedence over command-style aliases
+# when both trees define the same skill name.
+install_skill_tree "$REPO_SKILL_SOURCE_DIR" "$LEGACY_DEST_ROOT" "legacy aliases" "true"
