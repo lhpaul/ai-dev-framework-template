@@ -213,11 +213,22 @@ fi
 # exit cleanly rather than silently skipping or failing with UPDATED=0.
 if [ "$TRACKER_PROVIDER" = "linear" ]; then
   echo "Recording release stamp guidance for Linear issue(s)..."
+  LINEAR_STAMPED=0
   LINEAR_STAMP_SKIPPED=0
+  LINEAR_STAMP_FAILED=0
   for issue in "${ISSUE_NUMBERS[@]}"; do
     STAMP_OUT="$(record_release_for_issue_best_effort "$issue" "$RELEASE_VERSION" 2>&1)"
     echo "$STAMP_OUT"
-    LINEAR_STAMP_SKIPPED=$((LINEAR_STAMP_SKIPPED + 1))
+    if echo "$STAMP_OUT" | grep -q "^RELEASE_STAMPED "; then
+      LINEAR_STAMPED=$((LINEAR_STAMPED + 1))
+    elif echo "$STAMP_OUT" | grep -q "^RELEASE_STAMP_FAILED "; then
+      LINEAR_STAMP_FAILED=$((LINEAR_STAMP_FAILED + 1))
+    elif echo "$STAMP_OUT" | grep -q "^RELEASE_STAMP_SKIPPED "; then
+      LINEAR_STAMP_SKIPPED=$((LINEAR_STAMP_SKIPPED + 1))
+    else
+      echo "Warning: unrecognized release-stamp output for issue #$issue; counting as stamp failure."
+      LINEAR_STAMP_FAILED=$((LINEAR_STAMP_FAILED + 1))
+    fi
   done
   echo "Linear tracker detected: automatic '$MERGED_LABEL' -> '$RELEASED_LABEL' transitions are not supported by this script."
   echo "Manually transition the following issue(s) to '$RELEASED_LABEL' in Linear (via MCP server or API):"
@@ -225,7 +236,7 @@ if [ "$TRACKER_PROVIDER" = "linear" ]; then
     echo "  - Issue $issue: set status to '$RELEASED_LABEL'"
   done
   echo "See docs/workflow/development-workflow/integrations/linear.md for guidance."
-  echo "STAMPED=0 STAMP_SKIPPED=$LINEAR_STAMP_SKIPPED STAMP_FAILED=0 UPDATED=0 SKIPPED=0 FAILED=0"
+  echo "STAMPED=$LINEAR_STAMPED STAMP_SKIPPED=$LINEAR_STAMP_SKIPPED STAMP_FAILED=$LINEAR_STAMP_FAILED UPDATED=0 SKIPPED=0 FAILED=0"
   echo "Release post-merge cleanup complete."
   exit 0
 fi
@@ -248,7 +259,8 @@ for issue in "${ISSUE_NUMBERS[@]}"; do
   elif echo "$STAMP_OUT" | grep -q "^RELEASE_STAMP_SKIPPED "; then
     RELEASE_STAMP_SKIPPED=$((RELEASE_STAMP_SKIPPED + 1))
   else
-    RELEASE_STAMP_SKIPPED=$((RELEASE_STAMP_SKIPPED + 1))
+    echo "Warning: unrecognized release-stamp output for issue #$issue; counting as stamp failure."
+    RELEASE_STAMP_FAILED=$((RELEASE_STAMP_FAILED + 1))
   fi
 
   ISSUE_STATE=$(gh issue view "$issue" --json state --jq '.state' 2>/dev/null || true)
