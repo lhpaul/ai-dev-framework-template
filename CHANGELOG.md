@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Native GitHub sub-issues for epics** (#884): documents native sub-issue linking and verification for multi-item GitHub epics while preserving `integration-branch:<slug>` labels as the routing contract and fallback.
 - **Codex GitHub reviewer loop**: aligns the documented Codex bot default with the reviewer scripts, ignores outdated Codex review threads, and waits for Codex's definitive thumbs-up or inline-comment signal instead of treating review boilerplate as approval.
 - **Claude Code Action reviewer no-op guard** (#866): passes an explicit code-review prompt to the workflow and fails closed when a successful run log shows Claude did not actually execute.
 - **Tool-fix merge ordering** (#825): documents that foundational reviewer-tool fixes must merge before dependent tool-fixes are trusted, and that dependents must update from the fixed base before rerunning reviewer loops.
@@ -109,7 +110,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Shell Script Quality Checklist: add `jq`, timeout, and structured-input items** (#752) — items 9–11 in `03-implement-development-protocol.md`: `jq -e` exit-code guards, `timeout` for external CLIs, non-empty validation for structured input.
 - **`claude-code-action-reviewer.sh`: dispatch against default branch, not PR base branch** — fixes permanent 404 when the workflow file is not yet on the default branch.
 - **`pr-review-loop.sh`: clarify REST-vs-GraphQL bot-login normalization** — comments now explicitly state REST returns logins with `[bot]` suffix, GraphQL without, preventing future Haystack triage misreads.
-
 
 ## [0.28.4] - 2026-05-27
 
@@ -204,6 +204,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **`markdown-lint.yml`: disable `relative-links` rule in CI** (hotfix): implementation plans intentionally reference smoke test runbooks that are created later in the workflow — those forward references caused CI failures for any downstream project with plans. `markdownlint-rule-relative-links` is removed from `.markdownlint-cli2.jsonc` (the CI/runner config); `.markdownlint.jsonc` retains the rule for editor integrations.
+
 ## [0.27.0] - 2026-05-19
 
 ### Added

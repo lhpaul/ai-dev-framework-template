@@ -7,7 +7,8 @@
 
 ## Prerequisites
 
-- All planned sub-items for the epic labeled `integration-branch:<slug>` are merged to `develop-<slug>`.
+- All planned sub-items for the epic are discoverable through native GitHub sub-issues when available, or through the legacy `integration-branch:<slug>` label fallback.
+- All planned sub-items for the epic are merged to `develop-<slug>`.
 - The human has completed integration testing on `develop-<slug>` and is satisfied the feature is ready to land on `develop`.
 - `gh` CLI is authenticated and the local repo has the latest remote refs (`git fetch origin`).
 
@@ -17,10 +18,35 @@
 
 **This step is mandatory. The Graduation Agent must not proceed past this point without explicit human approval (BR-1).**
 
-1. Retrieve the full list of sub-items labeled `integration-branch:<slug>`:
+1. Retrieve the full list of sub-items. Prefer native GitHub sub-issues when the epic issue number is known:
 
    ```bash
-   gh issue list --label "integration-branch:<slug>" --state all --json number,title,state --jq '.[] | "#\(.number) \(.title) [\(.state)]"'
+   gh api graphql \
+     -F owner=<owner> \
+     -F repo=<repo> \
+     -F number=<epic-issue-number> \
+     -f query='
+       query($owner: String!, $repo: String!, $number: Int!) {
+         repository(owner: $owner, name: $repo) {
+           issue(number: $number) {
+             number
+             title
+             subIssues(first: 100) {
+               nodes { number title state }
+               pageInfo { hasNextPage endCursor }
+             }
+           }
+         }
+       }
+     '
+   ```
+
+   If `pageInfo.hasNextPage` is `true`, continue querying with the returned `endCursor` and merge every page before presenting the planned sub-item list.
+
+   If native sub-issues are unavailable or the epic issue number is unknown, use the legacy label fallback:
+
+   ```bash
+   gh issue list --label "integration-branch:<slug>" --state all --limit 1000 --json number,title,state --jq '.[] | "#\(.number) \(.title) [\(.state)]"'
    ```
 
 2. For each sub-item, fetch its latest implementation PR targeting `develop-<slug>`:
@@ -36,7 +62,6 @@
    - A note identifying any sub-items that are open, deferred, or optional — so the human can confirm whether to include them or defer graduation.
 
 4. Wait for the human to explicitly approve graduation. Do **not** open the graduation PR, push any commit, or run any review until the human responds with an approval.
-
    - **Human approves** → continue to Step 1.
    - **Human defers** → stop and record the hold; do not modify any artifact.
    - **Human requests more sub-items be merged first** → stop and wait; do not open the graduation PR.
@@ -53,7 +78,54 @@ Accept `<slug>` as input. Derive the integration branch name: `develop-<slug>`.
 
 ## Step 2: Verify All Sub-Items Are Merged
 
-1. List all GitHub issues labeled `integration-branch:<slug>` using `gh issue list --label "integration-branch:<slug>"`.
+1. List all planned GitHub sub-items. Prefer native sub-issues from the epic issue, then fall back to `gh issue list --label "integration-branch:<slug>"` for legacy epics:
+
+   ```bash
+   gh api graphql \
+     -F owner=<owner> \
+     -F repo=<repo> \
+     -F number=<epic-issue-number> \
+     -f query='
+       query($owner: String!, $repo: String!, $number: Int!) {
+         repository(owner: $owner, name: $repo) {
+           issue(number: $number) {
+             subIssues(first: 100) {
+               nodes { number title state labels(first: 20) { nodes { name } } }
+               pageInfo { hasNextPage endCursor }
+             }
+           }
+         }
+       }
+     '
+   ```
+
+   If `pageInfo.hasNextPage` is `true`, continue querying with the returned `endCursor` and merge every page before filtering or checking completion. Graduation decisions must be based on the complete native sub-issue set, not only the first page.
+
+   For each native sub-issue, verify the child-side parent relationship before treating it as planned:
+
+   ```bash
+   gh api graphql \
+     -F owner=<owner> \
+     -F repo=<repo> \
+     -F number=<sub-item-issue-number> \
+     -f query='
+       query($owner: String!, $repo: String!, $number: Int!) {
+         repository(owner: $owner, name: $repo) {
+           issue(number: $number) {
+             number
+             parent { number title }
+           }
+         }
+       }
+     '
+   ```
+
+   If native sub-issues are unavailable, use:
+
+   ```bash
+   gh issue list --label "integration-branch:<slug>" --state all --limit 1000 --json number,title,state --jq '.[] | "#\(.number) \(.title) [\(.state)]"'
+   ```
+
 2. For each sub-item, confirm that its implementation PR is merged:
 
    ```bash
@@ -213,10 +285,10 @@ After the human merges the graduation PR (must use a **merge commit**):
 
    If the human has explicitly requested to leave the epic open until all optional sub-items are resolved, defer the closure and note this in the cleanup summary.
 
-5. **Optional sub-item disposition** (Use Case 4, AC-10): For any sub-items labeled `integration-branch:<slug>` that remain open at graduation time, surface them to the human for disposition:
+5. **Optional sub-item disposition** (Use Case 4, AC-10): For any native sub-issues or label-discovered sub-items that remain open at graduation time, surface them to the human for disposition. Prefer the native sub-issue list when available; use the label fallback for legacy epics:
 
    ```bash
-   gh issue list --label "integration-branch:<slug>" --state open --json number,title,labels \
+   gh issue list --label "integration-branch:<slug>" --state open --limit 1000 --json number,title,labels \
      --jq '.[] | "#\(.number): \(.title)"'
    ```
 
@@ -257,14 +329,14 @@ After the human merges the graduation PR (must use a **merge commit**):
 
 The following business rules from the spec are enforced by this protocol:
 
-| Rule | Enforced in | Description |
-| ---- | ----------- | ----------- |
-| BR-1 | Step 0 | Human approval required before graduation |
-| BR-2 | Steps 3, 4, 5 | Merge commit is mandatory (not squash or rebase) |
-| BR-3 | Step 2 | All planned sub-items must be merged before graduation |
-| BR-4 | Steps 0, 5 | Optional sub-items surfaced to human; do not silently skip |
-| BR-5 | Step 2.5 | CHANGELOG absorb must be part of the graduation branch, not a prior merge |
-| BR-6 | Step 4 | `ready-for-regression` NOT required for graduation PRs |
-| BR-7 | Step 5 | Post-graduation remote branch deletion is mandatory |
-| BR-8 | Step 5 | Epic issue closed after graduation (unless human defers) |
-| BR-9 | Step 5 | Sub-items already marked Done at merge time; no additional tracker update needed |
+| Rule | Enforced in   | Description                                                                      |
+| ---- | ------------- | -------------------------------------------------------------------------------- |
+| BR-1 | Step 0        | Human approval required before graduation                                        |
+| BR-2 | Steps 3, 4, 5 | Merge commit is mandatory (not squash or rebase)                                 |
+| BR-3 | Step 2        | All planned sub-items must be merged before graduation                           |
+| BR-4 | Steps 0, 5    | Optional sub-items surfaced to human; do not silently skip                       |
+| BR-5 | Step 2.5      | CHANGELOG absorb must be part of the graduation branch, not a prior merge        |
+| BR-6 | Step 4        | `ready-for-regression` NOT required for graduation PRs                           |
+| BR-7 | Step 5        | Post-graduation remote branch deletion is mandatory                              |
+| BR-8 | Step 5        | Epic issue closed after graduation (unless human defers)                         |
+| BR-9 | Step 5        | Sub-items already marked Done at merge time; no additional tracker update needed |
