@@ -182,8 +182,17 @@ def parse_list(
             continue
         if ":" in item:
             key, value = split_key_value(item, path, line_no)
-            item_map: dict[str, Any] = {key: parse_scalar(value) if value is not None else {}}
-            if index < len(lines) and lines[index][0] == indent + 2:
+            if value is None and index < len(lines) and lines[index][0] > indent:
+                child_indent = lines[index][0]
+                child_content = lines[index][1]
+                if child_content.startswith("- "):
+                    child, index = parse_list(lines, index, child_indent, path)
+                else:
+                    child, index = parse_mapping(lines, index, child_indent, path)
+                item_map = {key: child}
+            else:
+                item_map = {key: parse_scalar(value) if value is not None else {}}
+            if value is not None and index < len(lines) and lines[index][0] == indent + 2:
                 continuation, index = parse_mapping(lines, index, indent + 2, path)
                 item_map.update(continuation)
             result.append(item_map)
@@ -372,7 +381,7 @@ def parse_remote_slug(repo_root: Path) -> str:
     except OSError:
         return ""
     match = re.search(
-        r"^\s*url = (?:git@github\.com:|https://github\.com/)([^/\s]+/[^/\s]+)\s*$",
+        r"^\s*url = (?:git@github\.com:|https://github\.com/|ssh://git@github\.com/)([^/\s]+/[^/\s]+)\s*$",
         text,
         re.M,
     )
@@ -485,19 +494,34 @@ def resolve_review_overrides(args: argparse.Namespace) -> dict[str, str]:
         legacy_runner = list_from_path(legacy, ["overrides", "review", "internal_reviewers"])
     local_runner = list_from_path(local, ["review", "on_draft", "runner"])
     runner = legacy_runner or local_runner
+    runner_source = (
+        ".tmp/template-config.json"
+        if legacy_runner
+        else (".ai-dev-workflow.local.yaml" if local_runner else "")
+    )
 
     legacy_policy = scalar_from_path(
         legacy, ["overrides", "review", "internal_reviewers_unavailable_policy"]
     )
     local_policy = scalar_from_path(local, ["review", "internal_reviewers_unavailable_policy"])
     policy = legacy_policy or local_policy
+    policy_source = (
+        ".tmp/template-config.json"
+        if legacy_policy
+        else (".ai-dev-workflow.local.yaml" if local_policy else "")
+    )
+
+    sources = []
+    for source in (runner_source, policy_source):
+        if source and source not in sources:
+            sources.append(source)
 
     return {
         "REVIEW_ON_DRAFT_RUNNER": ",".join(runner),
+        "REVIEW_ON_DRAFT_RUNNER_SOURCE": runner_source,
         "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY": policy,
-        "LOCAL_OVERRIDE_SOURCE": ".tmp/template-config.json"
-        if legacy_runner or legacy_policy
-        else (".ai-dev-workflow.local.yaml" if local_runner or local_policy else ""),
+        "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY_SOURCE": policy_source,
+        "LOCAL_OVERRIDE_SOURCE": ",".join(sources),
     }
 
 

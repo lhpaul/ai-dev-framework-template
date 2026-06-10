@@ -8,6 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../../.." && pwd)"
 RESOLVER="$REPO_ROOT/scripts/development-workflow/workflow-config-resolver.py"
+VALIDATOR="$REPO_ROOT/scripts/development-workflow/validate-workflow-config.sh"
 
 TMP_ROOT="$(mktemp -d)"
 TMP_ROOT="$(CDPATH='' cd -- "$TMP_ROOT" && pwd -P)"
@@ -45,7 +46,7 @@ run_contains() {
   local name="$1"
   local expected="$2"
   local actual="$3"
-  if grep -Fq "$expected" <<< "$actual"; then
+  if grep -Fq -- "$expected" <<< "$actual"; then
     echo "PASS: $name"
     PASS_COUNT=$((PASS_COUNT + 1))
   else
@@ -67,7 +68,7 @@ run_fails_contains() {
   status=$?
   set -e
 
-  if [ "$status" -ne 0 ] && grep -Fq "$expected" <<< "$output"; then
+  if [ "$status" -ne 0 ] && grep -Fq -- "$expected" <<< "$output"; then
     echo "PASS: $name"
     PASS_COUNT=$((PASS_COUNT + 1))
   else
@@ -106,6 +107,18 @@ run_contains "single_repo_context_mode" "WORKFLOW_MODE=single_repo" "$single_rep
 run_contains "single_repo_context_github_repo" "TARGET_GITHUB_REPO=example/mobile-app.extra" "$single_repo_output"
 run_contains "single_repo_context_local_path" "TARGET_LOCAL_PATH=$single_repo_dir" "$single_repo_output"
 run_contains "single_repo_context_default_branch" "TARGET_DEFAULT_BRANCH=develop" "$single_repo_output"
+validator_output="$(bash "$VALIDATOR" --repo-root "$single_repo_dir")"
+run_contains "validate_wrapper_repo_root_arg" "TARGET_REPO_NAME=single-repo" "$validator_output"
+validator_help_output="$(bash "$VALIDATOR" --help)"
+run_contains "validate_wrapper_help" "Usage:" "$validator_help_output"
+run_fails_contains \
+  "validate_wrapper_unknown_arg" \
+  "unknown argument '--unknown'" \
+  bash "$VALIDATOR" --unknown
+run_fails_contains \
+  "validate_wrapper_missing_arg_value" \
+  "--repo requires a value" \
+  bash "$VALIDATOR" --repo
 
 hub_dir="$(fixture_dir workflow-hub)"
 cat > "$hub_dir/.ai-dev-workflow.yaml" <<'YAML'
@@ -235,6 +248,34 @@ run_fails_contains \
   "contains local-only field(s): github_app.private_key_path" \
   python3 "$RESOLVER" resolve --repo-root "$nested_local_only_dir" --repo mobile-app
 
+nested_list_local_only_dir="$(fixture_dir nested-list-local-only-field)"
+cat > "$nested_list_local_only_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      app_identifiers:
+        - github_app:
+            app_id: "123"
+            private_key_path: ~/.config/example/private-key.pem
+YAML
+run_fails_contains \
+  "workflow_hub_preserves_nested_list_mapping" \
+  "contains local-only field(s): app_identifiers[1].github_app.private_key_path" \
+  python3 "$RESOLVER" resolve --repo-root "$nested_list_local_only_dir" --repo mobile-app
+
+ssh_remote_dir="$(fixture_dir ssh-remote)"
+mkdir -p "$ssh_remote_dir/.git"
+cat > "$ssh_remote_dir/.git/config" <<'GITCONFIG'
+[remote "origin"]
+  url = ssh://git@github.com/example/ssh-product.git
+GITCONFIG
+ssh_remote_output="$(python3 "$RESOLVER" resolve --repo-root "$ssh_remote_dir")"
+run_contains "single_repo_ssh_remote_slug" "TARGET_GITHUB_REPO=example/ssh-product" "$ssh_remote_output"
+
 product_repo_dir="$(fixture_dir product-repo)"
 cat > "$product_repo_dir/.ai-dev-workflow.yaml" <<'YAML'
 schema_version: 2
@@ -285,7 +326,9 @@ review:
 YAML
 review_output="$(workflow_review_override_context "$review_dir")"
 run_contains "legacy_review_override_precedence_runner" "REVIEW_ON_DRAFT_RUNNER=claude" "$review_output"
+run_contains "legacy_review_override_precedence_runner_source" "REVIEW_ON_DRAFT_RUNNER_SOURCE=.tmp/template-config.json" "$review_output"
 run_contains "legacy_review_override_precedence_policy" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY=fail-if-any-unavailable" "$review_output"
+run_contains "legacy_review_override_precedence_policy_source" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY_SOURCE=.tmp/template-config.json" "$review_output"
 run_contains "legacy_review_override_source" "LOCAL_OVERRIDE_SOURCE=.tmp/template-config.json" "$review_output"
 
 local_review_dir="$(fixture_dir local-review-overrides)"
@@ -298,6 +341,27 @@ YAML
 local_review_output="$(workflow_review_override_context "$local_review_dir")"
 run_contains "local_review_override_runner" "REVIEW_ON_DRAFT_RUNNER=claude,codex" "$local_review_output"
 run_contains "local_review_override_source" "LOCAL_OVERRIDE_SOURCE=.ai-dev-workflow.local.yaml" "$local_review_output"
+
+mixed_review_dir="$(fixture_dir mixed-review-overrides)"
+mkdir -p "$mixed_review_dir/.tmp"
+cat > "$mixed_review_dir/.tmp/template-config.json" <<'JSON'
+{
+  "overrides": {
+    "review": {
+      "internal_reviewers_unavailable_policy": "fail-if-any-unavailable"
+    }
+  }
+}
+JSON
+cat > "$mixed_review_dir/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_draft:
+    runner: [codex]
+YAML
+mixed_review_output="$(workflow_review_override_context "$mixed_review_dir")"
+run_contains "mixed_review_override_runner_source" "REVIEW_ON_DRAFT_RUNNER_SOURCE=.ai-dev-workflow.local.yaml" "$mixed_review_output"
+run_contains "mixed_review_override_policy_source" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY_SOURCE=.tmp/template-config.json" "$mixed_review_output"
+run_contains "mixed_review_override_combined_source" "LOCAL_OVERRIDE_SOURCE=.ai-dev-workflow.local.yaml,.tmp/template-config.json" "$mixed_review_output"
 
 malformed_dir="$(fixture_dir malformed)"
 cat > "$malformed_dir/.ai-dev-workflow.yaml" <<'YAML'
