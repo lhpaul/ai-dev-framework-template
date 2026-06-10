@@ -33,6 +33,7 @@
              title
              subIssues(first: 100) {
                nodes { number title state }
+               pageInfo { hasNextPage endCursor }
              }
            }
          }
@@ -40,10 +41,12 @@
      '
    ```
 
+   If `pageInfo.hasNextPage` is `true`, continue querying with the returned `endCursor` and merge every page before presenting the planned sub-item list.
+
    If native sub-issues are unavailable or the epic issue number is unknown, use the legacy label fallback:
 
    ```bash
-   gh issue list --label "integration-branch:<slug>" --state all --json number,title,state --jq '.[] | "#\(.number) \(.title) [\(.state)]"'
+   gh issue list --label "integration-branch:<slug>" --state all --limit 1000 --json number,title,state --jq '.[] | "#\(.number) \(.title) [\(.state)]"'
    ```
 
 2. For each sub-item, fetch its latest implementation PR targeting `develop-<slug>`:
@@ -88,12 +91,15 @@ Accept `<slug>` as input. Derive the integration branch name: `develop-<slug>`.
            issue(number: $number) {
              subIssues(first: 100) {
                nodes { number title state labels(first: 20) { nodes { name } } }
+               pageInfo { hasNextPage endCursor }
              }
            }
          }
        }
      '
    ```
+
+   If `pageInfo.hasNextPage` is `true`, continue querying with the returned `endCursor` and merge every page before filtering or checking completion. Graduation decisions must be based on the complete native sub-issue set, not only the first page.
 
    For each native sub-issue, verify the child-side parent relationship before treating it as planned:
 
@@ -117,7 +123,7 @@ Accept `<slug>` as input. Derive the integration branch name: `develop-<slug>`.
    If native sub-issues are unavailable, use:
 
    ```bash
-   gh issue list --label "integration-branch:<slug>" --state all --json number,title,state --jq '.[] | "#\(.number) \(.title) [\(.state)]"'
+   gh issue list --label "integration-branch:<slug>" --state all --limit 1000 --json number,title,state --jq '.[] | "#\(.number) \(.title) [\(.state)]"'
    ```
 
 2. For each sub-item, confirm that its implementation PR is merged:
@@ -282,7 +288,7 @@ After the human merges the graduation PR (must use a **merge commit**):
 5. **Optional sub-item disposition** (Use Case 4, AC-10): For any native sub-issues or label-discovered sub-items that remain open at graduation time, surface them to the human for disposition. Prefer the native sub-issue list when available; use the label fallback for legacy epics:
 
    ```bash
-   gh issue list --label "integration-branch:<slug>" --state open --json number,title,labels \
+   gh issue list --label "integration-branch:<slug>" --state open --limit 1000 --json number,title,labels \
      --jq '.[] | "#\(.number): \(.title)"'
    ```
 

@@ -132,10 +132,10 @@ Before running this smoke test:
 1. Open `docs/workflow/development-workflow/protocols/00-add-backlog-item-protocol.md`.
 2. Search for `addSubIssue`.
 3. Confirm the protocol shows how to resolve `EPIC_ID` and `SUB_ISSUE_ID`, call the GraphQL mutation, and preserve the `integration-branch:<slug>` label as the automation contract.
-4. Search for `subIssues(first: 50)` and `parent { number title }`.
-5. Confirm the protocol includes both epic-side and child-side verification commands.
+4. Search for `subIssues(first: 50)`, `pageInfo { hasNextPage endCursor }`, and `parent { number title }`.
+5. Confirm the protocol includes both epic-side and child-side verification commands, including pagination guidance for large epics.
 6. Open `docs/workflow/development-workflow/protocols/05b-graduate-development-protocol.md`.
-7. Confirm graduation discovery prefers native `subIssues`, verifies child-side `parent`, and still documents the label fallback for legacy epics.
+7. Confirm graduation discovery prefers native `subIssues`, verifies child-side `parent`, documents native pagination handling, and still documents the `--limit 1000` label fallback for legacy epics.
 
 **Expected result**: Native GitHub sub-issues are the preferred grouping relationship for GitHub providers, while the existing integration-branch label remains the base-branch routing contract and fallback discovery path.
 

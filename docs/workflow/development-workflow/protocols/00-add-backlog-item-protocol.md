@@ -140,6 +140,7 @@ When a human requests the creation of two or more related backlog items that tog
              number
              subIssues(first: 50) {
                nodes { number title state }
+               pageInfo { hasNextPage endCursor }
              }
            }
          }
@@ -162,6 +163,8 @@ When a human requests the creation of two or more related backlog items that tog
        }
      '
    ```
+
+   If `pageInfo.hasNextPage` is `true`, continue querying with the returned `endCursor` and merge every page before deciding that the epic-side sub-issue list is complete. Do not verify only the first page for large epics.
 
 7. **Confirm to the user** — include in the Step 4 confirmation:
    - The epic issue number and URL
