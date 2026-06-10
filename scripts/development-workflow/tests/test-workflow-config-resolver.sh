@@ -92,12 +92,18 @@ missing_mode_output="$(python3 "$RESOLVER" mode --repo-root "$missing_mode_dir")
 run_test "missing_mode_defaults_single_repo" "WORKFLOW_MODE=single_repo" "$missing_mode_output"
 
 single_repo_dir="$(fixture_dir single-repo)"
+mkdir -p "$single_repo_dir/.git"
 cat > "$single_repo_dir/.ai-dev-workflow.yaml" <<'YAML'
 schema_version: 2
 mode: single_repo
 YAML
+cat > "$single_repo_dir/.git/config" <<'GITCONFIG'
+[remote "origin"]
+  url = https://github.com/example/mobile-app.extra.git
+GITCONFIG
 single_repo_output="$(workflow_repository_context "" "$single_repo_dir")"
 run_contains "single_repo_context_mode" "WORKFLOW_MODE=single_repo" "$single_repo_output"
+run_contains "single_repo_context_github_repo" "TARGET_GITHUB_REPO=example/mobile-app.extra" "$single_repo_output"
 run_contains "single_repo_context_local_path" "TARGET_LOCAL_PATH=$single_repo_dir" "$single_repo_output"
 run_contains "single_repo_context_default_branch" "TARGET_DEFAULT_BRANCH=develop" "$single_repo_output"
 

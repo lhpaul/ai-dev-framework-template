@@ -371,8 +371,15 @@ def parse_remote_slug(repo_root: Path) -> str:
         text = git_config.read_text(encoding="utf-8", errors="ignore")
     except OSError:
         return ""
-    match = re.search(r"url = (?:git@github\.com:|https://github\.com/)([^/\s]+/[^/\s]+?)(?:\.git)?\s*$", text, re.M)
-    return match.group(1) if match else ""
+    match = re.search(
+        r"^\s*url = (?:git@github\.com:|https://github\.com/)([^/\s]+/[^/\s]+)\s*$",
+        text,
+        re.M,
+    )
+    if not match:
+        return ""
+    slug = match.group(1)
+    return slug[:-4] if slug.endswith(".git") else slug
 
 
 def resolve_context(args: argparse.Namespace) -> dict[str, str]:
