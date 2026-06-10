@@ -110,21 +110,24 @@ run_contains "single_repo_context_github_repo" "TARGET_GITHUB_REPO=example/mobil
 run_contains "single_repo_context_local_path" "TARGET_LOCAL_PATH=$single_repo_dir" "$single_repo_output"
 run_contains "single_repo_context_default_branch" "TARGET_DEFAULT_BRANCH=main" "$single_repo_output"
 validator_output="$(bash "$VALIDATOR" --repo-root "$single_repo_dir")"
-run_contains "validate_wrapper_repo_root_arg" "TARGET_REPO_NAME=single-repo" "$validator_output"
+run_contains "validate_workflow_config_sh_repo_root_arg" "TARGET_REPO_NAME=single-repo" "$validator_output"
+
+# validate-workflow-config.sh argument parsing coverage: help flags, unknown
+# flags, and missing values for both value-taking options.
 validator_help_output="$(bash "$VALIDATOR" --help)"
-run_contains "validate_wrapper_help" "Usage:" "$validator_help_output"
+run_contains "validate_workflow_config_sh_help" "Usage:" "$validator_help_output"
 validator_short_help_output="$(bash "$VALIDATOR" -h)"
-run_contains "validate_wrapper_short_help" "Usage:" "$validator_short_help_output"
+run_contains "validate_workflow_config_sh_short_help" "Usage:" "$validator_short_help_output"
 run_fails_contains \
-  "validate_wrapper_unknown_arg" \
+  "validate_workflow_config_sh_unknown_arg" \
   "unknown argument '--unknown'" \
   bash "$VALIDATOR" --unknown
 run_fails_contains \
-  "validate_wrapper_missing_arg_value" \
+  "validate_workflow_config_sh_missing_repo_value" \
   "--repo requires a value" \
   bash "$VALIDATOR" --repo
 run_fails_contains \
-  "validate_wrapper_missing_repo_root_value" \
+  "validate_workflow_config_sh_missing_repo_root_value" \
   "--repo-root requires a value" \
   bash "$VALIDATOR" --repo-root
 

@@ -217,6 +217,8 @@ def parse_list(
         if ":" in item:
             key, value = split_key_value(item, path, line_no)
             if value is None and index < len(lines) and lines[index][0] > indent:
+                # For `- key:` items, the following indented block is the value
+                # of `key`; it must not be merged into the list-item root.
                 child_indent = lines[index][0]
                 child_content = lines[index][1]
                 if child_content.startswith("- "):
@@ -228,7 +230,8 @@ def parse_list(
                 item_map = {key: parse_scalar(value) if value is not None else {}}
             if value is not None and index < len(lines) and lines[index][0] == indent + 2:
                 continuation, index = parse_mapping(lines, index, indent + 2, path)
-                item_map.update(continuation)
+                for continuation_key, continuation_value in continuation.items():
+                    item_map[continuation_key] = continuation_value
             result.append(item_map)
         else:
             result.append(parse_scalar(item))
