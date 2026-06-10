@@ -188,11 +188,19 @@ run_passes \
   "$REPO_ROOT/template/product-repo-injection/skeleton-manifest.yaml" \
   "$REPO_ROOT"
 
+private_detail_hits=""
+set +e
 private_detail_hits="$(
   grep -RInE 'Leasity|RADAR|kids-safety|baumsystem|lhpaul/' \
     "$REPO_ROOT/template/workflow-hub" \
-    "$REPO_ROOT/template/product-repo-injection" || true
+    "$REPO_ROOT/template/product-repo-injection"
 )"
+private_detail_status=$?
+set -e
+if [ "$private_detail_status" -ne 0 ] && [ "$private_detail_status" -ne 1 ]; then
+  echo "FAIL: skeleton_private_detail_scan - grep failed with exit code $private_detail_status"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
 run_test "skeleton_private_detail_scan" "" "$private_detail_hits"
 
 echo ""
