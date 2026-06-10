@@ -17,7 +17,39 @@ The key principle: **protocols live in `docs/`** and are tool-agnostic. Tool-spe
 
 ## Getting Started: Project Setup
 
-When you first clone this template into a new project, run the **Project Setup** workflow to generate your project-specific documentation:
+When you first clone this template into a new project, first choose the
+repository mode, then run the **Project Setup** workflow to generate your
+project-specific documentation.
+
+### Choose A Repository Mode
+
+Use `single_repo` when one repository owns the tracker item, specs, plans,
+implementation branches, PRs, CI, reviewer-loop checks, and releases. This is
+the default path and uses the current repository root exactly as before.
+Repositories with no mode declaration are treated as `single_repo`.
+
+Use `workflow_hub` when one repository coordinates workflow for multiple product
+repositories. Inspect `template/workflow-hub/` for the hub-owned skeleton:
+workflow protocols, scripts, agent wrappers, workflow configuration, and
+hub-owned runbooks.
+
+Use `product_repo` when a product repository receives implementation work routed
+from a workflow hub. Inspect `template/product-repo-injection/` for the minimal
+injection skeleton. Product repositories should not receive hub-owned tracker
+state, historical specs, implementation plans, or hub-only smoke runbooks unless
+a later workflow explicitly marks a specific artifact as required.
+
+Generated repositories should select the mode before setup writes
+`.ai-dev-workflow.yaml`. Existing repositories should choose the closest current
+role: keep `single_repo` for the current all-in-one workflow, adopt
+`workflow_hub` when centralizing portfolio workflow, or adopt `product_repo`
+when connecting product code validation to a separate hub.
+
+See
+[`docs/workflow/development-workflow/repository-modes.md`](docs/workflow/development-workflow/repository-modes.md)
+for the artifact ownership model and
+[`sync-manifest.yaml`](sync-manifest.yaml) for the informational sync-scope
+metadata used by the skeletons.
 
 ### With Claude Code
 
@@ -178,7 +210,8 @@ For teams coordinating work across more than one repository, see
 [`docs/workflow/development-workflow/repository-modes.md`](docs/workflow/development-workflow/repository-modes.md)
 for the supported repository modes, artifact ownership rules, and PR ownership
 model. Repositories with no mode declaration continue to behave as
-single-repository adopters.
+single-repository adopters. The inspectable skeletons live at
+`template/workflow-hub/` and `template/product-repo-injection/`.
 
 ---
 

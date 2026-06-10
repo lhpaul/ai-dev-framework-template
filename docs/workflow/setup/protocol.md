@@ -21,11 +21,53 @@ Estimated time: 20–45 minutes depending on project complexity.
 
 ---
 
+## Step 0: Repository Mode Selection
+
+Before asking project-specific questions, determine which repository mode this
+setup run is targeting:
+
+| Mode | Use when | Skeleton to inspect |
+| --- | --- | --- |
+| `single_repo` | One repository owns tracker work, specs, plans, implementation branches, PRs, CI, reviewer-loop checks, and releases. This is the default path. | Current repository root |
+| `workflow_hub` | One repository coordinates workflow for one or more product repositories. | `template/workflow-hub/` |
+| `product_repo` | A product repository receives routed implementation work from a workflow hub and owns product code validation. | `template/product-repo-injection/` |
+
+Ask:
+
+> "Which repository mode are we setting up: `single_repo`, `workflow_hub`, or
+> `product_repo`?"
+
+If the user is unsure, recommend `single_repo` unless they already have a
+separate workflow hub or are explicitly splitting workflow coordination from
+product code repositories.
+
+Rules:
+
+- The current root template remains the valid `single_repo` setup path.
+- `workflow_hub` setup should inspect `template/workflow-hub/` and
+  `docs/workflow/development-workflow/repository-modes.md` before generating
+  docs or configuration.
+- `product_repo` setup should inspect `template/product-repo-injection/` and
+  must not copy hub-owned tracker artifacts, historical specs, implementation
+  plans, or hub-only smoke runbooks unless a later workflow explicitly marks a
+  specific artifact as required.
+- Skeleton inspection is passive. It must not run sync, copy files, update a
+  tracker, or inject content by itself.
+- Record the selected mode in `.ai-dev-workflow.yaml` when workflow
+  configuration is generated. Omitting `mode` remains equivalent to
+  `single_repo`.
+
+---
+
 ## Step 1: Introduction
 
 Begin the conversation with:
 
-> "Welcome! I'll help you set up the AI dev framework for your project. We'll go through a series of questions to generate your project documentation. You can answer as much or as little as you know right now — we can refine everything later.
+> "Welcome! I'll help you set up the AI dev framework for your project. We'll
+> first confirm whether this is a `single_repo`, `workflow_hub`, or
+> `product_repo` setup, then go through the questions needed to generate your
+> project documentation. You can answer as much or as little as you know right
+> now — we can refine everything later.
 >
 > Let's start with the basics. What is the name of this project and what does it do?"
 
@@ -152,6 +194,11 @@ Name each file after the specific technology, not the category (e.g., `typescrip
 
 Ask:
 
+- If this is a `workflow_hub`, what product repositories should it know about?
+  Capture stable non-secret identity only: `name`, `github_repo` or `git_url`,
+  default branch, role, scope, and tracker hints.
+- If this is a `product_repo`, which workflow hub owns portfolio state for this
+  product repository? Capture `github_repo` or `git_url`.
 - Do you use an issue tracker? (Linear, GitHub Issues, Jira, Notion, other, none)
 - What Git hosting / pull-request platform do you use? (GitHub, GitLab, Bitbucket, other)
 - What browser automation tool, if any, should the workflow assume for smoke tests? (Cursor browser MCP, Playwright MCP, Playwright CLI, other, none)
@@ -172,14 +219,19 @@ Document the answers and point to the relevant integration docs:
 If the user selects any workflow integration providers, generate `.ai-dev-workflow.yaml` at the repo root. Prefer the versioned nested schema:
 
 ```yaml
-schema_version: 1
+schema_version: 2
+
+mode: single_repo
 
 review:
-  platforms:
-    - greptile
-  internal_reviewers:
-    - claude
-    - codex
+  on_draft:
+    runner:
+      - codex
+    github:
+      - pr-agent
+  on_ready:
+    github:
+      - greptile
 
 issue_tracker:
   provider: linear
@@ -194,9 +246,18 @@ browser_automation:
 Rules:
 
 - Include only the sections the user actually chose.
+- Include `mode` when the user selected `workflow_hub` or `product_repo`. For
+  `single_repo`, including `mode: single_repo` is allowed but not required.
+- For `workflow_hub`, include `workflow_hub.product_repos[]` only with stable
+  non-secret fields.
+- For `product_repo`, include `product_repo.workflow_hub` with the hub identity.
 - Keep the file declarative; do not store secrets or tokens in it.
-- `review.platforms` is consumed by `pr-review-loop.sh` for external automated PR review (Step 7). `review.internal_reviewers` is consumed by the Step 7a internal review gate protocol.
-- If the file is absent, or `review.platforms` is omitted or empty, automated PR review is treated as not configured and the review loop reports `skipped`.
+- `review.on_draft.runner` is consumed by the Step 7a internal review gate protocol.
+- `review.on_draft.github` and `review.on_ready.github` are consumed by
+  `pr-review-loop.sh` for external automated PR review.
+- If the file is absent, or both GitHub review lists are omitted or empty,
+  automated PR review is treated as not configured and the review loop reports
+  `skipped`.
 
 ---
 

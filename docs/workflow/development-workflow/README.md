@@ -240,6 +240,17 @@ product repository selection rule, and PR ownership model. When no mode is
 declared, repositories are interpreted as `single_repo` and keep the current
 single-repository behavior.
 
+Role-specific skeletons are inspectable under the template root:
+
+- `template/workflow-hub/` lists hub-owned protocols, scripts, agents,
+  configuration, and workflow runbooks.
+- `template/product-repo-injection/` lists the minimal product repository
+  integration set and explicitly excludes hub-owned tracker, spec, and plan
+  artifacts unless required by later workflow guidance.
+
+These skeletons are reference material in this iteration. Inspecting them does
+not apply setup, sync files, or change runtime behavior.
+
 ### Branch Naming
 
 | Branch type         | Pattern                      | Base branch |
@@ -424,6 +435,10 @@ template:
 Important implementation notes:
 
 - Repository mode fields are `mode`, `workflow_hub.product_repos[]`, and `product_repo.workflow_hub`. Shared product repository entries may contain stable non-secret identity and metadata such as `name`, `github_repo` or `git_url`, `default_branch`, `role`, `scope`, `tracker` hints, and non-secret app identifiers. Local checkout paths, private key paths, secret values, and machine-specific tool settings belong only in `.ai-dev-workflow.local.yaml`. See [`repository-modes.md`](repository-modes.md) for examples and validation commands.
+- `sync-manifest.yaml` includes informational `mode_scope` metadata:
+  `shared`, `hub_only`, and `product_repo_injection`. Current sync-template
+  readers still use the existing manifest categories; mode-aware sync
+  application belongs to later workflow-hub work.
 - `review.on_draft.runner` is consumed by the Step 7a internal review gate protocol (`91-orchestrate-work-protocol.md`). If omitted, the gate falls back to running the stage-appropriate `claude` reviewer once. Developers can override the list locally via `.tmp/template-config.json` (gitignored).
 - `review.on_draft.github` and `review.on_ready.github` are consumed by `scripts/development-workflow/pr-review-loop.sh` for external automated PR review (Step 7). If the config file is absent, or both lists are omitted or empty, automated PR review is treated as not configured and the review loop reports `skipped`.
 - Legacy `review.internal_reviewers`, `review.platforms`, and `review.phase_after_clean` keys remain accepted for one transition release and map to the new lifecycle buckets.
