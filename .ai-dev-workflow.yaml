@@ -5,6 +5,11 @@
 # Keep it declarative and repo-safe: select providers here, but do not store
 # secrets, tokens, hostnames, or other environment-specific credentials.
 #
+# Repository mode fields (`mode`, `workflow_hub.product_repos[]`, and
+# `product_repo.workflow_hub`) are documented in
+# docs/workflow/development-workflow/repository-modes.md. Omit `mode` to keep
+# the default `single_repo` behavior.
+#
 # See docs/workflow/development-workflow/README.md and
 # docs/workflow/development-workflow/integrations/ for integration-specific setup.
 #

@@ -1,0 +1,33 @@
+# Example local workflow configuration.
+#
+# Copy this file to `.ai-dev-workflow.local.yaml` when a workflow hub needs
+# machine-local checkout paths, secret references, or local tool overrides.
+# The real local file is gitignored. Keep all values here as placeholders.
+
+# Optional default root used when a product repo has no explicit local_path.
+checkout_root: ../repos
+
+# Product-repo local context. Names must match
+# workflow_hub.product_repos[].name in `.ai-dev-workflow.yaml`.
+product_repos:
+  - name: mobile-app
+    local_path: ../repos/mobile-app
+    private_key_path: ~/.config/example/mobile-app-github-app.pem
+    secret_ref: op://ExampleVault/mobile-app-github-app/private-key
+  - name: admin-portal
+    # With checkout_root above, this defaults to ../repos/admin-portal.
+    secret_ref: op://ExampleVault/admin-portal-github-app/private-key
+
+# Local reviewer/tool overrides. These are developer-specific and should not be
+# committed to the shared workflow config.
+review:
+  on_draft:
+    runner:
+      - codex
+  internal_reviewers_unavailable_policy: warn
+
+tools:
+  haystack:
+    command: haystack
+  browser:
+    provider: playwright_cli

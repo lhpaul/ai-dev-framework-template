@@ -6,6 +6,7 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+.ai-dev-workflow.local.yaml
 
 # Claude Code
 .claude/settings.local.json

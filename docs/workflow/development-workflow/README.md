@@ -375,9 +375,14 @@ Opening a PR is not a terminal condition. A workflow run should continue until t
 ### Workflow Configuration
 
 Repository-specific workflow integrations are declared in `.ai-dev-workflow.yaml` at the repo root.
+Machine-local overrides belong in `.ai-dev-workflow.local.yaml`, which is
+gitignored. Start from `.ai-dev-workflow.local.example.yaml` when a workflow hub
+needs checkout roots, product-repo local paths, secret references, or local tool
+overrides.
 
 The file is versioned and intentionally declarative. It is the right place to record which workflow providers this repository uses for:
 
+- Repository mode and stable product-repository identity
 - Automated PR review
 - Issue tracking
 - Git hosting / pull-request workflow
@@ -387,6 +392,9 @@ Current schema:
 
 ```yaml
 schema_version: 2
+
+# Optional. Missing mode resolves as single_repo.
+mode: single_repo
 
 review:
   on_draft:
@@ -415,6 +423,7 @@ template:
 
 Important implementation notes:
 
+- Repository mode fields are `mode`, `workflow_hub.product_repos[]`, and `product_repo.workflow_hub`. Shared product repository entries may contain stable non-secret identity and metadata such as `name`, `github_repo` or `git_url`, `default_branch`, `role`, `scope`, `tracker` hints, and non-secret app identifiers. Local checkout paths, private key paths, secret values, and machine-specific tool settings belong only in `.ai-dev-workflow.local.yaml`. See [`repository-modes.md`](repository-modes.md) for examples and validation commands.
 - `review.on_draft.runner` is consumed by the Step 7a internal review gate protocol (`91-orchestrate-work-protocol.md`). If omitted, the gate falls back to running the stage-appropriate `claude` reviewer once. Developers can override the list locally via `.tmp/template-config.json` (gitignored).
 - `review.on_draft.github` and `review.on_ready.github` are consumed by `scripts/development-workflow/pr-review-loop.sh` for external automated PR review (Step 7). If the config file is absent, or both lists are omitted or empty, automated PR review is treated as not configured and the review loop reports `skipped`.
 - Legacy `review.internal_reviewers`, `review.platforms`, and `review.phase_after_clean` keys remain accepted for one transition release and map to the new lifecycle buckets.
@@ -500,10 +509,12 @@ Protocol prefixes are stable family identifiers, not a promise of contiguous num
 ### Tooling And Configuration
 
 - `docs/workflow/development-workflow/agent-model-config.md`
-- `.ai-dev-workflow.yaml` - repo-level workflow integration manifest (`review.on_draft.runner`, `review.on_draft.github`, `review.on_ready.github`, `template.is_template`, `template.repository`, `template.last_synced_version`, `issue_tracker.provider`, `vcs.provider`, `browser_automation.provider`)
+- `.ai-dev-workflow.yaml` - repo-level workflow integration manifest (`mode`, `workflow_hub.product_repos[]`, `product_repo.workflow_hub`, `review.on_draft.runner`, `review.on_draft.github`, `review.on_ready.github`, `template.is_template`, `template.repository`, `template.last_synced_version`, `issue_tracker.provider`, `vcs.provider`, `browser_automation.provider`)
+- `.ai-dev-workflow.local.example.yaml` - placeholder-only example for gitignored local checkout, secret-reference, review-runner, and tool overrides
 
 Repository helpers:
 
+- `scripts/development-workflow/validate-workflow-config.sh`
 - `scripts/development-workflow/add-backlog-item.sh`
 - `scripts/development-workflow/discover-workflow-state.sh`
 - `scripts/development-workflow/workflow-batch-plan.sh`
