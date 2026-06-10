@@ -317,7 +317,46 @@ If no blocking human decision remains:
 
    Fix all inconsistencies found before moving to the lint check. Do not proceed to commit with known cross-section contradictions.
 
-7. **Pre-commit lint check (mandatory — do not skip)**:
+7. **Document Quality Gate (mandatory — do not skip)**:
+
+   Run this gate after the cross-section consistency self-check and before
+   opening the draft PR. This gate does not replace the internal review gate,
+   automated reviewer loop, CI, or human review; it reduces avoidable first-pass
+   review churn.
+
+   Record the result in the draft PR description under a `Document Quality Gate`
+   section. Each checked item must say `Checked` or `Not applicable`, with a
+   short rationale for every `Not applicable` item:
+
+   ```markdown
+   ## Document Quality Gate
+
+   - Spec/brief coverage: Checked - all ACs map to implementation steps and tests.
+   - Implementation-order consistency: Checked - file list and order agree.
+   - Verification support: Checked - broad claims cite Verification Log evidence.
+   - Parser/API/concurrency checklist: Not applicable - no parser, API-surface, snapshot, or concurrent-event signals.
+   ```
+
+   Before the PR is opened, verify:
+
+   - Spec/brief coverage: every acceptance criterion and in-scope brief objective
+     maps to implementation steps and test/smoke coverage.
+   - Implementation-order consistency: file lists, helper names, constants,
+     routes, status names, and branch/PR operations agree across all sections.
+   - Verification support: broad claims about existing behavior, file coverage,
+     or tool semantics cite a Verification Log command or a concrete source file.
+   - Behavioral guarantees: every guarantee such as idempotency, bounded retries,
+     ordering, or "at most once" names the mechanism that enforces it.
+   - Parser/API/concurrency checklist completeness: when parser-risk,
+     API-surface, single-snapshot or consistency-semantics, or
+     concurrent-event-source signals apply, the required checklist sections are
+     present and mapped to tests.
+   - CHANGELOG literal format: required implementation CHANGELOG entries appear
+     exactly as they should be added later, including section and issue number.
+   - Not-applicable rationale: any skipped checklist category has a brief
+     rationale in the PR description log.
+
+8. **Pre-commit lint check (mandatory — do not skip)**:
 
    Run `markdownlint-cli2` on the plan file and smoke test runbook before staging. This catches broken relative links (wrong `../../` depth), trailing spaces, and missing trailing newlines that would otherwise fail CI and require a fix commit.
 
@@ -340,13 +379,14 @@ If no blocking human decision remains:
 
    > **Worktree note**: When running inside a git worktree (e.g., when dispatched by the Portfolio Orchestrator), `node_modules/` does not exist inside the worktree directory. The `$(git rev-parse --git-common-dir)/..` expression resolves to the main repo root in both the main tree and any worktree.
 
-8. **Do NOT update CHANGELOG**: `implementation-plan/*` branches are exempt from CHANGELOG entries. The changelog policy only applies to `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches. Do not create or modify `CHANGELOG.md` in this PR.
-9. Commit: `docs: add implementation plan for [feature-name]`
-10. Push: `git push -u origin implementation-plan/[branch-slug]`
-11. Open a **draft** PR targeting `develop` with:
+9. **Do NOT update CHANGELOG**: `implementation-plan/*` branches are exempt from CHANGELOG entries. The changelog policy only applies to `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches. Do not create or modify `CHANGELOG.md` in this PR.
+10. Commit: `docs: add implementation plan for [feature-name]`
+11. Push: `git push -u origin implementation-plan/[branch-slug]`
+12. Open a **draft** PR targeting `develop` with:
     - Title: `docs(plan): [feature-name]`
     - Body: summary of the approach, complexity estimate, key risks, link to plan and runbook
-12. Return the branch + PR details to the **Work Item Runner**
+    - `Document Quality Gate` log from the pre-PR gate above
+13. Return the branch + PR details to the **Work Item Runner**
 
 ---
 

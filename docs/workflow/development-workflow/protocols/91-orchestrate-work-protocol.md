@@ -710,7 +710,12 @@ Run the next deterministic action for the selected item, then immediately re-eva
 
 Expected chain:
 
-`creator -> draft PR opened -> internal review gate with all internal reviewers (Step 7a) -> PR-Agent draft clean gate when CodeRabbit is configured in review.phase_after_clean -> gh pr ready -> after-clean automated reviewer phase (Step 7) -> regression label (Step 7b, implementation PRs only) -> CI loop (Step 8) -> label readiness checklist (Step 8a) -> tracker status update (Step 8b) -> independent PR verification (Step 8c) -> wait or escalation`
+For spec and plan PRs, the creator-stage output includes the `Document Quality
+Gate` log in the draft PR description before Step 7a begins. If the log is
+missing or obviously incomplete, treat the creator stage as incomplete and fix
+the PR description before running reviewer readiness loops.
+
+`creator -> draft PR opened with Document Quality Gate log when applicable -> internal review gate with all internal reviewers (Step 7a) -> PR-Agent draft clean gate when CodeRabbit is configured in review.phase_after_clean -> gh pr ready -> after-clean automated reviewer phase (Step 7) -> regression label (Step 7b, implementation PRs only) -> CI loop (Step 8) -> label readiness checklist (Step 8a) -> tracker status update (Step 8b) -> independent PR verification (Step 8c) -> wait or escalation`
 
 After any subagent finishes, determine whether the item still has a deterministic next action:
 
@@ -1960,14 +1965,15 @@ When a human requests changes on a PR:
 2. Add `needs-fixes`
 3. Address the feedback
 4. Push fixes
-5. Run Step 7a (internal review gate) — all internal reviewers must approve before proceeding
-6. Run Step 7 (external automated reviewers)
-7. Run Step 7b (implementation PRs only)
-8. Run Step 8 (CI loop)
-9. Run Step 8a (label readiness checklist) — this is **mandatory** to verify the PR is non-draft, `ready-for-regression` is applied on implementation PRs, and `ready-for-human-review` is applied
-10. Run Step 8b (update tracker status)
-11. Run Step 8c (post-label independent verification) — query GitHub directly to confirm base branch, labels, review comment, and CI before reporting ready
-12. Notify human that feedback has been addressed and the PR is ready again
+5. For spec and plan PRs, verify the PR description still contains a current `Document Quality Gate` log
+6. Run Step 7a (internal review gate) — all internal reviewers must approve before proceeding
+7. Run Step 7 (external automated reviewers)
+8. Run Step 7b (implementation PRs only)
+9. Run Step 8 (CI loop)
+10. Run Step 8a (label readiness checklist) — this is **mandatory** to verify the PR is non-draft, `ready-for-regression` is applied on implementation PRs, and `ready-for-human-review` is applied
+11. Run Step 8b (update tracker status)
+12. Run Step 8c (post-label independent verification) — query GitHub directly to confirm base branch, labels, review comment, and CI before reporting ready
+13. Notify human that feedback has been addressed and the PR is ready again
 
 See `92-pr-readiness-signal-protocol.md` for label definitions.
 

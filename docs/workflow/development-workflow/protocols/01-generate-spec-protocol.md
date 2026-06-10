@@ -139,9 +139,43 @@ Use the current timestamp for `YYYYMMDDHHMMSS`.
 - Use **domain and user language** in use cases, business rules, and UX sections — do not embed API field names, JSON keys, method names, or other code identifiers (they belong in the implementation plan, not the product spec)
 - For multi-entity or high-edge-case briefs: keep **terminology consistent** across sections, keep acceptance criteria **verifiable in a test environment**, and use **Open Questions** (when present in the template) only for genuine product ambiguities — not as a dump for implementation unknowns (those belong in the plan or out-of-scope deferrals)
 
-### Before opening the draft PR (self-check)
+### Before opening the draft PR (Document Quality Gate)
 
-Skim the spec body once more for: accidental **Open Questions** sections when forbidden, **copy/paste character corruption**, mixed terminology for the same concept, and acceptance criteria that cannot be verified without guessing environment or data setup.
+Run this gate after writing the spec and before opening the draft PR. This gate
+does not replace the internal review gate, automated reviewer loop, CI, or human
+review; it reduces avoidable first-pass review churn.
+
+Record the result in the draft PR description under a `Document Quality Gate`
+section. Each checked item must say `Checked` or `Not applicable`, with a short
+rationale for every `Not applicable` item:
+
+```markdown
+## Document Quality Gate
+
+- Brief coverage: Checked - all brief objectives map to acceptance criteria or out of scope.
+- Internal consistency: Checked - terminology and status labels are consistent.
+- Behavioral guarantees: Not applicable - this spec does not introduce guarantees beyond ACs.
+- Reviewer-risk categories: Checked - API surface, concurrency, snapshot semantics, edge cases, and template placeholders reviewed.
+```
+
+Before the PR is opened, verify:
+
+- Brief coverage: every tracker brief objective appears in the Coverage Matrix or
+  an explicit out-of-scope deferral.
+- Internal consistency: the same product concept, status, actor, and user-facing
+  term has the same name and meaning in every section.
+- Naming and casing consistency: user-visible labels, enum display labels, and
+  workflow statuses use one spelling/casing throughout.
+- Behavioral guarantees: every guarantee, limit, ordering rule, or invariant is
+  backed by acceptance criteria or a business rule that makes it testable.
+- Reviewer-risk categories: common high-signal reviewer concerns are checked:
+  API-surface completeness, concurrency correctness, single-snapshot or
+  consistency semantics, missing edge cases, vague actors/triggers, untestable
+  ACs, hidden dependencies, accidental implementation design, and stale
+  template content.
+- Placeholder cleanup: the template-placeholder grep below returns no output.
+- Not-applicable rationale: any omitted optional section or checklist item has a
+  brief rationale in the PR description log.
 
 **Template placeholder removal (mandatory — run before every spec PR)**:
 
@@ -225,6 +259,7 @@ If no blocking human decision remains:
    - Title: `docs(spec): [feature-name]`
    - Body: summary of the feature, link to the spec file, list of open questions (if any)
    - When a tracker brief exists: Coverage Matrix summary (each brief objective mapped to AC reference(s) or Out-of-Scope entry) and Deferral Notes for each objective intentionally moved to Out of Scope
+   - `Document Quality Gate` log from the pre-PR gate above
 10. Return the branch + PR details to the **Work Item Runner**
 
 ---
