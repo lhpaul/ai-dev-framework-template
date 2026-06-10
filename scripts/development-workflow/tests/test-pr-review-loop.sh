@@ -6,7 +6,7 @@
 #   2. check_unreplied_rest_comments (bot-account exclusion, reply detection)
 #   3. append_compare_metrics_row (compare-mode platform config change detection)
 #   4. Lock cleanup on SIGTERM (signal trap removes lockdir before exit)
-#   5. phase_after_clean config parsing and membership detection
+#   5. draft/ready lifecycle config parsing and membership detection
 #
 # Usage: bash scripts/development-workflow/tests/test-pr-review-loop.sh
 # No external tooling required beyond bash and git (git is used only to locate
@@ -176,25 +176,86 @@ run_test() {
 }
 
 # ---------------------------------------------------------------------------
-# Area 0: phase_after_clean config parsing
+# Area 0: draft/ready lifecycle config parsing
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== Area 0: phase_after_clean config parsing ==="
+echo "=== Area 0: draft/ready lifecycle config parsing ==="
 
 _CONFIG_DIR="$(mktemp -d)"
 cat > "$_CONFIG_DIR/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+
+review:
+  on_draft:
+    runner:
+      - codex
+    github:
+      - pr-agent
+  on_ready:
+    github:
+      - haystack
+YAML
+
+draft_runner_parsed="$(workflow_config_review_on_draft_runner "$_CONFIG_DIR/.ai-dev-workflow.yaml" | paste -sd ',' -)"
+draft_github_parsed="$(workflow_config_review_on_draft_github "$_CONFIG_DIR/.ai-dev-workflow.yaml" | paste -sd ',' -)"
+ready_github_parsed="$(workflow_config_review_on_ready_github "$_CONFIG_DIR/.ai-dev-workflow.yaml" | paste -sd ',' -)"
+all_github_parsed="$(workflow_config_review_platforms "$_CONFIG_DIR/.ai-dev-workflow.yaml" | paste -sd ',' -)"
+phase_after_clean_parsed="$(workflow_config_review_phase_after_clean_platforms "$_CONFIG_DIR/.ai-dev-workflow.yaml" | paste -sd ',' -)"
+run_test "review_on_draft_runner_parser" "codex" "$draft_runner_parsed"
+run_test "review_on_draft_github_parser" "pr-agent" "$draft_github_parsed"
+run_test "review_on_ready_github_parser" "haystack" "$ready_github_parsed"
+run_test "review_lifecycle_combined_platforms" "pr-agent,haystack" "$all_github_parsed"
+run_test "phase_after_clean_compat_maps_ready_github" "haystack" "$phase_after_clean_parsed"
+
+cat > "$_CONFIG_DIR/.ai-dev-workflow-legacy.yaml" <<'YAML'
 schema_version: 1
 
 review:
   platforms:
     - pr-agent
-    - coderabbit
+    - haystack
   phase_after_clean:
-    - coderabbit
+    - haystack
+  internal_reviewers:
+    - codex
 YAML
 
-phase_after_clean_parsed="$(workflow_config_review_phase_after_clean_platforms "$_CONFIG_DIR/.ai-dev-workflow.yaml" | paste -sd ',' -)"
-run_test "phase_after_clean_parser" "coderabbit" "$phase_after_clean_parsed"
+legacy_draft_runner="$(workflow_config_review_on_draft_runner "$_CONFIG_DIR/.ai-dev-workflow-legacy.yaml" | paste -sd ',' -)"
+legacy_draft_github="$(workflow_config_review_on_draft_github "$_CONFIG_DIR/.ai-dev-workflow-legacy.yaml" | paste -sd ',' -)"
+legacy_ready_github="$(workflow_config_review_on_ready_github "$_CONFIG_DIR/.ai-dev-workflow-legacy.yaml" | paste -sd ',' -)"
+legacy_all_github="$(workflow_config_review_platforms "$_CONFIG_DIR/.ai-dev-workflow-legacy.yaml" | paste -sd ',' -)"
+run_test "legacy_internal_reviewers_mapping" "codex" "$legacy_draft_runner"
+run_test "legacy_platforms_phase_draft_mapping" "pr-agent" "$legacy_draft_github"
+run_test "legacy_platforms_phase_ready_mapping" "haystack" "$legacy_ready_github"
+run_test "legacy_platforms_phase_combined_mapping" "pr-agent,haystack" "$legacy_all_github"
+
+cat > "$_CONFIG_DIR/.ai-dev-workflow-legacy-platforms-only.yaml" <<'YAML'
+schema_version: 1
+
+review:
+  platforms: [pr-agent, haystack]
+YAML
+
+legacy_platforms_only_ready="$(workflow_config_review_on_ready_github "$_CONFIG_DIR/.ai-dev-workflow-legacy-platforms-only.yaml" | paste -sd ',' -)"
+run_test "legacy_platforms_without_phase_mapping" "pr-agent,haystack" "$legacy_platforms_only_ready"
+
+cat > "$_CONFIG_DIR/.ai-dev-workflow-duplicates.yaml" <<'YAML'
+schema_version: 2
+
+review:
+  on_draft:
+    runner: [codex]
+    github: [pr-agent, haystack]
+  on_ready:
+    github: [haystack]
+YAML
+
+duplicate_warning="$(emit_review_lifecycle_duplicate_warnings "$_CONFIG_DIR/.ai-dev-workflow-duplicates.yaml" 2>&1 || true)"
+case "$duplicate_warning" in
+  *'reviewer "haystack" in more than one bucket'*) duplicate_detected=yes ;;
+  *) duplicate_detected=no ;;
+esac
+run_test "duplicate_lifecycle_reviewer_warning" "yes" "$duplicate_detected"
 
 declare -a phase_after_clean_platforms=()
 append_phase_after_clean_platforms "coderabbit, pr-agent"
@@ -217,6 +278,11 @@ declare -a platforms=("pr-agent" "coderabbit")
 filter_pre_after_clean_platforms
 run_test "pre_after_clean_only_filters_phase_platform" "pr-agent" "${platforms[0]}"
 run_test "pre_after_clean_only_platform_count" "1" "${#platforms[@]}"
+
+declare -a phase_after_clean_platforms=("haystack")
+declare -a platforms=("pr-agent" "haystack")
+filter_pre_after_clean_platforms
+run_test "draft_github_only_filters_ready_reviewers" "pr-agent" "${platforms[0]}"
 
 # ---------------------------------------------------------------------------
 # Area 0b: doc branch timeout defaults
@@ -907,7 +973,7 @@ run_test "run_platform_review_routes_to_run_haystack_review" "1" "$_haystack_dis
 unset -f run_haystack_review
 unset _haystack_dispatch_called
 
-# test: ensure_pr_ready_for_after_clean converts draft PRs before after-clean reviewers
+# test: legacy ensure_pr_ready_for_after_clean wrapper converts draft PRs before ready-phase reviewers
 _call_log="$(mktemp)"
 export MOCK_GH_CALL_LOG="$_call_log"
 MOCK_GH_OUTPUT="true"
@@ -1045,7 +1111,7 @@ unset _test_tokens _test_spl _sprt _spname _spdisp
 # _post_review_summary is defined after the HARNESS_MODE return point and cannot
 # be called directly from the test harness; verify the string constant in the source
 # so any accidental change to the wording is caught.
-if grep -qF 'result_line="skipped — no platforms configured in review.platforms"' \
+if grep -qF 'result_line="skipped — no GitHub reviewers configured in review.on_draft.github or review.on_ready.github"' \
     "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null; then
   _skipped_constant_count=1
 else

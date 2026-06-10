@@ -58,16 +58,17 @@ review:
     - copilot
 ```
 
-To run Copilot only after earlier platforms have already cleared (the
-`phase_after_clean` measurement position), use:
+To run Copilot only after draft GitHub reviewers have already cleared, place it
+in the ready phase:
 
 ```yaml
 review:
-  platforms:
-    - pr-agent
-    - copilot
-  phase_after_clean:
-    - copilot
+  on_draft:
+    github:
+      - pr-agent
+  on_ready:
+    github:
+      - copilot
 ```
 
 This configuration makes Copilot's net-new findings measurable independently of

@@ -8,7 +8,7 @@ For information about Haystack's local git hooks (truncation checker, LLM_RULES.
 
 ## Overview
 
-`haystack-reviewer.sh` wraps the `haystack triage <PR> --json` CLI call and emits the standard key-value output contract consumed by `pr-review-loop.sh`. Teams that declare `haystack` in `review.platforms` gain a review platform that produces actionable, file-anchored findings with fix prompts — without requiring any additional GitHub App installation.
+`haystack-reviewer.sh` wraps the `haystack triage <PR> --json` CLI call and emits the standard key-value output contract consumed by `pr-review-loop.sh`. Teams that declare `haystack` in `review.on_ready.github` gain a review platform that produces actionable, file-anchored findings with fix prompts — without requiring any additional GitHub App installation.
 
 Key properties:
 
@@ -41,24 +41,22 @@ haystack whoami
 
 ## Configuration
 
-Add `haystack` to `review.platforms` (or `review.phase_after_clean`) in `.ai-dev-workflow.yaml`:
+Add `haystack` to `review.on_ready.github` in `.ai-dev-workflow.yaml`:
 
 ```yaml
 review:
-  # Run haystack alongside or after other review platforms.
-  platforms:
-    - pr-agent
-    - haystack
-
-  # Or run haystack only after earlier platforms are clean:
-  # phase_after_clean:
-  #   - haystack
+  on_draft:
+    github:
+      - pr-agent
+  on_ready:
+    github:
+      - haystack
 ```
 
 No other configuration changes are required in `.ai-dev-workflow.yaml`.
 
 If the repository creates implementation PRs as drafts, prefer
-`review.phase_after_clean` for Haystack. In this mode the reviewer loop lets
+`review.on_ready.github` for Haystack. In this mode the reviewer loop lets
 draft-compatible platforms clear first, marks the PR ready, and then runs
 Haystack. Haystack triage may remain `pending` indefinitely while a PR is still
 draft, so running it before `gh pr ready` can produce avoidable
@@ -297,7 +295,7 @@ REASON=pending_timeout
    haystack triage <pr_number>
    ```
 
-> **Protocol guard (when Haystack is listed in `review.platforms` and the loop returns `skipped/pending_timeout`)**: Before applying `ready-for-human-review`, agents must verify that `REASON=pending_timeout` is not masking real findings. Check whether the Haystack GitHub App has posted a "Haystack Code Reviewer: PR Analysis Ready!" comment on the PR:
+> **Protocol guard (when Haystack is listed in `review.on_ready.github` and the loop returns `skipped/pending_timeout`)**: Before applying `ready-for-human-review`, agents must verify that `REASON=pending_timeout` is not masking real findings. Check whether the Haystack GitHub App has posted a "Haystack Code Reviewer: PR Analysis Ready!" comment on the PR:
 >
 > ```bash
 > gh pr view <pr_number> --json comments \
@@ -356,7 +354,7 @@ INFO: unrecognised finding category 'SomeNewCategory' — treating as blocking (
 | ---- | ---- |
 | `scripts/development-workflow/haystack-reviewer.sh` | Companion script — wraps `haystack triage --json` and emits key-value contract |
 | `scripts/development-workflow/pr-review-loop.sh` | Main review loop — dispatches `run_haystack_review()` for the `haystack` platform |
-| `.ai-dev-workflow.yaml` | Declare `haystack` under `review.platforms` or `review.phase_after_clean` |
+| `.ai-dev-workflow.yaml` | Declare `haystack` under `review.on_ready.github` |
 | `docs/workflow/development-workflow/integrations/haystack.md` | Haystack local git hooks integration (truncation checker, LLM_RULES.md) |
 
 ---

@@ -138,39 +138,74 @@ open_pr_number_for_branch() {
   gh pr list --head "$1" --state open --json number --jq '.[0].number // empty'
 }
 
-workflow_config_review_platforms() {
-  local config_file="${1:-$(workflow_config_file)}"
+workflow_config_review_nested_list() {
+  local config_file="$1"
+  local phase="$2"
+  local bucket="$3"
 
   [ -f "$config_file" ] || return 0
 
-  awk '
+  awk -v phase="$phase" -v bucket="$bucket" '
     function trim(value) {
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
       gsub(/^["'"'"']|["'"'"']$/, "", value)
       return value
     }
 
+    function emit_inline(value, count, idx, entries) {
+      gsub(/[[:space:]]+#.*$/, "", value)
+      gsub(/^[^[]*\[/, "", value)
+      gsub(/\].*$/, "", value)
+      count = split(value, entries, ",")
+      for (idx = 1; idx <= count; idx++) {
+        entries[idx] = trim(entries[idx])
+        if (entries[idx] != "") print entries[idx]
+      }
+    }
+
     /^review:[[:space:]]*(#.*)?$/ {
       in_review = 1
-      in_platforms = 0
+      in_phase = 0
+      in_bucket = 0
       next
     }
 
-    in_review && /^[^[:space:]#].*:[[:space:]]*$/ {
+    in_review && /^[^[:space:]#].*:[[:space:]]*/ {
       in_review = 0
-      in_platforms = 0
+      in_phase = 0
+      in_bucket = 0
     }
 
-    in_review && /^[[:space:]][[:space:]]platforms:[[:space:]]*(#.*)?$/ {
-      in_platforms = 1
+    in_review && $0 ~ ("^[[:space:]][[:space:]]" phase ":[[:space:]]*(#.*)?$") {
+      in_phase = 1
+      in_bucket = 0
       next
     }
 
-    in_review && in_platforms && /^[[:space:]][[:space:]][A-Za-z0-9_-]+:[[:space:]]*/ {
-      in_platforms = 0
+    in_review && in_phase && /^[[:space:]][[:space:]][A-Za-z0-9_-]+:[[:space:]]*/ {
+      if ($0 !~ ("^[[:space:]][[:space:]]" phase ":")) {
+        in_phase = 0
+        in_bucket = 0
+      }
     }
 
-    in_review && in_platforms && /^[[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ {
+    in_review && in_phase && $0 ~ ("^[[:space:]][[:space:]][[:space:]][[:space:]]" bucket ":[[:space:]]*\\[") {
+      line = $0
+      emit_inline(line)
+      in_bucket = 0
+      next
+    }
+
+    in_review && in_phase && $0 ~ ("^[[:space:]][[:space:]][[:space:]][[:space:]]" bucket ":[[:space:]]*(#.*)?$") {
+      in_bucket = 1
+      next
+    }
+
+    in_review && in_phase && in_bucket && /^[[:space:]][[:space:]][[:space:]][[:space:]][A-Za-z0-9_-]+:[[:space:]]*/ {
+      in_bucket = 0
+    }
+
+    in_review && in_phase && in_bucket && /^[[:space:]][[:space:]][[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ {
       line = $0
       sub(/^[[:space:]]*-[[:space:]]*/, "", line)
       sub(/[[:space:]]+#.*$/, "", line)
@@ -178,10 +213,126 @@ workflow_config_review_platforms() {
       next
     }
 
-    in_review && in_platforms && !/^[[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ && !/^[[:space:]]*#/ && !/^[[:space:]]*$/ {
-      in_platforms = 0
+    in_review && in_phase && in_bucket && !/^[[:space:]][[:space:]][[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ && !/^[[:space:]]*#/ && !/^[[:space:]]*$/ {
+      in_bucket = 0
     }
   ' "$config_file"
+}
+
+workflow_config_review_legacy_list() {
+  local config_file="$1"
+  local key="$2"
+
+  [ -f "$config_file" ] || return 0
+
+  awk -v key="$key" '
+    function trim(value) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      gsub(/^["'"'"']|["'"'"']$/, "", value)
+      return value
+    }
+
+    function emit_inline(value, count, idx, entries) {
+      gsub(/[[:space:]]+#.*$/, "", value)
+      gsub(/^[^[]*\[/, "", value)
+      gsub(/\].*$/, "", value)
+      count = split(value, entries, ",")
+      for (idx = 1; idx <= count; idx++) {
+        entries[idx] = trim(entries[idx])
+        if (entries[idx] != "") print entries[idx]
+      }
+    }
+
+    /^review:[[:space:]]*(#.*)?$/ {
+      in_review = 1
+      in_list = 0
+      next
+    }
+
+    in_review && /^[^[:space:]#].*:[[:space:]]*/ {
+      in_review = 0
+      in_list = 0
+    }
+
+    in_review && $0 ~ ("^[[:space:]][[:space:]]" key ":[[:space:]]*\\[") {
+      line = $0
+      emit_inline(line)
+      in_list = 0
+      next
+    }
+
+    in_review && $0 ~ ("^[[:space:]][[:space:]]" key ":[[:space:]]*(#.*)?$") {
+      in_list = 1
+      next
+    }
+
+    in_review && in_list && /^[[:space:]][[:space:]][A-Za-z0-9_-]+:[[:space:]]*/ {
+      in_list = 0
+    }
+
+    in_review && in_list && /^[[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ {
+      line = $0
+      sub(/^[[:space:]]*-[[:space:]]*/, "", line)
+      sub(/[[:space:]]+#.*$/, "", line)
+      print trim(line)
+      next
+    }
+
+    in_review && in_list && !/^[[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ && !/^[[:space:]]*#/ && !/^[[:space:]]*$/ {
+      in_list = 0
+    }
+  ' "$config_file"
+}
+
+workflow_config_review_on_draft_runner() {
+  local config_file="${1:-$(workflow_config_file)}"
+
+  [ -f "$config_file" ] || return 0
+
+  if workflow_config_review_nested_list "$config_file" on_draft runner | grep -q .; then
+    workflow_config_review_nested_list "$config_file" on_draft runner
+  else
+    workflow_config_review_legacy_list "$config_file" internal_reviewers
+  fi
+}
+
+workflow_config_review_on_draft_github() {
+  local config_file="${1:-$(workflow_config_file)}"
+
+  [ -f "$config_file" ] || return 0
+
+  if workflow_config_review_nested_list "$config_file" on_draft github | grep -q .; then
+    workflow_config_review_nested_list "$config_file" on_draft github
+    return 0
+  fi
+
+  if workflow_config_review_legacy_list "$config_file" phase_after_clean | grep -q .; then
+    workflow_config_review_legacy_list "$config_file" platforms \
+      | grep -F -x -v -f <(workflow_config_review_legacy_list "$config_file" phase_after_clean) || true
+  fi
+}
+
+workflow_config_review_on_ready_github() {
+  local config_file="${1:-$(workflow_config_file)}"
+
+  [ -f "$config_file" ] || return 0
+
+  if workflow_config_review_nested_list "$config_file" on_ready github | grep -q .; then
+    workflow_config_review_nested_list "$config_file" on_ready github
+  elif workflow_config_review_legacy_list "$config_file" phase_after_clean | grep -q .; then
+    workflow_config_review_legacy_list "$config_file" phase_after_clean
+  else
+    workflow_config_review_legacy_list "$config_file" platforms
+  fi
+}
+
+workflow_config_review_platforms() {
+  local config_file="${1:-$(workflow_config_file)}"
+
+  [ -f "$config_file" ] || return 0
+
+  workflow_config_review_on_draft_github "$config_file"
+  workflow_config_review_on_ready_github "$config_file"
 }
 
 workflow_config_review_phase_after_clean_platforms() {
@@ -189,45 +340,7 @@ workflow_config_review_phase_after_clean_platforms() {
 
   [ -f "$config_file" ] || return 0
 
-  awk '
-    function trim(value) {
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
-      gsub(/^["'"'"']|["'"'"']$/, "", value)
-      return value
-    }
-
-    /^review:[[:space:]]*(#.*)?$/ {
-      in_review = 1
-      in_phase = 0
-      next
-    }
-
-    in_review && /^[^[:space:]#].*:[[:space:]]*$/ {
-      in_review = 0
-      in_phase = 0
-    }
-
-    in_review && /^[[:space:]][[:space:]]phase_after_clean:[[:space:]]*(#.*)?$/ {
-      in_phase = 1
-      next
-    }
-
-    in_review && in_phase && /^[[:space:]][[:space:]][A-Za-z0-9_-]+:[[:space:]]*/ {
-      in_phase = 0
-    }
-
-    in_review && in_phase && /^[[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ {
-      line = $0
-      sub(/^[[:space:]]*-[[:space:]]*/, "", line)
-      sub(/[[:space:]]+#.*$/, "", line)
-      print trim(line)
-      next
-    }
-
-    in_review && in_phase && !/^[[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ && !/^[[:space:]]*#/ && !/^[[:space:]]*$/ {
-      in_phase = 0
-    }
-  ' "$config_file"
+  workflow_config_review_on_ready_github "$config_file"
 }
 
 workflow_config_provider() {

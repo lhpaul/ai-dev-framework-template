@@ -54,7 +54,7 @@ Always refer to these docs for authoritative guidance:
 
 This project uses a staged AI-assisted development workflow. See [`docs/workflow/development-workflow/README.md`](docs/workflow/development-workflow/README.md) for the full specification.
 
-Repository-specific workflow providers are declared in [`.ai-dev-workflow.yaml`](.ai-dev-workflow.yaml). Today, `review.platforms` is consumed by `pr-review-loop.sh` (Step 7) and `review.internal_reviewers` is consumed by the Step 7a internal review gate protocol; other sections are advisory until additional tooling adopts them.
+Repository-specific workflow providers are declared in [`.ai-dev-workflow.yaml`](.ai-dev-workflow.yaml). Today, `review.on_draft.runner` is consumed by the Step 7a internal review gate protocol, and `review.on_draft.github` / `review.on_ready.github` are consumed by `pr-review-loop.sh` (Step 7); other sections are advisory until additional tooling adopts them. Legacy `review.internal_reviewers`, `review.platforms`, and `review.phase_after_clean` keys remain accepted for one transition release.
 
 ### Workflow Commands
 

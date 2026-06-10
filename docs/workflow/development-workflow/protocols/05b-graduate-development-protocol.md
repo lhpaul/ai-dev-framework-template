@@ -179,20 +179,22 @@ If the diff is empty (no CHANGELOG difference), warn the human:
 
 ## Step 2.6: Verify Review Platform Coverage
 
-Before opening the graduation PR, confirm that the integration branch's `.ai-dev-workflow.yaml` lists all applicable review platforms.
+Before opening the graduation PR, confirm that the integration branch's `.ai-dev-workflow.yaml` lists all applicable GitHub reviewers.
 
-When an integration branch is created, it branches off `develop` at a point in time. If `review.platforms` entries are later added to `develop` (e.g., `haystack` was added in v0.27.0), those additions are **not** automatically propagated to existing integration branches. A graduation PR run against a branch missing a platform will silently skip that platform's triage.
+When an integration branch is created, it branches off `develop` at a point in time. If `review.on_draft.github` or `review.on_ready.github` entries are later added to `develop` (e.g., `haystack` was added in v0.27.0), those additions are **not** automatically propagated to existing integration branches. A graduation PR run against a branch missing a reviewer will silently skip that reviewer's triage.
 
 **Checklist — run before Step 3**:
 
-1. Fetch the integration branch's `.ai-dev-workflow.yaml` and compare `review.platforms` against the same list on `develop`:
+1. Fetch the integration branch's `.ai-dev-workflow.yaml` and compare `review.on_draft.github` plus `review.on_ready.github` against the same lists on `develop`:
 
    ```bash
-   # Show review.platforms on develop
-   git show origin/develop:.ai-dev-workflow.yaml | grep -A 20 'platforms:'
+   # Show GitHub reviewer buckets on develop
+   git show origin/develop:.ai-dev-workflow.yaml | grep -A 20 'on_draft:'
+   git show origin/develop:.ai-dev-workflow.yaml | grep -A 10 'on_ready:'
 
-   # Show review.platforms on the integration branch
-   git show origin/develop-<slug>:.ai-dev-workflow.yaml | grep -A 20 'platforms:'
+   # Show GitHub reviewer buckets on the integration branch
+   git show origin/develop-<slug>:.ai-dev-workflow.yaml | grep -A 20 'on_draft:'
+   git show origin/develop-<slug>:.ai-dev-workflow.yaml | grep -A 10 'on_ready:'
    ```
 
 2. If any platform present on `develop` is absent from `develop-<slug>`, update `.ai-dev-workflow.yaml` on the integration branch to match. At minimum, both `pr-agent` and `haystack` must be listed if the main repository uses them.
@@ -206,9 +208,9 @@ When an integration branch is created, it branches off `develop` at a point in t
      echo "ERROR: expected branch develop-<slug>, got $CURRENT_BRANCH — aborting" >&2
      exit 1
    fi
-   # Edit .ai-dev-workflow.yaml to add any missing platforms under review.platforms
+   # Edit .ai-dev-workflow.yaml to add any missing reviewers under review.on_draft.github or review.on_ready.github
    git add .ai-dev-workflow.yaml
-   git commit -m "chore: sync review.platforms from develop before graduation"
+   git commit -m "chore: sync review config from develop before graduation"
    git push origin develop-<slug>
    ```
 
