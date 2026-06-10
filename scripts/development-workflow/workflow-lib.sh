@@ -18,6 +18,10 @@ workflow_config_file() {
   printf '%s/.ai-dev-workflow.yaml\n' "$(workflow_repo_root)"
 }
 
+workflow_config_resolver_script() {
+  printf '%s/workflow-config-resolver.py\n' "$(workflow_script_dir)"
+}
+
 workflow_config_exists() {
   [ -f "$(workflow_config_file)" ]
 }
@@ -349,6 +353,46 @@ workflow_config_review_phase_after_clean_platforms() {
   [ -f "$config_file" ] || return 0
 
   workflow_config_review_on_ready_github "$config_file"
+}
+
+workflow_repository_mode() {
+  local repo_root="${1:-$(workflow_repo_root)}"
+
+  python3 "$(workflow_config_resolver_script)" mode --repo-root "$repo_root"
+}
+
+workflow_repository_context() {
+  local target_repo="${1:-}"
+  local repo_root="${2:-$(workflow_repo_root)}"
+  local args=(resolve --repo-root "$repo_root")
+
+  if [ -n "$target_repo" ]; then
+    args+=(--repo "$target_repo")
+  fi
+
+  python3 "$(workflow_config_resolver_script)" "${args[@]}"
+}
+
+workflow_validate_repository_context() {
+  local target_repo="${1:-}"
+  local repo_root="${2:-$(workflow_repo_root)}"
+  local require_local="${3:-}"
+  local args=(validate --repo-root "$repo_root")
+
+  if [ -n "$target_repo" ]; then
+    args+=(--repo "$target_repo")
+  fi
+  if [ "$require_local" = "--require-local" ] || [ "$require_local" = "require-local" ]; then
+    args+=(--require-local)
+  fi
+
+  python3 "$(workflow_config_resolver_script)" "${args[@]}"
+}
+
+workflow_review_override_context() {
+  local repo_root="${1:-$(workflow_repo_root)}"
+
+  python3 "$(workflow_config_resolver_script)" review-overrides --repo-root "$repo_root"
 }
 
 workflow_config_provider() {
