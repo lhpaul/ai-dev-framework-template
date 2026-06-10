@@ -1,7 +1,7 @@
 # Simplify Review Config to Two-Phase Draft/Ready Model - Implementation Plan
 
 **Spec**: Refactor item #868 - tracker brief only, no product spec
-**Smoke test runbook**: [868-review-config-two-phase-model.smoke-test.md](../../../../docs/testing/workflow/868-review-config-two-phase-model.smoke-test.md)
+**Smoke test runbook**: [868-review-config-two-phase-model.smoke-test.md](../../../testing/workflow/868-review-config-two-phase-model.smoke-test.md)
 
 ---
 
