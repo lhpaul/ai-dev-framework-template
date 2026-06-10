@@ -31,33 +31,38 @@ If no PR can be determined, ask the user to specify a PR number or to run from a
 
 ### Pre-flight: draft-state check
 
-Before running any scripts, verify the PR is not in draft state:
+Before running any scripts, check whether the PR is in draft state:
 
 ```bash
 gh pr view <number> --json isDraft --jq '.isDraft'
 ```
 
-If the result is `true`, determine whether any external reviewer configured in
-`review.on_ready.github` in `.ai-dev-workflow.yaml` restricts reviews to
-non-draft PRs. Protocol 91 Step 7a is the source of truth for the
-reviewer-to-draft-restriction mapping; see its "Draft-state pre-check" section
-for the full table. For CodeRabbit specifically, check `.coderabbit.yaml`:
+If the result is `true`, do **not** mark the PR ready before the draft GitHub
+gate. Run `review.on_draft.github` first, then let `pr-review-loop.sh` convert
+the PR at the ready-phase boundary before dispatching `review.on_ready.github`.
+Protocol 91 Step 7a is the source of truth for the reviewer-to-draft-restriction
+mapping; see its "Draft-state pre-check" section for the full table. For
+CodeRabbit specifically, check `.coderabbit.yaml`:
 
 ```bash
 grep -E '^\s*drafts:\s*false' .coderabbit.yaml
 ```
 
-If the file is absent or the key is not present, CodeRabbit defaults to `drafts: false` — treat it as draft-restricting.
+If the file is absent or the key is not present, CodeRabbit defaults to
+`drafts: false` — treat it as draft-restricting.
 
-If the PR is draft **and** a ready-phase external reviewer
-(`review.on_ready.github`) skips drafts, convert the PR to non-draft before
-running the full reviewer loop:
+When a draft-restricting reviewer is listed in `review.on_ready.github`, the
+ready transition happens after the draft gate:
 
 ```bash
-gh pr ready <number>
+./scripts/development-workflow/pr-review-loop.sh <number> --draft-github-only
+./scripts/development-workflow/pr-review-loop.sh <number>
 ```
 
-This prevents silent reviewer skip — CodeRabbit configured with `auto_review.drafts: false` produces no comment when it bypasses a draft PR, making the omission invisible to the agent.
+The second command marks the PR ready immediately before the first ready-phase
+reviewer. This prevents silent reviewer skip while preserving draft-phase
+coverage — CodeRabbit configured with `auto_review.drafts: false` produces no
+comment when it bypasses a draft PR, making the omission invisible to the agent.
 
 **Scope note**: This pre-flight checks `review.on_draft.github` and
 `review.on_ready.github` (external reviewers used by Protocol 93 / Step 7). The

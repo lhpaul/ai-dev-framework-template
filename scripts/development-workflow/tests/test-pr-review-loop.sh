@@ -188,8 +188,10 @@ schema_version: 2
 review:
   on_draft:
     runner:
+      # Default Codex runner.
       - codex
     github:
+
       - pr-agent
   on_ready:
     github:
@@ -238,6 +240,29 @@ YAML
 
 legacy_platforms_only_ready="$(workflow_config_review_on_ready_github "$_CONFIG_DIR/.ai-dev-workflow-legacy-platforms-only.yaml" | paste -sd ',' -)"
 run_test "legacy_platforms_without_phase_mapping" "pr-agent,haystack" "$legacy_platforms_only_ready"
+
+cat > "$_CONFIG_DIR/.ai-dev-workflow-mixed.yaml" <<'YAML'
+schema_version: 2
+
+review:
+  on_draft:
+    runner: [codex]
+    github: [pr-agent]
+  on_ready:
+    github: [haystack]
+  internal_reviewers: [claude]
+  platforms: [greptile, coderabbit]
+  phase_after_clean: [coderabbit]
+YAML
+
+mixed_runner="$(workflow_config_review_on_draft_runner "$_CONFIG_DIR/.ai-dev-workflow-mixed.yaml" | paste -sd ',' -)"
+mixed_draft_github="$(workflow_config_review_on_draft_github "$_CONFIG_DIR/.ai-dev-workflow-mixed.yaml" | paste -sd ',' -)"
+mixed_ready_github="$(workflow_config_review_on_ready_github "$_CONFIG_DIR/.ai-dev-workflow-mixed.yaml" | paste -sd ',' -)"
+mixed_all_github="$(workflow_config_review_platforms "$_CONFIG_DIR/.ai-dev-workflow-mixed.yaml" | paste -sd ',' -)"
+run_test "mixed_new_legacy_runner_prefers_new" "codex" "$mixed_runner"
+run_test "mixed_new_legacy_draft_prefers_new" "pr-agent" "$mixed_draft_github"
+run_test "mixed_new_legacy_ready_prefers_new" "haystack" "$mixed_ready_github"
+run_test "mixed_new_legacy_combined_prefers_new" "pr-agent,haystack" "$mixed_all_github"
 
 cat > "$_CONFIG_DIR/.ai-dev-workflow-duplicates.yaml" <<'YAML'
 schema_version: 2
