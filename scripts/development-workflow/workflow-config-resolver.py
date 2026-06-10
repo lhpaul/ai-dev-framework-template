@@ -258,7 +258,7 @@ def product_repos(shared: dict[str, Any], shared_path: Path) -> list[dict[str, A
     for index, raw in enumerate(repos, start=1):
         if not isinstance(raw, dict):
             raise ConfigError(f"{shared_path}: workflow_hub.product_repos[{index}] must be a mapping")
-        forbidden = sorted(key for key in raw if key in LOCAL_ONLY_KEYS)
+        forbidden = sorted(find_local_only_keys(raw))
         if forbidden:
             raise ConfigError(
                 f"{shared_path}: workflow_hub.product_repos[{index}] contains local-only field(s): {', '.join(forbidden)}"
@@ -281,6 +281,24 @@ def product_repos(shared: dict[str, Any], shared_path: Path) -> list[dict[str, A
         repo["default_branch"] = repo.get("default_branch") or "main"
         normalized.append(repo)
     return normalized
+
+
+def find_local_only_keys(value: Any, prefix: str = "") -> set[str]:
+    if isinstance(value, dict):
+        found: set[str] = set()
+        for key, child in value.items():
+            key_path = f"{prefix}.{key}" if prefix else str(key)
+            if key in LOCAL_ONLY_KEYS:
+                found.add(key_path)
+            found.update(find_local_only_keys(child, key_path))
+        return found
+    if isinstance(value, list):
+        found = set()
+        for index, child in enumerate(value, start=1):
+            item_path = f"{prefix}[{index}]" if prefix else f"[{index}]"
+            found.update(find_local_only_keys(child, item_path))
+        return found
+    return set()
 
 
 def select_product_repo(repos: list[dict[str, Any]], target: str | None, shared_path: Path) -> dict[str, Any]:

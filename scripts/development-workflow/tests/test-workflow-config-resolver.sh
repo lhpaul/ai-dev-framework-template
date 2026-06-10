@@ -211,6 +211,24 @@ run_fails_contains \
   "contains local-only field(s): local_path" \
   python3 "$RESOLVER" resolve --repo-root "$local_only_dir" --repo mobile-app
 
+nested_local_only_dir="$(fixture_dir nested-local-only-field)"
+cat > "$nested_local_only_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      github_app:
+        app_id: "123"
+        private_key_path: ~/.config/example/private-key.pem
+YAML
+run_fails_contains \
+  "workflow_hub_rejects_nested_local_only_fields" \
+  "contains local-only field(s): github_app.private_key_path" \
+  python3 "$RESOLVER" resolve --repo-root "$nested_local_only_dir" --repo mobile-app
+
 product_repo_dir="$(fixture_dir product-repo)"
 cat > "$product_repo_dir/.ai-dev-workflow.yaml" <<'YAML'
 schema_version: 2
