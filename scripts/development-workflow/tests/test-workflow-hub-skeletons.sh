@@ -100,69 +100,10 @@ run_passes() {
 validate_skeleton_manifest() {
   local manifest_path="$1"
   local repo_root="$2"
-  python3 - "$REPO_ROOT" "$manifest_path" "$repo_root" <<'PY'
-import importlib.util
-import sys
-from pathlib import Path
-
-resolver_path = Path(sys.argv[1]) / "scripts/development-workflow/workflow-config-resolver.py"
-manifest_path = Path(sys.argv[2])
-repo_root = Path(sys.argv[3])
-
-spec = importlib.util.spec_from_file_location("workflow_config_resolver", resolver_path)
-module = importlib.util.module_from_spec(spec)
-assert spec.loader is not None
-spec.loader.exec_module(module)
-
-allowed_scopes = {"shared", "hub_only", "product_repo_injection"}
-
-if not manifest_path.read_text(encoding="utf-8").strip():
-    raise SystemExit(f"{manifest_path}: manifest is empty")
-
-data = module.parse_yaml_subset(manifest_path)
-if not isinstance(data, dict):
-    raise SystemExit(f"{manifest_path}: manifest root must be a mapping")
-
-role = data.get("skeleton_role")
-if role not in {"workflow_hub", "product_repo"}:
-    raise SystemExit(f"{manifest_path}: unknown skeleton_role '{role}'")
-
-entries = data.get("entries")
-if not isinstance(entries, list) or not entries:
-    raise SystemExit(f"{manifest_path}: entries must be a non-empty list")
-
-for index, entry in enumerate(entries, start=1):
-    if not isinstance(entry, dict):
-        raise SystemExit(f"{manifest_path}: entry {index} must be a mapping")
-    path = entry.get("path")
-    if not isinstance(path, str) or not path.strip():
-        raise SystemExit(f"{manifest_path}: entry {index} has no path")
-    scope = entry.get("mode_scope")
-    if scope not in allowed_scopes:
-        raise SystemExit(f"{manifest_path}: entry {path} has unknown mode_scope '{scope}'")
-
-    generated = entry.get("generated_example") is True or entry.get("example_only") is True
-    if not generated and not (repo_root / path).exists():
-        raise SystemExit(f"{manifest_path}: entry {path} points to a missing source path")
-
-    if role == "product_repo":
-        required = entry.get("required_for_product_repo") is True
-        forbidden = (
-            path.startswith("docs/specs/")
-            or "implementation-plan" in path
-            or path.startswith("docs/testing/workflow/")
-        )
-        if forbidden and not required:
-            raise SystemExit(
-                f"{manifest_path}: product repository injection includes hub-owned artifact {path}"
-            )
-    elif entry.get("required_for_product_repo") is True:
-        raise SystemExit(
-            f"{manifest_path}: required_for_product_repo is only valid for product_repo manifests"
-        )
-
-print("VALID")
-PY
+  python3 "$REPO_ROOT/scripts/development-workflow/validate-workflow-hub-skeletons.py" \
+    --repo-root "$repo_root" \
+    --skeleton-manifest "$manifest_path" \
+    --skip-sync-manifest
 }
 
 echo ""
@@ -182,15 +123,9 @@ run_test "product_repo_manifest_exists" "yes" "$(
 )"
 
 run_passes \
-  "workflow_hub_manifest_valid" \
-  validate_skeleton_manifest \
-  "$REPO_ROOT/template/workflow-hub/skeleton-manifest.yaml" \
-  "$REPO_ROOT"
-run_passes \
-  "product_repo_manifest_valid" \
-  validate_skeleton_manifest \
-  "$REPO_ROOT/template/product-repo-injection/skeleton-manifest.yaml" \
-  "$REPO_ROOT"
+  "real_skeleton_and_sync_manifests_valid" \
+  python3 "$REPO_ROOT/scripts/development-workflow/validate-workflow-hub-skeletons.py" \
+  --repo-root "$REPO_ROOT"
 
 private_detail_hits=""
 set +e
@@ -210,16 +145,11 @@ run_test "skeleton_private_detail_scan" "" "$private_detail_hits"
 echo ""
 echo "=== Area 2: sync manifest mode scopes ==="
 
-sync_manifest="$REPO_ROOT/sync-manifest.yaml"
-sync_content="$(cat "$sync_manifest")"
-run_contains "sync_scope_shared_defined" "  shared:" "$sync_content"
-run_contains "sync_scope_hub_only_defined" "  hub_only:" "$sync_content"
-run_contains "sync_scope_product_injection_defined" "  product_repo_injection:" "$sync_content"
-run_contains "sync_manifest_workflow_hub_skeleton" "template/workflow-hub/" "$sync_content"
-run_contains "sync_manifest_product_repo_skeleton" "template/product-repo-injection/" "$sync_content"
-run_contains "sync_manifest_existing_always_sync" "  always_sync:" "$sync_content"
-run_contains "sync_manifest_existing_special_handling" "  special_handling:" "$sync_content"
-run_contains "sync_manifest_existing_project_specific" "  project_specific:" "$sync_content"
+run_passes \
+  "sync_manifest_semantic_validation" \
+  python3 "$REPO_ROOT/scripts/development-workflow/validate-workflow-hub-skeletons.py" \
+  --repo-root "$REPO_ROOT" \
+  --sync-manifest "$REPO_ROOT/sync-manifest.yaml"
 
 echo ""
 echo "=== Area 3: fixture validation edge cases ==="
