@@ -309,6 +309,23 @@ declare -a platforms=("pr-agent" "haystack")
 filter_pre_after_clean_platforms
 run_test "draft_github_only_filters_ready_reviewers" "pr-agent" "${platforms[0]}"
 
+if grep -q -- '--ready-phase)' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" \
+    && grep -q 'append_ready_phase_platforms "$2"' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"; then
+  _ready_phase_flag_parse=1
+else
+  _ready_phase_flag_parse=0
+fi
+run_test "ready_phase_flag_parsing_wired" "1" "$_ready_phase_flag_parse"
+
+if grep -q -- '--draft-github-only)' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" \
+    && grep -q 'pre_after_clean_only=1' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"; then
+  _draft_github_only_flag_parse=1
+else
+  _draft_github_only_flag_parse=0
+fi
+run_test "draft_github_only_flag_parsing_wired" "1" "$_draft_github_only_flag_parse"
+unset _ready_phase_flag_parse _draft_github_only_flag_parse
+
 # ---------------------------------------------------------------------------
 # Area 0b: doc branch timeout defaults
 # ---------------------------------------------------------------------------

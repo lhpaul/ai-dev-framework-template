@@ -307,8 +307,16 @@ workflow_config_review_on_draft_github() {
   fi
 
   if workflow_config_review_legacy_list "$config_file" phase_after_clean | grep -q .; then
-    workflow_config_review_legacy_list "$config_file" platforms \
-      | grep -F -x -v -f <(workflow_config_review_legacy_list "$config_file" phase_after_clean) || true
+    awk '
+      NR == FNR {
+        exclude[$0] = 1
+        next
+      }
+
+      !($0 in exclude)
+    ' \
+      <(workflow_config_review_legacy_list "$config_file" phase_after_clean) \
+      <(workflow_config_review_legacy_list "$config_file" platforms)
   fi
 }
 

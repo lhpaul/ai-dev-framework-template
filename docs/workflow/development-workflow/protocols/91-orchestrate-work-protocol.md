@@ -783,14 +783,18 @@ gh pr view <pr_number> --json isDraft --jq '.isDraft'
 
 If the result is `true` (PR is a draft), inspect the resolved
 `review.on_draft.runner` list from `.ai-dev-workflow.yaml` (after any
-`.tmp/template-config.json` override) and the `review.on_ready.github` list.
+`.tmp/template-config.json` override) and the `review.on_draft.github` /
+`review.on_ready.github` lists.
 
-If `coderabbit` is **only** listed under `review.on_ready.github`, keep the PR
-as a draft during Step 7a. This is intentional: `.coderabbit.yaml` has
+If `coderabbit` is **only** listed under `review.on_ready.github`, keep the PR as
+a draft during Step 7a. This is intentional: `.coderabbit.yaml` has
 `reviews.auto_review.drafts: false`, so draft state prevents CodeRabbit from
-starting before the draft GitHub reviewer gate.
+starting before the draft GitHub reviewer gate. If `coderabbit` is listed under
+`review.on_draft.github` while draft reviews are disabled, treat the reviewer
+placement as a configuration issue to fix before Step 7: draft GitHub reviewers
+are expected to support draft PRs.
 
-If `coderabbit` is listed as an **internal reviewer** and is therefore required
+If `coderabbit` is listed as a **runner reviewer** and is therefore required
 inside Step 7a itself, convert the PR to non-draft before triggering reviewers:
 
 ```bash
@@ -804,7 +808,7 @@ Post a comment on the PR explaining the action:
 **Why this matters**: CodeRabbit (and similar tools) configured with
 `auto_review.drafts: false` do not post any skip notice when they bypass a draft
 PR. That behavior is useful when CodeRabbit is intentionally configured as an
-ready-phase reviewer, because it lets the draft GitHub gate clear first. It is
+a ready-phase reviewer, because it lets the draft GitHub gate clear first. It is
 unsafe when CodeRabbit is configured as a Step 7a runner reviewer, because the
 internal review gate would silently pass with reduced coverage.
 
@@ -1834,7 +1838,7 @@ echo "✅ Label readiness checklist passed. PR is ready for human review."
 - Only when `review.on_draft.github` or `review.on_ready.github` in `.ai-dev-workflow.yaml` includes `codex-github` or any other known async-posting review bot
 
 **Why this substep exists:**
-Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asynchronously. A thread can arrive **after** the Step 8a pre-Check-4 GraphQL verification (line 1202–1225) but **before** or **during** the Step 8c post-label verification. Without an explicit re-check, these late-arriving threads slip through as unresolved and cause the orchestrator's Step 5.1 to redispatch the agent.
+Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asynchronously. A thread can arrive **after** the Step 8a pre-Check-4 GraphQL verification described in the label readiness checklist but **before** or **during** the Step 8c post-label verification. Without an explicit re-check, these late-arriving threads slip through as unresolved and cause the orchestrator's Step 5.1 to redispatch the agent.
 
 **Procedure:**
 
