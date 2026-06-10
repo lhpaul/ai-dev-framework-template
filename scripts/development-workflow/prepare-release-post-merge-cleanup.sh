@@ -4,6 +4,7 @@
 # - verifies release PRs to main and develop are both merged
 # - deletes remote release branch (if present)
 # - deletes local release branch (switching away first if needed)
+# - optionally stamps explicit issue numbers with the release version
 # - optionally transitions explicit issue numbers from merged -> released
 #
 # Usage:
@@ -21,7 +22,8 @@
 #   1  updated==0 after processing all issues, or at least one hard failure occurred
 #
 # Output (when --issues is supplied):
-#   Emits structured key/value summary line:  UPDATED=N SKIPPED=N FAILED=N
+#   Emits structured key/value summary line:
+#   STAMPED=N STAMP_SKIPPED=N STAMP_FAILED=N UPDATED=N SKIPPED=N FAILED=N
 #
 # Env overrides:
 #   GITHUB_PROJECT_STATUS_MERGED   (default: Merged)
@@ -148,7 +150,9 @@ if [ -z "$RELEASE_INPUT" ]; then
 fi
 
 RELEASE_BRANCH="$(normalize_release_branch "$RELEASE_INPUT")"
+RELEASE_VERSION="${RELEASE_BRANCH#release/}"
 echo "Release branch: $RELEASE_BRANCH"
+echo "Release version: $RELEASE_VERSION"
 
 echo "Verifying merged PRs for release branch..."
 MAIN_PR=$(gh pr list --state merged --head "$RELEASE_BRANCH" --base main --json number --jq '.[0].number // empty')
@@ -208,22 +212,63 @@ fi
 # (they require MCP/API access). Emit per-issue manual action guidance and
 # exit cleanly rather than silently skipping or failing with UPDATED=0.
 if [ "$TRACKER_PROVIDER" = "linear" ]; then
+  echo "Recording release stamp guidance for Linear issue(s)..."
+  LINEAR_STAMPED=0
+  LINEAR_STAMP_SKIPPED=0
+  LINEAR_STAMP_FAILED=0
+  for issue in "${ISSUE_NUMBERS[@]}"; do
+    if ! STAMP_OUT="$(record_release_for_issue_best_effort "$issue" "$RELEASE_VERSION")"; then
+      echo "Warning: release-stamp helper failed for issue #$issue; counting as stamp failure."
+      STAMP_OUT="RELEASE_STAMP_FAILED issue=${issue} version=${RELEASE_VERSION} provider=${TRACKER_PROVIDER:-unknown} reason=helper_failed"
+    fi
+    echo "$STAMP_OUT"
+    if echo "$STAMP_OUT" | grep -q "^RELEASE_STAMPED "; then
+      LINEAR_STAMPED=$((LINEAR_STAMPED + 1))
+    elif echo "$STAMP_OUT" | grep -q "^RELEASE_STAMP_FAILED "; then
+      LINEAR_STAMP_FAILED=$((LINEAR_STAMP_FAILED + 1))
+    elif echo "$STAMP_OUT" | grep -q "^RELEASE_STAMP_SKIPPED "; then
+      LINEAR_STAMP_SKIPPED=$((LINEAR_STAMP_SKIPPED + 1))
+    else
+      echo "Warning: unrecognized release-stamp output for issue #$issue; counting as stamp failure."
+      LINEAR_STAMP_FAILED=$((LINEAR_STAMP_FAILED + 1))
+    fi
+  done
   echo "Linear tracker detected: automatic '$MERGED_LABEL' -> '$RELEASED_LABEL' transitions are not supported by this script."
   echo "Manually transition the following issue(s) to '$RELEASED_LABEL' in Linear (via MCP server or API):"
   for issue in "${ISSUE_NUMBERS[@]}"; do
     echo "  - Issue $issue: set status to '$RELEASED_LABEL'"
   done
   echo "See docs/workflow/development-workflow/integrations/linear.md for guidance."
+  echo "STAMPED=$LINEAR_STAMPED STAMP_SKIPPED=$LINEAR_STAMP_SKIPPED STAMP_FAILED=$LINEAR_STAMP_FAILED UPDATED=0 SKIPPED=0 FAILED=0"
   echo "Release post-merge cleanup complete."
   exit 0
 fi
 
 echo "Transitioning scoped issues from '$MERGED_LABEL' to '$RELEASED_LABEL'..."
+RELEASE_STAMPED=0
+RELEASE_STAMP_SKIPPED=0
+RELEASE_STAMP_FAILED=0
 TRACKER_UPDATED=0
 TRACKER_SKIPPED=0
 TRACKER_FAILED=0
 
 for issue in "${ISSUE_NUMBERS[@]}"; do
+  if ! STAMP_OUT="$(record_release_for_issue_best_effort "$issue" "$RELEASE_VERSION")"; then
+    echo "Warning: release-stamp helper failed for issue #$issue; counting as stamp failure."
+    STAMP_OUT="RELEASE_STAMP_FAILED issue=${issue} version=${RELEASE_VERSION} provider=${TRACKER_PROVIDER:-unknown} reason=helper_failed"
+  fi
+  echo "$STAMP_OUT"
+  if echo "$STAMP_OUT" | grep -q "^RELEASE_STAMPED "; then
+    RELEASE_STAMPED=$((RELEASE_STAMPED + 1))
+  elif echo "$STAMP_OUT" | grep -q "^RELEASE_STAMP_FAILED "; then
+    RELEASE_STAMP_FAILED=$((RELEASE_STAMP_FAILED + 1))
+  elif echo "$STAMP_OUT" | grep -q "^RELEASE_STAMP_SKIPPED "; then
+    RELEASE_STAMP_SKIPPED=$((RELEASE_STAMP_SKIPPED + 1))
+  else
+    echo "Warning: unrecognized release-stamp output for issue #$issue; counting as stamp failure."
+    RELEASE_STAMP_FAILED=$((RELEASE_STAMP_FAILED + 1))
+  fi
+
   ISSUE_STATE=$(gh issue view "$issue" --json state --jq '.state' 2>/dev/null || true)
   if [ -z "$ISSUE_STATE" ]; then
     echo "Warning: could not read issue #$issue; skipping tracker update."
@@ -260,23 +305,44 @@ for issue in "${ISSUE_NUMBERS[@]}"; do
   fi
 done
 
-echo "UPDATED=$TRACKER_UPDATED SKIPPED=$TRACKER_SKIPPED FAILED=$TRACKER_FAILED"
+echo "STAMPED=$RELEASE_STAMPED STAMP_SKIPPED=$RELEASE_STAMP_SKIPPED STAMP_FAILED=$RELEASE_STAMP_FAILED UPDATED=$TRACKER_UPDATED SKIPPED=$TRACKER_SKIPPED FAILED=$TRACKER_FAILED"
 
-if [ "$BEST_EFFORT" = "true" ]; then
-  echo "Release post-merge cleanup complete."
-  exit 0
+if [ "$BEST_EFFORT" != "true" ]; then
+  if [ "$TRACKER_FAILED" -gt 0 ]; then
+    echo "Error: $TRACKER_FAILED tracker transition(s) failed for release $RELEASE_BRANCH." >&2
+    echo "Pass --best-effort to suppress this error and exit 0 regardless of transition outcomes." >&2
+    exit 1
+  fi
+
+  if [ "$TRACKER_UPDATED" -eq 0 ]; then
+    case "$TRACKER_PROVIDER" in
+      github_projects|github-projects|github_issues|github-issues)
+        ;;
+      *)
+        echo "No shell-supported tracker transitions ran for provider '${TRACKER_PROVIDER:-none}'; release-stamp handling completed."
+        echo "Release post-merge cleanup complete."
+        exit 0
+        ;;
+    esac
+    if [ "$RELEASE_STAMPED" -gt 0 ] && [ "$TRACKER_SKIPPED" -gt 0 ] && [ "$TRACKER_FAILED" -eq 0 ]; then
+      echo "Release stamping succeeded, but tracker status transitions were skipped; treating cleanup as successful because no transition failed."
+    else
+      echo "Error: no tracker transitions succeeded (UPDATED=0) for release $RELEASE_BRANCH." >&2
+      echo "Pass --best-effort to suppress this error and exit 0 regardless of transition outcomes." >&2
+      exit 1
+    fi
+  fi
 fi
 
-if [ "$TRACKER_FAILED" -gt 0 ]; then
-  echo "Error: $TRACKER_FAILED tracker transition(s) failed for release $RELEASE_BRANCH." >&2
-  echo "Pass --best-effort to suppress this error and exit 0 regardless of transition outcomes." >&2
-  exit 1
-fi
-
-if [ "$TRACKER_UPDATED" -eq 0 ]; then
-  echo "Error: no tracker transitions succeeded (UPDATED=0) for release $RELEASE_BRANCH." >&2
-  echo "Pass --best-effort to suppress this error and exit 0 regardless of transition outcomes." >&2
-  exit 1
+if [ "$RELEASE_STAMPED" -gt 0 ]; then
+  if ! finalize_release_marker_best_effort "$RELEASE_VERSION"; then
+    if [ "$BEST_EFFORT" != "true" ]; then
+      echo "Error: release marker finalization failed for $RELEASE_VERSION." >&2
+      echo "Pass --best-effort to suppress this error and exit 0 regardless of finalization outcomes." >&2
+      exit 1
+    fi
+    echo "Warning: release marker finalization failed for $RELEASE_VERSION; continuing because --best-effort was passed." >&2
+  fi
 fi
 
 echo "Release post-merge cleanup complete."

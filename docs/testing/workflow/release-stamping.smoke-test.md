@@ -36,9 +36,20 @@ Milestones as the GitHub Issues / GitHub Projects release primitive.
    VERSION="v999.999.999-smoke"
    ```
 
-4. Run the release-stamp helper directly, or run the release cleanup helper in a
-   controlled test repository after both release PR merge preconditions are
-   satisfied.
+4. Run the release-stamp helper directly:
+
+   ```bash
+   set -euo pipefail
+
+   source scripts/development-workflow/workflow-lib.sh
+   record_release_for_issue_best_effort "$ISSUE_NUMBER" "$VERSION"
+   ```
+
+   Expected result: output includes
+   `RELEASE_STAMPED issue=<issue> version=v999.999.999-smoke`.
+
+   Alternatively, run the release cleanup helper in a controlled test repository
+   after both release PR merge preconditions are satisfied.
 
 5. Verify the milestone exists and is assigned:
 
@@ -100,6 +111,8 @@ Milestones as the GitHub Issues / GitHub Projects release primitive.
 
 - GitHub providers create or reuse a milestone named for the release version.
 - The shipped issue is assigned to that milestone.
+- Release cleanup summary output reports `STAMPED`, `STAMP_SKIPPED`, and
+  `STAMP_FAILED` separately from tracker Status transition counts.
 - GitHub Projects can display the release version through the built-in Milestone
   field.
 - Unsupported or disabled tracker providers log a clear skip and do not fail the
