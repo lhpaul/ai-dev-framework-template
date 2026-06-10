@@ -1,7 +1,7 @@
 # Smoke Test Runbook: Development Integration Branches
 
 **Feature**: Development Integration Branches (#628)
-**Spec**: [1\_628-development-integration-branches\_specs.md](../../specs/developments/20260515122533_628-development-integration-branches/1_628-development-integration-branches_specs.md)
+**Spec**: [1_628-development-integration-branches_specs.md](../../specs/developments/20260515122533_628-development-integration-branches/1_628-development-integration-branches_specs.md)
 **Created in**: Plan Ready stage
 **Updated in**: In Development stage
 
@@ -20,12 +20,12 @@ Before running this smoke test:
 
 ## Test Data
 
-| Item | Value |
-| --- | --- |
-| Epic slug | `test-integration-smoke` |
-| Integration branch name | `develop-test-integration-smoke` |
-| Sub-item label | `integration-branch:test-integration-smoke` |
-| Test repository | Current repository (ai-dev-framework-template) |
+| Item                    | Value                                          |
+| ----------------------- | ---------------------------------------------- |
+| Epic slug               | `test-integration-smoke`                       |
+| Integration branch name | `develop-test-integration-smoke`               |
+| Sub-item label          | `integration-branch:test-integration-smoke`    |
+| Test repository         | Current repository (ai-dev-framework-template) |
 
 ---
 
@@ -41,9 +41,11 @@ Before running this smoke test:
    - Choosing a slug
    - Creating an epic issue with the `epic` label
    - Applying `integration-branch:<slug>` to each sub-item
+   - Linking native GitHub sub-issues with `addSubIssue` when supported
+   - Verifying both `subIssues` on the epic and `parent` on each sub-item
 3. Confirm the single-item exemption is stated.
 
-**Expected result**: The protocol contains the multi-item epic detection section with all five sub-steps above.
+**Expected result**: The protocol contains the multi-item epic detection section with all seven sub-steps above.
 
 ---
 
@@ -78,7 +80,7 @@ Before running this smoke test:
 2. Confirm the file exists.
 3. Confirm it contains:
    - Step 1: Resolve slug → `develop-<slug>`
-   - Step 2: Verify all sub-items are merged (blocking gate)
+   - Step 2: Verify all sub-items are merged (blocking gate), preferring native GitHub sub-issues and falling back to `integration-branch:<slug>` labels for legacy epics
    - Step 3: Open graduation PR with merge-commit note and sub-item summary
    - Step 4: Run reviewer loop and CI
    - Step 5: Delete `develop-<slug>` after merge
@@ -123,6 +125,22 @@ Before running this smoke test:
 
 ---
 
+### Step 7: Verify native GitHub sub-issue guidance
+
+**Maps to**: Native sub-issue creation, verification, and fallback requirements
+
+1. Open `docs/workflow/development-workflow/protocols/00-add-backlog-item-protocol.md`.
+2. Search for `addSubIssue`.
+3. Confirm the protocol shows how to resolve `EPIC_ID` and `SUB_ISSUE_ID`, call the GraphQL mutation, and preserve the `integration-branch:<slug>` label as the automation contract.
+4. Search for `subIssues(first: 50)` and `parent { number title }`.
+5. Confirm the protocol includes both epic-side and child-side verification commands.
+6. Open `docs/workflow/development-workflow/protocols/05b-graduate-development-protocol.md`.
+7. Confirm graduation discovery prefers native `subIssues`, verifies child-side `parent`, and still documents the label fallback for legacy epics.
+
+**Expected result**: Native GitHub sub-issues are the preferred grouping relationship for GitHub providers, while the existing integration-branch label remains the base-branch routing contract and fallback discovery path.
+
+---
+
 ### Last Step: Assertions checklist
 
 ---
@@ -139,6 +157,7 @@ Each checkbox maps to an acceptance criterion from the spec.
 - [ ] AC 6: The graduation protocol's Step 5 deletes `develop-<slug>` after the graduation PR is merged.
 - [ ] AC 7: Protocols 90 and 91 contain explicit single-item exemption guards, and protocol 03 conditionally applies `develop-<slug>` only when `integration-branch:<slug>` is present.
 - [ ] AC 8: The following five files all contain integration-branch concept, naming convention, label schema, and/or graduation command: `docs/workflow/development-workflow/README.md`, `00-add-backlog-item-protocol.md`, `90-batch-orchestrate-work-protocol.md`, `91-orchestrate-work-protocol.md`, `05b-graduate-development-protocol.md`.
+- [ ] #884: GitHub-provider multi-item backlog creation requires native sub-issues when supported, verifies epic-side `subIssues` and child-side `parent`, and documents label-only fallback for unsupported repositories.
 
 ---
 
@@ -150,11 +169,11 @@ No seed data required. This smoke test validates documentation content only.
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-| --- | --- | --- |
-| `05b-graduate-development-protocol.md` not found | Implementation step skipped or file path incorrect | Check `docs/workflow/development-workflow/protocols/` for the file |
-| Protocol 90 or 91 has no "integration-branch" section | Implementation step incomplete | Re-run the implementation for the affected protocol |
-| README branch-naming table missing `develop-<slug>` row | README update was skipped | Add the row per Implementation Order Step 2a |
+| Symptom                                                 | Likely cause                                       | Fix                                                                |
+| ------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------ |
+| `05b-graduate-development-protocol.md` not found        | Implementation step skipped or file path incorrect | Check `docs/workflow/development-workflow/protocols/` for the file |
+| Protocol 90 or 91 has no "integration-branch" section   | Implementation step incomplete                     | Re-run the implementation for the affected protocol                |
+| README branch-naming table missing `develop-<slug>` row | README update was skipped                          | Add the row per Implementation Order Step 2a                       |
 
 ---
 

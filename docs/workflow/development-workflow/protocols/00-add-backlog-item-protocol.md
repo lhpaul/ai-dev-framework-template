@@ -94,9 +94,79 @@ When a human requests the creation of two or more related backlog items that tog
 
    For non-GitHub providers, use the tracker's native grouping or tagging mechanism to associate sub-items with the parent initiative.
 
-5. **Confirm to the user** — include in the Step 4 confirmation:
+5. **Link native GitHub sub-issues when supported (GitHub providers only)** — after the epic and sub-item issues exist, link each sub-item to the epic with GitHub's native sub-issue relationship. Keep the `integration-branch:<slug>` label from Step 4; existing orchestration uses that label to derive `develop-<slug>` even when native sub-issues are available.
+
+   ```bash
+   set -euo pipefail
+
+   # Substitute the actual issue numbers before running.
+   EPIC_ID=$(gh issue view <epic-issue-number> --json id --jq '.id')
+   SUB_ISSUE_ID=$(gh issue view <sub-item-issue-number> --json id --jq '.id')
+   [ -n "$EPIC_ID" ] || { echo "ERROR: could not resolve epic issue node ID" >&2; exit 1; }
+   [ -n "$SUB_ISSUE_ID" ] || { echo "ERROR: could not resolve sub-item issue node ID" >&2; exit 1; }
+
+   gh api graphql \
+     -f issueId="$EPIC_ID" \
+     -f subIssueId="$SUB_ISSUE_ID" \
+     -F replaceParent=false \
+     -f query='
+       mutation($issueId: ID!, $subIssueId: ID!, $replaceParent: Boolean) {
+         addSubIssue(input: {
+           issueId: $issueId
+           subIssueId: $subIssueId
+           replaceParent: $replaceParent
+         }) {
+           issue { number }
+           subIssue { number }
+         }
+       }
+     '
+   ```
+
+   If the repository or API does not support native sub-issues, fall back to label-only grouping and report the fallback explicitly in the confirmation.
+
+6. **Verify both sides of the native relationship (GitHub providers only)** — when native sub-issues were linked, verify that the epic lists the expected children and that every child points back to the epic:
+
+   ```bash
+   # Epic-side verification: lists child issue numbers and titles.
+   gh api graphql \
+     -F owner=<owner> \
+     -F repo=<repo> \
+     -F number=<epic-issue-number> \
+     -f query='
+       query($owner: String!, $repo: String!, $number: Int!) {
+         repository(owner: $owner, name: $repo) {
+           issue(number: $number) {
+             number
+             subIssues(first: 50) {
+               nodes { number title state }
+             }
+           }
+         }
+       }
+     '
+
+   # Child-side verification: confirms the parent epic for one sub-item.
+   gh api graphql \
+     -F owner=<owner> \
+     -F repo=<repo> \
+     -F number=<sub-item-issue-number> \
+     -f query='
+       query($owner: String!, $repo: String!, $number: Int!) {
+         repository(owner: $owner, name: $repo) {
+           issue(number: $number) {
+             number
+             parent { number title }
+           }
+         }
+       }
+     '
+   ```
+
+7. **Confirm to the user** — include in the Step 4 confirmation:
    - The epic issue number and URL
    - The shared label `integration-branch:<slug>` applied to each sub-item
+   - Whether native GitHub sub-issues were linked and verified, or whether the run fell back to label-only grouping
    - The note that sub-item PRs will target `develop-<slug>` (to be created by the orchestrator before the first PR)
 
 **Single-item exemption**: When only a single item is requested, skip this step entirely. Single-item developments target `develop` directly and are not subject to the integration-branch workflow.
