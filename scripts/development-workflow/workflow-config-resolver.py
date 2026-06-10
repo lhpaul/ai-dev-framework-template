@@ -445,7 +445,7 @@ def resolve_context(args: argparse.Namespace) -> dict[str, str]:
     if mode == "single_repo":
         context["TARGET_REPO_NAME"] = repo_root.name
         context["TARGET_GITHUB_REPO"] = parse_remote_slug(repo_root)
-        context["TARGET_DEFAULT_BRANCH"] = "develop"
+        context["TARGET_DEFAULT_BRANCH"] = str(shared.get("default_branch") or "main")
         context["TARGET_LOCAL_PATH"] = str(repo_root)
         context["TARGET_LOCAL_PATH_SOURCE"] = "current_repo"
         return context

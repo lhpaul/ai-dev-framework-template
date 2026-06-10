@@ -108,11 +108,13 @@ single_repo_output="$(workflow_repository_context "" "$single_repo_dir")"
 run_contains "single_repo_context_mode" "WORKFLOW_MODE=single_repo" "$single_repo_output"
 run_contains "single_repo_context_github_repo" "TARGET_GITHUB_REPO=example/mobile-app.extra" "$single_repo_output"
 run_contains "single_repo_context_local_path" "TARGET_LOCAL_PATH=$single_repo_dir" "$single_repo_output"
-run_contains "single_repo_context_default_branch" "TARGET_DEFAULT_BRANCH=develop" "$single_repo_output"
+run_contains "single_repo_context_default_branch" "TARGET_DEFAULT_BRANCH=main" "$single_repo_output"
 validator_output="$(bash "$VALIDATOR" --repo-root "$single_repo_dir")"
 run_contains "validate_wrapper_repo_root_arg" "TARGET_REPO_NAME=single-repo" "$validator_output"
 validator_help_output="$(bash "$VALIDATOR" --help)"
 run_contains "validate_wrapper_help" "Usage:" "$validator_help_output"
+validator_short_help_output="$(bash "$VALIDATOR" -h)"
+run_contains "validate_wrapper_short_help" "Usage:" "$validator_short_help_output"
 run_fails_contains \
   "validate_wrapper_unknown_arg" \
   "unknown argument '--unknown'" \
@@ -121,6 +123,10 @@ run_fails_contains \
   "validate_wrapper_missing_arg_value" \
   "--repo requires a value" \
   bash "$VALIDATOR" --repo
+run_fails_contains \
+  "validate_wrapper_missing_repo_root_value" \
+  "--repo-root requires a value" \
+  bash "$VALIDATOR" --repo-root
 
 hub_dir="$(fixture_dir workflow-hub)"
 cat > "$hub_dir/.ai-dev-workflow.yaml" <<'YAML'
