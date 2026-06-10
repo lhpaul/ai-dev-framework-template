@@ -139,6 +139,9 @@ scripts.
 - [ ] Update `.codex/skills/workflow-reviewer-loop/SKILL.md`.
 - [ ] Update `.codex/skills/post-merge-cleanup/SKILL.md` if cleanup handoff
       context is mentioned there.
+- [ ] For every Codex skill above, update the paired `agents/openai.yaml` when
+      it exists so the displayed default prompt stays aligned with the skill
+      instructions.
 - [ ] Update `.agents/skills/run-work/SKILL.md` and
       `.agents/skills/run-work/agents/openai.yaml`.
 - [ ] Update `.agents/skills/run-item-work/SKILL.md` and
@@ -147,6 +150,9 @@ scripts.
       `.agents/skills/run-reviewer-loop/agents/openai.yaml`.
 - [ ] Update `.agents/skills/code-review/SKILL.md` and
       `.agents/skills/code-review/agents/openai.yaml`.
+- [ ] Update other `.agents/skills/*/agents/openai.yaml` files only when their
+      default prompt mentions stage ownership, reviewer-loop routing, cleanup,
+      or mutation context.
 
 ### Tests and Validation
 
