@@ -16,21 +16,20 @@ context consistently.
 
 ## Brief Objective List
 
-1. Document shared workflow configuration fields for mode, workflow-hub product
-   repositories, and product-repository hub identity.
+1. Document shared workflow configuration fields for `mode`,
+   `workflow_hub.product_repos[]`, and `product_repo.workflow_hub`.
 2. Keep versioned product repository entries limited to stable non-secret
    identity and metadata.
-3. Introduce a gitignored local workflow configuration file for checkout paths,
+3. Introduce gitignored `.ai-dev-workflow.local.yaml` for checkout paths,
    checkout defaults, secret references, and local tool overrides.
 4. Provide shared repository-context helpers that scripts can call to read mode,
    merge shared and local config, resolve product repositories, and return
    context values.
 5. Add validation that fails clearly for missing or ambiguous repository
    configuration.
-6. Add the local workflow configuration file to gitignore and provide an example
-   file.
-7. Define compatibility or migration behavior for the existing local override
-   file.
+6. Add `.ai-dev-workflow.local.yaml` to gitignore and provide
+   `.ai-dev-workflow.local.example.yaml`.
+7. Define compatibility or migration behavior for `.tmp/template-config.json`.
 8. Preserve existing behavior for repositories with no mode declaration.
 9. Cover single-repository, workflow-hub, product-repository, local override,
    invalid config, and missing local path cases with tests.
@@ -200,9 +199,16 @@ contract instead of duplicating parsing and fallback behavior.
   tracker hints, and optional non-secret app identifiers.
 - Local workflow configuration owns checkout paths, checkout root defaults,
   private key paths or secret references, and local reviewer or tool overrides.
-- The local workflow configuration file must be ignored by git.
-- The example local configuration file must document the local-only fields
+- The local workflow configuration file is `.ai-dev-workflow.local.yaml`, and it
+  must be ignored by git.
+- The example local configuration file is
+  `.ai-dev-workflow.local.example.yaml`; it must document the local-only fields
   without containing real secrets, private paths, or private repository names.
+- The shared workflow configuration fields for this feature are `mode`,
+  `workflow_hub.product_repos[]`, and `product_repo.workflow_hub`.
+- Product repository entries under `workflow_hub.product_repos[]` must use
+  stable identity fields such as `name`, `github_repo` or `git_url`, and
+  `default_branch`, plus optional non-secret metadata.
 - Repository-context helper output must be shell-callable and suitable for
   existing workflow scripts.
 - Missing or ambiguous product repository selection must fail clearly before a
@@ -232,18 +238,19 @@ contract instead of duplicating parsing and fallback behavior.
 
 - **Validation output**: Validation reports the resolved mode, selected product
   repository, and any missing or ambiguous required values.
-- **Example local config**: The example file shows local-only fields and safe
-  placeholder values.
-- **Compatibility notes**: Documentation states whether the existing local
-  override file remains supported and how users migrate if it is replaced.
+- **Example local config**: `.ai-dev-workflow.local.example.yaml` shows
+  local-only fields and safe placeholder values.
+- **Compatibility notes**: Documentation states whether the existing
+  `.tmp/template-config.json` override file remains supported and how users
+  migrate if it is replaced.
 - **Test output**: The test suite demonstrates successful and failing resolution
   paths for each supported mode.
 
 ## Acceptance Criteria
 
 - [ ] AC1: A repository with no mode declaration resolves as `single_repo`.
-- [ ] AC2: Shared workflow documentation describes mode, workflow-hub product
-      repository entries, and product-repository hub identity.
+- [ ] AC2: Shared workflow documentation describes `mode`,
+      `workflow_hub.product_repos[]`, and `product_repo.workflow_hub`.
 - [ ] AC3: A workflow hub can declare multiple product repositories by stable
       name plus GitHub repository slug or git URL.
 - [ ] AC4: Versioned product repository entries are limited to stable non-secret
@@ -252,17 +259,17 @@ contract instead of duplicating parsing and fallback behavior.
 - [ ] AC5: Local checkout paths, checkout root defaults, private key paths or
       secret references, and local reviewer or tool overrides are documented as
       local-only configuration.
-- [ ] AC6: The local workflow configuration file is ignored by git, and an
-      example file documents required local-only fields without real secrets or
-      private paths.
+- [ ] AC6: `.ai-dev-workflow.local.yaml` is ignored by git, and
+      `.ai-dev-workflow.local.example.yaml` documents required local-only fields
+      without real secrets or private paths.
 - [ ] AC7: Repository-context helpers expose shell-callable outputs for mode,
       local path, remote repository identity, default branch, and tracker hints.
 - [ ] AC8: Local checkout path resolution uses an explicit local override, a
       documented default, or a clear error.
 - [ ] AC9: Validation fails clearly when product repository configuration is
       missing, duplicated, or ambiguous.
-- [ ] AC10: Existing local override behavior is preserved as a compatibility
-      fallback or replaced with documented migration coverage.
+- [ ] AC10: Existing `.tmp/template-config.json` behavior is preserved as a
+      compatibility fallback or replaced with documented migration coverage.
 - [ ] AC11: Tests cover `single_repo`, valid and invalid `workflow_hub`,
       `product_repo`, local path overrides, and missing local path cases.
 
@@ -270,13 +277,13 @@ contract instead of duplicating parsing and fallback behavior.
 
 | Brief objective                                                                                               | Coverage |
 | ------------------------------------------------------------------------------------------------------------- | -------- |
-| Document shared fields for mode, hub product repos, and product-repo hub identity.                            | AC2      |
+| Document shared fields for `mode`, `workflow_hub.product_repos[]`, and `product_repo.workflow_hub`.           | AC2      |
 | Keep versioned product repo entries limited to stable identity and metadata.                                  | AC3, AC4 |
-| Introduce gitignored local workflow config for paths, defaults, secrets, and overrides.                       | AC5, AC6 |
+| Introduce gitignored `.ai-dev-workflow.local.yaml` for paths, defaults, secrets, and overrides.               | AC5, AC6 |
 | Add shared helpers to read mode, merge config, resolve product repos, and return context values.              | AC7, AC8 |
 | Add validation that fails clearly on missing or ambiguous repo config.                                        | AC9      |
-| Add local config to gitignore and provide an example file.                                                    | AC6      |
-| Define compatibility or migration behavior for the existing local override file.                              | AC10     |
+| Add `.ai-dev-workflow.local.yaml` to gitignore and provide `.ai-dev-workflow.local.example.yaml`.             | AC6      |
+| Define compatibility or migration behavior for `.tmp/template-config.json`.                                   | AC10     |
 | Existing repos with no mode declaration still resolve as `single_repo`.                                       | AC1      |
 | Tests cover single-repo, valid/invalid hub, product-repo, local path overrides, and missing local path cases. | AC11     |
 
