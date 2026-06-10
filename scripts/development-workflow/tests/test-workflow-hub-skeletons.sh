@@ -156,6 +156,10 @@ for index, entry in enumerate(entries, start=1):
             raise SystemExit(
                 f"{manifest_path}: product repository injection includes hub-owned artifact {path}"
             )
+    elif entry.get("required_for_product_repo") is True:
+        raise SystemExit(
+            f"{manifest_path}: required_for_product_repo is only valid for product_repo manifests"
+        )
 
 print("VALID")
 PY
@@ -289,6 +293,32 @@ entries:
     generated_example: true
 YAML
 run_fails_contains "product_repo_plan_forbidden" "hub-owned artifact" validate_skeleton_manifest "$forbidden_plan_manifest" "$fixture_root"
+
+required_product_artifact_manifest="$TMP_ROOT/required-product-artifact.yaml"
+cat > "$required_product_artifact_manifest" <<'YAML'
+schema_version: 1
+skeleton_role: product_repo
+mode_scope: product_repo_injection
+entries:
+  - path: docs/specs/developments/example/1_example_specs.md
+    mode_scope: product_repo_injection
+    generated_example: true
+    required_for_product_repo: true
+YAML
+run_passes "required_product_repo_artifact_passes" validate_skeleton_manifest "$required_product_artifact_manifest" "$fixture_root"
+
+required_non_product_artifact_manifest="$TMP_ROOT/required-non-product-artifact.yaml"
+cat > "$required_non_product_artifact_manifest" <<'YAML'
+schema_version: 1
+skeleton_role: workflow_hub
+mode_scope: hub_only
+entries:
+  - path: docs/specs/developments/example/1_example_specs.md
+    mode_scope: hub_only
+    generated_example: true
+    required_for_product_repo: true
+YAML
+run_fails_contains "required_product_repo_flag_rejected_for_hub" "only valid for product_repo" validate_skeleton_manifest "$required_non_product_artifact_manifest" "$fixture_root"
 
 unknown_scope_manifest="$TMP_ROOT/unknown-scope.yaml"
 cat > "$unknown_scope_manifest" <<'YAML'
