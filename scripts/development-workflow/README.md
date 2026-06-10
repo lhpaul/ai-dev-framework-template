@@ -115,12 +115,12 @@ Usage:
 
 What it does:
 
-- Evaluates configured review platforms sequentially
+- Evaluates configured draft and ready GitHub review platforms sequentially
 - Runs the platform adapter for each supported platform
 - Stops on the first platform that reports blocking findings or escalation
 - Reports a stable aggregate `RESULT=clean|needs_fixes|escalate|skipped`
 - Emits ordered per-platform `PLATFORM_<n>_*` records plus the matching compatibility fixer
-- If no platforms are configured, reports `RESULT=skipped`
+- If no GitHub reviewers are configured, reports `RESULT=skipped`
 
 Use this when:
 

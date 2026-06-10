@@ -105,20 +105,22 @@ it automatically:
 
 ```yaml
 review:
-  platforms:
-    - claude-code-action
+  on_draft:
+    github:
+      - claude-code-action
 ```
 
-To run Claude Code Action only after earlier platforms have already cleared (the
-`phase_after_clean` measurement position), use:
+To run Claude Code Action only after draft GitHub reviewers have already cleared,
+place it in the ready phase:
 
 ```yaml
 review:
-  platforms:
-    - pr-agent
-    - claude-code-action
-  phase_after_clean:
-    - claude-code-action
+  on_draft:
+    github:
+      - pr-agent
+  on_ready:
+    github:
+      - claude-code-action
 ```
 
 This configuration makes Claude Code Action's net-new findings measurable
@@ -255,16 +257,17 @@ Configure in `.ai-dev-workflow.yaml`:
 
 ```yaml
 review:
-  platforms:
-    - claude-code-action
-  internal_reviewers:
-    - claude
+  on_draft:
+    runner:
+      - claude
+    github:
+      - claude-code-action
 ```
 
-> **Note**: Register `claude-code-action` under `review.platforms`, not
-> `review.internal_reviewers` — Protocol 91 Step 7a only accepts `claude`,
-> `codex`, and `coderabbit` as internal reviewers. See Setup §5 for platform
-> configuration.
+> **Note**: Register `claude-code-action` under `review.on_draft.github` or
+> `review.on_ready.github`, not `review.on_draft.runner` — Protocol 91 Step 7a
+> only accepts `claude`, `codex`, and `coderabbit` as runner reviewers. See
+> Setup §5 for platform configuration.
 
 ### Exit code semantics
 
@@ -287,7 +290,7 @@ Step 7a gate maps to outcomes:
 | `RESULT=escalate REASON=unavailable`                           | Workflow file absent or `ANTHROPIC_API_KEY` not set            | Confirm `.github/workflows/claude-code-review.yml` exists and the secret is added in repository settings                       |
 | `RESULT=escalate REASON=timeout`                               | Actions run did not complete within `max_wait` (default 600 s) | Check the Actions tab for the run status; increase `--max-wait` if the review consistently takes longer than 10 minutes         |
 | Review threads not detected after Actions run succeeds         | Bot login mismatch                                             | Confirm the bot posting threads is `claude[bot]`; if using a custom App, set `CLAUDE_CODE_ACTION_BOT_LOGIN` to the correct login |
-| `pr-review-loop.sh` reports `skipped` for `claude-code-action` | Platform not listed in `review.platforms`                      | Add `claude-code-action` to `review.platforms` in `.ai-dev-workflow.yaml`                                                       |
+| `pr-review-loop.sh` reports `skipped` for `claude-code-action` | Platform not listed in `review.on_draft.github` or `review.on_ready.github` | Add `claude-code-action` to the appropriate GitHub reviewer bucket in `.ai-dev-workflow.yaml`                                    |
 | Workflow dispatched but no Actions run appears                 | Dispatch accepted but workflow file not found or wrong ref     | Confirm `.github/workflows/claude-code-review.yml` exists on the default branch and the dispatch `ref` matches the repository default branch |
 
 ---

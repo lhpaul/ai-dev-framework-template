@@ -376,15 +376,17 @@ The file is versioned and intentionally declarative. It is the right place to re
 Current schema:
 
 ```yaml
-schema_version: 1
+schema_version: 2
 
 review:
-  platforms:
-    - greptile
-    - devin
-  internal_reviewers:
-    - claude
-    - codex
+  on_draft:
+    runner:
+      - codex
+    github:
+      - pr-agent
+  on_ready:
+    github:
+      - haystack
 
 issue_tracker:
   provider: linear
@@ -403,8 +405,9 @@ template:
 
 Important implementation notes:
 
-- `review.platforms` is consumed by `scripts/development-workflow/pr-review-loop.sh` for external automated PR review (Step 7). If the config file is absent, or `review.platforms` is omitted or empty, automated PR review is treated as not configured and the review loop reports `skipped`.
-- `review.internal_reviewers` is consumed by the Step 7a internal review gate protocol (`91-orchestrate-work-protocol.md`). If omitted, the gate falls back to running the stage-appropriate `claude` reviewer once. Developers can override the list locally via `.tmp/template-config.json` (gitignored).
+- `review.on_draft.runner` is consumed by the Step 7a internal review gate protocol (`91-orchestrate-work-protocol.md`). If omitted, the gate falls back to running the stage-appropriate `claude` reviewer once. Developers can override the list locally via `.tmp/template-config.json` (gitignored).
+- `review.on_draft.github` and `review.on_ready.github` are consumed by `scripts/development-workflow/pr-review-loop.sh` for external automated PR review (Step 7). If the config file is absent, or both lists are omitted or empty, automated PR review is treated as not configured and the review loop reports `skipped`.
+- Legacy `review.internal_reviewers`, `review.platforms`, and `review.phase_after_clean` keys remain accepted for one transition release and map to the new lifecycle buckets.
 - `template.is_template` when set to `true` marks this repository as a framework template. Protocol 02 Step 0 (Template-Fit Check) becomes mandatory: before writing any implementation plan, the tech lead must verify that the spec is sufficiently generic for all downstream consumers. Set to `true` in the template repository itself; omit or leave `false` in downstream consumer repositories.
 - `template.repository` is an optional `owner/repo` reference to the upstream template repository. When set, the retrospective protocol (Step 3b) cross-references each finding against that repository's issue tracker to classify findings as already tracked, already fixed, or a new upstream contribution candidate. Leave empty or omit to skip this step entirely. Note: this field is set by downstream consumer repos pointing back to their template origin; the template repo itself leaves this empty.
 - `template.last_synced_version` is written automatically by the sync-template skill after a successful sync (e.g., `v0.22.0`). The retrospective uses this value to identify closed template issues whose fix landed in a version newer than the downstream's last sync, surfacing "just sync" opportunities.
@@ -422,7 +425,9 @@ The expected sequence is:
 3. Run the CI loop until required checks are green or the process escalates.
 4. Mark the PR ready for human review only after both loops are clean.
 
-Review platforms are declared in `.ai-dev-workflow.yaml` under `review.platforms`. The repository helpers that support this loop are:
+GitHub review platforms are declared in `.ai-dev-workflow.yaml` under
+`review.on_draft.github` and `review.on_ready.github`. The repository helpers
+that support this loop are:
 
 - `scripts/development-workflow/pr-review-loop.sh`
 - `scripts/development-workflow/pr-ci-loop.sh`
@@ -485,7 +490,7 @@ Protocol prefixes are stable family identifiers, not a promise of contiguous num
 ### Tooling And Configuration
 
 - `docs/workflow/development-workflow/agent-model-config.md`
-- `.ai-dev-workflow.yaml` - repo-level workflow integration manifest (`review.platforms`, `review.internal_reviewers`, `template.is_template`, `template.repository`, `template.last_synced_version`, `issue_tracker.provider`, `vcs.provider`, `browser_automation.provider`)
+- `.ai-dev-workflow.yaml` - repo-level workflow integration manifest (`review.on_draft.runner`, `review.on_draft.github`, `review.on_ready.github`, `template.is_template`, `template.repository`, `template.last_synced_version`, `issue_tracker.provider`, `vcs.provider`, `browser_automation.provider`)
 
 Repository helpers:
 

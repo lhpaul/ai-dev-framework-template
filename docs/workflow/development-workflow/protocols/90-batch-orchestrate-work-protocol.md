@@ -1310,7 +1310,7 @@ For each PR identified in the detection step:
 
 Skip Step 5.3 entirely when any of the following is true:
 
-- CodeRabbit is not listed in `review.platforms` in `.ai-dev-workflow.yaml` — there is no CodeRabbit to re-trigger.
+- CodeRabbit is not listed in `review.on_draft.github` or `review.on_ready.github` in `.ai-dev-workflow.yaml` — there is no CodeRabbit to re-trigger.
 - The batch contained only a single PR — rate-limit budget exhaustion across a batch requires multiple concurrent PRs.
 - No PR in the batch has a `skipped (no_review)` CodeRabbit signal in its reviewer loop summary — all PRs received a full or status-fallback review.
 

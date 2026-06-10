@@ -715,7 +715,7 @@ Gate` log in the draft PR description before Step 7a begins. If the log is
 missing or obviously incomplete, treat the creator stage as incomplete and fix
 the PR description before running reviewer readiness loops.
 
-`creator -> draft PR opened with Document Quality Gate log when applicable -> internal review gate with all internal reviewers (Step 7a) -> PR-Agent draft clean gate when CodeRabbit is configured in review.phase_after_clean -> gh pr ready -> after-clean automated reviewer phase (Step 7) -> regression label (Step 7b, implementation PRs only) -> CI loop (Step 8) -> label readiness checklist (Step 8a) -> tracker status update (Step 8b) -> independent PR verification (Step 8c) -> wait or escalation`
+`creator -> draft PR opened with Document Quality Gate log when applicable -> internal review gate with all review.on_draft.runner reviewers (Step 7a) -> draft GitHub reviewer gate with review.on_draft.github -> gh pr ready -> ready GitHub reviewer phase with review.on_ready.github (Step 7) -> regression label (Step 7b, implementation PRs only) -> CI loop (Step 8) -> label readiness checklist (Step 8a) -> tracker status update (Step 8b) -> independent PR verification (Step 8c) -> wait or escalation`
 
 After any subagent finishes, determine whether the item still has a deterministic next action:
 
@@ -781,16 +781,20 @@ Before dispatching any reviewer, check whether the PR is currently in draft stat
 gh pr view <pr_number> --json isDraft --jq '.isDraft'
 ```
 
-If the result is `true` (PR is a draft), inspect the resolved `internal_reviewers`
-list from `.ai-dev-workflow.yaml` (after any `.tmp/template-config.json`
-override) and the `review.phase_after_clean` list.
+If the result is `true` (PR is a draft), inspect the resolved
+`review.on_draft.runner` list from `.ai-dev-workflow.yaml` (after any
+`.tmp/template-config.json` override) and the `review.on_draft.github` /
+`review.on_ready.github` lists.
 
-If `coderabbit` is **only** listed under `review.phase_after_clean`, keep the PR
-as a draft during Step 7a. This is intentional: `.coderabbit.yaml` has
+If `coderabbit` is **only** listed under `review.on_ready.github`, keep the PR as
+a draft during Step 7a. This is intentional: `.coderabbit.yaml` has
 `reviews.auto_review.drafts: false`, so draft state prevents CodeRabbit from
-starting before the PR-Agent-clean gate.
+starting before the draft GitHub reviewer gate. If `coderabbit` is listed under
+`review.on_draft.github` while draft reviews are disabled, treat the reviewer
+placement as a configuration issue to fix before Step 7: draft GitHub reviewers
+are expected to support draft PRs.
 
-If `coderabbit` is listed as an **internal reviewer** and is therefore required
+If `coderabbit` is listed as a **runner reviewer** and is therefore required
 inside Step 7a itself, convert the PR to non-draft before triggering reviewers:
 
 ```bash
@@ -804,9 +808,9 @@ Post a comment on the PR explaining the action:
 **Why this matters**: CodeRabbit (and similar tools) configured with
 `auto_review.drafts: false` do not post any skip notice when they bypass a draft
 PR. That behavior is useful when CodeRabbit is intentionally configured as an
-after-clean reviewer, because it lets PR-Agent clear first. It is unsafe when
-CodeRabbit is configured as a Step 7a internal reviewer, because the internal
-review gate would silently pass with reduced coverage.
+a ready-phase reviewer, because it lets the draft GitHub gate clear first. It is
+unsafe when CodeRabbit is configured as a Step 7a runner reviewer, because the
+internal review gate would silently pass with reduced coverage.
 
 **Reviewer-to-draft-restriction mapping**:
 
@@ -825,9 +829,9 @@ grep -E '^\s*drafts:\s*false' .coderabbit.yaml
 If the file is absent or the key is not present, CodeRabbit defaults to `drafts: false` — treat it as draft-restricting.
 
 **Important**: Do not convert a draft PR to non-draft merely because CodeRabbit
-appears in `review.platforms` or `review.phase_after_clean`. Convert early only
-when CodeRabbit is part of `internal_reviewers`. Otherwise, keep the draft state
-until the PR-Agent-clean gate below has passed.
+appears in `review.on_draft.github` or `review.on_ready.github`. Convert early
+only when CodeRabbit is part of `review.on_draft.runner`. Otherwise, keep the
+draft state until the draft GitHub reviewer gate below has passed.
 
 If the PR is **not** in draft state, skip this pre-check entirely and proceed to the Design Review Gate.
 
@@ -892,9 +896,30 @@ The agent reads `browser_automation.provider` from `.ai-dev-workflow.yaml`. For 
 
 ### Determining which reviewers to run
 
-Read the `review.internal_reviewers` list from `.ai-dev-workflow.yaml`. If a `.tmp/template-config.json` file exists in the repository root (this path is gitignored and used for local developer overrides), read its `overrides.review.internal_reviewers` list — that value takes precedence over `.ai-dev-workflow.yaml` for the local environment. This allows developers without access to all configured review tools to run a subset (e.g., only `claude`) without changing the shared config.
+Read the `review.on_draft.runner` list from `.ai-dev-workflow.yaml`. If a
+`.tmp/template-config.json` file exists in the repository root (this path is
+gitignored and used for local developer overrides), read its
+`overrides.review.on_draft.runner` list. During the schema_version 2 transition
+release, also accept the legacy `overrides.review.internal_reviewers` list as an
+alias. The override value takes precedence over `.ai-dev-workflow.yaml` for the
+local environment, allowing developers without access to all configured review
+tools to run a subset (e.g., only `claude`) without changing the shared config.
 
 Example `.tmp/template-config.json` override format:
+
+```json
+{
+  "overrides": {
+    "review": {
+      "on_draft": {
+        "runner": ["claude"]
+      }
+    }
+  }
+}
+```
+
+Legacy override form accepted during the transition release:
 
 ```json
 {
@@ -906,13 +931,15 @@ Example `.tmp/template-config.json` override format:
 }
 ```
 
-Supported reviewer values: `claude`, `codex`, `coderabbit`.
+Supported runner reviewer values: `claude`, `codex`, `coderabbit`.
 
-If neither file defines `internal_reviewers`, fall back to running the stage-appropriate reviewer once (default behavior: `claude`).
+If neither file defines `review.on_draft.runner` (or the legacy alias), fall
+back to running the stage-appropriate reviewer once (default behavior:
+`claude`).
 
 When `.tmp/template-config.json` supplies an override, log the following before running the availability check:
 
-> `INFO: Using internal_reviewers override from .tmp/template-config.json: [<override-list>]. Original list: [<yaml-list>].`
+> `INFO: Using review.on_draft.runner override from .tmp/template-config.json: [<override-list>]. Original list: [<yaml-list>].`
 
 No warning comment is posted for reviewers intentionally removed by the override list (`override-excluded`). If any reviewer still present in the override list is unreachable at runtime, post the standard warning comment for those unreachable reviewers (the runtime-availability check still applies to the override list).
 
@@ -935,7 +962,11 @@ Note: the `auto_review.drafts: false` restriction is **not** treated as an unrea
 
 #### Policy resolution
 
-After classifying each reviewer, apply the configured policy. Read `internal_reviewers_unavailable_policy` from `.ai-dev-workflow.yaml` (or its local override in `.tmp/template-config.json`). If the key is absent, the default is `warn`.
+After classifying each reviewer, apply the configured policy. Read
+`internal_reviewers_unavailable_policy` from `.ai-dev-workflow.yaml` (or its
+local override in `.tmp/template-config.json`). This policy key is retained for
+compatibility even though the reviewer list moved to `review.on_draft.runner`.
+If the key is absent, the default is `warn`.
 
 To override the policy locally without changing shared config, use `.tmp/template-config.json`:
 
@@ -943,7 +974,9 @@ To override the policy locally without changing shared config, use `.tmp/templat
 {
   "overrides": {
     "review": {
-      "internal_reviewers": ["claude"],
+      "on_draft": {
+        "runner": ["claude"]
+      },
       "internal_reviewers_unavailable_policy": "warn"
     }
   }
@@ -965,7 +998,8 @@ Post via `gh pr comment` before dispatching any reviewer. Use the following word
 
 > `WARNING: internal_reviewer '<reviewer>' unreachable from current runner (<runner-context>) — skipping. Only '<reachable-list>' will run in this Step 7a cycle. Reviewer coverage is reduced from <total> to <reachable-count>.`
 
-Example for `codex` unreachable from a Claude Code subagent with `internal_reviewers: [claude, codex]`:
+Example for `codex` unreachable from a Claude Code subagent with
+`review.on_draft.runner: [claude, codex]`:
 
 > `WARNING: internal_reviewer 'codex' unreachable from current runner (Claude Code subagent) — skipping. Only 'claude' will run in this Step 7a cycle. Reviewer coverage is reduced from 2 to 1.`
 
@@ -975,11 +1009,11 @@ Post via `gh pr comment`. This comment doubles as the BR-7 mandatory Step 7a sum
 
 **Case A — Zero reviewers reachable (any policy):**
 
-> `Step 7a BLOCKED: no internal reviewer is reachable from the current runner. Effective reviewer set: none. Reachable: []. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. To unblock: run Step 7a from a runner that supports all configured reviewers, or temporarily override 'review.internal_reviewers' via .tmp/template-config.json.`
+> `Step 7a BLOCKED: no internal reviewer is reachable from the current runner. Effective reviewer set: none. Reachable: []. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. To unblock: run Step 7a from a runner that supports all configured reviewers, or temporarily override 'review.on_draft.runner' via .tmp/template-config.json.`
 
 **Case B — `fail-if-any-unavailable` policy triggered (one or more reviewers unreachable, but at least one was reachable):**
 
-> `Step 7a BLOCKED: policy 'fail-if-any-unavailable' triggered — one or more internal reviewers are unreachable. No reviewers were dispatched. Effective reviewer set: none (policy block). Reachable: [<reachable-list>]. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. To unblock: run Step 7a from a runner where all configured reviewers are reachable, or set internal_reviewers_unavailable_policy to 'warn' temporarily, or override 'review.internal_reviewers' via .tmp/template-config.json.`
+> `Step 7a BLOCKED: policy 'fail-if-any-unavailable' triggered — one or more internal reviewers are unreachable. No reviewers were dispatched. Effective reviewer set: none (policy block). Reachable: [<reachable-list>]. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. To unblock: run Step 7a from a runner where all configured reviewers are reachable, or set internal_reviewers_unavailable_policy to 'warn' temporarily, or override 'review.on_draft.runner' via .tmp/template-config.json.`
 
 ### Reviewer dispatch map
 
@@ -1251,18 +1285,26 @@ The script-posted comment format:
 **Result:** clean — no blocking findings | escalated (reason) | max cycles reached — N blocking finding(s) unresolved
 **Platforms:** greptile, devin
 **Findings:** N blocking, N suggestions
-**After-clean reviewer phase:** No net-new blocker was found after the PR-Agent-clean gate.
-**After-clean platforms:** coderabbit
+**Ready reviewer phase:** No net-new blocker was found after the draft GitHub gate.
+**Ready-phase platforms:** haystack
 
 _Posted automatically by `pr-review-loop.sh`._
 ```
 
-### PR-Agent-clean gate before CodeRabbit
+### Draft GitHub gate before ready-phase reviewers
 
-When `.ai-dev-workflow.yaml` contains `review.phase_after_clean` with
-`coderabbit`, run the external reviewer loop in two PR lifecycle phases:
+When `.ai-dev-workflow.yaml` contains `review.on_ready.github`, run the external
+reviewer loop in two PR lifecycle phases:
 
-Run the reviewer loop in two phases: keep the PR as draft and run pre-after-clean platforms (`--pre-after-clean-only`) until they are clean, then convert to non-draft and run the full loop so CodeRabbit sees a clean-gated PR. For the full runbook and `PHASE_AFTER_CLEAN_*` telemetry details, see the **"PR-Agent-clean gate before CodeRabbit"** section in [`93-automated-reviewer-loop-protocol.md`](93-automated-reviewer-loop-protocol.md).
+Run the reviewer loop in two phases: keep the PR as draft and run
+`review.on_draft.github` platforms (`--draft-github-only`) until they are clean,
+then convert to non-draft with `gh pr ready` and run the full loop so
+`review.on_ready.github` platforms see a clean-gated ready PR. The legacy
+`--pre-after-clean-only` flag remains accepted as an alias for
+`--draft-github-only` during the transition release. For the full runbook and
+`READY_PHASE_*` telemetry details, see the **"Draft GitHub gate before
+ready-phase reviewers"** section in
+[`93-automated-reviewer-loop-protocol.md`](93-automated-reviewer-loop-protocol.md).
 
 After running the helper script (it reads `.ai-dev-workflow.yaml` for the platform list automatically):
 
@@ -1793,10 +1835,10 @@ echo "✅ Label readiness checklist passed. PR is ready for human review."
 
 - After the label readiness checklist passes (all checks = exit 0)
 - Before proceeding to Step 8b
-- Only when `review.platforms` in `.ai-dev-workflow.yaml` includes `codex-github` or any other known async-posting review bot
+- Only when `review.on_draft.github` or `review.on_ready.github` in `.ai-dev-workflow.yaml` includes `codex-github` or any other known async-posting review bot
 
 **Why this substep exists:**
-Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asynchronously. A thread can arrive **after** the Step 8a pre-Check-4 GraphQL verification (line 1202–1225) but **before** or **during** the Step 8c post-label verification. Without an explicit re-check, these late-arriving threads slip through as unresolved and cause the orchestrator's Step 5.1 to redispatch the agent.
+Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asynchronously. A thread can arrive **after** the Step 8a pre-Check-4 GraphQL verification described in the label readiness checklist but **before** or **during** the Step 8c post-label verification. Without an explicit re-check, these late-arriving threads slip through as unresolved and cause the orchestrator's Step 5.1 to redispatch the agent.
 
 **Procedure:**
 
@@ -1928,7 +1970,7 @@ gh api graphql -f query='
         | select((.comments.nodes[0].body // "") | test("✅ Addressed") | not)'
 ```
 
-The bot login list above is a superset covering all platforms supported by `pr-review-loop.sh` (`coderabbit`, `devin`, `greptile`). The current default `review.platforms` in `.ai-dev-workflow.yaml` configures only `devin` and `coderabbit`. Update the list if your project uses different or additional review bots.
+The bot login list above is a superset covering all platforms supported by `pr-review-loop.sh` (`coderabbit`, `devin`, `greptile`). The current default GitHub reviewer config in `.ai-dev-workflow.yaml` uses `review.on_draft.github: [pr-agent]` and `review.on_ready.github: [haystack]`. Update the list if your project uses different or additional review bots.
 
 The output must contain no unresolved threads from configured bot reviewers (e.g. `coderabbitai`, `devin-ai-integration`) before this step passes. A thread is considered resolved when `isResolved: true` **or** the first comment body contains `✅ Addressed` (CodeRabbit appends this when a fix commit lands). Any unresolved bot-authored thread that does not meet either condition — regardless of severity, including Nitpick and Trivial — blocks this check. For PRs with more than 100 threads, implement cursor-based pagination: add `pageInfo { hasNextPage endCursor }` to the `reviewThreads` field selection, capture `endCursor` from each response, and repeat the query with `reviewThreads(first: 100, after: $cursor)` until `hasNextPage` is false.
 

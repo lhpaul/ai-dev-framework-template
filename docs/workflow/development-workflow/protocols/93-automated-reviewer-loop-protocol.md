@@ -31,29 +31,47 @@ If no PR can be determined, ask the user to specify a PR number or to run from a
 
 ### Pre-flight: draft-state check
 
-Before running any scripts, verify the PR is not in draft state:
+Before running any scripts, check whether the PR is in draft state:
 
 ```bash
 gh pr view <number> --json isDraft --jq '.isDraft'
 ```
 
-If the result is `true`, determine whether any external reviewer configured in `review.platforms` in `.ai-dev-workflow.yaml` restricts reviews to non-draft PRs. Protocol 91 Step 7a is the source of truth for the reviewer-to-draft-restriction mapping; see its "Draft-state pre-check" section for the full table. For CodeRabbit specifically, check `.coderabbit.yaml`:
+If the result is `true`, do **not** mark the PR ready before the draft GitHub
+gate. Run `review.on_draft.github` first, then let `pr-review-loop.sh` convert
+the PR at the ready-phase boundary before dispatching `review.on_ready.github`.
+Protocol 91 Step 7a is the source of truth for the reviewer-to-draft-restriction
+mapping; see its "Draft-state pre-check" section for the full table. For
+CodeRabbit specifically, check `.coderabbit.yaml`:
 
 ```bash
 grep -E '^\s*drafts:\s*false' .coderabbit.yaml
 ```
 
-If the file is absent or the key is not present, CodeRabbit defaults to `drafts: false` — treat it as draft-restricting.
+If the file is absent or the key is not present, CodeRabbit defaults to
+`drafts: false` — treat it as draft-restricting.
 
-If the PR is draft **and** a configured external reviewer (`review.platforms`) skips drafts, convert the PR to non-draft before running the reviewer loop:
+When a draft-restricting reviewer is listed in `review.on_ready.github`, the
+ready transition happens after the draft gate:
 
 ```bash
-gh pr ready <number>
+./scripts/development-workflow/pr-review-loop.sh <number> --draft-github-only
+./scripts/development-workflow/pr-review-loop.sh <number>
 ```
 
-This prevents silent reviewer skip — CodeRabbit configured with `auto_review.drafts: false` produces no comment when it bypasses a draft PR, making the omission invisible to the agent.
+The second command marks the PR ready immediately before the first ready-phase
+reviewer. This prevents silent reviewer skip while preserving draft-phase
+coverage — CodeRabbit configured with `auto_review.drafts: false` produces no
+comment when it bypasses a draft PR, making the omission invisible to the agent.
 
-**Scope note**: This pre-flight checks `review.platforms` (external reviewers used by Protocol 93 / Step 7). The internal reviewer gate in Protocol 91 Step 7a separately checks `review.internal_reviewers` and performs its own draft-state pre-check before any internal reviewer is dispatched. When Protocol 93 is invoked via Protocol 91 (the normal orchestrated path), the Step 7a pre-check has already converted the PR before this point; this pre-flight check is a safety net for standalone invocations.
+**Scope note**: This pre-flight checks `review.on_draft.github` and
+`review.on_ready.github` (external reviewers used by Protocol 93 / Step 7). The
+internal reviewer gate in Protocol 91 Step 7a separately checks
+`review.on_draft.runner` and performs its own draft-state pre-check before any
+runner reviewer is dispatched. When Protocol 93 is invoked via Protocol 91 (the
+normal orchestrated path), the Step 7a pre-check and draft GitHub gate have
+already controlled the ready transition; this pre-flight check is a safety net
+for standalone invocations.
 
 ### Pre-flight: check for existing unresolved review findings
 
@@ -80,7 +98,9 @@ This behavior is implemented in `pr-review-loop.sh` (`run_devin_review`): the ex
 
 #### What counts as an unresolved finding
 
-A **blocking** inline comment or review from a configured platform (see `.ai-dev-workflow.yaml` under `review.platforms`) counts as **unresolved** when:
+A **blocking** inline comment or review from a configured platform (see
+`.ai-dev-workflow.yaml` under `review.on_draft.github` and
+`review.on_ready.github`) counts as **unresolved** when:
 
 1. It applies to **any commit in this PR's history** (not only commits after the current `HEAD`). After merging the base branch (e.g. `develop`) into the PR branch, older bot comments are still open unless the **substantive issue** they describe is fixed in the codebase. A merge commit does not dismiss them.
 2. There is no later resolved confirmation **for that same finding** (match by `(platform, path, body_snippet)` or Devin's inline comment id in the body, not by "most recent comment on the PR"). A resolved comment from Devin about _one_ issue does not resolve a different blocking finding. Devin's resolved comments start with `✅` and must be excluded from blocking counts.
@@ -436,7 +456,23 @@ rather than inferring from comment age.
 
 Execute **Step 7a: Internal Review Gate**, **Step 7: Automated Reviewer Loop**, **Step 8: CI Loop**, **Step 8a: Label Readiness Checklist**, **Step 8b: Update Tracker Status**, and **Step 8c: Post-Label Independent Verification** exactly as defined in `91-orchestrate-work-protocol.md` (scripts, result interpretation, sequential platform policy, fixer mapping, parameters, and labels). Do not duplicate that logic here — follow 91.
 
-For each PR: run Step 7a first. Step 7a runs **all** configured internal reviewers sequentially (per the `review.internal_reviewers` list in `.ai-dev-workflow.yaml`, with `.tmp/template-config.json` local overrides taking precedence). All internal reviewers must APPROVE before proceeding. Once Step 7a produces `APPROVED` from all internal reviewers, run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then run Step 7 to completion, then Step 7b (regression label, implementation PRs only), then Step 8. Dispatch fixers and re-run as specified in 91 until the PR is clean and ready for human review or escalated. After Step 8 returns `green`, run Step 8a (label readiness checklist — this is a **hard gate** that verifies non-draft status, `ready-for-regression` label on implementation PRs, and applies `ready-for-human-review`). Once Step 8a passes, run Step 8b to update tracker status, then run Step 8c (post-label independent verification — this is a **hard gate** that independently verifies actual PR state via `gh pr view` before reporting ready). Only after Step 8c passes should the PR be reported as ready for human review.
+For each PR: run Step 7a first. Step 7a runs **all** configured runner
+reviewers sequentially (per the `review.on_draft.runner` list in
+`.ai-dev-workflow.yaml`, with `.tmp/template-config.json` local overrides taking
+precedence). All runner reviewers must APPROVE before proceeding. Then run the
+draft GitHub reviewer gate (`pr-review-loop.sh --draft-github-only`) for
+`review.on_draft.github`. Once Step 7a and the draft GitHub gate are clean, run
+`gh pr ready <pr_number>` to convert the draft PR to non-draft, then run Step 7
+to completion for `review.on_ready.github`, then Step 7b (regression label,
+implementation PRs only), then Step 8. Dispatch fixers and re-run as specified
+in 91 until the PR is clean and ready for human review or escalated. After Step
+8 returns `green`, run Step 8a (label readiness checklist — this is a **hard
+gate** that verifies non-draft status, `ready-for-regression` label on
+implementation PRs, and applies `ready-for-human-review`). Once Step 8a passes,
+run Step 8b to update tracker status, then run Step 8c (post-label independent
+verification — this is a **hard gate** that independently verifies actual PR
+state via `gh pr view` before reporting ready). Only after Step 8c passes should
+the PR be reported as ready for human review.
 
 ### Long spec/plan review-cycle guidance
 
@@ -563,34 +599,38 @@ When a reviewer flags a specific literal value — a numeric constant, hex value
 
 This rule applies to any value type: version numbers, timeout values, port numbers, hex color codes, string constants, label names, section headers, or any other repeated literal. If a reviewer flags one instance, treat it as a signal to fix all instances — the reviewer will check all occurrences on the next cycle and finding any remaining instance resets the review loop.
 
-### After-clean reviewer phase
+### Draft GitHub Gate Before Ready-Phase Reviewers
 
-Repositories may list one or more platforms under `review.phase_after_clean` in
-`.ai-dev-workflow.yaml`. These platforms remain in `review.platforms`, but
-`pr-review-loop.sh` treats them as a measured second phase and emits:
+Repositories may list one or more platforms under `review.on_ready.github` in
+`.ai-dev-workflow.yaml`. `pr-review-loop.sh` treats these as the ready phase and
+emits:
 
-- `PHASE_AFTER_CLEAN_ENABLED=1`
-- `PHASE_AFTER_CLEAN_PLATFORM_LIST=<platforms>`
-- `PHASE_AFTER_CLEAN_FILTERED_OUT=<platforms>` when phase platforms are configured
-  but absent from the active invocation
-- `PHASE_AFTER_CLEAN_STARTED=0|1`
-- `PHASE_AFTER_CLEAN_GATE_RESULT=<result>` when the after-clean phase starts
-- `PHASE_AFTER_CLEAN_SKIP_REASON=<result>` when the after-clean phase never starts
-- `PHASE_AFTER_CLEAN_NET_NEW_BLOCKER=0|1`
-- `PHASE_AFTER_CLEAN_BLOCKING_PLATFORM=<platform>` when applicable
+- `READY_PHASE_ENABLED=1`
+- `READY_PHASE_PLATFORM_LIST=<platforms>`
+- `READY_PHASE_FILTERED_OUT=<platforms>` when ready-phase platforms are
+  configured but absent from the active invocation
+- `READY_PHASE_STARTED=0|1`
+- `READY_PHASE_GATE_RESULT=<result>` when the ready phase starts
+- `READY_PHASE_SKIP_REASON=<result>` when the ready phase never starts
+- `READY_PHASE_NET_NEW_BLOCKER=0|1`
+- `READY_PHASE_BLOCKING_PLATFORM=<platform>` when applicable
 
-For this template, `coderabbit` is the after-clean platform. Keep implementation
-PRs as drafts while the PR-Agent-only gate runs, then convert the PR to non-draft
-and run the full configured loop. Because `.coderabbit.yaml` sets
-`reviews.auto_review.drafts: false`, this prevents CodeRabbit from starting
-before PR-Agent has reached `clean`.
+For one transition release, the script also emits compatibility
+`PHASE_AFTER_CLEAN_*` keys and accepts `review.phase_after_clean`,
+`--phase-after-clean`, and `--pre-after-clean-only` as aliases for the new
+ready-phase config and `--draft-github-only` flag.
 
-Use `PHASE_AFTER_CLEAN_NET_NEW_BLOCKER` as the primary value signal:
+For this template, `haystack` is the ready-phase platform. Keep implementation
+PRs as drafts while the `review.on_draft.github` gate runs, then convert the PR
+to non-draft and run the full configured loop. This prevents ready-only
+reviewers from starting before draft reviewers have reached `clean`.
 
-- `0` means the after-clean reviewer did not find a blocker after PR-Agent was
-  already clean.
-- `1` means the after-clean reviewer found net-new blocking feedback that the
-  pre-clean phase missed.
+Use `READY_PHASE_NET_NEW_BLOCKER` as the primary value signal:
+
+- `0` means the ready-phase reviewer did not find a blocker after draft GitHub
+  reviewers were already clean.
+- `1` means the ready-phase reviewer found net-new blocking feedback that the
+  draft GitHub phase missed.
 
 This signal is for tool-evaluation and graduation decisions. It does not weaken
 the normal merge gates: any net-new blocker still follows the standard

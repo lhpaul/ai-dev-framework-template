@@ -65,33 +65,38 @@ Additional rules:
 The active review platforms for a repository are declared in `.ai-dev-workflow.yaml` at the repo root:
 
 ```yaml
-schema_version: 1
+schema_version: 2
 
 review:
-  platforms:
-    - greptile
-    - devin
-    - coderabbit
+  on_draft:
+    github:
+      - pr-agent
     # claude-code-action: own-key, own-CI reviewer with no per-hour vendor cap.
     # Requires ANTHROPIC_API_KEY secret and .github/workflows/claude-code-review.yml.
     # See integrations/claude-code-action.md for setup instructions.
     # - claude-code-action
+  on_ready:
+    github:
     # haystack: Haystack triage CLI reviewer. Requires `haystack` CLI installed
     # and authenticated via `haystack setup`. No GitHub App required.
     # See integrations/haystack-triage.md for setup instructions.
-    # - haystack
-  phase_after_clean:
-    - coderabbit
+      - haystack
 ```
 
-The helper script reads this file automatically when no `--platform` flag is passed. If the file is absent, or if `review.platforms` is omitted or the platform list is empty, no reviewer tool runs and the result is skipped. Explicit `--platform` flags always override the config file.
+The helper script reads this file automatically when no `--platform` flag is
+passed. If the file is absent, or if both `review.on_draft.github` and
+`review.on_ready.github` are omitted or empty, no reviewer tool runs and the
+result is skipped. Explicit `--platform` flags always override the config file.
 
-`review.phase_after_clean` is optional. Platforms listed there remain normal
-review platforms, but `pr-review-loop.sh` emits extra telemetry showing whether
-those platforms found net-new blockers after earlier platforms were already
-clean. This is intended for measuring whether a second reviewer still adds value.
+`review.on_ready.github` is optional. Platforms listed there run only after
+draft GitHub reviewers are clean and the PR has been converted with
+`gh pr ready`. `pr-review-loop.sh` emits `READY_PHASE_*` telemetry showing
+whether those platforms found net-new blockers after earlier platforms were
+already clean. This is intended for measuring whether a ready-phase reviewer
+still adds value.
 
-Use the nested `review.platforms` form so `.ai-dev-workflow.yaml` can also declare other workflow integrations such as `issue_tracker`, `vcs`, and `browser_automation`.
+Legacy `review.platforms` and `review.phase_after_clean` config remains accepted
+for one transition release and maps into the lifecycle buckets above.
 
 ---
 
