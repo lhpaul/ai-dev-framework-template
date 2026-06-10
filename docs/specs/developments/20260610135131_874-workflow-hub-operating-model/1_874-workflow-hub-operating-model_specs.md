@@ -118,8 +118,8 @@ multiple product repositories.
 3. The operator checks the architecture note to determine which artifacts remain
    in the hub and which artifacts are opened in the product repository.
 4. The operator confirms that specs and plans are reviewed in the hub while code
-   changes, product CI, and product reviewer-loop checks happen in the target
-   product repository.
+   changes, product smoke runbooks, product CI, and product reviewer-loop checks
+   happen in the target product repository.
 
 **Postconditions**: The work item has one clear target product repository for
 implementation work, and reviewers can tell where each PR should be opened.
@@ -151,10 +151,14 @@ implementation work, and reviewers can tell where each PR should be opened.
 - In `single_repo` mode, all workflow artifacts and product implementation
   artifacts remain in the same repository.
 - In `workflow_hub` mode, the hub owns portfolio-level coordination, tracker
-  items, specs, plans, and cross-repository workflow documentation.
+  items, specs, plans, hub-owned smoke runbooks, and cross-repository workflow
+  documentation.
 - In `product_repo` mode, the product repository owns product code changes,
-  implementation branches, product PRs, product CI checks, and product
-  reviewer-loop checks.
+  implementation branches, product PRs, product smoke runbooks, product CI
+  checks, and product reviewer-loop checks.
+- If smoke runbook ownership differs by artifact type, the architecture note
+  must distinguish hub-owned workflow runbooks from product-owned implementation
+  runbooks.
 - A hub-managed work item must identify its target product repository before
   implementation work can be routed to a product repository.
 - The architecture note must state where spec PRs, plan PRs, and code PRs are
@@ -207,7 +211,8 @@ implementation work, and reviewers can tell where each PR should be opened.
       `single_repo`.
 - [ ] AC4: The note identifies the owner for backlog or tracker items, specs,
       plans, smoke runbooks, implementation branches, PRs, CI checks, and
-      reviewer-loop checks in each supported mode.
+      reviewer-loop checks in each supported mode, including the hub-owned
+      versus product-owned smoke runbook split when applicable.
 - [ ] AC5: The note states where spec PRs, plan PRs, and code PRs are opened in
       each supported mode.
 - [ ] AC6: The note defines how a hub-managed work item identifies its target
