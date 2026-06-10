@@ -29,7 +29,6 @@ review:
   platforms:
     - pr-agent
     - haystack
-    - codex-github
   #
   # Platforms listed here are treated as "after-clean" reviewers by
   # pr-review-loop.sh: earlier platforms must reach clean before these platforms
@@ -41,7 +40,6 @@ review:
   # repository.
   phase_after_clean:
     - haystack
-    - codex-github # Uses CODEX_GITHUB_BOT_LOGIN default documented below.
   #
   # Configurable codex-github options (set via env vars or script flags to codex-github-reviewer.sh):
   #   CODEX_GITHUB_TRIGGER_PHRASE  — trigger phrase sent to the bot (default: "@codex review")
