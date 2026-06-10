@@ -174,6 +174,12 @@ Released
 
 See [`docs/workflow/development-workflow/README.md`](docs/workflow/development-workflow/README.md) for the full workflow specification.
 
+For teams coordinating work across more than one repository, see
+[`docs/workflow/development-workflow/repository-modes.md`](docs/workflow/development-workflow/repository-modes.md)
+for the supported repository modes, artifact ownership rules, and PR ownership
+model. Repositories with no mode declaration continue to behave as
+single-repository adopters.
+
 ---
 
 ## Using With Different AI Tools

@@ -1,0 +1,146 @@
+# Repository Modes
+
+This note defines the repository ownership model for the AI development workflow.
+It is the source of truth for later workflow-hub implementation work, but this
+document by itself does not change runtime behavior, scripts, PR routing, or
+configuration requirements.
+
+## Supported Modes
+
+| Code value | Display label | Description |
+| --- | --- | --- |
+| `single_repo` | Single repository | One repository owns tracker work, specs, plans, implementation branches, PRs, CI, reviewer-loop checks, and releases. |
+| `workflow_hub` | Workflow hub | A coordination repository owns portfolio planning and workflow artifacts for one or more product repositories. |
+| `product_repo` | Product repository | A product repository receives routed implementation work from a workflow hub and owns product code validation. |
+
+When a repository has no mode declaration, the workflow interprets it as
+`single_repo`. Existing adopters keep the current behavior until they explicitly
+choose a different mode and install later workflow-hub automation.
+
+## Artifact Ownership
+
+| Artifact | `single_repo` owner | `workflow_hub` owner | `product_repo` owner |
+| --- | --- | --- | --- |
+| Backlog or tracker items | Current repository tracker | Hub tracker | Hub tracker references product work; product repo does not own portfolio tracking |
+| Specs | Current repository | Hub | Hub, unless a later product-specific convention explicitly copies read-only context |
+| Plans | Current repository | Hub | Hub, unless a later product-specific convention explicitly copies read-only context |
+| Hub-owned smoke runbooks | Current repository | Hub | Not owned by product repo |
+| Product-owned smoke runbooks | Current repository | Hub may reference or coordinate them | Product repo owns product validation runbooks |
+| Implementation branches | Current repository | Not owned by hub for product code | Product repo |
+| Spec PRs | Current repository | Hub | Hub |
+| Plan PRs | Current repository | Hub | Hub |
+| Code PRs | Current repository | Product repo selected by the work item | Product repo |
+| CI checks | Current repository | Hub for hub-doc/tool PRs; product repo for product code PRs | Product repo |
+| Reviewer-loop checks | Current repository | Hub for hub-doc/tool PRs; product repo for product code PRs | Product repo |
+
+In `single_repo` mode, all artifact ownership stays exactly as it works today:
+the tracker item, spec, plan, implementation branch, PR, CI, reviewer loop, smoke
+runbook, and release evidence are all handled in the same repository.
+
+In `workflow_hub` mode, the hub centralizes coordination artifacts. It owns the
+tracker item, spec, implementation plan, cross-repository workflow
+documentation, and any smoke runbook that validates hub-owned workflow behavior.
+The selected product repository owns implementation branches, code PRs, product
+CI checks, product reviewer-loop checks, and product smoke runbooks.
+
+In `product_repo` mode, the repository is a target for product implementation
+work routed from a hub. It owns the code change and validation artifacts for that
+product, while the hub remains the source of truth for portfolio state, specs,
+plans, and cross-product coordination.
+
+## PR Ownership
+
+| PR type | `single_repo` target | `workflow_hub` target | `product_repo` target |
+| --- | --- | --- | --- |
+| Spec PR | Current repository | Hub repository | Hub repository |
+| Plan PR | Current repository | Hub repository | Hub repository |
+| Code PR | Current repository | Selected product repository for product work; hub repository for hub-only workflow work | Product repository |
+
+A hub-managed item can still be hub-only. For example, a change to hub
+protocols, hub docs, or hub-owned orchestration scripts opens its code PR in the
+hub. A product implementation opens its code PR in the target product
+repository.
+
+## Target Product Repository Selection
+
+A hub-managed work item must identify one visible and unambiguous target product
+repository before implementation work is routed to a product repository. The
+target value must be reviewable from the work item context, stable enough for
+automation to resolve, and clear to humans reading the spec, plan, and PRs.
+
+This note does not prescribe the storage format for the target repository value.
+Later implementation items may choose a tracker field, issue-body field, local
+configuration mapping, command flag, or another explicit mechanism. Whatever
+format is chosen must preserve these rules:
+
+- A missing target is flagged before product implementation routing starts.
+- An ambiguous target is flagged before product implementation routing starts.
+- Multi-repository implementation work must make every target explicit instead
+  of relying on an implicit default.
+- Hub-only workflow changes must be distinguishable from product-code changes.
+
+## Hub-Owned And Product-Injected Content
+
+The workflow hub owns content that defines or coordinates the development
+process:
+
+- Tracker coordination and portfolio status.
+- Specs and implementation plans for hub-managed work.
+- Cross-repository workflow documentation and operating runbooks.
+- Hub-owned workflow protocols, agent wrappers, and orchestration scripts.
+- Hub smoke runbooks that validate workflow behavior rather than product
+  behavior.
+
+Product repositories own or receive content that must run next to product code:
+
+- Product implementation branches and product code PRs.
+- Product CI and reviewer-loop execution for product code changes.
+- Product smoke runbooks and regression fixtures.
+- Local agent wrappers or thin integration files when later workflow-hub
+  injection support provides them.
+- Minimal workflow helper files required for local product-repo operation.
+
+Product-injected framework content should be the smallest useful subset. A
+product repository should not receive hub-owned tracker artifacts, historical
+specs, implementation plans, or cross-product coordination state unless a later
+workflow explicitly documents why that copy is required.
+
+## Generic Multi-Product Example
+
+A team can run one hub and multiple product repositories:
+
+```text
+workflow-hub
+  owns: tracker items, specs, plans, workflow docs, hub orchestration scripts
+
+mobile-app
+  owns: mobile product code, mobile implementation PRs, mobile CI, mobile smoke runbooks
+
+admin-portal
+  owns: admin product code, admin implementation PRs, admin CI, admin smoke runbooks
+```
+
+In this topology, a hub work item for a mobile feature records `mobile-app` as
+its target product repository. The spec and plan PRs are opened in
+`workflow-hub`; the implementation branch, code PR, CI, reviewer-loop checks,
+and product smoke runbook execution happen in `mobile-app`.
+
+A different work item for an admin workflow records `admin-portal` as its target
+product repository and follows the same split. A hub-only workflow improvement,
+such as updating orchestration protocols, has no product target and opens its
+code PR in `workflow-hub`.
+
+## Non-Goals
+
+This note does not:
+
+- Add a mode field to `.ai-dev-workflow.yaml`.
+- Change existing script behavior.
+- Change existing agent prompts or command wrappers.
+- Migrate existing downstream repositories.
+- Route PRs across repositories.
+- Define secret storage, authentication, or product-repo checkout discovery.
+
+Those behaviors belong to later workflow-hub implementation items. Until those
+items land, missing mode remains `single_repo` and existing repositories keep the
+current single-repository workflow.

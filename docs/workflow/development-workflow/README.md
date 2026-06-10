@@ -230,6 +230,16 @@ This workflow depends on a few capabilities more than on any specific vendor or 
 - An issue tracker is optional. Without one, portfolio-wide prioritization and "current brief" lookup require more direct human guidance.
 - Browser automation is optional. Without it, smoke tests should be run manually from the committed smoke test runbook.
 
+### Repository Modes
+
+The workflow supports a documented repository-mode model for future
+multi-repository coordination. See
+[`repository-modes.md`](repository-modes.md) for the `single_repo`,
+`workflow_hub`, and `product_repo` definitions, artifact ownership table, target
+product repository selection rule, and PR ownership model. When no mode is
+declared, repositories are interpreted as `single_repo` and keep the current
+single-repository behavior.
+
 ### Branch Naming
 
 | Branch type         | Pattern                      | Base branch |

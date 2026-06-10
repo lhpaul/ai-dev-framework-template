@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Workflow hub operating model** (#874): documents repository modes, artifact ownership, target repository selection, and PR ownership for workflow hub deployments.
 - **Release stamping** (#829): records the production release version on shipped tracker issues using provider-native release markers such as GitHub Milestones, while failing softly for unsupported providers.
 - **Document PR quality gate** (#816): adds a pre-submission quality gate for spec and implementation-plan PRs so document authors check brief coverage, consistency, behavioral guarantees, and recurring reviewer categories before opening draft PRs.
 
