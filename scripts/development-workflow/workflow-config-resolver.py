@@ -102,7 +102,7 @@ def parse_scalar(value: str) -> Any:
         inner = value[1:-1].strip()
         if not inner:
             return []
-        return [parse_scalar(item.strip()) for item in inner.split(",") if item.strip()]
+        return [parse_scalar(item.strip()) for item in split_inline_list(inner) if item.strip()]
     if value in {"''", '""'}:
         return ""
     if (value.startswith("'") and value.endswith("'")) or (
@@ -120,6 +120,40 @@ def parse_scalar(value: str) -> Any:
     if value.lower() in {"null", "~"}:
         return None
     return value
+
+
+def split_inline_list(value: str) -> list[str]:
+    items: list[str] = []
+    current: list[str] = []
+    in_single = False
+    in_double = False
+    escaped = False
+
+    for char in value:
+        if escaped:
+            current.append(char)
+            escaped = False
+            continue
+        if char == "\\" and in_double:
+            current.append(char)
+            escaped = True
+            continue
+        if char == "'" and not in_double:
+            in_single = not in_single
+            current.append(char)
+            continue
+        if char == '"' and not in_single:
+            in_double = not in_double
+            current.append(char)
+            continue
+        if char == "," and not in_single and not in_double:
+            items.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+
+    items.append("".join(current))
+    return items
 
 
 def parse_mapping(
@@ -512,9 +546,10 @@ def resolve_review_overrides(args: argparse.Namespace) -> dict[str, str]:
     )
 
     sources = []
-    for source in (runner_source, policy_source):
-        if source and source not in sources:
-            sources.append(source)
+    if runner_source:
+        sources.append(f"runner:{runner_source}")
+    if policy_source:
+        sources.append(f"policy:{policy_source}")
 
     return {
         "REVIEW_ON_DRAFT_RUNNER": ",".join(runner),

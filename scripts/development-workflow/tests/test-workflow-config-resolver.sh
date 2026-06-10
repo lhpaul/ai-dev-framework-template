@@ -91,6 +91,8 @@ echo "=== Workflow config resolver ==="
 missing_mode_dir="$(fixture_dir missing-mode)"
 missing_mode_output="$(python3 "$RESOLVER" mode --repo-root "$missing_mode_dir")"
 run_test "missing_mode_defaults_single_repo" "WORKFLOW_MODE=single_repo" "$missing_mode_output"
+missing_mode_wrapper_output="$(workflow_repository_mode "$missing_mode_dir")"
+run_test "workflow_repository_mode_wrapper" "WORKFLOW_MODE=single_repo" "$missing_mode_wrapper_output"
 
 single_repo_dir="$(fixture_dir single-repo)"
 mkdir -p "$single_repo_dir/.git"
@@ -329,18 +331,32 @@ run_contains "legacy_review_override_precedence_runner" "REVIEW_ON_DRAFT_RUNNER=
 run_contains "legacy_review_override_precedence_runner_source" "REVIEW_ON_DRAFT_RUNNER_SOURCE=.tmp/template-config.json" "$review_output"
 run_contains "legacy_review_override_precedence_policy" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY=fail-if-any-unavailable" "$review_output"
 run_contains "legacy_review_override_precedence_policy_source" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY_SOURCE=.tmp/template-config.json" "$review_output"
-run_contains "legacy_review_override_source" "LOCAL_OVERRIDE_SOURCE=.tmp/template-config.json" "$review_output"
+run_contains "legacy_review_override_source" "LOCAL_OVERRIDE_SOURCE=runner:.tmp/template-config.json,policy:.tmp/template-config.json" "$review_output"
 
 local_review_dir="$(fixture_dir local-review-overrides)"
 cat > "$local_review_dir/.ai-dev-workflow.local.yaml" <<'YAML'
 review:
   on_draft:
-    runner: [claude, codex]
+    runner: ["claude,with-comma", codex]
   internal_reviewers_unavailable_policy: warn
 YAML
+inline_list_parse_output="$(
+  python3 - "$RESOLVER" "$local_review_dir/.ai-dev-workflow.local.yaml" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location("workflow_config_resolver", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+runner = module.parse_yaml_subset(Path(sys.argv[2]))["review"]["on_draft"]["runner"]
+print(f"{len(runner)}:{runner[0]}:{runner[1]}")
+PY
+)"
+run_test "inline_list_parser_respects_quotes" "2:claude,with-comma:codex" "$inline_list_parse_output"
 local_review_output="$(workflow_review_override_context "$local_review_dir")"
-run_contains "local_review_override_runner" "REVIEW_ON_DRAFT_RUNNER=claude,codex" "$local_review_output"
-run_contains "local_review_override_source" "LOCAL_OVERRIDE_SOURCE=.ai-dev-workflow.local.yaml" "$local_review_output"
+run_contains "local_review_override_runner" "REVIEW_ON_DRAFT_RUNNER=claude,with-comma,codex" "$local_review_output"
+run_contains "local_review_override_source" "LOCAL_OVERRIDE_SOURCE=runner:.ai-dev-workflow.local.yaml,policy:.ai-dev-workflow.local.yaml" "$local_review_output"
 
 mixed_review_dir="$(fixture_dir mixed-review-overrides)"
 mkdir -p "$mixed_review_dir/.tmp"
@@ -361,7 +377,7 @@ YAML
 mixed_review_output="$(workflow_review_override_context "$mixed_review_dir")"
 run_contains "mixed_review_override_runner_source" "REVIEW_ON_DRAFT_RUNNER_SOURCE=.ai-dev-workflow.local.yaml" "$mixed_review_output"
 run_contains "mixed_review_override_policy_source" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY_SOURCE=.tmp/template-config.json" "$mixed_review_output"
-run_contains "mixed_review_override_combined_source" "LOCAL_OVERRIDE_SOURCE=.ai-dev-workflow.local.yaml,.tmp/template-config.json" "$mixed_review_output"
+run_contains "mixed_review_override_combined_source" "LOCAL_OVERRIDE_SOURCE=runner:.ai-dev-workflow.local.yaml,policy:.tmp/template-config.json" "$mixed_review_output"
 
 malformed_dir="$(fixture_dir malformed)"
 cat > "$malformed_dir/.ai-dev-workflow.yaml" <<'YAML'
