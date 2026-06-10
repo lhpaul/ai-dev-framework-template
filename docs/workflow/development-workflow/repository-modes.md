@@ -105,6 +105,19 @@ product repository should not receive hub-owned tracker artifacts, historical
 specs, implementation plans, or cross-product coordination state unless a later
 workflow explicitly documents why that copy is required.
 
+Inspectable skeletons make this boundary visible without applying it:
+
+- `template/workflow-hub/` lists hub-owned protocols, scripts, agent wrappers,
+  project workflow configuration, and workflow runbooks.
+- `template/product-repo-injection/` lists minimal product repository
+  integration candidates and excludes hub-owned tracker, spec, implementation
+  plan, and hub-only runbook artifacts unless a later workflow marks a specific
+  artifact as required.
+
+The skeleton manifests reference canonical source paths instead of copying full
+framework trees, so they can be reviewed without creating duplicate files that
+drift from the template.
+
 ## Generic Multi-Product Example
 
 A team can run one hub and multiple product repositories:
@@ -282,3 +295,8 @@ This note does not:
 Those behaviors belong to later workflow-hub implementation items. Until those
 items land, missing mode remains `single_repo` and existing repositories keep the
 current single-repository workflow.
+
+The `sync-manifest.yaml` `mode_scope` metadata is also informational until later
+mode-aware sync work consumes it. Current sync-template readers continue to use
+the existing manifest categories and do not filter or apply files by repository
+mode.
