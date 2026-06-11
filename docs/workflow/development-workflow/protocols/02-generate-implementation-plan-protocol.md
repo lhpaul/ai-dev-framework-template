@@ -21,6 +21,14 @@ Before starting, read:
 
 **Tracker workflow status**: The **Work Item Runner** owns workflow-status transitions for this stage. When this protocol is run under normal orchestration, expect the runner to set **Writing Plan** before dispatch, **Plan in Review** when the PR is human-ready, and **Plan Ready** only after merge. If you invoke this protocol standalone, mirror the same status progression manually.
 
+**Repository mode ownership**: Resolve repository mode before writing or
+reviewing plan artifacts. Missing mode or explicit `single_repo` means the
+current repository owns the plan. In `workflow_hub` mode, the hub owns
+implementation plans and plan PRs unless a future workflow contract explicitly
+says otherwise. In `product_repo` mode, report the configured hub owner or stop
+if planning ownership is ambiguous; do not create duplicate hub-owned plans in
+the product repository.
+
 ---
 
 ## Step 0: Template-Fit Check (Template Repositories Only)

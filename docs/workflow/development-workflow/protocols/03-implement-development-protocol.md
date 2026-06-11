@@ -436,6 +436,15 @@ Extract from your reading:
 
 Complete this checklist **before writing any code**. It takes 5–10 minutes and prevents review round-trips caused by missed files, scope drift, or inconsistencies with related protocols.
 
+**Repository mode pre-mutation check**: Resolve repository mode before file
+edits, branch creation, commits, or implementation PR creation. Missing mode or
+explicit `single_repo` keeps the current repository as the mutation target and
+does not require `--repo`. In `workflow_hub`, state the selected product
+repository, local path or remote identity, hub-owned tracker/spec/plan context,
+and product mutation target before changing files. If the selected product
+repository is missing or ambiguous for product-owned implementation work, stop
+before mutation.
+
 1. **Enumerate all files** that need changes. List every file path explicitly.
 2. **For each file**, describe the specific changes needed (e.g., "add section X", "update step Y to handle case Z").
 3. **Verify scope**: confirm all listed changes are within the issue's stated scope. Remove anything that is not.

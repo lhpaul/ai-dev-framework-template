@@ -19,5 +19,6 @@ Key rules:
 - Refactor: read plan + runbook BEFORE writing any code (no spec)
 - Fast Track: stop and report if scope expands beyond the brief
 - Hotfix: branch from `main`, not `develop`
+- In `workflow_hub`, state selected product repository, local path or remote identity, and mutation target before file edits, branch creation, commits, or implementation PR creation; stop when context is missing or ambiguous
 - Always update CHANGELOG before opening the PR (except spec/plan-only PRs; for fixes to unreleased work, update the existing entry instead of adding a new one; in parallel batches, each PR adds its own CHANGELOG entry as normal; merge conflicts are resolved at merge time)
 - Do not stop at "PR opened"; continue through code review, automated review, and CI until the PR is ready or escalated

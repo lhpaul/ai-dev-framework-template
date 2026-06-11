@@ -83,6 +83,35 @@ When a workflow hub has more than one product repository, implementation
 inspection and mutation fail before touching product state unless the caller
 selects one product repository.
 
+## Agent Obligations
+
+Agents and command wrappers must make repository ownership visible before they
+act. Missing mode or explicit `single_repo` keeps current behavior: the current
+repository owns specs, plans, implementation branches, pull requests, reviews,
+smoke tests, and cleanup, and no product repository selector is required.
+
+In `workflow_hub` mode:
+
+- Portfolio and item orchestrators include workflow mode, artifact owner, and
+  selected product repository context in implementation handoffs.
+- Product-manager and tech-lead agents create specs and plans in the hub unless
+  a future workflow contract explicitly says otherwise.
+- Developer agents state the selected product repository, local path or remote
+  identity, and mutation target before file edits, branch creation, commits, or
+  implementation PR creation.
+- Spec and plan reviewers report the hub-owned artifact they reviewed; code
+  reviewers report the product or hub repository that owns the implementation
+  artifact under review.
+- Smoke testers report whether the runbook or implementation artifact is
+  hub-owned or product-repository-owned.
+- Reviewer-loop wrappers remain thin: they pass repository context through to
+  shared scripts/helpers and do not implement independent product repository
+  selection rules.
+
+If product repository context is missing or ambiguous for mutation-oriented
+work, the agent must stop before modifying files, creating branches, committing,
+or opening implementation PRs.
+
 ## Target Product Repository Selection
 
 A hub-managed work item must identify one visible and unambiguous target product

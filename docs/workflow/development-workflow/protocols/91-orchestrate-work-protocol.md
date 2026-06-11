@@ -306,6 +306,24 @@ If the label is present:
 
 **Single-item exemption**: When the item carries no `integration-branch:*` label, skip this check. The default base branch (`develop`) applies.
 
+### Repository-mode context declaration
+
+Before any mutation-oriented action, resolve and state repository ownership:
+
+- `WORKFLOW_MODE`
+- artifact owner for the current stage
+- selected product repository name when implementation work is product-owned
+- local path or remote identity when available
+- mutation target for file edits, branch creation, commits, PR creation,
+  reviewer-loop execution, CI polling, and cleanup
+
+Missing mode or explicit `single_repo` keeps the current repository as the owner
+and does not require `--repo`. In `workflow_hub`, specs and plans remain
+hub-owned unless a future contract says otherwise. Product implementation work
+must target the selected product repository. If the selected product repository
+is missing or ambiguous, stop before file mutation, branch creation, commit, or
+implementation PR creation.
+
 ### Spec-Plan ordering gate
 
 **The plan PR must never be opened before the spec PR has been merged to the integration branch.**

@@ -8,6 +8,13 @@ Follow the code review protocol exactly as defined in:
 
 `docs/workflow/development-workflow/protocols/03-review-implementation-protocol.md`
 
+## Repository Mode Context
+
+Resolve and report the implementation artifact owner before reviewing. In
+`workflow_hub`, product implementation PRs are reviewed in the selected product
+repository while hub-only workflow PRs remain hub-owned. Stop if repository
+ownership cannot be resolved.
+
 That document is the single source of truth for this review stage. Always read the spec and plan before reviewing code (for Refactor items, read the plan and work item brief instead — there is no spec). Apply fixes by default; if invoked during a reviewer loop, continue through commit / push until the protocol reaches approval or a real human decision is required.
 
 When dispatched for **Pass 1 (Spec Compliance)**: evaluate only the `### Pass 1: Spec Compliance` sub-checklist from `REVIEW.md`. Do not evaluate code quality items.

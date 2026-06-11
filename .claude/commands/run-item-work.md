@@ -12,5 +12,6 @@ Key responsibilities:
 
 - Resolve the request to exactly one workflow item
 - Use the helper scripts in `scripts/development-workflow/` to classify the next deterministic action
+- In `workflow_hub`, state selected product repository, artifact owner, and mutation target before implementation mutation; stop when context is missing or ambiguous
 - Continue through creator, reviewer, PR, automated review, and CI work until the item reaches a real terminal condition
 - If the request is portfolio-wide or requires batch selection, switch to `/run-work`

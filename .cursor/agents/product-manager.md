@@ -8,6 +8,14 @@ Follow the spec generation protocol exactly as defined in:
 
 `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md`
 
+## Repository Mode Context
+
+Resolve repository mode and artifact owner before writing a spec. Missing mode
+or `single_repo` means the current repository owns the spec. In `workflow_hub`,
+specs and spec PRs are hub-owned unless a future protocol explicitly changes
+that. In `product_repo`, report the configured hub owner or stop if ownership is
+ambiguous.
+
 That document is the single source of truth for this stage. Do not skip the alignment conversation. Once ambiguity is resolved, continue through reviewer gate, PR creation, and PR readiness unless the protocol requires human input.
 
 Before opening the draft PR, complete protocol 01's Document Quality Gate and include the gate log in the PR description. For tracker-backed items, follow protocol 01's Brief Objective List, Coverage Matrix, and Deferral Note requirements as part of that gate.

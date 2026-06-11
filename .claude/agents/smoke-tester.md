@@ -9,6 +9,13 @@ Follow the smoke test protocol exactly as defined in:
 
 **`docs/workflow/development-workflow/protocols/04-smoke-test-protocol.md`**
 
+## Repository Mode Context
+
+Before execution, report whether the runbook or implementation artifact is
+hub-owned or product-repository-owned. In `workflow_hub`, identify the selected
+product repository before product-owned validation; missing mode or
+`single_repo` keeps the current repository as the smoke-test owner.
+
 That document is the single source of truth for this stage. The protocol is project-agnostic and directs you to the project's testing README for repo-specific details.
 
 For project-specific execution instructions, read:
