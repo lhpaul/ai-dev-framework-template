@@ -144,6 +144,9 @@ run_not_contains "auth_status_hides_private_key_path" "$mobile_key" "$auth_statu
 
 auth_machine="$(python3 "$RESOLVER" auth --repo-root "$hub_dir" --repo mobile-app --include-local-secrets)"
 run_contains "auth_machine_includes_private_key_path" "AUTH_PRIVATE_KEY_PATH=$mobile_key" "$auth_machine"
+auth_json="$(python3 "$RESOLVER" auth --repo-root "$hub_dir" --repo mobile-app --include-local-secrets --json)"
+run_contains "auth_json_status" '"AUTH_STATUS": "auth_configured"' "$auth_json"
+run_contains "auth_json_private_key_path" "\"AUTH_PRIVATE_KEY_PATH\": \"$mobile_key\"" "$auth_json"
 
 body_file="$hub_dir/body.md"
 printf 'PR body\n' > "$body_file"
@@ -153,6 +156,19 @@ run_contains "mobile_dry_run_targets_mobile" "TARGET_REPO=example/mobile-app" "$
 run_contains "admin_dry_run_targets_admin" "TARGET_REPO=example/admin-portal" "$admin_dry_run"
 run_not_contains "dry_run_redacts_token" "fixture-installation-token" "$mobile_dry_run"
 run_contains "dry_run_command_shape" "GH_TOKEN=<redacted> gh pr create --repo 'example/mobile-app'" "$mobile_dry_run"
+
+https_dir="$(fixture_dir https-url)"
+cat > "$https_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: web-app
+      git_url: https://github.com/example/web-app.git
+YAML
+https_dry_run="$(bash "$PR_HELPER" --repo-root "$https_dir" --repo web-app --base main --head feature/test --title "Web PR" --body-file "$body_file" --dry-run)"
+run_contains "https_git_url_targets_repo" "TARGET_REPO=example/web-app" "$https_dry_run"
 
 non_github_dir="$(fixture_dir non-github)"
 cat > "$non_github_dir/.ai-dev-workflow.yaml" <<'YAML'
@@ -174,10 +190,20 @@ cat > "$single_repo_dir/.ai-dev-workflow.yaml" <<'YAML'
 schema_version: 2
 mode: single_repo
 YAML
+single_auth_json="$(python3 "$RESOLVER" auth --repo-root "$single_repo_dir" --json)"
+run_contains "auth_not_required_json" '"AUTH_STATUS": "not_required"' "$single_auth_json"
 run_fails_contains \
   "product_pr_single_repo_mode_fails" \
   "product PR operations require workflow_hub mode" \
   bash "$PR_HELPER" --repo-root "$single_repo_dir" --repo mobile-app --base main --head feature/test --title "Mobile PR" --body-file "$body_file" --dry-run
+run_fails_contains \
+  "product_pr_missing_repo_value" \
+  "--repo requires a value" \
+  bash "$PR_HELPER" --repo
+run_fails_contains \
+  "token_helper_missing_repo_value" \
+  "--repo requires a value" \
+  bash "$TOKEN_HELPER" --repo
 
 missing_app_dir="$(fixture_dir missing-app)"
 cat > "$missing_app_dir/.ai-dev-workflow.yaml" <<'YAML'
@@ -289,6 +315,33 @@ run_fails_contains \
   "token_helper_secret_ref_empty_result" \
   "secret_ref resolver returned an empty private key" \
   env WORKFLOW_GITHUB_APP_SECRET_REF_COMMAND="$secret_ref_empty_stub" bash "$TOKEN_HELPER" --repo-root "$secret_ref_dir" --repo mobile-app --print-token
+
+precedence_dir="$(fixture_dir precedence)"
+precedence_key="$precedence_dir/mobile-app.pem"
+make_private_key "$precedence_key"
+cat > "$precedence_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      github_app:
+        app_id: "shared-app"
+        installation_id: "shared-installation"
+YAML
+cat > "$precedence_dir/.ai-dev-workflow.local.yaml" <<YAML
+product_repos:
+  - name: mobile-app
+    github_app:
+      app_id: "local-app"
+      installation_id: "local-installation"
+      private_key_path: "$precedence_key"
+YAML
+precedence_auth="$(python3 "$RESOLVER" auth --repo-root "$precedence_dir" --repo mobile-app --include-local-secrets)"
+run_contains "auth_precedence_local_app_id" "AUTH_APP_ID=local-app" "$precedence_auth"
+run_contains "auth_precedence_local_installation" "AUTH_INSTALLATION_ID=local-installation" "$precedence_auth"
 
 missing_installation_dir="$(fixture_dir missing-installation)"
 cat > "$missing_installation_dir/.ai-dev-workflow.yaml" <<'YAML'

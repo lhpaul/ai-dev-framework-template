@@ -660,25 +660,32 @@ def print_shell_context(values: dict[str, str]) -> None:
             print(f"{key}={shlex.quote(str(value))}")
 
 
+def print_context(args: argparse.Namespace, values: dict[str, str]) -> None:
+    if getattr(args, "json", False):
+        print(json.dumps(values, sort_keys=True))
+    else:
+        print_shell_context(values)
+
+
 def cmd_mode(args: argparse.Namespace) -> int:
     repo_root = repo_root_from_args(args.repo_root)
     shared, _, shared_path, _ = load_configs(repo_root)
-    print_shell_context({"WORKFLOW_MODE": mode_from_shared(shared, shared_path)})
+    print_context(args, {"WORKFLOW_MODE": mode_from_shared(shared, shared_path)})
     return 0
 
 
 def cmd_resolve(args: argparse.Namespace) -> int:
-    print_shell_context(resolve_context(args))
+    print_context(args, resolve_context(args))
     return 0
 
 
 def cmd_auth(args: argparse.Namespace) -> int:
-    print_shell_context(resolve_auth_context(args))
+    print_context(args, resolve_auth_context(args))
     return 0
 
 
 def cmd_review_overrides(args: argparse.Namespace) -> int:
-    print_shell_context(resolve_review_overrides(args))
+    print_context(args, resolve_review_overrides(args))
     return 0
 
 
@@ -688,6 +695,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     mode = subcommands.add_parser("mode", help="print the effective workflow mode")
     mode.add_argument("--repo-root")
+    mode.add_argument("--json", action="store_true", help="print JSON instead of shell KEY=value")
     mode.set_defaults(func=cmd_mode)
 
     for name in ("resolve", "validate"):
@@ -699,6 +707,7 @@ def build_parser() -> argparse.ArgumentParser:
             action="store_true",
             help="require a resolved local product checkout path",
         )
+        command.add_argument("--json", action="store_true", help="print JSON instead of shell KEY=value")
         command.set_defaults(func=cmd_resolve)
 
     auth = subcommands.add_parser("auth", help="print product repository auth metadata")
@@ -709,12 +718,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="include local secret references for machine callers; do not use for normal logs",
     )
+    auth.add_argument("--json", action="store_true", help="print JSON instead of shell KEY=value")
     auth.set_defaults(func=cmd_auth)
 
     overrides = subcommands.add_parser(
         "review-overrides", help="print local review override compatibility values"
     )
     overrides.add_argument("--repo-root")
+    overrides.add_argument("--json", action="store_true", help="print JSON instead of shell KEY=value")
     overrides.set_defaults(func=cmd_review_overrides)
     return parser
 

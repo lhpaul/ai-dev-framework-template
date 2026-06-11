@@ -44,6 +44,14 @@ log() {
   printf '%s\n' "$*" >&2
 }
 
+json_field() {
+  local json="$1"
+  local key="$2"
+  if ! printf '%s' "$json" | jq -re --arg key "$key" '.[$key] // ""' 2>/dev/null; then
+    die "resolver output did not include expected field '$key'"
+  fi
+}
+
 base64url_file() {
   openssl base64 -A -in "$1" | tr '+/' '-_' | tr -d '='
 }
@@ -192,11 +200,15 @@ if [ "$MODE" = "status" ] || [ "$MODE" = "dry-run" ]; then
   exit 0
 fi
 
-if ! AUTH_OUTPUT="$(python3 "$RESOLVER" auth --repo-root "$REPO_ROOT" --repo "$REPO_NAME" --include-local-secrets 2>&1)"; then
+if ! AUTH_OUTPUT="$(python3 "$RESOLVER" auth --repo-root "$REPO_ROOT" --repo "$REPO_NAME" --include-local-secrets --json 2>&1)"; then
   printf '%s\n' "$AUTH_OUTPUT" >&2
   exit 1
 fi
-eval "$AUTH_OUTPUT"
+AUTH_STATUS="$(json_field "$AUTH_OUTPUT" AUTH_STATUS)"
+AUTH_APP_ID="$(json_field "$AUTH_OUTPUT" AUTH_APP_ID)"
+AUTH_INSTALLATION_ID="$(json_field "$AUTH_OUTPUT" AUTH_INSTALLATION_ID)"
+AUTH_PRIVATE_KEY_PATH="$(json_field "$AUTH_OUTPUT" AUTH_PRIVATE_KEY_PATH)"
+AUTH_SECRET_REF="$(json_field "$AUTH_OUTPUT" AUTH_SECRET_REF)"
 
 case "${AUTH_STATUS:-}" in
   auth_configured) ;;

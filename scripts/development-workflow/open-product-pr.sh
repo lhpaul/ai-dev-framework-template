@@ -23,6 +23,14 @@ die() {
   exit 1
 }
 
+json_field() {
+  local json="$1"
+  local key="$2"
+  if ! printf '%s' "$json" | jq -re --arg key "$key" '.[$key] // ""' 2>/dev/null; then
+    die "resolver output did not include expected field '$key'"
+  fi
+}
+
 quote_arg() {
   printf '%s' "$1" | sed "s/'/'\\\\''/g; s/^/'/; s/$/'/"
 }
@@ -120,11 +128,13 @@ done
 [ -n "$BODY_FILE" ] || die "--body-file is required"
 [ -r "$BODY_FILE" ] || die "--body-file must be readable"
 
-if ! CONTEXT_OUTPUT="$(python3 "$RESOLVER" resolve --repo-root "$REPO_ROOT" --repo "$REPO_NAME" 2>&1)"; then
+if ! CONTEXT_OUTPUT="$(python3 "$RESOLVER" resolve --repo-root "$REPO_ROOT" --repo "$REPO_NAME" --json 2>&1)"; then
   printf '%s\n' "$CONTEXT_OUTPUT" >&2
   exit 1
 fi
-eval "$CONTEXT_OUTPUT"
+WORKFLOW_MODE="$(json_field "$CONTEXT_OUTPUT" WORKFLOW_MODE)"
+TARGET_GITHUB_REPO="$(json_field "$CONTEXT_OUTPUT" TARGET_GITHUB_REPO)"
+TARGET_GIT_URL="$(json_field "$CONTEXT_OUTPUT" TARGET_GIT_URL)"
 
 if [ "${WORKFLOW_MODE:-}" != "workflow_hub" ]; then
   die "product PR operations require workflow_hub mode"
