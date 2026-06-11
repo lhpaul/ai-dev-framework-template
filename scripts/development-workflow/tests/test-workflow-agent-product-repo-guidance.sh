@@ -93,9 +93,18 @@ done
 run_contains "claude_run_work_alias_context" \
   ".claude/commands/run-work.md" \
   "selected product repository context in implementation handoffs"
+run_contains "claude_code_review_command_owner" \
+  ".claude/commands/code-review.md" \
+  "Resolve and report the implementation artifact owner"
+run_contains "claude_post_merge_cleanup_context" \
+  ".claude/commands/post-merge-cleanup.md" \
+  "preserve selected product repository context"
 run_contains "cursor_implement_command_context" \
   ".cursor/commands/implement-development.md" \
   "state selected product repository, local path or remote identity"
+run_contains "cursor_post_merge_cleanup_context" \
+  ".cursor/commands/post-merge-cleanup.md" \
+  "preserve selected product repository context"
 
 run_contains "codex_orchestrator_context" \
   ".codex/skills/workflow-orchestrator/SKILL.md" \
