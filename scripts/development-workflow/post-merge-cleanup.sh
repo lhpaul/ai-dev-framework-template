@@ -82,6 +82,10 @@ if [ "$workflow_mode" = "workflow_hub" ] && { [ "$branch_owner_kind" = "implemen
   repo_context="$(workflow_validate_repository_context "$target_repo" "$repo_root" --require-local)"
   CLEANUP_REPO_ROOT="$(workflow_context_value TARGET_LOCAL_PATH "$repo_context")"
   DEVELOP_BRANCH="$(workflow_context_value TARGET_DEFAULT_BRANCH "$repo_context")"
+  if [ -z "$DEVELOP_BRANCH" ]; then
+    echo "ERROR: product repository default branch is required for workflow_hub cleanup." >&2
+    exit 64
+  fi
   ACTION_REPOSITORY_KIND="product_repo_owned"
   ACTION_REPOSITORY="$(workflow_context_value TARGET_REPO_NAME "$repo_context")"
   TARGET_GITHUB_REPO="$(workflow_github_repo_from_context "$repo_context")"

@@ -458,8 +458,18 @@ fi
 # PLAN_FILE is intentionally not emitted; callers that need the path should scan
 # "$development_path"/2_*_implementation-plan.md directly.
 case "$next_action" in
-  implement|resolve-development-pr) action_context_output="$(repository_context_for_action implementation)" ;;
-  *) action_context_output="$(repository_context_for_action hub)" ;;
+  implement|resolve-development-pr)
+    if ! action_context_output="$(repository_context_for_action implementation 2>&1)"; then
+      echo "ERROR: $action_context_output" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    if ! action_context_output="$(repository_context_for_action hub 2>&1)"; then
+      echo "ERROR: $action_context_output" >&2
+      exit 1
+    fi
+    ;;
 esac
 print_kv TARGET "development:$development_path"
 [ -n "$spec_file" ] && print_kv SPEC_FILE "$spec_file"
