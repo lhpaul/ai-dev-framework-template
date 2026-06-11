@@ -335,7 +335,7 @@ development_paths=()
 
 require_option_value() {
   local option="$1"
-  if [ "$#" -lt 2 ] || [ -z "${2:-}" ]; then
+  if [ "$#" -lt 2 ] || [ -z "${2:-}" ] || [[ "${2:-}" == -* ]]; then
     echo "$option requires a value." >&2
     usage >&2
     exit 64

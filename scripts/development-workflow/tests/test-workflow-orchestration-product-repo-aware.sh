@@ -199,6 +199,22 @@ batch_output="$(
 run_contains "batch_plan_preserves_action_kind" "ACTION_REPOSITORY_KIND=product_repo_owned" "$batch_output"
 run_contains "batch_plan_derives_github_repo_from_git_url" "ACTION_GITHUB_REPO=example/admin-portal" "$batch_output"
 
+run_fails_contains \
+  "batch_plan_repo_rejects_next_flag_as_value" \
+  "--repo requires a value." \
+  env WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-batch-plan.sh" \
+    --repo \
+    --repo-root "$hub_dir" \
+    "$hub_dev"
+
+run_fails_contains \
+  "batch_plan_repo_root_rejects_next_flag_as_value" \
+  "--repo-root requires a value." \
+  env WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-batch-plan.sh" \
+    --repo-root \
+    --repo admin-portal \
+    "$hub_dev"
+
 stub_bin="$TMP_ROOT/bin"
 mkdir -p "$stub_bin"
 cat > "$stub_bin/gh" <<'SH'
