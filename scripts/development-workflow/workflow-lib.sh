@@ -46,7 +46,60 @@ require_gh() {
 }
 
 repo_slug() {
+  if [ -n "${WORKFLOW_TARGET_GITHUB_REPO:-}" ]; then
+    printf '%s\n' "$WORKFLOW_TARGET_GITHUB_REPO"
+    return 0
+  fi
   gh repo view --json nameWithOwner --jq '.nameWithOwner'
+}
+
+workflow_context_value() {
+  local key="$1"
+  local context="${2:-}"
+
+  printf '%s\n' "$context" | awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }'
+}
+
+workflow_github_repo_from_git_url() {
+  local git_url="$1"
+  local remote_path=""
+
+  case "$git_url" in
+    https://github.com/*)
+      remote_path="${git_url#https://github.com/}"
+      ;;
+    https://*@github.com/*)
+      remote_path="${git_url#https://*@github.com/}"
+      ;;
+    git@github.com:*)
+      remote_path="${git_url#git@github.com:}"
+      ;;
+    ssh://git@github.com/*)
+      remote_path="${git_url#ssh://git@github.com/}"
+      ;;
+  esac
+
+  remote_path="${remote_path%.git}"
+  if [ -n "$remote_path" ] && workflow_remote_path_has_single_repo "$remote_path"; then
+    printf '%s\n' "$remote_path"
+  fi
+}
+
+workflow_github_repo_from_context() {
+  local context="$1"
+  local github_repo
+  local git_url
+
+  github_repo="$(workflow_context_value TARGET_GITHUB_REPO "$context")"
+  if [ -n "$github_repo" ]; then
+    printf '%s\n' "$github_repo"
+    return 0
+  fi
+
+  git_url="$(workflow_context_value TARGET_GIT_URL "$context")"
+  if [ -n "$git_url" ]; then
+    workflow_github_repo_from_git_url "$git_url"
+  fi
 }
 
 branch_prefix() {

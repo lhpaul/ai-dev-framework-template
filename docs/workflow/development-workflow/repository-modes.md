@@ -61,6 +61,28 @@ protocols, hub docs, or hub-owned orchestration scripts opens its code PR in the
 hub. A product implementation opens its code PR in the target product
 repository.
 
+## Orchestration Ownership
+
+Workflow orchestration scripts keep planning and tracker state in the hub while
+allowing implementation actions to target a selected product repository.
+
+- `discover-workflow-state.sh`, `workflow-next-action.sh`, and
+  `workflow-batch-plan.sh` accept `--repo <name>` and report
+  `WORKFLOW_MODE`, `ACTION_REPOSITORY_KIND`, and the selected repository
+  identity for each implementation action.
+- `pr-review-loop.sh` and `pr-ci-loop.sh` can target implementation PRs outside
+  the hub by accepting `--repo <owner/repo>` or `--product-repo <name>`.
+- `post-merge-cleanup.sh --repo <name> <branch>` cleans implementation branches
+  in the selected product checkout in `workflow_hub` mode, then returns tracker
+  updates to the hub repository.
+- Spec, plan, and tracker operations remain hub-owned. Product repository
+  selection must not redirect GitHub Projects reads or status updates unless a
+  later workflow contract explicitly changes tracker ownership.
+
+When a workflow hub has more than one product repository, implementation
+inspection and mutation fail before touching product state unless the caller
+selects one product repository.
+
 ## Target Product Repository Selection
 
 A hub-managed work item must identify one visible and unambiguous target product

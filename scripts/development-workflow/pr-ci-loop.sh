@@ -8,7 +8,7 @@ source "$SCRIPT_DIR/workflow-lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-ci-loop.sh <pr-number> [--poll-interval seconds] [--max-wait seconds]
+Usage: ./scripts/development-workflow/pr-ci-loop.sh <pr-number> [--repo owner/repo|product-name] [--product-repo name] [--repo-root path] [--poll-interval seconds] [--max-wait seconds]
 
 Polls GitHub required status checks for a PR until they are green, failing, or timed out.
 Outputs stable key=value lines and exits with:
@@ -26,6 +26,8 @@ fi
 pr_number=""
 poll_interval=60
 max_wait=1800
+repo_selector=""
+repo_root="$(workflow_repo_root)"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -35,6 +37,18 @@ while [ "$#" -gt 0 ]; do
       ;;
     --max-wait)
       max_wait="$2"
+      shift 2
+      ;;
+    --repo)
+      repo_selector="$2"
+      shift 2
+      ;;
+    --product-repo)
+      repo_selector="$2"
+      shift 2
+      ;;
+    --repo-root)
+      repo_root="$2"
       shift 2
       ;;
     -h|--help)
@@ -62,10 +76,23 @@ if [ -z "$pr_number" ]; then
 fi
 
 require_gh
-cd_workflow_repo_root
+cd "$repo_root"
 
 elapsed=0
-repo="$(repo_slug)"
+if [ -n "$repo_selector" ] && printf '%s\n' "$repo_selector" | grep -q '/'; then
+  repo="$repo_selector"
+elif [ -n "$repo_selector" ]; then
+  repo_context="$(workflow_repository_context "$repo_selector" "$repo_root")"
+  repo="$(workflow_github_repo_from_context "$repo_context")"
+else
+  repo="$(repo_slug)"
+fi
+if [ -z "$repo" ]; then
+  echo "ERROR: could not resolve GitHub repository for PR CI loop; pass --repo owner/repo or --product-repo <name>." >&2
+  exit 64
+fi
+export WORKFLOW_TARGET_GITHUB_REPO="$repo"
+export GH_REPO="$repo"
 min_no_checks_wait=$((poll_interval * 2))
 
 # is_devin_status_stale <pr_number> <repo>
@@ -175,7 +202,7 @@ is_devin_status_stale() {
 }
 
 while :; do
-  checks_json="$(gh pr view "$pr_number" --json statusCheckRollup)"
+  checks_json="$(gh pr view "$pr_number" --repo "$repo" --json statusCheckRollup)"
   # statusCheckRollup can include historical duplicates for the same check.
   # Keep only the latest entry per check name to avoid stale conclusions.
   normalized_checks_json="$(

@@ -5,7 +5,7 @@
 # Keeps the local repo clean after merging developments.
 #
 # Usage:
-#   ./scripts/development-workflow/post-merge-cleanup.sh [BRANCH]
+#   ./scripts/development-workflow/post-merge-cleanup.sh [--repo <name>] [--repo-root <path>] [BRANCH]
 #
 # - No BRANCH: use current branch (run while still on the merged branch).
 # - BRANCH: name of the local branch to delete (e.g. feature/my-feature).
@@ -22,12 +22,41 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 cd_workflow_repo_root
 
+HUB_REPO_ROOT="$(workflow_repo_root)"
 DEVELOP_BRANCH="develop"
 TO_DELETE=""
+target_repo=""
+repo_root="$HUB_REPO_ROOT"
 
-if [ $# -ge 1 ]; then
-  TO_DELETE="$1"
-else
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --repo)
+      target_repo="${2:?--repo requires a value}"
+      shift 2
+      ;;
+    --repo-root)
+      repo_root="${2:?--repo-root requires a value}"
+      shift 2
+      ;;
+    -h|--help)
+      sed -n '2,16p' "$0"
+      exit 0
+      ;;
+    *)
+      if [ -n "$TO_DELETE" ]; then
+        echo "Only one branch name may be provided." >&2
+        exit 64
+      fi
+      TO_DELETE="$1"
+      shift
+      ;;
+  esac
+done
+
+HUB_REPO_ROOT="$repo_root"
+cd "$HUB_REPO_ROOT"
+
+if [ -z "$TO_DELETE" ]; then
   TO_DELETE="$(git branch --show-current)"
   if [ -z "$TO_DELETE" ]; then
     echo "Could not determine current branch (detached HEAD?). Pass the branch name to delete." >&2
@@ -46,12 +75,44 @@ case "$TO_DELETE" in
     ;;
 esac
 
+CLEANUP_REPO_ROOT="$repo_root"
+ACTION_REPOSITORY_KIND="hub_owned"
+ACTION_REPOSITORY="$(basename "$repo_root")"
+TARGET_GITHUB_REPO=""
+
+case "$(branch_prefix "$TO_DELETE")" in
+  feature|fix|refactor|hotfix)
+    mode_context="$(workflow_repository_mode "$repo_root")"
+    workflow_mode="$(workflow_context_value WORKFLOW_MODE "$mode_context")"
+    if [ "$workflow_mode" = "workflow_hub" ]; then
+      repo_context="$(workflow_validate_repository_context "$target_repo" "$repo_root" --require-local)"
+      CLEANUP_REPO_ROOT="$(workflow_context_value TARGET_LOCAL_PATH "$repo_context")"
+      DEVELOP_BRANCH="$(workflow_context_value TARGET_DEFAULT_BRANCH "$repo_context")"
+      ACTION_REPOSITORY_KIND="product_repo_owned"
+      ACTION_REPOSITORY="$(workflow_context_value TARGET_REPO_NAME "$repo_context")"
+      TARGET_GITHUB_REPO="$(workflow_github_repo_from_context "$repo_context")"
+      if [ -z "$CLEANUP_REPO_ROOT" ]; then
+        echo "ERROR: product repository local path is required for implementation branch cleanup in workflow_hub mode." >&2
+        exit 64
+      fi
+    fi
+    ;;
+esac
+
+print_kv ACTION_REPOSITORY_KIND "$ACTION_REPOSITORY_KIND"
+print_kv ACTION_REPOSITORY "$ACTION_REPOSITORY"
+[ -n "$TARGET_GITHUB_REPO" ] && print_kv TARGET_GITHUB_REPO "$TARGET_GITHUB_REPO"
+print_kv CLEANUP_REPO_ROOT "$CLEANUP_REPO_ROOT"
+print_kv TRACKER_REPO_ROOT "$HUB_REPO_ROOT"
+
+cd "$CLEANUP_REPO_ROOT"
+
 if ! git show-ref --quiet "refs/heads/$TO_DELETE"; then
   echo "Local branch '$TO_DELETE' does not exist." >&2
   exit 2
 fi
 
-echo "Post-merge cleanup: will switch to $DEVELOP_BRANCH, update it, and delete local branch '$TO_DELETE'."
+echo "Post-merge cleanup: will switch to $DEVELOP_BRANCH in $CLEANUP_REPO_ROOT, update it, and delete local branch '$TO_DELETE'."
 echo ""
 
 echo "Fetching origin..."
@@ -162,6 +223,7 @@ elif [[ "$TO_DELETE" =~ ^(implementation-plan)/([a-zA-Z]{2,6}-([0-9]+))($|-) ]];
 fi
 
 if [ -n "$ISSUE_IDENTIFIER" ]; then
+  cd "$HUB_REPO_ROOT"
   # For team-prefixed identifiers, log the extraction result.
   # All `gh issue` and `update_tracker_status_best_effort` calls use ISSUE_NUMBER
   # (the numeric part) because:

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Workflow hub orchestration repository awareness** (#878): routes implementation branch, pull request, reviewer, CI, and cleanup operations to the selected product repository while keeping tracker/spec/plan state in the hub.
 - **Two-phase review config** (#868): replaces overlapping reviewer config keys with explicit draft and ready lifecycle buckets while preserving legacy aliases for one transition release.
 - **Codex review routing default**: makes `codex` the default Step 7a internal reviewer and replaces the Claude Code Action after-clean reviewer with `codex-github`.
 
