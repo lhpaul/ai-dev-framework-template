@@ -47,6 +47,10 @@ require_gh() {
 
 repo_slug() {
   if [ -n "${WORKFLOW_TARGET_GITHUB_REPO:-}" ]; then
+    if ! workflow_is_valid_github_repo_slug "$WORKFLOW_TARGET_GITHUB_REPO"; then
+      echo "ERROR: WORKFLOW_TARGET_GITHUB_REPO must be an owner/repo GitHub repository slug." >&2
+      return 1
+    fi
     printf '%s\n' "$WORKFLOW_TARGET_GITHUB_REPO"
     return 0
   fi
@@ -192,7 +196,7 @@ is_soft_suggestion() {
 
 open_pr_number_for_branch() {
   require_gh
-  gh pr list --head "$1" --state open --json number --jq '.[0].number // empty'
+  gh pr list --head "$1" --state open --limit 100 --json number --jq '.[0].number // empty'
 }
 
 workflow_config_review_nested_list() {
@@ -724,6 +728,17 @@ workflow_is_valid_github_repo_name() {
       return 1
       ;;
   esac
+  return 0
+}
+
+workflow_is_valid_github_repo_slug() {
+  local repo_slug="$1"
+  local owner="${repo_slug%%/*}"
+  local repo_name="${repo_slug#*/}"
+
+  [ "$owner/$repo_name" = "$repo_slug" ] || return 1
+  workflow_is_valid_github_owner "$owner" || return 1
+  workflow_is_valid_github_repo_name "$repo_name" || return 1
   return 0
 }
 

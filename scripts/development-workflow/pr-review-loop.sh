@@ -4041,7 +4041,7 @@ if [ -z "$pr_number" ]; then
 fi
 
 if [ -n "$repo_selector" ]; then
-  if printf '%s\n' "$repo_selector" | grep -q '/'; then
+  if workflow_is_valid_github_repo_slug "$repo_selector"; then
     target_github_repo="$repo_selector"
   else
     repo_context="$(workflow_repository_context "$repo_selector" "$repo_root")"

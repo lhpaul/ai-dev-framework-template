@@ -79,7 +79,7 @@ require_gh
 cd "$repo_root"
 
 elapsed=0
-if [ -n "$repo_selector" ] && printf '%s\n' "$repo_selector" | grep -q '/'; then
+if [ -n "$repo_selector" ] && workflow_is_valid_github_repo_slug "$repo_selector"; then
   repo="$repo_selector"
 elif [ -n "$repo_selector" ]; then
   repo_context="$(workflow_repository_context "$repo_selector" "$repo_root")"
@@ -202,10 +202,21 @@ is_devin_status_stale() {
 }
 
 while :; do
-  checks_json="$(gh pr view "$pr_number" --repo "$repo" --json statusCheckRollup)"
+  if ! checks_json="$(gh pr view "$pr_number" --repo "$repo" --json statusCheckRollup 2>/dev/null)"; then
+    print_kv RESULT red
+    print_kv PR_NUMBER "$pr_number"
+    print_kv REPO "$repo"
+    print_kv REASON pr_status_fetch_failed
+    print_kv TOTAL_CHECK_COUNT 0
+    print_kv FAILING_CHECK_COUNT 1
+    print_kv FAILING_CHECKS pr_status_fetch_failed
+    print_kv PENDING_CHECK_COUNT 0
+    print_kv PENDING_CHECKS ""
+    exit 1
+  fi
   # statusCheckRollup can include historical duplicates for the same check.
   # Keep only the latest entry per check name to avoid stale conclusions.
-  normalized_checks_json="$(
+  if ! normalized_checks_json="$(
     printf '%s\n' "$checks_json" | jq '
       (.statusCheckRollup // [])
       | map(
@@ -228,7 +239,18 @@ while :; do
       | group_by(.__check_key)
       | map(last | del(.__check_key, .__check_ts))
     '
-  )"
+  )"; then
+    print_kv RESULT red
+    print_kv PR_NUMBER "$pr_number"
+    print_kv REPO "$repo"
+    print_kv REASON check_json_parse_failed
+    print_kv TOTAL_CHECK_COUNT 0
+    print_kv FAILING_CHECK_COUNT 1
+    print_kv FAILING_CHECKS check_json_parse_failed
+    print_kv PENDING_CHECK_COUNT 0
+    print_kv PENDING_CHECKS ""
+    exit 1
+  fi
   total_check_count="$(
     printf '%s\n' "$normalized_checks_json" | jq 'length'
   )"

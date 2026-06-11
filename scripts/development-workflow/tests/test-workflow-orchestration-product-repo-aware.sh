@@ -108,6 +108,26 @@ YAML
 echo ""
 echo "=== Workflow orchestration product repository awareness ==="
 
+lib_script="$REPO_ROOT/scripts/development-workflow/workflow-lib.sh"
+
+git_url_repo="$(
+  bash -c 'source "$1"; workflow_github_repo_from_git_url "$2"' \
+    bash "$lib_script" "ssh://git@github.com/example/admin-portal.git"
+)"
+run_contains "workflow_lib_derives_repo_from_ssh_url" "example/admin-portal" "$git_url_repo"
+
+env_repo="$(
+  bash -c 'source "$1"; WORKFLOW_TARGET_GITHUB_REPO=example/mobile-app repo_slug' \
+    bash "$lib_script"
+)"
+run_contains "workflow_lib_uses_valid_repo_override" "example/mobile-app" "$env_repo"
+
+run_fails_contains \
+  "workflow_lib_rejects_invalid_repo_override" \
+  "WORKFLOW_TARGET_GITHUB_REPO must be an owner/repo" \
+  bash -c 'source "$1"; WORKFLOW_TARGET_GITHUB_REPO=example/mobile/app repo_slug' \
+    bash "$lib_script"
+
 single_output="$(
   WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
     --repo-root "$single_dir" \
@@ -149,6 +169,15 @@ cat > "$stub_bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [ "${GH_FAIL_PR_VIEW:-}" = "1" ] && [ "$1" = "pr" ] && [ "${2:-}" = "view" ]; then
+  echo "simulated pr view failure" >&2
+  exit 1
+fi
+
+if [ -n "${GH_ARGS_LOG:-}" ]; then
+  printf '%s\n' "$*" >> "$GH_ARGS_LOG"
+fi
+
 case "$1" in
   auth)
     exit 0
@@ -181,6 +210,27 @@ ci_output="$(
 )"
 run_contains "ci_loop_targets_explicit_repo" "REPO=example/mobile-app" "$ci_output"
 run_contains "ci_loop_reports_green" "RESULT=green" "$ci_output"
+
+ci_product_log="$TMP_ROOT/ci-product-gh-args.log"
+ci_product_output="$(
+  GH_ARGS_LOG="$ci_product_log" PATH="$stub_bin:$PATH" "$REPO_ROOT/scripts/development-workflow/pr-ci-loop.sh" \
+    8 \
+    --repo-root "$hub_dir" \
+    --product-repo mobile-app \
+    --poll-interval 1 \
+    --max-wait 2
+)"
+run_contains "ci_loop_resolves_product_repo" "REPO=example/mobile-app" "$ci_product_output"
+run_contains "ci_loop_passes_resolved_repo_to_gh" "--repo example/mobile-app" "$(tr '\n' ' ' < "$ci_product_log")"
+
+run_fails_contains \
+  "ci_loop_fails_closed_when_pr_status_unreadable" \
+  "REASON=pr_status_fetch_failed" \
+  env GH_FAIL_PR_VIEW=1 PATH="$stub_bin:$PATH" "$REPO_ROOT/scripts/development-workflow/pr-ci-loop.sh" \
+    9 \
+    --repo example/mobile-app \
+    --poll-interval 1 \
+    --max-wait 2
 
 echo ""
 echo "Passed: $PASS_COUNT"

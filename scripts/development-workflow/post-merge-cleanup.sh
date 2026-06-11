@@ -246,7 +246,7 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
     if ISSUE_STATE=$(gh issue view "$ISSUE_NUMBER" --json state --jq '.state' 2>/dev/null); then
       if [ "$ISSUE_STATE" = "OPEN" ]; then
         # Find the merged PR for this branch.
-        if MERGED_PR=$(gh pr list --state merged --head "$TO_DELETE" --json number --jq '.[0].number // empty' 2>/dev/null); then
+        if MERGED_PR=$(gh pr list --state merged --head "$TO_DELETE" --limit 1 --json number --jq '.[0].number // empty' 2>/dev/null); then
           : # gh succeeded; MERGED_PR may still be empty if no matching PR exists
         else
           echo "Warning: could not query merged PRs for branch '$TO_DELETE' (gh command failed). Leaving issue #$ISSUE_NUMBER open."

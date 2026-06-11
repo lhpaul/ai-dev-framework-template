@@ -41,6 +41,24 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+print_filtered_refs() {
+  local refs="$1"
+  local pattern="$2"
+  local matches=""
+  local grep_status=0
+
+  set +e
+  matches="$(printf '%s\n' "$refs" | grep -E "$pattern")"
+  grep_status=$?
+  set -e
+
+  case "$grep_status" in
+    0) printf '%s\n' "$matches" ;;
+    1) echo "(none)" ;;
+    *) return "$grep_status" ;;
+  esac
+}
+
 cd "$repo_root"
 
 mode_context="$(workflow_repository_mode "$repo_root")"
@@ -103,14 +121,18 @@ echo
 echo "== workflow branches =="
 branch_refs="$(git for-each-ref --format='%(refname:short)' refs/heads refs/remotes)"
 if [ -n "$branch_refs" ]; then
-  printf '%s\n' "$branch_refs" | grep -E '(^|/)(spec|implementation-plan|feature|refactor|fix|hotfix|release)/' || true
+  print_filtered_refs "$branch_refs" '(^|/)(spec|implementation-plan|feature|refactor|fix|hotfix|release)/'
+else
+  echo "(none)"
 fi
 if [ "$workflow_mode" = "workflow_hub" ] && [ -n "$target_local_path" ] && [ -d "$target_local_path/.git" ]; then
   echo
   echo "== product workflow branches =="
   product_branch_refs="$(git -C "$target_local_path" for-each-ref --format='%(refname:short)' refs/heads refs/remotes)"
   if [ -n "$product_branch_refs" ]; then
-    printf '%s\n' "$product_branch_refs" | grep -E '(^|/)(feature|refactor|fix|hotfix)/' || true
+    print_filtered_refs "$product_branch_refs" '(^|/)(feature|refactor|fix|hotfix)/'
+  else
+    echo "(none)"
   fi
 fi
 
@@ -135,7 +157,7 @@ echo
 echo "== open pull requests =="
 if gh_available; then
   echo "-- hub repository --"
-  gh pr list --state open --json number,title,headRefName,baseRefName,labels,statusCheckRollup \
+  gh pr list --state open --limit 100 --json number,title,headRefName,baseRefName,labels,statusCheckRollup \
     --jq '
       if length == 0 then
         "(none)"
@@ -157,7 +179,7 @@ if gh_available; then
     '
   if [ "$workflow_mode" = "workflow_hub" ] && [ -n "$target_github_repo" ]; then
     echo "-- product repository: $target_github_repo --"
-    gh pr list --repo "$target_github_repo" --state open --json number,title,headRefName,baseRefName,labels,statusCheckRollup \
+    gh pr list --repo "$target_github_repo" --state open --limit 100 --json number,title,headRefName,baseRefName,labels,statusCheckRollup \
       --jq '
         if length == 0 then
           "(none)"

@@ -141,9 +141,15 @@ if [ -n "$pr_number" ]; then
     done < <(github_repo_args_for_action implementation)
   fi
   if [ "${#pr_view_args[@]}" -gt 0 ]; then
-    pr_json="$(gh pr view "$pr_number" "${pr_view_args[@]}" --json headRefName,labels,isDraft,comments)"
+    if ! pr_json="$(gh pr view "$pr_number" "${pr_view_args[@]}" --json headRefName,labels,isDraft,comments)"; then
+      echo "ERROR: could not read PR #$pr_number from the selected GitHub repository." >&2
+      exit 1
+    fi
   else
-    pr_json="$(gh pr view "$pr_number" --json headRefName,labels,isDraft,comments)"
+    if ! pr_json="$(gh pr view "$pr_number" --json headRefName,labels,isDraft,comments)"; then
+      echo "ERROR: could not read PR #$pr_number." >&2
+      exit 1
+    fi
   fi
   branch_name="$(printf '%s\n' "$pr_json" | jq -r '.headRefName')"
   labels="$(printf '%s\n' "$pr_json" | jq -r '[.labels[].name] | join(",")')"
@@ -202,7 +208,7 @@ if [ -n "$branch_name" ]; then
   fi
   if gh_available; then
     if [ "${#pr_list_args[@]}" -gt 0 ]; then
-      pr_number="$(gh pr list "${pr_list_args[@]}" --head "$branch_name" --state open --json number --jq '.[0].number // empty')"
+      pr_number="$(gh pr list "${pr_list_args[@]}" --head "$branch_name" --state open --limit 100 --json number --jq '.[0].number // empty')"
     else
       pr_number="$(open_pr_number_for_branch "$branch_name")"
     fi
@@ -216,9 +222,15 @@ if [ -n "$branch_name" ]; then
 
   if [ -n "$pr_number" ]; then
     if [ "${#pr_view_args[@]}" -gt 0 ]; then
-      pr_json="$(gh pr view "$pr_number" "${pr_view_args[@]}" --json labels,isDraft,comments)"
+      if ! pr_json="$(gh pr view "$pr_number" "${pr_view_args[@]}" --json labels,isDraft,comments)"; then
+        echo "ERROR: could not read PR #$pr_number from the selected GitHub repository." >&2
+        exit 1
+      fi
     else
-      pr_json="$(gh pr view "$pr_number" --json labels,isDraft,comments)"
+      if ! pr_json="$(gh pr view "$pr_number" --json labels,isDraft,comments)"; then
+        echo "ERROR: could not read PR #$pr_number." >&2
+        exit 1
+      fi
     fi
     labels="$(printf '%s\n' "$pr_json" | jq -r '[.labels[].name] | join(",")')"
     print_kv PR_NUMBER "$pr_number"
@@ -345,24 +357,36 @@ if [ "$feature_branch_exists" -eq 0 ] && [ -n "$plan_file" ] && gh_available; th
     done < <(github_repo_args_for_action implementation)
   fi
   if [ "${#merged_pr_args[@]}" -gt 0 ]; then
-    merged_count="$(gh pr list "${merged_pr_args[@]}" --state merged --head "${dev_prefix}/$slug" --json number --jq 'length' 2>/dev/null || echo 0)"
+    if ! merged_count="$(gh pr list "${merged_pr_args[@]}" --state merged --head "${dev_prefix}/$slug" --limit 100 --json number --jq 'length' 2>/dev/null)"; then
+      echo "workflow-next-action.sh: warning: could not query merged PRs for ${dev_prefix}/$slug; treating as not merged" >&2
+      merged_count=0
+    fi
   else
-    merged_count="$(gh pr list --state merged --head "${dev_prefix}/$slug" --json number --jq 'length' 2>/dev/null || echo 0)"
+    if ! merged_count="$(gh pr list --state merged --head "${dev_prefix}/$slug" --limit 100 --json number --jq 'length' 2>/dev/null)"; then
+      echo "workflow-next-action.sh: warning: could not query merged PRs for ${dev_prefix}/$slug; treating as not merged" >&2
+      merged_count=0
+    fi
   fi
   if [ "${merged_count:-0}" -gt 0 ]; then
     feature_branch_merged=1
   else
     # Try issue-tracker-prefixed pattern: [prefix]/<ISSUE-ID>-<slug>
     # Matches Linear (ENG-123), Jira (PROJ-456), and GitHub Issues (42) prefixes.
-    if { if [ "${#merged_pr_args[@]}" -gt 0 ]; then
-           gh pr list "${merged_pr_args[@]}" --state merged --limit 500 --json headRefName 2>/dev/null
-         else
-           gh pr list --state merged --limit 500 --json headRefName 2>/dev/null
-         fi; } \
-        | jq -r '.[].headRefName' 2>/dev/null \
-        | sed -n "s|^${dev_prefix}/||p" \
-        | grep -qE "^([A-Z]+-)?[0-9]+-${slug_ere}$"; then
-      feature_branch_merged=1
+    merged_heads_json=""
+    if [ "${#merged_pr_args[@]}" -gt 0 ]; then
+      if ! merged_heads_json="$(gh pr list "${merged_pr_args[@]}" --state merged --limit 500 --json headRefName 2>/dev/null)"; then
+        echo "workflow-next-action.sh: warning: could not scan merged PR heads; treating as not merged" >&2
+      fi
+    elif ! merged_heads_json="$(gh pr list --state merged --limit 500 --json headRefName 2>/dev/null)"; then
+      echo "workflow-next-action.sh: warning: could not scan merged PR heads; treating as not merged" >&2
+    fi
+    if [ -n "$merged_heads_json" ]; then
+      if printf '%s\n' "$merged_heads_json" \
+          | jq -r '.[].headRefName' 2>/dev/null \
+          | sed -n "s|^${dev_prefix}/||p" \
+          | grep -qE "^([A-Z]+-)?[0-9]+-${slug_ere}$"; then
+        feature_branch_merged=1
+      fi
     fi
   fi
 fi
