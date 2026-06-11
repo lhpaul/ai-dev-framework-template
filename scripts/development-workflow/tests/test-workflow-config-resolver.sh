@@ -176,6 +176,11 @@ set_local_path_output="$(python3 "$RESOLVER" set-local-path --repo-root "$hub_di
 run_contains "workflow_hub_set_local_path_output" "LOCAL_CONFIG_PATH=$hub_dir/.ai-dev-workflow.local.yaml" "$set_local_path_output"
 admin_local_output="$(workflow_repository_context admin-portal "$hub_dir")"
 run_contains "workflow_hub_set_local_path_resolves" "TARGET_LOCAL_PATH=$TMP_ROOT/local/admin-portal" "$admin_local_output"
+python3 "$RESOLVER" set-local-path --repo-root "$hub_dir" --repo mobile-app --local-path "true" >/dev/null
+run_contains "workflow_hub_set_local_path_quotes_yaml_token" 'local_path: "true"' "$(cat "$hub_dir/.ai-dev-workflow.local.yaml")"
+newline_path=$'line1\nline2'
+python3 "$RESOLVER" set-local-path --repo-root "$hub_dir" --repo mobile-app --local-path "$newline_path" >/dev/null
+run_contains "workflow_hub_set_local_path_escapes_newline" 'local_path: "line1\nline2"' "$(cat "$hub_dir/.ai-dev-workflow.local.yaml")"
 
 run_fails_contains \
   "workflow_hub_ambiguous_without_repo" \

@@ -411,9 +411,18 @@ def quote_yaml_scalar(value: Any) -> str:
     text = str(value)
     if text == "":
         return '""'
-    if re.match(r"^[A-Za-z0-9_./:@~+-]+$", text):
+    yaml_token = text.lower()
+    if (
+        yaml_token in {"true", "false", "yes", "no", "on", "off", "null", "~"}
+        or re.match(r"^[+-]?[0-9]+(?:\.[0-9]+)?$", text)
+    ):
+        must_quote = True
+    else:
+        must_quote = not re.match(r"^[A-Za-z0-9_./:@~+-]+$", text)
+    if not must_quote:
         return text
-    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    escaped = text.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+    return '"' + escaped + '"'
 
 
 def dump_yaml_subset(value: Any, indent: int = 0) -> list[str]:

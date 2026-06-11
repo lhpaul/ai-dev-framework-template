@@ -120,10 +120,12 @@ run_fails_contains "status_unknown_option" "unknown argument '--bogus'" bash "$S
 hub_dir="$(fixture_dir hub)"
 clean_repo="$(fixture_dir clean-product)"
 dirty_repo="$(fixture_dir dirty-product)"
+branch_restore_repo="$(fixture_dir branch-restore-product)"
 missing_checkout="$TMP_ROOT/missing-checkout"
 mkdir -p "$missing_checkout"
 init_repo "$clean_repo" main
 init_repo "$dirty_repo" main
+init_repo "$branch_restore_repo" main
 clean_remote="$(fixture_dir clean-remote.git)"
 updater_repo="$(fixture_dir clean-updater)"
 git init --bare -q -b main "$clean_remote"
@@ -136,6 +138,16 @@ printf 'remote update\n' > "$updater_repo/remote.txt"
 git -C "$updater_repo" add remote.txt
 git -C "$updater_repo" commit -q -m "remote update"
 git -C "$updater_repo" push -q origin main
+restore_remote="$(fixture_dir restore-remote.git)"
+git init --bare -q -b main "$restore_remote"
+git -C "$branch_restore_repo" remote add origin "$restore_remote"
+git -C "$branch_restore_repo" push -q -u origin main
+git -C "$branch_restore_repo" switch -q -c feature/start
+git -C "$branch_restore_repo" switch -q main
+printf 'local ahead\n' > "$branch_restore_repo/local-ahead.txt"
+git -C "$branch_restore_repo" add local-ahead.txt
+git -C "$branch_restore_repo" commit -q -m "local ahead"
+git -C "$branch_restore_repo" switch -q feature/start
 printf 'dirty\n' > "$dirty_repo/dirty.txt"
 
 cat > "$hub_dir/.ai-dev-workflow.yaml" <<'YAML'
@@ -149,6 +161,9 @@ workflow_hub:
       default_branch: main
     - name: dirty-app
       github_repo: example/dirty-app
+      default_branch: main
+    - name: branch-restore-app
+      github_repo: example/branch-restore-app
       default_branch: main
     - name: missing-path-app
       github_repo: example/missing-path-app
@@ -169,6 +184,8 @@ product_repos:
     local_path: "$clean_repo"
   - name: dirty-app
     local_path: "$dirty_repo"
+  - name: branch-restore-app
+    local_path: "$branch_restore_repo"
   - name: missing-checkout-app
     local_path: "$missing_checkout"
 YAML
@@ -201,6 +218,21 @@ run_contains "status_all_summary" "SUMMARY" "$all_status"
 
 run_fails_contains "sync_dirty_refusal" "REASON=dirty_checkout" bash "$SYNC_CMD" --repo-root "$hub_dir" --repo dirty-app
 run_fails_contains "sync_repo_all_conflict" "--repo and --all cannot be used together" bash "$SYNC_CMD" --repo-root "$hub_dir" --repo clean-app --all
+set +e
+branch_restore_output="$(bash "$SYNC_CMD" --repo-root "$hub_dir" --repo branch-restore-app 2>&1)"
+branch_restore_code=$?
+set -e
+if [ "$branch_restore_code" -ne 0 ]; then
+  echo "PASS: sync_branch_restore_exit"
+  PASS_COUNT=$((PASS_COUNT + 1))
+else
+  echo "FAIL: sync_branch_restore_exit - expected blocked local-ahead branch"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+run_contains "sync_branch_restore_reason" "REASON=local_ahead_or_diverged" "$branch_restore_output"
+run_contains "sync_branch_restore_marker" "RESTORE_ORIGINAL_BRANCH=ok" "$branch_restore_output"
+branch_after_restore="$(git -C "$branch_restore_repo" rev-parse --abbrev-ref HEAD)"
+run_contains "sync_branch_restore_current_branch" "feature/start" "$branch_after_restore"
 
 set +e
 all_sync="$(bash "$SYNC_CMD" --repo-root "$hub_dir" --all 2>&1)"

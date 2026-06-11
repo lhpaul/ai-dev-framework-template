@@ -81,7 +81,7 @@ while IFS= read -r selected_repo; do
   fi
 
   printf '  GITHUB_REPO=%s\n' "$github_repo"
-  if ! pr_output="$(gh pr list --repo "$github_repo" --state open --json number,title,headRefName,baseRefName,isDraft,labels 2>&1)"; then
+  if ! pr_output="$(gh pr list --repo "$github_repo" --state open --limit 200 --json number,title,headRefName,baseRefName,isDraft,labels 2>&1)"; then
     printf '  STATUS=failed\n'
     printf '  REASON=remote_inspection_failed\n'
     printf '%s\n' "$pr_output" | sed 's/^/  gh: /'
