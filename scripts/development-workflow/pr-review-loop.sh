@@ -4123,10 +4123,13 @@ fi
 
 if [ "${#platforms[@]}" -gt 0 ]; then
   require_gh
-  cd "$repo_root"
+  cd "$repo_root" || exit 1
 
   if [ -z "$branch_name" ]; then
-    branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"
+    if ! branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"; then
+      echo "ERROR: could not resolve PR #$pr_number head branch." >&2
+      exit 1
+    fi
   fi
 fi
 

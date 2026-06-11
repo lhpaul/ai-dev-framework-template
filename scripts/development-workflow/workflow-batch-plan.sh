@@ -354,7 +354,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-cd "$repo_root"
+cd "$repo_root" || exit 1
 
 if [ "${#development_paths[@]}" -eq 0 ]; then
   if [ -d "docs/specs/developments" ]; then

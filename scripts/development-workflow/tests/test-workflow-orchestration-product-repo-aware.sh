@@ -100,10 +100,16 @@ workflow_hub:
     - name: admin-portal
       git_url: git@github.com:example/admin-portal.git
       default_branch: develop
+    - name: trunk-app
+      github_repo: example/trunk-app
+      default_branch: trunk
 YAML
 cat > "$hub_dir/.ai-dev-workflow.local.yaml" <<'YAML'
 checkout_root: ../products
 YAML
+trunk_product_dir="$TMP_ROOT/products/trunk-app"
+mkdir -p "$trunk_product_dir"
+git -C "$trunk_product_dir" init -q -b trunk
 
 echo ""
 echo "=== Workflow orchestration product repository awareness ==="
@@ -231,6 +237,14 @@ run_fails_contains \
     --repo example/mobile-app \
     --poll-interval 1 \
     --max-wait 2
+
+run_fails_contains \
+  "post_merge_cleanup_refuses_product_default_branch" \
+  "Refusing to delete protected branch 'trunk'." \
+  "$REPO_ROOT/scripts/development-workflow/post-merge-cleanup.sh" \
+    --repo-root "$hub_dir" \
+    --repo trunk-app \
+    trunk
 
 echo ""
 echo "Passed: $PASS_COUNT"

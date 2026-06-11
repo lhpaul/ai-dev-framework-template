@@ -54,7 +54,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 HUB_REPO_ROOT="$repo_root"
-cd "$HUB_REPO_ROOT"
+cd "$HUB_REPO_ROOT" || exit 1
 
 if [ -z "$TO_DELETE" ]; then
   TO_DELETE="$(git branch --show-current)"
@@ -62,9 +62,32 @@ if [ -z "$TO_DELETE" ]; then
     echo "Could not determine current branch (detached HEAD?). Pass the branch name to delete." >&2
     exit 2
   fi
-  if [ "$TO_DELETE" = "$DEVELOP_BRANCH" ]; then
-    echo "You are on '$DEVELOP_BRANCH'. Pass the merged branch name to delete, e.g. feature/my-feature." >&2
-    exit 2
+fi
+
+CLEANUP_REPO_ROOT="$repo_root"
+ACTION_REPOSITORY_KIND="hub_owned"
+ACTION_REPOSITORY="$(basename "$repo_root")"
+TARGET_GITHUB_REPO=""
+mode_context="$(workflow_repository_mode "$repo_root")"
+workflow_mode="$(workflow_context_value WORKFLOW_MODE "$mode_context")"
+branch_owner_kind="hub"
+
+case "$(branch_prefix "$TO_DELETE")" in
+  feature|fix|refactor|hotfix)
+    branch_owner_kind="implementation"
+    ;;
+esac
+
+if [ "$workflow_mode" = "workflow_hub" ] && { [ "$branch_owner_kind" = "implementation" ] || [ -n "$target_repo" ]; }; then
+  repo_context="$(workflow_validate_repository_context "$target_repo" "$repo_root" --require-local)"
+  CLEANUP_REPO_ROOT="$(workflow_context_value TARGET_LOCAL_PATH "$repo_context")"
+  DEVELOP_BRANCH="$(workflow_context_value TARGET_DEFAULT_BRANCH "$repo_context")"
+  ACTION_REPOSITORY_KIND="product_repo_owned"
+  ACTION_REPOSITORY="$(workflow_context_value TARGET_REPO_NAME "$repo_context")"
+  TARGET_GITHUB_REPO="$(workflow_github_repo_from_context "$repo_context")"
+  if [ -z "$CLEANUP_REPO_ROOT" ]; then
+    echo "ERROR: product repository local path is required for product repository cleanup in workflow_hub mode." >&2
+    exit 64
   fi
 fi
 
@@ -75,37 +98,13 @@ case "$TO_DELETE" in
     ;;
 esac
 
-CLEANUP_REPO_ROOT="$repo_root"
-ACTION_REPOSITORY_KIND="hub_owned"
-ACTION_REPOSITORY="$(basename "$repo_root")"
-TARGET_GITHUB_REPO=""
-
-case "$(branch_prefix "$TO_DELETE")" in
-  feature|fix|refactor|hotfix)
-    mode_context="$(workflow_repository_mode "$repo_root")"
-    workflow_mode="$(workflow_context_value WORKFLOW_MODE "$mode_context")"
-    if [ "$workflow_mode" = "workflow_hub" ]; then
-      repo_context="$(workflow_validate_repository_context "$target_repo" "$repo_root" --require-local)"
-      CLEANUP_REPO_ROOT="$(workflow_context_value TARGET_LOCAL_PATH "$repo_context")"
-      DEVELOP_BRANCH="$(workflow_context_value TARGET_DEFAULT_BRANCH "$repo_context")"
-      ACTION_REPOSITORY_KIND="product_repo_owned"
-      ACTION_REPOSITORY="$(workflow_context_value TARGET_REPO_NAME "$repo_context")"
-      TARGET_GITHUB_REPO="$(workflow_github_repo_from_context "$repo_context")"
-      if [ -z "$CLEANUP_REPO_ROOT" ]; then
-        echo "ERROR: product repository local path is required for implementation branch cleanup in workflow_hub mode." >&2
-        exit 64
-      fi
-    fi
-    ;;
-esac
-
 print_kv ACTION_REPOSITORY_KIND "$ACTION_REPOSITORY_KIND"
 print_kv ACTION_REPOSITORY "$ACTION_REPOSITORY"
 [ -n "$TARGET_GITHUB_REPO" ] && print_kv TARGET_GITHUB_REPO "$TARGET_GITHUB_REPO"
 print_kv CLEANUP_REPO_ROOT "$CLEANUP_REPO_ROOT"
 print_kv TRACKER_REPO_ROOT "$HUB_REPO_ROOT"
 
-cd "$CLEANUP_REPO_ROOT"
+cd "$CLEANUP_REPO_ROOT" || exit 1
 
 if ! git show-ref --quiet "refs/heads/$TO_DELETE"; then
   echo "Local branch '$TO_DELETE' does not exist." >&2
@@ -243,32 +242,33 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
     # whose linked issue is open; once closed the lookup silently fails).
     update_tracker_status_best_effort "$ISSUE_NUMBER" "Merged"
     # Close the issue when an implementation branch (feature/fix/hotfix/refactor) is merged.
-    if ISSUE_STATE=$(gh issue view "$ISSUE_NUMBER" --json state --jq '.state' 2>/dev/null); then
-      if [ "$ISSUE_STATE" = "OPEN" ]; then
-        # Find the merged PR for this branch.
-        if MERGED_PR=$(gh pr list --state merged --head "$TO_DELETE" --limit 1 --json number --jq '.[0].number // empty' 2>/dev/null); then
-          : # gh succeeded; MERGED_PR may still be empty if no matching PR exists
+    if ! ISSUE_STATE=$(gh issue view "$ISSUE_NUMBER" --json state --jq '.state'); then
+      echo "ERROR: could not query issue #$ISSUE_NUMBER (gh command failed)." >&2
+      exit 1
+    fi
+    if [ "$ISSUE_STATE" = "OPEN" ]; then
+      # Find the merged PR for this branch.
+      if MERGED_PR=$(gh pr list --state merged --head "$TO_DELETE" --limit 1 --json number --jq '.[0].number // empty'); then
+        : # gh succeeded; MERGED_PR may still be empty if no matching PR exists
+      else
+        echo "ERROR: could not query merged PRs for branch '$TO_DELETE' (gh command failed)." >&2
+        exit 1
+      fi
+      if [ -n "$MERGED_PR" ]; then
+        CLOSE_COMMENT="Closed by PR #${MERGED_PR}."
+        echo "Closing issue #$ISSUE_NUMBER..."
+        if gh issue close "$ISSUE_NUMBER" --comment "$CLOSE_COMMENT"; then
+          echo "Reasserting issue #$ISSUE_NUMBER tracker status as Merged after close..."
+          update_tracker_status_best_effort "$ISSUE_NUMBER" "Merged" "" "allow-backward"
         else
-          echo "Warning: could not query merged PRs for branch '$TO_DELETE' (gh command failed). Leaving issue #$ISSUE_NUMBER open."
-          MERGED_PR=""
-        fi
-        if [ -n "$MERGED_PR" ]; then
-          CLOSE_COMMENT="Closed by PR #${MERGED_PR}."
-          echo "Closing issue #$ISSUE_NUMBER..."
-          if gh issue close "$ISSUE_NUMBER" --comment "$CLOSE_COMMENT"; then
-            echo "Reasserting issue #$ISSUE_NUMBER tracker status as Merged after close..."
-            update_tracker_status_best_effort "$ISSUE_NUMBER" "Merged" "" "allow-backward"
-          else
-            echo "Warning: could not close issue #$ISSUE_NUMBER"
-          fi
-        else
-          echo "No merged PR found for branch '$TO_DELETE'; leaving issue #$ISSUE_NUMBER open."
+          echo "ERROR: could not close issue #$ISSUE_NUMBER" >&2
+          exit 1
         fi
       else
-        echo "Issue #$ISSUE_NUMBER is already $ISSUE_STATE, skipping close."
+        echo "No merged PR found for branch '$TO_DELETE'; leaving issue #$ISSUE_NUMBER open."
       fi
     else
-      echo "Warning: could not query issue #$ISSUE_NUMBER (gh command failed). Skipping issue close."
+      echo "Issue #$ISSUE_NUMBER is already $ISSUE_STATE, skipping close."
     fi
   elif [ "$BRANCH_TYPE" = "spec" ]; then
     # spec/* branches reference the issue but must not close it — the issue stays
