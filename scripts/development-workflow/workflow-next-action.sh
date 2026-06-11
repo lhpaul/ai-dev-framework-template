@@ -147,6 +147,17 @@ github_repo_args_for_action() {
 }
 
 if [ -n "$pr_number" ]; then
+  if [ "$workflow_mode" = "workflow_hub" ] && [ -z "$target_repo" ]; then
+    print_kv WORKFLOW_MODE "$workflow_mode"
+    print_kv ACTION_REPOSITORY_KIND "repository_selection_required"
+    print_kv ACTION_REPOSITORY ""
+    print_kv TARGET "pr:$pr_number"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv REVIEW_AGENT "none"
+    print_kv NEXT_ACTION "resolve-repository-selection"
+    print_kv ERROR "workflow_hub PR lookup requires --repo because PR numbers are repository-scoped."
+    exit 0
+  fi
   require_gh
   pr_view_args=()
   if [ "$workflow_mode" = "workflow_hub" ] && [ -n "$target_repo" ]; then

@@ -169,6 +169,14 @@ branch_resolution_output="$(
 run_contains "workflow_branch_unresolved_repo_action" "NEXT_ACTION=resolve-repository-selection" "$branch_resolution_output"
 run_contains "workflow_branch_unresolved_repo_context" "ACTION_REPOSITORY_KIND=repository_resolution_failed" "$branch_resolution_output"
 
+pr_selection_output="$(
+  WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo-root "$hub_dir" \
+    --pr 123
+)"
+run_contains "workflow_pr_requires_repo_selection" "NEXT_ACTION=resolve-repository-selection" "$pr_selection_output"
+run_contains "workflow_pr_selection_required_context" "ACTION_REPOSITORY_KIND=repository_selection_required" "$pr_selection_output"
+
 run_fails_contains \
   "workflow_next_action_repo_requires_value" \
   "--repo requires a value." \
