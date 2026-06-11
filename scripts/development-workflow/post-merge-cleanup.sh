@@ -82,6 +82,7 @@ TARGET_GITHUB_REPO=""
 mode_context="$(workflow_repository_mode "$repo_root")"
 workflow_mode="$(workflow_context_value WORKFLOW_MODE "$mode_context")"
 branch_owner_kind="hub"
+selected_product_default_branch=""
 
 case "$(branch_prefix "$TO_DELETE")" in
   feature|fix|refactor|hotfix)
@@ -89,8 +90,23 @@ case "$(branch_prefix "$TO_DELETE")" in
     ;;
 esac
 
-if [ "$workflow_mode" = "workflow_hub" ] && { [ "$branch_owner_kind" = "implementation" ] || [ -n "$target_repo" ]; }; then
-  repo_context="$(workflow_validate_repository_context "$target_repo" "$repo_root" --require-local)"
+if [ "$workflow_mode" = "workflow_hub" ] && [ -n "$target_repo" ]; then
+  selected_repo_context="$(workflow_validate_repository_context "$target_repo" "$repo_root" --require-local)"
+  selected_product_default_branch="$(workflow_context_value TARGET_DEFAULT_BRANCH "$selected_repo_context")"
+  if [ -z "$selected_product_default_branch" ]; then
+    echo "ERROR: product repository default branch is required for workflow_hub cleanup." >&2
+    exit 64
+  fi
+else
+  selected_repo_context=""
+fi
+
+if [ "$workflow_mode" = "workflow_hub" ] && [ "$branch_owner_kind" = "implementation" ]; then
+  if [ -n "$selected_repo_context" ]; then
+    repo_context="$selected_repo_context"
+  else
+    repo_context="$(workflow_validate_repository_context "$target_repo" "$repo_root" --require-local)"
+  fi
   CLEANUP_REPO_ROOT="$(workflow_context_value TARGET_LOCAL_PATH "$repo_context")"
   DEVELOP_BRANCH="$(workflow_context_value TARGET_DEFAULT_BRANCH "$repo_context")"
   if [ -z "$DEVELOP_BRANCH" ]; then
@@ -107,7 +123,7 @@ if [ "$workflow_mode" = "workflow_hub" ] && { [ "$branch_owner_kind" = "implemen
 fi
 
 case "$TO_DELETE" in
-  "$DEVELOP_BRANCH"|main|master)
+  "$DEVELOP_BRANCH"|"$selected_product_default_branch"|main|master)
     echo "Refusing to delete protected branch '$TO_DELETE'." >&2
     exit 2
     ;;

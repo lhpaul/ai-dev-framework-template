@@ -101,17 +101,20 @@ if [ "$workflow_mode" = "workflow_hub" ]; then
   if [ -n "$repo_context" ]; then
     print_kv ACTION_REPOSITORY_KIND "product_repo_owned"
     print_kv ACTION_REPOSITORY "$target_repo_name"
+    print_kv ACTION_GITHUB_REPO "$target_github_repo"
     print_kv TARGET_GITHUB_REPO "$target_github_repo"
     print_kv TARGET_LOCAL_PATH "$target_local_path"
     print_kv TARGET_DEFAULT_BRANCH "$target_default_branch"
   else
     print_kv ACTION_REPOSITORY_KIND "selection_missing"
     print_kv ACTION_REPOSITORY ""
+    print_kv ACTION_GITHUB_REPO ""
     echo "NOTE: product repository selection is required for product-owned implementation branch and PR inspection."
   fi
 else
   print_kv ACTION_REPOSITORY_KIND "single_repo_context"
   print_kv ACTION_REPOSITORY "$target_repo_name"
+  print_kv ACTION_GITHUB_REPO "$target_github_repo"
   print_kv TARGET_GITHUB_REPO "$target_github_repo"
 fi
 echo

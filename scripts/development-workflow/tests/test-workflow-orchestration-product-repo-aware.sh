@@ -87,6 +87,7 @@ single_dev="$(make_development "$single_dir")"
 
 hub_dir="$TMP_ROOT/hub"
 mkdir -p "$hub_dir"
+git -C "$hub_dir" init -q -b main
 hub_dev="$(make_development "$hub_dir")"
 cat > "$hub_dir/.ai-dev-workflow.yaml" <<'YAML'
 schema_version: 2
@@ -222,6 +223,10 @@ case "$1" in
       printf '{"statusCheckRollup":[]}\n'
       exit 0
     fi
+    if [ "$2" = "list" ]; then
+      printf '[]\n'
+      exit 0
+    fi
     ;;
   repo)
     if [ "$2" = "view" ]; then
@@ -235,6 +240,13 @@ echo "unexpected gh invocation: $*" >&2
 exit 1
 SH
 chmod +x "$stub_bin/gh"
+
+discover_output="$(
+  PATH="$stub_bin:$PATH" "$REPO_ROOT/scripts/development-workflow/discover-workflow-state.sh" \
+    --repo-root "$hub_dir" \
+    --repo mobile-app
+)"
+run_contains "discover_state_emits_action_github_repo" "ACTION_GITHUB_REPO=example/mobile-app" "$discover_output"
 
 ci_output="$(
   PATH="$stub_bin:$PATH" "$REPO_ROOT/scripts/development-workflow/pr-ci-loop.sh" \
