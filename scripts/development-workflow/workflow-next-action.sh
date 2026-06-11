@@ -32,25 +32,39 @@ development_path=""
 target_repo=""
 repo_root="$(workflow_repo_root)"
 
+require_option_value() {
+  local option="$1"
+  if [ "$#" -lt 2 ] || [ -z "${2:-}" ]; then
+    echo "$option requires a value." >&2
+    usage >&2
+    exit 64
+  fi
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --branch)
+      require_option_value "$@"
       branch_name="$2"
       shift 2
       ;;
     --pr)
+      require_option_value "$@"
       pr_number="$2"
       shift 2
       ;;
     --development)
+      require_option_value "$@"
       development_path="$2"
       shift 2
       ;;
     --repo)
+      require_option_value "$@"
       target_repo="$2"
       shift 2
       ;;
     --repo-root)
+      require_option_value "$@"
       repo_root="$2"
       shift 2
       ;;

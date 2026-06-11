@@ -160,6 +160,18 @@ run_fails_contains \
     --repo-root "$hub_dir" \
     --development "$hub_dev"
 
+run_fails_contains \
+  "workflow_next_action_repo_requires_value" \
+  "--repo requires a value." \
+  "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo
+
+run_fails_contains \
+  "workflow_next_action_repo_root_requires_value" \
+  "--repo-root requires a value." \
+  "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo-root
+
 batch_output="$(
   WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-batch-plan.sh" \
     --repo-root "$hub_dir" \
