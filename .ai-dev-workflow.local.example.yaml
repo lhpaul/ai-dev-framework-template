@@ -12,11 +12,17 @@ checkout_root: ../repos
 product_repos:
   - name: mobile-app
     local_path: ../repos/mobile-app
-    private_key_path: ~/.config/example/mobile-app-github-app.pem
-    secret_ref: op://ExampleVault/mobile-app-github-app/private-key
+    github_app:
+      private_key_path: ~/.config/example/mobile-app-github-app.pem
+      secret_ref: op://ExampleVault/mobile-app-github-app/private-key
   - name: admin-portal
     # With checkout_root above, this defaults to ../repos/admin-portal.
-    secret_ref: op://ExampleVault/admin-portal-github-app/private-key
+    github_app:
+      secret_ref: op://ExampleVault/admin-portal-github-app/private-key
+
+# Compatibility: product_repos[].private_key_path and
+# product_repos[].secret_ref remain accepted as local-only aliases. Prefer the
+# nested github_app form for new setup.
 
 # Local reviewer/tool overrides. These are developer-specific and should not be
 # committed to the shared workflow config.

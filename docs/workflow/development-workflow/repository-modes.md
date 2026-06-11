@@ -274,9 +274,12 @@ checkout_root: ../repos
 product_repos:
   - name: mobile-app
     local_path: ../repos/mobile-app
-    secret_ref: op://ExampleVault/mobile-app-github-app/private-key
+    github_app:
+      private_key_path: ~/.config/example/mobile-app-github-app.pem
+      secret_ref: op://ExampleVault/mobile-app-github-app/private-key
   - name: admin-portal
-    secret_ref: op://ExampleVault/admin-portal-github-app/private-key
+    github_app:
+      secret_ref: op://ExampleVault/admin-portal-github-app/private-key
 
 review:
   on_draft:
@@ -296,6 +299,12 @@ For a hub target, local path resolution uses this order:
 Local config is optional for `single_repo` mode. It is required only when a
 workflow hub action needs a local product checkout path that cannot be derived
 safely.
+
+Workflow-hub product PR authentication uses the same split: shared config may
+store non-secret GitHub App IDs and installation IDs, while private key paths
+and secret-manager references stay local-only. See
+[`integrations/workflow-hub-github-app.md`](integrations/workflow-hub-github-app.md)
+for the setup guide and dry-run helper commands.
 
 ### Compatibility And Precedence
 
@@ -337,11 +346,8 @@ file-specific error.
 
 This note does not:
 
-- Route PRs across repositories.
-- Change existing agent prompts or command wrappers.
 - Migrate existing downstream repositories.
-- Define secret storage or authentication beyond local secret-reference
-  placement.
+- Define a required secret manager or store secret values.
 
 Those behaviors belong to later workflow-hub implementation items. Until those
 items land, missing mode remains `single_repo` and existing repositories keep the
