@@ -214,6 +214,34 @@ run_fails_contains \
   "missing_private_key" \
   bash "$TOKEN_HELPER" --repo-root "$missing_key_dir" --repo mobile-app --print-token
 
+unreadable_key_dir="$(fixture_dir unreadable-key)"
+unreadable_key="$unreadable_key_dir/mobile-app.pem"
+make_private_key "$unreadable_key"
+chmod 000 "$unreadable_key"
+cat > "$unreadable_key_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      github_app:
+        app_id: "12345"
+        installation_id: "999"
+YAML
+cat > "$unreadable_key_dir/.ai-dev-workflow.local.yaml" <<YAML
+product_repos:
+  - name: mobile-app
+    github_app:
+      private_key_path: "$unreadable_key"
+YAML
+run_fails_contains \
+  "token_helper_unreadable_private_key" \
+  "configured private key path is not readable" \
+  bash "$TOKEN_HELPER" --repo-root "$unreadable_key_dir" --repo mobile-app --print-token
+chmod 600 "$unreadable_key"
+
 secret_ref_dir="$(fixture_dir secret-ref)"
 cat > "$secret_ref_dir/.ai-dev-workflow.yaml" <<'YAML'
 schema_version: 2
@@ -237,6 +265,30 @@ run_fails_contains \
   "token_helper_secret_ref_without_resolver_command" \
   "WORKFLOW_GITHUB_APP_SECRET_REF_COMMAND is not set" \
   bash "$TOKEN_HELPER" --repo-root "$secret_ref_dir" --repo mobile-app --print-token
+
+secret_ref_fail_stub="$TMP_ROOT/secret-ref-fail.sh"
+cat > "$secret_ref_fail_stub" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+exit 42
+SH
+chmod +x "$secret_ref_fail_stub"
+run_fails_contains \
+  "token_helper_secret_ref_resolver_failure" \
+  "secret_ref resolver command failed" \
+  env WORKFLOW_GITHUB_APP_SECRET_REF_COMMAND="$secret_ref_fail_stub" bash "$TOKEN_HELPER" --repo-root "$secret_ref_dir" --repo mobile-app --print-token
+
+secret_ref_empty_stub="$TMP_ROOT/secret-ref-empty.sh"
+cat > "$secret_ref_empty_stub" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf ''
+SH
+chmod +x "$secret_ref_empty_stub"
+run_fails_contains \
+  "token_helper_secret_ref_empty_result" \
+  "secret_ref resolver returned an empty private key" \
+  env WORKFLOW_GITHUB_APP_SECRET_REF_COMMAND="$secret_ref_empty_stub" bash "$TOKEN_HELPER" --repo-root "$secret_ref_dir" --repo mobile-app --print-token
 
 missing_installation_dir="$(fixture_dir missing-installation)"
 cat > "$missing_installation_dir/.ai-dev-workflow.yaml" <<'YAML'
@@ -292,6 +344,11 @@ token_stdout="$(
 )"
 run_equals "token_helper_prints_only_token" "fixture-installation-token" "$token_stdout"
 run_not_contains "token_helper_stderr_no_token" "fixture-installation-token" "$(cat "$TMP_ROOT/token.stderr")"
+token_tmp_root="$TMP_ROOT/token-tmp"
+mkdir -p "$token_tmp_root"
+TMPDIR="$token_tmp_root" WORKFLOW_GITHUB_APP_TOKEN_EXCHANGE_CMD="$token_exchange_stub" \
+  bash "$TOKEN_HELPER" --repo-root "$hub_dir" --repo mobile-app --print-token > "$TMP_ROOT/token-cleanup.stdout"
+run_equals "token_helper_cleans_temp_dir" "0" "$(find "$token_tmp_root" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')"
 
 stub_bin="$TMP_ROOT/bin"
 mkdir -p "$stub_bin"

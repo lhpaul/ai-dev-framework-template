@@ -2,7 +2,18 @@
 # github-app-token.sh - resolve workflow-hub GitHub App auth for product repos.
 
 set -euo pipefail
-trap 'case $? in 141) exit 0 ;; *) exit $? ;; esac' EXIT
+TOKEN_TMP_DIR=""
+_github_app_token_exit() {
+  local status=$?
+  if [ -n "$TOKEN_TMP_DIR" ]; then
+    rm -rf "$TOKEN_TMP_DIR"
+  fi
+  case "$status" in
+    141) exit 0 ;;
+    *)   exit "$status" ;;
+  esac
+}
+trap _github_app_token_exit EXIT
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../.." && pwd)"
@@ -99,17 +110,13 @@ exchange_token() {
   local installation_id="$2"
   local private_key_path="$3"
   local secret_ref="$4"
-  local tmp_dir jwt response token
+  local jwt response token
 
-  tmp_dir="$(mktemp -d)"
-  _cleanup_token_tmp() {
-    rm -rf "$tmp_dir"
-  }
-  trap _cleanup_token_tmp EXIT
+  TOKEN_TMP_DIR="$(mktemp -d)"
 
   local key_file
-  key_file="$(load_private_key_file "$private_key_path" "$secret_ref" "$tmp_dir")"
-  jwt="$(create_jwt "$app_id" "$key_file" "$tmp_dir")"
+  key_file="$(load_private_key_file "$private_key_path" "$secret_ref" "$TOKEN_TMP_DIR")"
+  jwt="$(create_jwt "$app_id" "$key_file" "$TOKEN_TMP_DIR")"
 
   if [ -n "${WORKFLOW_GITHUB_APP_TOKEN_EXCHANGE_CMD:-}" ]; then
     if ! token="$("$WORKFLOW_GITHUB_APP_TOKEN_EXCHANGE_CMD" "$app_id" "$installation_id" "$jwt")"; then
