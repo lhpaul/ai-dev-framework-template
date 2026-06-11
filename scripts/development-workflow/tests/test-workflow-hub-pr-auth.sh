@@ -154,6 +154,31 @@ run_contains "admin_dry_run_targets_admin" "TARGET_REPO=example/admin-portal" "$
 run_not_contains "dry_run_redacts_token" "fixture-installation-token" "$mobile_dry_run"
 run_contains "dry_run_command_shape" "GH_TOKEN=<redacted> gh pr create --repo 'example/mobile-app'" "$mobile_dry_run"
 
+non_github_dir="$(fixture_dir non-github)"
+cat > "$non_github_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: internal-app
+      git_url: ssh://git@example.com/internal-app.git
+YAML
+run_fails_contains \
+  "product_pr_non_github_url_fails" \
+  "does not resolve to a GitHub owner/repo slug" \
+  bash "$PR_HELPER" --repo-root "$non_github_dir" --repo internal-app --base main --head feature/test --title "Internal PR" --body-file "$body_file" --dry-run
+
+single_repo_dir="$(fixture_dir single-repo)"
+cat > "$single_repo_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: single_repo
+YAML
+run_fails_contains \
+  "product_pr_single_repo_mode_fails" \
+  "product PR operations require workflow_hub mode" \
+  bash "$PR_HELPER" --repo-root "$single_repo_dir" --repo mobile-app --base main --head feature/test --title "Mobile PR" --body-file "$body_file" --dry-run
+
 missing_app_dir="$(fixture_dir missing-app)"
 cat > "$missing_app_dir/.ai-dev-workflow.yaml" <<'YAML'
 schema_version: 2
@@ -188,6 +213,30 @@ run_fails_contains \
   "token_helper_missing_private_key" \
   "missing_private_key" \
   bash "$TOKEN_HELPER" --repo-root "$missing_key_dir" --repo mobile-app --print-token
+
+secret_ref_dir="$(fixture_dir secret-ref)"
+cat > "$secret_ref_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      github_app:
+        app_id: "12345"
+        installation_id: "999"
+YAML
+cat > "$secret_ref_dir/.ai-dev-workflow.local.yaml" <<'YAML'
+product_repos:
+  - name: mobile-app
+    github_app:
+      secret_ref: op://ExampleVault/mobile-app-github-app/private-key
+YAML
+run_fails_contains \
+  "token_helper_secret_ref_without_resolver_command" \
+  "WORKFLOW_GITHUB_APP_SECRET_REF_COMMAND is not set" \
+  bash "$TOKEN_HELPER" --repo-root "$secret_ref_dir" --repo mobile-app --print-token
 
 missing_installation_dir="$(fixture_dir missing-installation)"
 cat > "$missing_installation_dir/.ai-dev-workflow.yaml" <<'YAML'
