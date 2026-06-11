@@ -103,6 +103,11 @@ hub_github_repo_from_url() {
       value=""
       ;;
   esac
+  case "$value" in
+    */*/*|/*|*/|'')
+      value=""
+      ;;
+  esac
   printf '%s\n' "$value"
 }
 

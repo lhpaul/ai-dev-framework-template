@@ -174,6 +174,18 @@ workflow_hub:
     - name: git-url-app
       git_url: git@github.com:example/git-url-app.git
       default_branch: main
+    - name: ssh-url-app
+      git_url: ssh://git@github.com/example/ssh-url-app.git
+      default_branch: main
+    - name: https-url-app
+      git_url: https://github.com/example/https-url-app.git
+      default_branch: main
+    - name: extra-path-url-app
+      git_url: https://github.com/example/extra-path-url-app/extra
+      default_branch: main
+    - name: port-url-app
+      git_url: ssh://git@github.com:22/example/port-url-app.git
+      default_branch: main
     - name: malformed-pr-app
       github_repo: example/malformed-pr-app
       default_branch: main
@@ -311,7 +323,7 @@ if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
     exit 1
   fi
   case "$repo" in
-    example/clean-app|example/git-url-app)
+    example/clean-app|example/git-url-app|example/ssh-url-app|example/https-url-app)
       printf '[{"number":7,"title":"Ready PR","headRefName":"feature/test","baseRefName":"main","isDraft":false,"labels":[{"name":"ready-for-human-review"}]}]\n'
       ;;
     example/malformed-pr-app)
@@ -335,6 +347,12 @@ run_contains "prs_uses_github_repo" "GITHUB_REPO=example/clean-app" "$prs_output
 
 git_url_prs="$(PATH="$mock_bin:$PATH" bash "$PRS_CMD" --repo-root "$hub_dir" --repo git-url-app)"
 run_contains "prs_git_url_slug" "GITHUB_REPO=example/git-url-app" "$git_url_prs"
+ssh_url_prs="$(PATH="$mock_bin:$PATH" bash "$PRS_CMD" --repo-root "$hub_dir" --repo ssh-url-app)"
+run_contains "prs_ssh_url_slug" "GITHUB_REPO=example/ssh-url-app" "$ssh_url_prs"
+https_url_prs="$(PATH="$mock_bin:$PATH" bash "$PRS_CMD" --repo-root "$hub_dir" --repo https-url-app)"
+run_contains "prs_https_url_slug" "GITHUB_REPO=example/https-url-app" "$https_url_prs"
+run_fails_contains "prs_extra_path_url_fails" "REASON=no_github_repo_slug" env PATH="$mock_bin:$PATH" bash "$PRS_CMD" --repo-root "$hub_dir" --repo extra-path-url-app
+run_fails_contains "prs_port_url_fails" "REASON=no_github_repo_slug" env PATH="$mock_bin:$PATH" bash "$PRS_CMD" --repo-root "$hub_dir" --repo port-url-app
 set +e
 malformed_prs="$(PATH="$mock_bin:$PATH" bash "$PRS_CMD" --repo-root "$hub_dir" --repo malformed-pr-app 2>&1)"
 malformed_prs_code=$?
