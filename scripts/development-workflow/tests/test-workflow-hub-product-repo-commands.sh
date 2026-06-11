@@ -255,7 +255,6 @@ else
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 run_contains "sync_branch_restore_reason" "REASON=local_ahead_or_diverged" "$branch_restore_output"
-run_contains "sync_branch_restore_marker" "RESTORE_ORIGINAL_BRANCH=ok" "$branch_restore_output"
 branch_after_restore="$(git -C "$branch_restore_repo" rev-parse --abbrev-ref HEAD)"
 run_contains "sync_branch_restore_current_branch" "feature/start" "$branch_after_restore"
 set +e
@@ -270,7 +269,6 @@ else
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 run_contains "sync_fetch_failure_reason" "REASON=fetch_failed" "$fetch_fail_output"
-run_contains "sync_fetch_failure_restore_marker" "RESTORE_ORIGINAL_BRANCH=ok" "$fetch_fail_output"
 branch_after_fetch_failure="$(git -C "$fetch_fail_repo" rev-parse --abbrev-ref HEAD)"
 run_contains "sync_fetch_failure_current_branch" "feature/start" "$branch_after_fetch_failure"
 
