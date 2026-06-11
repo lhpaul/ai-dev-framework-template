@@ -21,6 +21,7 @@ USAGE
 REPO_NAME=""
 ALL=false
 REPO_ROOT="$HUB_REPO_ROOT"
+PR_LIST_LIMIT=1000
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -81,7 +82,7 @@ while IFS= read -r selected_repo; do
   fi
 
   printf '  GITHUB_REPO=%s\n' "$github_repo"
-  if ! pr_output="$(gh pr list --repo "$github_repo" --state open --limit 200 --json number,title,headRefName,baseRefName,isDraft,labels 2>&1)"; then
+  if ! pr_output="$(gh pr list --repo "$github_repo" --state open --limit "$PR_LIST_LIMIT" --json number,title,headRefName,baseRefName,isDraft,labels 2>&1)"; then
     printf '  STATUS=failed\n'
     printf '  REASON=remote_inspection_failed\n'
     printf '%s\n' "$pr_output" | sed 's/^/  gh: /'
@@ -90,16 +91,24 @@ while IFS= read -r selected_repo; do
     continue
   fi
 
-  printf '  STATUS=clean\n'
-  clean_count=$((clean_count + 1))
-  printf '%s' "$pr_output" | jq -r '
+  if ! formatted_prs="$(printf '%s' "$pr_output" | jq -r '
     if length == 0 then
       "  PRS=none"
     else
       .[] |
       "  PR #\(.number) title=\(.title) head=\(.headRefName) base=\(.baseRefName) draft=\(.isDraft) labels=\([.labels[].name] | join(","))"
     end
-  '
+  ' 2>/dev/null)"; then
+    printf '  STATUS=failed\n'
+    printf '  REASON=pr_json_parse_failed\n'
+    failed_count=$((failed_count + 1))
+    exit_code=1
+    continue
+  fi
+
+  printf '  STATUS=clean\n'
+  clean_count=$((clean_count + 1))
+  printf '%s\n' "$formatted_prs"
 done <<< "$selected_repos"
 
 hub_print_summary 0 0 "$clean_count" 0 0 0 "$failed_count"

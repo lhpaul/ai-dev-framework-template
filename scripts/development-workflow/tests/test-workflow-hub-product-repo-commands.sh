@@ -174,6 +174,9 @@ workflow_hub:
     - name: git-url-app
       git_url: git@github.com:example/git-url-app.git
       default_branch: main
+    - name: malformed-pr-app
+      github_repo: example/malformed-pr-app
+      default_branch: main
     - name: internal-app
       git_url: ssh://git@example.com/internal-app.git
       default_branch: main
@@ -287,10 +290,15 @@ cat > "$mock_bin/gh" <<'MOCKGH'
 set -euo pipefail
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
   repo=""
+  has_limit=false
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --repo)
         repo="$2"
+        shift 2
+        ;;
+      --limit)
+        has_limit=true
         shift 2
         ;;
       *)
@@ -298,9 +306,16 @@ if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
         ;;
     esac
   done
+  if [ "$has_limit" != "true" ]; then
+    printf 'missing --limit\n' >&2
+    exit 1
+  fi
   case "$repo" in
     example/clean-app|example/git-url-app)
       printf '[{"number":7,"title":"Ready PR","headRefName":"feature/test","baseRefName":"main","isDraft":false,"labels":[{"name":"ready-for-human-review"}]}]\n'
+      ;;
+    example/malformed-pr-app)
+      printf '{not-json\n'
       ;;
     *)
       printf 'mock remote failure for %s\n' "$repo" >&2
@@ -320,6 +335,19 @@ run_contains "prs_uses_github_repo" "GITHUB_REPO=example/clean-app" "$prs_output
 
 git_url_prs="$(PATH="$mock_bin:$PATH" bash "$PRS_CMD" --repo-root "$hub_dir" --repo git-url-app)"
 run_contains "prs_git_url_slug" "GITHUB_REPO=example/git-url-app" "$git_url_prs"
+set +e
+malformed_prs="$(PATH="$mock_bin:$PATH" bash "$PRS_CMD" --repo-root "$hub_dir" --repo malformed-pr-app 2>&1)"
+malformed_prs_code=$?
+set -e
+if [ "$malformed_prs_code" -ne 0 ]; then
+  echo "PASS: prs_malformed_json_exit"
+  PASS_COUNT=$((PASS_COUNT + 1))
+else
+  echo "FAIL: prs_malformed_json_exit - expected non-zero for malformed JSON"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+run_contains "prs_malformed_json_reason" "REASON=pr_json_parse_failed" "$malformed_prs"
+run_contains "prs_malformed_json_summary" "SUMMARY" "$malformed_prs"
 run_fails_contains "prs_non_github_url_fails" "REASON=no_github_repo_slug" env PATH="$mock_bin:$PATH" bash "$PRS_CMD" --repo-root "$hub_dir" --repo internal-app
 
 printf '\nPassed: %s\nFailed: %s\n' "$PASS_COUNT" "$FAIL_COUNT"
