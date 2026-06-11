@@ -240,6 +240,14 @@ product repository selection rule, and PR ownership model. When no mode is
 declared, repositories are interpreted as `single_repo` and keep the current
 single-repository behavior.
 
+In `workflow_hub` mode, orchestration scripts keep tracker, spec, and plan state
+in the hub while routing implementation branch/PR inspection, reviewer loops, CI
+loops, and implementation cleanup to the selected product repository. Use
+`--repo <name>` with hub-mode discovery, next-action, batch-planning, and cleanup
+commands when a product implementation action is involved. Reviewer and CI loops
+also accept `--repo <owner/repo>` or `--product-repo <name>` for implementation
+PRs outside the hub.
+
 Role-specific skeletons are inspectable under the template root:
 
 - `template/workflow-hub/` lists hub-owned protocols, scripts, agents,
@@ -435,6 +443,10 @@ template:
 Important implementation notes:
 
 - Repository mode fields are `mode`, `workflow_hub.product_repos[]`, and `product_repo.workflow_hub`. Shared product repository entries may contain stable non-secret identity and metadata such as `name`, `github_repo` or `git_url`, `default_branch`, `role`, `scope`, `tracker` hints, and non-secret app identifiers. Local checkout paths, private key paths, secret values, and machine-specific tool settings belong only in `.ai-dev-workflow.local.yaml`. See [`repository-modes.md`](repository-modes.md) for examples and validation commands.
+- Product-repository-aware orchestration scripts emit ownership fields such as
+  `WORKFLOW_MODE`, `ACTION_REPOSITORY_KIND`, `ACTION_REPOSITORY`, and
+  `ACTION_GITHUB_REPO` so orchestrators can distinguish hub-owned planning work
+  from product-owned implementation work.
 - `sync-manifest.yaml` includes informational `mode_scope` metadata:
   `shared`, `hub_only`, and `product_repo_injection`. Current sync-template
   readers still use the existing manifest categories; mode-aware sync

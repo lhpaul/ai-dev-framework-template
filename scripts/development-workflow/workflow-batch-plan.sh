@@ -9,7 +9,7 @@ source "$SCRIPT_DIR/workflow-lib.sh"
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/development-workflow/workflow-batch-plan.sh [development-path ...]
+  ./scripts/development-workflow/workflow-batch-plan.sh [--repo <name>] [--repo-root <path>] [development-path ...]
 
 Classifies development folders into batch-planning candidates for the batch
 orchestrator. If no paths are given, scans docs/specs/developments/*.
@@ -329,23 +329,53 @@ extract_github_issue_number() {
   printf '%s' "${issue_number:-}"
 }
 
-cd_workflow_repo_root
+target_repo=""
+repo_root="$(workflow_repo_root)"
+development_paths=()
 
-if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
-  usage
-  exit 0
-fi
+option_value_or_exit() {
+  local option="$1"
+  local value="${2:-}"
+  if [ -z "$value" ] || [[ "$value" == --* ]]; then
+    echo "$option requires a value." >&2
+    usage >&2
+    exit 64
+  fi
+  printf '%s\n' "$value"
+}
 
-if [ "$#" -gt 0 ]; then
-  development_paths=("$@")
-else
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --repo)
+      option="$1"
+      shift
+      target_repo="$(option_value_or_exit "$option" "${1:-}")"
+      shift
+      ;;
+    --repo-root)
+      option="$1"
+      shift
+      repo_root="$(option_value_or_exit "$option" "${1:-}")"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      development_paths+=("$1")
+      shift
+      ;;
+  esac
+done
+
+cd "$repo_root" || exit 1
+
+if [ "${#development_paths[@]}" -eq 0 ]; then
   if [ -d "docs/specs/developments" ]; then
-    development_paths=()
     while IFS= read -r path; do
       development_paths+=("$path")
     done < <(find "docs/specs/developments" -mindepth 1 -maxdepth 1 -type d | sort)
-  else
-    development_paths=()
   fi
 fi
 
@@ -419,7 +449,9 @@ for development_path in "${development_paths[@]}"; do
     tool_fix_files="$(printf '%s\n' "$tool_fix_output" | sed -n '2p')"
   fi
 
-  if ! next_action_output="$("$SCRIPT_DIR/workflow-next-action.sh" --development "$development_path" 2>&1)"; then
+  next_action_args=(--development "$development_path" --repo-root "$repo_root")
+  [ -n "$target_repo" ] && next_action_args+=(--repo "$target_repo")
+  if ! next_action_output="$("$SCRIPT_DIR/workflow-next-action.sh" "${next_action_args[@]}" 2>&1)"; then
     # next-action failed (e.g., no merged spec/plan PR yet).  Emit an abbreviated
     # block so the orchestrator still sees TOOL_FIX for this folder.
     echo "Skipping $development_path: $next_action_output" >&2
@@ -435,11 +467,21 @@ for development_path in "${development_paths[@]}"; do
   status=""
   next_action=""
   linear_issue=""
+  workflow_mode=""
+  action_repository_kind=""
+  action_repository=""
+  action_github_repo=""
+  action_local_path=""
   while IFS='=' read -r key value; do
     case "$key" in
       STATUS) status="$value" ;;
       NEXT_ACTION) next_action="$value" ;;
       LINEAR_ISSUE) linear_issue="$value" ;;
+      WORKFLOW_MODE) workflow_mode="$value" ;;
+      ACTION_REPOSITORY_KIND) action_repository_kind="$value" ;;
+      ACTION_REPOSITORY) action_repository="$value" ;;
+      ACTION_GITHUB_REPO) action_github_repo="$value" ;;
+      ACTION_LOCAL_PATH) action_local_path="$value" ;;
     esac
   done <<< "$next_action_output"
 
@@ -470,6 +512,11 @@ for development_path in "${development_paths[@]}"; do
   [ -n "$linear_issue" ] && print_kv LINEAR_ISSUE "$linear_issue"
   print_kv STATUS "$status"
   print_kv NEXT_ACTION "$next_action"
+  [ -n "$workflow_mode" ] && print_kv WORKFLOW_MODE "$workflow_mode"
+  [ -n "$action_repository_kind" ] && print_kv ACTION_REPOSITORY_KIND "$action_repository_kind"
+  [ -n "$action_repository" ] && print_kv ACTION_REPOSITORY "$action_repository"
+  [ -n "$action_github_repo" ] && print_kv ACTION_GITHUB_REPO "$action_github_repo"
+  [ -n "$action_local_path" ] && print_kv ACTION_LOCAL_PATH "$action_local_path"
   print_kv BATCH_HINT "$(batch_hint_for_action "$next_action")"
   print_kv PARALLEL_SAFE "$(parallel_safe_for_action "$next_action")"
   print_kv TOOL_FIX "$tool_fix"

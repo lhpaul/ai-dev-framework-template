@@ -8,7 +8,7 @@ source "$SCRIPT_DIR/workflow-lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-ci-loop.sh <pr-number> [--poll-interval seconds] [--max-wait seconds]
+Usage: ./scripts/development-workflow/pr-ci-loop.sh <pr-number> [--repo owner/repo|product-name] [--product-repo name] [--repo-root path] [--poll-interval seconds] [--max-wait seconds]
 
 Polls GitHub required status checks for a PR until they are green, failing, or timed out.
 Outputs stable key=value lines and exits with:
@@ -26,15 +26,43 @@ fi
 pr_number=""
 poll_interval=60
 max_wait=1800
+repo_selector=""
+repo_root="$(workflow_repo_root)"
+
+require_option_value() {
+  local option="$1"
+  if [ "$#" -lt 2 ] || [ -z "${2:-}" ]; then
+    echo "$option requires a value." >&2
+    usage >&2
+    exit 64
+  fi
+}
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --poll-interval)
+      require_option_value "$@"
       poll_interval="$2"
       shift 2
       ;;
     --max-wait)
+      require_option_value "$@"
       max_wait="$2"
+      shift 2
+      ;;
+    --repo)
+      require_option_value "$@"
+      repo_selector="$2"
+      shift 2
+      ;;
+    --product-repo)
+      require_option_value "$@"
+      repo_selector="$2"
+      shift 2
+      ;;
+    --repo-root)
+      require_option_value "$@"
+      repo_root="$2"
       shift 2
       ;;
     -h|--help)
@@ -62,10 +90,23 @@ if [ -z "$pr_number" ]; then
 fi
 
 require_gh
-cd_workflow_repo_root
+cd "$repo_root"
 
 elapsed=0
-repo="$(repo_slug)"
+if [ -n "$repo_selector" ] && workflow_is_valid_github_repo_slug "$repo_selector"; then
+  repo="$repo_selector"
+elif [ -n "$repo_selector" ]; then
+  repo_context="$(workflow_repository_context "$repo_selector" "$repo_root")"
+  repo="$(workflow_github_repo_from_context "$repo_context")"
+else
+  repo="$(repo_slug)"
+fi
+if [ -z "$repo" ]; then
+  echo "ERROR: could not resolve GitHub repository for PR CI loop; pass --repo owner/repo or --product-repo <name>." >&2
+  exit 64
+fi
+export WORKFLOW_TARGET_GITHUB_REPO="$repo"
+export GH_REPO="$repo"
 min_no_checks_wait=$((poll_interval * 2))
 
 # is_devin_status_stale <pr_number> <repo>
@@ -175,10 +216,21 @@ is_devin_status_stale() {
 }
 
 while :; do
-  checks_json="$(gh pr view "$pr_number" --json statusCheckRollup)"
+  if ! checks_json="$(gh pr view "$pr_number" --repo "$repo" --json statusCheckRollup 2>/dev/null)"; then
+    print_kv RESULT red
+    print_kv PR_NUMBER "$pr_number"
+    print_kv REPO "$repo"
+    print_kv REASON pr_status_fetch_failed
+    print_kv TOTAL_CHECK_COUNT 0
+    print_kv FAILING_CHECK_COUNT 1
+    print_kv FAILING_CHECKS pr_status_fetch_failed
+    print_kv PENDING_CHECK_COUNT 0
+    print_kv PENDING_CHECKS ""
+    exit 1
+  fi
   # statusCheckRollup can include historical duplicates for the same check.
   # Keep only the latest entry per check name to avoid stale conclusions.
-  normalized_checks_json="$(
+  if ! normalized_checks_json="$(
     printf '%s\n' "$checks_json" | jq '
       (.statusCheckRollup // [])
       | map(
@@ -201,7 +253,18 @@ while :; do
       | group_by(.__check_key)
       | map(last | del(.__check_key, .__check_ts))
     '
-  )"
+  )"; then
+    print_kv RESULT red
+    print_kv PR_NUMBER "$pr_number"
+    print_kv REPO "$repo"
+    print_kv REASON check_json_parse_failed
+    print_kv TOTAL_CHECK_COUNT 0
+    print_kv FAILING_CHECK_COUNT 1
+    print_kv FAILING_CHECKS check_json_parse_failed
+    print_kv PENDING_CHECK_COUNT 0
+    print_kv PENDING_CHECKS ""
+    exit 1
+  fi
   total_check_count="$(
     printf '%s\n' "$normalized_checks_json" | jq 'length'
   )"
