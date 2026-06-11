@@ -112,6 +112,20 @@ trunk_product_dir="$TMP_ROOT/products/trunk-app"
 mkdir -p "$trunk_product_dir"
 git -C "$trunk_product_dir" init -q -b trunk
 
+solo_hub_dir="$TMP_ROOT/solo-hub"
+mkdir -p "$solo_hub_dir"
+git -C "$solo_hub_dir" init -q -b main
+cat > "$solo_hub_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      default_branch: main
+YAML
+
 echo ""
 echo "=== Workflow orchestration product repository awareness ==="
 
@@ -236,7 +250,7 @@ case "$1" in
     ;;
   pr)
     if [ "$2" = "view" ]; then
-      printf '{"statusCheckRollup":[]}\n'
+      printf '{"headRefName":"feature/900-product-routing","labels":[],"isDraft":false,"comments":[],"statusCheckRollup":[]}\n'
       exit 0
     fi
     if [ "$2" = "list" ]; then
@@ -263,6 +277,16 @@ discover_output="$(
     --repo mobile-app
 )"
 run_contains "discover_state_emits_action_github_repo" "ACTION_GITHUB_REPO=example/mobile-app" "$discover_output"
+
+pr_inferred_repo_log="$TMP_ROOT/pr-inferred-repo-gh-args.log"
+touch "$pr_inferred_repo_log"
+pr_inferred_output="$(
+  env GH_ARGS_LOG="$pr_inferred_repo_log" PATH="$stub_bin:$PATH" "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo-root "$solo_hub_dir" \
+    --pr 42
+)"
+run_contains "workflow_pr_infers_single_product_repo" "ACTION_GITHUB_REPO=example/mobile-app" "$pr_inferred_output"
+run_contains "workflow_pr_passes_inferred_repo_to_gh" "--repo example/mobile-app" "$(tr '\n' ' ' < "$pr_inferred_repo_log")"
 
 ci_output="$(
   PATH="$stub_bin:$PATH" "$REPO_ROOT/scripts/development-workflow/pr-ci-loop.sh" \

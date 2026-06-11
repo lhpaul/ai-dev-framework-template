@@ -335,7 +335,8 @@ development_paths=()
 
 require_option_value() {
   local option="$1"
-  if [ "$#" -lt 2 ] || [ -z "${2:-}" ] || [[ "${2:-}" == -* ]]; then
+  local value="${2:-}"
+  if [ -z "$value" ] || [[ "$value" == --* ]]; then
     echo "$option requires a value." >&2
     usage >&2
     exit 64
@@ -345,12 +346,12 @@ require_option_value() {
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --repo)
-      require_option_value "$@"
+      require_option_value "$1" "${2:-}"
       target_repo="$2"
       shift 2
       ;;
     --repo-root)
-      require_option_value "$@"
+      require_option_value "$1" "${2:-}"
       repo_root="$2"
       shift 2
       ;;

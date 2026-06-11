@@ -130,6 +130,7 @@ repository_context_for_action() {
   print_kv ACTION_REPOSITORY "$action_repository"
   [ -n "$action_github_repo" ] && print_kv ACTION_GITHUB_REPO "$action_github_repo"
   [ -n "$action_local_path" ] && print_kv ACTION_LOCAL_PATH "$action_local_path"
+  return 0
 }
 
 github_repo_args_for_action() {
@@ -144,23 +145,26 @@ github_repo_args_for_action() {
       printf '%s\n%s\n' "--repo" "$action_github_repo"
     fi
   fi
+  return 0
 }
 
 if [ -n "$pr_number" ]; then
   if [ "$workflow_mode" = "workflow_hub" ] && [ -z "$target_repo" ]; then
-    print_kv WORKFLOW_MODE "$workflow_mode"
-    print_kv ACTION_REPOSITORY_KIND "repository_selection_required"
-    print_kv ACTION_REPOSITORY ""
-    print_kv TARGET "pr:$pr_number"
-    print_kv PR_NUMBER "$pr_number"
-    print_kv REVIEW_AGENT "none"
-    print_kv NEXT_ACTION "resolve-repository-selection"
-    print_kv ERROR "workflow_hub PR lookup requires --repo because PR numbers are repository-scoped."
-    exit 0
+    if ! pr_action_context="$(repository_context_for_action implementation 2>&1)"; then
+      print_kv WORKFLOW_MODE "$workflow_mode"
+      print_kv ACTION_REPOSITORY_KIND "repository_selection_required"
+      print_kv ACTION_REPOSITORY ""
+      print_kv TARGET "pr:$pr_number"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv REVIEW_AGENT "none"
+      print_kv NEXT_ACTION "resolve-repository-selection"
+      print_kv_escaped ERROR "$pr_action_context"
+      exit 0
+    fi
   fi
   require_gh
   pr_view_args=()
-  if [ "$workflow_mode" = "workflow_hub" ] && [ -n "$target_repo" ]; then
+  if [ "$workflow_mode" = "workflow_hub" ]; then
     while IFS= read -r arg; do
       [ -n "$arg" ] && pr_view_args+=("$arg")
     done < <(github_repo_args_for_action implementation)

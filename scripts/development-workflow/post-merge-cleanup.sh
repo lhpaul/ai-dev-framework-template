@@ -302,8 +302,7 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
           echo "Reasserting issue #$ISSUE_NUMBER tracker status as Merged after close..."
           update_tracker_status_best_effort "$ISSUE_NUMBER" "Merged" "" "allow-backward"
         else
-          echo "ERROR: could not close issue #$ISSUE_NUMBER" >&2
-          exit 1
+          echo "Warning: could not close issue #$ISSUE_NUMBER; continuing cleanup." >&2
         fi
       else
         echo "No merged PR found for branch '$TO_DELETE'; leaving issue #$ISSUE_NUMBER open."
