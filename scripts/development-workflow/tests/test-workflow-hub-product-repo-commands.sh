@@ -116,6 +116,7 @@ run_fails_contains "status_missing_repo_value" "--repo requires a value" bash "$
 run_fails_contains "sync_missing_repo_value" "--repo requires a value" bash "$SYNC_CMD" --repo
 run_fails_contains "prs_missing_repo_value" "--repo requires a value" bash "$PRS_CMD" --repo
 run_fails_contains "status_unknown_option" "unknown argument '--bogus'" bash "$STATUS_CMD" --bogus
+run_fails_contains "prs_unknown_option" "unknown argument '--bogus'" bash "$PRS_CMD" --bogus
 
 hub_dir="$(fixture_dir hub)"
 clean_repo="$(fixture_dir clean-product)"
@@ -290,6 +291,7 @@ run_contains "sync_all_failed_or_missing" "missing=" "$all_sync"
 run_contains "sync_all_summary" "SUMMARY" "$all_sync"
 
 run_fails_contains "missing_path_guidance" ".ai-dev-workflow.local.yaml" bash "$SYNC_CMD" --repo-root "$hub_dir" --repo missing-path-app
+run_fails_contains "prs_repo_all_conflict" "--repo and --all cannot be used together" bash "$PRS_CMD" --repo-root "$hub_dir" --repo clean-app --all
 
 bootstrap_declined_before="$(cat "$hub_dir/.ai-dev-workflow.local.yaml")"
 set +e
