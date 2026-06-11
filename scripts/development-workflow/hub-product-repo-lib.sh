@@ -39,9 +39,16 @@ hub_list_product_repos() {
   local output
   if ! output="$(python3 "$HUB_RESOLVER" list-product-repos --repo-root "$repo_root" 2>&1)"; then
     printf '%s\n' "$output" >&2
-    exit 1
+    return 1
   fi
   printf '%s\n' "$output"
+}
+
+hub_branch_is_checked_out() {
+  local repo_path="$1"
+  local branch="$2"
+  git -C "$repo_path" worktree list --porcelain 2>/dev/null |
+    awk -v branch_ref="refs/heads/$branch" '$1 == "branch" && $2 == branch_ref { found = 1 } END { exit(found ? 0 : 1) }'
 }
 
 hub_selected_repos() {
@@ -53,7 +60,7 @@ hub_selected_repos() {
   fi
   if [ "$all" = "true" ]; then
     hub_list_product_repos "$repo_root"
-    return 0
+    return $?
   fi
   if [ -n "$repo_name" ]; then
     printf '%s\n' "$repo_name"

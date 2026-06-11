@@ -160,6 +160,11 @@ sync_one_repo() {
         failed_count=$((failed_count + 1))
         return 1
       fi
+    elif hub_branch_is_checked_out "$local_path" "$default_branch"; then
+      printf '  STATUS=blocked\n'
+      printf '  REASON=default_branch_checked_out_elsewhere\n'
+      blocked_count=$((blocked_count + 1))
+      return 1
     elif ! git -C "$local_path" fetch origin "$default_branch:$default_branch" >/dev/null 2>&1; then
       printf '  STATUS=failed\n'
       printf '  REASON=fast_forward_failed\n'
@@ -230,7 +235,11 @@ missing_count=0
 blocked_count=0
 failed_count=0
 exit_code=0
-selected_repos="$(hub_selected_repos "$REPO_ROOT" "$REPO_NAME" "$ALL")"
+if ! selected_repos="$(hub_selected_repos "$REPO_ROOT" "$REPO_NAME" "$ALL")"; then
+  failed_count=$((failed_count + 1))
+  hub_print_summary "$synced_count" "$skipped_count" 0 0 "$missing_count" "$blocked_count" "$failed_count"
+  exit 1
+fi
 
 while IFS= read -r selected_repo; do
   [ -n "$selected_repo" ] || continue

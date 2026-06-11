@@ -118,17 +118,45 @@ run_fails_contains "prs_missing_repo_value" "--repo requires a value" bash "$PRS
 run_fails_contains "status_unknown_option" "unknown argument '--bogus'" bash "$STATUS_CMD" --bogus
 run_fails_contains "prs_unknown_option" "unknown argument '--bogus'" bash "$PRS_CMD" --bogus
 
+broken_list_hub="$(fixture_dir broken-list-hub)"
+cat > "$broken_list_hub/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: duplicate-app
+      github_repo: example/duplicate-app
+    - name: duplicate-app
+      github_repo: example/duplicate-app-two
+YAML
+set +e
+broken_list_status="$(bash "$STATUS_CMD" --repo-root "$broken_list_hub" --all 2>&1)"
+broken_list_status_code=$?
+set -e
+if [ "$broken_list_status_code" -ne 0 ]; then
+  echo "PASS: status_all_bad_repo_list_exit"
+  PASS_COUNT=$((PASS_COUNT + 1))
+else
+  echo "FAIL: status_all_bad_repo_list_exit - expected bad repo list failure"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+run_contains "status_all_bad_repo_list_reason" "duplicate workflow_hub.product_repos name 'duplicate-app'" "$broken_list_status"
+run_contains "status_all_bad_repo_list_summary" "SUMMARY" "$broken_list_status"
+
 hub_dir="$(fixture_dir hub)"
 clean_repo="$(fixture_dir clean-product)"
 dirty_repo="$(fixture_dir dirty-product)"
 branch_restore_repo="$(fixture_dir branch-restore-product)"
 fetch_fail_repo="$(fixture_dir fetch-fail-product)"
+worktree_guard_repo="$(fixture_dir worktree-guard-product)"
 missing_checkout="$TMP_ROOT/missing-checkout"
 mkdir -p "$missing_checkout"
 init_repo "$clean_repo" main
 init_repo "$dirty_repo" main
 init_repo "$branch_restore_repo" main
 init_repo "$fetch_fail_repo" main
+init_repo "$worktree_guard_repo" main
 clean_remote="$(fixture_dir clean-remote.git)"
 updater_repo="$(fixture_dir clean-updater)"
 git init --bare -q -b main "$clean_remote"
@@ -153,6 +181,21 @@ git -C "$branch_restore_repo" commit -q -m "local ahead"
 git -C "$branch_restore_repo" switch -q feature/start
 git -C "$fetch_fail_repo" switch -q -c feature/start
 git -C "$fetch_fail_repo" remote add origin "$TMP_ROOT/does-not-exist.git"
+worktree_guard_remote="$(fixture_dir worktree-guard-remote.git)"
+worktree_guard_updater="$(fixture_dir worktree-guard-updater)"
+worktree_guard_default_worktree="$TMP_ROOT/worktree-guard-default-worktree"
+git init --bare -q -b main "$worktree_guard_remote"
+git -C "$worktree_guard_repo" remote add origin "$worktree_guard_remote"
+git -C "$worktree_guard_repo" push -q -u origin main
+git -C "$worktree_guard_repo" switch -q -c feature/start
+git -C "$worktree_guard_repo" worktree add -q "$worktree_guard_default_worktree" main
+git clone -q "$worktree_guard_remote" "$worktree_guard_updater"
+git -C "$worktree_guard_updater" config user.email "test@example.com"
+git -C "$worktree_guard_updater" config user.name "Test User"
+printf 'remote update\n' > "$worktree_guard_updater/remote.txt"
+git -C "$worktree_guard_updater" add remote.txt
+git -C "$worktree_guard_updater" commit -q -m "remote update"
+git -C "$worktree_guard_updater" push -q origin main
 printf 'dirty\n' > "$dirty_repo/dirty.txt"
 
 cat > "$hub_dir/.ai-dev-workflow.yaml" <<'YAML'
@@ -172,6 +215,9 @@ workflow_hub:
       default_branch: main
     - name: fetch-fail-app
       github_repo: example/fetch-fail-app
+      default_branch: main
+    - name: worktree-guard-app
+      github_repo: example/worktree-guard-app
       default_branch: main
     - name: missing-path-app
       github_repo: example/missing-path-app
@@ -211,6 +257,8 @@ product_repos:
     local_path: "$branch_restore_repo"
   - name: fetch-fail-app
     local_path: "$fetch_fail_repo"
+  - name: worktree-guard-app
+    local_path: "$worktree_guard_repo"
   - name: missing-checkout-app
     local_path: "$missing_checkout"
 YAML
@@ -271,6 +319,20 @@ fi
 run_contains "sync_fetch_failure_reason" "REASON=fetch_failed" "$fetch_fail_output"
 branch_after_fetch_failure="$(git -C "$fetch_fail_repo" rev-parse --abbrev-ref HEAD)"
 run_contains "sync_fetch_failure_current_branch" "feature/start" "$branch_after_fetch_failure"
+set +e
+worktree_guard_output="$(bash "$SYNC_CMD" --repo-root "$hub_dir" --repo worktree-guard-app 2>&1)"
+worktree_guard_code=$?
+set -e
+if [ "$worktree_guard_code" -ne 0 ]; then
+  echo "PASS: sync_worktree_guard_exit"
+  PASS_COUNT=$((PASS_COUNT + 1))
+else
+  echo "FAIL: sync_worktree_guard_exit - expected checked-out default branch block"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+run_contains "sync_worktree_guard_reason" "REASON=default_branch_checked_out_elsewhere" "$worktree_guard_output"
+branch_after_worktree_guard="$(git -C "$worktree_guard_repo" rev-parse --abbrev-ref HEAD)"
+run_contains "sync_worktree_guard_current_branch" "feature/start" "$branch_after_worktree_guard"
 
 set +e
 all_sync="$(bash "$SYNC_CMD" --repo-root "$hub_dir" --all 2>&1)"

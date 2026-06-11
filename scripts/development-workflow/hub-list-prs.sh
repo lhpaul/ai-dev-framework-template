@@ -54,7 +54,11 @@ hub_require_workflow_hub_mode "$REPO_ROOT"
 failed_count=0
 clean_count=0
 exit_code=0
-selected_repos="$(hub_selected_repos "$REPO_ROOT" "$REPO_NAME" "$ALL")"
+if ! selected_repos="$(hub_selected_repos "$REPO_ROOT" "$REPO_NAME" "$ALL")"; then
+  failed_count=$((failed_count + 1))
+  hub_print_summary 0 0 "$clean_count" 0 0 0 "$failed_count"
+  exit 1
+fi
 
 while IFS= read -r selected_repo; do
   [ -n "$selected_repo" ] || continue
