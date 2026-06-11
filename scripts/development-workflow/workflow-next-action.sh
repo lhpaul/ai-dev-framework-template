@@ -211,7 +211,17 @@ if [ -n "$branch_name" ]; then
     feature|refactor|fix|hotfix) action_kind="implementation" ;;
     *) action_kind="hub" ;;
   esac
-  repository_context_for_action "$action_kind"
+  if ! action_context_output="$(repository_context_for_action "$action_kind" 2>&1)"; then
+    print_kv WORKFLOW_MODE "$workflow_mode"
+    print_kv ACTION_REPOSITORY_KIND "repository_resolution_failed"
+    print_kv ACTION_REPOSITORY ""
+    print_kv TARGET "branch:$branch_name"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv NEXT_ACTION "resolve-repository-selection"
+    print_kv_escaped ERROR "$action_context_output"
+    exit 0
+  fi
   pr_list_args=()
   pr_view_args=()
   if [ "$action_kind" = "implementation" ]; then
@@ -230,6 +240,7 @@ if [ -n "$branch_name" ]; then
     pr_number=""
   fi
 
+  printf '%s\n' "$action_context_output"
   print_kv TARGET "branch:$branch_name"
   print_kv BRANCH "$branch_name"
   print_kv REVIEW_AGENT "$(reviewer_for_branch "$branch_name")"
@@ -435,14 +446,15 @@ fi
 
 # PLAN_FILE is intentionally not emitted; callers that need the path should scan
 # "$development_path"/2_*_implementation-plan.md directly.
+case "$next_action" in
+  implement|resolve-development-pr) action_context_output="$(repository_context_for_action implementation)" ;;
+  *) action_context_output="$(repository_context_for_action hub)" ;;
+esac
 print_kv TARGET "development:$development_path"
 [ -n "$spec_file" ] && print_kv SPEC_FILE "$spec_file"
 print_kv STATUS "$status_line"
 print_kv NEXT_ACTION "$next_action"
-case "$next_action" in
-  implement|resolve-development-pr) repository_context_for_action implementation ;;
-  *) repository_context_for_action hub ;;
-esac
+printf '%s\n' "$action_context_output"
 
 # Optional: read Linear issue ID from spec for orchestrator (tracker is source of truth for status)
 linear_issue=""
