@@ -99,7 +99,15 @@ while IFS= read -r selected_repo; do
   fi
   printf '  BRANCH=%s\n' "$branch"
 
-  if [ -n "$(git -C "$local_path" status --porcelain)" ]; then
+  if ! dirty_output="$(git -C "$local_path" status --porcelain 2>/dev/null)"; then
+    printf '  STATUS=failed\n'
+    printf '  ERROR=could not inspect working tree state\n'
+    failed_count=$((failed_count + 1))
+    exit_code=1
+    continue
+  fi
+
+  if [ -n "$dirty_output" ]; then
     printf '  STATUS=dirty\n'
     dirty_count=$((dirty_count + 1))
   else

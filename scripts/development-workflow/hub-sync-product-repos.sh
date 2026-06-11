@@ -36,7 +36,7 @@ confirm_bootstrap() {
 
 sync_one_repo() {
   local selected_repo="$1"
-  local context local_path default_branch current_branch remote_ref ahead behind counts
+  local context local_path default_branch current_branch remote_ref ahead behind counts dirty_output
 
   if ! context="$(hub_resolve_context_json "$REPO_ROOT" "$selected_repo")"; then
     printf 'REPO %s STATUS=failed\n' "$selected_repo"
@@ -77,7 +77,14 @@ sync_one_repo() {
     return 1
   fi
 
-  if [ -n "$(git -C "$local_path" status --porcelain)" ]; then
+  if ! dirty_output="$(git -C "$local_path" status --porcelain 2>/dev/null)"; then
+    printf '  STATUS=failed\n'
+    printf '  REASON=working_tree_inspection_failed\n'
+    failed_count=$((failed_count + 1))
+    return 1
+  fi
+
+  if [ -n "$dirty_output" ]; then
     printf '  STATUS=blocked\n'
     printf '  REASON=dirty_checkout\n'
     printf '  PATH=%s\n' "$local_path"
