@@ -29,25 +29,39 @@ max_wait=1800
 repo_selector=""
 repo_root="$(workflow_repo_root)"
 
+require_option_value() {
+  local option="$1"
+  if [ "$#" -lt 2 ] || [ -z "${2:-}" ]; then
+    echo "$option requires a value." >&2
+    usage >&2
+    exit 64
+  fi
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --poll-interval)
+      require_option_value "$@"
       poll_interval="$2"
       shift 2
       ;;
     --max-wait)
+      require_option_value "$@"
       max_wait="$2"
       shift 2
       ;;
     --repo)
+      require_option_value "$@"
       repo_selector="$2"
       shift 2
       ;;
     --product-repo)
+      require_option_value "$@"
       repo_selector="$2"
       shift 2
       ;;
     --repo-root)
+      require_option_value "$@"
       repo_root="$2"
       shift 2
       ;;

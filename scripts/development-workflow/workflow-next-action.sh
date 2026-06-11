@@ -393,12 +393,12 @@ if [ "$feature_branch_exists" -eq 0 ] && [ -n "$plan_file" ] && gh_available; th
     done < <(github_repo_args_for_action implementation)
   fi
   if [ "${#merged_pr_args[@]}" -gt 0 ]; then
-    if ! merged_count="$(gh pr list "${merged_pr_args[@]}" --state merged --head "${dev_prefix}/$slug" --limit 100 --json number --jq 'length' 2>/dev/null)"; then
+    if ! merged_count="$(gh pr list "${merged_pr_args[@]}" --state merged --head "${dev_prefix}/$slug" --limit 100 --json number --jq 'length')"; then
       echo "workflow-next-action.sh: warning: could not query merged PRs for ${dev_prefix}/$slug; treating as not merged" >&2
       merged_count=0
     fi
   else
-    if ! merged_count="$(gh pr list --state merged --head "${dev_prefix}/$slug" --limit 100 --json number --jq 'length' 2>/dev/null)"; then
+    if ! merged_count="$(gh pr list --state merged --head "${dev_prefix}/$slug" --limit 100 --json number --jq 'length')"; then
       echo "workflow-next-action.sh: warning: could not query merged PRs for ${dev_prefix}/$slug; treating as not merged" >&2
       merged_count=0
     fi
@@ -410,10 +410,10 @@ if [ "$feature_branch_exists" -eq 0 ] && [ -n "$plan_file" ] && gh_available; th
     # Matches Linear (ENG-123), Jira (PROJ-456), and GitHub Issues (42) prefixes.
     merged_heads_json=""
     if [ "${#merged_pr_args[@]}" -gt 0 ]; then
-      if ! merged_heads_json="$(gh pr list "${merged_pr_args[@]}" --state merged --limit 500 --json headRefName 2>/dev/null)"; then
+      if ! merged_heads_json="$(gh pr list "${merged_pr_args[@]}" --state merged --limit 500 --json headRefName)"; then
         echo "workflow-next-action.sh: warning: could not scan merged PR heads; treating as not merged" >&2
       fi
-    elif ! merged_heads_json="$(gh pr list --state merged --limit 500 --json headRefName 2>/dev/null)"; then
+    elif ! merged_heads_json="$(gh pr list --state merged --limit 500 --json headRefName)"; then
       echo "workflow-next-action.sh: warning: could not scan merged PR heads; treating as not merged" >&2
     fi
     if [ -n "$merged_heads_json" ]; then

@@ -28,14 +28,25 @@ TO_DELETE=""
 target_repo=""
 repo_root="$HUB_REPO_ROOT"
 
+require_option_value() {
+  local option="$1"
+  if [ "$#" -lt 2 ] || [ -z "${2:-}" ]; then
+    echo "$option requires a value." >&2
+    sed -n '2,16p' "$0" >&2
+    exit 64
+  fi
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --repo)
-      target_repo="${2:?--repo requires a value}"
+      require_option_value "$@"
+      target_repo="$2"
       shift 2
       ;;
     --repo-root)
-      repo_root="${2:?--repo-root requires a value}"
+      require_option_value "$@"
+      repo_root="$2"
       shift 2
       ;;
     -h|--help)
