@@ -300,6 +300,26 @@ Local config is optional for `single_repo` mode. It is required only when a
 workflow hub action needs a local product checkout path that cannot be derived
 safely.
 
+Workflow hub operators can inspect and prepare product repositories with:
+
+```bash
+scripts/development-workflow/hub-status.sh --repo mobile-app
+scripts/development-workflow/hub-status.sh --all
+scripts/development-workflow/hub-sync-product-repos.sh --repo mobile-app
+scripts/development-workflow/hub-list-prs.sh --all
+```
+
+These commands are workflow-hub-only surfaces:
+
+- `hub-status.sh` is read-only and reports local checkout path, current branch,
+  clean or dirty state, remote visibility, and a categorized summary.
+- `hub-sync-product-repos.sh` refuses dirty, ahead-only, or diverged checkouts;
+  it only fast-forwards clean repositories and writes local path entries to
+  `.ai-dev-workflow.local.yaml` after explicit bootstrap confirmation.
+- `hub-list-prs.sh` is read-only and targets the resolved product repository
+  with `gh pr list --repo <owner/repo>`, never the workflow hub repository as a
+  fallback.
+
 Workflow-hub product PR authentication uses the same split: shared config may
 store non-secret GitHub App IDs and installation IDs, while private key paths
 and secret-manager references stay local-only. See

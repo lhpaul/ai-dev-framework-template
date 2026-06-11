@@ -168,6 +168,14 @@ run_contains "workflow_hub_local_path_source" "TARGET_LOCAL_PATH_SOURCE=local_ov
 admin_output="$(workflow_repository_context admin-portal "$hub_dir")"
 run_contains "workflow_hub_checkout_root_path" "TARGET_LOCAL_PATH=$TMP_ROOT/checkouts/admin-portal" "$admin_output"
 run_contains "workflow_hub_checkout_root_source" "TARGET_LOCAL_PATH_SOURCE=checkout_root" "$admin_output"
+repo_list_output="$(python3 "$RESOLVER" list-product-repos --repo-root "$hub_dir")"
+run_contains "workflow_hub_list_product_repos_mobile" "mobile-app" "$repo_list_output"
+run_contains "workflow_hub_list_product_repos_admin" "admin-portal" "$repo_list_output"
+
+set_local_path_output="$(python3 "$RESOLVER" set-local-path --repo-root "$hub_dir" --repo admin-portal --local-path "$TMP_ROOT/local/admin-portal")"
+run_contains "workflow_hub_set_local_path_output" "LOCAL_CONFIG_PATH=$hub_dir/.ai-dev-workflow.local.yaml" "$set_local_path_output"
+admin_local_output="$(workflow_repository_context admin-portal "$hub_dir")"
+run_contains "workflow_hub_set_local_path_resolves" "TARGET_LOCAL_PATH=$TMP_ROOT/local/admin-portal" "$admin_local_output"
 
 run_fails_contains \
   "workflow_hub_ambiguous_without_repo" \
