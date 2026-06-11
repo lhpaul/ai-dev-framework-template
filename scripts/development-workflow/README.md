@@ -175,6 +175,79 @@ Use this when:
 - The batch orchestrator needs a deterministic first-pass list of development-folder candidates
 - You want to separate portfolio-level batch planning from single-item orchestration
 
+### Workflow hub product repository commands
+
+These commands run only when `.ai-dev-workflow.yaml` resolves to
+`mode: workflow_hub`. They use the shared repository-context resolver, support
+`--repo <name>` for one configured product repository and `--all` for every
+configured product repository, and fail before checkout inspection when the
+current repository is not a workflow hub.
+
+#### `hub-status.sh`
+
+Inspects local product repository checkouts without modifying them.
+
+Usage:
+
+```bash
+./scripts/development-workflow/hub-status.sh --repo mobile-app
+./scripts/development-workflow/hub-status.sh --all
+```
+
+What it reports:
+
+- Product repository name and local checkout path
+- Current branch when the checkout exists
+- `clean`, `dirty`, `missing_path`, `missing_checkout`, or `failed` status
+- Origin remote visibility
+- A final categorized summary across all selected repositories
+
+Use this before routing implementation work from a workflow hub to confirm that
+the selected checkout exists and that dirty state is visible.
+
+#### `hub-sync-product-repos.sh`
+
+Safely prepares clean product repository checkouts.
+
+Usage:
+
+```bash
+./scripts/development-workflow/hub-sync-product-repos.sh --repo mobile-app
+./scripts/development-workflow/hub-sync-product-repos.sh --all
+./scripts/development-workflow/hub-sync-product-repos.sh --repo mobile-app --bootstrap-local-path --yes
+```
+
+What it does:
+
+- Refuses dirty checkouts before fetch or fast-forward work
+- Fetches the configured default branch and fast-forwards only when local state
+  is not ahead of origin
+- Blocks ahead-only or diverged checkouts instead of rebasing, stashing,
+  resetting, force-updating, or pushing
+- Reports partial success and blocked or failed repositories in the final
+  summary
+- Writes a missing local path to `.ai-dev-workflow.local.yaml` only when
+  `--bootstrap-local-path` is set and the operator confirms the prompt, or when
+  `--yes` is also supplied
+
+#### `hub-list-prs.sh`
+
+Lists open pull requests for selected product repositories without modifying
+remote state.
+
+Usage:
+
+```bash
+./scripts/development-workflow/hub-list-prs.sh --repo mobile-app
+./scripts/development-workflow/hub-list-prs.sh --all
+```
+
+The command resolves `github_repo` directly, or derives `owner/repo` from
+GitHub-form `git_url` values such as `git@github.com:owner/repo.git` and
+`https://github.com/owner/repo.git`. If no GitHub repository slug can be
+resolved, it fails for that product repository instead of falling back to the
+workflow hub repository.
+
 ### `post-merge-cleanup.sh`
 
 After a development PR is merged and the remote branch deleted, sync with origin, switch to develop, pull, and delete the local branch.

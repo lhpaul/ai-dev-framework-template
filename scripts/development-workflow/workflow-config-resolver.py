@@ -397,6 +397,104 @@ def resolve_local_path(
     return "", ""
 
 
+def relative_or_absolute_path(repo_root: Path, value: str) -> str:
+    path = Path(value)
+    if path.is_absolute():
+        try:
+            return os.path.relpath(path, repo_root)
+        except ValueError:
+            return str(path)
+    return value
+
+
+def quote_yaml_scalar(value: Any) -> str:
+    text = str(value)
+    if text == "":
+        return '""'
+    yaml_token = text.lower()
+    if (
+        yaml_token in {"true", "false", "yes", "no", "on", "off", "null", "~"}
+        or re.match(r"^[+-]?[0-9]+(?:\.[0-9]+)?$", text)
+    ):
+        must_quote = True
+    else:
+        must_quote = not re.match(r"^[A-Za-z0-9_./:@~+-]+$", text)
+    if not must_quote:
+        return text
+    escaped = text.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+    return '"' + escaped + '"'
+
+
+def dump_yaml_subset(value: Any, indent: int = 0) -> list[str]:
+    prefix = " " * indent
+    lines: list[str] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if isinstance(child, (dict, list)):
+                lines.append(f"{prefix}{key}:")
+                lines.extend(dump_yaml_subset(child, indent + 2))
+            else:
+                lines.append(f"{prefix}{key}: {quote_yaml_scalar(child)}")
+        return lines
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict):
+                if not item:
+                    lines.append(f"{prefix}- {{}}")
+                    continue
+                first = True
+                for key, child in item.items():
+                    if first:
+                        if isinstance(child, (dict, list)):
+                            lines.append(f"{prefix}- {key}:")
+                            lines.extend(dump_yaml_subset(child, indent + 4))
+                        else:
+                            lines.append(f"{prefix}- {key}: {quote_yaml_scalar(child)}")
+                        first = False
+                    else:
+                        if isinstance(child, (dict, list)):
+                            lines.append(f"{prefix}  {key}:")
+                            lines.extend(dump_yaml_subset(child, indent + 4))
+                        else:
+                            lines.append(f"{prefix}  {key}: {quote_yaml_scalar(child)}")
+            else:
+                lines.append(f"{prefix}- {quote_yaml_scalar(item)}")
+        return lines
+    lines.append(f"{prefix}{quote_yaml_scalar(value)}")
+    return lines
+
+
+def set_local_product_repo_path(repo_root: Path, repo_name: str, local_path_value: str) -> Path:
+    _, local, _, local_path = load_configs(repo_root)
+    repos = as_list(local.get("product_repos"), local_path, "product_repos")
+    updated = False
+    match_count = 0
+    normalized_path = relative_or_absolute_path(repo_root, local_path_value)
+
+    new_repos: list[dict[str, Any]] = []
+    for index, raw in enumerate(repos, start=1):
+        if not isinstance(raw, dict):
+            raise ConfigError(f"{local_path}: product_repos[{index}] must be a mapping")
+        repo = dict(raw)
+        if repo.get("name") == repo_name:
+            match_count += 1
+            repo["local_path"] = normalized_path
+            updated = True
+        new_repos.append(repo)
+
+    if match_count > 1:
+        raise ConfigError(
+            f"{local_path}: duplicate product_repos entries named '{repo_name}' cannot be updated safely"
+        )
+
+    if not updated:
+        new_repos.append({"name": repo_name, "local_path": normalized_path})
+    local["product_repos"] = new_repos
+
+    local_path.write_text("\n".join(dump_yaml_subset(local)) + "\n", encoding="utf-8")
+    return local_path
+
+
 def flatten_tracker_hints(repo: dict[str, Any]) -> str:
     tracker = repo.get("tracker")
     if not isinstance(tracker, dict):
@@ -679,6 +777,33 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_list_product_repos(args: argparse.Namespace) -> int:
+    repo_root = repo_root_from_args(args.repo_root)
+    shared, _, shared_path, _ = load_configs(repo_root)
+    mode = mode_from_shared(shared, shared_path)
+    if mode != "workflow_hub":
+        raise ConfigError(f"{shared_path}: workflow_hub mode is required to list product repositories")
+    names = [str(repo.get("name")) for repo in product_repos(shared, shared_path)]
+    if args.json:
+        print(json.dumps(names))
+    else:
+        for name in names:
+            print(name)
+    return 0
+
+
+def cmd_set_local_path(args: argparse.Namespace) -> int:
+    repo_root = repo_root_from_args(args.repo_root)
+    shared, _, shared_path, _ = load_configs(repo_root)
+    mode = mode_from_shared(shared, shared_path)
+    if mode != "workflow_hub":
+        raise ConfigError(f"{shared_path}: workflow_hub mode is required to write product repository local paths")
+    select_product_repo(product_repos(shared, shared_path), args.repo, shared_path)
+    written = set_local_product_repo_path(repo_root, args.repo, args.local_path)
+    print_context(args, {"LOCAL_CONFIG_PATH": str(written)})
+    return 0
+
+
 def cmd_auth(args: argparse.Namespace) -> int:
     print_context(args, resolve_auth_context(args))
     return 0
@@ -709,6 +834,22 @@ def build_parser() -> argparse.ArgumentParser:
         )
         command.add_argument("--json", action="store_true", help="print JSON instead of shell KEY=value")
         command.set_defaults(func=cmd_resolve)
+
+    list_product_repos = subcommands.add_parser(
+        "list-product-repos", help="list configured workflow_hub product repository names"
+    )
+    list_product_repos.add_argument("--repo-root")
+    list_product_repos.add_argument("--json", action="store_true", help="print JSON instead of one name per line")
+    list_product_repos.set_defaults(func=cmd_list_product_repos)
+
+    set_local_path = subcommands.add_parser(
+        "set-local-path", help="write one product repository local path to local config"
+    )
+    set_local_path.add_argument("--repo-root")
+    set_local_path.add_argument("--repo", required=True, help="stable product repository name")
+    set_local_path.add_argument("--local-path", required=True, help="local checkout path to write")
+    set_local_path.add_argument("--json", action="store_true", help="print JSON instead of shell KEY=value")
+    set_local_path.set_defaults(func=cmd_set_local_path)
 
     auth = subcommands.add_parser("auth", help="print product repository auth metadata")
     auth.add_argument("--repo-root")
