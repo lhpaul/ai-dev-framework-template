@@ -333,7 +333,7 @@ target_repo=""
 repo_root="$(workflow_repo_root)"
 development_paths=()
 
-require_option_value() {
+option_value_or_exit() {
   local option="$1"
   local value="${2:-}"
   if [ -z "$value" ] || [[ "$value" == --* ]]; then
@@ -341,18 +341,17 @@ require_option_value() {
     usage >&2
     exit 64
   fi
+  printf '%s\n' "$value"
 }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --repo)
-      require_option_value "$1" "${2:-}"
-      target_repo="$2"
+      target_repo="$(option_value_or_exit "$1" "${2:-}")"
       shift 2
       ;;
     --repo-root)
-      require_option_value "$1" "${2:-}"
-      repo_root="$2"
+      repo_root="$(option_value_or_exit "$1" "${2:-}")"
       shift 2
       ;;
     -h|--help)
