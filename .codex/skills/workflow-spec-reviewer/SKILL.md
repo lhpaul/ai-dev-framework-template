@@ -12,3 +12,4 @@ Recommended model tier: `balanced`
 3. Follow that protocol exactly.
 4. Treat the protocol as the checklist; keep review findings concrete and scoped to the spec.
 5. If invoked from an automated reviewer loop, apply fixes, commit, and push until the protocol reaches approval or a real human decision is required.
+6. Resolve and report the artifact repository owner before reviewing. Specs are hub-owned in `workflow_hub` mode unless a future protocol explicitly changes that.

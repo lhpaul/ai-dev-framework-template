@@ -6,6 +6,10 @@ disable-model-invocation: false
 
 Provide a code review for the given pull request.
 
+Resolve and report the implementation artifact owner before reviewing. In
+`workflow_hub`, product implementation PRs are reviewed in the selected product
+repository while hub-only workflow PRs remain hub-owned.
+
 To do this, follow these steps precisely:
 
 1. Use a Haiku agent to check if the pull request (a) is closed, (b) is a draft, (c) does not need a code review (eg. because it is an automated pull request, or is very simple and obviously ok), or (d) already has a code review from you from earlier. If so, do not proceed.

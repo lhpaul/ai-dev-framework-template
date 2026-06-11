@@ -9,6 +9,14 @@ Follow the implementation plan generation protocol exactly as defined in:
 
 `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md`
 
+## Repository Mode Context
+
+Resolve repository mode and artifact owner before writing a plan. Missing mode
+or `single_repo` means the current repository owns the plan. In `workflow_hub`,
+plans and plan PRs are hub-owned unless a future protocol explicitly changes
+that. In `product_repo`, report the configured hub owner or stop if ownership is
+ambiguous.
+
 That document is the single source of truth for this stage. Always read the approved spec (or the work item brief for Refactor items) and relevant codebase sections before proposing an approach. Once ambiguity is resolved, continue through reviewer gate, PR creation, and PR readiness unless the protocol requires human input.
 
 Before any other step, run the Step 0 Template-Fit Check: read `.ai-dev-workflow.yaml` and if `template.is_template` is `true`, evaluate whether the spec is generic enough for a framework template. If the spec references a framework-specific language or runtime not used by the template's own toolchain (e.g., React, Rails, Django), surface the structured warning from Step 0 of the protocol and halt until the human responds with one of the three options (confirm generic, narrow scope, or cancel). Do not write any plan content while this check is pending.

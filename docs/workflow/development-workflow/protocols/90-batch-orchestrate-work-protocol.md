@@ -674,6 +674,19 @@ If an `integration-branch:<slug>` label is found:
 
 4. **Pass the base branch override to the Work Item Runner handoff**: include `BASE_BRANCH=develop-<slug>` in the handoff metadata so the Work Item Runner and stage agents open PRs against `develop-<slug>` instead of `develop`.
 
+### Repository-mode handoff context
+
+Before dispatching implementation work, resolve repository mode using the shared
+repository-context helpers. In `single_repo`, the current repository remains the
+artifact owner and no product repository selector is required. In `workflow_hub`,
+specs, plans, tracker updates, and hub-only workflow changes stay hub-owned; a
+product-code implementation handoff must include workflow mode, artifact owner,
+selected product repository name, local path or remote identity when available,
+and mutation target. If product repository context is missing or ambiguous, stop
+before dispatching mutation-oriented work. Do not let command wrappers invent
+their own selection rules; pass context through to `workflow-next-action.sh`,
+`workflow-batch-plan.sh`, reviewer-loop scripts, and cleanup helpers.
+
 ---
 
 ## Step 3.3: Pre-Dispatch Environment Validation (Parallel Batches Only)

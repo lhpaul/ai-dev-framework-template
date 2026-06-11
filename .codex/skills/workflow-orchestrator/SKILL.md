@@ -13,3 +13,4 @@ Recommended model tier: `economy`
 4. Treat the protocol as canonical. Use `workflow-item-orchestrator` for each selected or approved item when your runner supports skill-to-skill handoff; otherwise continue in the current session by following `91-orchestrate-work-protocol.md` item by item.
 5. Keep batching and prioritization decisions explicit, especially when work must be serialized because the runner cannot execute multiple item orchestrators concurrently.
 6. Do not stop after dispatching a batch if any selected or approved item still has a deterministic next action.
+7. For `workflow_hub` implementation work, include workflow mode, artifact owner, selected product repository, local path or remote identity, and mutation target in item handoffs; stop before mutation-oriented dispatch when product repository context is missing or ambiguous. Missing mode or `single_repo` does not require `--repo`.

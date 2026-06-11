@@ -13,3 +13,4 @@ Recommended model tier: `economy`
 4. Run Step 7 (automated review), Step 7b (regression label for implementation PRs), and Step 8 (CI) using the scripts in `scripts/development-workflow/`. Run Step 7 to completion before Step 7b and Step 8.
 5. Dispatch the appropriate fixer agent when the loop returns `needs_fixes`; apply labels per `92-pr-readiness-signal-protocol.md` when clean or when escalating.
 6. Track all blocking findings across cycles in an issue ledger. After each fixer push, post a fix commit comment listing resolved issues. When the loop terminates, post a final summary table on the PR using `gh pr comment`.
+7. Keep repository routing thin: in `workflow_hub`, pass selected product repository context through to shared reviewer and CI scripts for product implementation PRs; hub-owned spec, plan, and workflow PRs continue to target the hub.

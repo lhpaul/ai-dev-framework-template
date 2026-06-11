@@ -1,7 +1,7 @@
 interface:
   display_name: "Run reviewer loop"
   short_description: "Run automated reviewer and CI loops for a PR."
-  default_prompt: "Use $run-reviewer-loop to drive the current branch's PR, or the PR number I provide, to readiness or escalation."
+  default_prompt: "Use $run-reviewer-loop to drive the current branch's PR or PR number to readiness, passing workflow_hub product repository context through shared scripts when needed."
 
 policy:
   allow_implicit_invocation: false

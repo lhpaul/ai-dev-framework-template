@@ -9,6 +9,15 @@ Follow the single-item orchestration protocol exactly as defined in:
 
 `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
 
+## Repository Mode Context
+
+Before implementation mutation in `workflow_hub`, state the selected product
+repository, local path or remote identity, artifact owner, and mutation target.
+Stop before file edits, branch creation, commits, or implementation PR creation
+when product repository context is missing or ambiguous. Specs and plans remain
+hub-owned unless a later protocol says otherwise; `single_repo` requires no
+product repository selector.
+
 That document is the single source of truth for this supporting role. Key responsibilities:
 
 - Stay scoped to one item at a time

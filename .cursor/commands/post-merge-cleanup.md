@@ -18,6 +18,11 @@ The script will: fetch origin, checkout `develop`, pull, delete the local branch
 
 Do not skip steps or change the order. If the script fails, show the error and stop.
 
+In `workflow_hub`, preserve selected product repository context for
+product-owned implementation cleanup and pass it through to shared cleanup
+helpers. Hub-owned spec, plan, and workflow PR cleanup remains in the hub.
+Missing mode or `single_repo` keeps current cleanup behavior.
+
 **After the script succeeds — update the issue tracker (if configured):**
 The merged branch name often contains an issue identifier (e.g. `feature/ENG-123-user-auth` → `ENG-123`, or `feature/42-user-auth` → `#42`). If so, update that issue in the project’s issue tracker using the branch-type-based status table from Step 10 of `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`:
 

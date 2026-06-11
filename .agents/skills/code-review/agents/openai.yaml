@@ -1,7 +1,7 @@
 interface:
   display_name: "Code review"
   short_description: "Run the repository implementation review gate."
-  default_prompt: "Use $code-review to review the current implementation changes against the repository review contract."
+  default_prompt: "Use $code-review to review current implementation changes against the repository review contract and report the artifact repository owner."
 
 policy:
   allow_implicit_invocation: false

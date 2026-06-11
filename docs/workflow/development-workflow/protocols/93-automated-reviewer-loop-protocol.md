@@ -25,6 +25,14 @@ Determine the target PR(s) in this order:
 
 If no PR can be determined, ask the user to specify a PR number or to run from a branch that has an open PR.
 
+Before running reviewer or CI scripts, preserve repository context from the
+caller. In `single_repo`, target the current repository as before. In
+`workflow_hub`, implementation PR review/CI must target the selected product
+repository, while spec/plan and hub-only workflow PRs target the hub. Pass
+repository context through to shared scripts such as `pr-review-loop.sh` and
+`pr-ci-loop.sh`; do not duplicate product repository selection logic inside a
+command wrapper.
+
 ---
 
 ## Procedure (per PR)
