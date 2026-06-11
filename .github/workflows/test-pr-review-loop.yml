@@ -4,12 +4,21 @@ on:
   pull_request:
     branches:
       - develop
+      - develop-workflow-hub-mode
       - main
     paths:
       - 'scripts/development-workflow/pr-review-loop.sh'
       - 'scripts/development-workflow/workflow-lib.sh'
+      - 'scripts/development-workflow/workflow-config-resolver.py'
+      - 'scripts/development-workflow/workflow-next-action.sh'
+      - 'scripts/development-workflow/hub-*.sh'
+      - 'scripts/development-workflow/open-product-pr.sh'
+      - 'scripts/development-workflow/validate-workflow-hub-skeletons.py'
       - 'scripts/development-workflow/tests/test-pr-review-loop.sh'
       - 'scripts/development-workflow/tests/test-haystack-commit-msg-hook.sh'
+      - 'scripts/development-workflow/tests/test-workflow-hub-smoke-fixtures.sh'
+      - 'scripts/development-workflow/tests/fixtures/workflow-hub-smoke/**'
+      - 'sync-manifest.yaml'
       - 'hooks/commit-msg'
       - '.github/workflows/test-pr-review-loop.yml'
 
@@ -32,3 +41,6 @@ jobs:
 
       - name: Run Haystack commit-msg hook test harness
         run: bash scripts/development-workflow/tests/test-haystack-commit-msg-hook.sh
+
+      - name: Run workflow hub smoke fixture harness
+        run: bash scripts/development-workflow/tests/test-workflow-hub-smoke-fixtures.sh

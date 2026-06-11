@@ -205,6 +205,26 @@ What it reports:
 Use this before routing implementation work from a workflow hub to confirm that
 the selected checkout exists and that dirty state is visible.
 
+### Workflow hub smoke fixture
+
+Run the non-secret workflow-hub smoke fixture with:
+
+```bash
+bash scripts/development-workflow/tests/test-workflow-hub-smoke-fixtures.sh
+```
+
+The harness copies the committed seed under
+`scripts/development-workflow/tests/fixtures/workflow-hub-smoke/` into a
+temporary hub checkout, creates two dummy product repositories, and validates
+configuration parsing, local checkout resolution, product status/sync commands,
+product PR dry-run routing, mode-scope classification, and single-repository
+regression behavior. It never needs private product repositories or live GitHub
+App credentials by default.
+
+Optional live GitHub App validation is separate and must be requested with
+`--live-github-app` plus operator-supplied safe-test repository environment
+variables. Do not wire the live path into default CI.
+
 #### `hub-sync-product-repos.sh`
 
 Safely prepares clean product repository checkouts.
