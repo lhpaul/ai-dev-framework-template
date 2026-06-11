@@ -284,17 +284,17 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
     fi
     if [ "$ISSUE_STATE" = "OPEN" ]; then
       # Find the merged PR for this branch.
-      if [ -n "$TARGET_GITHUB_REPO" ]; then
-        MERGED_PR="$(gh pr list --repo "$TARGET_GITHUB_REPO" --state merged --head "$TO_DELETE" --limit 1 --json number --jq '.[0].number // empty')" || {
-          echo "ERROR: could not query merged PRs for branch '$TO_DELETE' in '$TARGET_GITHUB_REPO' (gh command failed)." >&2
+      merged_pr_repo="$TARGET_GITHUB_REPO"
+      if [ -z "$merged_pr_repo" ]; then
+        if ! merged_pr_repo="$(repo_slug)"; then
+          echo "ERROR: could not resolve GitHub repository for merged PR lookup." >&2
           exit 1
-        }
-      else
-        MERGED_PR="$(gh pr list --state merged --head "$TO_DELETE" --limit 1 --json number --jq '.[0].number // empty')" || {
-          echo "ERROR: could not query merged PRs for branch '$TO_DELETE' (gh command failed)." >&2
-          exit 1
-        }
+        fi
       fi
+      MERGED_PR="$(gh pr list --repo "$merged_pr_repo" --state merged --head "$TO_DELETE" --limit 1 --json number --jq '.[0].number // empty')" || {
+        echo "ERROR: could not query merged PRs for branch '$TO_DELETE' in '$merged_pr_repo' (gh command failed)." >&2
+        exit 1
+      }
       if [ -n "$MERGED_PR" ]; then
         CLOSE_COMMENT="Closed by PR #${MERGED_PR}."
         echo "Closing issue #$ISSUE_NUMBER..."
