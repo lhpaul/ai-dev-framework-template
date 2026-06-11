@@ -347,12 +347,16 @@ option_value_or_exit() {
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --repo)
-      target_repo="$(option_value_or_exit "$1" "${2:-}")"
-      shift 2
+      option="$1"
+      shift
+      target_repo="$(option_value_or_exit "$option" "${1:-}")"
+      shift
       ;;
     --repo-root)
-      repo_root="$(option_value_or_exit "$1" "${2:-}")"
-      shift 2
+      option="$1"
+      shift
+      repo_root="$(option_value_or_exit "$option" "${1:-}")"
+      shift
       ;;
     -h|--help)
       usage
