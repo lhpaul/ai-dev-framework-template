@@ -182,6 +182,28 @@ newline_path=$'line1\nline2'
 python3 "$RESOLVER" set-local-path --repo-root "$hub_dir" --repo mobile-app --local-path "$newline_path" >/dev/null
 run_contains "workflow_hub_set_local_path_escapes_newline" 'local_path: "line1\nline2"' "$(cat "$hub_dir/.ai-dev-workflow.local.yaml")"
 
+duplicate_local_dir="$(fixture_dir duplicate-local)"
+cat > "$duplicate_local_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+YAML
+cat > "$duplicate_local_dir/.ai-dev-workflow.local.yaml" <<'YAML'
+product_repos:
+  - name: mobile-app
+    local_path: ../one
+  - name: mobile-app
+    local_path: ../two
+YAML
+run_fails_contains \
+  "workflow_hub_set_local_path_duplicate_local_fails" \
+  "duplicate product_repos entries named 'mobile-app'" \
+  python3 "$RESOLVER" set-local-path --repo-root "$duplicate_local_dir" --repo mobile-app --local-path ../three
+
 run_fails_contains \
   "workflow_hub_ambiguous_without_repo" \
   "product repository selection is ambiguous" \

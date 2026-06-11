@@ -468,6 +468,7 @@ def set_local_product_repo_path(repo_root: Path, repo_name: str, local_path_valu
     _, local, _, local_path = load_configs(repo_root)
     repos = as_list(local.get("product_repos"), local_path, "product_repos")
     updated = False
+    match_count = 0
     normalized_path = relative_or_absolute_path(repo_root, local_path_value)
 
     new_repos: list[dict[str, Any]] = []
@@ -476,9 +477,15 @@ def set_local_product_repo_path(repo_root: Path, repo_name: str, local_path_valu
             raise ConfigError(f"{local_path}: product_repos[{index}] must be a mapping")
         repo = dict(raw)
         if repo.get("name") == repo_name:
+            match_count += 1
             repo["local_path"] = normalized_path
             updated = True
         new_repos.append(repo)
+
+    if match_count > 1:
+        raise ConfigError(
+            f"{local_path}: duplicate product_repos entries named '{repo_name}' cannot be updated safely"
+        )
 
     if not updated:
         new_repos.append({"name": repo_name, "local_path": normalized_path})
