@@ -287,6 +287,13 @@ run_fails_contains \
     --repo trunk-app \
     trunk
 
+run_fails_contains \
+  "post_merge_cleanup_implementation_requires_repo_selection" \
+  "pass --repo <name>" \
+  "$REPO_ROOT/scripts/development-workflow/post-merge-cleanup.sh" \
+    --repo-root "$hub_dir" \
+    feature/900-product-routing
+
 echo ""
 echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"

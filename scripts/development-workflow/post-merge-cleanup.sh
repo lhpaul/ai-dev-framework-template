@@ -90,6 +90,11 @@ case "$(branch_prefix "$TO_DELETE")" in
     ;;
 esac
 
+if [ "$workflow_mode" = "workflow_hub" ] && [ "$branch_owner_kind" = "implementation" ] && [ -z "$target_repo" ]; then
+  echo "ERROR: product repository selection is required for implementation branch cleanup in workflow_hub mode; pass --repo <name>." >&2
+  exit 64
+fi
+
 if [ "$workflow_mode" = "workflow_hub" ] && [ -n "$target_repo" ]; then
   selected_repo_context="$(workflow_validate_repository_context "$target_repo" "$repo_root" --require-local)"
   selected_product_default_branch="$(workflow_context_value TARGET_DEFAULT_BRANCH "$selected_repo_context")"
