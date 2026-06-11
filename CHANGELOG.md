@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Workflow hub product repository PR authentication** (#880): adds local-only GitHub App auth guidance and helpers for opening product repository pull requests without exposing secrets.
 - **Workflow hub template skeletons** (#876): adds inspectable workflow-hub and product-repo-injection skeletons with mode-specific sync-scope metadata.
 - **Shared and local workflow configuration** (#875): separates versioned repository identity from local checkout and secret references, with repository-context helpers for workflow hub routing.
 - **Workflow hub operating model** (#874): documents repository modes, artifact ownership, target repository selection, and PR ownership for workflow hub deployments.

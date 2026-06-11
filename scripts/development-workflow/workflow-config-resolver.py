@@ -409,6 +409,16 @@ def flatten_tracker_hints(repo: dict[str, Any]) -> str:
     return ",".join(parts)
 
 
+def github_repo_from_url(value: str) -> str:
+    match = re.match(
+        r"^(?:git@github\.com:|https://github\.com/|ssh://git@github\.com/)([^/\s]+/[^/\s]+?)(?:\.git)?/?$",
+        value,
+    )
+    if not match:
+        return ""
+    return match.group(1)
+
+
 def parse_remote_slug(repo_root: Path) -> str:
     git_config = repo_root / ".git" / "config"
     if not git_config.exists():
@@ -426,6 +436,84 @@ def parse_remote_slug(repo_root: Path) -> str:
         return ""
     slug = match.group(1)
     return slug[:-4] if slug.endswith(".git") else slug
+
+
+def nested_mapping(value: dict[str, Any], key: str) -> dict[str, Any]:
+    raw = value.get(key)
+    return raw if isinstance(raw, dict) else {}
+
+
+def first_present(*values: Any) -> str:
+    for value in values:
+        if value is not None and value != "":
+            return str(value)
+    return ""
+
+
+def resolve_auth_context(args: argparse.Namespace) -> dict[str, str]:
+    repo_root = repo_root_from_args(args.repo_root)
+    shared, local, shared_path, local_path = load_configs(repo_root)
+    mode = mode_from_shared(shared, shared_path)
+    if mode != "workflow_hub":
+        return {
+            "WORKFLOW_MODE": mode,
+            "AUTH_STATUS": "not_required",
+            "AUTH_REQUIRES_PRODUCT_REPO": "false",
+            "AUTH_MESSAGE": "GitHub App product-repo auth is only required in workflow_hub mode",
+        }
+
+    repo = select_product_repo(product_repos(shared, shared_path), args.repo, shared_path)
+    local_repo = local_product_repo(local, local_path, str(repo["name"]))
+    shared_app = nested_mapping(repo, "github_app")
+    local_app = nested_mapping(local_repo, "github_app")
+
+    github_repo = str(repo.get("github_repo") or "")
+    if not github_repo and repo.get("git_url"):
+        github_repo = github_repo_from_url(str(repo.get("git_url")))
+
+    app_id = first_present(local_app.get("app_id"), local_repo.get("app_id"), shared_app.get("app_id"))
+    installation_id = first_present(
+        local_app.get("installation_id"),
+        local_repo.get("installation_id"),
+        shared_app.get("installation_id"),
+    )
+    private_key_path = first_present(
+        local_app.get("private_key_path"), local_repo.get("private_key_path")
+    )
+    secret_ref = first_present(local_app.get("secret_ref"), local_repo.get("secret_ref"))
+
+    status = "auth_configured"
+    if not app_id:
+        status = "missing_app_id"
+    elif not private_key_path and not secret_ref:
+        status = "missing_private_key"
+    elif not installation_id:
+        status = "missing_installation"
+
+    context = {
+        "WORKFLOW_MODE": mode,
+        "TARGET_REPO_NAME": str(repo.get("name") or ""),
+        "TARGET_GITHUB_REPO": github_repo,
+        "TARGET_GIT_URL": str(repo.get("git_url") or ""),
+        "AUTH_STATUS": status,
+        "AUTH_REQUIRES_PRODUCT_REPO": "true",
+        "AUTH_APP_ID_PRESENT": "true" if app_id else "false",
+        "AUTH_INSTALLATION_ID_PRESENT": "true" if installation_id else "false",
+        "AUTH_PRIVATE_KEY_REF_PRESENT": "true" if (private_key_path or secret_ref) else "false",
+        "AUTH_SECRET_SOURCE": (
+            "private_key_path" if private_key_path else ("secret_ref" if secret_ref else "")
+        ),
+    }
+    if args.include_local_secrets:
+        context.update(
+            {
+                "AUTH_APP_ID": app_id,
+                "AUTH_INSTALLATION_ID": installation_id,
+                "AUTH_PRIVATE_KEY_PATH": private_key_path,
+                "AUTH_SECRET_REF": secret_ref,
+            }
+        )
+    return context
 
 
 def resolve_context(args: argparse.Namespace) -> dict[str, str]:
@@ -584,6 +672,11 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_auth(args: argparse.Namespace) -> int:
+    print_shell_context(resolve_auth_context(args))
+    return 0
+
+
 def cmd_review_overrides(args: argparse.Namespace) -> int:
     print_shell_context(resolve_review_overrides(args))
     return 0
@@ -607,6 +700,16 @@ def build_parser() -> argparse.ArgumentParser:
             help="require a resolved local product checkout path",
         )
         command.set_defaults(func=cmd_resolve)
+
+    auth = subcommands.add_parser("auth", help="print product repository auth metadata")
+    auth.add_argument("--repo-root")
+    auth.add_argument("--repo", help="stable product repository name")
+    auth.add_argument(
+        "--include-local-secrets",
+        action="store_true",
+        help="include local secret references for machine callers; do not use for normal logs",
+    )
+    auth.set_defaults(func=cmd_auth)
 
     overrides = subcommands.add_parser(
         "review-overrides", help="print local review override compatibility values"

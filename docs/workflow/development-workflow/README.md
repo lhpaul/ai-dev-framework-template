@@ -248,6 +248,12 @@ commands when a product implementation action is involved. Reviewer and CI loops
 also accept `--repo <owner/repo>` or `--product-repo <name>` for implementation
 PRs outside the hub.
 
+Product repository PR creation can use GitHub App authentication without
+printing secrets. See
+[`integrations/workflow-hub-github-app.md`](integrations/workflow-hub-github-app.md)
+for required App permissions, local-only secret-reference fields, token helper
+behavior, and dry-run examples for product PR routing.
+
 Role-specific skeletons are inspectable under the template root:
 
 - `template/workflow-hub/` lists hub-owned protocols, scripts, agents,
@@ -442,7 +448,7 @@ template:
 
 Important implementation notes:
 
-- Repository mode fields are `mode`, `workflow_hub.product_repos[]`, and `product_repo.workflow_hub`. Shared product repository entries may contain stable non-secret identity and metadata such as `name`, `github_repo` or `git_url`, `default_branch`, `role`, `scope`, `tracker` hints, and non-secret app identifiers. Local checkout paths, private key paths, secret values, and machine-specific tool settings belong only in `.ai-dev-workflow.local.yaml`. See [`repository-modes.md`](repository-modes.md) for examples and validation commands.
+- Repository mode fields are `mode`, `workflow_hub.product_repos[]`, and `product_repo.workflow_hub`. Shared product repository entries may contain stable non-secret identity and metadata such as `name`, `github_repo` or `git_url`, `default_branch`, `role`, `scope`, `tracker` hints, and non-secret app identifiers. Local checkout paths, private key paths, secret values, and machine-specific tool settings belong only in `.ai-dev-workflow.local.yaml`. See [`repository-modes.md`](repository-modes.md) and [`integrations/workflow-hub-github-app.md`](integrations/workflow-hub-github-app.md) for examples and validation commands.
 - Product-repository-aware orchestration scripts emit ownership fields such as
   `WORKFLOW_MODE`, `ACTION_REPOSITORY_KIND`, `ACTION_REPOSITORY`, and
   `ACTION_GITHUB_REPO` so orchestrators can distinguish hub-owned planning work
@@ -560,6 +566,7 @@ Repository helpers:
 - `docs/workflow/development-workflow/integrations/coderabbit.md`
 - `docs/workflow/development-workflow/integrations/haystack.md`
 - `docs/workflow/development-workflow/integrations/github-projects.md`
+- `docs/workflow/development-workflow/integrations/workflow-hub-github-app.md`
 - `docs/workflow/development-workflow/integrations/ci-cd-deployment.md`
 - `docs/workflow/development-workflow/integrations/e2e-regression.md`
 
