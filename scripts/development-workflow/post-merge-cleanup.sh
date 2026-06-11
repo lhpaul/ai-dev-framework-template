@@ -248,7 +248,9 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
     fi
     if [ "$ISSUE_STATE" = "OPEN" ]; then
       # Find the merged PR for this branch.
-      if MERGED_PR=$(gh pr list --state merged --head "$TO_DELETE" --limit 1 --json number --jq '.[0].number // empty'); then
+      merged_pr_args=()
+      [ -n "$TARGET_GITHUB_REPO" ] && merged_pr_args+=(--repo "$TARGET_GITHUB_REPO")
+      if MERGED_PR=$(gh pr list "${merged_pr_args[@]}" --state merged --head "$TO_DELETE" --limit 1 --json number --jq '.[0].number // empty'); then
         : # gh succeeded; MERGED_PR may still be empty if no matching PR exists
       else
         echo "ERROR: could not query merged PRs for branch '$TO_DELETE' (gh command failed)." >&2
