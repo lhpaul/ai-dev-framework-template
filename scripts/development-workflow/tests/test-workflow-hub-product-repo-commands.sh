@@ -121,11 +121,13 @@ hub_dir="$(fixture_dir hub)"
 clean_repo="$(fixture_dir clean-product)"
 dirty_repo="$(fixture_dir dirty-product)"
 branch_restore_repo="$(fixture_dir branch-restore-product)"
+fetch_fail_repo="$(fixture_dir fetch-fail-product)"
 missing_checkout="$TMP_ROOT/missing-checkout"
 mkdir -p "$missing_checkout"
 init_repo "$clean_repo" main
 init_repo "$dirty_repo" main
 init_repo "$branch_restore_repo" main
+init_repo "$fetch_fail_repo" main
 clean_remote="$(fixture_dir clean-remote.git)"
 updater_repo="$(fixture_dir clean-updater)"
 git init --bare -q -b main "$clean_remote"
@@ -148,6 +150,8 @@ printf 'local ahead\n' > "$branch_restore_repo/local-ahead.txt"
 git -C "$branch_restore_repo" add local-ahead.txt
 git -C "$branch_restore_repo" commit -q -m "local ahead"
 git -C "$branch_restore_repo" switch -q feature/start
+git -C "$fetch_fail_repo" switch -q -c feature/start
+git -C "$fetch_fail_repo" remote add origin "$TMP_ROOT/does-not-exist.git"
 printf 'dirty\n' > "$dirty_repo/dirty.txt"
 
 cat > "$hub_dir/.ai-dev-workflow.yaml" <<'YAML'
@@ -164,6 +168,9 @@ workflow_hub:
       default_branch: main
     - name: branch-restore-app
       github_repo: example/branch-restore-app
+      default_branch: main
+    - name: fetch-fail-app
+      github_repo: example/fetch-fail-app
       default_branch: main
     - name: missing-path-app
       github_repo: example/missing-path-app
@@ -201,6 +208,8 @@ product_repos:
     local_path: "$dirty_repo"
   - name: branch-restore-app
     local_path: "$branch_restore_repo"
+  - name: fetch-fail-app
+    local_path: "$fetch_fail_repo"
   - name: missing-checkout-app
     local_path: "$missing_checkout"
 YAML
@@ -248,6 +257,21 @@ run_contains "sync_branch_restore_reason" "REASON=local_ahead_or_diverged" "$bra
 run_contains "sync_branch_restore_marker" "RESTORE_ORIGINAL_BRANCH=ok" "$branch_restore_output"
 branch_after_restore="$(git -C "$branch_restore_repo" rev-parse --abbrev-ref HEAD)"
 run_contains "sync_branch_restore_current_branch" "feature/start" "$branch_after_restore"
+set +e
+fetch_fail_output="$(bash "$SYNC_CMD" --repo-root "$hub_dir" --repo fetch-fail-app 2>&1)"
+fetch_fail_code=$?
+set -e
+if [ "$fetch_fail_code" -ne 0 ]; then
+  echo "PASS: sync_fetch_failure_exit"
+  PASS_COUNT=$((PASS_COUNT + 1))
+else
+  echo "FAIL: sync_fetch_failure_exit - expected fetch failure"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+run_contains "sync_fetch_failure_reason" "REASON=fetch_failed" "$fetch_fail_output"
+run_contains "sync_fetch_failure_restore_marker" "RESTORE_ORIGINAL_BRANCH=ok" "$fetch_fail_output"
+branch_after_fetch_failure="$(git -C "$fetch_fail_repo" rev-parse --abbrev-ref HEAD)"
+run_contains "sync_fetch_failure_current_branch" "feature/start" "$branch_after_fetch_failure"
 
 set +e
 all_sync="$(bash "$SYNC_CMD" --repo-root "$hub_dir" --all 2>&1)"

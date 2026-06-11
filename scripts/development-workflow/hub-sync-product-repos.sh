@@ -47,6 +47,16 @@ restore_original_branch() {
   return 0
 }
 
+return_after_sync_failure() {
+  local local_path="$1"
+  local original_branch="$2"
+  local switched_branch="$3"
+  if [ "$switched_branch" = "true" ]; then
+    restore_original_branch "$local_path" "$original_branch" || return 1
+  fi
+  return 1
+}
+
 sync_one_repo() {
   local selected_repo="$1"
   local context local_path default_branch current_branch remote_ref ahead behind counts dirty_output branch_after
@@ -113,13 +123,6 @@ sync_one_repo() {
     return 1
   fi
 
-  if ! git -C "$local_path" fetch origin "$default_branch" >/dev/null 2>&1; then
-    printf '  STATUS=failed\n'
-    printf '  REASON=fetch_failed\n'
-    failed_count=$((failed_count + 1))
-    return 1
-  fi
-
   if ! current_branch="$(git -C "$local_path" rev-parse --abbrev-ref HEAD 2>/dev/null)"; then
     printf '  STATUS=failed\n'
     printf '  REASON=current_branch_unreadable\n'
@@ -138,14 +141,20 @@ sync_one_repo() {
     switched_branch=true
   fi
 
+  if ! git -C "$local_path" fetch origin "$default_branch" >/dev/null 2>&1; then
+    printf '  STATUS=failed\n'
+    printf '  REASON=fetch_failed\n'
+    failed_count=$((failed_count + 1))
+    return_after_sync_failure "$local_path" "$current_branch" "$switched_branch"
+    return 1
+  fi
+
   remote_ref="origin/$default_branch"
   if ! git -C "$local_path" rev-parse --verify "$remote_ref" >/dev/null 2>&1; then
     printf '  STATUS=failed\n'
     printf '  REASON=remote_branch_missing\n'
     failed_count=$((failed_count + 1))
-    if [ "$switched_branch" = "true" ]; then
-      restore_original_branch "$local_path" "$current_branch" || return 1
-    fi
+    return_after_sync_failure "$local_path" "$current_branch" "$switched_branch"
     return 1
   fi
 
@@ -153,9 +162,7 @@ sync_one_repo() {
     printf '  STATUS=failed\n'
     printf '  REASON=ahead_behind_check_failed\n'
     failed_count=$((failed_count + 1))
-    if [ "$switched_branch" = "true" ]; then
-      restore_original_branch "$local_path" "$current_branch" || return 1
-    fi
+    return_after_sync_failure "$local_path" "$current_branch" "$switched_branch"
     return 1
   fi
   ahead="${counts%%[[:space:]]*}"
@@ -167,9 +174,7 @@ sync_one_repo() {
     printf '  AHEAD=%s\n' "$ahead"
     printf '  BEHIND=%s\n' "$behind"
     blocked_count=$((blocked_count + 1))
-    if [ "$switched_branch" = "true" ]; then
-      restore_original_branch "$local_path" "$current_branch" || return 1
-    fi
+    return_after_sync_failure "$local_path" "$current_branch" "$switched_branch"
     return 1
   fi
 
@@ -178,9 +183,7 @@ sync_one_repo() {
       printf '  STATUS=failed\n'
       printf '  REASON=fast_forward_failed\n'
       failed_count=$((failed_count + 1))
-      if [ "$switched_branch" = "true" ]; then
-        restore_original_branch "$local_path" "$current_branch" || return 1
-      fi
+      return_after_sync_failure "$local_path" "$current_branch" "$switched_branch"
       return 1
     fi
     printf '  STATUS=synced\n'
