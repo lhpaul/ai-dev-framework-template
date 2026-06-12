@@ -28,34 +28,34 @@ case "$*" in
   repo\ view\ --json\ nameWithOwner\ --jq\ .nameWithOwner)
     printf 'lhpaul/ai-dev-framework-template\n'
     ;;
-  api\ --paginate\ repos/lhpaul/ai-dev-framework-template/issues/10/comments)
+  api\ --paginate\ --slurp\ repos/lhpaul/ai-dev-framework-template/issues/10/comments)
     if [ "${MOCK_COMMENT_MODE:-missing}" = "existing" ]; then
       cat <<'JSON'
-[{"id":123,"body":"<!-- run-epic:pr-disposition -->\nold"}]
+[[{"id":111,"body":"unrelated"}],[{"id":123,"body":"<!-- run-epic:pr-disposition -->\nold"}]]
 JSON
     else
       printf '[]\n'
     fi
     ;;
-  api\ --paginate\ repos/lhpaul/ai-dev-framework-template/issues/900/comments)
+  api\ --paginate\ --slurp\ repos/lhpaul/ai-dev-framework-template/issues/900/comments)
     if [ "${MOCK_COMMENT_MODE:-missing}" = "existing" ]; then
       cat <<'JSON'
-[{"id":456,"body":"<!-- run-epic:epic-ledger -->\nold"}]
+[[{"id":456,"body":"<!-- run-epic:epic-ledger -->\nold"}]]
 JSON
     else
       printf '[]\n'
     fi
     ;;
-  api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/123\ -f\ body=*)
+  api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/123\ --input\ -)
     printf '{"id":123}\n'
     ;;
-  api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/456\ -f\ body=*)
+  api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/456\ --input\ -)
     printf '{"id":456}\n'
     ;;
-  api\ -X\ POST\ repos/lhpaul/ai-dev-framework-template/issues/10/comments\ -f\ body=*)
+  api\ -X\ POST\ repos/lhpaul/ai-dev-framework-template/issues/10/comments\ --input\ -)
     printf '{"id":124}\n'
     ;;
-  api\ -X\ POST\ repos/lhpaul/ai-dev-framework-template/issues/900/comments\ -f\ body=*)
+  api\ -X\ POST\ repos/lhpaul/ai-dev-framework-template/issues/900/comments\ --input\ -)
     printf '{"id":457}\n'
     ;;
   *)
@@ -174,6 +174,7 @@ create_output="$("$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10)"
 run_test "creates_pr_disposition_when_missing" "CREATED_COMMENT=1" "$create_output"
 update_output="$(MOCK_COMMENT_MODE=existing "$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10)"
 run_test "updates_existing_pr_disposition_comment" "UPDATED_COMMENT_ID=123" "$update_output"
+run_test "finds_marker_on_later_page" "yes" "$(grep -q 'PATCH repos/lhpaul/ai-dev-framework-template/issues/comments/123' "$CALL_LOG" && echo yes || echo no)"
 
 ledger_create_output="$("$HELPER" apply-epic-ledger --input "$ledger_fixture" --epic 900)"
 run_test "creates_epic_ledger_when_missing" "CREATED_COMMENT=1" "$ledger_create_output"
@@ -181,6 +182,7 @@ ledger_update_output="$(MOCK_COMMENT_MODE=existing "$HELPER" apply-epic-ledger -
 run_test "updates_existing_epic_ledger_comment" "UPDATED_COMMENT_ID=456" "$ledger_update_output"
 
 run_test "no_duplicate_pr_comments" "1" "$(grep -c 'POST repos/lhpaul/ai-dev-framework-template/issues/10/comments' "$CALL_LOG")"
+run_test "uses_json_input_for_comments" "yes" "$(grep -q -- '--input -' "$CALL_LOG" && echo yes || echo no)"
 
 echo ""
 echo "=== Summary ==="

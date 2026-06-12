@@ -214,11 +214,11 @@ find_marker_comment_id() {
   local repo comments
 
   repo="$(repo_slug)"
-  if ! comments="$(gh api --paginate "repos/${repo}/issues/${target}/comments" 2>/dev/null)"; then
+  if ! comments="$(gh api --paginate --slurp "repos/${repo}/issues/${target}/comments" 2>/dev/null)"; then
     error_exit "failed to read comments for issue/PR #$target"
   fi
   printf '%s\n' "$comments" |
-    jq -r --arg marker "$marker" '[.[]? | select((.body // "") | contains($marker))][0].id // empty'
+    jq -r --arg marker "$marker" '[.[][]? | select((.body // "") | contains($marker))][0].id // empty'
 }
 
 apply_comment() {
@@ -231,10 +231,12 @@ apply_comment() {
   repo="$(repo_slug)"
   comment_id="$(find_marker_comment_id "$target" "$marker")"
   if [ -n "$comment_id" ]; then
-    gh api -X PATCH "repos/${repo}/issues/comments/${comment_id}" -f body="$body" >/dev/null
+    jq -n --arg body "$body" '{body: $body}' |
+      gh api -X PATCH "repos/${repo}/issues/comments/${comment_id}" --input - >/dev/null
     printf 'UPDATED_COMMENT_ID=%s\n' "$comment_id"
   else
-    gh api -X POST "repos/${repo}/issues/${target}/comments" -f body="$body" >/dev/null
+    jq -n --arg body "$body" '{body: $body}' |
+      gh api -X POST "repos/${repo}/issues/${target}/comments" --input - >/dev/null
     printf 'CREATED_COMMENT=1\n'
   fi
 }
