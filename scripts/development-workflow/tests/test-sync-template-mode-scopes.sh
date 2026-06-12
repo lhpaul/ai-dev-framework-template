@@ -104,6 +104,8 @@ categories:
   always_sync:
     - path: REVIEW.md
       mode_scope: shared
+    - path: "docs/hash#file.md"
+      mode_scope: shared
     - path: docs/workflow/
       glob: "**/*"
       mode_scope: hub_only
@@ -120,6 +122,9 @@ categories:
   project_specific:
     - path: README.md
       mode_scope: shared
+      note: |
+        This literal block also has colon-like text that must not be parsed as
+        metadata: mode_scope: hub_only.
     - path: CLAUDE.md
       mode_scope: hub_only
     - path: AGENTS.md
@@ -139,8 +144,9 @@ echo ""
 echo "=== sync_template_scopes: single_repo compatibility ==="
 
 run_contains "single_role_reported" "ROLE=single_repo" "$single_output"
-run_contains "single_selects_all_entries" "SELECTED_COUNT=9" "$single_output"
+run_contains "single_selects_all_entries" "SELECTED_COUNT=10" "$single_output"
 run_contains "single_skips_no_entries" "SKIPPED_COUNT=0" "$single_output"
+run_contains "single_preserves_quoted_hash_path" "SELECTED category=always_sync mode_scope=shared path=docs/hash#file.md glob=" "$single_output"
 run_contains "single_keeps_hub_scope" "SELECTED category=always_sync mode_scope=hub_only path=docs/workflow/ glob=**/*" "$single_output"
 run_contains "single_keeps_product_scope" "SELECTED category=project_specific mode_scope=product_repo_injection path=AGENTS.md glob=" "$single_output"
 
@@ -148,7 +154,7 @@ echo ""
 echo "=== sync_template_scopes: workflow_hub selection ==="
 
 run_contains "hub_role_reported" "ROLE=workflow_hub" "$hub_output"
-run_contains "hub_selected_count" "SELECTED_COUNT=6" "$hub_output"
+run_contains "hub_selected_count" "SELECTED_COUNT=7" "$hub_output"
 run_contains "hub_skipped_count" "SKIPPED_COUNT=3" "$hub_output"
 run_contains "hub_selects_shared" "SELECTED category=always_sync mode_scope=shared path=REVIEW.md glob=" "$hub_output"
 run_contains "hub_selects_hub_only" "SELECTED category=always_sync mode_scope=hub_only path=docs/workflow/ glob=**/*" "$hub_output"
@@ -158,7 +164,7 @@ echo ""
 echo "=== sync_template_scopes: product_repo selection ==="
 
 run_contains "product_role_reported" "ROLE=product_repo" "$product_output"
-run_contains "product_selected_count" "SELECTED_COUNT=6" "$product_output"
+run_contains "product_selected_count" "SELECTED_COUNT=7" "$product_output"
 run_contains "product_skipped_count" "SKIPPED_COUNT=3" "$product_output"
 run_contains "product_selects_shared" "SELECTED category=always_sync mode_scope=shared path=REVIEW.md glob=" "$product_output"
 run_contains "product_selects_injection" "SELECTED category=always_sync mode_scope=product_repo_injection path=template/product-repo-injection/ glob=**/*" "$product_output"
@@ -197,6 +203,13 @@ run_fails_contains \
   "unknown_role_fails_closed" \
   "invalid choice" \
   python3 "$SELECTOR" --manifest "$fixture_manifest" --role unknown_role
+
+tab_indent_manifest="$TMP_ROOT/tab-indent.yaml"
+printf 'schema_version: 1\n\nmode_scopes:\n\tshared:\n' > "$tab_indent_manifest"
+run_fails_contains \
+  "tab_indentation_fails_closed" \
+  "tabs are not supported for indentation" \
+  python3 "$SELECTOR" --manifest "$tab_indent_manifest" --role workflow_hub
 
 echo ""
 echo "sync-template mode-scope tests complete: $PASS_COUNT passed, $FAIL_COUNT failed."
