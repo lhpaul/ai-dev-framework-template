@@ -323,17 +323,18 @@ Use this when:
 
 ### `prepare-release-post-merge-cleanup.sh`
 
-After both release PRs (`release/*` -> `main` and `release/*` -> `develop`) are merged, verify merge state, remove the release branch remotely and locally, and optionally transition scoped tracker items from `Merged` to `Released`.
+After both release PRs (`release/*` -> `main` and `release/*` -> `develop`) are merged, verify merge state, remove the release branch remotely and locally, and transition scoped tracker items from `Merged` to `Released`.
 
 Usage:
 
 ```bash
-./scripts/development-workflow/prepare-release-post-merge-cleanup.sh <version|release-branch> [--issue N]... [--issues N,N,...]
+./scripts/development-workflow/prepare-release-post-merge-cleanup.sh <version|release-branch> [--from-changelog] [--issue N]... [--issues N,N,...]
 ```
 
 Examples:
 
 ```bash
+./scripts/development-workflow/prepare-release-post-merge-cleanup.sh v1.2.3 --from-changelog
 ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh v1.2.3 --issues 232,240
 ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh release/v1.2.3 --issue 232
 ```
@@ -342,6 +343,8 @@ Use this when:
 
 - Both release PRs are already merged and you need deterministic release-branch cleanup.
 - You want explicit, scoped tracker transitions to the terminal shipped status.
+- You want `--from-changelog` to derive the shipped issue scope from the finalized version section instead of manually copying issue IDs.
+- You need a fail-closed handoff for Linear: `TRACKER_ACTION=linear_mcp_or_api_required` means the listed issues still need MCP/API status transitions before release closeout is complete.
 
 ### `batch-merge.sh`
 

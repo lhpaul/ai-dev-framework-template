@@ -137,9 +137,11 @@ release tracking can set `release_field`; an MCP/API-backed implementation can
 write that field during release cleanup.
 
 Shell-only cleanup helpers cannot mutate Linear labels or custom fields directly.
-They emit release-stamp guidance and continue. The orchestrator or a Linear MCP
-runner should apply the release label/custom field and then transition shipped
-issues from `Merged` to `Released`.
+They emit release-stamp guidance plus `TRACKER_ACTION=linear_mcp_or_api_required`
+and exit non-zero unless `--best-effort` was explicitly accepted. The
+orchestrator or a Linear MCP runner must apply the release label/custom field
+and then transition every listed `TRACKER_ISSUES` item from `Merged` to
+`Released` before reporting the release as complete.
 
 ---
 
