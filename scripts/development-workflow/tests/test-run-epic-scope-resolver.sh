@@ -129,6 +129,7 @@ JSON
       107) body='Depends on #108'; labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
       109) state="CLOSED"; state_reason="NOT_PLANNED"; labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
       110) labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
+      111) body='Blocked by #108'; labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
     esac
     jq -n \
       --argjson number "$issue_number" \
@@ -240,6 +241,9 @@ run_test "satisfied_dependency_not_blocked" "eligible" "$(printf '%s\n' "$depend
 
 blocked_output="$(run_json --items 107)"
 run_test "blocked_dependency_group_detected" "blocked" "$(printf '%s\n' "$blocked_output" | jq -r '.items[0].group')"
+
+blocked_variant_output="$(run_json --items 111)"
+run_test "blocked_dependency_variant_detected" "blocked" "$(printf '%s\n' "$blocked_variant_output" | jq -r '.items[0].group')"
 
 merged_output="$(run_json --items 103)"
 run_test "merged_pr_group_detected" "already_merged" "$(printf '%s\n' "$merged_output" | jq -r '.items[0].group')"

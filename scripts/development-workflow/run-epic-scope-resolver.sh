@@ -262,11 +262,18 @@ integration_label_for_issue_json() {
 
 linked_pr_json() {
   local issue="$1"
-  local open_raw open_prs merged_raw merged_prs
+  local open_raw open_prs merged_raw merged_prs open_count merged_count
+  local pr_list_limit=5000
 
-  if ! open_raw="$(gh pr list --state open --limit 1000 \
+  if ! open_raw="$(gh pr list --state open --limit "$pr_list_limit" \
     --json number,title,headRefName,baseRefName,isDraft,labels 2>/dev/null)"; then
     error_exit "failed to read open PRs while resolving issue #${issue}."
+  fi
+  if ! open_count="$(printf '%s\n' "$open_raw" | jq 'length')"; then
+    error_exit "failed to parse open PR count while resolving issue #${issue}."
+  fi
+  if [ "$open_count" -ge "$pr_list_limit" ]; then
+    error_exit "open PR list reached ${pr_list_limit}; rerun with a narrower repository state before resolving issue #${issue}."
   fi
   if ! open_prs="$(printf '%s\n' "$open_raw" | jq --arg issue "$issue" '
         [ .[]
@@ -284,9 +291,15 @@ linked_pr_json() {
     error_exit "failed to parse open PRs while resolving issue #${issue}."
   fi
 
-  if ! merged_raw="$(gh pr list --state merged --limit 1000 \
+  if ! merged_raw="$(gh pr list --state merged --limit "$pr_list_limit" \
     --json number,title,headRefName,baseRefName,mergedAt 2>/dev/null)"; then
     error_exit "failed to read merged PRs while resolving issue #${issue}."
+  fi
+  if ! merged_count="$(printf '%s\n' "$merged_raw" | jq 'length')"; then
+    error_exit "failed to parse merged PR count while resolving issue #${issue}."
+  fi
+  if [ "$merged_count" -ge "$pr_list_limit" ]; then
+    error_exit "merged PR list reached ${pr_list_limit}; rerun with a narrower repository state before resolving issue #${issue}."
   fi
   if ! merged_prs="$(printf '%s\n' "$merged_raw" | jq --arg issue "$issue" '
         [ .[]
@@ -317,9 +330,9 @@ dependency_json() {
       awk '
         {
           line = tolower($0)
-          while (match(line, /depends on #[0-9]+/)) {
+          while (match(line, /(depends on|blocked by|requires|waiting on) #[0-9]+/)) {
             token = substr(line, RSTART, RLENGTH)
-            sub(/^depends on #/, "", token)
+            sub(/^.*#/, "", token)
             print token
             line = substr(line, RSTART + RLENGTH)
           }
