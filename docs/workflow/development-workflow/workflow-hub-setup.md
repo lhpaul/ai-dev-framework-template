@@ -169,3 +169,35 @@ Safe repair:
 
 Do not fall back to an unrelated user token when GitHub App configuration is
 missing.
+
+### Failed CI
+
+Symptom: product PR validation reports a failing CI result.
+
+Start from the hub checkout and follow the recovery path in
+[Cross-Repository PR Flow](cross-repo-pr-flow.md#failed-ci). The first check is:
+
+```bash
+scripts/development-workflow/pr-ci-loop.sh 123 --repo example/faind-mobile-app
+```
+
+Fix the selected product branch in the product checkout, push the repair, and
+rerun reviewer and CI loops before applying readiness labels.
+
+### Reviewer-Loop Failures
+
+Symptom: product PR review reports `needs_fixes`, `escalate`, or a reviewer
+failure label.
+
+Start from the hub checkout and follow the recovery path in
+[Cross-Repository PR Flow](cross-repo-pr-flow.md#reviewer-loop-failures). The
+first check is:
+
+```bash
+scripts/development-workflow/pr-review-loop.sh 123 \
+  --repo example/faind-mobile-app \
+  --branch feature/faind-example
+```
+
+Fix blocking findings in the selected product checkout and rerun the reviewer
+loop before applying readiness labels.

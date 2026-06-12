@@ -56,11 +56,15 @@ run_not_contains_any() {
   status=$?
   set -e
 
-  if [ "$status" -eq 1 ]; then
+  if [ "$status" -eq 0 ]; then
+    echo "FAIL: $name - unexpected match for pattern '$pattern'"
+    printf '%s\n' "$output"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  elif [ "$status" -eq 1 ]; then
     echo "PASS: $name"
     PASS_COUNT=$((PASS_COUNT + 1))
   else
-    echo "FAIL: $name - unexpected match for pattern '$pattern'"
+    echo "FAIL: $name - grep failed with status $status"
     printf '%s\n' "$output"
     FAIL_COUNT=$((FAIL_COUNT + 1))
   fi
