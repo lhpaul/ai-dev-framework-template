@@ -15,4 +15,4 @@ Key rules:
 - Open **two** PRs: one to `main`, one backport to `develop`
 - **After both PRs exist**, run the automated reviewer loop, apply `ready-for-regression`, and run the CI loop on the **production PR targeting `main` only** — do not stop at “PR opened” (use `scripts/development-workflow/pr-review-loop.sh` and `pr-ci-loop.sh` per protocol)
 - Merge `main` PR first; the tag is created automatically by CI
-- After both PRs merge, run Step 9 post-merge cleanup (`scripts/development-workflow/prepare-release-post-merge-cleanup.sh`) before considering the release flow complete
+- After both PRs merge, run Step 9 post-merge cleanup with `--from-changelog` or an explicit `--issues` scope, then complete any emitted tracker handoff such as `TRACKER_ACTION=linear_mcp_or_api_required` before considering the release flow complete

@@ -4,21 +4,23 @@
 # - verifies release PRs to main and develop are both merged
 # - deletes remote release branch (if present)
 # - deletes local release branch (switching away first if needed)
-# - optionally stamps explicit issue numbers with the release version
-# - optionally transitions explicit issue numbers from merged -> released
+# - stamps scoped issue numbers with the release version
+# - transitions scoped issue numbers from merged -> released, or emits a
+#   fail-closed tracker handoff when shell automation cannot complete them
 #
 # Usage:
-#   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh <version|release-branch> [--issue N]... [--issues N,N,...] [--best-effort]
+#   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh <version|release-branch> [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort]
 #
 # Examples:
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh 1.2.3
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh v1.2.3 --issue 232 --issue 240
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh release/v1.2.3 --issues 232,240
+#   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh v1.2.3 --from-changelog
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh release/v1.2.3 --issues 232,240 --best-effort
 #
-# Exit codes when --issues is supplied (unless --best-effort is passed):
+# Exit codes for tracker cleanup (unless --best-effort is passed):
 #   0  At least one issue was updated (or already in Released status) and no hard failures
-#      occurred (or no issues supplied). Issues already in Released status count as success.
+#      occurred. Issues already in Released status count as success.
 #   1  updated==0 after processing all issues, or at least one hard failure occurred
 #
 # Output (when --issues is supplied):
@@ -46,10 +48,11 @@ MERGED_LABEL="${GITHUB_PROJECT_STATUS_MERGED:-Merged}"
 RELEASED_LABEL="${GITHUB_PROJECT_STATUS_RELEASED:-Released}"
 RELEASE_INPUT=""
 BEST_EFFORT=false
+FROM_CHANGELOG=false
 declare -a ISSUE_NUMBERS=()
 
 usage() {
-  echo "Usage: $0 <version|release-branch> [--issue N]... [--issues N,N,...] [--best-effort]" >&2
+  echo "Usage: $0 <version|release-branch> [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort]" >&2
 }
 
 normalize_release_branch() {
@@ -97,6 +100,110 @@ parse_issue_csv() {
   IFS="$old_ifs"
 }
 
+append_issues_from_changelog() {
+  local version="$1"
+  local changelog_path="${CHANGELOG_PATH:-CHANGELOG.md}"
+  local extracted
+
+  if [ ! -f "$changelog_path" ]; then
+    echo "Could not find changelog at '$changelog_path' for --from-changelog." >&2
+    return 1
+  fi
+
+  if ! extracted="$(python3 - "$version" "$changelog_path" "$TRACKER_PROVIDER" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+version = sys.argv[1]
+if version.startswith("v"):
+    version = version[1:]
+path = Path(sys.argv[2])
+provider = sys.argv[3]
+text = path.read_text(encoding="utf-8")
+
+heading = re.compile(rf"^## \[(?:v?{re.escape(version)})\].*$", re.MULTILINE)
+match = heading.search(text)
+if not match:
+    print(f"CHANGELOG_VERSION_NOT_FOUND version=v{version}", file=sys.stderr)
+    sys.exit(1)
+
+next_heading = re.search(r"^## \[", text[match.end():], re.MULTILINE)
+section_end = match.end() + next_heading.start() if next_heading else len(text)
+section = text[match.end():section_end]
+
+seen = set()
+issues = []
+
+def add(value: str) -> None:
+    if value not in seen:
+        seen.add(value)
+        issues.append(value)
+
+if provider == "linear":
+    range_re = re.compile(r"\b([A-Z][A-Z0-9_]*-)(\d+)\s*[\u2013-]\s*(?:[A-Z][A-Z0-9_]*-)?(\d+)\b")
+    for item in range_re.finditer(section):
+        prefix = item.group(1)
+        start = int(item.group(2))
+        end = int(item.group(3))
+        if end < start:
+            start, end = end, start
+        for number in range(start, end + 1):
+            add(f"{prefix}{number}")
+
+    for item in re.finditer(r"\b[A-Z][A-Z0-9_]*-\d+\b", section):
+        add(item.group(0))
+else:
+    for item in re.finditer(r"(?<![\w-])#([1-9][0-9]*)\b", section):
+        add(item.group(1))
+
+if not issues:
+    print(f"CHANGELOG_NO_ISSUES_FOUND version=v{version}", file=sys.stderr)
+    sys.exit(1)
+
+print("\n".join(issues))
+PY
+  )"; then
+    return 1
+  fi
+
+  while IFS= read -r issue; do
+    [ -z "$issue" ] && continue
+    if ! is_valid_issue_token "$issue"; then
+      echo "Invalid issue token '$issue' extracted from CHANGELOG." >&2
+      return 1
+    fi
+    ISSUE_NUMBERS+=("$issue")
+  done <<< "$extracted"
+}
+
+dedupe_issue_numbers() {
+  local deduped
+  if [ "${#ISSUE_NUMBERS[@]}" -eq 0 ]; then
+    return 0
+  fi
+
+  if ! deduped="$(python3 - "${ISSUE_NUMBERS[@]}" <<'PY'
+import sys
+
+seen = set()
+for issue in sys.argv[1:]:
+    if issue and issue not in seen:
+        seen.add(issue)
+        print(issue)
+PY
+  )"; then
+    echo "Could not deduplicate issue scope." >&2
+    return 1
+  fi
+
+  ISSUE_NUMBERS=()
+  while IFS= read -r issue; do
+    [ -z "$issue" ] && continue
+    ISSUE_NUMBERS+=("$issue")
+  done <<< "$deduped"
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --issue)
@@ -118,6 +225,10 @@ while [ $# -gt 0 ]; do
       fi
       parse_issue_csv "$2"
       shift 2
+      ;;
+    --from-changelog)
+      FROM_CHANGELOG=true
+      shift
       ;;
     --best-effort)
       BEST_EFFORT=true
@@ -153,6 +264,17 @@ RELEASE_BRANCH="$(normalize_release_branch "$RELEASE_INPUT")"
 RELEASE_VERSION="${RELEASE_BRANCH#release/}"
 echo "Release branch: $RELEASE_BRANCH"
 echo "Release version: $RELEASE_VERSION"
+
+if [ "$FROM_CHANGELOG" = "true" ]; then
+  if ! append_issues_from_changelog "$RELEASE_VERSION"; then
+    echo "TRACKER_INCOMPLETE=1 REASON=changelog_scope_unavailable"
+    if [ "$BEST_EFFORT" != "true" ]; then
+      exit 1
+    fi
+  fi
+fi
+
+dedupe_issue_numbers
 
 echo "Verifying merged PRs for release branch..."
 MAIN_PR=$(gh pr list --state merged --head "$RELEASE_BRANCH" --base main --json number --jq '.[0].number // empty')
@@ -203,7 +325,13 @@ else
 fi
 
 if [ "${#ISSUE_NUMBERS[@]}" -eq 0 ]; then
-  echo "No issues supplied; skipping tracker release transitions."
+  echo "TRACKER_INCOMPLETE=1 REASON=no_issue_scope"
+  echo "No issues supplied; release tracker transitions are incomplete."
+  echo "Rerun with --from-changelog or explicit --issue/--issues after confirming the shipped issue scope."
+  if [ "$BEST_EFFORT" != "true" ]; then
+    echo "Pass --best-effort to keep branch cleanup as the only completed action and exit 0." >&2
+    exit 1
+  fi
   echo "Release post-merge cleanup complete."
   exit 0
 fi
@@ -238,8 +366,16 @@ if [ "$TRACKER_PROVIDER" = "linear" ]; then
   for issue in "${ISSUE_NUMBERS[@]}"; do
     echo "  - Issue $issue: set status to '$RELEASED_LABEL'"
   done
+  echo "TRACKER_ACTION=linear_mcp_or_api_required"
+  echo "TRACKER_INCOMPLETE=1 REASON=linear_status_transition_required"
+  echo "TRACKER_ISSUES=$(IFS=,; printf '%s' "${ISSUE_NUMBERS[*]}")"
   echo "See docs/workflow/development-workflow/integrations/linear.md for guidance."
   echo "STAMPED=$LINEAR_STAMPED STAMP_SKIPPED=$LINEAR_STAMP_SKIPPED STAMP_FAILED=$LINEAR_STAMP_FAILED UPDATED=0 SKIPPED=0 FAILED=0"
+  if [ "$BEST_EFFORT" != "true" ]; then
+    echo "Release tracker transitions are incomplete until Linear issues are moved to '$RELEASED_LABEL'." >&2
+    echo "Pass --best-effort only when a human explicitly accepts completing tracker transitions outside this script." >&2
+    exit 1
+  fi
   echo "Release post-merge cleanup complete."
   exit 0
 fi

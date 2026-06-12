@@ -228,16 +228,16 @@ If either merged PR is missing, or one PR is still open, stop. Do **not** delete
 
 Before running cleanup, derive the explicit shipped issue set from the finalized
 `## [X.Y.Z]` section in `CHANGELOG.md`. Use only issue references that actually
-shipped in that release section. Keep the helper invocation explicit with
-`--issue` or `--issues`; do not ask the helper to infer release scope from the
-whole project board.
+shipped in that release section. Prefer the helper's `--from-changelog` parser,
+or pass the same explicit scope with `--issue` / `--issues`. Do not infer release
+scope from the whole project board.
 
 ### 9.2 Preferred command (single entry point)
 
 Use the helper script:
 
 ```bash
-./scripts/development-workflow/prepare-release-post-merge-cleanup.sh v[X.Y.Z] --issues <issue1,issue2,...>
+./scripts/development-workflow/prepare-release-post-merge-cleanup.sh v[X.Y.Z] --from-changelog
 ```
 
 The script performs all required checks and actions in order:
@@ -247,6 +247,10 @@ The script performs all required checks and actions in order:
 3. Deletes local branch `release/v[X.Y.Z]` when safe.
 4. Records the production release version on each explicit in-scope tracker item.
 5. Transitions explicit in-scope tracker items from merged-to-integration to released-to-production.
+
+Use `--issues <issue1,issue2,...>` or repeated `--issue <issue>` only when the
+CHANGELOG section cannot be used and a human has confirmed the shipped issue
+scope.
 
 ### 9.3 Manual equivalent (when script cannot be used)
 
@@ -275,8 +279,21 @@ Use the provider-routed release-stamp operation documented in [`issue-tracker.md
   - `GITHUB_PROJECT_STATUS_RELEASED`
 - GitHub providers stamp releases with a Milestone named `vX.Y.Z`, assign it to each shipped issue, and close the milestone after cleanup succeeds.
 - Unsupported providers log a release-stamp skip/warning and continue; release stamping is best effort and must not block status transitions.
+- Linear providers require MCP/API completion after shell cleanup. If the helper
+  emits `TRACKER_ACTION=linear_mcp_or_api_required`, transition every listed
+  `TRACKER_ISSUES` item from `Merged` to `Released` with Linear MCP/API before
+  treating the release as complete. The helper exits non-zero unless
+  `--best-effort` is passed.
 
 Only transition work items explicitly confirmed as part of the shipped release. Do not bulk-move all project items in `Merged` unless a human explicitly asks for that scope.
+
+### 9.5 Completion gate
+
+The release is not complete until branch cleanup succeeds and tracker transitions
+either succeed or a human explicitly accepts `--best-effort` handling. A cleanup
+run that emits `TRACKER_INCOMPLETE=1` is a handoff signal, not a success state:
+complete the named tracker action and rerun/verify before reporting the release
+closed.
 
 If release stamping needs manual repair, use the provider-native release marker
 for each shipped issue (for example, GitHub Milestone `vX.Y.Z`, Jira Fix
