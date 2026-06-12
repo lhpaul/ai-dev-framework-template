@@ -254,10 +254,20 @@ case "$1" in
       exit 0
     fi
     if [ "$2" = "list" ]; then
-      if [ -n "${GH_PR_LIST_BASE:-}" ]; then
-        printf '%s\n' "$GH_PR_LIST_BASE"
-        exit 0
+      if [ "${GH_FAIL_PR_LIST:-}" = "1" ]; then
+        echo "simulated pr list failure" >&2
+        exit 1
       fi
+      case " $* " in
+        *" --json baseRefName "*)
+          [ -n "${GH_PR_LIST_BASE:-}" ] && printf '%s\n' "$GH_PR_LIST_BASE"
+          exit 0
+          ;;
+        *" --json number "*)
+          [ -n "${GH_PR_LIST_NUMBER:-}" ] && printf '%s\n' "$GH_PR_LIST_NUMBER"
+          exit 0
+          ;;
+      esac
       exit 0
     fi
     ;;
@@ -353,6 +363,16 @@ run_fails_contains \
     --repo-root "$hub_dir" \
     spec/integration-cleanup
 
+run_fails_contains \
+  "post_merge_cleanup_fails_when_merged_base_query_fails" \
+  "could not query merged PR base" \
+  env GH_FAIL_PR_LIST=1 \
+    WORKFLOW_TARGET_GITHUB_REPO=example/workflow-hub \
+    PATH="$stub_bin:$PATH" \
+    "$REPO_ROOT/scripts/development-workflow/post-merge-cleanup.sh" \
+    --repo-root "$hub_dir" \
+    spec/integration-cleanup
+
 cleanup_remote="$TMP_ROOT/integration-cleanup.git"
 cleanup_repo="$TMP_ROOT/integration-cleanup"
 git init --bare -q -b develop-workflow-hub-mode "$cleanup_remote"
@@ -374,6 +394,16 @@ printf 'override\n' > "$cleanup_repo/override.txt"
 git -C "$cleanup_repo" add override.txt
 git -C "$cleanup_repo" commit -q -m "base override fixture"
 git -C "$cleanup_repo" checkout -q develop-workflow-hub-mode
+
+run_fails_contains \
+  "post_merge_cleanup_refuses_resolved_base_branch" \
+  "Refusing to delete protected branch 'develop-workflow-hub-mode'." \
+  env GH_PR_LIST_BASE=develop-workflow-hub-mode \
+    WORKFLOW_TARGET_GITHUB_REPO=example/workflow-hub \
+    PATH="$stub_bin:$PATH" \
+    "$REPO_ROOT/scripts/development-workflow/post-merge-cleanup.sh" \
+    --repo-root "$cleanup_repo" \
+    develop-workflow-hub-mode
 
 base_override_output="$(
   GH_PR_LIST_BASE=wrong-base \
