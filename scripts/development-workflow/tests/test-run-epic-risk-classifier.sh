@@ -215,6 +215,18 @@ run_test "hard_blockers_take_precedence" "blocked" "$(printf '%s\n' "$blocked_ou
 run_test "blocked_not_mergeable" "false" "$(printf '%s\n' "$blocked_output" | jq -r '.merge_permitted')"
 run_test "hard_blocker_count" "yes" "$(printf '%s\n' "$blocked_output" | jq -e '.blockers | length >= 8' >/dev/null && echo yes || echo no)"
 
+missing_check_fixture="$(write_fixture missing-check '{
+  "pr_number": 6,
+  "merge_state": "CLEAN",
+  "labels": ["ready-for-human-review"],
+  "status_checks": [{"name": "guard"}],
+  "changed_files": ["docs/README.md"],
+  "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 0}
+}')"
+missing_check_output="$(classify_fixture "$missing_check_fixture" high)"
+run_test "missing_check_state_blocks" "blocked" "$(printf '%s\n' "$missing_check_output" | jq -r '.risk')"
+run_test "missing_check_state_reason_clear" "yes" "$(printf '%s\n' "$missing_check_output" | jq -e '.blockers[] | select(test("missing or ambiguous"))' >/dev/null && echo yes || echo no)"
+
 threshold_output="$(classify_fixture "$medium_fixture" low)"
 run_test "max_risk_gate_blocks_excess_risk" "false" "$(printf '%s\n' "$threshold_output" | jq -r '.merge_permitted')"
 run_test "max_risk_gate_reason" "yes" "$(printf '%s\n' "$threshold_output" | jq -e '.gate_reason | test("exceeds max risk")' >/dev/null && echo yes || echo no)"

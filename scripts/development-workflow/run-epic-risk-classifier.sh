@@ -177,6 +177,10 @@ collect_check_blockers() {
     status="$(printf '%s' "$encoded" | base64_decode | jq -r '.status // .state // ""')"
     conclusion="$(printf '%s' "$encoded" | base64_decode | jq -r '.conclusion // .state // ""')"
     name="$(printf '%s' "$encoded" | base64_decode | jq -r '.name // .context // "unnamed check"')"
+    if [ -z "$status" ] && [ -z "$conclusion" ]; then
+      blockers="$(append_json_array_string "$blockers" "required CI state is missing or ambiguous: ${name}")"
+      continue
+    fi
     if ! check_status_is_success "$status" "$conclusion"; then
       blockers="$(append_json_array_string "$blockers" "required CI is not successful: ${name}")"
     fi
@@ -197,7 +201,7 @@ changed_file_risk() {
   local state_json="$1"
   local risk="low"
   local reasons='[]'
-  local file
+  local file reason_count
 
   while IFS= read -r file; do
     [ -n "$file" ] || continue
@@ -231,7 +235,10 @@ changed_file_risk() {
     esac
   done < <(printf '%s\n' "$state_json" | jq -r '.changed_files[]?')
 
-  if [ "$(printf '%s\n' "$reasons" | jq 'length')" -eq 0 ]; then
+  if ! reason_count="$(printf '%s\n' "$reasons" | jq -e 'length')"; then
+    reason_count=0
+  fi
+  if [ "$reason_count" -eq 0 ]; then
     reasons="$(append_json_array_string "$reasons" "changed-file evidence is missing")"
     risk="high"
   fi
