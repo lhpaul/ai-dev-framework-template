@@ -453,10 +453,12 @@ Important implementation notes:
   `WORKFLOW_MODE`, `ACTION_REPOSITORY_KIND`, `ACTION_REPOSITORY`, and
   `ACTION_GITHUB_REPO` so orchestrators can distinguish hub-owned planning work
   from product-owned implementation work.
-- `sync-manifest.yaml` includes informational `mode_scope` metadata:
-  `shared`, `hub_only`, and `product_repo_injection`. Current sync-template
-  readers still use the existing manifest categories; mode-aware sync
-  application belongs to later workflow-hub work.
+- `sync-manifest.yaml` includes enforced `mode_scope` metadata: `shared`,
+  `hub_only`, and `product_repo_injection`. Sync-template resolves repository
+  mode before comparison: `single_repo` keeps the compatibility file set,
+  `workflow_hub` selects shared and hub-only entries, and `product_repo`
+  selects shared and product-repo-injection entries while reporting skipped
+  scopes.
 - `review.on_draft.runner` is consumed by the Step 7a internal review gate protocol (`91-orchestrate-work-protocol.md`). If omitted, the gate falls back to running the stage-appropriate `claude` reviewer once. Developers can override the list locally via `.tmp/template-config.json` (gitignored).
 - `review.on_draft.github` and `review.on_ready.github` are consumed by `scripts/development-workflow/pr-review-loop.sh` for external automated PR review (Step 7). If the config file is absent, or both lists are omitted or empty, automated PR review is treated as not configured and the review loop reports `skipped`.
 - Legacy `review.internal_reviewers`, `review.platforms`, and `review.phase_after_clean` keys remain accepted for one transition release and map to the new lifecycle buckets.

@@ -13,7 +13,10 @@ Recommended model tier: `economy`
    3a. After Step 0 (template source resolved), run Step 0.5 — the comprehensive pre-flight diagnostic. This step surfaces all foreseeable conflict categories (file-level conflicts, CI configuration issues, CHANGELOG structure issues, protocol file incompatibilities) in a single pass before any files are modified. If `--dry-run` was passed, stop after printing the diagnostic report and do not proceed to Step 1. The diagnostic report format is defined in the protocol's Step 0.5 section.
 4. Apply the same manifest-driven procedure as the Claude Code and Cursor sync-template artefacts:
    - Check for `sync-manifest.yaml` at the template root after resolving the template source.
-   - If found, use `categories.always_sync`, `categories.special_handling`, and `categories.project_specific` from the manifest.
+   - Resolve the current repository role from `.ai-dev-workflow.yaml` (`single_repo` when missing).
+   - If found, run `scripts/development-workflow/select-sync-manifest-entries.py` from the template source and use only the selected `categories.always_sync`, `categories.special_handling`, and `categories.project_specific` entries for the resolved role.
+   - Report skipped entries by `mode_scope` in dry-run and apply summaries.
+   - Reuse the same selected entry set for dry-run comparison and apply; do not rebuild the file list independently.
    - If found and `rename_detections` is present, apply the rename cleanup detection defined in the protocol's "Rename cleanup detection" section (Step 2) and display the "Rename cleanup" section in Step 3 when candidates are found.
    - If absent, fall back to the embedded file list in the protocol and display the warning message.
    - For mixed-content files (`mixed_content: true`, `annotation_scheme: html_comments`), apply the extraction logic defined in the protocol's "Mixed-content extraction logic" section.

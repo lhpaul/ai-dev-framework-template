@@ -156,6 +156,21 @@ product repository should not receive hub-owned tracker artifacts, historical
 specs, implementation plans, or cross-product coordination state unless a later
 workflow explicitly documents why that copy is required.
 
+The sync-template workflow enforces this boundary through `sync-manifest.yaml`
+`mode_scope` metadata:
+
+- `single_repo` selects all manifest entries and preserves the existing
+  compatibility file set.
+- `workflow_hub` selects `shared` and `hub_only` entries, then reports
+  `product_repo_injection` entries as skipped.
+- `product_repo` selects `shared` and `product_repo_injection` entries, then
+  reports `hub_only` entries as skipped.
+
+Unknown repository roles, missing entry `mode_scope` values, and unknown
+`mode_scope` values fail closed before file changes are applied. Dry-run and
+apply paths use the same selected manifest entry set so preview output and the
+actual apply set cannot diverge.
+
 Inspectable skeletons make this boundary visible without applying it:
 
 - `template/workflow-hub/` lists hub-owned protocols, scripts, agent wrappers,
@@ -400,7 +415,7 @@ Those behaviors belong to later workflow-hub implementation items. Until those
 items land, missing mode remains `single_repo` and existing repositories keep the
 current single-repository workflow.
 
-The `sync-manifest.yaml` `mode_scope` metadata is also informational until later
-mode-aware sync work consumes it. Current sync-template readers continue to use
-the existing manifest categories and do not filter or apply files by repository
-mode.
+The `sync-manifest.yaml` `mode_scope` metadata is consumed by sync-template
+selection. Current readers still preserve single-repository compatibility, but
+workflow hubs and product repositories receive role-specific selected and
+skipped file sets.
