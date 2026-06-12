@@ -162,6 +162,20 @@ low_output="$(classify_fixture "$low_fixture" low)"
 run_test "classifies_low_docs_and_tests" "low" "$(printf '%s\n' "$low_output" | jq -r '.risk')"
 run_test "low_merge_permitted" "true" "$(printf '%s\n' "$low_output" | jq -r '.merge_permitted')"
 run_test "json_output_has_reasons" "yes" "$(printf '%s\n' "$low_output" | jq -e '.reasons | length > 0' >/dev/null && echo yes || echo no)"
+run_test "json_output_shape_stable" "yes" "$(
+  printf '%s\n' "$low_output" |
+    jq -e '
+      has("pr_number") and
+      has("risk") and
+      has("max_risk") and
+      has("merge_permitted") and
+      has("gate_reason") and
+      (.reasons | type == "array") and
+      (.blockers | type == "array") and
+      has("why_safe_to_merge") and
+      has("read_only_guarantee")
+    ' >/dev/null && echo yes || echo no
+)"
 
 medium_fixture="$(write_fixture medium '{
   "pr_number": 2,
@@ -304,7 +318,7 @@ one_thread_fixture="$(write_fixture one-thread '{
 one_thread_output="$(classify_fixture "$one_thread_fixture" low)"
 run_test "one_unresolved_blocking_thread_blocks" "blocked" "$(printf '%s\n' "$one_thread_output" | jq -r '.risk')"
 
-for blocker_flag in ambiguous_tracker_state unclear_base_branch missing_credentials destructive_action_required; do
+for blocker_flag in ambiguous_tracker_state unclear_base_branch missing_credentials destructive_action_required force_push_required; do
   blocker_fixture="$(write_fixture "blocker-${blocker_flag}" "{
     \"pr_number\": 12,
     \"merge_state\": \"CLEAN\",
@@ -317,6 +331,28 @@ for blocker_flag in ambiguous_tracker_state unclear_base_branch missing_credenti
   blocker_output="$(classify_fixture "$blocker_fixture" high)"
   run_test "${blocker_flag}_blocks" "blocked" "$(printf '%s\n' "$blocker_output" | jq -r '.risk')"
 done
+
+needs_setup_fixture="$(write_fixture needs-setup '{
+  "pr_number": 13,
+  "merge_state": "CLEAN",
+  "labels": ["ready-for-human-review", "needs-setup"],
+  "status_checks": [{"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+  "changed_files": ["docs/README.md"],
+  "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 0}
+}')"
+needs_setup_output="$(classify_fixture "$needs_setup_fixture" high)"
+run_test "needs_setup_label_blocks" "blocked" "$(printf '%s\n' "$needs_setup_output" | jq -r '.risk')"
+
+dirty_merge_fixture="$(write_fixture dirty-merge '{
+  "pr_number": 14,
+  "merge_state": "DIRTY",
+  "labels": ["ready-for-human-review"],
+  "status_checks": [{"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+  "changed_files": ["docs/README.md"],
+  "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 0}
+}')"
+dirty_merge_output="$(classify_fixture "$dirty_merge_fixture" high)"
+run_test "dirty_merge_state_blocks" "blocked" "$(printf '%s\n' "$dirty_merge_output" | jq -r '.risk')"
 
 threshold_output="$(classify_fixture "$medium_fixture" low)"
 run_test "max_risk_gate_blocks_excess_risk" "false" "$(printf '%s\n' "$threshold_output" | jq -r '.merge_permitted')"
