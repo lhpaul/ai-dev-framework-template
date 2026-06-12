@@ -4,7 +4,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
-REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
+REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)" || {
+  echo "Error: could not resolve repository root." >&2
+  exit 1
+}
 
 SETUP_DOC="$REPO_ROOT/docs/workflow/development-workflow/workflow-hub-setup.md"
 INJECTION_DOC="$REPO_ROOT/docs/workflow/development-workflow/product-repo-injection.md"
