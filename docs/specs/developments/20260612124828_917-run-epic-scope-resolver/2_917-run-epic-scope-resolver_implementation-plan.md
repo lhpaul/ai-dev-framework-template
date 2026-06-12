@@ -33,8 +33,8 @@ epic orchestration package.
 | Existing `/run-epic` surface | `rg -n "run-epic" .agents .codex .claude .cursor scripts docs/workflow/development-workflow -g '!docs/specs/**'` | No existing command, skill, script, or protocol owns `/run-epic`; implementation must add the first resolver surface. |
 | Existing command alias patterns | `find .agents/skills .codex/skills .claude/commands .cursor/commands -maxdepth 3 -type f \| sort` | Command-style aliases already exist for `/run-work`, `/run-item-work`, `/graduate-development`, and related workflow commands across Claude, Cursor, and Codex surfaces. |
 | Native sub-issue query precedent | `rg -n "subIssues|addSubIssue|parent" docs/workflow/development-workflow/protocols scripts` | Native GitHub sub-issue GraphQL examples exist in `00-add-backlog-item-protocol.md` and `05b-graduate-development-protocol.md`; reuse their pagination and parent-verification patterns. |
-| Workflow helper patterns | `sed -n '1,220p' scripts/development-workflow/workflow-next-action.sh` and `sed -n '1938,2025p' scripts/development-workflow/workflow-lib.sh` | Existing helpers use Bash, `workflow-lib.sh`, stable key-value output, GitHub Projects status/type helpers, and stub-friendly shell tests. |
-| Installer alias coverage | `sed -n '1,220p' scripts/development-workflow/install-codex-skills.sh` | The installer symlinks every `.agents/skills/*` directory, but `test-install-codex-skills.sh` has explicit real-repo alias expectations that must include `run-epic`. |
+| Workflow helper patterns | Inspect `workflow-next-action.sh` plus `list_open_workflow_type_issues`, `get_tracker_status_for_issue`, and `get_tracker_type_for_issue` in `workflow-lib.sh`. | Existing helpers use Bash, `workflow-lib.sh`, stable key-value output, GitHub Projects status/type helpers, and stub-friendly shell tests. |
+| Installer alias coverage | Inspect `install_skill_tree` calls in `scripts/development-workflow/install-codex-skills.sh`. | The installer symlinks every `.agents/skills/*` directory, but `test-install-codex-skills.sh` has explicit real-repo alias expectations that must include `run-epic`. |
 
 ---
 
