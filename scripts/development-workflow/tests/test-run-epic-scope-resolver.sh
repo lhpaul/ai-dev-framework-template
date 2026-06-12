@@ -125,6 +125,7 @@ JSON
       106) labels_json='[{"name":"integration-branch:beta"}]' ;;
       107) body='Depends on #108'; labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
       109) state="CLOSED"; state_reason="NOT_PLANNED"; labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
+      110) labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
     esac
     jq -n \
       --argjson number "$issue_number" \
@@ -144,7 +145,7 @@ JSON
     ;;
   pr\ list\ --state\ open*)
     cat <<'JSON'
-[{"number":2102,"title":"Plan PR","headRefName":"implementation-plan/102-two","baseRefName":"develop-delegated-epic-orchestration","isDraft":false,"labels":[{"name":"ready-for-human-review"}]}]
+[{"number":2102,"title":"Plan PR","headRefName":"implementation-plan/102-two","baseRefName":"develop-delegated-epic-orchestration","isDraft":false,"labels":[{"name":"ready-for-human-review"}]},{"number":2110,"title":"Unready PR","headRefName":"feature/110-ten","baseRefName":"develop-delegated-epic-orchestration","isDraft":false,"labels":[]}]
 JSON
     ;;
   pr\ list\ --state\ merged*)
@@ -238,6 +239,9 @@ run_test "blocked_dependency_group_detected" "blocked" "$(printf '%s\n' "$blocke
 
 merged_output="$(run_json --items 103)"
 run_test "merged_pr_group_detected" "already_merged" "$(printf '%s\n' "$merged_output" | jq -r '.items[0].group')"
+
+unready_pr_output="$(run_json --items 110)"
+run_test "unready_open_pr_remains_eligible" "eligible" "$(printf '%s\n' "$unready_pr_output" | jq -r '.items[0].group')"
 
 closed_output="$(run_json --items 109)"
 run_test "closed_not_planned_not_complete" "ambiguous" "$(printf '%s\n' "$closed_output" | jq -r '.items[0].group')"

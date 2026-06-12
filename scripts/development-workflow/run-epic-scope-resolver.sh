@@ -295,7 +295,21 @@ linked_pr_json() {
 dependency_json() {
   local body="$1"
   local deps dep state title
-  deps="$(printf '%s\n' "$body" | grep -Eio 'depends on #[0-9]+' | grep -Eo '[0-9]+' | sort -n -u || true)"
+  deps="$(
+    printf '%s\n' "$body" |
+      awk '
+        {
+          line = tolower($0)
+          while (match(line, /depends on #[0-9]+/)) {
+            token = substr(line, RSTART, RLENGTH)
+            sub(/^depends on #/, "", token)
+            print token
+            line = substr(line, RSTART + RLENGTH)
+          }
+        }
+      ' |
+      sort -n -u
+  )"
   if [ -z "$deps" ]; then
     jq -n '{state:"none", issues:[]}'
     return 0
@@ -368,7 +382,7 @@ enrich_item() {
   if ! merged_impl_count="$(printf '%s\n' "$pr_json" | jq '[.merged[] | select(.headRefName | test("^(feature|fix|refactor|hotfix)/"))] | length')"; then
     error_exit "failed to parse merged PR state for issue #${issue}."
   fi
-  if ! open_review_count="$(printf '%s\n' "$pr_json" | jq '[.open[] | select((.labels | index("ready-for-human-review")) or .isDraft == false)] | length')"; then
+  if ! open_review_count="$(printf '%s\n' "$pr_json" | jq '[.open[] | select(.labels | index("ready-for-human-review"))] | length')"; then
     error_exit "failed to parse open PR state for issue #${issue}."
   fi
   if ! dep_state="$(printf '%s\n' "$dep_json" | jq -r '.state')"; then
