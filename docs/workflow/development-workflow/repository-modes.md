@@ -326,6 +326,33 @@ and secret-manager references stay local-only. See
 [`integrations/workflow-hub-github-app.md`](integrations/workflow-hub-github-app.md)
 for the setup guide and dry-run helper commands.
 
+### Non-Secret Workflow Hub Smoke Fixture
+
+Template maintainers can run a deterministic workflow-hub fixture without
+private repositories or credentials:
+
+```bash
+bash scripts/development-workflow/tests/test-workflow-hub-smoke-fixtures.sh
+```
+
+The committed fixture seed lives under
+`scripts/development-workflow/tests/fixtures/workflow-hub-smoke/`. It models one
+hub and two placeholder product repositories, `mobile-app` and `admin-portal`,
+using `example/*` repository identities. The harness copies the seed into a
+temporary directory, writes local-only checkout paths there, creates temporary
+git repositories for the products, and validates:
+
+- workflow-hub config parsing and product repository resolution
+- local path precedence from `.ai-dev-workflow.local.yaml` and `checkout_root`
+- status and sync command behavior for both dummy products
+- product branch and PR routing through dry-run commands
+- `sync-manifest.yaml` mode-scope classification
+- missing-mode and explicit `single_repo` regression behavior
+
+The default path is safe for CI and does not perform live GitHub writes. Live
+GitHub App validation is an explicit operator action via `--live-github-app`
+against safe test repositories only.
+
 ### Compatibility And Precedence
 
 Existing `.tmp/template-config.json` review overrides remain supported for the

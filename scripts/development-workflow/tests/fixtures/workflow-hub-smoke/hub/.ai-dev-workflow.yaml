@@ -1,0 +1,19 @@
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      default_branch: main
+      role: mobile
+      scope: fixture app
+      tracker:
+        component: mobile
+    - name: admin-portal
+      git_url: git@github.com:example/admin-portal.git
+      default_branch: develop
+      role: admin
+      scope: fixture portal
+      tracker:
+        component: admin

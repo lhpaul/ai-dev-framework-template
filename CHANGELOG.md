@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Workflow hub smoke fixtures** (#883): adds non-secret workflow hub and product repository fixture coverage with single-repository regression checks.
 - **Workflow hub product repository commands** (#877): adds workflow-hub status, sync, and pull-request visibility commands for product repository checkouts.
 - **Workflow hub product repository PR authentication** (#880): adds local-only GitHub App auth guidance and helpers for opening product repository pull requests without exposing secrets.
 - **Workflow hub template skeletons** (#876): adds inspectable workflow-hub and product-repo-injection skeletons with mode-specific sync-scope metadata.

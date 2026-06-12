@@ -1,0 +1,5 @@
+checkout_root: __CHECKOUT_ROOT__
+
+product_repos:
+  - name: mobile-app
+    local_path: __MOBILE_LOCAL_PATH__
