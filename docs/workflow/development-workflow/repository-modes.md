@@ -209,6 +209,14 @@ product repository and follows the same split. A hub-only workflow improvement,
 such as updating orchestration protocols, has no product target and opens its
 code PR in `workflow-hub`.
 
+## Adoption Guides
+
+Use these guides when moving from the operating model to a concrete setup:
+
+- [Workflow Hub Setup](workflow-hub-setup.md)
+- [Product Repository Injection](product-repo-injection.md)
+- [Cross-Repository PR Flow](cross-repo-pr-flow.md)
+
 ## Shared And Local Workflow Configuration
 
 Repository mode configuration is split across one versioned shared file and one
