@@ -199,6 +199,67 @@ run_fails_contains \
   "manifest is missing mode_scopes" \
   python3 "$SELECTOR" --manifest "$TMP_ROOT/missing-mode-scopes-fixed.yaml" --role workflow_hub
 
+partial_scopes_manifest="$TMP_ROOT/partial-mode-scopes.yaml"
+cat > "$partial_scopes_manifest" <<'YAML'
+schema_version: 1
+
+mode_scopes:
+  shared:
+    label: Shared
+
+categories:
+  always_sync:
+    - path: REVIEW.md
+      mode_scope: shared
+YAML
+run_fails_contains \
+  "partial_mode_scopes_fail_closed" \
+  "manifest is missing required mode_scope declarations" \
+  python3 "$SELECTOR" --manifest "$partial_scopes_manifest" --role workflow_hub
+
+unknown_category_manifest="$TMP_ROOT/unknown-category.yaml"
+cat > "$unknown_category_manifest" <<'YAML'
+schema_version: 1
+
+mode_scopes:
+  shared:
+    label: Shared
+  hub_only:
+    label: Hub only
+  product_repo_injection:
+    label: Product repository injection
+
+categories:
+  not_a_sync_category:
+    - path: REVIEW.md
+      mode_scope: shared
+YAML
+run_fails_contains \
+  "unknown_category_fails_closed" \
+  "unknown category 'not_a_sync_category'" \
+  python3 "$SELECTOR" --manifest "$unknown_category_manifest" --role workflow_hub
+
+entry_before_category_manifest="$TMP_ROOT/entry-before-category.yaml"
+cat > "$entry_before_category_manifest" <<'YAML'
+schema_version: 1
+
+mode_scopes:
+  shared:
+    label: Shared
+  hub_only:
+    label: Hub only
+  product_repo_injection:
+    label: Product repository injection
+
+categories:
+    - path: REVIEW.md
+      mode_scope: shared
+YAML
+run_fails_contains \
+  "entry_before_category_fails_closed" \
+  "category entry appears before category name" \
+  python3 "$SELECTOR" --manifest "$entry_before_category_manifest" --role workflow_hub
+
 run_fails_contains \
   "unknown_role_fails_closed" \
   "invalid choice" \
