@@ -459,6 +459,10 @@ Important implementation notes:
   `workflow_hub` selects shared and hub-only entries, and `product_repo`
   selects shared and product-repo-injection entries while reporting skipped
   scopes.
+- Workflow-hub adopters can follow the setup and operations guides:
+  [`workflow-hub-setup.md`](workflow-hub-setup.md),
+  [`product-repo-injection.md`](product-repo-injection.md), and
+  [`cross-repo-pr-flow.md`](cross-repo-pr-flow.md).
 - `review.on_draft.runner` is consumed by the Step 7a internal review gate protocol (`91-orchestrate-work-protocol.md`). If omitted, the gate falls back to running the stage-appropriate `claude` reviewer once. Developers can override the list locally via `.tmp/template-config.json` (gitignored).
 - `review.on_draft.github` and `review.on_ready.github` are consumed by `scripts/development-workflow/pr-review-loop.sh` for external automated PR review (Step 7). If the config file is absent, or both lists are omitted or empty, automated PR review is treated as not configured and the review loop reports `skipped`.
 - Legacy `review.internal_reviewers`, `review.platforms`, and `review.phase_after_clean` keys remain accepted for one transition release and map to the new lifecycle buckets.
