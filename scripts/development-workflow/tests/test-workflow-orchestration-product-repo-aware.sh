@@ -338,6 +338,13 @@ run_fails_contains \
     feature/900-product-routing
 
 run_fails_contains \
+  "post_merge_cleanup_refuses_main_branch" \
+  "Refusing to delete protected branch 'main'." \
+  "$REPO_ROOT/scripts/development-workflow/post-merge-cleanup.sh" \
+    --repo-root "$hub_dir" \
+    main
+
+run_fails_contains \
   "post_merge_cleanup_fails_when_merged_base_unknown" \
   "could not determine merged PR base" \
   env WORKFLOW_TARGET_GITHUB_REPO=example/workflow-hub \
@@ -362,6 +369,29 @@ printf 'branch\n' > "$cleanup_repo/spec.txt"
 git -C "$cleanup_repo" add spec.txt
 git -C "$cleanup_repo" commit -q -m "spec branch fixture"
 git -C "$cleanup_repo" checkout -q develop-workflow-hub-mode
+git -C "$cleanup_repo" checkout -q -b spec/base-override
+printf 'override\n' > "$cleanup_repo/override.txt"
+git -C "$cleanup_repo" add override.txt
+git -C "$cleanup_repo" commit -q -m "base override fixture"
+git -C "$cleanup_repo" checkout -q develop-workflow-hub-mode
+
+base_override_output="$(
+  GH_PR_LIST_BASE=wrong-base \
+  WORKFLOW_TARGET_GITHUB_REPO=example/workflow-hub \
+  PATH="$stub_bin:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/post-merge-cleanup.sh" \
+    --repo-root "$cleanup_repo" \
+    --base develop-workflow-hub-mode \
+    spec/base-override
+)"
+run_contains \
+  "post_merge_cleanup_base_override_precedes_lookup" \
+  "will switch to develop-workflow-hub-mode" \
+  "$base_override_output"
+run_contains \
+  "post_merge_cleanup_base_override_deletes_branch" \
+  "Deleted branch spec/base-override" \
+  "$base_override_output"
 
 cleanup_output="$(
   GH_PR_LIST_BASE=develop-workflow-hub-mode \
