@@ -6,7 +6,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
-REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../../.." && pwd)"
+REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 FIXTURE_ROOT="$SCRIPT_DIR/fixtures/workflow-hub-smoke"
 RESOLVER="$REPO_ROOT/scripts/development-workflow/workflow-config-resolver.py"
 STATUS_CMD="$REPO_ROOT/scripts/development-workflow/hub-status.sh"
@@ -34,7 +34,10 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-TMP_ROOT="$(mktemp -d)"
+TMP_ROOT="$(mktemp -d)" || {
+  echo "Failed to create temporary directory." >&2
+  exit 1
+}
 TMP_ROOT="$(CDPATH='' cd -- "$TMP_ROOT" && pwd -P)"
 
 _harness_exit() {
@@ -181,19 +184,28 @@ run_equals "fixture_seed_exists" "yes" "$([ -d "$FIXTURE_ROOT" ] && echo yes || 
 run_equals "fixture_hub_shared_config_exists" "yes" "$([ -f "$FIXTURE_ROOT/hub/.ai-dev-workflow.yaml" ] && echo yes || echo no)"
 run_equals "fixture_local_template_exists" "yes" "$([ -f "$FIXTURE_ROOT/local-config.template.yaml" ] && echo yes || echo no)"
 
-private_hits=""
-set +e
-private_hits="$(
-  find "$FIXTURE_ROOT" -type f ! -name README.md -print0 |
-    xargs -0 grep -InE 'Leasity|RADAR|kids-safety|baumsystem|lhpaul/|op://|BEGIN .*PRIVATE KEY|ghp_|github_pat_|private_key_path|secret_ref|token='
-)"
-private_status=$?
-set -e
-if [ "$private_status" -ne 0 ] && [ "$private_status" -ne 1 ]; then
-  echo "FAIL: fixture_private_detail_scan - grep failed with exit code $private_status"
-  FAIL_COUNT=$((FAIL_COUNT + 1))
+if private_hits="$(
+  grep -RInE --exclude='README.md' \
+    'Leasity|RADAR|kids-safety|baumsystem|lhpaul/|op://|BEGIN .*PRIVATE KEY|ghp_|github_pat_|private_key_path|secret_ref|token=' \
+    "$FIXTURE_ROOT" 2>&1
+)"; then
+  :
+else
+  private_status=$?
+  if [ "$private_status" -eq 1 ]; then
+    private_hits=""
+  else
+    echo "FAIL: fixture_private_detail_scan - grep failed with exit code $private_status"
+    printf '%s\n' "$private_hits"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    private_hits="__scan_failed__"
+  fi
 fi
-run_equals "fixture_private_detail_scan" "" "$private_hits"
+if [ "$private_hits" = "__scan_failed__" ]; then
+  :
+else
+  run_equals "fixture_private_detail_scan" "" "$private_hits"
+fi
 
 hub_dir="$(fixture_dir workflow-hub)"
 cp -R "$FIXTURE_ROOT/hub/." "$hub_dir/"
