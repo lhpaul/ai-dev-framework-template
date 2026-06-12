@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Post-merge cleanup integration branch awareness** (#911): makes cleanup switch to the merged PR base branch, including workflow hub integration branches, instead of always defaulting to `develop`.
 - **Native GitHub sub-issues for epics** (#884): documents native sub-issue linking and verification for multi-item GitHub epics while preserving `integration-branch:<slug>` labels as the routing contract and fallback.
 - **Codex GitHub reviewer loop**: aligns the documented Codex bot default with the reviewer scripts, ignores outdated Codex review threads, and waits for Codex's definitive thumbs-up or inline-comment signal instead of treating review boilerplate as approval.
 - **Claude Code Action reviewer no-op guard** (#866): passes an explicit code-review prompt to the workflow and fails closed when a successful run log shows Claude did not actually execute.

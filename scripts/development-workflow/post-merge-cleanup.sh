@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# Post-merge cleanup: fetch origin, checkout develop, pull, and delete the
+# Post-merge cleanup: fetch origin, checkout the merge base, pull, and delete the
 # local branch that was just merged (remote branch already deleted).
 # Keeps the local repo clean after merging developments.
 #
 # Usage:
-#   ./scripts/development-workflow/post-merge-cleanup.sh [--repo <name>] [--repo-root <path>] [BRANCH]
+#   ./scripts/development-workflow/post-merge-cleanup.sh [--repo <name>] [--repo-root <path>] [--base <branch>] [BRANCH]
 #
 # - No BRANCH: use current branch (run while still on the merged branch).
 # - BRANCH: name of the local branch to delete (e.g. feature/my-feature).
@@ -27,6 +27,7 @@ DEVELOP_BRANCH="develop"
 TO_DELETE=""
 target_repo=""
 repo_root="$HUB_REPO_ROOT"
+base_branch_override=""
 
 require_option_value() {
   local option="$1"
@@ -47,6 +48,11 @@ while [ "$#" -gt 0 ]; do
     --repo-root)
       require_option_value "$@"
       repo_root="$2"
+      shift 2
+      ;;
+    --base)
+      require_option_value "$@"
+      base_branch_override="$2"
       shift 2
       ;;
     -h|--help)
@@ -124,6 +130,31 @@ if [ "$workflow_mode" = "workflow_hub" ] && [ "$branch_owner_kind" = "implementa
   if [ -z "$CLEANUP_REPO_ROOT" ]; then
     echo "ERROR: product repository local path is required for product repository cleanup in workflow_hub mode." >&2
     exit 64
+  fi
+fi
+
+if [ -n "$base_branch_override" ]; then
+  DEVELOP_BRANCH="$base_branch_override"
+elif [ "$ACTION_REPOSITORY_KIND" = "hub_owned" ]; then
+  cleanup_repo_slug=""
+  if cleanup_repo_slug="$(repo_slug 2>/dev/null)"; then
+    merged_base="$(
+      gh pr list \
+        --repo "$cleanup_repo_slug" \
+        --state merged \
+        --head "$TO_DELETE" \
+        --limit 1 \
+        --json baseRefName \
+        --jq '.[0].baseRefName // empty'
+    )" || {
+      echo "Warning: could not query merged PR base for branch '$TO_DELETE'; using '$DEVELOP_BRANCH'." >&2
+      merged_base=""
+    }
+    if [ -n "$merged_base" ]; then
+      DEVELOP_BRANCH="$merged_base"
+    fi
+  else
+    echo "Warning: could not resolve GitHub repository; using '$DEVELOP_BRANCH' for cleanup base." >&2
   fi
 fi
 

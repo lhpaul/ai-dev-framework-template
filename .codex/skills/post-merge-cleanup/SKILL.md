@@ -1,18 +1,19 @@
 ---
 name: post-merge-cleanup
-description: After a development PR is merged and the remote branch deleted, sync with origin, switch to develop, pull, delete the local branch, and update the related issue in the issue tracker. Use when you want to clean up the local repo post-merge.
+description: After a development PR is merged and the remote branch deleted, sync with origin, switch to the merged PR's base branch, pull, delete the local branch, and update the related issue in the issue tracker. Use when you want to clean up the local repo post-merge.
 ---
 
 # Post-merge cleanup
 
 1. From the repository root, run:
    ```bash
-   ./scripts/development-workflow/post-merge-cleanup.sh [branch-name]
+   ./scripts/development-workflow/post-merge-cleanup.sh [--base base-branch] [branch-name]
    ```
 2. **No argument**: the current branch is the one to delete (user runs while still on the merged branch).
 3. **With `branch-name`**: delete that local branch (e.g. `feature/my-feature`).
-4. In `workflow_hub`, preserve the selected product repository context for product-owned implementation cleanup and pass it through to shared cleanup helpers; hub-owned spec, plan, and workflow PR cleanup remains in the hub. Missing mode or `single_repo` keeps current cleanup behavior.
-5. **Update the issue tracker (if configured)**
+4. **With `--base base-branch`**: explicitly choose the cleanup base branch. When omitted for hub-owned cleanup, the script queries the merged PR base and falls back to `develop` only if that lookup is unavailable.
+5. In `workflow_hub`, preserve the selected product repository context for product-owned implementation cleanup and pass it through to shared cleanup helpers; hub-owned spec, plan, and workflow PR cleanup remains in the hub. Missing mode or `single_repo` keeps current cleanup behavior.
+6. **Update the issue tracker (if configured)**
    The merged branch name often contains an issue identifier (e.g. `feature/ENG-123-user-auth` → `ENG-123`, `fix/PROJ-456-login` → `PROJ-456`, `feature/42-user-auth` → `#42`). After the script succeeds, update the corresponding issue using the branch-type-based status table from Step 10 of `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`:
 
    | Merged branch type                                | Set tracker status to |
@@ -34,4 +35,4 @@ If this post-merge cleanup is the final action for a work item that was advanced
 
 Only suggest this when the cleanup is for a standalone item run (not when called as part of a batch merge or orchestrator flow, which handle retrospectives at their own level). See `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md`.
 
-The script (step 1) fetches origin, checks out `develop`, pulls, deletes the local branch with `git branch -D` (force-delete; safe because the branch is already merged on the remote), and for implementation branches (`fix/*`, `feature/*`, `hotfix/*`, `refactor/*`) automatically closes the associated GitHub issue if a merged PR is found. Do not change the order or skip steps.
+The script (step 1) fetches origin, checks out the merged PR's base branch, pulls, deletes the local branch with `git branch -D` (force-delete; safe because the branch is already merged on the remote), and for implementation branches (`fix/*`, `feature/*`, `hotfix/*`, `refactor/*`) automatically closes the associated GitHub issue if a merged PR is found. Do not change the order or skip steps.

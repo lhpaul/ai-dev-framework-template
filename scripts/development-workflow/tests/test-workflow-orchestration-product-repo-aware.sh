@@ -254,6 +254,10 @@ case "$1" in
       exit 0
     fi
     if [ "$2" = "list" ]; then
+      if [ -n "${GH_PR_LIST_BASE:-}" ]; then
+        printf '%s\n' "$GH_PR_LIST_BASE"
+        exit 0
+      fi
       printf '[]\n'
       exit 0
     fi
@@ -333,6 +337,40 @@ run_fails_contains \
   "$REPO_ROOT/scripts/development-workflow/post-merge-cleanup.sh" \
     --repo-root "$hub_dir" \
     feature/900-product-routing
+
+cleanup_remote="$TMP_ROOT/integration-cleanup.git"
+cleanup_repo="$TMP_ROOT/integration-cleanup"
+git init --bare -q -b develop-workflow-hub-mode "$cleanup_remote"
+git init -q -b develop-workflow-hub-mode "$cleanup_repo"
+git -C "$cleanup_repo" config user.email "fixture@example.com"
+git -C "$cleanup_repo" config user.name "Fixture User"
+printf 'base\n' > "$cleanup_repo/README.md"
+git -C "$cleanup_repo" add README.md
+git -C "$cleanup_repo" commit -q -m "initial integration base"
+git -C "$cleanup_repo" remote add origin "$cleanup_remote"
+git -C "$cleanup_repo" push -q -u origin develop-workflow-hub-mode
+git -C "$cleanup_repo" checkout -q -b spec/integration-cleanup
+printf 'branch\n' > "$cleanup_repo/spec.txt"
+git -C "$cleanup_repo" add spec.txt
+git -C "$cleanup_repo" commit -q -m "spec branch fixture"
+git -C "$cleanup_repo" checkout -q develop-workflow-hub-mode
+
+cleanup_output="$(
+  GH_PR_LIST_BASE=develop-workflow-hub-mode \
+  WORKFLOW_TARGET_GITHUB_REPO=example/workflow-hub \
+  PATH="$stub_bin:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/post-merge-cleanup.sh" \
+    --repo-root "$cleanup_repo" \
+    spec/integration-cleanup
+)"
+run_contains \
+  "post_merge_cleanup_uses_merged_pr_base" \
+  "will switch to develop-workflow-hub-mode" \
+  "$cleanup_output"
+run_contains \
+  "post_merge_cleanup_deletes_integration_branch" \
+  "Deleted branch spec/integration-cleanup" \
+  "$cleanup_output"
 
 echo ""
 echo "Passed: $PASS_COUNT"

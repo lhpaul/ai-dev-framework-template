@@ -300,20 +300,26 @@ workflow hub repository.
 
 ### `post-merge-cleanup.sh`
 
-After a development PR is merged and the remote branch deleted, sync with origin, switch to develop, pull, and delete the local branch.
+After a development PR is merged and the remote branch deleted, sync with
+origin, switch to the merged PR's base branch, pull, and delete the local
+branch.
 
 Usage:
 
 ```bash
-./scripts/development-workflow/post-merge-cleanup.sh [BRANCH]
+./scripts/development-workflow/post-merge-cleanup.sh [--base develop-workflow-hub-mode] [BRANCH]
 ```
 
 - No argument: use the current branch (run while still on the merged branch).
 - With `BRANCH`: branch name to delete (e.g. `feature/my-feature`).
+- With `--base`: explicitly choose the cleanup base branch. When omitted for
+  hub-owned branches, the script queries the merged PR base and falls back to
+  `develop` only if that lookup is unavailable.
 
 Use this when:
 
-- You have merged a feature/plan/spec PR and deleted the remote branch, and want to clean up the local branch and update develop.
+- You have merged a feature/plan/spec PR and deleted the remote branch, and want
+  to clean up the local branch and update the correct base branch.
 
 ### `prepare-release-post-merge-cleanup.sh`
 
