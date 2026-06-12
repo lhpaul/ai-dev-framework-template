@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Add run-epic scope resolver** (#917): add a read-only resolver for epic and explicit item-list execution sets before delegated review or merge behavior begins.
 - **Workflow hub setup and operations docs** (#882): documents workflow-hub setup, product-repo injection, cross-repo PR flow, and troubleshooting with non-secret example repositories.
 - **Workflow hub smoke fixtures** (#883): adds non-secret workflow hub and product repository fixture coverage with single-repository regression checks.
 - **Workflow hub product repository commands** (#877): adds workflow-hub status, sync, and pull-request visibility commands for product repository checkouts.
