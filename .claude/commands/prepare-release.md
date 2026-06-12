@@ -1,6 +1,6 @@
 ---
 description: Prepare a release from develop. Creates the release branch, updates CHANGELOG, bumps version, opens PRs to main and develop, then drives reviewer loop + ready-for-regression + CI on the main PR before human merge. Usage: /prepare-release [version number, e.g. 1.2.0]
-allowed-tools: Bash(git checkout:*), Bash(git fetch:*), Bash(git pull:*), Bash(git push:*), Bash(git log:*), Bash(git status:*), Bash(git branch:*), Bash(git diff:*), Bash(gh pr create:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(gh pr edit:*), Bash(gh pr comment:*), Bash(gh api:*), Bash(date:*), Bash(./scripts/development-workflow/pr-review-loop.sh:*), Bash(./scripts/development-workflow/pr-ci-loop.sh:*)
+allowed-tools: Bash(git checkout:*), Bash(git fetch:*), Bash(git pull:*), Bash(git push:*), Bash(git log:*), Bash(git status:*), Bash(git branch:*), Bash(git diff:*), Bash(gh pr create:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(gh pr edit:*), Bash(gh pr comment:*), Bash(gh api:*), Bash(date:*), Bash(./scripts/development-workflow/pr-review-loop.sh:*), Bash(./scripts/development-workflow/pr-ci-loop.sh:*), Bash(./scripts/development-workflow/prepare-release-post-merge-cleanup.sh:*)
 ---
 
 Follow the release protocol exactly as defined in:
