@@ -35,9 +35,9 @@ that #917 introduced.
 | Check | Command / query | Result |
 | --- | --- | --- |
 | Repo revision | `git rev-parse --short HEAD` | `f74c8aa` |
-| Existing `/run-epic` surface | `sed -n '1,220p' docs/workflow/development-workflow/protocols/95-run-epic-protocol.md` | Current protocol is resolver-only and explicitly says risk, review, merge, and audit behavior are sibling epic work. |
-| Resolver helper precedent | `sed -n '1,260p' scripts/development-workflow/run-epic-scope-resolver.sh` | Existing helper is Bash, uses `workflow-lib.sh`, validates inputs before lookup, supports text/JSON modes, and is fixture-testable. |
-| Existing #917 plan precedent | `sed -n '1,340p' docs/specs/developments/20260612124828_917-run-epic-scope-resolver/2_917-run-epic-scope-resolver_implementation-plan.md` | Workflow-tooling plans in this epic list helper scripts, protocol surfaces, tests, parser-risk cases, and smoke runbooks explicitly. |
+| Existing `/run-epic` surface | `rg -n "resolver protocol|review|merge|audit|sibling" docs/workflow/development-workflow/protocols/95-run-epic-protocol.md` | Current protocol is resolver-only and explicitly says risk, review, merge, and audit behavior are sibling epic work. |
+| Resolver helper precedent | `rg -n "workflow-lib|--epic|--items|--json|json_output|usage\\(" scripts/development-workflow/run-epic-scope-resolver.sh` | Existing helper is Bash, uses `workflow-lib.sh`, validates inputs before lookup, supports text/JSON modes, and is fixture-testable. |
+| Existing #917 plan precedent | `rg -n "Workflow Helper Script|Protocol and Command Surfaces|Parser-risk addendum|Smoke test runbook" docs/specs/developments/20260612124828_917-run-epic-scope-resolver/2_917-run-epic-scope-resolver_implementation-plan.md` | Workflow-tooling plans in this epic list helper scripts, protocol surfaces, tests, parser-risk cases, and smoke runbooks explicitly. |
 | Changelog placement | `rg -n "## \\[Unreleased\\]|Add run-epic" CHANGELOG.md \| head -20` | `[Unreleased]` exists and #917 already uses the bold-title issue format expected for implementation PR entries. |
 
 ---
