@@ -96,6 +96,7 @@ def parse_manifest(path: Path) -> tuple[set[str], list[ManifestEntry]]:
     current_category: str | None = None
     current: dict[str, str] | None = None
     current_line = 0
+    block_scalar_indent: int | None = None
 
     def flush_current() -> None:
         nonlocal current, current_line
@@ -135,6 +136,11 @@ def parse_manifest(path: Path) -> tuple[set[str], list[ManifestEntry]]:
             continue
         indent = len(line) - len(line.lstrip(" "))
         content = line.strip()
+
+        if block_scalar_indent is not None:
+            if indent > block_scalar_indent:
+                continue
+            block_scalar_indent = None
 
         if indent == 0:
             flush_current()
@@ -180,6 +186,8 @@ def parse_manifest(path: Path) -> tuple[set[str], list[ManifestEntry]]:
             parsed = parse_key_value(content)
             if parsed is not None:
                 key, value = parsed
+                if value in {">", "|", ">-", "|-", ">+", "|+"}:
+                    block_scalar_indent = indent
                 current[key] = value
 
     flush_current()

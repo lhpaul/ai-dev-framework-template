@@ -126,6 +126,9 @@ categories:
       mixed_content: true
       annotation_scheme: html_comments
       mode_scope: product_repo_injection
+      note: >
+        This folded block has colon-like text that must not be parsed as entry
+        metadata: mode_scope: hub_only.
 YAML
 
 single_output="$(python3 "$SELECTOR" --manifest "$fixture_manifest" --role single_repo)"
