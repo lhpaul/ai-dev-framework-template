@@ -233,7 +233,8 @@ run_test "base_override_wins" "develop-custom" "$(printf '%s\n' "$override_outpu
 run_test "base_override_keeps_eligible" "2" "$(printf '%s\n' "$override_output" | jq '.groups.eligible | length')"
 
 ambiguous_output="$(run_json --items 105,106)"
-run_test "conflicting_labels_no_base" "" "$(printf '%s\n' "$ambiguous_output" | jq -r '.baseBranch')"
+run_test "conflicting_labels_no_base" "null" "$(printf '%s\n' "$ambiguous_output" | jq -r '.baseBranch')"
+run_test "conflicting_labels_base_ambiguous" "true" "$(printf '%s\n' "$ambiguous_output" | jq -r '.baseAmbiguous')"
 run_test "conflicting_labels_ambiguous" "2" "$(printf '%s\n' "$ambiguous_output" | jq '.groups.ambiguous | length')"
 
 dependency_output="$(run_json --items 104)"
