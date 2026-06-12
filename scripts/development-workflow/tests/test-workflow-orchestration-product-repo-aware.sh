@@ -254,7 +254,20 @@ case "$1" in
       exit 0
     fi
     if [ "$2" = "list" ]; then
-      printf '[]\n'
+      if [ "${GH_FAIL_PR_LIST:-}" = "1" ]; then
+        echo "simulated pr list failure" >&2
+        exit 1
+      fi
+      case " $* " in
+        *" --json baseRefName "*)
+          [ -n "${GH_PR_LIST_BASE:-}" ] && printf '%s\n' "$GH_PR_LIST_BASE"
+          exit 0
+          ;;
+        *" --json number "*)
+          [ -n "${GH_PR_LIST_NUMBER:-}" ] && printf '%s\n' "$GH_PR_LIST_NUMBER"
+          exit 0
+          ;;
+      esac
       exit 0
     fi
     ;;
@@ -333,6 +346,99 @@ run_fails_contains \
   "$REPO_ROOT/scripts/development-workflow/post-merge-cleanup.sh" \
     --repo-root "$hub_dir" \
     feature/900-product-routing
+
+run_fails_contains \
+  "post_merge_cleanup_refuses_main_branch" \
+  "Refusing to delete protected branch 'main'." \
+  "$REPO_ROOT/scripts/development-workflow/post-merge-cleanup.sh" \
+    --repo-root "$hub_dir" \
+    main
+
+run_fails_contains \
+  "post_merge_cleanup_fails_when_merged_base_unknown" \
+  "could not determine merged PR base" \
+  env WORKFLOW_TARGET_GITHUB_REPO=example/workflow-hub \
+    PATH="$stub_bin:$PATH" \
+    "$REPO_ROOT/scripts/development-workflow/post-merge-cleanup.sh" \
+    --repo-root "$hub_dir" \
+    spec/integration-cleanup
+
+run_fails_contains \
+  "post_merge_cleanup_fails_when_merged_base_query_fails" \
+  "could not query merged PR base" \
+  env GH_FAIL_PR_LIST=1 \
+    WORKFLOW_TARGET_GITHUB_REPO=example/workflow-hub \
+    PATH="$stub_bin:$PATH" \
+    "$REPO_ROOT/scripts/development-workflow/post-merge-cleanup.sh" \
+    --repo-root "$hub_dir" \
+    spec/integration-cleanup
+
+cleanup_remote="$TMP_ROOT/integration-cleanup.git"
+cleanup_repo="$TMP_ROOT/integration-cleanup"
+git init --bare -q -b develop-workflow-hub-mode "$cleanup_remote"
+git init -q -b develop-workflow-hub-mode "$cleanup_repo"
+git -C "$cleanup_repo" config user.email "fixture@example.com"
+git -C "$cleanup_repo" config user.name "Fixture User"
+printf 'base\n' > "$cleanup_repo/README.md"
+git -C "$cleanup_repo" add README.md
+git -C "$cleanup_repo" commit -q -m "initial integration base"
+git -C "$cleanup_repo" remote add origin "$cleanup_remote"
+git -C "$cleanup_repo" push -q -u origin develop-workflow-hub-mode
+git -C "$cleanup_repo" checkout -q -b spec/integration-cleanup
+printf 'branch\n' > "$cleanup_repo/spec.txt"
+git -C "$cleanup_repo" add spec.txt
+git -C "$cleanup_repo" commit -q -m "spec branch fixture"
+git -C "$cleanup_repo" checkout -q develop-workflow-hub-mode
+git -C "$cleanup_repo" checkout -q -b spec/base-override
+printf 'override\n' > "$cleanup_repo/override.txt"
+git -C "$cleanup_repo" add override.txt
+git -C "$cleanup_repo" commit -q -m "base override fixture"
+git -C "$cleanup_repo" checkout -q develop-workflow-hub-mode
+
+run_fails_contains \
+  "post_merge_cleanup_refuses_resolved_base_branch" \
+  "Refusing to delete protected branch 'develop-workflow-hub-mode'." \
+  env GH_PR_LIST_BASE=develop-workflow-hub-mode \
+    WORKFLOW_TARGET_GITHUB_REPO=example/workflow-hub \
+    PATH="$stub_bin:$PATH" \
+    "$REPO_ROOT/scripts/development-workflow/post-merge-cleanup.sh" \
+    --repo-root "$cleanup_repo" \
+    develop-workflow-hub-mode
+
+base_override_output="$(
+  GH_PR_LIST_BASE=wrong-base \
+  WORKFLOW_TARGET_GITHUB_REPO=example/workflow-hub \
+  PATH="$stub_bin:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/post-merge-cleanup.sh" \
+    --repo-root "$cleanup_repo" \
+    --base develop-workflow-hub-mode \
+    spec/base-override
+)"
+run_contains \
+  "post_merge_cleanup_base_override_precedes_lookup" \
+  "will switch to develop-workflow-hub-mode" \
+  "$base_override_output"
+run_contains \
+  "post_merge_cleanup_base_override_deletes_branch" \
+  "Deleted branch spec/base-override" \
+  "$base_override_output"
+
+cleanup_output="$(
+  GH_PR_LIST_BASE=develop-workflow-hub-mode \
+  WORKFLOW_TARGET_GITHUB_REPO=example/workflow-hub \
+  PATH="$stub_bin:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/post-merge-cleanup.sh" \
+    --repo-root "$cleanup_repo" \
+    spec/integration-cleanup
+)"
+run_contains \
+  "post_merge_cleanup_uses_merged_pr_base" \
+  "will switch to develop-workflow-hub-mode" \
+  "$cleanup_output"
+run_contains \
+  "post_merge_cleanup_deletes_integration_branch" \
+  "Deleted branch spec/integration-cleanup" \
+  "$cleanup_output"
 
 echo ""
 echo "Passed: $PASS_COUNT"

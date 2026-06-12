@@ -256,12 +256,13 @@ After a clean or resolved merge, in order:
 
    ```bash
    BRANCH="$(gh pr view <number> --json headRefName --jq '.headRefName')"
+   BASE_BRANCH="${TARGET_BASE:-develop}"
    # Try origin/<branch> first; fall back to HEAD~1 if the remote branch was
    # already deleted (e.g., repo has auto-delete enabled). HEAD~1 points to the
    # pre-merge develop commit, not the PR's tip, but post-merge-cleanup.sh only
    # needs the branch *name* to delete it — the commit it points to is irrelevant.
    git branch "$BRANCH" "origin/$BRANCH" 2>/dev/null || git branch "$BRANCH" HEAD~1 2>/dev/null || true
-   ./scripts/development-workflow/post-merge-cleanup.sh "$BRANCH"
+   ./scripts/development-workflow/post-merge-cleanup.sh --base "$BASE_BRANCH" "$BRANCH"
    ```
 
    If cleanup fails: report the failure but **do not halt remaining merges**. The human can re-run cleanup manually.
