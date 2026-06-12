@@ -43,33 +43,64 @@ class ManifestEntry:
 def strip_inline_comment(line: str) -> str:
     in_single = False
     in_double = False
+    triple_quote: str | None = None
     escaped = False
     result: list[str] = []
-    for char in line:
+    index = 0
+    while index < len(line):
+        char = line[index]
         if escaped:
             result.append(char)
             escaped = False
+            index += 1
+            continue
+        if triple_quote is not None:
+            if line.startswith(triple_quote, index):
+                result.append(line[index : index + 3])
+                index += 3
+                triple_quote = None
+                continue
+            result.append(char)
+            index += 1
+            continue
+        if not in_single and not in_double and line.startswith('"""', index):
+            result.append('"""')
+            index += 3
+            triple_quote = '"""'
+            continue
+        if not in_single and not in_double and line.startswith("'''", index):
+            result.append("'''")
+            index += 3
+            triple_quote = "'''"
             continue
         if char == "\\" and in_double:
             result.append(char)
             escaped = True
+            index += 1
             continue
         if char == "'" and not in_double:
             in_single = not in_single
             result.append(char)
+            index += 1
             continue
         if char == '"' and not in_single:
             in_double = not in_double
             result.append(char)
+            index += 1
             continue
         if char == "#" and not in_single and not in_double:
             break
         result.append(char)
+        index += 1
     return "".join(result).rstrip()
 
 
 def parse_scalar(value: str) -> str:
     value = value.strip()
+    if (value.startswith('"""') and value.endswith('"""')) or (
+        value.startswith("'''") and value.endswith("'''")
+    ):
+        return value[3:-3]
     if (value.startswith('"') and value.endswith('"')) or (
         value.startswith("'") and value.endswith("'")
     ):

@@ -272,6 +272,29 @@ run_fails_contains \
   "tabs are not supported for indentation" \
   python3 "$SELECTOR" --manifest "$tab_indent_manifest" --role workflow_hub
 
+triple_quote_manifest="$TMP_ROOT/triple-quote.yaml"
+cat > "$triple_quote_manifest" <<'YAML'
+schema_version: 1
+
+mode_scopes:
+  shared:
+    label: Shared
+  hub_only:
+    label: Hub only
+  product_repo_injection:
+    label: Product repository injection
+
+categories:
+  always_sync:
+    - path: """docs/triple#hash.md"""
+      mode_scope: shared
+YAML
+triple_quote_output="$(python3 "$SELECTOR" --manifest "$triple_quote_manifest" --role single_repo)"
+run_contains \
+  "triple_quoted_hash_path_preserved" \
+  "SELECTED category=always_sync mode_scope=shared path=docs/triple#hash.md glob=" \
+  "$triple_quote_output"
+
 echo ""
 echo "sync-template mode-scope tests complete: $PASS_COUNT passed, $FAIL_COUNT failed."
 
