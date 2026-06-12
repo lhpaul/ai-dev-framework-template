@@ -12,7 +12,7 @@ Follow this workflow exactly when invoked. Do not skip steps or reorder them.
 
 ---
 
-## Step 0 — Parse arguments and determine template source
+## Step 0 — Parse arguments, determine template source, and resolve repository role
 
 Parse the user's arguments:
 
@@ -55,6 +55,40 @@ Once the template source is resolved, read its `CHANGELOG.md` and extract the la
 
 - If found: read it and store its contents as `SYNC_MANIFEST`. The manifest is the authoritative file list (BR-1).
 - If absent: set `SYNC_MANIFEST=absent`. The graceful fallback (BR-4 / AC-4) activates in Step 2 — the embedded lists below are used and a warning is shown.
+
+**Repository role check**: Read the current project's `.ai-dev-workflow.yaml`
+top-level `mode` value. If the file or field is absent, set
+`REPOSITORY_ROLE=single_repo`. Supported roles are `single_repo`,
+`workflow_hub`, and `product_repo`; any other value is a configuration error and
+must stop the sync before file comparison.
+
+When `SYNC_MANIFEST` is loaded, build the selected manifest entry set before
+Step 0.5 using the selector helper from the resolved template source:
+
+```bash
+python3 "<template_source>/scripts/development-workflow/select-sync-manifest-entries.py" \
+  --manifest "<template_source>/sync-manifest.yaml" \
+  --role "$REPOSITORY_ROLE"
+```
+
+Store the resulting selected and skipped entries as `SYNC_SELECTED_ENTRIES` and
+`SYNC_SKIPPED_ENTRIES`. This same selected entry set must be used for dry-run
+diagnostics, file comparison, and apply steps so preview and apply cannot
+disagree.
+
+Role rules:
+
+- `single_repo`: preserve compatibility by selecting every manifest entry from
+  the existing categories.
+- `workflow_hub`: select `shared` and `hub_only`; skip
+  `product_repo_injection`.
+- `product_repo`: select `shared` and `product_repo_injection`; skip
+  `hub_only`.
+
+Unknown roles, missing `mode_scope` values, unknown `mode_scope` values, or a
+missing selector helper for a non-`single_repo` role must fail closed before any
+file changes are applied. If the manifest is absent, use fallback mode and make
+the lack of role-aware filtering explicit in the diagnostic report.
 
 **Migration notes check**: If `SYNC_MANIFEST` is loaded, read `migration_notes` from it. Read `template.last_synced_version` from the project's `.ai-dev-workflow.yaml` (if the file or field is absent, treat it as unknown — show all notes).
 
@@ -111,7 +145,7 @@ Dry-run complete. No changes were applied. Re-run without --dry-run to apply cha
 
 ### Category 1 — File-level merge conflicts (always-sync files)
 
-For each file listed in `categories.always_sync` (or the embedded fallback list when `SYNC_MANIFEST=absent`):
+For each selected file listed in `categories.always_sync` (or the embedded fallback list when `SYNC_MANIFEST=absent`):
 
 1. Enumerate all files using `find` (same method as Step 2).
 2. For files that exist in both the template and the project, run a diff:
@@ -129,7 +163,7 @@ Report all `Conflict risk` files with a one-line summary of what differs. This p
 
 Check for known CI/CD configuration mismatches between the template and the project:
 
-1. **Workflow file presence**: compare the set of `.github/workflows/` files in the template (under `categories.special_handling` if manifest is loaded, otherwise the embedded special-handling list) against the project. List any files that are in the template but absent from the project — these may be needed for full CI coverage after the sync.
+1. **Workflow file presence**: compare the selected set of `.github/workflows/` files in the template (under `categories.special_handling` if manifest is loaded, otherwise the embedded special-handling list) against the project. List any files that are in the template but absent from the project — these may be needed for full CI coverage after the sync.
 
 2. **Workflow YAML parse test** (pre-apply): for each workflow file that _would be updated_ based on the Category 1 diff, verify the _template_ version parses correctly before applying:
 
@@ -220,6 +254,8 @@ Output the report in this structure before proceeding to Step 1 (or stopping, if
 ## Pre-flight Diagnostic Report
 Template version: v{TEMPLATE_VERSION}  |  Project branch: [branch]
 Manifest: [loaded / absent — fallback mode]
+Repository role: [single_repo / workflow_hub / product_repo]
+Selected manifest entries: [N selected / M skipped by mode_scope]
 
 ### Category 1 — File-level conflicts
   No conflict:    N files (will be updated cleanly)
@@ -282,10 +318,10 @@ Run these checks **before touching anything**. If any check fails, report the pr
    git branch --show-current
    ```
 
-   - If `develop` branch exists → must be on `develop`
-   - If `develop` does not exist → must be on `main`
+   - If `develop` branch exists → must be on `develop`; set `BASE_BRANCH=develop`
+   - If `develop` does not exist → must be on `main`; set `BASE_BRANCH=main`
 
-   If on the wrong branch, abort with:
+   Store `BASE_BRANCH` for use in Step 5.4. If on the wrong branch, abort with:
 
    > "You must be on the `develop` branch (or `main` if `develop` doesn't exist) before syncing. Please switch branches and try again."
 
@@ -293,29 +329,29 @@ Run these checks **before touching anything**. If any check fails, report the pr
 
 ## Step 2 — Compare files
 
-Use `SYNC_MANIFEST` to determine the file lists. If `SYNC_MANIFEST=absent`, fall back to the embedded lists in each section below and display this warning before continuing:
+Use `SYNC_MANIFEST` and `SYNC_SELECTED_ENTRIES` to determine the file lists. If `SYNC_MANIFEST=absent`, fall back to the embedded lists in each section below and display this warning before continuing:
 
 > "Warning: sync manifest not found in upstream template. Using embedded file list — results may be incomplete."
 
 ### Always sync (apply automatically after approval)
 
-**If `SYNC_MANIFEST` is loaded**: read `categories.always_sync` from the manifest and enumerate those paths from the template. Each entry may specify a `path` (single file or directory prefix) and an optional `glob` pattern for recursive enumeration.
+**If `SYNC_MANIFEST` is loaded**: read selected `categories.always_sync` entries from `SYNC_SELECTED_ENTRIES` and enumerate those paths from the template. Each entry may specify a `path` (single file or directory prefix) and an optional `glob` pattern for recursive enumeration. Do not compare or apply entries from `SYNC_SKIPPED_ENTRIES`; list them in the summary under "Skipped by repository role".
 
 **If `SYNC_MANIFEST=absent`** (fallback): use the embedded list below.
 
 ```
-REVIEW.md                         ← canonical review contract for spec, plan, and code review gates
-docs/workflow/                          ← full tree, all files recursively
-.claude/agents/                   ← all *.md files
-.claude/commands/                 ← all *.md files
-.claude/skills/                   ← all *.md files (including this skill itself)
-.codex/skills/                    ← Codex skill trees shipped with the template (SKILL.md and assets)
-.agents/skills/                   ← Codex repo-scoped skill discovery path and command-style aliases
-.cursor/commands/                 ← all *.md files
-.cursor/agents/                   ← all *.md files
-.cursor/rules/                    ← all *.mdc files
-scripts/development-workflow/     ← workflow helper scripts (discover state, PR/CI loops, etc.)
-scripts/README.md                 ← purpose and usage of scripts in scripts/
+REVIEW.md                         <- canonical review contract for spec, plan, and code review gates
+docs/workflow/                          <- full tree, all files recursively
+.claude/agents/                   <- all *.md files
+.claude/commands/                 <- all *.md files
+.claude/skills/                   <- all *.md files (including this skill itself)
+.codex/skills/                    <- Codex skill trees shipped with the template (SKILL.md and assets)
+.agents/skills/                   <- Codex repo-scoped skill discovery path and command-style aliases
+.cursor/commands/                 <- all *.md files
+.cursor/agents/                   <- all *.md files
+.cursor/rules/                    <- all *.mdc files
+scripts/development-workflow/     <- workflow helper scripts (discover state, PR/CI loops, etc.)
+scripts/README.md                 <- purpose and usage of scripts in scripts/
 docs/best-practices/1-general.md
 docs/best-practices/2-version-control.md
 docs/best-practices/3-testing.md
@@ -325,16 +361,17 @@ docs/best-practices/3-testing.md
 
 For each file in these paths:
 
-- **Exists in template, not in project** → classify as ✅ **Add**
-- **Exists in both, content differs** → classify as 📝 **Update** (prepare a concise diff summary)
-- **Exists in both, content identical** → classify as ⏭ **No change** (list but don't highlight)
+- **Exists in template, not in project** → classify as **Add**
+- **Exists in both, content differs** → classify as **Update** (prepare a concise diff summary)
+- **Exists in both, content identical** → classify as **No change** (list but don't highlight)
 - **Exists in project, not in template** → **ignore** (never delete project-only files)
 
 ### Rename cleanup detection
 
 **If `SYNC_MANIFEST` is loaded and contains a `rename_detections` list**: after completing the always-sync comparison above, check each entry:
 
-1. Verify that `entry.new_path` is present in `categories.always_sync`. If it is not, skip this entry.
+1. Verify that `entry.new_path` is present in selected `categories.always_sync`
+   for the resolved repository role. If it is not, skip this entry.
 2. Check whether `entry.old_path` exists as a non-empty directory in the project:
    ```bash
    [ -d "<old_path>" ] && find "<old_path>" -mindepth 1 -maxdepth 1 | wc -l
@@ -349,17 +386,17 @@ Rename cleanup candidates are displayed in Step 3 and applied in Step 4 only aft
 
 ### Special handling (show full diff, user decides per file)
 
-**If `SYNC_MANIFEST` is loaded**: read `categories.special_handling` from the manifest.
+**If `SYNC_MANIFEST` is loaded**: read selected `categories.special_handling` entries from `SYNC_SELECTED_ENTRIES`.
 
 **If `SYNC_MANIFEST=absent`** (fallback): use the embedded list below.
 
 ```
-.claude/settings.json                          ← may have project-specific permissions
+.claude/settings.json                          <- may have project-specific permissions
 .claude/settings.local.json.example
-.github/workflows/auto-tag-release.yml         ← automated release tagging; add if CI is set up
-.github/workflows/deploy.yml                   ← placeholder deployment workflow; customize with project-specific deploy logic
-.github/workflows/e2e-regression.yml           ← label-gated e2e/regression placeholder; customize with project-specific test logic
-e2e/                                              ← placeholder e2e/regression test project (Playwright); customize with project-specific tests
+.github/workflows/auto-tag-release.yml         <- automated release tagging; add if CI is set up
+.github/workflows/deploy.yml                   <- placeholder deployment workflow; customize with project-specific deploy logic
+.github/workflows/e2e-regression.yml           <- label-gated e2e/regression placeholder; customize with project-specific test logic
+e2e/                                           <- placeholder e2e/regression test project (Playwright); customize with project-specific tests
 ```
 
 For each of these: show the full diff and ask the user explicitly whether to apply it.
@@ -370,7 +407,7 @@ These paths are project-specific and must **not** be overwritten by the template
 
 **Critical:** Do not remove or replace content that is specific to the project. Only suggest additions or merges that clearly originate from the template and do not conflict with project-only content. When in doubt, list the difference under "Optional additive update" and let the user decide.
 
-**If `SYNC_MANIFEST` is loaded**: read `categories.project_specific` from the manifest. For entries with `mixed_content: true`, also read the `annotation_scheme` field and apply the mixed-content extraction logic described below.
+**If `SYNC_MANIFEST` is loaded**: read selected `categories.project_specific` entries from `SYNC_SELECTED_ENTRIES`. For entries with `mixed_content: true`, also read the `annotation_scheme` field and apply the mixed-content extraction logic described below.
 
 **If `SYNC_MANIFEST=absent`** (fallback): use the embedded list below.
 
@@ -387,7 +424,7 @@ CLAUDE.md
 GEMINI.md
 ```
 
-For each of these: if template and project differ, show what the template has that the project might want to add; classify as ⚠️ **Optional additive update** (user decides). Do not apply changes to these paths without explicit user approval.
+For each of these: if template and project differ, show what the template has that the project might want to add; classify as **Optional additive update** (user decides). Do not apply changes to these paths without explicit user approval.
 
 Everything else not listed above (application code, project configs, etc.) is also never overwritten.
 
@@ -416,34 +453,41 @@ Show a structured summary before asking for confirmation. Include file counts pe
 ## Template Sync Summary
 Template version: v0.4.0  |  Project branch: develop
 Manifest: loaded from sync-manifest.yaml  (or: "not found — using embedded fallback list")
+Repository role: workflow_hub  (selected: N entries, skipped by mode_scope: M)
 
 ### Always-sync files: N total (A to add, U to update, C up-to-date)
 
-#### ✅ New files (will be added): A
+#### New files (will be added): A
   .claude/skills/sync-template.md
 
-#### 📝 Modified files (will be updated): U
+#### Modified files (will be updated): U
   .claude/agents/developer.md
-    Line 3: model: claude-sonnet-4-5 → model: claude-sonnet-4-6
+    Line 3: model: claude-sonnet-4-5 -> model: claude-sonnet-4-6
 
   docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
     [diff summary]
 
-#### ⏭ Already up to date (no changes): C
+#### Already up to date (no changes): C
   docs/best-practices/1-general.md
   .cursor/rules/code.mdc
   ... (N files)
 
-### ⚠️ Requires manual review (you decide)
+### Requires manual review (you decide)
   .claude/settings.json
     [full diff shown here]
 
-### ⚠️ Optional additive updates (project-specific — you decide)
-  AGENTS.md — template has [brief description]; project keeps its own content; suggest adding: …
+### Optional additive updates (project-specific — you decide)
+  AGENTS.md — template has [brief description]; project keeps its own content; suggest adding: ...
   README.md — no template additions suggested
-  …
+  ...
 
-### 🗂️ Rename cleanup (you decide)
+### Skipped by repository role
+  product_repo_injection:
+    AGENTS.md
+  hub_only:
+    docs/workflow/
+
+### Rename cleanup (you decide)
   docs/ai/ — was the previous location of always-sync content now in docs/workflow/ (renamed in v0.23.0).
   Stale directory still present. Proposed actions (each requires separate approval):
     1. Delete docs/ai/  (git rm -r docs/ai/)
@@ -467,7 +511,14 @@ Always-sync disposition:
 
 Then ask:
 
-> "Ready to apply the changes above? For the files listed under ✅ **New files** and 📝 **Modified files** in the **always-sync** section only, I can apply them in one batch when you confirm. Special-handling and optional additive-update paths always need explicit per-path approval — bulk phrases like \"apply all\" never include those categories."
+> "Ready to apply the changes above? You have two options:
+>
+> - **"apply all"** — Apply the always-sync files in one batch, then walk through each manual-review and optional-additive item inline, presenting the diff and asking you to confirm or skip before moving on.
+> - **"apply always-sync only"** — Apply only the always-sync files now; skip manual-review and optional-additive items entirely.
+>
+> Special-handling paths (`.github/workflows/deploy.yml`, `e2e-regression.yml`, `e2e/`, `.claude/settings.json`, etc.) are never included in "apply all" — those require you to name each approved path explicitly.
+>
+> Which would you like?"
 
 **Do not modify any files until you have explicit confirmation.**
 
@@ -475,9 +526,36 @@ Then ask:
 
 ## Step 4 — Apply changes (only after approval)
 
-- Copy/overwrite all ✅ (Add) and 📝 (Update) files **from the always-sync Step 3 section only** when the user confirms that batch. Phrases such as "apply all", "apply everything", or "yes to all" mean **always-sync files only** — they **never** authorize applying **special-handling** paths (`.github/workflows/deploy.yml`, `e2e-regression.yml`, `e2e/`, `.claude/settings.json`, etc.) or **optional additive updates**; those require the user to name each approved path (or `none`).
+Apply approved changes:
+
+### Always-sync files
+
+Copy/overwrite all **Add** and **Update** files from the always-sync section whenever the user confirms that batch — regardless of whether they said "apply all" or "apply always-sync only".
+
+### Manual-review and optional-additive items ("apply all" path)
+
+When the user chooses **"apply all"**, after the always-sync batch is applied, walk through **every** item in the manual-review section and every item in the optional-additive section, **one item at a time**:
+
+1. Show the item's diff (or proposed addition) inline.
+2. State a recommendation (e.g., "I recommend applying this because …" or "This is optional — your project already has equivalent content").
+3. Ask: "Apply this item? (yes / skip)"
+4. Apply immediately if the user answers "yes"; skip if "skip" (or any non-yes answer).
+5. Proceed to the next item.
+
+Continue until all manual-review and optional-additive items have been presented. This ensures "apply all" genuinely means "walk me through everything and apply what I approve."
+
+### Always-sync only path
+
+When the user chooses **"apply always-sync only"**, skip the manual-review and optional-additive walkthrough entirely. Special-handling items are also skipped unless named explicitly.
+
+### Special-handling paths
+
+Phrases such as "apply all", "apply everything", or "yes to all" **never** authorize applying **special-handling** paths (`.github/workflows/deploy.yml`, `e2e-regression.yml`, `e2e/`, `.claude/settings.json`, etc.). Those require the user to name each approved path explicitly.
+
 - **Placeholder guard for workflow YAML** (`.github/workflows/deploy.yml`, `.github/workflows/e2e-regression.yml`): Before overwriting the project copy with the template, compare line counts. If the **project** file has **more lines** than the template and the template has **fewer than 70%** of the project's line count, treat this as likely "real implementation → template placeholder" and **refuse** unless the user sends a **second** explicit confirmation naming that exact file.
-- For ⚠️ files: apply only those the user explicitly approved (including any optional additive updates to project-specific files — merge or add only, never remove project-specific content)
+
+### General rules
+
 - Do **not** delete any file from the always-sync, special-handling, or project-specific categories without explicit approval
 - Do **not** overwrite project-specific files; for those paths only additive/merge changes are allowed, and only with explicit approval
 
@@ -527,7 +605,7 @@ If any references remain, list them and ask the maintainer whether to update the
 
 **Bulk phrases do not cover rename cleanup**: "apply all", "apply everything", or "yes to all" never authorize rename cleanup actions. Each rename cleanup action (delete directory, update cross-references) requires the maintainer to name it explicitly.
 
-If the template source was a remote clone, clean it up now:
+If the template source was a remote clone, clean up the exact temp directory recorded in Step 0:
 
 ```bash
 rm -rf "$TEMPLATE_TEMP_DIR"   # use the exact path, not a wildcard
@@ -571,18 +649,22 @@ if [ "$yaml_parse_failed" -ne 0 ]; then
 fi
 ```
 
-If `yaml_parse_failed` is non-zero, **do not commit**. Report the broken file(s) and ask the maintainer to fix them before committing.
+If any file fails to parse, **do not commit**. Report the broken file(s) and ask the maintainer to fix them before committing.
 
 ### 3. Validate that `scripts/` paths referenced in workflow `run:` steps exist
 
 ```bash
-grep -hE 'scripts/[A-Za-z0-9_/.-]+' .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null \
-  | grep -oE 'scripts/[A-Za-z0-9_/.-]+' \
-  | sort -u \
-  | while read -r script_path; do
-      if [ ! -e "$script_path" ]; then
-        echo "MISSING SCRIPT: $script_path (referenced in a workflow run: step)"
-      fi
+grep -nHE 'scripts/[A-Za-z0-9_/.-]+' .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null \
+  | while IFS=: read -r workflow_file _ matched_line; do
+      printf '%s\n' "$matched_line" \
+        | grep -oE 'scripts/[A-Za-z0-9_/.-]+' \
+        | sort -u \
+        | while IFS= read -r script_path; do
+            [ -n "$script_path" ] || continue
+            if [ ! -e "$script_path" ]; then
+              echo "MISSING SCRIPT: $script_path (referenced in $workflow_file)"
+            fi
+          done
     done
 ```
 
@@ -598,61 +680,183 @@ This check is **advisory for the project-specific category** (e.g., `.github/wor
 
 ---
 
-## Step 5 — Generate git instructions
+## Step 5 — Commit, push, and open PR
 
-Before printing the git instructions, record the last-synced template version:
+### 5.1 — Record last-synced template version
 
 1. Read `.ai-dev-workflow.yaml` from the project root.
-2. Use `yq` to safely update the template section. If the `template:` key does not exist, create it with both required fields (see schema below); if it exists, update only `last_synced_version`. Insert new sections after the `browser_automation:` block.
-   - Schema for new `template:` section:
-     ```yaml
-     template:
-       repository: ""
-       last_synced_version: "v{TEMPLATE_VERSION}"
-     ```
-   - Command to update existing section: `yq eval '.template.last_synced_version = "v{TEMPLATE_VERSION}"' -i .ai-dev-workflow.yaml`
-   - Command to create new section (if missing): `yq eval '.template.repository = "" | .template.last_synced_version = "v{TEMPLATE_VERSION}"' -i .ai-dev-workflow.yaml` (yq will create the `template:` key if absent; key order in YAML is cosmetic, so exact positioning after `browser_automation:` is not critical)
-   - Error handling: If `.ai-dev-workflow.yaml` does not exist or is malformed YAML, abort with error: "Error: cannot modify .ai-dev-workflow.yaml — file does not exist or is malformed. Please fix the file manually before retrying."
-3. Print: `Recorded last-synced template version: v{TEMPLATE_VERSION}` (only after successful write)
+2. Capture the existing `template.last_synced_version` value into `PREV_LAST_VERSION` **before** writing the new value (this is used in Step 5.4 to bound the CHANGELOG extraction to changes since the previous sync):
 
-Then print ready-to-use git instructions (do not execute them — let the user run them after reviewing the changes):
+   ```bash
+   PREV_LAST_VERSION=$(grep -E 'last_synced_version:' .ai-dev-workflow.yaml | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+   ```
+
+3. Set (or update) `template.last_synced_version` to `v{TEMPLATE_VERSION}` under the `template:` key. If the `template:` key does not exist yet, append the section after the `browser_automation:` block.
+4. Print: `Recorded last-synced template version: v{TEMPLATE_VERSION}`
+
+### 5.2 — Create sync branch
+
+Execute:
 
 ```bash
-# 1. Create a sync branch
 git checkout -b feature/sync-template-v{TEMPLATE_VERSION}
+```
 
-# 2. Review the changes
-git diff --stat
+### 5.3 — Stage and commit
 
-# 3. Stage and commit (only after you've reviewed the changes)
-git add REVIEW.md docs/workflow/ .claude/agents/ .claude/commands/ .claude/skills/ .codex/skills/ .agents/skills/ .cursor/ \
+Stage only approved paths — avoid `git add .` so unapproved files never enter the commit:
+
+```bash
+git add REVIEW.md docs/workflow/ .claude/agents/ .claude/commands/ .claude/skills/ .codex/skills/ .agents/skills/ \
+  .cursor/commands/ .cursor/agents/ .cursor/rules/ \
   scripts/development-workflow/ scripts/README.md \
   docs/best-practices/1-general.md \
   docs/best-practices/2-version-control.md \
   docs/best-practices/3-testing.md
-# If sync-manifest.yaml was updated, stage it as well:
-git add sync-manifest.yaml
-# Stage the updated last_synced_version field:
-git add .ai-dev-workflow.yaml
-git commit -m "chore(template): sync framework updates from template v{TEMPLATE_VERSION}"
+```
 
-# 4. Push and open PR
+If `sync-manifest.yaml` was updated, stage it as well:
+
+```bash
+git add sync-manifest.yaml
+```
+
+Stage the updated `last_synced_version` field:
+
+```bash
+git add .ai-dev-workflow.yaml
+```
+
+If the user explicitly approved additional paths in Step 4 (via the manual-review, optional-additive, or rename-cleanup sections), stage them now. Track approved additional paths in an `APPROVED_ADDITIONAL_PATHS` list during Step 4 as each item is approved, then apply them here:
+
+```bash
+# Stage any additional paths approved interactively in Step 4:
+if [ -n "$APPROVED_ADDITIONAL_PATHS" ]; then
+  printf '%s\n' "$APPROVED_ADDITIONAL_PATHS" \
+    | while IFS= read -r p; do
+        [ -n "$p" ] && git add -- "$p"
+      done
+fi
+```
+
+Run:
+
+```bash
+git diff --stat --cached
+git commit -m "chore(template): sync framework updates from template v{TEMPLATE_VERSION}"
+```
+
+### 5.4 — Push and open PR
+
+Execute:
+
+```bash
 git push -u origin feature/sync-template-v{TEMPLATE_VERSION}
 ```
 
-**Suggested PR description:**
+Then immediately create the PR (do not print instructions for the user to run manually — execute this step directly).
 
-```
-## Template sync: v{TEMPLATE_VERSION}
+First, extract the relevant CHANGELOG section from the template's `CHANGELOG.md` and compose the PR body. Use `TEMPLATE_DIR` (the resolved template source path from Step 0) and `TEMPLATE_VERSION`:
 
-Sync framework-level files from [ai-dev-framework-template](TEMPLATE_URL) v{TEMPLATE_VERSION}.
+```bash
+# PREV_LAST_VERSION was captured in Step 5.1 before updating .ai-dev-workflow.yaml.
+# Use it here to bound the CHANGELOG extraction to only changes since the previous sync.
+# Extract the CHANGELOG section for changes since PREV_LAST_VERSION
+if [ -n "$PREV_LAST_VERSION" ]; then
+  CHANGELOG_SECTION=$(awk -v start="${TEMPLATE_VERSION#v}" -v stop="${PREV_LAST_VERSION#v}" '
+    $0 ~ ("^## \\[" start "\\]") { in_range=1; next }
+    in_range {
+      if ($0 ~ ("^## \\[" stop "\\]")) exit
+      print
+    }
+  ' "${TEMPLATE_DIR}/CHANGELOG.md")
+else
+  # No previous version — extract content after the TEMPLATE_VERSION header up to the next versioned section
+  CHANGELOG_SECTION=$(awk -v tv="${TEMPLATE_VERSION#v}" '
+    $0 ~ ("^## \\[" tv "\\]") { in_range=1; next }
+    in_range && $0 ~ /^## \[/ { exit }
+    in_range { print }
+  ' "${TEMPLATE_DIR}/CHANGELOG.md")
+fi
+
+# Compose the PR body
+PR_BODY="## Template sync: ${TEMPLATE_VERSION}
+
+Sync framework-level files from the upstream template ${TEMPLATE_VERSION}.
 
 ### Changes included
-[Paste the relevant section from the template's CHANGELOG.md here]
+
+${CHANGELOG_SECTION}
 
 ### What was NOT overwritten
+
 Project-specific files (AGENTS.md, README.md, CHANGELOG.md, docs/project/, etc.)
-were not overwritten; optional additive updates from the template may have been applied where you approved them, with project-specific content preserved.
+were not overwritten; optional additive updates from the template may have been applied where you approved them, with project-specific content preserved."
 ```
 
-Paste the relevant section from the template's `CHANGELOG.md` into the PR description placeholder.
+Then create the PR using `BASE_BRANCH` from Step 1:
+
+```bash
+PR_URL=$(gh pr create \
+  --title "chore(template): sync framework updates from template ${TEMPLATE_VERSION}" \
+  --body "$PR_BODY" \
+  --base "$BASE_BRANCH" \
+  --draft)
+PR_NUMBER=$(gh pr view "$PR_URL" --json number --jq '.number')
+echo "PR created: $PR_URL (#$PR_NUMBER)"
+```
+
+The `--draft` flag opens the PR as a draft so automated reviewers do not trigger prematurely; Step 6 will convert it to non-draft after the reviewer gate clears. Store `$PR_NUMBER` and `$PR_URL` for use in Step 6.
+
+---
+
+## Step 6 — Start the reviewer loop
+
+After the PR is open, run the reviewer loop immediately — do not ask the user to start it manually.
+
+### 6.1 — Run the internal review gate (Step 7a)
+
+Follow the full Step 7a procedure defined in `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` Step 7a ("Internal reviewer gate"), using the PR opened in Step 5.4 as the target.
+
+The sync-template PR is a `feature/*` branch, so the two-pass code review procedure applies. Key focus areas for the `claude` reviewer pass on a sync PR:
+
+- No project-specific content was accidentally overwritten by the sync.
+- Always-sync files match what was approved in Step 3.
+- CHANGELOG entry (if any) is correctly formatted under `[Unreleased]`.
+- `.ai-dev-workflow.yaml` was updated with `last_synced_version`.
+
+Apply any blocking fixes, commit, and push before proceeding. Continue until all configured internal reviewers have approved (or are unavailable under the configured policy).
+
+Once the Step 7a gate passes, ensure the PR is non-draft:
+
+```bash
+gh pr ready "$PR_NUMBER"
+```
+
+### 6.2 — Run the automated reviewer loop (Step 7)
+
+Run `scripts/development-workflow/pr-review-loop.sh` against the PR:
+
+```bash
+bash scripts/development-workflow/pr-review-loop.sh "$PR_NUMBER"
+```
+
+Monitor the output. If the script reports unresolved findings, apply the required fixes, push, and re-run until the loop exits clean or escalates.
+
+### 6.3 — Apply readiness labels
+
+Once the reviewer loop exits clean:
+
+```bash
+gh pr edit "$PR_NUMBER" --add-label "ready-for-regression"
+gh pr edit "$PR_NUMBER" --add-label "ready-for-human-review"
+```
+
+Update the tracker status to `Development in Review` if an issue tracker is configured.
+
+Print a final summary:
+
+```
+Sync complete. PR #$PR_NUMBER is open and ready for human review.
+URL: $PR_URL
+```

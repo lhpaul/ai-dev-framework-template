@@ -22,11 +22,12 @@
 #   hub_only                - File belongs only in a workflow hub repository.
 #   product_repo_injection  - File may be injected into a product repository.
 #
-# The mode_scope metadata below is informational for this schema version. Current
-# sync-template readers continue to consume categories.always_sync,
-# categories.special_handling, and categories.project_specific exactly as before.
-# Later mode-aware sync tooling may use these values to filter role-specific
-# skeletons or injection sets.
+# Sync-template uses mode_scope to filter the manifest by repository role before
+# comparing or applying files. Missing mode resolves to single_repo and keeps the
+# compatibility file set. workflow_hub selects shared and hub_only entries.
+# product_repo selects shared and product_repo_injection entries. Unknown roles,
+# missing mode_scope values, and unknown mode_scope values fail closed before
+# file changes are applied.
 #
 # Annotation schemes (used in mixed_content files):
 #   html_comments     - Markers in Markdown files:

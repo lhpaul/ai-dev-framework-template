@@ -14,6 +14,7 @@ SYNC_CMD="$REPO_ROOT/scripts/development-workflow/hub-sync-product-repos.sh"
 PR_CMD="$REPO_ROOT/scripts/development-workflow/open-product-pr.sh"
 NEXT_ACTION_CMD="$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh"
 VALIDATOR="$REPO_ROOT/scripts/development-workflow/validate-workflow-hub-skeletons.py"
+SYNC_SELECTOR="$REPO_ROOT/scripts/development-workflow/select-sync-manifest-entries.py"
 
 LIVE_GITHUB_APP=false
 
@@ -393,7 +394,13 @@ run_contains "mode_scope_manifest_defines_product_injection" "product_repo_injec
 run_contains "mode_scope_has_shared_entries" "mode_scope: shared" "$(cat "$REPO_ROOT/sync-manifest.yaml")"
 run_contains "mode_scope_has_hub_entries" "mode_scope: hub_only" "$(cat "$REPO_ROOT/sync-manifest.yaml")"
 run_contains "mode_scope_has_product_entries" "mode_scope: product_repo_injection" "$(cat "$REPO_ROOT/sync-manifest.yaml")"
-echo "INFO: runtime mode-aware sync filtering remains outside this smoke harness; #883 validates classification metadata only."
+hub_sync_scope_output="$(python3 "$SYNC_SELECTOR" --manifest "$REPO_ROOT/sync-manifest.yaml" --role workflow_hub)"
+product_sync_scope_output="$(python3 "$SYNC_SELECTOR" --manifest "$REPO_ROOT/sync-manifest.yaml" --role product_repo)"
+run_contains "mode_scope_hub_selects_hub_docs" "SELECTED category=always_sync mode_scope=hub_only path=docs/workflow/ glob=**/*" "$hub_sync_scope_output"
+run_contains "mode_scope_hub_skips_product_injection" "SKIPPED category=project_specific mode_scope=product_repo_injection path=AGENTS.md glob= mixed_content=true annotation_scheme=html_comments reason=scope_not_applicable" "$hub_sync_scope_output"
+run_contains "mode_scope_product_selects_injection" "SELECTED category=project_specific mode_scope=product_repo_injection path=AGENTS.md glob=" "$product_sync_scope_output"
+run_contains "mode_scope_product_skips_hub_docs" "SKIPPED category=always_sync mode_scope=hub_only path=docs/workflow/ glob=**/* mixed_content= annotation_scheme= reason=scope_not_applicable" "$product_sync_scope_output"
+run_not_contains "mode_scope_product_does_not_select_hub_docs" "SELECTED category=always_sync mode_scope=hub_only path=docs/workflow/" "$product_sync_scope_output"
 
 echo ""
 echo "=== single_repo_regression: default compatibility ==="

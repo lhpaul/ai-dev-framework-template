@@ -225,6 +225,36 @@ Optional live GitHub App validation is separate and must be requested with
 `--live-github-app` plus operator-supplied safe-test repository environment
 variables. Do not wire the live path into default CI.
 
+### `select-sync-manifest-entries.py`
+
+Selects `sync-manifest.yaml` entries for a repository role before sync-template
+compares or applies files.
+
+Usage:
+
+```bash
+python3 scripts/development-workflow/select-sync-manifest-entries.py \
+  --manifest sync-manifest.yaml \
+  --role workflow_hub
+```
+
+What it does:
+
+- Validates declared `mode_scope` values.
+- Selects all entries for `single_repo` compatibility.
+- Selects `shared` plus `hub_only` for `workflow_hub`.
+- Selects `shared` plus `product_repo_injection` for `product_repo`.
+- Prints selected and skipped entries with stable `KEY=value` output for tests
+  and sync-template summaries.
+- Fails closed on unknown roles, missing entry scopes, and unknown scope values
+  before any file mutation path can proceed.
+
+Run focused coverage with:
+
+```bash
+bash scripts/development-workflow/tests/test-sync-template-mode-scopes.sh
+```
+
 #### `hub-sync-product-repos.sh`
 
 Safely prepares clean product repository checkouts.

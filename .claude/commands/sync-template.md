@@ -12,7 +12,7 @@ Follow this workflow exactly when invoked. Do not skip steps or reorder them.
 
 ---
 
-## Step 0 — Parse arguments and determine template source
+## Step 0 — Parse arguments, determine template source, and resolve repository role
 
 Parse the user's arguments:
 
@@ -55,6 +55,40 @@ Once the template source is resolved, read its `CHANGELOG.md` and extract the la
 
 - If found: read it and store its contents as `SYNC_MANIFEST`. The manifest is the authoritative file list (BR-1).
 - If absent: set `SYNC_MANIFEST=absent`. The graceful fallback (BR-4 / AC-4) activates in Step 2 — the embedded lists below are used and a warning is shown.
+
+**Repository role check**: Read the current project's `.ai-dev-workflow.yaml`
+top-level `mode` value. If the file or field is absent, set
+`REPOSITORY_ROLE=single_repo`. Supported roles are `single_repo`,
+`workflow_hub`, and `product_repo`; any other value is a configuration error and
+must stop the sync before file comparison.
+
+When `SYNC_MANIFEST` is loaded, build the selected manifest entry set before
+Step 0.5 using the selector helper from the resolved template source:
+
+```bash
+python3 "<template_source>/scripts/development-workflow/select-sync-manifest-entries.py" \
+  --manifest "<template_source>/sync-manifest.yaml" \
+  --role "$REPOSITORY_ROLE"
+```
+
+Store the resulting selected and skipped entries as `SYNC_SELECTED_ENTRIES` and
+`SYNC_SKIPPED_ENTRIES`. This same selected entry set must be used for dry-run
+diagnostics, file comparison, and apply steps so preview and apply cannot
+disagree.
+
+Role rules:
+
+- `single_repo`: preserve compatibility by selecting every manifest entry from
+  the existing categories.
+- `workflow_hub`: select `shared` and `hub_only`; skip
+  `product_repo_injection`.
+- `product_repo`: select `shared` and `product_repo_injection`; skip
+  `hub_only`.
+
+Unknown roles, missing `mode_scope` values, unknown `mode_scope` values, or a
+missing selector helper for a non-`single_repo` role must fail closed before any
+file changes are applied. If the manifest is absent, use fallback mode and make
+the lack of role-aware filtering explicit in the diagnostic report.
 
 **Migration notes check**: If `SYNC_MANIFEST` is loaded, read `migration_notes` from it. Read `template.last_synced_version` from the project's `.ai-dev-workflow.yaml` (if the file or field is absent, treat it as unknown — show all notes).
 
@@ -111,7 +145,7 @@ Dry-run complete. No changes were applied. Re-run without --dry-run to apply cha
 
 ### Category 1 — File-level merge conflicts (always-sync files)
 
-For each file listed in `categories.always_sync` (or the embedded fallback list when `SYNC_MANIFEST=absent`):
+For each selected file listed in `categories.always_sync` (or the embedded fallback list when `SYNC_MANIFEST=absent`):
 
 1. Enumerate all files using `find` (same method as Step 2).
 2. For files that exist in both the template and the project, run a diff:
@@ -129,7 +163,7 @@ Report all `Conflict risk` files with a one-line summary of what differs. This p
 
 Check for known CI/CD configuration mismatches between the template and the project:
 
-1. **Workflow file presence**: compare the set of `.github/workflows/` files in the template (under `categories.special_handling` if manifest is loaded, otherwise the embedded special-handling list) against the project. List any files that are in the template but absent from the project — these may be needed for full CI coverage after the sync.
+1. **Workflow file presence**: compare the selected set of `.github/workflows/` files in the template (under `categories.special_handling` if manifest is loaded, otherwise the embedded special-handling list) against the project. List any files that are in the template but absent from the project — these may be needed for full CI coverage after the sync.
 
 2. **Workflow YAML parse test** (pre-apply): for each workflow file that _would be updated_ based on the Category 1 diff, verify the _template_ version parses correctly before applying:
 
@@ -220,6 +254,8 @@ Output the report in this structure before proceeding to Step 1 (or stopping, if
 ## Pre-flight Diagnostic Report
 Template version: v{TEMPLATE_VERSION}  |  Project branch: [branch]
 Manifest: [loaded / absent — fallback mode]
+Repository role: [single_repo / workflow_hub / product_repo]
+Selected manifest entries: [N selected / M skipped by mode_scope]
 
 ### Category 1 — File-level conflicts
   No conflict:    N files (will be updated cleanly)
@@ -293,13 +329,13 @@ Run these checks **before touching anything**. If any check fails, report the pr
 
 ## Step 2 — Compare files
 
-Use `SYNC_MANIFEST` to determine the file lists. If `SYNC_MANIFEST=absent`, fall back to the embedded lists in each section below and display this warning before continuing:
+Use `SYNC_MANIFEST` and `SYNC_SELECTED_ENTRIES` to determine the file lists. If `SYNC_MANIFEST=absent`, fall back to the embedded lists in each section below and display this warning before continuing:
 
 > "Warning: sync manifest not found in upstream template. Using embedded file list — results may be incomplete."
 
 ### Always sync (apply automatically after approval)
 
-**If `SYNC_MANIFEST` is loaded**: read `categories.always_sync` from the manifest and enumerate those paths from the template. Each entry may specify a `path` (single file or directory prefix) and an optional `glob` pattern for recursive enumeration.
+**If `SYNC_MANIFEST` is loaded**: read selected `categories.always_sync` entries from `SYNC_SELECTED_ENTRIES` and enumerate those paths from the template. Each entry may specify a `path` (single file or directory prefix) and an optional `glob` pattern for recursive enumeration. Do not compare or apply entries from `SYNC_SKIPPED_ENTRIES`; list them in the summary under "Skipped by repository role".
 
 **If `SYNC_MANIFEST=absent`** (fallback): use the embedded list below.
 
@@ -334,7 +370,8 @@ For each file in these paths:
 
 **If `SYNC_MANIFEST` is loaded and contains a `rename_detections` list**: after completing the always-sync comparison above, check each entry:
 
-1. Verify that `entry.new_path` is present in `categories.always_sync`. If it is not, skip this entry.
+1. Verify that `entry.new_path` is present in selected `categories.always_sync`
+   for the resolved repository role. If it is not, skip this entry.
 2. Check whether `entry.old_path` exists as a non-empty directory in the project:
    ```bash
    [ -d "<old_path>" ] && find "<old_path>" -mindepth 1 -maxdepth 1 | wc -l
@@ -349,7 +386,7 @@ Rename cleanup candidates are displayed in Step 3 and applied in Step 4 only aft
 
 ### Special handling (show full diff, user decides per file)
 
-**If `SYNC_MANIFEST` is loaded**: read `categories.special_handling` from the manifest.
+**If `SYNC_MANIFEST` is loaded**: read selected `categories.special_handling` entries from `SYNC_SELECTED_ENTRIES`.
 
 **If `SYNC_MANIFEST=absent`** (fallback): use the embedded list below.
 
@@ -370,7 +407,7 @@ These paths are project-specific and must **not** be overwritten by the template
 
 **Critical:** Do not remove or replace content that is specific to the project. Only suggest additions or merges that clearly originate from the template and do not conflict with project-only content. When in doubt, list the difference under "Optional additive update" and let the user decide.
 
-**If `SYNC_MANIFEST` is loaded**: read `categories.project_specific` from the manifest. For entries with `mixed_content: true`, also read the `annotation_scheme` field and apply the mixed-content extraction logic described below.
+**If `SYNC_MANIFEST` is loaded**: read selected `categories.project_specific` entries from `SYNC_SELECTED_ENTRIES`. For entries with `mixed_content: true`, also read the `annotation_scheme` field and apply the mixed-content extraction logic described below.
 
 **If `SYNC_MANIFEST=absent`** (fallback): use the embedded list below.
 
@@ -416,6 +453,7 @@ Show a structured summary before asking for confirmation. Include file counts pe
 ## Template Sync Summary
 Template version: v0.4.0  |  Project branch: develop
 Manifest: loaded from sync-manifest.yaml  (or: "not found — using embedded fallback list")
+Repository role: workflow_hub  (selected: N entries, skipped by mode_scope: M)
 
 ### Always-sync files: N total (A to add, U to update, C up-to-date)
 
@@ -442,6 +480,12 @@ Manifest: loaded from sync-manifest.yaml  (or: "not found — using embedded fal
   AGENTS.md — template has [brief description]; project keeps its own content; suggest adding: ...
   README.md — no template additions suggested
   ...
+
+### Skipped by repository role
+  product_repo_injection:
+    AGENTS.md
+  hub_only:
+    docs/workflow/
 
 ### Rename cleanup (you decide)
   docs/ai/ — was the previous location of always-sync content now in docs/workflow/ (renamed in v0.23.0).
