@@ -124,7 +124,7 @@ cat > "$pr_fixture" <<'JSON'
   "pr": {"number": 10, "head_sha": "abc123"},
   "reviewer": {"result": "clean", "blocking_count": 0, "advisory_count": 2},
   "advisories": [
-    {"source": "haystack", "category": "docs", "decision": "accepted", "rationale": "stale after rg verification"},
+    {"source": "haystack|triage", "category": "docs\nsync", "decision": "accepted", "rationale": "stale after rg verification with Authorization: secret Bearer abc.def"},
     {"source": "pr-agent", "category": "tests", "decision": "fixed", "rationale": ""}
   ],
   "risk": {"level": "medium", "reasons": ["workflow script change"]},
@@ -140,7 +140,7 @@ cat > "$pr_fixture" <<'JSON'
     "project_status": "In Development"
   },
   "protocol_deviations": [
-    {"action": "accepted advisory", "impact": "none", "mitigation": "documented rationale"}
+    {"action": "accepted advisory", "impact": "none | expected", "mitigation": "documented\nrationale\twith ghp_abc123 /Users/example/secret /tmp/local"}
   ],
   "notes": "token ghp_abc123 /Users/example/secret /tmp/local"
 }
@@ -151,7 +151,7 @@ cat > "$ledger_fixture" <<'JSON'
 {
   "epic": {"number": 916, "title": "Delegated epic orchestration"},
   "items": [
-    {"issue_number": 920, "title": "Add autonomous epic audit trail", "pr_number": 10, "tracker_status": "In Development", "risk_level": "medium", "review_result": "clean", "decision": "merge_approved", "merge_cleanup": "verified", "notes": "ready"},
+    {"issue_number": 920, "title": "Add autonomous | epic audit trail", "pr_number": 10, "tracker_status": "In Development", "risk_level": "medium", "review_result": "clean", "decision": "merge_approved", "merge_cleanup": "verified", "notes": "ready\nBearer token.value"},
     {"issue_number": 918, "title": "Add delegated review and merge loop", "tracker_status": "Backlog", "risk_level": "-", "review_result": "-", "decision": "blocked", "merge_cleanup": "-", "notes": "depends on #920"}
   ]
 }
@@ -184,12 +184,16 @@ pr_output="$("$HELPER" render-pr-disposition --input "$pr_fixture")"
 run_test "renders_pr_marker" "yes" "$(grep -q '<!-- run-epic:pr-disposition -->' <<< "$pr_output" && echo yes || echo no)"
 run_test "renders_reviewed_sha" "yes" "$(grep -q 'abc123' <<< "$pr_output" && echo yes || echo no)"
 run_test "renders_advisory_decision" "yes" "$(grep -q 'accepted' <<< "$pr_output" && echo yes || echo no)"
-run_test "renders_protocol_deviation" "yes" "$(grep -q 'documented rationale' <<< "$pr_output" && echo yes || echo no)"
-run_test "redacts_sensitive_values" "yes" "$(! grep -Eq 'ghp_abc123|/Users/example|/tmp/local' <<< "$pr_output" && echo yes || echo no)"
+run_test "renders_protocol_deviation" "yes" "$(grep -q 'documented<br>rationale' <<< "$pr_output" && echo yes || echo no)"
+run_test "escapes_pr_table_pipes" "yes" "$(grep -Fq 'haystack\\|triage' <<< "$pr_output" && grep -Fq 'none \\| expected' <<< "$pr_output" && echo yes || echo no)"
+run_test "normalizes_pr_table_newlines_tabs" "yes" "$(grep -Fq 'docs<br>sync' <<< "$pr_output" && grep -Fq 'documented<br>rationale with' <<< "$pr_output" && echo yes || echo no)"
+run_test "redacts_sensitive_values" "yes" "$(! grep -Eq 'ghp_abc123|Authorization: secret|Bearer abc\\.def|/Users/example|/tmp/local' <<< "$pr_output" && grep -Fq 'Authorization: [REDACTED]' <<< "$pr_output" && grep -Fq 'Bearer [REDACTED]' <<< "$pr_output" && echo yes || echo no)"
 
 ledger_output="$("$HELPER" render-epic-ledger --input "$ledger_fixture")"
 run_test "renders_ledger_marker" "yes" "$(grep -q '<!-- run-epic:epic-ledger -->' <<< "$ledger_output" && echo yes || echo no)"
 run_test "renders_ledger_row" "yes" "$(grep -q '#920' <<< "$ledger_output" && echo yes || echo no)"
+run_test "escapes_ledger_table_pipes" "yes" "$(grep -Fq 'Add autonomous \\| epic audit trail' <<< "$ledger_output" && echo yes || echo no)"
+run_test "normalizes_ledger_newlines" "yes" "$(grep -Fq 'ready<br>Bearer [REDACTED]' <<< "$ledger_output" && echo yes || echo no)"
 
 explicit_output="$("$HELPER" render-epic-ledger --input "$explicit_fixture")"
 run_test "explicit_items_skip_epic_ledger" "yes" "$(grep -q 'Not applicable' <<< "$explicit_output" && echo yes || echo no)"

@@ -38,5 +38,8 @@ Use the read-only risk helper before delegated merge decisions:
 Use the audit helper after delegated decisions:
 
 ```bash
+./scripts/development-workflow/run-epic-audit-trail.sh render-pr-disposition --input <file>
 ./scripts/development-workflow/run-epic-audit-trail.sh apply-pr-disposition --input <file> --pr <pr-number>
+./scripts/development-workflow/run-epic-audit-trail.sh render-epic-ledger --input <file>
+./scripts/development-workflow/run-epic-audit-trail.sh apply-epic-ledger --input <file> --epic <issue-number>
 ```
