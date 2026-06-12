@@ -20,6 +20,8 @@ Key responsibilities:
   closure, or cleanup.
 - Before any later delegated merge decision, run the PR risk classifier and
   respect its `--max-risk` gate.
+- After delegated review, fix, merge, block, or escalation decisions, update
+  stable PR disposition and epic ledger audit comments.
 
 Use the helper script:
 
@@ -31,4 +33,10 @@ Use the read-only risk helper before delegated merge decisions:
 
 ```bash
 ./scripts/development-workflow/run-epic-risk-classifier.sh --pr <pr-number> --max-risk <low|medium|high>
+```
+
+Use the audit helper after delegated decisions:
+
+```bash
+./scripts/development-workflow/run-epic-audit-trail.sh apply-pr-disposition --input <file> --pr <pr-number>
 ```
