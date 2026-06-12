@@ -156,8 +156,6 @@ check_status_is_success() {
 
   case "$status:$conclusion" in
     COMPLETED:SUCCESS|completed:success|SUCCESS:SUCCESS|success:success) return 0 ;;
-    SUCCESS:|success:) return 0 ;;
-    :SUCCESS|:success) return 0 ;;
     *) return 1 ;;
   esac
 }
