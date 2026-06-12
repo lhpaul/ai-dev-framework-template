@@ -128,6 +128,9 @@ echo "=== Run epic risk classifier ==="
 run_fails_contains "requires_one_pr_source" "pass exactly one of --pr or --input" "$CLASSIFIER"
 run_fails_contains "rejects_conflicting_pr_sources" "not both" "$CLASSIFIER" --pr 1 --input "$TMP_ROOT/missing.json"
 run_fails_contains "rejects_invalid_pr_number" "--pr must be a positive integer" "$CLASSIFIER" --pr nope
+run_fails_contains "rejects_flag_as_pr_value" "--pr requires a value" "$CLASSIFIER" --pr --json
+run_fails_contains "rejects_flag_as_input_value" "--input requires a value" "$CLASSIFIER" --input --json
+run_fails_contains "rejects_flag_as_max_risk_value" "--max-risk requires a value" "$CLASSIFIER" --input "$TMP_ROOT/missing.json" --max-risk --json
 run_fails_contains "rejects_invalid_max_risk" "--max-risk must be one of low, medium, or high" "$CLASSIFIER" --input "$TMP_ROOT/missing.json" --max-risk blocked
 run_fails_contains "rejects_missing_fixture" "input file not found" "$CLASSIFIER" --input "$TMP_ROOT/missing.json"
 printf '{not-json\n' > "$TMP_ROOT/malformed.json"
@@ -226,6 +229,40 @@ missing_check_fixture="$(write_fixture missing-check '{
 missing_check_output="$(classify_fixture "$missing_check_fixture" high)"
 run_test "missing_check_state_blocks" "blocked" "$(printf '%s\n' "$missing_check_output" | jq -r '.risk')"
 run_test "missing_check_state_reason_clear" "yes" "$(printf '%s\n' "$missing_check_output" | jq -e '.blockers[] | select(test("missing or ambiguous"))' >/dev/null && echo yes || echo no)"
+
+reviewer_available_fixture="$(write_fixture reviewer-available '{
+  "pr_number": 7,
+  "merge_state": "CLEAN",
+  "labels": ["ready-for-human-review"],
+  "status_checks": [{"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+  "changed_files": ["docs/README.md"],
+  "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 0}
+}')"
+reviewer_available_output="$(classify_fixture "$reviewer_available_fixture" low)"
+run_test "reviewer_clean_zero_threads_allowed" "low" "$(printf '%s\n' "$reviewer_available_output" | jq -r '.risk')"
+run_test "reviewer_clean_zero_threads_merge_permitted" "true" "$(printf '%s\n' "$reviewer_available_output" | jq -r '.merge_permitted')"
+
+reviewer_unavailable_fixture="$(write_fixture reviewer-unavailable '{
+  "pr_number": 8,
+  "merge_state": "CLEAN",
+  "labels": ["ready-for-human-review"],
+  "status_checks": [{"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+  "changed_files": ["docs/README.md"],
+  "reviewer": {"status": "unavailable", "blocking_count": 0, "unresolved_blocking_threads": 0}
+}')"
+reviewer_unavailable_output="$(classify_fixture "$reviewer_unavailable_fixture" low)"
+run_test "reviewer_unavailable_blocks" "blocked" "$(printf '%s\n' "$reviewer_unavailable_output" | jq -r '.risk')"
+
+one_thread_fixture="$(write_fixture one-thread '{
+  "pr_number": 9,
+  "merge_state": "CLEAN",
+  "labels": ["ready-for-human-review"],
+  "status_checks": [{"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+  "changed_files": ["docs/README.md"],
+  "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 1}
+}')"
+one_thread_output="$(classify_fixture "$one_thread_fixture" low)"
+run_test "one_unresolved_blocking_thread_blocks" "blocked" "$(printf '%s\n' "$one_thread_output" | jq -r '.risk')"
 
 threshold_output="$(classify_fixture "$medium_fixture" low)"
 run_test "max_risk_gate_blocks_excess_risk" "false" "$(printf '%s\n' "$threshold_output" | jq -r '.merge_permitted')"

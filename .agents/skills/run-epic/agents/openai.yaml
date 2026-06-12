@@ -1,7 +1,7 @@
 interface:
   display_name: "Run epic"
-  short_description: "Resolve an epic or explicit item list into a read-only execution scope."
-  default_prompt: "Use $run-epic to resolve a native GitHub epic or explicit item list before delegated workflow execution. Keep it read-only: no tracker updates, branches, PRs, merges, issue closure, or cleanup."
+  short_description: "Resolve an epic or explicit item list into a bounded execution scope with a delegated merge risk gate."
+  default_prompt: "Use $run-epic to resolve a native GitHub epic or explicit item list before delegated workflow execution. Keep the resolver read-only, and before delegated merge decisions run the read-only PR risk classifier with the invocation's max-risk gate. The classifier does not replace reviewer-loop, CI-loop, thread, merge-state, readiness-label, or merge-protocol checks."
 
 policy:
   allow_implicit_invocation: false
