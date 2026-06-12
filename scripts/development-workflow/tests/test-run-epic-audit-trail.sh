@@ -29,7 +29,11 @@ case "$*" in
     printf 'lhpaul/ai-dev-framework-template\n'
     ;;
   api\ --paginate\ --slurp\ repos/lhpaul/ai-dev-framework-template/issues/10/comments)
-    if [ "${MOCK_COMMENT_MODE:-missing}" = "existing" ]; then
+    if [ "${MOCK_COMMENT_MODE:-missing}" = "list-fail" ]; then
+      printf 'list failed\n' >&2
+      exit 1
+    fi
+    if [ "${MOCK_COMMENT_MODE:-missing}" = "existing" ] || [ "${MOCK_COMMENT_MODE:-missing}" = "patch-fail" ]; then
       cat <<'JSON'
 [[{"id":111,"body":"unrelated"}],[{"id":123,"body":"<!-- run-epic:pr-disposition -->\nold"}]]
 JSON
@@ -38,6 +42,10 @@ JSON
     fi
     ;;
   api\ --paginate\ --slurp\ repos/lhpaul/ai-dev-framework-template/issues/900/comments)
+    if [ "${MOCK_COMMENT_MODE:-missing}" = "list-fail" ]; then
+      printf 'list failed\n' >&2
+      exit 1
+    fi
     if [ "${MOCK_COMMENT_MODE:-missing}" = "existing" ]; then
       cat <<'JSON'
 [[{"id":456,"body":"<!-- run-epic:epic-ledger -->\nold"}]]
@@ -47,12 +55,20 @@ JSON
     fi
     ;;
   api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/123\ --input\ -)
+    if [ "${MOCK_COMMENT_MODE:-missing}" = "patch-fail" ]; then
+      printf 'patch failed\n' >&2
+      exit 1
+    fi
     printf '{"id":123}\n'
     ;;
   api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/456\ --input\ -)
     printf '{"id":456}\n'
     ;;
   api\ -X\ POST\ repos/lhpaul/ai-dev-framework-template/issues/10/comments\ --input\ -)
+    if [ "${MOCK_COMMENT_MODE:-missing}" = "post-fail" ]; then
+      printf 'post failed\n' >&2
+      exit 1
+    fi
     printf '{"id":124}\n'
     ;;
   api\ -X\ POST\ repos/lhpaul/ai-dev-framework-template/issues/900/comments\ --input\ -)
@@ -148,6 +164,12 @@ JSON
 
 bad_advisory_fixture="$TMP_ROOT/bad-advisory.json"
 jq '.advisories[0].rationale = ""' "$pr_fixture" > "$bad_advisory_fixture"
+missing_pr_field_fixture="$TMP_ROOT/missing-pr-field.json"
+jq 'del(.pr.head_sha)' "$pr_fixture" > "$missing_pr_field_fixture"
+bad_ledger_fixture="$TMP_ROOT/bad-ledger.json"
+cat > "$bad_ledger_fixture" <<'JSON'
+{"epic": {"number": 916, "title": "Bad"}, "items": "not an array"}
+JSON
 
 echo ""
 echo "=== Run epic audit trail ==="
@@ -155,6 +177,8 @@ echo "=== Run epic audit trail ==="
 run_fails_contains "requires_known_subcommand" "unknown or missing subcommand" "$HELPER"
 run_fails_contains "requires_input" "--input is required" "$HELPER" render-pr-disposition
 run_fails_contains "requires_advisory_rationale" "non-fixed advisory decisions require rationale" "$HELPER" render-pr-disposition --input "$bad_advisory_fixture"
+run_fails_contains "rejects_missing_pr_required_field" "missing required PR disposition fields" "$HELPER" render-pr-disposition --input "$missing_pr_field_fixture"
+run_fails_contains "rejects_bad_ledger_items_type" "missing required epic ledger fields" "$HELPER" render-epic-ledger --input "$bad_ledger_fixture"
 
 pr_output="$("$HELPER" render-pr-disposition --input "$pr_fixture")"
 run_test "renders_pr_marker" "yes" "$(grep -q '<!-- run-epic:pr-disposition -->' <<< "$pr_output" && echo yes || echo no)"
@@ -175,13 +199,16 @@ run_test "creates_pr_disposition_when_missing" "CREATED_COMMENT=1" "$create_outp
 update_output="$(MOCK_COMMENT_MODE=existing "$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10)"
 run_test "updates_existing_pr_disposition_comment" "UPDATED_COMMENT_ID=123" "$update_output"
 run_test "finds_marker_on_later_page" "yes" "$(grep -q 'PATCH repos/lhpaul/ai-dev-framework-template/issues/comments/123' "$CALL_LOG" && echo yes || echo no)"
+run_test "no_duplicate_pr_comments" "1" "$(grep -c 'POST repos/lhpaul/ai-dev-framework-template/issues/10/comments' "$CALL_LOG")"
+run_fails_contains "comment_list_failure_errors" "failed to read comments" env MOCK_COMMENT_MODE=list-fail "$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10
+run_fails_contains "comment_post_failure_errors" "post failed" env MOCK_COMMENT_MODE=post-fail "$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10
+run_fails_contains "comment_patch_failure_errors" "patch failed" env MOCK_COMMENT_MODE=patch-fail "$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10
 
 ledger_create_output="$("$HELPER" apply-epic-ledger --input "$ledger_fixture" --epic 900)"
 run_test "creates_epic_ledger_when_missing" "CREATED_COMMENT=1" "$ledger_create_output"
 ledger_update_output="$(MOCK_COMMENT_MODE=existing "$HELPER" apply-epic-ledger --input "$ledger_fixture" --epic 900)"
 run_test "updates_existing_epic_ledger_comment" "UPDATED_COMMENT_ID=456" "$ledger_update_output"
 
-run_test "no_duplicate_pr_comments" "1" "$(grep -c 'POST repos/lhpaul/ai-dev-framework-template/issues/10/comments' "$CALL_LOG")"
 run_test "uses_json_input_for_comments" "yes" "$(grep -q -- '--input -' "$CALL_LOG" && echo yes || echo no)"
 
 echo ""
