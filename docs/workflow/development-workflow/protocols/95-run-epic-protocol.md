@@ -1,11 +1,14 @@
-# Protocol: Resolve Epic Execution Scope
+# Protocol: Run Epic
 
-**Agent role**: Epic Scope Resolver (`run-epic`)
-**Purpose**: Convert a native GitHub epic or explicit item list into a read-only execution set before delegated orchestration begins
+**Agent role**: Epic Runner (`run-epic`)
+**Purpose**: Convert a native GitHub epic or explicit item list into a bounded
+execution set, then apply delegated pre-merge risk classification when a
+candidate PR reaches the merge decision point
 
-This is a **resolver protocol**, not an implementation protocol. It exists to
-make scoped multi-item work explicit before an agent starts specs, plans,
-branches, PRs, tracker updates, reviewer loops, merges, or cleanup.
+The first phase is a **read-only resolver protocol**, not an implementation
+protocol. It exists to make scoped multi-item work explicit before an agent
+starts specs, plans, branches, PRs, tracker updates, reviewer loops, merges, or
+cleanup. Later delegated execution phases must stay inside that resolved scope.
 
 ---
 
@@ -28,6 +31,19 @@ Optional flags:
 
 The resolver is read-only. It must not update tracker status, create branches,
 open or edit PRs, merge PRs, close issues, or delete branches.
+
+When a later delegated run reaches a candidate PR merge decision, classify that
+PR with:
+
+```bash
+./scripts/development-workflow/run-epic-risk-classifier.sh --pr <pr-number> --max-risk <low|medium|high>
+```
+
+The risk classifier is also read-only. It must not run reviewer loops, poll CI,
+update tracker status, change labels, create comments, merge PRs, close issues,
+or delete branches. It is an additional pre-merge gate and does not replace the
+reviewer loop, CI loop, unresolved-thread checks, merge-state checks, readiness
+labels, or repository merge protocol.
 
 ---
 
@@ -124,3 +140,45 @@ Print:
 When `--json` is supplied, emit valid JSON containing the same fields plus the
 full item metadata. Downstream orchestrators must treat this JSON as the bounded
 scope contract and must not opportunistically mutate items outside it.
+
+---
+
+## Step 7: Classify PR Risk Before Delegated Merge
+
+This step applies only after a later delegated run has advanced an in-scope item
+to a candidate PR merge decision. It does not run during the resolver-only
+handoff.
+
+Before an autonomous merge decision:
+
+1. Confirm the PR is in the resolved execution set or was created for an
+   in-scope item.
+2. Confirm the normal readiness evidence is current: reviewer loop, CI loop,
+   readiness labels, unresolved-thread audit, and merge state.
+3. Run `run-epic-risk-classifier.sh` for the candidate PR with the invocation's
+   maximum allowed risk.
+4. Continue toward merge only when the classifier reports
+   `merge_permitted: true` and the normal repository merge protocol is also
+   clean.
+5. If the classifier reports `blocked`, fix the deterministic blocker when
+   safe, then rerun validation, reviewer loop, CI loop, and risk
+   classification.
+6. If the classifier reports a risk above `--max-risk`, stop or escalate rather
+   than widening authority silently.
+
+Risk levels:
+
+- `low`: docs, tests, narrow workflow text, or isolated helper changes with
+  clean readiness evidence and no blockers.
+- `medium`: workflow scripts, orchestration behavior, merge or cleanup
+  automation, or shared workflow tooling with contained blast radius and clean
+  readiness evidence.
+- `high`: auth, secrets, GitHub permissions, release automation, branch deletion
+  behavior, cross-repo PR credentials, broad shared libraries, or unclear
+  behavior changes.
+- `blocked`: hard-blocking readiness, setup, credential, tracker/base, merge
+  state, force-push, destructive-action, or reviewer/thread conditions.
+
+Medium-risk autonomous merge decisions require a complete "why safe to merge"
+explanation covering scope, tests, reviewer outcome, CI outcome, and rollback or
+cleanup risk. Missing evidence blocks the merge decision.
