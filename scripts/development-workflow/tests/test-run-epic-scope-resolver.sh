@@ -71,10 +71,28 @@ JSON
         }'
         ;;
       *'subIssues(first:'*)
-        if [ "${MOCK_EPIC_MODE:-populated}" = "empty" ]; then
+        if [[ "$*" == *"after= -f"* ]]; then
+          printf 'empty pagination cursor was passed\n' >&2
+          exit 64
+        fi
+        if [ "${MOCK_EPIC_MODE:-populated}" = "missing" ]; then
+          cat <<'JSON'
+{"data":{"repository":{"issue":null}}}
+JSON
+        elif [ "${MOCK_EPIC_MODE:-populated}" = "empty" ]; then
           cat <<'JSON'
 {"data":{"repository":{"issue":{"number":900,"title":"Empty epic","subIssues":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
 JSON
+        elif [ "${MOCK_EPIC_MODE:-populated}" = "paginated" ]; then
+          if [[ "$*" == *"after=cursor_page_1"* ]]; then
+            cat <<'JSON'
+{"data":{"repository":{"issue":{"number":900,"title":"Epic","subIssues":{"nodes":[{"number":102,"title":"Two","state":"OPEN"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
+JSON
+          else
+            cat <<'JSON'
+{"data":{"repository":{"issue":{"number":900,"title":"Epic","subIssues":{"nodes":[{"number":101,"title":"One","state":"OPEN"}],"pageInfo":{"hasNextPage":true,"endCursor":"cursor_page_1"}}}}}}
+JSON
+          fi
         else
           cat <<'JSON'
 {"data":{"repository":{"issue":{"number":900,"title":"Epic","subIssues":{"nodes":[{"number":101,"title":"One","state":"OPEN"},{"number":102,"title":"Two","state":"OPEN"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
@@ -91,10 +109,11 @@ JSON
         ;;
     esac
     ;;
-  issue\ view\ *\ --json\ number,title,state,body,labels,projectItems)
+  issue\ view\ *\ --json\ number,title,state,stateReason,body,labels,projectItems)
     issue_number="${3}"
     title="Issue ${issue_number}"
     state="OPEN"
+    state_reason=""
     body=""
     labels_json='[]'
     case "$issue_number" in
@@ -104,14 +123,17 @@ JSON
       104) body='Depends on #103'; labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
       105) labels_json='[{"name":"integration-branch:alpha"}]' ;;
       106) labels_json='[{"name":"integration-branch:beta"}]' ;;
+      107) body='Depends on #108'; labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
+      109) state="CLOSED"; state_reason="NOT_PLANNED"; labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
     esac
     jq -n \
       --argjson number "$issue_number" \
       --arg title "$title" \
       --arg state "$state" \
+      --arg stateReason "$state_reason" \
       --arg body "$body" \
       --argjson labels "$labels_json" \
-      '{number:$number,title:$title,state:$state,body:$body,labels:$labels,projectItems:[{priority:{name:"High"}}]}'
+      '{number:$number,title:$title,state:$state,stateReason:$stateReason,body:$body,labels:$labels,projectItems:[{priority:{name:"High"}}]}'
     ;;
   issue\ view\ *\ --json\ number,title,state)
     issue_number="${3}"
@@ -121,28 +143,14 @@ JSON
       '{number:$number,title:("Dependency " + ($number|tostring)),state:$state}'
     ;;
   pr\ list\ --state\ open*)
-    search_number="$(printf '%s\n' "$*" | sed -n 's/.*--search \([0-9][0-9]*\).*/\1/p')"
-    if [ "$search_number" = "102" ]; then
-      cat <<'JSON'
+    cat <<'JSON'
 [{"number":2102,"title":"Plan PR","headRefName":"implementation-plan/102-two","baseRefName":"develop-delegated-epic-orchestration","isDraft":false,"labels":[{"name":"ready-for-human-review"}]}]
 JSON
-    else
-      printf '[]\n'
-    fi
     ;;
   pr\ list\ --state\ merged*)
-    search_number="$(printf '%s\n' "$*" | sed -n 's/.*--search \([0-9][0-9]*\).*/\1/p')"
-    if [ "$search_number" = "101" ]; then
-      cat <<'JSON'
-[{"number":2101,"title":"Merged plan PR","headRefName":"implementation-plan/101-one","baseRefName":"develop-delegated-epic-orchestration","mergedAt":"2026-06-12T11:00:00Z"}]
+    cat <<'JSON'
+[{"number":2101,"title":"Merged plan PR","headRefName":"implementation-plan/101-one","baseRefName":"develop-delegated-epic-orchestration","mergedAt":"2026-06-12T11:00:00Z"},{"number":2103,"title":"Merged PR","headRefName":"feature/103-three","baseRefName":"develop-delegated-epic-orchestration","mergedAt":"2026-06-12T12:00:00Z"}]
 JSON
-    elif [ "$search_number" = "103" ]; then
-      cat <<'JSON'
-[{"number":2103,"title":"Merged PR","headRefName":"feature/103-three","baseRefName":"develop-delegated-epic-orchestration","mergedAt":"2026-06-12T12:00:00Z"}]
-JSON
-    else
-      printf '[]\n'
-    fi
     ;;
   *)
     printf 'unexpected gh invocation: gh %s\n' "$*" >&2
@@ -205,6 +213,7 @@ run_fails_contains "requires_scope" "pass exactly one of --epic or --items" "$RE
 run_fails_contains "rejects_both_scope_inputs" "not both" "$RESOLVER" --epic 900 --items 101
 run_fails_contains "rejects_invalid_items" "not a positive integer" "$RESOLVER" --items "101,nope"
 run_fails_contains "rejects_empty_item_token" "contains an empty item" "$RESOLVER" --items "101,,102"
+run_fails_contains "missing_epic_clear_error" "not found or inaccessible" env MOCK_EPIC_MODE=missing "$RESOLVER" --epic 900
 
 items_output="$(run_json --items 101,101,102)"
 run_test "explicit_items_deduped" "2" "$(printf '%s\n' "$items_output" | jq '.items | length')"
@@ -224,11 +233,20 @@ run_test "conflicting_labels_ambiguous" "2" "$(printf '%s\n' "$ambiguous_output"
 dependency_output="$(run_json --items 104)"
 run_test "satisfied_dependency_not_blocked" "eligible" "$(printf '%s\n' "$dependency_output" | jq -r '.items[0].group')"
 
+blocked_output="$(run_json --items 107)"
+run_test "blocked_dependency_group_detected" "blocked" "$(printf '%s\n' "$blocked_output" | jq -r '.items[0].group')"
+
 merged_output="$(run_json --items 103)"
 run_test "merged_pr_group_detected" "already_merged" "$(printf '%s\n' "$merged_output" | jq -r '.items[0].group')"
 
+closed_output="$(run_json --items 109)"
+run_test "closed_not_planned_not_complete" "ambiguous" "$(printf '%s\n' "$closed_output" | jq -r '.items[0].group')"
+
 epic_output="$(run_json --epic 900)"
 run_test "epic_subissues_resolved" "101,102" "$(printf '%s\n' "$epic_output" | jq -r '[.items[].number] | join(",")')"
+
+paginated_output="$(MOCK_EPIC_MODE=paginated run_json --epic 900)"
+run_test "epic_pagination_resolved" "101,102" "$(printf '%s\n' "$paginated_output" | jq -r '[.items[].number] | join(",")')"
 
 empty_output="$(MOCK_EPIC_MODE=empty run_json --epic 900)"
 run_test "empty_epic_reports_scope" "true" "$(printf '%s\n' "$empty_output" | jq -r '.emptyEpicScope')"
