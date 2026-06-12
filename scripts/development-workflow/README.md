@@ -313,8 +313,8 @@ Usage:
 - No argument: use the current branch (run while still on the merged branch).
 - With `BRANCH`: branch name to delete (e.g. `feature/my-feature`).
 - With `--base`: explicitly choose the cleanup base branch. When omitted for
-  hub-owned branches, the script queries the merged PR base and falls back to
-  `develop` only if that lookup is unavailable.
+  hub-owned branches, the script queries the merged PR base and fails closed if
+  that lookup is unavailable.
 
 Use this when:
 

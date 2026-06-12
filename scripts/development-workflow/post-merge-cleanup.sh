@@ -133,33 +133,42 @@ if [ "$workflow_mode" = "workflow_hub" ] && [ "$branch_owner_kind" = "implementa
   fi
 fi
 
+case "$TO_DELETE" in
+  "$DEVELOP_BRANCH"|"$selected_product_default_branch"|main|master)
+    echo "Refusing to delete protected branch '$TO_DELETE'." >&2
+    exit 2
+    ;;
+esac
+
 if [ -n "$base_branch_override" ]; then
   DEVELOP_BRANCH="$base_branch_override"
 elif [ "$ACTION_REPOSITORY_KIND" = "hub_owned" ]; then
   cleanup_repo_slug=""
-  if cleanup_repo_slug="$(repo_slug 2>/dev/null)"; then
-    merged_base="$(
-      gh pr list \
-        --repo "$cleanup_repo_slug" \
-        --state merged \
-        --head "$TO_DELETE" \
-        --limit 1 \
-        --json baseRefName \
-        --jq '.[0].baseRefName // empty'
-    )" || {
-      echo "Warning: could not query merged PR base for branch '$TO_DELETE'; using '$DEVELOP_BRANCH'." >&2
-      merged_base=""
-    }
-    if [ -n "$merged_base" ]; then
-      DEVELOP_BRANCH="$merged_base"
-    fi
-  else
-    echo "Warning: could not resolve GitHub repository; using '$DEVELOP_BRANCH' for cleanup base." >&2
+  if ! cleanup_repo_slug="$(repo_slug 2>/dev/null)"; then
+    echo "ERROR: could not resolve GitHub repository for merged PR base lookup; pass --base <branch> to override." >&2
+    exit 1
   fi
+  if ! merged_base="$(
+    gh pr list \
+      --repo "$cleanup_repo_slug" \
+      --state merged \
+      --head "$TO_DELETE" \
+      --limit 1 \
+      --json baseRefName \
+      --jq '.[0].baseRefName // empty'
+  )"; then
+    echo "ERROR: could not query merged PR base for branch '$TO_DELETE'; pass --base <branch> to override." >&2
+    exit 1
+  fi
+  if [ -z "$merged_base" ]; then
+    echo "ERROR: could not determine merged PR base for branch '$TO_DELETE'; pass --base <branch> to override." >&2
+    exit 1
+  fi
+  DEVELOP_BRANCH="$merged_base"
 fi
 
 case "$TO_DELETE" in
-  "$DEVELOP_BRANCH"|"$selected_product_default_branch"|main|master)
+  "$DEVELOP_BRANCH")
     echo "Refusing to delete protected branch '$TO_DELETE'." >&2
     exit 2
     ;;

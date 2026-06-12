@@ -258,7 +258,6 @@ case "$1" in
         printf '%s\n' "$GH_PR_LIST_BASE"
         exit 0
       fi
-      printf '[]\n'
       exit 0
     fi
     ;;
@@ -337,6 +336,15 @@ run_fails_contains \
   "$REPO_ROOT/scripts/development-workflow/post-merge-cleanup.sh" \
     --repo-root "$hub_dir" \
     feature/900-product-routing
+
+run_fails_contains \
+  "post_merge_cleanup_fails_when_merged_base_unknown" \
+  "could not determine merged PR base" \
+  env WORKFLOW_TARGET_GITHUB_REPO=example/workflow-hub \
+    PATH="$stub_bin:$PATH" \
+    "$REPO_ROOT/scripts/development-workflow/post-merge-cleanup.sh" \
+    --repo-root "$hub_dir" \
+    spec/integration-cleanup
 
 cleanup_remote="$TMP_ROOT/integration-cleanup.git"
 cleanup_repo="$TMP_ROOT/integration-cleanup"
