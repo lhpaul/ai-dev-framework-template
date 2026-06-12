@@ -101,7 +101,10 @@ JSON
         ;;
       *'parent { number title }'*)
         child="$(printf '%s\n' "$*" | sed -n 's/.*number=\([0-9][0-9]*\).*/\1/p')"
-        jq -n --argjson child "$child" '{data:{repository:{issue:{number:$child,parent:{number:900,title:"Epic"}}}}}'
+        parent=900
+        [ "${MOCK_PARENT_MODE:-valid}" = "mismatch" ] && parent=901
+        jq -n --argjson child "$child" --argjson parent "$parent" \
+          '{data:{repository:{issue:{number:$child,parent:{number:$parent,title:"Epic"}}}}}'
         ;;
       *)
         printf 'unexpected gh graphql invocation: gh %s\n' "$*" >&2
@@ -215,6 +218,7 @@ run_fails_contains "rejects_both_scope_inputs" "not both" "$RESOLVER" --epic 900
 run_fails_contains "rejects_invalid_items" "not a positive integer" "$RESOLVER" --items "101,nope"
 run_fails_contains "rejects_empty_item_token" "contains an empty item" "$RESOLVER" --items "101,,102"
 run_fails_contains "missing_epic_clear_error" "not found or inaccessible" env MOCK_EPIC_MODE=missing "$RESOLVER" --epic 900
+run_fails_contains "parent_mismatch_rejected" "does not point back" env MOCK_PARENT_MODE=mismatch "$RESOLVER" --epic 900
 
 items_output="$(run_json --items 101,101,102)"
 run_test "explicit_items_deduped" "2" "$(printf '%s\n' "$items_output" | jq '.items | length')"

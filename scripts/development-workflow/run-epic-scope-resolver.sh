@@ -150,9 +150,8 @@ query_epic_subissues() {
     )
     if [ -n "$after" ]; then
       graphql_args+=(-f after="$after")
-    fi
-    graphql_args+=(
-      -f query='
+      graphql_args+=(
+        -f query='
         query($owner: String!, $repo: String!, $number: Int!, $after: String) {
           repository(owner: $owner, name: $repo) {
             issue(number: $number) {
@@ -166,7 +165,25 @@ query_epic_subissues() {
           }
         }
       '
-    )
+      )
+    else
+      graphql_args+=(
+        -f query='
+        query($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) {
+            issue(number: $number) {
+              number
+              title
+              subIssues(first: 100) {
+                nodes { number title state }
+                pageInfo { hasNextPage endCursor }
+              }
+            }
+          }
+        }
+      '
+      )
+    fi
 
     if ! response="$("${graphql_args[@]}" 2>/dev/null)"; then
       error_exit "failed to read native sub-issues for epic #${epic_number}."
