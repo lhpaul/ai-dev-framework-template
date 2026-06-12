@@ -101,6 +101,8 @@ tmp_dir="$(mktemp -d)"
 items_file="$tmp_dir/items.jsonl"
 subissues_file="$tmp_dir/subissues.jsonl"
 touch "$items_file" "$subissues_file"
+open_prs_raw_cache=""
+closed_prs_raw_cache=""
 
 cleanup() {
   rm -rf "$tmp_dir"
@@ -262,13 +264,15 @@ integration_label_for_issue_json() {
 
 linked_pr_json() {
   local issue="$1"
-  local open_raw open_prs closed_raw merged_prs
+  local open_prs merged_prs
 
-  if ! open_raw="$(gh api --paginate --slurp \
-    "repos/${repo}/pulls?state=open&per_page=100" 2>/dev/null)"; then
-    error_exit "failed to read open PRs while resolving issue #${issue}."
+  if [ -z "$open_prs_raw_cache" ]; then
+    if ! open_prs_raw_cache="$(gh api --paginate --slurp \
+      "repos/${repo}/pulls?state=open&per_page=100" 2>/dev/null)"; then
+      error_exit "failed to read open PRs while resolving issue #${issue}."
+    fi
   fi
-  if ! open_prs="$(printf '%s\n' "$open_raw" | jq --arg issue "$issue" '
+  if ! open_prs="$(printf '%s\n' "$open_prs_raw_cache" | jq --arg issue "$issue" '
         [ .[][]
           | select(.head.ref | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
           | {
@@ -284,11 +288,13 @@ linked_pr_json() {
     error_exit "failed to parse open PRs while resolving issue #${issue}."
   fi
 
-  if ! closed_raw="$(gh api --paginate --slurp \
-    "repos/${repo}/pulls?state=closed&per_page=100" 2>/dev/null)"; then
-    error_exit "failed to read closed PRs while resolving issue #${issue}."
+  if [ -z "$closed_prs_raw_cache" ]; then
+    if ! closed_prs_raw_cache="$(gh api --paginate --slurp \
+      "repos/${repo}/pulls?state=closed&per_page=100" 2>/dev/null)"; then
+      error_exit "failed to read closed PRs while resolving issue #${issue}."
+    fi
   fi
-  if ! merged_prs="$(printf '%s\n' "$closed_raw" | jq --arg issue "$issue" '
+  if ! merged_prs="$(printf '%s\n' "$closed_prs_raw_cache" | jq --arg issue "$issue" '
         [ .[][]
           | select(.merged_at != null)
           | select(.head.ref | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
