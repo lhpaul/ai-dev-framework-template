@@ -48,7 +48,7 @@ merged.
     `faind-workflow-hub`, `faind-mobile-app`, and `faind-admin-portal`
     repositories.
   - Show local-only `.ai-dev-workflow.local.yaml` with placeholder checkout
-    paths and fake secret references only.
+    paths and non-provider placeholder secret references only.
   - Include commands and run locations for:
     - `scripts/development-workflow/validate-workflow-config.sh`
     - `scripts/development-workflow/hub-status.sh --all`
@@ -166,7 +166,7 @@ duplicate-header check, link/path inspection, and unsafe-content scan.
 | Placeholder products | `faind-mobile-app`, `faind-admin-portal`, `example/faind-mobile-app`, `example/faind-admin-portal` | New setup, injection, and flow docs |
 | Fake GitHub App IDs | `"12345"`, `"999999"`, `"888888"` | New setup docs |
 | Fake local paths | `../repos/faind-mobile-app`, `../repos/faind-admin-portal` | New setup docs |
-| Fake secret refs | `op://ExampleVault/faind-mobile-app-github-app/private-key` | New setup docs only as placeholder syntax |
+| Placeholder secret refs | `example-secret-ref-faind-mobile-app-github-app` | New setup docs only as placeholder syntax |
 
 ---
 
