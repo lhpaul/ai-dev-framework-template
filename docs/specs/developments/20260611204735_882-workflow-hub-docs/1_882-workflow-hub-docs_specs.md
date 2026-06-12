@@ -39,6 +39,7 @@ existing primitives into concrete setup and operations guides.
 ### Use Case 1: Maintainer initializes a workflow hub
 
 **Actor**: Template adopter or workflow maintainer
+**Trigger**: The maintainer is converting a repository into a workflow hub.
 **Preconditions**: The maintainer has a repository that will coordinate work
 for one or more product repositories.
 
@@ -78,6 +79,8 @@ without storing secrets in versioned files.
 ### Use Case 2: Product maintainer injects workflow support
 
 **Actor**: Product repository maintainer
+**Trigger**: The maintainer is preparing a product repository to receive
+hub-routed workflow support.
 **Preconditions**: A hub exists and the product repository should receive the
 minimal workflow integration surface.
 
@@ -117,6 +120,8 @@ injection-safe workflow surface.
 ### Use Case 3: Hub operator routes a cross-repository PR
 
 **Actor**: Hub operator or AI work orchestrator
+**Trigger**: A hub-managed work item is ready for product repository
+implementation.
 **Preconditions**: A hub-managed work item identifies one product repository
 target and the product checkout is available locally.
 
@@ -155,6 +160,7 @@ confusing hub-owned state with product-owned implementation artifacts.
 ### Use Case 4: Operator troubleshoots common workflow-hub failures
 
 **Actor**: Hub operator
+**Trigger**: A workflow-hub setup, injection, PR, reviewer, or CI command fails.
 **Preconditions**: A setup, injection, PR, reviewer, or CI step failed.
 
 **Steps**:
@@ -270,6 +276,20 @@ using unsafe fallback behavior.
       secret material.
 - [ ] AC10: Docs are discoverable from the workflow-hub operating model or the
       development-workflow README.
+
+## Objective Coverage Matrix
+
+| Objective | Covered by |
+| --- | --- |
+| 1. Document the end-to-end setup path for a workflow hub and product repositories. | AC1, AC2, AC10 |
+| 2. Document where each command runs. | AC1, AC4 |
+| 3. Explain versioned `.ai-dev-workflow.yaml` versus local-only `.ai-dev-workflow.local.yaml`. | AC2 |
+| 4. Document product-repo injection using role-aware sync-template scopes. | AC3 |
+| 5. Document the cross-repository PR flow from hub item selection through product PR readiness. | AC4, AC5 |
+| 6. Add troubleshooting for common workflow-hub failures. | AC6, AC9 |
+| 7. Link back to relevant workflow protocols and integration guides. | AC7 |
+| 8. Use a non-secret Faind-like multi-repository example. | AC8 |
+| 9. Keep docs aligned with the existing workflow docs tree. | AC10 |
 
 ## Out of Scope (MVP)
 
