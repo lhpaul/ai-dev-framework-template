@@ -18,6 +18,10 @@ workflow_config_file() {
   printf '%s/.ai-dev-workflow.yaml\n' "$(workflow_repo_root)"
 }
 
+workflow_config_resolver_script() {
+  printf '%s/workflow-config-resolver.py\n' "$(workflow_script_dir)"
+}
+
 workflow_config_exists() {
   [ -f "$(workflow_config_file)" ]
 }
@@ -42,7 +46,64 @@ require_gh() {
 }
 
 repo_slug() {
+  if [ -n "${WORKFLOW_TARGET_GITHUB_REPO:-}" ]; then
+    if ! workflow_is_valid_github_repo_slug "$WORKFLOW_TARGET_GITHUB_REPO"; then
+      echo "ERROR: WORKFLOW_TARGET_GITHUB_REPO must be an owner/repo GitHub repository slug." >&2
+      return 1
+    fi
+    printf '%s\n' "$WORKFLOW_TARGET_GITHUB_REPO"
+    return 0
+  fi
   gh repo view --json nameWithOwner --jq '.nameWithOwner'
+}
+
+workflow_context_value() {
+  local key="$1"
+  local context="${2:-}"
+
+  printf '%s\n' "$context" | awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }'
+}
+
+workflow_github_repo_from_git_url() {
+  local git_url="$1"
+  local remote_path=""
+
+  case "$git_url" in
+    https://github.com/*)
+      remote_path="${git_url#https://github.com/}"
+      ;;
+    https://*@github.com/*)
+      remote_path="${git_url#https://*@github.com/}"
+      ;;
+    git@github.com:*)
+      remote_path="${git_url#git@github.com:}"
+      ;;
+    ssh://git@github.com/*)
+      remote_path="${git_url#ssh://git@github.com/}"
+      ;;
+  esac
+
+  remote_path="${remote_path%.git}"
+  if [ -n "$remote_path" ] && workflow_remote_path_has_single_repo "$remote_path"; then
+    printf '%s\n' "$remote_path"
+  fi
+}
+
+workflow_github_repo_from_context() {
+  local context="$1"
+  local github_repo
+  local git_url
+
+  github_repo="$(workflow_context_value TARGET_GITHUB_REPO "$context")"
+  if [ -n "$github_repo" ]; then
+    printf '%s\n' "$github_repo"
+    return 0
+  fi
+
+  git_url="$(workflow_context_value TARGET_GIT_URL "$context")"
+  if [ -n "$git_url" ]; then
+    workflow_github_repo_from_git_url "$git_url"
+  fi
 }
 
 branch_prefix() {
@@ -135,7 +196,7 @@ is_soft_suggestion() {
 
 open_pr_number_for_branch() {
   require_gh
-  gh pr list --head "$1" --state open --json number --jq '.[0].number // empty'
+  gh pr list --head "$1" --state open --limit 100 --json number --jq '.[0].number // empty'
 }
 
 workflow_config_review_nested_list() {
@@ -349,6 +410,46 @@ workflow_config_review_phase_after_clean_platforms() {
   [ -f "$config_file" ] || return 0
 
   workflow_config_review_on_ready_github "$config_file"
+}
+
+workflow_repository_mode() {
+  local repo_root="${1:-$(workflow_repo_root)}"
+
+  python3 "$(workflow_config_resolver_script)" mode --repo-root "$repo_root"
+}
+
+workflow_repository_context() {
+  local target_repo="${1:-}"
+  local repo_root="${2:-$(workflow_repo_root)}"
+  local args=(resolve --repo-root "$repo_root")
+
+  if [ -n "$target_repo" ]; then
+    args+=(--repo "$target_repo")
+  fi
+
+  python3 "$(workflow_config_resolver_script)" "${args[@]}"
+}
+
+workflow_validate_repository_context() {
+  local target_repo="${1:-}"
+  local repo_root="${2:-$(workflow_repo_root)}"
+  local require_local="${3:-}"
+  local args=(validate --repo-root "$repo_root")
+
+  if [ -n "$target_repo" ]; then
+    args+=(--repo "$target_repo")
+  fi
+  if [ "$require_local" = "--require-local" ] || [ "$require_local" = "require-local" ]; then
+    args+=(--require-local)
+  fi
+
+  python3 "$(workflow_config_resolver_script)" "${args[@]}"
+}
+
+workflow_review_override_context() {
+  local repo_root="${1:-$(workflow_repo_root)}"
+
+  python3 "$(workflow_config_resolver_script)" review-overrides --repo-root "$repo_root"
 }
 
 workflow_config_provider() {
@@ -627,6 +728,17 @@ workflow_is_valid_github_repo_name() {
       return 1
       ;;
   esac
+  return 0
+}
+
+workflow_is_valid_github_repo_slug() {
+  local repo_slug="$1"
+  local owner="${repo_slug%%/*}"
+  local repo_name="${repo_slug#*/}"
+
+  [ "$owner/$repo_name" = "$repo_slug" ] || return 1
+  workflow_is_valid_github_owner "$owner" || return 1
+  workflow_is_valid_github_repo_name "$repo_name" || return 1
   return 0
 }
 

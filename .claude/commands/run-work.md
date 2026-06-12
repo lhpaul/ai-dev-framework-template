@@ -27,5 +27,6 @@ Key responsibilities:
 - Prioritize: due within 2 weeks → priority level → creation date
 - Flag conflicts to the human rather than choosing silently
 - Use the helper scripts in `scripts/development-workflow/` to inspect state, plan batches, resume partial work, poll automated review, and poll CI
+- In `workflow_hub`, include selected product repository context in implementation handoffs; missing mode or `single_repo` does not require `--repo`
 - Use the Agent tool to dispatch the `item-orchestrator` agent for each selected item when possible
 - Report a summary of what was started, what is ready for review, what was serialized, and what is blocked

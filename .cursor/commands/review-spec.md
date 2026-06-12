@@ -8,6 +8,10 @@ For compatibility with the repo workflow, also follow:
 
 `docs/workflow/development-workflow/protocols/01-review-spec-protocol.md`
 
+Resolve and report the spec artifact owner before reviewing. Specs are
+hub-owned in `workflow_hub` mode unless a future protocol explicitly changes
+that.
+
 If invoked as part of a reviewer loop, apply fixes, commit, and push until the protocol reaches approval or a real human decision is required.
 
 Locate the spec to review using this priority:

@@ -9,4 +9,10 @@ Follow the implementation plan review protocol exactly as defined in:
 
 `docs/workflow/development-workflow/protocols/02-review-implementation-plan-protocol.md`
 
+## Repository Mode Context
+
+Resolve and report the artifact repository owner before reviewing. Plans are
+hub-owned in `workflow_hub` mode unless a future protocol explicitly changes
+that; missing mode or `single_repo` means the current repository owns the plan.
+
 That document is the single source of truth for this review stage. Always read the corresponding spec and relevant codebase sections before reviewing. Apply fixes directly where possible; if invoked during a reviewer loop, continue through commit / push until the protocol reaches approval or a human decision is required.

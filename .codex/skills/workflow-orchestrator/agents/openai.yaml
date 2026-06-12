@@ -1,7 +1,7 @@
 interface:
   display_name: "Workflow Orchestrator"
   short_description: "Propose and supervise the largest safe workflow batch."
-  default_prompt: "Use $workflow-orchestrator to inspect workflow state, advance deterministic in-flight work, and propose the largest safe Backlog start batch by priority and parallelization feasibility before asking for approval."
+  default_prompt: "Use $workflow-orchestrator to inspect workflow state, advance deterministic in-flight work, and propose the largest safe Backlog start batch. In workflow_hub mode, include selected product repository context in implementation handoffs; single_repo does not require --repo."
 
 policy:
   allow_implicit_invocation: true

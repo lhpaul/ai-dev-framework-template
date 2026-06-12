@@ -9,9 +9,9 @@ source "$SCRIPT_DIR/workflow-lib.sh"
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/development-workflow/workflow-next-action.sh --branch <branch>
-  ./scripts/development-workflow/workflow-next-action.sh --pr <number>
-  ./scripts/development-workflow/workflow-next-action.sh --development <path>
+  ./scripts/development-workflow/workflow-next-action.sh --branch <branch> [--repo <name>] [--repo-root <path>]
+  ./scripts/development-workflow/workflow-next-action.sh --pr <number> [--repo <name>] [--repo-root <path>]
+  ./scripts/development-workflow/workflow-next-action.sh --development <path> [--repo <name>] [--repo-root <path>]
 
 Classifies the next deterministic workflow action and prints stable key=value lines.
 
@@ -29,19 +29,43 @@ ere_escape() {
 branch_name=""
 pr_number=""
 development_path=""
+target_repo=""
+repo_root="$(workflow_repo_root)"
+
+require_option_value() {
+  local option="$1"
+  if [ "$#" -lt 2 ] || [ -z "${2:-}" ]; then
+    echo "$option requires a value." >&2
+    usage >&2
+    exit 64
+  fi
+}
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --branch)
+      require_option_value "$@"
       branch_name="$2"
       shift 2
       ;;
     --pr)
+      require_option_value "$@"
       pr_number="$2"
       shift 2
       ;;
     --development)
+      require_option_value "$@"
       development_path="$2"
+      shift 2
+      ;;
+    --repo)
+      require_option_value "$@"
+      target_repo="$2"
+      shift 2
+      ;;
+    --repo-root)
+      require_option_value "$@"
+      repo_root="$2"
       shift 2
       ;;
     -h|--help)
@@ -65,13 +89,103 @@ if [ "$targets" -ne 1 ]; then
   exit 64
 fi
 
-cd_workflow_repo_root
+cd "$repo_root"
+
+mode_context="$(workflow_repository_mode "$repo_root")"
+workflow_mode="$(workflow_context_value WORKFLOW_MODE "$mode_context")"
+
+repository_context_for_action() {
+  local action_kind="$1"
+  local context=""
+  local action_repository_kind="single_repo_context"
+  local action_repository=""
+  local action_github_repo=""
+  local action_local_path=""
+
+  if [ "$workflow_mode" = "workflow_hub" ]; then
+    case "$action_kind" in
+      implementation)
+        if ! context="$(workflow_repository_context "$target_repo" "$repo_root")"; then
+          return 1
+        fi
+        action_repository_kind="product_repo_owned"
+        action_repository="$(workflow_context_value TARGET_REPO_NAME "$context")"
+        action_github_repo="$(workflow_github_repo_from_context "$context")"
+        action_local_path="$(workflow_context_value TARGET_LOCAL_PATH "$context")"
+        ;;
+      *)
+        action_repository_kind="hub_owned"
+        action_repository="$(basename "$repo_root")"
+        ;;
+    esac
+  else
+    context="$(workflow_repository_context "" "$repo_root")"
+    action_repository="$(workflow_context_value TARGET_REPO_NAME "$context")"
+    action_github_repo="$(workflow_github_repo_from_context "$context")"
+    action_local_path="$(workflow_context_value TARGET_LOCAL_PATH "$context")"
+  fi
+
+  print_kv WORKFLOW_MODE "$workflow_mode"
+  print_kv ACTION_REPOSITORY_KIND "$action_repository_kind"
+  print_kv ACTION_REPOSITORY "$action_repository"
+  [ -n "$action_github_repo" ] && print_kv ACTION_GITHUB_REPO "$action_github_repo"
+  [ -n "$action_local_path" ] && print_kv ACTION_LOCAL_PATH "$action_local_path"
+  return 0
+}
+
+github_repo_args_for_action() {
+  local action_kind="$1"
+  local context=""
+  local action_github_repo=""
+
+  if [ "$workflow_mode" = "workflow_hub" ] && [ "$action_kind" = "implementation" ]; then
+    context="$(workflow_repository_context "$target_repo" "$repo_root")"
+    action_github_repo="$(workflow_github_repo_from_context "$context")"
+    if [ -n "$action_github_repo" ]; then
+      printf '%s\n%s\n' "--repo" "$action_github_repo"
+    fi
+  fi
+  return 0
+}
 
 if [ -n "$pr_number" ]; then
+  if [ "$workflow_mode" = "workflow_hub" ] && [ -z "$target_repo" ]; then
+    if ! pr_action_context="$(repository_context_for_action implementation 2>&1)"; then
+      print_kv WORKFLOW_MODE "$workflow_mode"
+      print_kv ACTION_REPOSITORY_KIND "repository_selection_required"
+      print_kv ACTION_REPOSITORY ""
+      print_kv TARGET "pr:$pr_number"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv REVIEW_AGENT "none"
+      print_kv NEXT_ACTION "resolve-repository-selection"
+      print_kv_escaped ERROR "$pr_action_context"
+      exit 0
+    fi
+  fi
   require_gh
-  pr_json="$(gh pr view "$pr_number" --json headRefName,labels,isDraft,comments)"
+  pr_view_args=()
+  if [ "$workflow_mode" = "workflow_hub" ]; then
+    while IFS= read -r arg; do
+      [ -n "$arg" ] && pr_view_args+=("$arg")
+    done < <(github_repo_args_for_action implementation)
+  fi
+  if [ "${#pr_view_args[@]}" -gt 0 ]; then
+    if ! pr_json="$(gh pr view "$pr_number" "${pr_view_args[@]}" --json headRefName,labels,isDraft,comments)"; then
+      echo "ERROR: could not read PR #$pr_number from the selected GitHub repository." >&2
+      exit 1
+    fi
+  else
+    if ! pr_json="$(gh pr view "$pr_number" --json headRefName,labels,isDraft,comments)"; then
+      echo "ERROR: could not read PR #$pr_number." >&2
+      exit 1
+    fi
+  fi
   branch_name="$(printf '%s\n' "$pr_json" | jq -r '.headRefName')"
   labels="$(printf '%s\n' "$pr_json" | jq -r '[.labels[].name] | join(",")')"
+  case "$(branch_prefix "$branch_name")" in
+    feature|refactor|fix|hotfix) repository_context_for_action implementation ;;
+    *) repository_context_for_action hub ;;
+  esac
 
   print_kv TARGET "pr:$pr_number"
   print_kv PR_NUMBER "$pr_number"
@@ -108,18 +222,56 @@ if [ -n "$pr_number" ]; then
 fi
 
 if [ -n "$branch_name" ]; then
+  case "$(branch_prefix "$branch_name")" in
+    feature|refactor|fix|hotfix) action_kind="implementation" ;;
+    *) action_kind="hub" ;;
+  esac
+  if ! action_context_output="$(repository_context_for_action "$action_kind" 2>&1)"; then
+    print_kv WORKFLOW_MODE "$workflow_mode"
+    print_kv ACTION_REPOSITORY_KIND "repository_resolution_failed"
+    print_kv ACTION_REPOSITORY ""
+    print_kv TARGET "branch:$branch_name"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv NEXT_ACTION "resolve-repository-selection"
+    print_kv_escaped ERROR "$action_context_output"
+    exit 0
+  fi
+  pr_list_args=()
+  pr_view_args=()
+  if [ "$action_kind" = "implementation" ]; then
+    while IFS= read -r arg; do
+      [ -n "$arg" ] && pr_list_args+=("$arg")
+      [ -n "$arg" ] && pr_view_args+=("$arg")
+    done < <(github_repo_args_for_action implementation)
+  fi
   if gh_available; then
-    pr_number="$(open_pr_number_for_branch "$branch_name")"
+    if [ "${#pr_list_args[@]}" -gt 0 ]; then
+      pr_number="$(gh pr list "${pr_list_args[@]}" --head "$branch_name" --state open --limit 100 --json number --jq '.[0].number // empty')"
+    else
+      pr_number="$(open_pr_number_for_branch "$branch_name")"
+    fi
   else
     pr_number=""
   fi
 
+  printf '%s\n' "$action_context_output"
   print_kv TARGET "branch:$branch_name"
   print_kv BRANCH "$branch_name"
   print_kv REVIEW_AGENT "$(reviewer_for_branch "$branch_name")"
 
   if [ -n "$pr_number" ]; then
-    pr_json="$(gh pr view "$pr_number" --json labels,isDraft,comments)"
+    if [ "${#pr_view_args[@]}" -gt 0 ]; then
+      if ! pr_json="$(gh pr view "$pr_number" "${pr_view_args[@]}" --json labels,isDraft,comments)"; then
+        echo "ERROR: could not read PR #$pr_number from the selected GitHub repository." >&2
+        exit 1
+      fi
+    else
+      if ! pr_json="$(gh pr view "$pr_number" --json labels,isDraft,comments)"; then
+        echo "ERROR: could not read PR #$pr_number." >&2
+        exit 1
+      fi
+    fi
     labels="$(printf '%s\n' "$pr_json" | jq -r '[.labels[].name] | join(",")')"
     print_kv PR_NUMBER "$pr_number"
     case ",$labels," in
@@ -238,17 +390,43 @@ feature_branch_merged=0
 if [ "$feature_branch_exists" -eq 0 ] && [ -n "$plan_file" ] && gh_available; then
   # Use the same scoped dev_prefix determined above (feature or refactor).
   # Try exact branch name first: [prefix]/<slug>
-  merged_count="$(gh pr list --state merged --head "${dev_prefix}/$slug" --json number --jq 'length' 2>/dev/null || echo 0)"
+  merged_pr_args=()
+  if [ "$dev_prefix" != "spec" ] && [ "$workflow_mode" = "workflow_hub" ]; then
+    while IFS= read -r arg; do
+      [ -n "$arg" ] && merged_pr_args+=("$arg")
+    done < <(github_repo_args_for_action implementation)
+  fi
+  if [ "${#merged_pr_args[@]}" -gt 0 ]; then
+    if ! merged_count="$(gh pr list "${merged_pr_args[@]}" --state merged --head "${dev_prefix}/$slug" --limit 100 --json number --jq 'length')"; then
+      echo "workflow-next-action.sh: warning: could not query merged PRs for ${dev_prefix}/$slug; treating as not merged" >&2
+      merged_count=0
+    fi
+  else
+    if ! merged_count="$(gh pr list --state merged --head "${dev_prefix}/$slug" --limit 100 --json number --jq 'length')"; then
+      echo "workflow-next-action.sh: warning: could not query merged PRs for ${dev_prefix}/$slug; treating as not merged" >&2
+      merged_count=0
+    fi
+  fi
   if [ "${merged_count:-0}" -gt 0 ]; then
     feature_branch_merged=1
   else
     # Try issue-tracker-prefixed pattern: [prefix]/<ISSUE-ID>-<slug>
     # Matches Linear (ENG-123), Jira (PROJ-456), and GitHub Issues (42) prefixes.
-    if gh pr list --state merged --limit 500 --json headRefName 2>/dev/null \
-        | jq -r '.[].headRefName' 2>/dev/null \
-        | sed -n "s|^${dev_prefix}/||p" \
-        | grep -qE "^([A-Z]+-)?[0-9]+-${slug_ere}$"; then
-      feature_branch_merged=1
+    merged_heads_json=""
+    if [ "${#merged_pr_args[@]}" -gt 0 ]; then
+      if ! merged_heads_json="$(gh pr list "${merged_pr_args[@]}" --state merged --limit 500 --json headRefName)"; then
+        echo "workflow-next-action.sh: warning: could not scan merged PR heads; treating as not merged" >&2
+      fi
+    elif ! merged_heads_json="$(gh pr list --state merged --limit 500 --json headRefName)"; then
+      echo "workflow-next-action.sh: warning: could not scan merged PR heads; treating as not merged" >&2
+    fi
+    if [ -n "$merged_heads_json" ]; then
+      if printf '%s\n' "$merged_heads_json" \
+          | jq -r '.[].headRefName' 2>/dev/null \
+          | sed -n "s|^${dev_prefix}/||p" \
+          | grep -qE "^([A-Z]+-)?[0-9]+-${slug_ere}$"; then
+        feature_branch_merged=1
+      fi
     fi
   fi
 fi
@@ -283,10 +461,25 @@ fi
 
 # PLAN_FILE is intentionally not emitted; callers that need the path should scan
 # "$development_path"/2_*_implementation-plan.md directly.
+case "$next_action" in
+  implement|resolve-development-pr)
+    if ! action_context_output="$(repository_context_for_action implementation 2>&1)"; then
+      echo "ERROR: $action_context_output" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    if ! action_context_output="$(repository_context_for_action hub 2>&1)"; then
+      echo "ERROR: $action_context_output" >&2
+      exit 1
+    fi
+    ;;
+esac
 print_kv TARGET "development:$development_path"
 [ -n "$spec_file" ] && print_kv SPEC_FILE "$spec_file"
 print_kv STATUS "$status_line"
 print_kv NEXT_ACTION "$next_action"
+printf '%s\n' "$action_context_output"
 
 # Optional: read Linear issue ID from spec for orchestrator (tracker is source of truth for status)
 linear_issue=""

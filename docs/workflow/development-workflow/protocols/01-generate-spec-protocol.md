@@ -34,6 +34,14 @@ Before starting, read:
 
 **Tracker workflow status**: The **Work Item Runner** owns workflow-status transitions for this stage. When this protocol is run under normal orchestration, expect the runner to set **Writing Spec** before dispatch, **Spec in Review** when the PR is human-ready, and **Spec Ready** only after merge. If you invoke this protocol standalone, mirror the same status progression manually.
 
+**Repository mode ownership**: Resolve repository mode before creating or
+reviewing spec artifacts. Missing mode or explicit `single_repo` means the
+current repository owns the spec. In `workflow_hub` mode, the hub owns specs and
+spec PRs unless a future workflow contract explicitly says otherwise. In
+`product_repo` mode, report the configured hub owner or stop if planning
+ownership is ambiguous; do not create duplicate hub-owned specs in the product
+repository.
+
 ---
 
 ## Step 1: Mandatory Alignment Conversation

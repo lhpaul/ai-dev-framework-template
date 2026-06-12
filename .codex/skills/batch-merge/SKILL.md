@@ -1,6 +1,6 @@
 ---
 name: batch-merge
-description: Merge all ready PRs in a parallel batch into develop sequentially, auto-resolving trivial CHANGELOG and documentation conflicts, pausing for human input only on non-trivial conflicts, and running post-merge-cleanup for each successfully merged PR. Prints the merge plan for visibility but proceeds immediately without requiring confirmation. Use when a parallel batch of PRs is ready for merge.
+description: Merge all ready PRs in a parallel batch into the target base branch sequentially, auto-resolving trivial CHANGELOG and documentation conflicts, pausing for human input only on non-trivial conflicts, and running post-merge-cleanup for each successfully merged PR. Prints the merge plan for visibility but proceeds immediately without requiring confirmation. Use when a parallel batch of PRs is ready for merge.
 ---
 
 # Batch Merge
@@ -35,13 +35,13 @@ Follow `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md`
      - Documentation files (`docs/`, `.claude/`, `.cursor/`, `.codex/`): auto-resolve if non-overlapping; escalate if overlapping.
      - All other files (or overlapping doc changes): pause, show conflict markers, wait for human to resolve or abort.
    - On `MERGE_RESULT=failed`: report the error, mark `failed`, continue.
-   - After each successful merge: complete the post-merge sequence from Protocol 94 Step 4.2 (`git push origin develop`, verify GitHub shows `MERGED`, delete the remote branch if it still exists, create a temporary local branch if needed, then run `./scripts/development-workflow/post-merge-cleanup.sh <branch>`).
+   - After each successful merge: complete the post-merge sequence from Protocol 94 Step 4.2 (push the target base branch, verify GitHub shows `MERGED`, delete the remote branch if it still exists, create a temporary local branch if needed, then run `./scripts/development-workflow/post-merge-cleanup.sh --base <target-base> <branch>`).
 
 7. **Final summary**: always print a table listing every candidate PR with its outcome code (`merged_clean`, `merged_auto`, `merged_human`, `skipped_not_ready`, `skipped_conflict`, `failed`, `not_attempted`).
 
 Key rules:
 
-- Never leave `develop` in a conflicted state — always run `git merge --abort` if a conflict cannot be resolved.
+- Never leave the target base branch in a conflicted state — always run `git merge --abort` if a conflict cannot be resolved.
 - Do not force-push or rebase PR branches.
 - Do not use `gh pr close` — the merge must be recognized by GitHub as `MERGED`.
 - Already-merged PRs stay merged even if the human aborts mid-batch.

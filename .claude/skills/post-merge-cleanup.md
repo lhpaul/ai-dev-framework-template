@@ -2,20 +2,21 @@
 name: post-merge-cleanup
 description: >
   After a development PR is merged and the remote branch deleted, sync with origin,
-  switch to develop, pull, delete the local branch, and update the related issue in the issue tracker.
-  Usage: /post-merge-cleanup [branch-name]
+  switch to the merged PR's base branch, pull, delete the local branch, and update the related issue in the issue tracker.
+  Usage: /post-merge-cleanup [--base base-branch] [branch-name]
 ---
 
 Run the post-merge cleanup script from the repository root.
 
 - **From repo root**, run:
   ```bash
-  ./scripts/development-workflow/post-merge-cleanup.sh [branch-name]
+  ./scripts/development-workflow/post-merge-cleanup.sh [--base base-branch] [branch-name]
   ```
 - **No argument**: use the current branch (user should run while still on the merged branch).
 - **With `branch-name`**: delete that local branch (e.g. `feature/my-feature`).
+- **With `--base base-branch`**: explicitly choose the cleanup base branch. When omitted for hub-owned cleanup, the script queries the merged PR base and fails closed if that lookup is unavailable.
 
-The script will: fetch origin, checkout `develop`, pull, then delete the local branch with `git branch -D` (force-delete; safe because the branch is already merged on the remote). If the user is not in the repo root, change to the repo root first.
+The script will: fetch origin, checkout the merged PR's base branch, pull, then delete the local branch with `git branch -D` (force-delete; safe because the branch is already merged on the remote). If the user is not in the repo root, change to the repo root first.
 
 Do not skip steps or change the order. If the script fails, show the error and stop.
 

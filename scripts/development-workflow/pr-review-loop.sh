@@ -81,7 +81,7 @@ _skip_next=0
 for _arg in "$@"; do
   if [ "$_skip_next" -eq 1 ]; then _skip_next=0; continue; fi
   case "$_arg" in
-    --branch|--platform|--poll-interval|--max-wait) _skip_next=1 ;;
+    --branch|--platform|--poll-interval|--max-wait|--repo|--product-repo|--repo-root) _skip_next=1 ;;
     [0-9]*) _PR_ARG="$_arg"; break ;;
   esac
 done
@@ -172,7 +172,7 @@ _interruptible_sleep() {
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github,claude-code-action,copilot,haystack] [--ready-phase haystack] [--phase-after-clean haystack] [--draft-github-only] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--repo owner/repo|product-name] [--product-repo name] [--repo-root path] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github,claude-code-action,copilot,haystack] [--ready-phase haystack] [--phase-after-clean haystack] [--draft-github-only] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
        ./scripts/development-workflow/pr-review-loop.sh unlock <pr-number>
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
@@ -3946,6 +3946,8 @@ fi
 
 pr_number=""
 branch_name=""
+repo_selector=""
+repo_root="$(workflow_repo_root)"
 poll_interval=120
 poll_interval_explicit=0
 max_wait=1200
@@ -3958,21 +3960,49 @@ declare -a platforms=()
 declare -a phase_after_clean_platforms=()
 phase_after_clean_filtered_out=""
 
+require_option_value() {
+  local option="$1"
+  if [ "$#" -lt 2 ] || [ -z "${2:-}" ]; then
+    echo "$option requires a value." >&2
+    usage >&2
+    exit 64
+  fi
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --branch)
+      require_option_value "$@"
       branch_name="$2"
       shift 2
       ;;
+    --repo)
+      require_option_value "$@"
+      repo_selector="$2"
+      shift 2
+      ;;
+    --product-repo)
+      require_option_value "$@"
+      repo_selector="$2"
+      shift 2
+      ;;
+    --repo-root)
+      require_option_value "$@"
+      repo_root="$2"
+      shift 2
+      ;;
     --platform)
+      require_option_value "$@"
       append_platforms "$2"
       shift 2
       ;;
     --phase-after-clean)
+      require_option_value "$@"
       append_phase_after_clean_platforms "$2"
       shift 2
       ;;
     --ready-phase)
+      require_option_value "$@"
       append_ready_phase_platforms "$2"
       shift 2
       ;;
@@ -3985,11 +4015,13 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     --poll-interval)
+      require_option_value "$@"
       poll_interval="$2"
       poll_interval_explicit=1
       shift 2
       ;;
     --max-wait)
+      require_option_value "$@"
       max_wait="$2"
       max_wait_explicit=1
       shift 2
@@ -4024,6 +4056,22 @@ done
 if [ -z "$pr_number" ]; then
   usage >&2
   exit 64
+fi
+
+if [ -n "$repo_selector" ]; then
+  if workflow_is_valid_github_repo_slug "$repo_selector"; then
+    target_github_repo="$repo_selector"
+  else
+    repo_context="$(workflow_repository_context "$repo_selector" "$repo_root")"
+    target_github_repo="$(workflow_github_repo_from_context "$repo_context")"
+  fi
+  if [ -z "$target_github_repo" ]; then
+    echo "ERROR: could not resolve GitHub repository for PR review loop; pass --repo owner/repo or --product-repo <name>." >&2
+    exit 64
+  fi
+  export WORKFLOW_TARGET_GITHUB_REPO="$target_github_repo"
+  export GH_REPO="$target_github_repo"
+  print_kv REPO "$target_github_repo"
 fi
 
 if [ "${#platforms[@]}" -eq 0 ]; then
@@ -4093,10 +4141,13 @@ fi
 
 if [ "${#platforms[@]}" -gt 0 ]; then
   require_gh
-  cd_workflow_repo_root
+  cd "$repo_root" || exit 1
 
   if [ -z "$branch_name" ]; then
-    branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"
+    if ! branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"; then
+      echo "ERROR: could not resolve PR #$pr_number head branch." >&2
+      exit 1
+    fi
   fi
 fi
 

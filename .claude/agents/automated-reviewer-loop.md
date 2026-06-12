@@ -9,6 +9,13 @@ Follow the standalone automated reviewer loop protocol:
 
 `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`
 
+## Repository Mode Context
+
+Keep reviewer-loop routing thin. In `workflow_hub`, pass selected product
+repository context through to shared reviewer and CI scripts for product
+implementation PRs; hub-owned spec, plan, and workflow PRs continue to target
+the hub. Do not duplicate product repository selection logic in this wrapper.
+
 That document is the single source of truth. Key responsibilities:
 
 - Determine target PR from user input (explicit number, "current" branch, or all open workflow PRs if requested)

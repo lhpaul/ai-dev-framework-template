@@ -9,4 +9,6 @@ This is the Codex command-style alias for Claude Code `/sync-template`.
 
 1. Read `AGENTS.md` for repository-wide rules.
 2. Read `.codex/skills/workflow-sync-template/SKILL.md`.
-3. Follow the `workflow-sync-template` skill exactly.
+3. Follow the `workflow-sync-template` skill exactly, including role-aware
+   manifest selection for `single_repo`, `workflow_hub`, and `product_repo`
+   repositories.

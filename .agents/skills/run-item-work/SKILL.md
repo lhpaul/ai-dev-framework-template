@@ -10,3 +10,6 @@ This is the Codex command-style alias for Claude Code `/run-item-work`.
 1. Read `AGENTS.md` for repository-wide rules.
 2. Read `.codex/skills/workflow-item-orchestrator/SKILL.md`.
 3. Follow the `workflow-item-orchestrator` skill exactly.
+4. Before mutation in `workflow_hub`, state selected product repository,
+   artifact owner, and mutation target; stop when product repository context is
+   missing or ambiguous.

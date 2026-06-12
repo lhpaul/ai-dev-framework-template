@@ -1,0 +1,58 @@
+schema_version: 1
+skeleton_role: product_repo
+mode_scope: product_repo_injection
+description: Minimal files for a product repository that receives routed implementation work from a workflow hub.
+
+entries:
+  - group: local agent guidance
+    path: AGENTS.md
+    mode_scope: product_repo_injection
+    note: product repository adapts this with local project context and workflow-hub routing guidance
+  - group: review contract
+    path: REVIEW.md
+    mode_scope: product_repo_injection
+    note: review contract for product code PRs and local review gates
+  - group: shared workflow configuration
+    path: .ai-dev-workflow.yaml
+    mode_scope: product_repo_injection
+    note: product repository declares mode product_repo and its workflow hub reference
+  - group: local workflow configuration example
+    path: .ai-dev-workflow.local.example.yaml
+    mode_scope: product_repo_injection
+    note: placeholder-only local checkout and secret-reference example
+  - group: repository mode reference
+    path: docs/workflow/development-workflow/repository-modes.md
+    mode_scope: product_repo_injection
+    note: artifact ownership and product repository configuration reference
+  - group: workflow configuration resolver
+    path: scripts/development-workflow/workflow-config-resolver.py
+    mode_scope: product_repo_injection
+    note: resolves product repository mode and hub references
+  - group: workflow configuration validator
+    path: scripts/development-workflow/validate-workflow-config.sh
+    mode_scope: product_repo_injection
+    note: validates product repository workflow configuration
+  - group: shared workflow shell helpers
+    path: scripts/development-workflow/workflow-lib.sh
+    mode_scope: product_repo_injection
+    note: shell helpers used by product-repo validation and PR readiness scripts
+  - group: PR reviewer loop
+    path: scripts/development-workflow/pr-review-loop.sh
+    mode_scope: product_repo_injection
+    note: runs configured product repository PR reviewers
+  - group: PR CI loop
+    path: scripts/development-workflow/pr-ci-loop.sh
+    mode_scope: product_repo_injection
+    note: waits for product repository PR checks to settle
+  - group: general best practices
+    path: docs/best-practices/1-general.md
+    mode_scope: product_repo_injection
+    note: shared development standards for product code changes
+  - group: version-control best practices
+    path: docs/best-practices/2-version-control.md
+    mode_scope: product_repo_injection
+    note: branch, commit, and PR conventions for product repositories
+  - group: testing best practices
+    path: docs/best-practices/3-testing.md
+    mode_scope: product_repo_injection
+    note: test strategy guidance for product validation

@@ -230,6 +230,41 @@ This workflow depends on a few capabilities more than on any specific vendor or 
 - An issue tracker is optional. Without one, portfolio-wide prioritization and "current brief" lookup require more direct human guidance.
 - Browser automation is optional. Without it, smoke tests should be run manually from the committed smoke test runbook.
 
+### Repository Modes
+
+The workflow supports a documented repository-mode model for future
+multi-repository coordination. See
+[`repository-modes.md`](repository-modes.md) for the `single_repo`,
+`workflow_hub`, and `product_repo` definitions, artifact ownership table, target
+product repository selection rule, and PR ownership model. When no mode is
+declared, repositories are interpreted as `single_repo` and keep the current
+single-repository behavior.
+
+In `workflow_hub` mode, orchestration scripts keep tracker, spec, and plan state
+in the hub while routing implementation branch/PR inspection, reviewer loops, CI
+loops, and implementation cleanup to the selected product repository. Use
+`--repo <name>` with hub-mode discovery, next-action, batch-planning, and cleanup
+commands when a product implementation action is involved. Reviewer and CI loops
+also accept `--repo <owner/repo>` or `--product-repo <name>` for implementation
+PRs outside the hub.
+
+Product repository PR creation can use GitHub App authentication without
+printing secrets. See
+[`integrations/workflow-hub-github-app.md`](integrations/workflow-hub-github-app.md)
+for required App permissions, local-only secret-reference fields, token helper
+behavior, and dry-run examples for product PR routing.
+
+Role-specific skeletons are inspectable under the template root:
+
+- `template/workflow-hub/` lists hub-owned protocols, scripts, agents,
+  configuration, and workflow runbooks.
+- `template/product-repo-injection/` lists the minimal product repository
+  integration set and explicitly excludes hub-owned tracker, spec, and plan
+  artifacts unless required by later workflow guidance.
+
+These skeletons are reference material in this iteration. Inspecting them does
+not apply setup, sync files, or change runtime behavior.
+
 ### Branch Naming
 
 | Branch type         | Pattern                      | Base branch |
@@ -365,9 +400,14 @@ Opening a PR is not a terminal condition. A workflow run should continue until t
 ### Workflow Configuration
 
 Repository-specific workflow integrations are declared in `.ai-dev-workflow.yaml` at the repo root.
+Machine-local overrides belong in `.ai-dev-workflow.local.yaml`, which is
+gitignored. Start from `.ai-dev-workflow.local.example.yaml` when a workflow hub
+needs checkout roots, product-repo local paths, secret references, or local tool
+overrides.
 
 The file is versioned and intentionally declarative. It is the right place to record which workflow providers this repository uses for:
 
+- Repository mode and stable product-repository identity
 - Automated PR review
 - Issue tracking
 - Git hosting / pull-request workflow
@@ -377,6 +417,9 @@ Current schema:
 
 ```yaml
 schema_version: 2
+
+# Optional. Missing mode resolves as single_repo.
+mode: single_repo
 
 review:
   on_draft:
@@ -405,6 +448,21 @@ template:
 
 Important implementation notes:
 
+- Repository mode fields are `mode`, `workflow_hub.product_repos[]`, and `product_repo.workflow_hub`. Shared product repository entries may contain stable non-secret identity and metadata such as `name`, `github_repo` or `git_url`, `default_branch`, `role`, `scope`, `tracker` hints, and non-secret app identifiers. Local checkout paths, private key paths, secret values, and machine-specific tool settings belong only in `.ai-dev-workflow.local.yaml`. See [`repository-modes.md`](repository-modes.md) and [`integrations/workflow-hub-github-app.md`](integrations/workflow-hub-github-app.md) for examples and validation commands.
+- Product-repository-aware orchestration scripts emit ownership fields such as
+  `WORKFLOW_MODE`, `ACTION_REPOSITORY_KIND`, `ACTION_REPOSITORY`, and
+  `ACTION_GITHUB_REPO` so orchestrators can distinguish hub-owned planning work
+  from product-owned implementation work.
+- `sync-manifest.yaml` includes enforced `mode_scope` metadata: `shared`,
+  `hub_only`, and `product_repo_injection`. Sync-template resolves repository
+  mode before comparison: `single_repo` keeps the compatibility file set,
+  `workflow_hub` selects shared and hub-only entries, and `product_repo`
+  selects shared and product-repo-injection entries while reporting skipped
+  scopes.
+- Workflow-hub adopters can follow the setup and operations guides:
+  [`workflow-hub-setup.md`](workflow-hub-setup.md),
+  [`product-repo-injection.md`](product-repo-injection.md), and
+  [`cross-repo-pr-flow.md`](cross-repo-pr-flow.md).
 - `review.on_draft.runner` is consumed by the Step 7a internal review gate protocol (`91-orchestrate-work-protocol.md`). If omitted, the gate falls back to running the stage-appropriate `claude` reviewer once. Developers can override the list locally via `.tmp/template-config.json` (gitignored).
 - `review.on_draft.github` and `review.on_ready.github` are consumed by `scripts/development-workflow/pr-review-loop.sh` for external automated PR review (Step 7). If the config file is absent, or both lists are omitted or empty, automated PR review is treated as not configured and the review loop reports `skipped`.
 - Legacy `review.internal_reviewers`, `review.platforms`, and `review.phase_after_clean` keys remain accepted for one transition release and map to the new lifecycle buckets.
@@ -490,10 +548,12 @@ Protocol prefixes are stable family identifiers, not a promise of contiguous num
 ### Tooling And Configuration
 
 - `docs/workflow/development-workflow/agent-model-config.md`
-- `.ai-dev-workflow.yaml` - repo-level workflow integration manifest (`review.on_draft.runner`, `review.on_draft.github`, `review.on_ready.github`, `template.is_template`, `template.repository`, `template.last_synced_version`, `issue_tracker.provider`, `vcs.provider`, `browser_automation.provider`)
+- `.ai-dev-workflow.yaml` - repo-level workflow integration manifest (`mode`, `workflow_hub.product_repos[]`, `product_repo.workflow_hub`, `review.on_draft.runner`, `review.on_draft.github`, `review.on_ready.github`, `template.is_template`, `template.repository`, `template.last_synced_version`, `issue_tracker.provider`, `vcs.provider`, `browser_automation.provider`)
+- `.ai-dev-workflow.local.example.yaml` - placeholder-only example for gitignored local checkout, secret-reference, review-runner, and tool overrides
 
 Repository helpers:
 
+- `scripts/development-workflow/validate-workflow-config.sh`
 - `scripts/development-workflow/add-backlog-item.sh`
 - `scripts/development-workflow/discover-workflow-state.sh`
 - `scripts/development-workflow/workflow-batch-plan.sh`
@@ -512,6 +572,7 @@ Repository helpers:
 - `docs/workflow/development-workflow/integrations/coderabbit.md`
 - `docs/workflow/development-workflow/integrations/haystack.md`
 - `docs/workflow/development-workflow/integrations/github-projects.md`
+- `docs/workflow/development-workflow/integrations/workflow-hub-github-app.md`
 - `docs/workflow/development-workflow/integrations/ci-cd-deployment.md`
 - `docs/workflow/development-workflow/integrations/e2e-regression.md`
 

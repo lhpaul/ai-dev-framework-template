@@ -34,6 +34,13 @@ The human (or the workflow) provides:
 1. **Runbook path**: Path to the smoke test runbook.
 2. **Application URL** (optional): Base URL of the app under test. See the project testing README for defaults.
 
+Also resolve repository mode and artifact ownership before executing the
+runbook. Report whether the runbook or implementation artifact is hub-owned or
+product-repository-owned. Missing mode or explicit `single_repo` means the
+current repository owns the smoke-test context. In `workflow_hub`, hub runbooks
+stay hub-owned, while product implementation validation must identify the
+selected product repository before executing product-owned checks.
+
 ---
 
 ## Steps

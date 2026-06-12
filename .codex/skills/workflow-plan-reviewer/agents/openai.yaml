@@ -1,7 +1,7 @@
 interface:
   display_name: "Workflow Plan Reviewer"
   short_description: "Review an implementation plan before coding starts."
-  default_prompt: "Use $workflow-plan-reviewer to review the current implementation plan against the spec and codebase."
+  default_prompt: "Use $workflow-plan-reviewer to review the current implementation plan against the spec and codebase and report the plan artifact owner."
 
 policy:
   allow_implicit_invocation: true
