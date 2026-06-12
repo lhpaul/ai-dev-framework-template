@@ -262,57 +262,45 @@ integration_label_for_issue_json() {
 
 linked_pr_json() {
   local issue="$1"
-  local open_raw open_prs merged_raw merged_prs open_count merged_count
-  local pr_list_limit=5000
+  local open_raw open_prs closed_raw merged_prs
 
-  if ! open_raw="$(gh pr list --state open --limit "$pr_list_limit" \
-    --json number,title,headRefName,baseRefName,isDraft,labels 2>/dev/null)"; then
+  if ! open_raw="$(gh api --paginate --slurp \
+    "repos/${repo}/pulls?state=open&per_page=100" 2>/dev/null)"; then
     error_exit "failed to read open PRs while resolving issue #${issue}."
   fi
-  if ! open_count="$(printf '%s\n' "$open_raw" | jq 'length')"; then
-    error_exit "failed to parse open PR count while resolving issue #${issue}."
-  fi
-  if [ "$open_count" -ge "$pr_list_limit" ]; then
-    error_exit "open PR list reached ${pr_list_limit}; rerun with a narrower repository state before resolving issue #${issue}."
-  fi
   if ! open_prs="$(printf '%s\n' "$open_raw" | jq --arg issue "$issue" '
-        [ .[]
-          | select(.headRefName | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
+        [ .[][]
+          | select(.head.ref | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
           | {
               number,
               title,
               state: "OPEN",
-              headRefName,
-              baseRefName,
-              isDraft,
+              headRefName: .head.ref,
+              baseRefName: .base.ref,
+              isDraft: .draft,
               labels: [.labels[].name]
             }
         ]')"; then
     error_exit "failed to parse open PRs while resolving issue #${issue}."
   fi
 
-  if ! merged_raw="$(gh pr list --state merged --limit "$pr_list_limit" \
-    --json number,title,headRefName,baseRefName,mergedAt 2>/dev/null)"; then
-    error_exit "failed to read merged PRs while resolving issue #${issue}."
+  if ! closed_raw="$(gh api --paginate --slurp \
+    "repos/${repo}/pulls?state=closed&per_page=100" 2>/dev/null)"; then
+    error_exit "failed to read closed PRs while resolving issue #${issue}."
   fi
-  if ! merged_count="$(printf '%s\n' "$merged_raw" | jq 'length')"; then
-    error_exit "failed to parse merged PR count while resolving issue #${issue}."
-  fi
-  if [ "$merged_count" -ge "$pr_list_limit" ]; then
-    error_exit "merged PR list reached ${pr_list_limit}; rerun with a narrower repository state before resolving issue #${issue}."
-  fi
-  if ! merged_prs="$(printf '%s\n' "$merged_raw" | jq --arg issue "$issue" '
-        [ .[]
-          | select(.headRefName | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
+  if ! merged_prs="$(printf '%s\n' "$closed_raw" | jq --arg issue "$issue" '
+        [ .[][]
+          | select(.merged_at != null)
+          | select(.head.ref | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
           | {
               number,
               title,
               state: "MERGED",
-              headRefName,
-              baseRefName,
+              headRefName: .head.ref,
+              baseRefName: .base.ref,
               isDraft: false,
               labels: [],
-              mergedAt
+              mergedAt: .merged_at
             }
         ]')"; then
     error_exit "failed to parse merged PRs while resolving issue #${issue}."

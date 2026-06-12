@@ -147,14 +147,14 @@ JSON
     jq -n --argjson number "$issue_number" --arg state "$state" \
       '{number:$number,title:("Dependency " + ($number|tostring)),state:$state}'
     ;;
-  pr\ list\ --state\ open*)
+  api\ --paginate\ --slurp\ repos/lhpaul/ai-dev-framework-template/pulls\?state=open\&per_page=100)
     cat <<'JSON'
-[{"number":2102,"title":"Plan PR","headRefName":"implementation-plan/102-two","baseRefName":"develop-delegated-epic-orchestration","isDraft":false,"labels":[{"name":"ready-for-human-review"}]},{"number":2110,"title":"Unready PR","headRefName":"feature/110-ten","baseRefName":"develop-delegated-epic-orchestration","isDraft":false,"labels":[]}]
+[[{"number":2102,"title":"Plan PR","head":{"ref":"implementation-plan/102-two"},"base":{"ref":"develop-delegated-epic-orchestration"},"draft":false,"labels":[{"name":"ready-for-human-review"}],"merged_at":null},{"number":2110,"title":"Unready PR","head":{"ref":"feature/110-ten"},"base":{"ref":"develop-delegated-epic-orchestration"},"draft":false,"labels":[],"merged_at":null}]]
 JSON
     ;;
-  pr\ list\ --state\ merged*)
+  api\ --paginate\ --slurp\ repos/lhpaul/ai-dev-framework-template/pulls\?state=closed\&per_page=100)
     cat <<'JSON'
-[{"number":2101,"title":"Merged plan PR","headRefName":"implementation-plan/101-one","baseRefName":"develop-delegated-epic-orchestration","mergedAt":"2026-06-12T11:00:00Z"},{"number":2103,"title":"Merged PR","headRefName":"feature/103-three","baseRefName":"develop-delegated-epic-orchestration","mergedAt":"2026-06-12T12:00:00Z"}]
+[[{"number":2101,"title":"Merged plan PR","head":{"ref":"implementation-plan/101-one"},"base":{"ref":"develop-delegated-epic-orchestration"},"draft":false,"labels":[],"merged_at":"2026-06-12T11:00:00Z"},{"number":2103,"title":"Merged PR","head":{"ref":"feature/103-three"},"base":{"ref":"develop-delegated-epic-orchestration"},"draft":false,"labels":[],"merged_at":"2026-06-12T12:00:00Z"},{"number":2104,"title":"Closed unmerged PR","head":{"ref":"feature/104-four"},"base":{"ref":"develop-delegated-epic-orchestration"},"draft":false,"labels":[],"merged_at":null}]]
 JSON
     ;;
   *)
