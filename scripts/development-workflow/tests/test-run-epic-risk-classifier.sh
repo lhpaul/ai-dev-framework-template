@@ -31,9 +31,18 @@ printf '%s\n' "$*" >> "$MOCK_GH_CALL_LOG"
 
 case "$*" in
   auth\ status)
+    if [ "${MOCK_GH_MODE:-ok}" = "auth-fail" ]; then
+      exit 1
+    fi
     exit 0
     ;;
   pr\ view\ 42\ --json*)
+    if [ "${MOCK_GH_MODE:-ok}" = "view-fail" ]; then
+      exit 1
+    fi
+    if [ "${MOCK_GH_MODE:-ok}" = "view-empty" ]; then
+      exit 0
+    fi
     cat <<'JSON'
 {
   "number": 42,
@@ -52,6 +61,9 @@ case "$*" in
 JSON
     ;;
   pr\ diff\ 42\ --name-only)
+    if [ "${MOCK_GH_MODE:-ok}" = "diff-fail" ]; then
+      exit 1
+    fi
     printf '%s\n' 'docs/workflow/development-workflow/protocols/95-run-epic-protocol.md'
     ;;
   issue\ edit*|pr\ create*|pr\ merge*|project\ item-edit*|project\ item-add*|pr\ comment*|pr\ close*|pr\ edit*)
@@ -230,8 +242,23 @@ missing_check_output="$(classify_fixture "$missing_check_fixture" high)"
 run_test "missing_check_state_blocks" "blocked" "$(printf '%s\n' "$missing_check_output" | jq -r '.risk')"
 run_test "missing_check_state_reason_clear" "yes" "$(printf '%s\n' "$missing_check_output" | jq -e '.blockers[] | select(test("missing or ambiguous"))' >/dev/null && echo yes || echo no)"
 
-reviewer_available_fixture="$(write_fixture reviewer-available '{
+dedupe_checks_fixture="$(write_fixture dedupe-checks '{
   "pr_number": 7,
+  "merge_state": "CLEAN",
+  "labels": ["ready-for-human-review"],
+  "status_checks": [
+    {"name": "guard", "status": "COMPLETED", "conclusion": "FAILURE", "completed_at": "2026-06-12T10:00:00Z"},
+    {"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS", "completed_at": "2026-06-12T10:05:00Z"}
+  ],
+  "changed_files": ["docs/README.md"],
+  "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 0}
+}')"
+dedupe_checks_output="$(classify_fixture "$dedupe_checks_fixture" low)"
+run_test "stale_check_failure_deduped_by_latest_success" "low" "$(printf '%s\n' "$dedupe_checks_output" | jq -r '.risk')"
+run_test "stale_check_failure_does_not_block" "true" "$(printf '%s\n' "$dedupe_checks_output" | jq -r '.merge_permitted')"
+
+reviewer_available_fixture="$(write_fixture reviewer-available '{
+  "pr_number": 8,
   "merge_state": "CLEAN",
   "labels": ["ready-for-human-review"],
   "status_checks": [{"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}],
@@ -243,7 +270,7 @@ run_test "reviewer_clean_zero_threads_allowed" "low" "$(printf '%s\n' "$reviewer
 run_test "reviewer_clean_zero_threads_merge_permitted" "true" "$(printf '%s\n' "$reviewer_available_output" | jq -r '.merge_permitted')"
 
 reviewer_unavailable_fixture="$(write_fixture reviewer-unavailable '{
-  "pr_number": 8,
+  "pr_number": 9,
   "merge_state": "CLEAN",
   "labels": ["ready-for-human-review"],
   "status_checks": [{"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}],
@@ -254,7 +281,7 @@ reviewer_unavailable_output="$(classify_fixture "$reviewer_unavailable_fixture" 
 run_test "reviewer_unavailable_blocks" "blocked" "$(printf '%s\n' "$reviewer_unavailable_output" | jq -r '.risk')"
 
 one_thread_fixture="$(write_fixture one-thread '{
-  "pr_number": 9,
+  "pr_number": 10,
   "merge_state": "CLEAN",
   "labels": ["ready-for-human-review"],
   "status_checks": [{"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}],
@@ -272,6 +299,9 @@ live_output="$("$CLASSIFIER" --pr 42 --max-risk low --json)"
 run_test "live_pr_path_read_only_classifies" "low" "$(printf '%s\n' "$live_output" | jq -r '.risk')"
 run_test "live_pr_path_merge_permitted" "true" "$(printf '%s\n' "$live_output" | jq -r '.merge_permitted')"
 run_test "json_read_only_guarantee" "yes" "$(printf '%s\n' "$live_output" | jq -e '.read_only_guarantee | test("No tracker status")' >/dev/null && echo yes || echo no)"
+run_fails_contains "live_pr_view_failure_errors" "failed to read PR #42" env MOCK_GH_MODE=view-fail "$CLASSIFIER" --pr 42 --json
+run_fails_contains "live_pr_empty_response_errors" "empty PR response for #42" env MOCK_GH_MODE=view-empty "$CLASSIFIER" --pr 42 --json
+run_fails_contains "live_pr_diff_failure_errors" "failed to read changed files for PR #42" env MOCK_GH_MODE=diff-fail "$CLASSIFIER" --pr 42 --json
 
 run_test "no_mutating_gh_commands" "no" "$(
   grep -Eq '(^issue edit|^pr create|^pr merge|^project item-edit|^project item-add|^pr comment|^pr close|^pr edit|mutation)' "$CALL_LOG" && echo yes || echo no

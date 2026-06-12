@@ -134,13 +134,15 @@ live_pr_state() {
         {
           name: .name,
           status: (.status // ""),
-          conclusion: (.conclusion // "")
+          conclusion: (.conclusion // ""),
+          completed_at: (.completedAt // .startedAt // "")
         }
       else
         {
           name: .context,
           status: (.state // ""),
-          conclusion: (.state // "")
+          conclusion: (.state // ""),
+          completed_at: (.startedAt // "")
         }
       end
     ],
@@ -163,10 +165,19 @@ check_status_is_success() {
 collect_check_blockers() {
   local state_json="$1"
   local blockers='[]'
-  local check_count
+  local checks_json check_count
   local encoded status conclusion name
 
-  check_count="$(printf '%s\n' "$state_json" | jq '[.status_checks[]?, .required_checks[]?, .checks[]?] | length')"
+  if ! checks_json="$(printf '%s\n' "$state_json" | jq -c '
+    [.status_checks[]?, .required_checks[]?, .checks[]?]
+    | sort_by((.name // .context // "unnamed check"), (.completed_at // .completedAt // .startedAt // ""))
+    | group_by(.name // .context // "unnamed check")
+    | map(.[-1])
+  ')"; then
+    error_exit "failed to normalize required CI checks"
+  fi
+
+  check_count="$(printf '%s\n' "$checks_json" | jq 'length')"
   if [ "$check_count" -eq 0 ]; then
     append_json_array_string "$blockers" "required CI state is missing or unavailable"
     return
@@ -184,7 +195,7 @@ collect_check_blockers() {
     if ! check_status_is_success "$status" "$conclusion"; then
       blockers="$(append_json_array_string "$blockers" "required CI is not successful: ${name}")"
     fi
-  done < <(printf '%s\n' "$state_json" | jq -r '[.status_checks[]?, .required_checks[]?, .checks[]?] | .[] | @base64')
+  done < <(printf '%s\n' "$checks_json" | jq -r '.[] | @base64')
 
   printf '%s\n' "$blockers"
 }
@@ -317,14 +328,24 @@ classify_state() {
     blockers="$(append_json_array_string "$blockers" "unresolved blocking review threads remain")"
   fi
 
-  check_blockers="$(collect_check_blockers "$state_json")"
+  if ! check_blockers="$(collect_check_blockers "$state_json")"; then
+    error_exit "collect_check_blockers failed"
+  fi
+  if ! printf '%s\n' "$check_blockers" | jq -e 'type == "array"' >/dev/null; then
+    error_exit "collect_check_blockers returned invalid JSON"
+  fi
   blockers="$(jq -n --argjson a "$blockers" --argjson b "$check_blockers" '$a + $b')"
 
   if [ "$(printf '%s\n' "$blockers" | jq 'length')" -gt 0 ]; then
     assigned_risk="blocked"
     reasons="$blockers"
   else
-    file_result="$(changed_file_risk "$state_json")"
+    if ! file_result="$(changed_file_risk "$state_json")"; then
+      error_exit "changed_file_risk failed"
+    fi
+    if ! printf '%s\n' "$file_result" | jq -e 'type == "object" and (.reasons | type == "array")' >/dev/null; then
+      error_exit "changed_file_risk returned invalid JSON"
+    fi
     file_risk="$(printf '%s\n' "$file_result" | jq -r '.risk')"
     file_reasons="$(printf '%s\n' "$file_result" | jq -c '.reasons')"
     assigned_risk="$file_risk"
