@@ -170,6 +170,11 @@ bad_ledger_fixture="$TMP_ROOT/bad-ledger.json"
 cat > "$bad_ledger_fixture" <<'JSON'
 {"epic": {"number": 916, "title": "Bad"}, "items": "not an array"}
 JSON
+empty_fixture="$TMP_ROOT/empty.json"
+: > "$empty_fixture"
+malformed_fixture="$TMP_ROOT/malformed.json"
+printf '{"not": "closed"\n' > "$malformed_fixture"
+missing_fixture="$TMP_ROOT/missing.json"
 
 echo ""
 echo "=== Run epic audit trail ==="
@@ -179,6 +184,9 @@ run_fails_contains "requires_input" "--input is required" "$HELPER" render-pr-di
 run_fails_contains "requires_advisory_rationale" "non-fixed advisory decisions require rationale" "$HELPER" render-pr-disposition --input "$bad_advisory_fixture"
 run_fails_contains "rejects_missing_pr_required_field" "missing required PR disposition fields" "$HELPER" render-pr-disposition --input "$missing_pr_field_fixture"
 run_fails_contains "rejects_bad_ledger_items_type" "missing required epic ledger fields" "$HELPER" render-epic-ledger --input "$bad_ledger_fixture"
+run_fails_contains "rejects_missing_input_file" "input file not found" "$HELPER" render-pr-disposition --input "$missing_fixture"
+run_fails_contains "rejects_empty_input_file" "input file is empty" "$HELPER" render-pr-disposition --input "$empty_fixture"
+run_fails_contains "rejects_malformed_input_json" "input file is not valid JSON" "$HELPER" render-pr-disposition --input "$malformed_fixture"
 
 pr_output="$("$HELPER" render-pr-disposition --input "$pr_fixture")"
 run_test "renders_pr_marker" "yes" "$(grep -q '<!-- run-epic:pr-disposition -->' <<< "$pr_output" && echo yes || echo no)"
