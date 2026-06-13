@@ -45,6 +45,17 @@ or delete branches. It is an additional pre-merge gate and does not replace the
 reviewer loop, CI loop, unresolved-thread checks, merge-state checks, readiness
 labels, or repository merge protocol.
 
+Delegated decision runs also record audit comments with:
+
+```bash
+./scripts/development-workflow/run-epic-audit-trail.sh render-pr-disposition --input <file>
+./scripts/development-workflow/run-epic-audit-trail.sh apply-pr-disposition --input <file> --pr <pr-number>
+./scripts/development-workflow/run-epic-audit-trail.sh render-epic-ledger --input <file>
+./scripts/development-workflow/run-epic-audit-trail.sh apply-epic-ledger --input <file> --epic <issue-number>
+```
+
+Audit comments are evidence records only; they do not grant merge authority.
+
 ---
 
 ## Step 1: Validate Scope Input
@@ -182,3 +193,28 @@ Risk levels:
 Medium-risk autonomous merge decisions require a complete "why safe to merge"
 explanation covering scope, tests, reviewer outcome, CI outcome, and rollback or
 cleanup risk. Missing evidence blocks the merge decision.
+
+---
+
+## Step 8: Record Audit Trail
+
+After a delegated review, fix, merge, block, or escalation decision, create or
+update the audit trail before considering the item complete.
+
+Required behavior:
+
+- Write one PR disposition comment for every PR that reaches the delegated
+  review gate.
+- Use the stable marker `<!-- run-epic:pr-disposition -->` so reruns update the
+  existing comment.
+- For native epic runs, update one parent epic ledger comment with marker
+  `<!-- run-epic:epic-ledger -->`.
+- For explicit item-list runs without a parent epic, report the epic ledger as
+  not applicable while still writing PR disposition comments.
+- Include reviewed head SHA, reviewer-loop result, blocking/advisory counts,
+  advisory decisions and rationales, risk classification and reasons, merge
+  authority, final decision, verification evidence, and protocol deviations.
+- Redact secrets, credentials, tokens, and local-only paths before rendering or
+  applying comments.
+
+Reruns must update existing marker comments instead of creating duplicates.

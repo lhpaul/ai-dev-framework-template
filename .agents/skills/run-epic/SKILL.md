@@ -19,3 +19,10 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
    with the invocation's `--max-risk` before merge. The classifier is also
    read-only and does not replace reviewer-loop, CI-loop, thread, merge-state,
    readiness-label, or repository merge-protocol checks.
+6. After delegated review, fix, merge, block, or escalation decisions, use
+   `./scripts/development-workflow/run-epic-audit-trail.sh` to create or update
+   stable PR disposition and epic ledger comments:
+   - `render-pr-disposition --input <file>`
+   - `apply-pr-disposition --input <file> --pr <pr-number>`
+   - `render-epic-ledger --input <file>`
+   - `apply-epic-ledger --input <file> --epic <issue-number>`
