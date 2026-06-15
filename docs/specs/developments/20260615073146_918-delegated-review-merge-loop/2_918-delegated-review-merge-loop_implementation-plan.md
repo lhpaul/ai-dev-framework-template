@@ -35,9 +35,9 @@ comments.
 | --- | --- | --- |
 | Repo revision | `git rev-parse --short HEAD` | `608abdd` |
 | Template-fit check | `cat .ai-dev-workflow.yaml` | `template.is_template: true`; this feature is generic workflow tooling for all downstream projects. |
-| Existing run-epic protocol | `sed -n '1,320p' docs/workflow/development-workflow/protocols/95-run-epic-protocol.md` | Current protocol covers resolver, risk gate, and audit trail but not the delegated review/merge control loop. |
+| Existing run-epic protocol | `rg -n "Resolve Epic Children|Classify PR Risk|Record Audit Trail|delegated review|post-merge cleanup" docs/workflow/development-workflow/protocols/95-run-epic-protocol.md` | Current protocol covers resolver, risk gate, and audit trail but not the delegated review/merge control loop. |
 | Existing helper surfaces | `rg -n "run-epic-scope-resolver|run-epic-risk-classifier|run-epic-audit-trail" scripts/development-workflow .agents .claude .cursor docs/workflow/development-workflow AGENTS.md` | Resolver, risk classifier, and audit helper already exist and are referenced by command wrappers. |
-| Readiness labels | `sed -n '1,120p' docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md` | `ready-for-regression` applies to implementation PRs; `ready-for-human-review` requires CI and reviewer gates. |
+| Readiness labels | `rg -n "ready-for-human-review|ready-for-regression|Conditions for" docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md` | `ready-for-regression` applies to implementation PRs; `ready-for-human-review` requires CI and reviewer gates. |
 | Existing tests | `ls scripts/development-workflow/tests/test-run-epic-*.sh` | Existing fixture tests cover scope resolver, risk classifier, and audit trail; #918 should add delegated policy/readiness coverage. |
 | Existing smoke runbooks | `ls docs/testing/workflow/*run-epic*.smoke-test.md docs/testing/workflow/91*.smoke-test.md docs/testing/workflow/92*.smoke-test.md 2>/dev/null` | #917, #919, and #920 runbooks establish the workflow test style for this epic. |
 
