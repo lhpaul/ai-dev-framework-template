@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -130,7 +131,8 @@ def lint_logical_line(line: AddedLine) -> list[Finding]:
             )
         )
 
-    if not has_suppression(line, "SH002") and ASSIGNMENT_MASKING.search(content):
+    sh002_triggered = not has_suppression(line, "SH002") and ASSIGNMENT_MASKING.search(content)
+    if sh002_triggered:
         findings.append(
             Finding(
                 rule="SH002",
@@ -144,7 +146,7 @@ def lint_logical_line(line: AddedLine) -> list[Finding]:
             )
         )
 
-    if not has_suppression(line, "SH003") and is_unguarded_jq_r_assignment(content):
+    if not sh002_triggered and not has_suppression(line, "SH003") and is_unguarded_jq_r_assignment(content):
         findings.append(
             Finding(
                 rule="SH003",
@@ -200,13 +202,25 @@ def is_unguarded_jq_r_assignment(content: str) -> bool:
         return False
 
     jq_segment = content[jq_match.start() :]
-    tokens = re.findall(r"""'[^']*'|"[^"]*"|\S+""", jq_segment)
+    try:
+        tokens = shlex.split(jq_segment, posix=True)
+    except ValueError:
+        return False
+
+    jq_index = next((index for index, token in enumerate(tokens) if token == "jq"), -1)
+    if jq_index == -1:
+        return False
+
+    flag_tokens = tokens[jq_index + 1 :]
 
     has_raw_output = any(
-        token.startswith("-")
-        and not token.startswith("--")
-        and "r" in token[1:]
-        for token in tokens
+        token == "-r"
+        or (
+            token.startswith("-")
+            and not token.startswith("--")
+            and "r" in token[1:]
+        )
+        for token in flag_tokens
     )
     if not has_raw_output:
         return False
@@ -238,8 +252,13 @@ def has_unanchored_branch_prefix_grep(content: str) -> bool:
     if not match:
         return False
 
-    tokens = re.findall(r"""'[^']*'|"[^"]*"|\S+""", match.group("tail"))
+    try:
+        tokens = shlex.split(match.group("tail"), posix=True)
+    except ValueError:
+        return False
+
     patterns: list[str] = []
+    first_bare_pattern = ""
     consume_next = False
     for token in tokens:
         if consume_next:
@@ -260,8 +279,11 @@ def has_unanchored_branch_prefix_grep(content: str) -> bool:
             continue
         if token.startswith("-"):
             continue
-        if not patterns:
-            patterns.append(token)
+        if not first_bare_pattern:
+            first_bare_pattern = token
+
+    if not patterns and first_bare_pattern:
+        patterns.append(first_bare_pattern)
 
     if not patterns:
         return False

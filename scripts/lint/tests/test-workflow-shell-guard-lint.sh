@@ -298,6 +298,15 @@ diff --git a/scripts/development-workflow/example.sh b/scripts/development-workf
 +declare -A seen=([one]=1)
 DIFF
 
+cat > "$TMP_DIR/multi-dedup.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,2 @@
++#!/usr/bin/env bash
++local RESULT=$(jq -r '.state' <<< "$payload")
+DIFF
+
 git_repo="$TMP_DIR/git-repo"
 mkdir -p "$git_repo/scripts/development-workflow"
 (
@@ -362,6 +371,10 @@ run_test "git_diff_mode_detects_added_suppression" "fail" "$(run_git_linter "$gi
 multi_output="$(run_linter_output "$TMP_DIR/multi-finding.diff" || true)"
 run_test "multi_finding_reports_sh001" "1" "$(printf '%s\n' "$multi_output" | grep -c 'SH001')"
 run_test "multi_finding_reports_sh005" "1" "$(printf '%s\n' "$multi_output" | grep -c 'SH005')"
+
+dedup_output="$(run_linter_output "$TMP_DIR/multi-dedup.diff" || true)"
+run_test "dedup_reports_only_sh002" "1" "$(printf '%s\n' "$dedup_output" | grep -c 'SH002')"
+run_test "dedup_reports_no_sh003" "0" "$(printf '%s\n' "$dedup_output" | grep -c 'SH003')"
 
 echo ""
 echo "Summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"
