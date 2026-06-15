@@ -60,6 +60,22 @@ cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 if [ -n "${MOCK_GH_CALL_LOG:-}" ]; then
   printf '%s\n' "$*" >> "$MOCK_GH_CALL_LOG"
 fi
+# Capture comment body files when requested so tests can inspect the rendered
+# summary after pr-review-loop.sh removes the temporary file.
+if [ -n "${MOCK_GH_BODY_CAPTURE:-}" ]; then
+  _gh_body_file=""
+  _prev_arg=""
+  for _gh_arg in "$@"; do
+    if [ "$_prev_arg" = "--body-file" ]; then
+      _gh_body_file="$_gh_arg"
+      break
+    fi
+    _prev_arg="$_gh_arg"
+  done
+  if [ -n "$_gh_body_file" ] && [ -f "$_gh_body_file" ]; then
+    cat "$_gh_body_file" > "$MOCK_GH_BODY_CAPTURE"
+  fi
+fi
 # Differentiate call types.
 case "$*" in
   *"pr ready"*)
@@ -1217,6 +1233,47 @@ else
 fi
 run_test "summary_policy_acknowledgements_section" "1" "$_policy_status_summary_count"
 unset _policy_status_summary_count
+
+# Test 10.7: blocking findings and advisory findings both remain visible in the summary.
+_post_summary_source="$(awk '/^_post_review_summary\(\)/,/^}$/' \
+  "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
+eval "$_post_summary_source"
+# shellcheck disable=SC2329 # Invoked indirectly by the eval-loaded function.
+repo_slug() { printf "owner/repo\n"; }
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+compare_mode=0
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+compare_verdicts=()
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+platform_policy_status_notes=()
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+pr_number=42
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+branch_name="fix/42-summary"
+_summary_call_log="$(mktemp)"
+_summary_body_capture="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_summary_call_log"
+export MOCK_GH_BODY_CAPTURE="$_summary_body_capture"
+MOCK_GH_EXIT=0
+export MOCK_GH_EXIT
+MOCK_GH_COMMENTS_OUTPUT='[]'
+export MOCK_GH_COMMENTS_OUTPUT
+_post_review_summary "needs_fixes" "haystack_blocking_findings" "haystack (needs_fixes)" "1" "1" \
+  "Rules violation@@@https://github.com/lhpaul/ai-dev-framework-template/pull/952#issuecomment-1"
+if [ -n "${_summary_body_capture:-}" ] && grep -q "1 blocking finding(s) require fixes" "$_summary_body_capture" \
+    && grep -q "Advisory findings (non-blocking):" "$_summary_body_capture" \
+    && grep -q "Rules violation" "$_summary_body_capture"; then
+  _summary_advisory_split="yes"
+else
+  _summary_advisory_split="no"
+fi
+run_test "summary_advisory_split_visible" "yes" "$_summary_advisory_split"
+rm -f "$_summary_call_log"
+rm -f "$_summary_body_capture"
+unset MOCK_GH_CALL_LOG MOCK_GH_BODY_CAPTURE MOCK_GH_EXIT MOCK_GH_COMMENTS_OUTPUT
+unset _summary_advisory_split _post_summary_source
+unset -f _post_review_summary
+unset compare_mode compare_verdicts platform_policy_status_notes pr_number branch_name
 
 # ---------------------------------------------------------------------------
 # Area 11: Step 7b regression-label auto-restore (Option C, issue #805)

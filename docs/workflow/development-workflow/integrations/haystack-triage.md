@@ -156,6 +156,15 @@ Haystack uses the `Rules violation` category for custom rule findings, including
 
 If both conditions hold, the finding is a confirmed false positive and can be dismissed.
 
+### Mirror guidance — actionable drift vs. stale advisories
+
+Haystack also uses `Rules violation` for mirror guidance around the agent-doc surface map. Treat those findings as follows:
+
+- **Actionable mirror drift**: a real mismatch exists between matching `.claude/agents/*` and `.cursor/agents/*` workflow docs, or between another documented mirror pair that actually exists in the repository.
+- **Non-actionable advisory**: the finding is based only on tool-specific front matter, a missing `.cursor/skills` tree, or another surface that the repository does not actually contain.
+
+The reviewer loop keeps these findings non-blocking. Use the repository surface map and the mirrored file content to decide whether a `Rules violation` needs a fix or just a note in the summary comment.
+
 #### Hotfix backport PRs
 
 An additional false positive occurs specifically on hotfix backport PRs. Hotfix branches are cut from `main`. The diff of a backport branch against `develop` shows an empty `[Unreleased]` section (from `main`'s version of the CHANGELOG). Haystack interprets the diff as "removing `[Unreleased]` content" and flags it as a structure violation. In reality, the 3-way merge on the `develop` side preserves its own `[Unreleased]` content; the CHANGELOG structure in the merged result is correct.

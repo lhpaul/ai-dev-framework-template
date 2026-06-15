@@ -34,3 +34,4 @@
 - If reviewer availability drops or warn-only behavior is used, a human must decide whether reduced coverage is acceptable for that pull request.
 - If automation cannot post review summary output and manual recovery is used, a human must confirm the evidence is sufficient to proceed.
 - If a pull request expands beyond approved scope or defers advisory findings, a human must decide whether the remaining risk is acceptable.
+- If Haystack mirror guidance changes, verify the live agent-doc surface map first. Treat tool-specific front matter differences and absent `.cursor/skills` surfaces as advisory-only unless a real mirrored workflow body mismatch remains.
