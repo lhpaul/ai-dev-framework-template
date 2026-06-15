@@ -121,7 +121,7 @@ live_pr_state() {
       else
         {
           name: .context,
-          status: (.state // ""),
+          state: (.state // ""),
           conclusion: (.state // "")
         }
       end
@@ -190,12 +190,12 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
   def labels: (.pr.labels // []);
   def has_label($name): labels | index($name) != null;
   def success_check:
-    ((.status // .state // "") as $status |
-     (.conclusion // .state // "") as $conclusion |
-     (($status == "COMPLETED" and $conclusion == "SUCCESS") or
-      ($status == "completed" and $conclusion == "success") or
-      ($status == "SUCCESS" and $conclusion == "SUCCESS") or
-      ($status == "success" and $conclusion == "success")));
+    if (. | has("state")) and ((. | has("status")) | not) then
+      ((.state // "") | ascii_downcase) == "success"
+    else
+      (((.status // "") | ascii_downcase) == "completed" and
+       ((.conclusion // "") | ascii_downcase) == "success")
+    end;
   def implementation_branch:
     (.pr.headRefName // "") | test("^(feature|fix|refactor|hotfix|backport/hotfix)/");
   def risk_merge_permitted:

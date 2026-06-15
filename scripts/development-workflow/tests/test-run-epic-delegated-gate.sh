@@ -4,7 +4,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
-REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../../.." && pwd)"
+REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 GATE="$REPO_ROOT/scripts/development-workflow/run-epic-delegated-gate.sh"
 
 TMP_ROOT="$(mktemp -d)"
@@ -160,7 +160,7 @@ cat > "$base_fixture" <<'JSON'
   },
   "statusChecks": [
     {"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"},
-    {"name": "Reviewer-loop completion guard (#42)", "status": "SUCCESS", "conclusion": "SUCCESS"}
+    {"name": "Reviewer-loop completion guard (#42)", "state": "SUCCESS", "conclusion": "SUCCESS"}
   ]
 }
 JSON
@@ -219,6 +219,12 @@ run_test "needs_setup_requires_human" "human_required" "$(decision_for "$setup_f
 
 ci_failure_fixture="$(write_fixture ci-failure '.statusChecks[0].conclusion = "FAILURE"')"
 run_test "ci_failure_requires_fix" "fix_required" "$(decision_for "$ci_failure_fixture")"
+
+ci_in_progress_fixture="$(write_fixture ci-in-progress '.statusChecks[0].status = "IN_PROGRESS" | .statusChecks[0].conclusion = "SUCCESS"')"
+run_test "ci_in_progress_success_conclusion_requires_fix" "fix_required" "$(decision_for "$ci_in_progress_fixture")"
+
+status_context_fixture="$(write_fixture status-context '.statusChecks = [{"name": "legacy", "state": "SUCCESS", "conclusion": "SUCCESS"}]')"
+run_test "status_context_success_is_terminal" "merge_allowed" "$(decision_for "$status_context_fixture")"
 
 missing_ci_fixture="$(write_fixture missing-ci '.statusChecks = []')"
 run_test "missing_ci_blocks" "blocked" "$(decision_for "$missing_ci_fixture")"
