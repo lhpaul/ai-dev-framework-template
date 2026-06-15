@@ -66,11 +66,10 @@ before PR submission.
 1. Run ShellCheck on changed shell files.
 
    ```bash
-   CHANGED_SH="$(git diff --name-only origin/develop...HEAD -- '*.sh')"
-   if [ -n "$CHANGED_SH" ]; then
-     # shellcheck disable=SC2086  # Intentional word splitting for the changed file list.
-     shellcheck --severity=warning $CHANGED_SH
-   fi
+   git diff --name-only origin/develop...HEAD -- '*.sh' |
+     while IFS= read -r file; do
+       shellcheck --severity=warning -- "$file"
+     done
    ```
 
 **Expected result**: ShellCheck exits 0.
