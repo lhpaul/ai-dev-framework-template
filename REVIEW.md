@@ -21,6 +21,10 @@ Use it for every pre-PR review gate and as the normalization layer for PR review
 | `important`  | Edge-case gap, maintainability issue, unclear design choice, incomplete workflow update                                 | Fix by default unless a human decision is required                       |
 | `suggestion` | Improvement that is optional and low-risk                                                                               | Fix by default; report if scope-expanding or requires a product decision |
 
+### Haystack mirror findings
+
+When a review references mirrored agent docs, compare the live repository surface map before treating the finding as blocking. A `Rules violation` that only points at tool-specific front matter differences or an absent `.cursor/skills` tree is advisory only; a real mismatch between mirrored workflow bodies is actionable.
+
 ### Fix vs. Report
 
 Fix directly when:
@@ -60,6 +64,7 @@ Read before reviewing:
 Check:
 
 - Required spec template sections are present and no placeholders are unintentionally left behind
+- Spec PRs include a current `Document Quality Gate` log in the PR description; a missing, obviously incomplete, stale, or contradictory log is an important finding by default and blocking when it claims unchecked coverage
 - Use cases are explicit: actor, trigger, steps, outcome
 - Acceptance criteria are specific and testable
 - When a tracker issue is linked, brief objectives are fully covered via a visible matrix: each objective maps to AC(s) or explicit out-of-scope deferral with rationale
@@ -96,6 +101,7 @@ Read before reviewing:
 Check:
 
 - Every use case and acceptance criterion from the spec (or from the work item brief for Refactor items) is addressed
+- Plan PRs include a current `Document Quality Gate` log in the PR description; a missing, obviously incomplete, stale, or contradictory log is an important finding by default and blocking when it claims unchecked coverage
 - Steps are specific enough to execute without guessing
 - Ordering is feasible and dependencies are explicit
 - When pattern-based completeness applies, enumerated counts/paths are validated against the plan's Verification Log commands and outputs
@@ -200,6 +206,7 @@ Additional checks for **shell scripts** (`*.sh`):
 - All error paths emit structured output consistent with the script's output contract
 - User-supplied input (PR numbers, branch names) is validated before interpolation into file paths or commands
 - `|| true` does not silently swallow failures from external commands (e.g., `gh`, `git`) that the caller needs to know about
+- Workflow shell PRs run `python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop` in addition to ShellCheck; missing guard execution is an important finding
 
 Additional checks for **database migrations** (when a migration adds or changes triggers, functions, or backfills):
 

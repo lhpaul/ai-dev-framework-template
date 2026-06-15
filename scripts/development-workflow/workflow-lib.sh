@@ -18,6 +18,10 @@ workflow_config_file() {
   printf '%s/.ai-dev-workflow.yaml\n' "$(workflow_repo_root)"
 }
 
+workflow_config_resolver_script() {
+  printf '%s/workflow-config-resolver.py\n' "$(workflow_script_dir)"
+}
+
 workflow_config_exists() {
   [ -f "$(workflow_config_file)" ]
 }
@@ -42,7 +46,64 @@ require_gh() {
 }
 
 repo_slug() {
+  if [ -n "${WORKFLOW_TARGET_GITHUB_REPO:-}" ]; then
+    if ! workflow_is_valid_github_repo_slug "$WORKFLOW_TARGET_GITHUB_REPO"; then
+      echo "ERROR: WORKFLOW_TARGET_GITHUB_REPO must be an owner/repo GitHub repository slug." >&2
+      return 1
+    fi
+    printf '%s\n' "$WORKFLOW_TARGET_GITHUB_REPO"
+    return 0
+  fi
   gh repo view --json nameWithOwner --jq '.nameWithOwner'
+}
+
+workflow_context_value() {
+  local key="$1"
+  local context="${2:-}"
+
+  printf '%s\n' "$context" | awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }'
+}
+
+workflow_github_repo_from_git_url() {
+  local git_url="$1"
+  local remote_path=""
+
+  case "$git_url" in
+    https://github.com/*)
+      remote_path="${git_url#https://github.com/}"
+      ;;
+    https://*@github.com/*)
+      remote_path="${git_url#https://*@github.com/}"
+      ;;
+    git@github.com:*)
+      remote_path="${git_url#git@github.com:}"
+      ;;
+    ssh://git@github.com/*)
+      remote_path="${git_url#ssh://git@github.com/}"
+      ;;
+  esac
+
+  remote_path="${remote_path%.git}"
+  if [ -n "$remote_path" ] && workflow_remote_path_has_single_repo "$remote_path"; then
+    printf '%s\n' "$remote_path"
+  fi
+}
+
+workflow_github_repo_from_context() {
+  local context="$1"
+  local github_repo
+  local git_url
+
+  github_repo="$(workflow_context_value TARGET_GITHUB_REPO "$context")"
+  if [ -n "$github_repo" ]; then
+    printf '%s\n' "$github_repo"
+    return 0
+  fi
+
+  git_url="$(workflow_context_value TARGET_GIT_URL "$context")"
+  if [ -n "$git_url" ]; then
+    workflow_github_repo_from_git_url "$git_url"
+  fi
 }
 
 branch_prefix() {
@@ -135,7 +196,203 @@ is_soft_suggestion() {
 
 open_pr_number_for_branch() {
   require_gh
-  gh pr list --head "$1" --state open --json number --jq '.[0].number // empty'
+  gh pr list --head "$1" --state open --limit 100 --json number --jq '.[0].number // empty'
+}
+
+workflow_config_review_nested_list() {
+  local config_file="$1"
+  local phase="$2"
+  local bucket="$3"
+
+  [ -f "$config_file" ] || return 0
+
+  awk -v phase="$phase" -v bucket="$bucket" '
+    function trim(value) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      gsub(/^["'"'"']|["'"'"']$/, "", value)
+      return value
+    }
+
+    function emit_inline(value, count, idx, entries) {
+      gsub(/[[:space:]]+#.*$/, "", value)
+      gsub(/^[^[]*\[/, "", value)
+      gsub(/\].*$/, "", value)
+      count = split(value, entries, ",")
+      for (idx = 1; idx <= count; idx++) {
+        entries[idx] = trim(entries[idx])
+        if (entries[idx] != "") print entries[idx]
+      }
+    }
+
+    /^review:[[:space:]]*(#.*)?$/ {
+      in_review = 1
+      in_phase = 0
+      in_bucket = 0
+      next
+    }
+
+    in_review && /^[^[:space:]#].*:[[:space:]]*/ {
+      in_review = 0
+      in_phase = 0
+      in_bucket = 0
+    }
+
+    in_review && $0 ~ ("^[[:space:]][[:space:]]" phase ":[[:space:]]*(#.*)?$") {
+      in_phase = 1
+      in_bucket = 0
+      next
+    }
+
+    in_review && in_phase && /^[[:space:]][[:space:]][A-Za-z0-9_-]+:[[:space:]]*/ {
+      if ($0 !~ ("^[[:space:]][[:space:]]" phase ":")) {
+        in_phase = 0
+        in_bucket = 0
+      }
+    }
+
+    in_review && in_phase && $0 ~ ("^[[:space:]][[:space:]][[:space:]][[:space:]]" bucket ":[[:space:]]*\\[") {
+      line = $0
+      emit_inline(line)
+      in_bucket = 0
+      next
+    }
+
+    in_review && in_phase && $0 ~ ("^[[:space:]][[:space:]][[:space:]][[:space:]]" bucket ":[[:space:]]*(#.*)?$") {
+      in_bucket = 1
+      next
+    }
+
+    in_review && in_phase && in_bucket && /^[[:space:]][[:space:]][[:space:]][[:space:]][A-Za-z0-9_-]+:[[:space:]]*/ {
+      in_bucket = 0
+    }
+
+    in_review && in_phase && in_bucket && /^[[:space:]][[:space:]][[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ {
+      line = $0
+      sub(/^[[:space:]]*-[[:space:]]*/, "", line)
+      sub(/[[:space:]]+#.*$/, "", line)
+      print trim(line)
+      next
+    }
+
+    in_review && in_phase && in_bucket && !/^[[:space:]][[:space:]][[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ && !/^[[:space:]]*#/ && !/^[[:space:]]*$/ {
+      in_bucket = 0
+    }
+  ' "$config_file"
+}
+
+workflow_config_review_legacy_list() {
+  local config_file="$1"
+  local key="$2"
+
+  [ -f "$config_file" ] || return 0
+
+  awk -v key="$key" '
+    function trim(value) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      gsub(/^["'"'"']|["'"'"']$/, "", value)
+      return value
+    }
+
+    function emit_inline(value, count, idx, entries) {
+      gsub(/[[:space:]]+#.*$/, "", value)
+      gsub(/^[^[]*\[/, "", value)
+      gsub(/\].*$/, "", value)
+      count = split(value, entries, ",")
+      for (idx = 1; idx <= count; idx++) {
+        entries[idx] = trim(entries[idx])
+        if (entries[idx] != "") print entries[idx]
+      }
+    }
+
+    /^review:[[:space:]]*(#.*)?$/ {
+      in_review = 1
+      in_list = 0
+      next
+    }
+
+    in_review && /^[^[:space:]#].*:[[:space:]]*/ {
+      in_review = 0
+      in_list = 0
+    }
+
+    in_review && $0 ~ ("^[[:space:]][[:space:]]" key ":[[:space:]]*\\[") {
+      line = $0
+      emit_inline(line)
+      in_list = 0
+      next
+    }
+
+    in_review && $0 ~ ("^[[:space:]][[:space:]]" key ":[[:space:]]*(#.*)?$") {
+      in_list = 1
+      next
+    }
+
+    in_review && in_list && /^[[:space:]][[:space:]][A-Za-z0-9_-]+:[[:space:]]*/ {
+      in_list = 0
+    }
+
+    in_review && in_list && /^[[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ {
+      line = $0
+      sub(/^[[:space:]]*-[[:space:]]*/, "", line)
+      sub(/[[:space:]]+#.*$/, "", line)
+      print trim(line)
+      next
+    }
+
+    in_review && in_list && !/^[[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ && !/^[[:space:]]*#/ && !/^[[:space:]]*$/ {
+      in_list = 0
+    }
+  ' "$config_file"
+}
+
+workflow_config_review_on_draft_runner() {
+  local config_file="${1:-$(workflow_config_file)}"
+
+  [ -f "$config_file" ] || return 0
+
+  if workflow_config_review_nested_list "$config_file" on_draft runner | grep -q .; then
+    workflow_config_review_nested_list "$config_file" on_draft runner
+  else
+    workflow_config_review_legacy_list "$config_file" internal_reviewers
+  fi
+}
+
+workflow_config_review_on_draft_github() {
+  local config_file="${1:-$(workflow_config_file)}"
+
+  [ -f "$config_file" ] || return 0
+
+  if workflow_config_review_nested_list "$config_file" on_draft github | grep -q .; then
+    workflow_config_review_nested_list "$config_file" on_draft github
+    return 0
+  fi
+
+  if workflow_config_review_legacy_list "$config_file" phase_after_clean | grep -q .; then
+    awk '
+      NR == FNR {
+        exclude[$0] = 1
+        next
+      }
+
+      !($0 in exclude)
+    ' \
+      <(workflow_config_review_legacy_list "$config_file" phase_after_clean) \
+      <(workflow_config_review_legacy_list "$config_file" platforms)
+  fi
+}
+
+workflow_config_review_on_ready_github() {
+  local config_file="${1:-$(workflow_config_file)}"
+
+  [ -f "$config_file" ] || return 0
+
+  if workflow_config_review_nested_list "$config_file" on_ready github | grep -q .; then
+    workflow_config_review_nested_list "$config_file" on_ready github
+  elif workflow_config_review_legacy_list "$config_file" phase_after_clean | grep -q .; then
+    workflow_config_review_legacy_list "$config_file" phase_after_clean
+  else
+    workflow_config_review_legacy_list "$config_file" platforms
+  fi
 }
 
 workflow_config_review_platforms() {
@@ -143,45 +400,8 @@ workflow_config_review_platforms() {
 
   [ -f "$config_file" ] || return 0
 
-  awk '
-    function trim(value) {
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
-      gsub(/^["'"'"']|["'"'"']$/, "", value)
-      return value
-    }
-
-    /^review:[[:space:]]*(#.*)?$/ {
-      in_review = 1
-      in_platforms = 0
-      next
-    }
-
-    in_review && /^[^[:space:]#].*:[[:space:]]*$/ {
-      in_review = 0
-      in_platforms = 0
-    }
-
-    in_review && /^[[:space:]][[:space:]]platforms:[[:space:]]*(#.*)?$/ {
-      in_platforms = 1
-      next
-    }
-
-    in_review && in_platforms && /^[[:space:]][[:space:]][A-Za-z0-9_-]+:[[:space:]]*/ {
-      in_platforms = 0
-    }
-
-    in_review && in_platforms && /^[[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ {
-      line = $0
-      sub(/^[[:space:]]*-[[:space:]]*/, "", line)
-      sub(/[[:space:]]+#.*$/, "", line)
-      print trim(line)
-      next
-    }
-
-    in_review && in_platforms && !/^[[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ && !/^[[:space:]]*#/ && !/^[[:space:]]*$/ {
-      in_platforms = 0
-    }
-  ' "$config_file"
+  workflow_config_review_on_draft_github "$config_file"
+  workflow_config_review_on_ready_github "$config_file"
 }
 
 workflow_config_review_phase_after_clean_platforms() {
@@ -189,45 +409,47 @@ workflow_config_review_phase_after_clean_platforms() {
 
   [ -f "$config_file" ] || return 0
 
-  awk '
-    function trim(value) {
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
-      gsub(/^["'"'"']|["'"'"']$/, "", value)
-      return value
-    }
+  workflow_config_review_on_ready_github "$config_file"
+}
 
-    /^review:[[:space:]]*(#.*)?$/ {
-      in_review = 1
-      in_phase = 0
-      next
-    }
+workflow_repository_mode() {
+  local repo_root="${1:-$(workflow_repo_root)}"
 
-    in_review && /^[^[:space:]#].*:[[:space:]]*$/ {
-      in_review = 0
-      in_phase = 0
-    }
+  python3 "$(workflow_config_resolver_script)" mode --repo-root "$repo_root"
+}
 
-    in_review && /^[[:space:]][[:space:]]phase_after_clean:[[:space:]]*(#.*)?$/ {
-      in_phase = 1
-      next
-    }
+workflow_repository_context() {
+  local target_repo="${1:-}"
+  local repo_root="${2:-$(workflow_repo_root)}"
+  local args=(resolve --repo-root "$repo_root")
 
-    in_review && in_phase && /^[[:space:]][[:space:]][A-Za-z0-9_-]+:[[:space:]]*/ {
-      in_phase = 0
-    }
+  if [ -n "$target_repo" ]; then
+    args+=(--repo "$target_repo")
+  fi
 
-    in_review && in_phase && /^[[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ {
-      line = $0
-      sub(/^[[:space:]]*-[[:space:]]*/, "", line)
-      sub(/[[:space:]]+#.*$/, "", line)
-      print trim(line)
-      next
-    }
+  python3 "$(workflow_config_resolver_script)" "${args[@]}"
+}
 
-    in_review && in_phase && !/^[[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ && !/^[[:space:]]*#/ && !/^[[:space:]]*$/ {
-      in_phase = 0
-    }
-  ' "$config_file"
+workflow_validate_repository_context() {
+  local target_repo="${1:-}"
+  local repo_root="${2:-$(workflow_repo_root)}"
+  local require_local="${3:-}"
+  local args=(validate --repo-root "$repo_root")
+
+  if [ -n "$target_repo" ]; then
+    args+=(--repo "$target_repo")
+  fi
+  if [ "$require_local" = "--require-local" ] || [ "$require_local" = "require-local" ]; then
+    args+=(--require-local)
+  fi
+
+  python3 "$(workflow_config_resolver_script)" "${args[@]}"
+}
+
+workflow_review_override_context() {
+  local repo_root="${1:-$(workflow_repo_root)}"
+
+  python3 "$(workflow_config_resolver_script)" review-overrides --repo-root "$repo_root"
 }
 
 workflow_config_provider() {
@@ -506,6 +728,17 @@ workflow_is_valid_github_repo_name() {
       return 1
       ;;
   esac
+  return 0
+}
+
+workflow_is_valid_github_repo_slug() {
+  local repo_slug="$1"
+  local owner="${repo_slug%%/*}"
+  local repo_name="${repo_slug#*/}"
+
+  [ "$owner/$repo_name" = "$repo_slug" ] || return 1
+  workflow_is_valid_github_owner "$owner" || return 1
+  workflow_is_valid_github_repo_name "$repo_name" || return 1
   return 0
 }
 
@@ -1416,6 +1649,191 @@ print(item.get('status') or '', end='')
     echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker status not updated."
     workflow_print_captured_gh_stderr
   fi
+}
+
+# workflow_github_milestone_number <version>
+#
+# Prints the GitHub milestone number whose title exactly matches <version>, or
+# empty when absent/unreadable.
+workflow_github_milestone_number() {
+  local version="$1"
+  local repo_owner repo_name milestones
+
+  repo_owner="$(workflow_resolve_github_repo_owner)"
+  repo_name="$(workflow_resolve_github_repo_name)"
+  if [ -z "$repo_owner" ] || [ -z "$repo_name" ]; then
+    return 1
+  fi
+
+  if ! workflow_run_gh_capture_stderr api --paginate --slurp "repos/${repo_owner}/${repo_name}/milestones?state=all&per_page=100"; then
+    echo "Warning: could not list GitHub milestones for release '${version}'." >&2
+    workflow_print_captured_gh_stderr
+    return 1
+  fi
+  milestones="$__workflow_last_gh_stdout"
+
+  printf '%s' "$milestones" | python3 -c '
+import json
+import sys
+
+version = sys.argv[1]
+raw = sys.stdin.read()
+try:
+    pages = json.loads(raw)
+except Exception:
+    pages = []
+
+if isinstance(pages, dict):
+    pages = [pages]
+if pages and all(isinstance(item, dict) for item in pages):
+    items = pages
+else:
+    items = []
+    for page in pages if isinstance(pages, list) else []:
+        if isinstance(page, list):
+            items.extend(item for item in page if isinstance(item, dict))
+
+for item in items:
+    if item.get("title") == version:
+        print(item.get("number") or "", end="")
+        break
+' "$version"
+}
+
+# workflow_ensure_github_release_milestone <version>
+#
+# Creates the release milestone when absent and prints its number when known.
+workflow_ensure_github_release_milestone() {
+  local version="$1"
+  local repo_owner repo_name milestone_number created_number
+
+  if ! milestone_number="$(workflow_github_milestone_number "$version")"; then
+    return 1
+  fi
+  if [ -n "$milestone_number" ]; then
+    printf '%s' "$milestone_number"
+    return 0
+  fi
+
+  repo_owner="$(workflow_resolve_github_repo_owner)"
+  repo_name="$(workflow_resolve_github_repo_name)"
+  if [ -z "$repo_owner" ] || [ -z "$repo_name" ]; then
+    echo "Warning: could not resolve GitHub repository for release milestone '${version}'." >&2
+    return 1
+  fi
+
+  if ! workflow_run_gh_capture_stderr api -X POST "repos/${repo_owner}/${repo_name}/milestones" \
+    -f title="$version" \
+    -f description="Release ${version}"; then
+    echo "Warning: could not create GitHub release milestone '${version}'." >&2
+    workflow_print_captured_gh_stderr
+    return 1
+  fi
+
+  created_number=$(printf '%s' "$__workflow_last_gh_stdout" | python3 -c '
+import json
+import sys
+
+try:
+    data = json.loads(sys.stdin.read())
+except Exception:
+    data = {}
+print(data.get("number") or "", end="")
+'
+)
+  if [ -z "$created_number" ]; then
+    echo "Warning: GitHub milestone create response did not include a milestone number for '${version}'." >&2
+    return 1
+  fi
+  printf '%s' "$created_number"
+}
+
+# record_release_for_issue_best_effort <issue> <version>
+#
+# Provider-routed, fail-soft release stamp. Emits exactly one stable result line:
+#   RELEASE_STAMPED issue=<issue> version=<version> provider=<provider>
+#   RELEASE_STAMP_SKIPPED issue=<issue> version=<version> provider=<provider> reason=<reason>
+#   RELEASE_STAMP_FAILED issue=<issue> version=<version> provider=<provider> reason=<reason>
+record_release_for_issue_best_effort() {
+  local issue="$1"
+  local version="$2"
+  local provider milestone_number
+
+  provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+  case "$provider" in
+    github_projects|github-projects|github_issues|github-issues)
+      milestone_number="$(workflow_ensure_github_release_milestone "$version")"
+      if [ -z "$milestone_number" ]; then
+        echo "RELEASE_STAMP_FAILED issue=${issue} version=${version} provider=${provider} reason=milestone_unavailable"
+        return 0
+      fi
+      if workflow_run_gh_capture_stderr issue edit "$issue" --milestone "$version"; then
+        echo "RELEASE_STAMPED issue=${issue} version=${version} provider=${provider}"
+      else
+        echo "Warning: could not assign GitHub milestone '${version}' to issue '${issue}'." >&2
+        workflow_print_captured_gh_stderr
+        echo "RELEASE_STAMP_FAILED issue=${issue} version=${version} provider=${provider} reason=assignment_failed"
+      fi
+      ;;
+    ''|none)
+      echo "RELEASE_STAMP_SKIPPED issue=${issue} version=${version} provider=${provider:-none} reason=provider_none"
+      ;;
+    linear)
+      local release_field release_label_prefix
+      release_field="$(workflow_issue_tracker_custom_field release_field)"
+      release_label_prefix="$(workflow_issue_tracker_custom_field release_label_prefix)"
+      release_label_prefix="${release_label_prefix:-release/}"
+      if [ -n "$release_field" ]; then
+        echo "RELEASE_STAMP_SKIPPED issue=${issue} version=${version} provider=linear reason=mcp_required release_field=${release_field}"
+      else
+        echo "RELEASE_STAMP_SKIPPED issue=${issue} version=${version} provider=linear reason=mcp_required release_label=${release_label_prefix}${version}"
+      fi
+      ;;
+    *)
+      echo "RELEASE_STAMP_SKIPPED issue=${issue} version=${version} provider=${provider} reason=unsupported_provider"
+      ;;
+  esac
+  return 0
+}
+
+# finalize_release_marker_best_effort <version>
+#
+# Lifecycle finalizer. GitHub providers must close the release milestone
+# successfully; other providers currently no-op.
+finalize_release_marker_best_effort() {
+  local version="$1"
+  local provider repo_owner repo_name milestone_number
+
+  provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+  case "$provider" in
+    github_projects|github-projects|github_issues|github-issues)
+      if ! milestone_number="$(workflow_github_milestone_number "$version")"; then
+        echo "Warning: could not read release milestone '${version}'; skipping finalization."
+        return 1
+      fi
+      if [ -z "$milestone_number" ]; then
+        echo "Warning: release milestone '${version}' not found; skipping finalization."
+        return 1
+      fi
+      repo_owner="$(workflow_resolve_github_repo_owner)"
+      repo_name="$(workflow_resolve_github_repo_name)"
+      if [ -z "$repo_owner" ] || [ -z "$repo_name" ]; then
+        echo "Warning: could not resolve GitHub repository for release marker finalization."
+        return 1
+      fi
+      if workflow_run_gh_capture_stderr api -X PATCH "repos/${repo_owner}/${repo_name}/milestones/${milestone_number}" -f state=closed; then
+        echo "Release marker finalized: ${version}"
+      else
+        echo "Warning: could not close GitHub release milestone '${version}'."
+        workflow_print_captured_gh_stderr
+        return 1
+      fi
+      ;;
+    *)
+      echo "Release marker finalization skipped for provider '${provider:-none}'."
+      ;;
+  esac
+  return 0
 }
 
 # update_tracker_type_best_effort <issue_number> <type_label>

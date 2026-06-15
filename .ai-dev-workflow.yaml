@@ -5,47 +5,57 @@
 # Keep it declarative and repo-safe: select providers here, but do not store
 # secrets, tokens, hostnames, or other environment-specific credentials.
 #
+# Repository mode fields (`mode`, `workflow_hub.product_repos[]`, and
+# `product_repo.workflow_hub`) are documented in
+# docs/workflow/development-workflow/repository-modes.md. Omit `mode` to keep
+# the default `single_repo` behavior.
+#
 # See docs/workflow/development-workflow/README.md and
 # docs/workflow/development-workflow/integrations/ for integration-specific setup.
 #
 # Important:
-# - review.platforms is consumed by scripts/development-workflow/pr-review-loop.sh
-#   for external automated PR review (Step 7).
-# - review.internal_reviewers is consumed by the Step 7a internal review gate
+# - review.on_draft.runner is consumed by the Step 7a internal review gate
 #   protocol (91-orchestrate-work-protocol.md).
+# - review.on_draft.github and review.on_ready.github are consumed by
+#   scripts/development-workflow/pr-review-loop.sh for external automated PR
+#   review (Step 7).
 # - Other sections are advisory until additional scripts or agents adopt them.
 #
 # Behavior for automated PR review:
-# - If this file is absent, or review.platforms is omitted or empty, the review
-#   loop reports skipped (not configured).
+# - If this file is absent, or both review.on_draft.github and
+#   review.on_ready.github are omitted or empty, the review loop reports skipped
+#   (not configured).
 # <!-- TEMPLATE-OWNED-END -->
 
-schema_version: 1
+schema_version: 2
 
 review:
-  # Ordered list of automated PR review platforms to run sequentially.
-  # Platforms are evaluated in order; the first blocking result stops the loop.
-  # Supported today by pr-review-loop.sh: greptile, devin, coderabbit, pr-agent, codex-github, claude-code-action, haystack, copilot
-  platforms:
-    - pr-agent
-    - haystack
-    - claude-code-action
-  #
-  # Platforms listed here are treated as "after-clean" reviewers by
-  # pr-review-loop.sh: earlier platforms must reach clean before these platforms
-  # are considered the value-measurement phase. The protocol keeps PRs as drafts
-  # while PR-Agent clears, then converts to non-draft so Haystack and
-  # claude-code-action can run after the clean gate. Haystack triage is placed
-  # here because it does not reliably complete analysis for draft PRs.
-  # claude-code-action requires ANTHROPIC_API_KEY in GitHub Actions secrets.
-  phase_after_clean:
-    - haystack
-    - claude-code-action
+  on_draft:
+    # Ordered list of in-runner internal reviewers for draft PRs (Step 7a).
+    # Supported values:
+    #   claude        — dispatches the stage-appropriate reviewer agent.
+    #   codex         — dispatches the stage-appropriate Codex review skill.
+    #   coderabbit    — triggers CodeRabbit on the draft PR when reachable.
+    runner:
+      - codex
+
+    # Ordered list of GitHub/App/CLI reviewers that can safely evaluate draft
+    # PRs. These run before the PR is converted to ready.
+    # Supported today by pr-review-loop.sh: greptile, devin, coderabbit,
+    # pr-agent, codex-github, claude-code-action, haystack, copilot.
+    github:
+      - pr-agent
+
+  on_ready:
+    # Ordered list of GitHub/App/CLI reviewers that run only after draft gates
+    # are clean and the PR has been converted with `gh pr ready`.
+    github:
+      - haystack
   #
   # Configurable codex-github options (set via env vars or script flags to codex-github-reviewer.sh):
   #   CODEX_GITHUB_TRIGGER_PHRASE  — trigger phrase sent to the bot (default: "@codex review")
   #   CODEX_GITHUB_BOT_LOGIN       — GitHub login of the Codex bot account
-  #                                  (default: "codex-ai[bot]"; verify from GitHub App settings)
+  #                                  (default: "chatgpt-codex-connector[bot]"; verify from GitHub App settings)
   #
   # Additional options available as script flags to codex-github-reviewer.sh (passed via pr-review-loop.sh):
   #   --poll-interval <seconds>    — polling interval while waiting for bot response (default: 30)
@@ -58,45 +68,26 @@ review:
   #   COPILOT_BOT_LOGIN  — override the default Copilot bot login
   #                        (default: "copilot-pull-request-reviewer[bot]")
 
-  # Ordered list of internal AI reviewers to run sequentially on draft PRs
-  # (Step 7a in 91-orchestrate-work-protocol.md) before converting to non-draft.
-  # All listed reviewers must APPROVE before `gh pr ready` is called.
-  #
-  # Supported values:
-  #   claude        — dispatches the stage-appropriate reviewer agent:
-  #                     spec/*               -> spec-reviewer
-  #                     implementation-plan/* -> implementation-plan-reviewer
-  #                     feature/*/refactor/*/fix/*/hotfix/* -> code-reviewer
-  #   codex         — dispatches the stage-appropriate Codex review skill:
-  #                     spec/*               -> workflow-spec-reviewer
-  #                     implementation-plan/* -> workflow-plan-reviewer
-  #                     feature/*/refactor/*/fix/*/hotfix/* -> workflow-code-reviewer
-  #   coderabbit  — triggers CodeRabbit GitHub App auto-review on the draft PR
-  #                 (same mechanism as Step 7 but on a draft PR before non-draft
-  #                 conversion). Requires: App installed, auto_review.enabled: true
-  #                 in .coderabbit.yaml, and draft PRs not filtered out by the App.
-  #                 Reachability is determined at runtime by checking App activity
-  #                 on the repository. See docs/workflow/development-workflow/
-  #                 integrations/coderabbit.md Step 7a section for setup details.
-  #
   # Runner-context constraint:
-  #   'codex' as a direct CLI reviewer is NOT reliably reachable from automated
-  #   subagent runners (Claude Code subagents, Cursor subagents, or any headless
+  #   This template defaults to 'codex' for Codex-first workflow runs. 'codex' as
+  #   a direct CLI reviewer is NOT reliably reachable from automated subagent
+  #   runners (Claude Code subagents, Cursor subagents, or any headless
   #   environment). It is typically only reachable when Codex is the top-level
   #   runner itself. Protocol 91 Step 7a will classify 'codex' as unreachable in
-  #   these contexts and emit a warning comment on the PR, then proceed with only
-  #   'claude' under the default 'warn' policy. This is expected behaviour — not
-  #   a misconfiguration.
+  #   these contexts. Because 'codex' is the only default internal reviewer, that
+  #   means zero reviewers are reachable and the gate hard-fails until the run is
+  #   retried from Codex or a local override selects a reachable reviewer. This is
+  #   expected behaviour — not a misconfiguration.
   #
-  # Local override: developers who do not have access to all tools listed here
-  # can override this list locally by creating .tmp/template-config.json in the
-  # repository root (this path is gitignored). Format:
-  #   { "overrides": { "review": { "internal_reviewers": ["claude"] } } }
+  # Local override: developers who need a different top-level review runner can
+  # override this list locally by creating .tmp/template-config.json in the
+  # repository root (this path is gitignored). Example for Claude Code:
+  #   { "overrides": { "review": { "on_draft": { "runner": ["claude"] } } } }
+  # Legacy local overrides using `overrides.review.internal_reviewers` remain
+  # accepted during the schema_version 2 transition release.
   # The overrides key takes precedence over this file for the local environment.
   # See docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
   # Step 7a for the full multi-reviewer gate procedure.
-  internal_reviewers:
-    - claude
 
   # Optional: policy when a listed internal reviewer is unreachable from the current runner.
   # Protocol 91 Step 7a enforces this policy at runtime.

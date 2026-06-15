@@ -68,9 +68,9 @@ rules:
     type: llm
     severity: warning
     category: "patterns"
-    message: "When shared agent guidance changes, update matching files under .claude and .cursor together."
+    message: "When shared agent guidance changes, update the real mirrored surfaces in .claude and .cursor together; compare workflow semantics, not tool-specific front matter, and do not require absent .cursor/skills surfaces."
     llm:
-      prompt: "When shared agent guidance changes, update matching files under .claude and .cursor together."
+      prompt: "When shared agent guidance changes, update the real mirrored surfaces in .claude and .cursor together. Compare the workflow body semantically, not byte-for-byte, so tool-specific front matter differences stay advisory. Do not require absent .cursor/skills surfaces as mirrors."
   - id: "sync-integration-docs-with-script-behavior"
     name: "Sync integration docs and scripts"
     type: llm

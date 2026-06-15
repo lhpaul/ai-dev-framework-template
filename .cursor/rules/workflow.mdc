@@ -10,7 +10,7 @@ This project follows a staged AI-assisted development workflow. The canonical re
 
 `docs/workflow/development-workflow/README.md`
 
-Repository-specific workflow providers live in `.ai-dev-workflow.yaml`. Today, `review.platforms` is consumed by `pr-review-loop.sh` (Step 7) and `review.internal_reviewers` is consumed by the Step 7a internal review gate protocol; other sections are advisory until more tooling adopts them.
+Repository-specific workflow providers live in `.ai-dev-workflow.yaml`. Today, `review.on_draft.runner` is consumed by the Step 7a internal review gate protocol, and `review.on_draft.github` / `review.on_ready.github` are consumed by `pr-review-loop.sh` (Step 7); other sections are advisory until more tooling adopts them. Legacy review keys remain accepted for one transition release.
 
 ### Stages and protocols
 

@@ -1,7 +1,7 @@
 interface:
   display_name: "Workflow Plan Writer"
   short_description: "Draft an implementation plan from a merged spec."
-  default_prompt: "Use $workflow-plan-writer to turn the approved spec into an implementation plan."
+  default_prompt: "Use $workflow-plan-writer to turn the approved spec into an implementation plan, resolving repository mode and keeping workflow_hub plans hub-owned."
 
 policy:
   allow_implicit_invocation: true

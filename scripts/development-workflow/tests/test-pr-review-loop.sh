@@ -6,7 +6,7 @@
 #   2. check_unreplied_rest_comments (bot-account exclusion, reply detection)
 #   3. append_compare_metrics_row (compare-mode platform config change detection)
 #   4. Lock cleanup on SIGTERM (signal trap removes lockdir before exit)
-#   5. phase_after_clean config parsing and membership detection
+#   5. draft/ready lifecycle config parsing and membership detection
 #
 # Usage: bash scripts/development-workflow/tests/test-pr-review-loop.sh
 # No external tooling required beyond bash and git (git is used only to locate
@@ -59,6 +59,22 @@ cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 # Log call arguments when requested.
 if [ -n "${MOCK_GH_CALL_LOG:-}" ]; then
   printf '%s\n' "$*" >> "$MOCK_GH_CALL_LOG"
+fi
+# Capture comment body files when requested so tests can inspect the rendered
+# summary after pr-review-loop.sh removes the temporary file.
+if [ -n "${MOCK_GH_BODY_CAPTURE:-}" ]; then
+  _gh_body_file=""
+  _prev_arg=""
+  for _gh_arg in "$@"; do
+    if [ "$_prev_arg" = "--body-file" ]; then
+      _gh_body_file="$_gh_arg"
+      break
+    fi
+    _prev_arg="$_gh_arg"
+  done
+  if [ -n "$_gh_body_file" ] && [ -f "$_gh_body_file" ]; then
+    cat "$_gh_body_file" > "$MOCK_GH_BODY_CAPTURE"
+  fi
 fi
 # Differentiate call types.
 case "$*" in
@@ -175,26 +191,129 @@ run_test() {
   fi
 }
 
+grep_count_or_zero() {
+  local pattern="$1"
+  local file="$2"
+  local count
+  local status
+
+  set +e
+  count="$(grep -c -- "$pattern" "$file")"
+  status=$?
+  set -e
+
+  case "$status" in
+    0|1) printf '%s\n' "${count:-0}" ;;
+    *) return "$status" ;;
+  esac
+}
+
 # ---------------------------------------------------------------------------
-# Area 0: phase_after_clean config parsing
+# Area 0: draft/ready lifecycle config parsing
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== Area 0: phase_after_clean config parsing ==="
+echo "=== Area 0: draft/ready lifecycle config parsing ==="
 
 _CONFIG_DIR="$(mktemp -d)"
 cat > "$_CONFIG_DIR/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+
+review:
+  on_draft:
+    runner:
+      # Default Codex runner.
+      - codex
+    github:
+
+      - pr-agent
+  on_ready:
+    github:
+      - haystack
+YAML
+
+draft_runner_parsed="$(workflow_config_review_on_draft_runner "$_CONFIG_DIR/.ai-dev-workflow.yaml" | paste -sd ',' -)"
+draft_github_parsed="$(workflow_config_review_on_draft_github "$_CONFIG_DIR/.ai-dev-workflow.yaml" | paste -sd ',' -)"
+ready_github_parsed="$(workflow_config_review_on_ready_github "$_CONFIG_DIR/.ai-dev-workflow.yaml" | paste -sd ',' -)"
+all_github_parsed="$(workflow_config_review_platforms "$_CONFIG_DIR/.ai-dev-workflow.yaml" | paste -sd ',' -)"
+phase_after_clean_parsed="$(workflow_config_review_phase_after_clean_platforms "$_CONFIG_DIR/.ai-dev-workflow.yaml" | paste -sd ',' -)"
+run_test "review_on_draft_runner_parser" "codex" "$draft_runner_parsed"
+run_test "review_on_draft_github_parser" "pr-agent" "$draft_github_parsed"
+run_test "review_on_ready_github_parser" "haystack" "$ready_github_parsed"
+run_test "review_lifecycle_combined_platforms" "pr-agent,haystack" "$all_github_parsed"
+run_test "phase_after_clean_compat_maps_ready_github" "haystack" "$phase_after_clean_parsed"
+
+cat > "$_CONFIG_DIR/.ai-dev-workflow-legacy.yaml" <<'YAML'
 schema_version: 1
 
 review:
   platforms:
     - pr-agent
-    - coderabbit
+    - haystack
   phase_after_clean:
-    - coderabbit
+    - haystack
+  internal_reviewers:
+    - codex
 YAML
 
-phase_after_clean_parsed="$(workflow_config_review_phase_after_clean_platforms "$_CONFIG_DIR/.ai-dev-workflow.yaml" | paste -sd ',' -)"
-run_test "phase_after_clean_parser" "coderabbit" "$phase_after_clean_parsed"
+legacy_draft_runner="$(workflow_config_review_on_draft_runner "$_CONFIG_DIR/.ai-dev-workflow-legacy.yaml" | paste -sd ',' -)"
+legacy_draft_github="$(workflow_config_review_on_draft_github "$_CONFIG_DIR/.ai-dev-workflow-legacy.yaml" | paste -sd ',' -)"
+legacy_ready_github="$(workflow_config_review_on_ready_github "$_CONFIG_DIR/.ai-dev-workflow-legacy.yaml" | paste -sd ',' -)"
+legacy_all_github="$(workflow_config_review_platforms "$_CONFIG_DIR/.ai-dev-workflow-legacy.yaml" | paste -sd ',' -)"
+run_test "legacy_internal_reviewers_mapping" "codex" "$legacy_draft_runner"
+run_test "legacy_platforms_phase_draft_mapping" "pr-agent" "$legacy_draft_github"
+run_test "legacy_platforms_phase_ready_mapping" "haystack" "$legacy_ready_github"
+run_test "legacy_platforms_phase_combined_mapping" "pr-agent,haystack" "$legacy_all_github"
+
+cat > "$_CONFIG_DIR/.ai-dev-workflow-legacy-platforms-only.yaml" <<'YAML'
+schema_version: 1
+
+review:
+  platforms: [pr-agent, haystack]
+YAML
+
+legacy_platforms_only_ready="$(workflow_config_review_on_ready_github "$_CONFIG_DIR/.ai-dev-workflow-legacy-platforms-only.yaml" | paste -sd ',' -)"
+run_test "legacy_platforms_without_phase_mapping" "pr-agent,haystack" "$legacy_platforms_only_ready"
+
+cat > "$_CONFIG_DIR/.ai-dev-workflow-mixed.yaml" <<'YAML'
+schema_version: 2
+
+review:
+  on_draft:
+    runner: [codex]
+    github: [pr-agent]
+  on_ready:
+    github: [haystack]
+  internal_reviewers: [claude]
+  platforms: [greptile, coderabbit]
+  phase_after_clean: [coderabbit]
+YAML
+
+mixed_runner="$(workflow_config_review_on_draft_runner "$_CONFIG_DIR/.ai-dev-workflow-mixed.yaml" | paste -sd ',' -)"
+mixed_draft_github="$(workflow_config_review_on_draft_github "$_CONFIG_DIR/.ai-dev-workflow-mixed.yaml" | paste -sd ',' -)"
+mixed_ready_github="$(workflow_config_review_on_ready_github "$_CONFIG_DIR/.ai-dev-workflow-mixed.yaml" | paste -sd ',' -)"
+mixed_all_github="$(workflow_config_review_platforms "$_CONFIG_DIR/.ai-dev-workflow-mixed.yaml" | paste -sd ',' -)"
+run_test "mixed_new_legacy_runner_prefers_new" "codex" "$mixed_runner"
+run_test "mixed_new_legacy_draft_prefers_new" "pr-agent" "$mixed_draft_github"
+run_test "mixed_new_legacy_ready_prefers_new" "haystack" "$mixed_ready_github"
+run_test "mixed_new_legacy_combined_prefers_new" "pr-agent,haystack" "$mixed_all_github"
+
+cat > "$_CONFIG_DIR/.ai-dev-workflow-duplicates.yaml" <<'YAML'
+schema_version: 2
+
+review:
+  on_draft:
+    runner: [codex]
+    github: [pr-agent, haystack]
+  on_ready:
+    github: [haystack]
+YAML
+
+duplicate_warning="$(emit_review_lifecycle_duplicate_warnings "$_CONFIG_DIR/.ai-dev-workflow-duplicates.yaml" 2>&1 || true)"
+case "$duplicate_warning" in
+  *'reviewer "haystack" in more than one bucket'*) duplicate_detected=yes ;;
+  *) duplicate_detected=no ;;
+esac
+run_test "duplicate_lifecycle_reviewer_warning" "yes" "$duplicate_detected"
 
 declare -a phase_after_clean_platforms=()
 append_phase_after_clean_platforms "coderabbit, pr-agent"
@@ -217,6 +336,28 @@ declare -a platforms=("pr-agent" "coderabbit")
 filter_pre_after_clean_platforms
 run_test "pre_after_clean_only_filters_phase_platform" "pr-agent" "${platforms[0]}"
 run_test "pre_after_clean_only_platform_count" "1" "${#platforms[@]}"
+
+declare -a phase_after_clean_platforms=("haystack")
+declare -a platforms=("pr-agent" "haystack")
+filter_pre_after_clean_platforms
+run_test "draft_github_only_filters_ready_reviewers" "pr-agent" "${platforms[0]}"
+
+if grep -q -- '--ready-phase)' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" \
+    && grep -q 'append_ready_phase_platforms "$2"' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"; then
+  _ready_phase_flag_parse=1
+else
+  _ready_phase_flag_parse=0
+fi
+run_test "ready_phase_flag_parsing_wired" "1" "$_ready_phase_flag_parse"
+
+if grep -q -- '--draft-github-only)' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" \
+    && grep -q 'pre_after_clean_only=1' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"; then
+  _draft_github_only_flag_parse=1
+else
+  _draft_github_only_flag_parse=0
+fi
+run_test "draft_github_only_flag_parsing_wired" "1" "$_draft_github_only_flag_parse"
+unset _ready_phase_flag_parse _draft_github_only_flag_parse
 
 # ---------------------------------------------------------------------------
 # Area 0b: doc branch timeout defaults
@@ -907,7 +1048,7 @@ run_test "run_platform_review_routes_to_run_haystack_review" "1" "$_haystack_dis
 unset -f run_haystack_review
 unset _haystack_dispatch_called
 
-# test: ensure_pr_ready_for_after_clean converts draft PRs before after-clean reviewers
+# test: legacy ensure_pr_ready_for_after_clean wrapper converts draft PRs before ready-phase reviewers
 _call_log="$(mktemp)"
 export MOCK_GH_CALL_LOG="$_call_log"
 MOCK_GH_OUTPUT="true"
@@ -1045,7 +1186,7 @@ unset _test_tokens _test_spl _sprt _spname _spdisp
 # _post_review_summary is defined after the HARNESS_MODE return point and cannot
 # be called directly from the test harness; verify the string constant in the source
 # so any accidental change to the wording is caught.
-if grep -qF 'result_line="skipped — no platforms configured in review.platforms"' \
+if grep -qF 'result_line="skipped — no GitHub reviewers configured in review.on_draft.github or review.on_ready.github"' \
     "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null; then
   _skipped_constant_count=1
 else
@@ -1054,8 +1195,35 @@ fi
 run_test "summary_result_line_skipped" "1" "$_skipped_constant_count"
 unset _skipped_constant_count
 
-# Test 10.4: _post_review_summary source renders policy-status details.
-if grep -qF '**Review policy status:**' \
+# Test 10.4: _post_review_summary source renders needs_fixes as active findings.
+if grep -qF 'result_line="${blocking} blocking finding(s) require fixes"' \
+    "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" \
+    && grep -qF 'needs_fixes)' \
+      "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"; then
+  _needs_fixes_summary_count=1
+else
+  _needs_fixes_summary_count=0
+fi
+run_test "summary_needs_fixes_active_findings" "1" "$_needs_fixes_summary_count"
+unset _needs_fixes_summary_count
+
+# Test 10.5: main needs_fixes exit branch posts the summary before exiting.
+_needs_fixes_case_block="$(awk '
+  /^  needs_fixes\)/ {capture=1}
+  capture {print}
+  capture && /^    ;;/ {exit}
+' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
+if grep -qF '_post_review_summary "$aggregate_result" "$aggregate_reason"' <<<"$_needs_fixes_case_block" \
+    && grep -qF 'exit 1' <<<"$_needs_fixes_case_block"; then
+  _needs_fixes_main_summary_count=1
+else
+  _needs_fixes_main_summary_count=0
+fi
+run_test "main_needs_fixes_exit_posts_summary" "1" "$_needs_fixes_main_summary_count"
+unset _needs_fixes_case_block _needs_fixes_main_summary_count
+
+# Test 10.6: _post_review_summary source renders policy acknowledgement details.
+if grep -qF '**Policy acknowledgements:**' \
     "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" \
     && grep -qF 'platform_policy_status_notes' \
       "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"; then
@@ -1063,8 +1231,63 @@ if grep -qF '**Review policy status:**' \
 else
   _policy_status_summary_count=0
 fi
-run_test "summary_policy_status_section" "1" "$_policy_status_summary_count"
+run_test "summary_policy_acknowledgements_section" "1" "$_policy_status_summary_count"
 unset _policy_status_summary_count
+
+# Test 10.7: blocking findings and advisory findings both remain visible in the summary.
+_post_summary_source="$(awk '/^_post_review_summary\(\)/,/^}$/' \
+  "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
+eval "$_post_summary_source"
+# shellcheck disable=SC2329 # Invoked indirectly by the eval-loaded function.
+repo_slug() { printf "owner/repo\n"; }
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+compare_mode=0
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+compare_verdicts=()
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+platform_policy_status_notes=()
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+pr_number=42
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+branch_name="fix/42-summary"
+if ! _summary_call_log="$(mktemp)"; then
+  echo "ERROR: failed to allocate summary call log temp file" >&2
+  exit 1
+fi
+if [ -z "$_summary_call_log" ]; then
+  echo "ERROR: mktemp returned an empty summary call log path" >&2
+  exit 1
+fi
+if ! _summary_body_capture="$(mktemp)"; then
+  echo "ERROR: failed to allocate summary body capture temp file" >&2
+  exit 1
+fi
+if [ -z "$_summary_body_capture" ]; then
+  echo "ERROR: mktemp returned an empty summary body capture path" >&2
+  exit 1
+fi
+export MOCK_GH_CALL_LOG="$_summary_call_log"
+export MOCK_GH_BODY_CAPTURE="$_summary_body_capture"
+MOCK_GH_EXIT=0
+export MOCK_GH_EXIT
+MOCK_GH_COMMENTS_OUTPUT='[]'
+export MOCK_GH_COMMENTS_OUTPUT
+_post_review_summary "needs_fixes" "haystack_blocking_findings" "haystack (needs_fixes)" "1" "1" \
+  "Rules violation@@@https://github.com/lhpaul/ai-dev-framework-template/pull/952#issuecomment-1"
+if [ -n "${_summary_body_capture:-}" ] && grep -q "1 blocking finding(s) require fixes" "$_summary_body_capture" \
+    && grep -q "Advisory findings (non-blocking):" "$_summary_body_capture" \
+    && grep -q "Rules violation" "$_summary_body_capture"; then
+  _summary_advisory_split="yes"
+else
+  _summary_advisory_split="no"
+fi
+run_test "summary_advisory_split_visible" "yes" "$_summary_advisory_split"
+rm -f "$_summary_call_log"
+rm -f "$_summary_body_capture"
+unset MOCK_GH_CALL_LOG MOCK_GH_BODY_CAPTURE MOCK_GH_EXIT MOCK_GH_COMMENTS_OUTPUT
+unset _summary_advisory_split _post_summary_source
+unset -f _post_review_summary
+unset compare_mode compare_verdicts platform_policy_status_notes pr_number branch_name
 
 # ---------------------------------------------------------------------------
 # Area 11: Step 7b regression-label auto-restore (Option C, issue #805)
@@ -1102,7 +1325,10 @@ _SUMMARY_COMMENT_JSON='[{"id":1,"body":"### Automated Reviewer Loop Summary\nAll
 # Test 11.1: label absent + summary comment PRESENT on an implementation branch
 # → gh pr edit IS called (the #805 scenario: loop ran before, label was dropped
 # by a push, restore is correct).
-_call_log_11="$(mktemp)"
+if ! _call_log_11="$(mktemp)"; then
+  echo "ERROR: failed to allocate regression-label test temp file" >&2
+  exit 1
+fi
 export MOCK_GH_OUTPUT="false"
 export MOCK_GH_COMMENTS_OUTPUT="$_SUMMARY_COMMENT_JSON"
 export MOCK_GH_CALL_LOG="$_call_log_11"
@@ -1114,7 +1340,10 @@ unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT
 
 # Test 11.2: label already present on an implementation branch → NO gh pr edit.
 # MOCK_GH_OUTPUT is "true" (label present); summary-comment gate is not reached.
-_call_log_11="$(mktemp)"
+if ! _call_log_11="$(mktemp)"; then
+  echo "ERROR: failed to allocate regression-label test temp file" >&2
+  exit 1
+fi
 export MOCK_GH_OUTPUT="true"
 export MOCK_GH_CALL_LOG="$_call_log_11"
 restore_regression_label_if_missing "42" "feature/42-my-feature" 2>/dev/null
@@ -1125,7 +1354,10 @@ unset MOCK_GH_CALL_LOG
 
 # Test 11.3: non-implementation branch (spec/) → NO gh pr edit regardless of
 # label state or summary-comment presence.
-_call_log_11="$(mktemp)"
+if ! _call_log_11="$(mktemp)"; then
+  echo "ERROR: failed to allocate regression-label test temp file" >&2
+  exit 1
+fi
 export MOCK_GH_OUTPUT="false"
 export MOCK_GH_COMMENTS_OUTPUT="$_SUMMARY_COMMENT_JSON"
 export MOCK_GH_CALL_LOG="$_call_log_11"
@@ -1139,7 +1371,10 @@ unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT
 # gh pr edit is NOT called (no false re-apply on unknown label state).
 # Note: MOCK_GH_EXIT=1 affects the label-check `gh pr view` call; the function
 # returns early before reaching the summary-comment gate.
-_call_log_11="$(mktemp)"
+if ! _call_log_11="$(mktemp)"; then
+  echo "ERROR: failed to allocate regression-label test temp file" >&2
+  exit 1
+fi
 export MOCK_GH_EXIT=1
 export MOCK_GH_CALL_LOG="$_call_log_11"
 _restore_exit=0
@@ -1152,7 +1387,10 @@ unset MOCK_GH_CALL_LOG MOCK_GH_EXIT
 
 # Test 11.5: hotfix/* branch + label absent + summary comment PRESENT
 # → gh pr edit called (hotfix is an implementation branch; must be in scope).
-_call_log_11="$(mktemp)"
+if ! _call_log_11="$(mktemp)"; then
+  echo "ERROR: failed to allocate regression-label test temp file" >&2
+  exit 1
+fi
 export MOCK_GH_OUTPUT="false"
 export MOCK_GH_COMMENTS_OUTPUT="$_SUMMARY_COMMENT_JSON"
 export MOCK_GH_CALL_LOG="$_call_log_11"
@@ -1365,6 +1603,69 @@ unset MOCK_GH_EXIT MOCK_GH_LABEL_VIEW_EXIT MOCK_GH_LABEL_CREATE_EXIT MOCK_GH_PR_
 echo ""
 echo "=== Area 13: PR #801 reviewer-loop failure paths ==="
 
+export MOCK_GH_OUTPUT='{
+  "pageInfo": {"hasNextPage": false, "endCursor": null},
+  "nodes": [
+    {
+      "id": "thread-outdated",
+      "isResolved": false,
+      "isOutdated": true,
+      "comments": {
+        "nodes": [
+          {
+            "author": {"login": "chatgpt-codex-connector"},
+            "body": "stale Codex finding"
+          }
+        ]
+      }
+    },
+    {
+      "id": "thread-active",
+      "isResolved": false,
+      "isOutdated": false,
+      "comments": {
+        "nodes": [
+          {
+            "author": {"login": "chatgpt-codex-connector"},
+            "body": "active Codex finding"
+          }
+        ]
+      }
+    }
+  ]
+}'
+run_test "codex_thread_audit_ignores_outdated" "1" \
+  "$(check_unresolved_threads "42" "owner/repo" "chatgpt-codex-connector")"
+export MOCK_GH_OUTPUT='{
+  "pageInfo": {"hasNextPage": false, "endCursor": null},
+  "nodes": [
+    {
+      "id": "thread-outdated",
+      "isResolved": false,
+      "isOutdated": true,
+      "comments": {
+        "nodes": [
+          {
+            "author": {"login": "chatgpt-codex-connector"},
+            "body": "stale Codex finding"
+          }
+        ]
+      }
+    }
+  ]
+}'
+run_test "codex_thread_audit_all_outdated_clean" "0" \
+  "$(check_unresolved_threads "42" "owner/repo" "chatgpt-codex-connector")"
+unset MOCK_GH_OUTPUT
+if grep -q "Codex acknowledgement detected; waiting for thumbs-up reaction or inline review comments" \
+    "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh"; then
+  _codex_ack_wait_signal="yes"
+else
+  _codex_ack_wait_signal="no"
+fi
+run_test "codex_reviewer_ack_wait_signal" "yes" "$_codex_ack_wait_signal"
+unset _codex_ack_wait_signal
+
 _unlock_pr="80213$$"
 _unlock_lock_dir="/tmp/pr-review-loop-${_unlock_pr}.lockdir"
 rm -rf "$_unlock_lock_dir"
@@ -1472,8 +1773,37 @@ else
 fi
 run_test "post_summary_removes_body_file_on_failure" "yes" "$_body_file_removed"
 rm -f "$_summary_call_log"
+
+MOCK_GH_EXIT=0
+export MOCK_GH_EXIT
+MOCK_GH_COMMENTS_OUTPUT='[]'
+export MOCK_GH_COMMENTS_OUTPUT
+_summary_call_log="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_summary_call_log"
+_post_review_summary "needs_fixes" "haystack_blocking_findings" "pr-agent (clean), haystack (needs_fixes)" "2" "0"
+_needs_fixes_create_calls="$(grep_count_or_zero 'pr comment 42 --body-file' "$_summary_call_log")"
+_needs_fixes_patch_calls="$(grep_count_or_zero '--method PATCH' "$_summary_call_log")"
+run_test "post_summary_needs_fixes_creates_when_missing" "1" "$_needs_fixes_create_calls"
+run_test "post_summary_needs_fixes_missing_does_not_patch" "0" "$_needs_fixes_patch_calls"
+rm -f "$_summary_call_log"
+
+MOCK_GH_COMMENTS_OUTPUT="$(
+  jq -nc --arg body $'### Automated Reviewer Loop Summary\n\n*Posted automatically by `pr-review-loop.sh`.*' \
+    '[{id: 123, body: $body}]'
+)"
+export MOCK_GH_COMMENTS_OUTPUT
+_summary_call_log="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_summary_call_log"
+_post_review_summary "needs_fixes" "haystack_blocking_findings" "pr-agent (clean), haystack (needs_fixes)" "2" "0"
+_needs_fixes_create_calls="$(grep_count_or_zero 'pr comment 42 --body-file' "$_summary_call_log")"
+_needs_fixes_patch_calls="$(grep_count_or_zero '--method PATCH' "$_summary_call_log")"
+run_test "post_summary_needs_fixes_repeated_no_duplicate" "0" "$_needs_fixes_create_calls"
+run_test "post_summary_needs_fixes_repeated_updates_in_place" "1" "$_needs_fixes_patch_calls"
+rm -f "$_summary_call_log"
+
 unset MOCK_GH_CALL_LOG MOCK_GH_EXIT MOCK_GH_COMMENTS_OUTPUT
 unset _post_summary_source _summary_call_log _body_file _body_file_used _body_file_removed
+unset _needs_fixes_create_calls _needs_fixes_patch_calls
 unset -f _post_review_summary repo_slug
 
 # ---------------------------------------------------------------------------

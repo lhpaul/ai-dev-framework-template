@@ -440,6 +440,17 @@ run_test "advisory_only_result" "RESULT=clean" "$(echo "$output" | grep '^RESULT
 run_test "advisory_only_suggestion_count" "SUGGESTION_COUNT=1" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
 run_test "advisory_only_blocking_zero" "BLOCKING_COUNT=0" "$(echo "$output" | grep '^BLOCKING_COUNT=')"
 
+# Test 5.3: Rules violation mirror finding stays advisory-only.
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":4,"findings":[{"category":"Rules violation","summary":"Mirror drift needs review","detail":"Claude/Cursor workflow bodies differ; front matter differs only"}]}'
+_reset_mocks
+_install_haystack_mock
+
+output=$(_run_reviewer 10 1)
+
+run_test "rules_violation_result" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+run_test "rules_violation_suggestion_count" "SUGGESTION_COUNT=1" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
+run_test "rules_violation_blocking_zero" "BLOCKING_COUNT=0" "$(echo "$output" | grep '^BLOCKING_COUNT=')"
+
 # ---------------------------------------------------------------------------
 # Area 6: HAYSTACK_POLL_INTERVAL controls retry cadence (env var)
 # ---------------------------------------------------------------------------

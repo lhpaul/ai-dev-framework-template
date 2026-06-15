@@ -4,24 +4,28 @@
 # - verifies release PRs to main and develop are both merged
 # - deletes remote release branch (if present)
 # - deletes local release branch (switching away first if needed)
-# - optionally transitions explicit issue numbers from merged -> released
+# - stamps scoped issue numbers with the release version
+# - transitions scoped issue numbers from merged -> released, or emits a
+#   fail-closed tracker handoff when shell automation cannot complete them
 #
 # Usage:
-#   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh <version|release-branch> [--issue N]... [--issues N,N,...] [--best-effort]
+#   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh <version|release-branch> [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort]
 #
 # Examples:
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh 1.2.3
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh v1.2.3 --issue 232 --issue 240
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh release/v1.2.3 --issues 232,240
+#   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh v1.2.3 --from-changelog
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh release/v1.2.3 --issues 232,240 --best-effort
 #
-# Exit codes when --issues is supplied (unless --best-effort is passed):
+# Exit codes for tracker cleanup (unless --best-effort is passed):
 #   0  At least one issue was updated (or already in Released status) and no hard failures
-#      occurred (or no issues supplied). Issues already in Released status count as success.
+#      occurred. Issues already in Released status count as success.
 #   1  updated==0 after processing all issues, or at least one hard failure occurred
 #
 # Output (when --issues is supplied):
-#   Emits structured key/value summary line:  UPDATED=N SKIPPED=N FAILED=N
+#   Emits structured key/value summary line:
+#   STAMPED=N STAMP_SKIPPED=N STAMP_FAILED=N UPDATED=N SKIPPED=N FAILED=N
 #
 # Env overrides:
 #   GITHUB_PROJECT_STATUS_MERGED   (default: Merged)
@@ -44,10 +48,11 @@ MERGED_LABEL="${GITHUB_PROJECT_STATUS_MERGED:-Merged}"
 RELEASED_LABEL="${GITHUB_PROJECT_STATUS_RELEASED:-Released}"
 RELEASE_INPUT=""
 BEST_EFFORT=false
+FROM_CHANGELOG=false
 declare -a ISSUE_NUMBERS=()
 
 usage() {
-  echo "Usage: $0 <version|release-branch> [--issue N]... [--issues N,N,...] [--best-effort]" >&2
+  echo "Usage: $0 <version|release-branch> [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort]" >&2
 }
 
 normalize_release_branch() {
@@ -95,6 +100,110 @@ parse_issue_csv() {
   IFS="$old_ifs"
 }
 
+append_issues_from_changelog() {
+  local version="$1"
+  local changelog_path="${CHANGELOG_PATH:-CHANGELOG.md}"
+  local extracted
+
+  if [ ! -f "$changelog_path" ]; then
+    echo "Could not find changelog at '$changelog_path' for --from-changelog." >&2
+    return 1
+  fi
+
+  if ! extracted="$(python3 - "$version" "$changelog_path" "$TRACKER_PROVIDER" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+version = sys.argv[1]
+if version.startswith("v"):
+    version = version[1:]
+path = Path(sys.argv[2])
+provider = sys.argv[3]
+text = path.read_text(encoding="utf-8")
+
+heading = re.compile(rf"^## \[(?:v?{re.escape(version)})\].*$", re.MULTILINE)
+match = heading.search(text)
+if not match:
+    print(f"CHANGELOG_VERSION_NOT_FOUND version=v{version}", file=sys.stderr)
+    sys.exit(1)
+
+next_heading = re.search(r"^## \[", text[match.end():], re.MULTILINE)
+section_end = match.end() + next_heading.start() if next_heading else len(text)
+section = text[match.end():section_end]
+
+seen = set()
+issues = []
+
+def add(value: str) -> None:
+    if value not in seen:
+        seen.add(value)
+        issues.append(value)
+
+if provider == "linear":
+    range_re = re.compile(r"\b([A-Z][A-Z0-9_]*-)(\d+)\s*[\u2013-]\s*(?:[A-Z][A-Z0-9_]*-)?(\d+)\b")
+    for item in range_re.finditer(section):
+        prefix = item.group(1)
+        start = int(item.group(2))
+        end = int(item.group(3))
+        if end < start:
+            start, end = end, start
+        for number in range(start, end + 1):
+            add(f"{prefix}{number}")
+
+    for item in re.finditer(r"\b[A-Z][A-Z0-9_]*-\d+\b", section):
+        add(item.group(0))
+else:
+    for item in re.finditer(r"(?<![\w-])#([1-9][0-9]*)\b", section):
+        add(item.group(1))
+
+if not issues:
+    print(f"CHANGELOG_NO_ISSUES_FOUND version=v{version}", file=sys.stderr)
+    sys.exit(1)
+
+print("\n".join(issues))
+PY
+  )"; then
+    return 1
+  fi
+
+  while IFS= read -r issue; do
+    [ -z "$issue" ] && continue
+    if ! is_valid_issue_token "$issue"; then
+      echo "Invalid issue token '$issue' extracted from CHANGELOG." >&2
+      return 1
+    fi
+    ISSUE_NUMBERS+=("$issue")
+  done <<< "$extracted"
+}
+
+dedupe_issue_numbers() {
+  local deduped
+  if [ "${#ISSUE_NUMBERS[@]}" -eq 0 ]; then
+    return 0
+  fi
+
+  if ! deduped="$(python3 - "${ISSUE_NUMBERS[@]}" <<'PY'
+import sys
+
+seen = set()
+for issue in sys.argv[1:]:
+    if issue and issue not in seen:
+        seen.add(issue)
+        print(issue)
+PY
+  )"; then
+    echo "Could not deduplicate issue scope." >&2
+    return 1
+  fi
+
+  ISSUE_NUMBERS=()
+  while IFS= read -r issue; do
+    [ -z "$issue" ] && continue
+    ISSUE_NUMBERS+=("$issue")
+  done <<< "$deduped"
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --issue)
@@ -116,6 +225,10 @@ while [ $# -gt 0 ]; do
       fi
       parse_issue_csv "$2"
       shift 2
+      ;;
+    --from-changelog)
+      FROM_CHANGELOG=true
+      shift
       ;;
     --best-effort)
       BEST_EFFORT=true
@@ -148,7 +261,20 @@ if [ -z "$RELEASE_INPUT" ]; then
 fi
 
 RELEASE_BRANCH="$(normalize_release_branch "$RELEASE_INPUT")"
+RELEASE_VERSION="${RELEASE_BRANCH#release/}"
 echo "Release branch: $RELEASE_BRANCH"
+echo "Release version: $RELEASE_VERSION"
+
+if [ "$FROM_CHANGELOG" = "true" ]; then
+  if ! append_issues_from_changelog "$RELEASE_VERSION"; then
+    echo "TRACKER_INCOMPLETE=1 REASON=changelog_scope_unavailable"
+    if [ "$BEST_EFFORT" != "true" ]; then
+      exit 1
+    fi
+  fi
+fi
+
+dedupe_issue_numbers
 
 echo "Verifying merged PRs for release branch..."
 MAIN_PR=$(gh pr list --state merged --head "$RELEASE_BRANCH" --base main --json number --jq '.[0].number // empty')
@@ -199,7 +325,13 @@ else
 fi
 
 if [ "${#ISSUE_NUMBERS[@]}" -eq 0 ]; then
-  echo "No issues supplied; skipping tracker release transitions."
+  echo "TRACKER_INCOMPLETE=1 REASON=no_issue_scope"
+  echo "No issues supplied; release tracker transitions are incomplete."
+  echo "Rerun with --from-changelog or explicit --issue/--issues after confirming the shipped issue scope."
+  if [ "$BEST_EFFORT" != "true" ]; then
+    echo "Pass --best-effort to keep branch cleanup as the only completed action and exit 0." >&2
+    exit 1
+  fi
   echo "Release post-merge cleanup complete."
   exit 0
 fi
@@ -208,22 +340,71 @@ fi
 # (they require MCP/API access). Emit per-issue manual action guidance and
 # exit cleanly rather than silently skipping or failing with UPDATED=0.
 if [ "$TRACKER_PROVIDER" = "linear" ]; then
+  echo "Recording release stamp guidance for Linear issue(s)..."
+  LINEAR_STAMPED=0
+  LINEAR_STAMP_SKIPPED=0
+  LINEAR_STAMP_FAILED=0
+  for issue in "${ISSUE_NUMBERS[@]}"; do
+    if ! STAMP_OUT="$(record_release_for_issue_best_effort "$issue" "$RELEASE_VERSION")"; then
+      echo "Warning: release-stamp helper failed for issue #$issue; counting as stamp failure."
+      STAMP_OUT="RELEASE_STAMP_FAILED issue=${issue} version=${RELEASE_VERSION} provider=${TRACKER_PROVIDER:-unknown} reason=helper_failed"
+    fi
+    echo "$STAMP_OUT"
+    if echo "$STAMP_OUT" | grep -q "^RELEASE_STAMPED "; then
+      LINEAR_STAMPED=$((LINEAR_STAMPED + 1))
+    elif echo "$STAMP_OUT" | grep -q "^RELEASE_STAMP_FAILED "; then
+      LINEAR_STAMP_FAILED=$((LINEAR_STAMP_FAILED + 1))
+    elif echo "$STAMP_OUT" | grep -q "^RELEASE_STAMP_SKIPPED "; then
+      LINEAR_STAMP_SKIPPED=$((LINEAR_STAMP_SKIPPED + 1))
+    else
+      echo "Warning: unrecognized release-stamp output for issue #$issue; counting as stamp failure."
+      LINEAR_STAMP_FAILED=$((LINEAR_STAMP_FAILED + 1))
+    fi
+  done
   echo "Linear tracker detected: automatic '$MERGED_LABEL' -> '$RELEASED_LABEL' transitions are not supported by this script."
   echo "Manually transition the following issue(s) to '$RELEASED_LABEL' in Linear (via MCP server or API):"
   for issue in "${ISSUE_NUMBERS[@]}"; do
     echo "  - Issue $issue: set status to '$RELEASED_LABEL'"
   done
+  echo "TRACKER_ACTION=linear_mcp_or_api_required"
+  echo "TRACKER_INCOMPLETE=1 REASON=linear_status_transition_required"
+  echo "TRACKER_ISSUES=$(IFS=,; printf '%s' "${ISSUE_NUMBERS[*]}")"
   echo "See docs/workflow/development-workflow/integrations/linear.md for guidance."
+  echo "STAMPED=$LINEAR_STAMPED STAMP_SKIPPED=$LINEAR_STAMP_SKIPPED STAMP_FAILED=$LINEAR_STAMP_FAILED UPDATED=0 SKIPPED=0 FAILED=0"
+  if [ "$BEST_EFFORT" != "true" ]; then
+    echo "Release tracker transitions are incomplete until Linear issues are moved to '$RELEASED_LABEL'." >&2
+    echo "Pass --best-effort only when a human explicitly accepts completing tracker transitions outside this script." >&2
+    exit 1
+  fi
   echo "Release post-merge cleanup complete."
   exit 0
 fi
 
 echo "Transitioning scoped issues from '$MERGED_LABEL' to '$RELEASED_LABEL'..."
+RELEASE_STAMPED=0
+RELEASE_STAMP_SKIPPED=0
+RELEASE_STAMP_FAILED=0
 TRACKER_UPDATED=0
 TRACKER_SKIPPED=0
 TRACKER_FAILED=0
 
 for issue in "${ISSUE_NUMBERS[@]}"; do
+  if ! STAMP_OUT="$(record_release_for_issue_best_effort "$issue" "$RELEASE_VERSION")"; then
+    echo "Warning: release-stamp helper failed for issue #$issue; counting as stamp failure."
+    STAMP_OUT="RELEASE_STAMP_FAILED issue=${issue} version=${RELEASE_VERSION} provider=${TRACKER_PROVIDER:-unknown} reason=helper_failed"
+  fi
+  echo "$STAMP_OUT"
+  if echo "$STAMP_OUT" | grep -q "^RELEASE_STAMPED "; then
+    RELEASE_STAMPED=$((RELEASE_STAMPED + 1))
+  elif echo "$STAMP_OUT" | grep -q "^RELEASE_STAMP_FAILED "; then
+    RELEASE_STAMP_FAILED=$((RELEASE_STAMP_FAILED + 1))
+  elif echo "$STAMP_OUT" | grep -q "^RELEASE_STAMP_SKIPPED "; then
+    RELEASE_STAMP_SKIPPED=$((RELEASE_STAMP_SKIPPED + 1))
+  else
+    echo "Warning: unrecognized release-stamp output for issue #$issue; counting as stamp failure."
+    RELEASE_STAMP_FAILED=$((RELEASE_STAMP_FAILED + 1))
+  fi
+
   ISSUE_STATE=$(gh issue view "$issue" --json state --jq '.state' 2>/dev/null || true)
   if [ -z "$ISSUE_STATE" ]; then
     echo "Warning: could not read issue #$issue; skipping tracker update."
@@ -260,23 +441,44 @@ for issue in "${ISSUE_NUMBERS[@]}"; do
   fi
 done
 
-echo "UPDATED=$TRACKER_UPDATED SKIPPED=$TRACKER_SKIPPED FAILED=$TRACKER_FAILED"
+echo "STAMPED=$RELEASE_STAMPED STAMP_SKIPPED=$RELEASE_STAMP_SKIPPED STAMP_FAILED=$RELEASE_STAMP_FAILED UPDATED=$TRACKER_UPDATED SKIPPED=$TRACKER_SKIPPED FAILED=$TRACKER_FAILED"
 
-if [ "$BEST_EFFORT" = "true" ]; then
-  echo "Release post-merge cleanup complete."
-  exit 0
+if [ "$BEST_EFFORT" != "true" ]; then
+  if [ "$TRACKER_FAILED" -gt 0 ]; then
+    echo "Error: $TRACKER_FAILED tracker transition(s) failed for release $RELEASE_BRANCH." >&2
+    echo "Pass --best-effort to suppress this error and exit 0 regardless of transition outcomes." >&2
+    exit 1
+  fi
+
+  if [ "$TRACKER_UPDATED" -eq 0 ]; then
+    case "$TRACKER_PROVIDER" in
+      github_projects|github-projects|github_issues|github-issues)
+        ;;
+      *)
+        echo "No shell-supported tracker transitions ran for provider '${TRACKER_PROVIDER:-none}'; release-stamp handling completed."
+        echo "Release post-merge cleanup complete."
+        exit 0
+        ;;
+    esac
+    if [ "$RELEASE_STAMPED" -gt 0 ] && [ "$TRACKER_SKIPPED" -gt 0 ] && [ "$TRACKER_FAILED" -eq 0 ]; then
+      echo "Release stamping succeeded, but tracker status transitions were skipped; treating cleanup as successful because no transition failed."
+    else
+      echo "Error: no tracker transitions succeeded (UPDATED=0) for release $RELEASE_BRANCH." >&2
+      echo "Pass --best-effort to suppress this error and exit 0 regardless of transition outcomes." >&2
+      exit 1
+    fi
+  fi
 fi
 
-if [ "$TRACKER_FAILED" -gt 0 ]; then
-  echo "Error: $TRACKER_FAILED tracker transition(s) failed for release $RELEASE_BRANCH." >&2
-  echo "Pass --best-effort to suppress this error and exit 0 regardless of transition outcomes." >&2
-  exit 1
-fi
-
-if [ "$TRACKER_UPDATED" -eq 0 ]; then
-  echo "Error: no tracker transitions succeeded (UPDATED=0) for release $RELEASE_BRANCH." >&2
-  echo "Pass --best-effort to suppress this error and exit 0 regardless of transition outcomes." >&2
-  exit 1
+if [ "$RELEASE_STAMPED" -gt 0 ]; then
+  if ! finalize_release_marker_best_effort "$RELEASE_VERSION"; then
+    if [ "$BEST_EFFORT" != "true" ]; then
+      echo "Error: release marker finalization failed for $RELEASE_VERSION." >&2
+      echo "Pass --best-effort to suppress this error and exit 0 regardless of finalization outcomes." >&2
+      exit 1
+    fi
+    echo "Warning: release marker finalization failed for $RELEASE_VERSION; continuing because --best-effort was passed." >&2
+  fi
 fi
 
 echo "Release post-merge cleanup complete."

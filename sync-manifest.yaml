@@ -17,6 +17,18 @@
 #                       both template-owned and project-owned sections separated by
 #                       annotation markers (see annotation_scheme below).
 #
+# Mode scopes:
+#   shared                  - File applies across supported repository roles.
+#   hub_only                - File belongs only in a workflow hub repository.
+#   product_repo_injection  - File may be injected into a product repository.
+#
+# Sync-template uses mode_scope to filter the manifest by repository role before
+# comparing or applying files. Missing mode resolves to single_repo and keeps the
+# compatibility file set. workflow_hub selects shared and hub_only entries.
+# product_repo selects shared and product_repo_injection entries. Unknown roles,
+# missing mode_scope values, and unknown mode_scope values fail closed before
+# file changes are applied.
+#
 # Annotation schemes (used in mixed_content files):
 #   html_comments     - Markers in Markdown files:
 #                         <!-- TEMPLATE-OWNED-START --> ... <!-- TEMPLATE-OWNED-END -->
@@ -29,99 +41,154 @@
 
 schema_version: 1
 
+mode_scopes:
+  shared:
+    label: Shared
+    description: File applies across supported repository roles.
+  hub_only:
+    label: Hub only
+    description: File belongs only in a workflow hub repository.
+  product_repo_injection:
+    label: Product repository injection
+    description: File may be injected into a product repository integration.
+
 categories:
   always_sync:
     - path: REVIEW.md
+      mode_scope: shared
       note: canonical review contract for spec, plan, and code review gates
     - path: docs/workflow/
       glob: "**/*"
+      mode_scope: hub_only
       note: full workflow documentation tree (all files recursively)
     - path: .claude/agents/
       glob: "*.md"
+      mode_scope: hub_only
       note: Claude Code agent definitions
     - path: .claude/commands/
       glob: "*.md"
+      mode_scope: hub_only
       note: Claude Code slash commands
     - path: .claude/skills/
       glob: "*.md"
+      mode_scope: hub_only
       note: Claude Code skills
     - path: .codex/skills/
       glob: "**/*"
+      mode_scope: hub_only
       note: Codex skill trees shipped with the template (SKILL.md and assets)
     - path: .agents/skills/
       glob: "**/*"
+      mode_scope: hub_only
       note: Codex repo-scoped skill discovery path and command-style aliases
     - path: .cursor/commands/
       glob: "*.md"
+      mode_scope: hub_only
       note: Cursor slash commands
     - path: .cursor/agents/
       glob: "*.md"
+      mode_scope: hub_only
       note: Cursor subagent definitions
     - path: .cursor/rules/
       glob: "*.mdc"
+      mode_scope: hub_only
       note: Cursor rules files
     - path: scripts/development-workflow/
       glob: "**/*"
+      mode_scope: hub_only
       note: workflow helper scripts (state inspection, PR/CI loops, etc.)
     - path: scripts/lint/
       glob: "**/*"
+      mode_scope: shared
       note: lint helpers referenced by workflow protocols and best-practice docs
     - path: scripts/README.md
+      mode_scope: shared
       note: purpose and usage of scripts in scripts/
     - path: docs/best-practices/1-general.md
+      mode_scope: shared
       note: general coding standards
     - path: docs/best-practices/2-version-control.md
+      mode_scope: shared
       note: git and branching conventions
     - path: docs/best-practices/3-testing.md
+      mode_scope: shared
       note: testing standards
+    - path: template/workflow-hub/
+      glob: "**/*"
+      mode_scope: shared
+      note: inspectable workflow hub skeleton documentation and manifest
+    - path: template/product-repo-injection/
+      glob: "**/*"
+      mode_scope: shared
+      note: inspectable product repository injection skeleton documentation and manifest
     - path: sync-manifest.yaml
+      mode_scope: shared
       note: this manifest file itself; must be synced so downstream projects receive manifest updates
 
   special_handling:
     - path: .claude/settings.json
+      mode_scope: hub_only
       note: may have project-specific tool permissions
     - path: .claude/settings.local.json.example
+      mode_scope: hub_only
       note: local settings example file
     - path: .github/workflows/auto-tag-release.yml
+      mode_scope: shared
       note: automated release tagging; add if CI is set up
     - path: .github/workflows/deploy.yml
+      mode_scope: shared
       note: placeholder deployment workflow; customize with project-specific deploy logic
     - path: .github/workflows/e2e-regression.yml
+      mode_scope: shared
       note: label-gated e2e/regression placeholder; customize with project-specific test logic
     - path: e2e/
       glob: "**/*"
+      mode_scope: shared
       note: placeholder e2e/regression test project (Playwright); customize with project-specific tests
 
   project_specific:
     - path: AGENTS.md
       mixed_content: true
       annotation_scheme: html_comments
+      mode_scope: product_repo_injection
       note: >
         workflow table (## Development Workflow section) is template-owned;
         project fills in ## Project Overview and ## Repository Structure sections
     - path: README.md
+      mode_scope: shared
       note: project-specific README; template version is a starting point only
     - path: CHANGELOG.md
+      mode_scope: shared
       note: project maintains its own changelog; never overwrite
     - path: .ai-dev-workflow.yaml
       mixed_content: true
       annotation_scheme: html_comments
+      mode_scope: product_repo_injection
       note: >
         schema description comments are template-owned;
         provider selections (platforms, internal_reviewers, etc.) are project-specific
+    - path: .ai-dev-workflow.local.example.yaml
+      mode_scope: product_repo_injection
+      note: placeholder-only example for local checkout roots, product paths, and secret references
     - path: docs/project/
       glob: "**/*"
+      mode_scope: shared
       note: project domain docs; entirely project-specific
     - path: docs/best-practices/STACK-SPECIFIC.md
+      mode_scope: shared
       note: stack summary; project fills in its own technology choices
     - path: docs/best-practices/stack/
       glob: "**/*"
+      mode_scope: shared
       note: per-technology convention files; project-specific
     - path: .gitignore
+      mode_scope: shared
       note: project-specific ignore rules
     - path: CLAUDE.md
+      mode_scope: hub_only
       note: symlink to AGENTS.md; project-specific
     - path: GEMINI.md
+      mode_scope: shared
       note: symlink to AGENTS.md; project-specific
 
 # migration_notes: versioned manual steps required when syncing across a breaking structural change.

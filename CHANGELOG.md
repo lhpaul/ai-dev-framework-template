@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-06-15
+
+### Added
+
+- **Workflow hub operating model** (#874): repository modes, artifact ownership, target repository selection, and PR ownership for hub deployments.
+- **Shared and local workflow configuration** (#875): separates versioned repository identity from local checkout and secret references, with repository-context helpers for hub routing.
+- **Workflow hub template skeletons** (#876): inspectable hub and product-repo-injection skeletons with mode-specific sync-scope metadata.
+- **Workflow hub product repository commands** (#877): status, sync, and pull-request visibility for product repository checkouts.
+- **Workflow hub PR authentication** (#880): local-only GitHub App auth guidance for opening product repository pull requests.
+- **Workflow hub setup and operations docs** (#882): setup, product-repo injection, cross-repo PR flow, and troubleshooting.
+- **Workflow hub smoke fixtures** (#883): non-secret hub and product repository fixture coverage.
+- **`/run-epic` autonomy and delegation** (#917, #918, #919, #920, #949): scope resolver, PR risk classification, delegated review/merge loop, audit trail, and autonomy policy recommendations.
+- **Release stamping** (#829): records the production release version on shipped tracker issues using provider-native release markers.
+- **Document PR quality gate** (#816): pre-submission quality gate for spec and implementation-plan PRs.
+
+### Changed
+
+- **Two-phase review config** (#868): explicit draft and ready lifecycle buckets, with legacy aliases for one transition release.
+- **Codex review routing**: Codex is the default Step 7a internal reviewer; Claude Code Action after-clean reviewer replaced with `codex-github`.
+- **Workflow hub orchestration** (#878): routes branch, PR, reviewer, CI, and cleanup operations to the selected product repository while keeping tracker/spec/plan state in the hub.
+- **Workflow agent product-repo awareness** (#879): Claude, Cursor, Codex, and command wrappers declare repository context and route implementation to product repos in hub mode.
+- **Sync-template hub scopes** (#881): role-aware template sync so hubs receive hub-owned files and product repos receive injection-safe files.
+- **Workflow shell guard lint** (#910): catches command-substitution masking, unguarded `jq -r` assignments, unanchored branch-prefix grep, and bash 4 associative arrays.
+
+### Fixed
+
+- **`/run-epic` regression gates** (#955): delegated merge gates accept completed skipped or neutral regression checks while still blocking real failures and pending checks.
+- **Haystack reviewer-loop** (#890, #909): policy acknowledgements stay advisory; stale clean summaries cannot hide active findings.
+- **Prepare-release Linear cleanup** (#914): derives shipped issue scope from the finalized changelog and emits actionable Linear MCP/API handoff when tracker completion is missing.
+- **Post-merge cleanup** (#911): switches to the merged PR base branch, including workflow hub integration branches, instead of always defaulting to `develop`.
+- **Native GitHub sub-issues** (#884): documents native sub-issue linking for epics; preserves `integration-branch:<slug>` as the routing contract.
+- **Codex GitHub reviewer loop**: aligns bot default with reviewer scripts, ignores outdated threads, and waits for a definitive approval signal.
+- **Claude Code Action reviewer** (#866): explicit code-review prompt; fails closed when Claude did not execute.
+- **Tool-fix merge ordering** (#825): foundational reviewer-tool fixes must merge before dependent tool-fixes are trusted.
+
 ## [0.30.2] - 2026-06-08
 
 ### Fixed
@@ -94,7 +129,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Shell Script Quality Checklist: add `jq`, timeout, and structured-input items** (#752) — items 9–11 in `03-implement-development-protocol.md`: `jq -e` exit-code guards, `timeout` for external CLIs, non-empty validation for structured input.
 - **`claude-code-action-reviewer.sh`: dispatch against default branch, not PR base branch** — fixes permanent 404 when the workflow file is not yet on the default branch.
 - **`pr-review-loop.sh`: clarify REST-vs-GraphQL bot-login normalization** — comments now explicitly state REST returns logins with `[bot]` suffix, GraphQL without, preventing future Haystack triage misreads.
-
 
 ## [0.28.4] - 2026-05-27
 
@@ -189,6 +223,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **`markdown-lint.yml`: disable `relative-links` rule in CI** (hotfix): implementation plans intentionally reference smoke test runbooks that are created later in the workflow — those forward references caused CI failures for any downstream project with plans. `markdownlint-rule-relative-links` is removed from `.markdownlint-cli2.jsonc` (the CI/runner config); `.markdownlint.jsonc` retains the rule for editor integrations.
+
 ## [0.27.0] - 2026-05-19
 
 ### Added
@@ -889,7 +924,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.30.2...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.31.0...HEAD
+[0.31.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.30.2...v0.31.0
 [0.30.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.30.1...v0.30.2
 [0.30.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.30.0...v0.30.1
 [0.30.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.29.1...v0.30.0

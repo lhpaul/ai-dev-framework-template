@@ -8,6 +8,10 @@ For compatibility with the repo workflow, also follow:
 
 `docs/workflow/development-workflow/protocols/03-review-implementation-protocol.md`
 
+Resolve and report the implementation artifact owner before reviewing. In
+`workflow_hub`, product implementation PRs are reviewed in the selected product
+repository while hub-only workflow PRs remain hub-owned.
+
 If invoked as part of a reviewer loop, apply fixes, commit, and push until the review gate reaches approval or a real human decision is required.
 
 Locate the code to review using this priority:

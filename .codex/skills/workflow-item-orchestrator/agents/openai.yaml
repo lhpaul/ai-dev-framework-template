@@ -1,7 +1,7 @@
 interface:
   display_name: "Workflow Item Orchestrator"
   short_description: "Advance one workflow item until it reaches a terminal condition."
-  default_prompt: "Use $workflow-item-orchestrator to resume or advance one specific workflow item until it is waiting on a human, blocked, or escalated."
+  default_prompt: "Use $workflow-item-orchestrator to resume one workflow item until terminal. In workflow_hub mode, state selected product repository, artifact owner, and mutation target before implementation mutation."
 
 policy:
   allow_implicit_invocation: true

@@ -51,7 +51,7 @@ When using the full Haystack product:
 
 This can run **in parallel** with CodeRabbit/Greptile/Devin configured in `.ai-dev-workflow.yaml`; they address different layers (local commit hygiene vs. hosted PR review).
 
-**Native review platform**: `haystack triage` is also supported as a native automated review platform in `pr-review-loop.sh`. Declare `haystack` under `review.platforms` (or `review.phase_after_clean`) in `.ai-dev-workflow.yaml` to include Haystack triage in the Step 7 automated reviewer loop. See [`haystack-triage.md`](haystack-triage.md) for setup instructions, severity mapping, and troubleshooting.
+**Native review platform**: `haystack triage` is also supported as a native automated review platform in `pr-review-loop.sh`. Declare `haystack` under `review.on_ready.github` in `.ai-dev-workflow.yaml` to include Haystack triage in the Step 7 automated reviewer loop after draft reviewers clear. See [`haystack-triage.md`](haystack-triage.md) for setup instructions, severity mapping, and troubleshooting.
 
 ### Operating model
 
@@ -65,9 +65,11 @@ Use Haystack in three layers, each with a different failure mode:
 
 Prefer deterministic checks for rules that can be expressed mechanically. Keep `.haystack/pr-rules.yml` focused on judgement calls: shell control-flow risk, review-state freshness, unsafe API payload construction, and workflow-contract drift. When Haystack reports a non-blocking finding, record the disposition in the reviewer-loop summary instead of silently ignoring it.
 
+Mirror guidance is calibrated against the live repository surface map. For this template, the mirrored agent-doc surfaces are the files under `.claude/agents/` and `.cursor/agents/`, while `.cursor/skills/` is intentionally absent and must not be treated as a required mirror. Tool-specific front matter differences are advisory unless the shared workflow body really diverges.
+
 For repositories that open implementation PRs as drafts, configure Haystack in
-`review.phase_after_clean` instead of the draft phase. The reviewer loop will
-mark the PR ready before running after-clean platforms; Haystack triage may stay
+`review.on_ready.github` instead of the draft phase. The reviewer loop will
+mark the PR ready before running ready-phase platforms; Haystack triage may stay
 `pending` indefinitely while a PR remains draft.
 
 ### Hardening roadmap
@@ -78,6 +80,7 @@ Use small PRs when expanding this integration:
 2. Extend local hooks only for repo-wide contracts with low false-positive risk.
 3. Keep `haystack triage` visible in reviewer-loop summaries, especially `unavailable`, `pending_timeout`, and advisory-only outcomes.
 4. Add agent detection only for tools that the team actively uses. Cursor is not detected by the stock parsers today; those commits behave like human commits unless detection is extended.
+5. When refining mirror guidance, prefer semantic workflow-body checks over byte-for-byte matching and treat absent surfaces as out of scope unless the repo actually contains them.
 
 ---
 
@@ -117,7 +120,7 @@ After install, run `npm install` in `hooks/` only if the installer did not alrea
 | Concern | Default in this template | With Haystack hooks |
 | ------- | ------------------------ | ------------------- |
 | Open PRs | `gh pr create --draft` per protocol 03 | Optional `haystack submit` when team adopts Haystack PR flow |
-| Automated review | `review.platforms` in `.ai-dev-workflow.yaml` + protocol 93 | Unchanged; Haystack triage is separate unless you standardize on Haystack review |
+| Automated review | `review.on_draft.github` / `review.on_ready.github` in `.ai-dev-workflow.yaml` + protocol 93 | Unchanged; Haystack triage is separate unless you standardize on Haystack review |
 | Agent rules at commit | `AGENTS.md`, `REVIEW.md`, protocols | Additional `LLM_RULES.md` enforced on **agent** commits via pre-commit |
 | Truncation in agent code | Best practice in docs | Automated scan on staged paths matching `agent/`, `prompts/`, `pipeline/`, etc. |
 

@@ -45,3 +45,31 @@ If the agent does not have direct tracker access, it must ask the human to paste
 - **In Development (Full Pipeline)**: scan recent comments for post-plan scope changes. If anything conflicts with the spec or plan, stop and request an update before coding.
 - **In Development (Refactor)**: scan recent comments for post-plan scope changes. If anything conflicts with the plan, stop and request an update before coding. There is no spec for refactor items — the plan and work item brief are the authoritative sources.
 - **In Development (Fast Track)**: the work item description/comments can be the brief; confirm scope is bounded and stop if it expands beyond the brief.
+
+---
+
+## Release Stamping
+
+Release cleanup records which production version shipped each explicit issue via
+a provider-routed operation:
+
+```bash
+record_release_for_issue_best_effort <issue> <version>
+```
+
+The finalized `CHANGELOG.md` release section is the provider-independent source
+for which issues shipped. Cleanup helpers keep the issue list explicit with
+`--issue` or `--issues` so a release cannot accidentally stamp every item in a
+tracker status.
+
+| Provider | Release marker |
+| --- | --- |
+| `github_projects`, `github_issues` | GitHub Milestone named like `v1.2.0` |
+| `jira` | Fix Version/s, when a Jira integration implements the write path |
+| `linear` | Default label `release/v1.2.0`, or a configured custom field |
+| `clickup`, `notion` | Configured custom field, tag, or select property |
+| `none` | No-op |
+
+Release stamping is best effort. Unsupported or unavailable providers must log a
+clear warning/skip and continue with the rest of release cleanup. A stamp failure
+must not block the `Merged` -> `Released` status transition.

@@ -81,7 +81,7 @@ _skip_next=0
 for _arg in "$@"; do
   if [ "$_skip_next" -eq 1 ]; then _skip_next=0; continue; fi
   case "$_arg" in
-    --branch|--platform|--poll-interval|--max-wait) _skip_next=1 ;;
+    --branch|--platform|--poll-interval|--max-wait|--repo|--product-repo|--repo-root) _skip_next=1 ;;
     [0-9]*) _PR_ARG="$_arg"; break ;;
   esac
 done
@@ -172,7 +172,7 @@ _interruptible_sleep() {
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github,claude-code-action,copilot,haystack] [--phase-after-clean coderabbit] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--repo owner/repo|product-name] [--product-repo name] [--repo-root path] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github,claude-code-action,copilot,haystack] [--ready-phase haystack] [--phase-after-clean haystack] [--draft-github-only] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
        ./scripts/development-workflow/pr-review-loop.sh unlock <pr-number>
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
@@ -197,11 +197,9 @@ Subcommands:
     remove it manually with: rm -rf /tmp/pr-review-loop-<pr>.lockdir
 
 --post-final-summary:
-  Post the "Automated Reviewer Loop Summary" comment even when the result is
-  needs_fixes. Use this when the orchestrator has reached cycle >= max_cycles and
-  will not dispatch another fixer — i.e. the run is terminal regardless of the
-  script exit code. On clean and escalate exits the summary is always posted
-  (this flag has no additional effect for those exits).
+  Compatibility no-op. The script now posts or updates the
+  "Automated Reviewer Loop Summary" comment on every needs_fixes exit, not only
+  final/max-cycle exits. Existing callers may keep passing this flag.
 
 --compare:
   Run all configured platforms to completion regardless of individual verdicts
@@ -213,21 +211,30 @@ Subcommands:
   docs/workflow/retro-metrics-platforms.md. Intended for platform evaluation only —
   not for normal orchestration where early exit is desired.
 
+--ready-phase:
+  Mark one or more platforms as ready-phase reviewers that should run only after
+  draft-phase GitHub reviewers are clean and the PR has been converted with
+  gh pr ready. This does not override normal platform order; it emits
+  READY_PHASE_* key=value telemetry and compatibility PHASE_AFTER_CLEAN_* keys.
+  When omitted, the script reads review.on_ready.github from
+  .ai-dev-workflow.yaml when present.
+
 --phase-after-clean:
-  Mark one or more platforms as second-phase reviewers that should run only after
-  earlier platforms are clean. This does not override normal platform order; it
-  emits PHASE_AFTER_CLEAN_* key=value telemetry and annotates the summary so the
-  value of the second-phase reviewer can be measured. When omitted, the script
-  reads review.phase_after_clean from .ai-dev-workflow.yaml when present.
+  Deprecated compatibility alias for --ready-phase.
+
+--draft-github-only:
+  Run only review.on_draft.github reviewers. Use this for draft PR gates that
+  must clear draft-compatible GitHub reviewers before converting the PR to ready
+  and allowing ready-phase reviewers to run.
 
 --pre-after-clean-only:
-  Run only the configured platforms that are not listed in phase-after-clean.
-  Use this for draft PR gates that must clear all pre-after-clean reviewers before
-  converting the PR to non-draft and allowing after-clean reviewers to run.
+  Deprecated compatibility alias for --draft-github-only.
 
 Platform selection (in priority order):
   1. --platform flag(s) passed on the command line
-  2. review.platforms list in .ai-dev-workflow.yaml at the repo root
+  2. review.on_draft.github + review.on_ready.github in .ai-dev-workflow.yaml
+     at the repo root
+  3. Legacy review.platforms / review.phase_after_clean compatibility mapping
 
 Branch-type-aware default timeout:
   On spec/* and implementation-plan/* branches, Devin has no trigger condition and
@@ -265,13 +272,21 @@ Outputs stable key=value lines including:
   REASON=late_review_threads (when post-clean recheck finds new unresolved threads)
   COMPARE_MODE=1 (when --compare is active)
   COMPARE_VERDICT_<n>_PLATFORM / COMPARE_VERDICT_<n>_RESULT (when --compare is active)
+  DRAFT_GITHUB_ONLY=0|1
+  READY_PHASE_ENABLED=0|1
+  READY_PHASE_STARTED=0|1
+  READY_PHASE_PLATFORM_LIST=<comma-separated platforms>
+  READY_PHASE_FILTERED_OUT=<comma-separated platforms> (when configured ready-phase platforms are absent from this invocation)
+  READY_PHASE_GATE_RESULT=<result> (emitted only after the phase starts)
+  READY_PHASE_SKIP_REASON=<result> (emitted when the phase never starts)
+  READY_PHASE_NET_NEW_BLOCKER=0|1 (1 when a ready-phase platform blocks)
   PHASE_AFTER_CLEAN_ENABLED=0|1
   PHASE_AFTER_CLEAN_STARTED=0|1
   PHASE_AFTER_CLEAN_PLATFORM_LIST=<comma-separated platforms>
-  PHASE_AFTER_CLEAN_FILTERED_OUT=<comma-separated platforms> (when configured phase platforms are absent from this invocation)
+  PHASE_AFTER_CLEAN_FILTERED_OUT=<comma-separated platforms> (compatibility alias for READY_PHASE_FILTERED_OUT)
   PHASE_AFTER_CLEAN_GATE_RESULT=<result> (emitted only after the phase starts)
   PHASE_AFTER_CLEAN_SKIP_REASON=<result> (emitted when the phase never starts)
-  PHASE_AFTER_CLEAN_NET_NEW_BLOCKER=0|1 (1 when a second-phase platform blocks)
+  PHASE_AFTER_CLEAN_NET_NEW_BLOCKER=0|1 (compatibility alias for READY_PHASE_NET_NEW_BLOCKER)
   POST_CLEAN_RECHECK=0|1 (1 when the post-clean wait-and-recheck ran)
   LATE_THREADS_FOUND=<N> (count of newly-found unresolved threads; -1 on audit failure; 0 when POST_CLEAN_RECHECK=0)
 
@@ -311,6 +326,10 @@ append_phase_after_clean_platforms() {
     entry="$(trim "$entry")"
     [ -n "$entry" ] && phase_after_clean_platforms+=("$entry")
   done
+}
+
+append_ready_phase_platforms() {
+  append_phase_after_clean_platforms "$1"
 }
 
 array_contains_value() {
@@ -368,6 +387,29 @@ filter_phase_after_clean_platforms() {
   else
     phase_after_clean_filtered_out=""
   fi
+}
+
+emit_review_lifecycle_duplicate_warnings() {
+  local config_file="$1"
+  local duplicates
+  local duplicate
+
+  [ -f "$config_file" ] || return 0
+
+  duplicates="$(
+    {
+      workflow_config_review_on_draft_runner "$config_file"
+      workflow_config_review_on_draft_github "$config_file"
+      workflow_config_review_on_ready_github "$config_file"
+    } | sort | uniq -d
+  )" || return 0
+
+  while IFS= read -r duplicate; do
+    [ -z "$duplicate" ] && continue
+    printf 'WARN: review lifecycle config lists reviewer "%s" in more than one bucket; each reviewer should appear only once across on_draft.runner, on_draft.github, and on_ready.github.\n' "$duplicate" >&2
+  done <<_REVIEW_DUPLICATE_LINES_
+$duplicates
+_REVIEW_DUPLICATE_LINES_
 }
 
 kv_value() {
@@ -3323,6 +3365,7 @@ check_unresolved_threads() {
   #
   # A thread is considered resolved when:
   #   - isResolved=true (GitHub resolved it via the Resolve button / mutation), OR
+  #   - isOutdated=true (GitHub marked it stale after a newer commit), OR
   #   - the first comment body contains "✅ Addressed" (bot self-marked it resolved)
   #
   # Only threads whose first comment was authored by a configured bot login are counted.
@@ -3361,7 +3404,7 @@ check_unresolved_threads() {
   # GraphQL query: paginate reviewThreads 100 at a time, fetch first comment per thread.
   # Using inline query string to avoid heredoc quoting issues in subshells.
   local graphql_query
-  graphql_query='query($owner:String!,$repo:String!,$pr:Int!,$cursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor}nodes{id isResolved comments(first:1){nodes{author{login}body}}}}}}}'
+  graphql_query='query($owner:String!,$repo:String!,$pr:Int!,$cursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor}nodes{id isResolved isOutdated comments(first:1){nodes{author{login}body}}}}}}}'
 
   while [ "$has_next_page" = "true" ]; do
     page=$((page + 1))
@@ -3402,8 +3445,9 @@ check_unresolved_threads() {
     while IFS= read -r thread_json; do
       [ -z "${thread_json:-}" ] && continue
 
-      local is_resolved author body
+      local is_resolved is_outdated author body
       is_resolved="$(printf '%s\n' "$thread_json" | jq -r '.isResolved')"
+      is_outdated="$(printf '%s\n' "$thread_json" | jq -r '.isOutdated // false')"
       author="$(printf '%s\n' "$thread_json" | jq -r '.comments.nodes[0].author.login // ""')"
       body="$(printf '%s\n' "$thread_json" | jq -r '.comments.nodes[0].body // ""')"
 
@@ -3416,8 +3460,9 @@ check_unresolved_threads() {
       done
       [ "$is_bot" -eq 0 ] && continue
 
-      # Thread is resolved if isResolved=true (GitHub resolved) or body contains "✅ Addressed"
+      # Thread is resolved if isResolved=true, isOutdated=true, or body contains "✅ Addressed"
       if [ "$is_resolved" = "true" ]; then continue; fi
+      if [ "$is_outdated" = "true" ]; then continue; fi
       if printf '%s\n' "$body" | grep -q "✅ Addressed"; then continue; fi
 
       unresolved_count=$((unresolved_count + 1))
@@ -3479,28 +3524,32 @@ run_platform_review() {
   esac
 }
 
-ensure_pr_ready_for_after_clean() {
-  # After-clean platforms are intended to run only once draft-compatible
+ensure_pr_ready_for_ready_phase() {
+  # Ready-phase platforms are intended to run only once draft-compatible GitHub
   # reviewers have cleared. Some external reviewers, including Haystack triage,
   # do not reliably complete while the PR is still draft, so convert the PR to
-  # ready before dispatching the first after-clean platform.
+  # ready before dispatching the first ready-phase platform.
   local pr_number="$1"
   local is_draft
 
   if ! is_draft="$(gh pr view "$pr_number" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
-    echo "WARN: could not determine draft state for PR #$pr_number before after-clean phase" >&2
+    echo "WARN: could not determine draft state for PR #$pr_number before ready phase" >&2
     return 2
   fi
 
   if [ "$is_draft" = "true" ]; then
-    echo "INFO: converting PR #$pr_number to ready before after-clean reviewers" >&2
+    echo "INFO: converting PR #$pr_number to ready before ready-phase reviewers" >&2
     if ! gh pr ready "$pr_number" >/dev/null 2>&1; then
-      echo "WARN: failed to mark PR #$pr_number ready before after-clean phase" >&2
+      echo "WARN: failed to mark PR #$pr_number ready before ready phase" >&2
       return 2
     fi
   fi
 
   return 0
+}
+
+ensure_pr_ready_for_after_clean() {
+  ensure_pr_ready_for_ready_phase "$@"
 }
 
 # --- Compare-mode helpers ---
@@ -3895,6 +3944,8 @@ fi
 
 pr_number=""
 branch_name=""
+repo_selector=""
+repo_root="$(workflow_repo_root)"
 poll_interval=120
 poll_interval_explicit=0
 max_wait=1200
@@ -3902,34 +3953,73 @@ max_wait_explicit=0
 post_final_summary=0
 compare_mode=0
 pre_after_clean_only=0
+review_lifecycle_duplicate_warnings_emitted=0
 declare -a platforms=()
 declare -a phase_after_clean_platforms=()
 phase_after_clean_filtered_out=""
 
+require_option_value() {
+  local option="$1"
+  if [ "$#" -lt 2 ] || [ -z "${2:-}" ]; then
+    echo "$option requires a value." >&2
+    usage >&2
+    exit 64
+  fi
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --branch)
+      require_option_value "$@"
       branch_name="$2"
       shift 2
       ;;
+    --repo)
+      require_option_value "$@"
+      repo_selector="$2"
+      shift 2
+      ;;
+    --product-repo)
+      require_option_value "$@"
+      repo_selector="$2"
+      shift 2
+      ;;
+    --repo-root)
+      require_option_value "$@"
+      repo_root="$2"
+      shift 2
+      ;;
     --platform)
+      require_option_value "$@"
       append_platforms "$2"
       shift 2
       ;;
     --phase-after-clean)
+      require_option_value "$@"
       append_phase_after_clean_platforms "$2"
       shift 2
+      ;;
+    --ready-phase)
+      require_option_value "$@"
+      append_ready_phase_platforms "$2"
+      shift 2
+      ;;
+    --draft-github-only)
+      pre_after_clean_only=1
+      shift
       ;;
     --pre-after-clean-only)
       pre_after_clean_only=1
       shift
       ;;
     --poll-interval)
+      require_option_value "$@"
       poll_interval="$2"
       poll_interval_explicit=1
       shift 2
       ;;
     --max-wait)
+      require_option_value "$@"
       max_wait="$2"
       max_wait_explicit=1
       shift 2
@@ -3966,6 +4056,22 @@ if [ -z "$pr_number" ]; then
   exit 64
 fi
 
+if [ -n "$repo_selector" ]; then
+  if workflow_is_valid_github_repo_slug "$repo_selector"; then
+    target_github_repo="$repo_selector"
+  else
+    repo_context="$(workflow_repository_context "$repo_selector" "$repo_root")"
+    target_github_repo="$(workflow_github_repo_from_context "$repo_context")"
+  fi
+  if [ -z "$target_github_repo" ]; then
+    echo "ERROR: could not resolve GitHub repository for PR review loop; pass --repo owner/repo or --product-repo <name>." >&2
+    exit 64
+  fi
+  export WORKFLOW_TARGET_GITHUB_REPO="$target_github_repo"
+  export GH_REPO="$target_github_repo"
+  print_kv REPO "$target_github_repo"
+fi
+
 if [ "${#platforms[@]}" -eq 0 ]; then
   # Resolve config from the PR's target branch so platform coverage is
   # consistent regardless of the operator's local checkout state (#756).
@@ -3995,6 +4101,10 @@ if [ "${#platforms[@]}" -eq 0 ]; then
   fi
   config_file="${_PR_CONFIG_TMPFILE:-$(workflow_config_file)}"
   if [ -f "$config_file" ]; then
+    if [ "$review_lifecycle_duplicate_warnings_emitted" -eq 0 ]; then
+      emit_review_lifecycle_duplicate_warnings "$config_file"
+      review_lifecycle_duplicate_warnings_emitted=1
+    fi
     while IFS= read -r line; do
       line="$(trim "$line")"
       [ -n "$line" ] && platforms+=("$line")
@@ -4005,6 +4115,10 @@ fi
 if [ "${#phase_after_clean_platforms[@]}" -eq 0 ]; then
   config_file="${config_file:-$(workflow_config_file)}"
   if [ -f "$config_file" ]; then
+    if [ "$review_lifecycle_duplicate_warnings_emitted" -eq 0 ]; then
+      emit_review_lifecycle_duplicate_warnings "$config_file"
+      review_lifecycle_duplicate_warnings_emitted=1
+    fi
     while IFS= read -r line; do
       line="$(trim "$line")"
       [ -n "$line" ] && phase_after_clean_platforms+=("$line")
@@ -4025,10 +4139,13 @@ fi
 
 if [ "${#platforms[@]}" -gt 0 ]; then
   require_gh
-  cd_workflow_repo_root
+  cd "$repo_root" || exit 1
 
   if [ -z "$branch_name" ]; then
-    branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"
+    if ! branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"; then
+      echo "ERROR: could not resolve PR #$pr_number head branch." >&2
+      exit 1
+    fi
   fi
 fi
 
@@ -4146,10 +4263,16 @@ print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
 print_kv PLATFORM_COUNT "${#platforms[@]}"
 # So callers can verify config was respected (e.g. no greptile when only devin is in .ai-dev-workflow.yaml)
 print_kv PLATFORM_LIST "$(IFS=,; printf '%s' "${platforms[*]}")"
+print_kv DRAFT_GITHUB_ONLY "$pre_after_clean_only"
 print_kv PRE_AFTER_CLEAN_ONLY "$pre_after_clean_only"
+print_kv READY_PHASE_ENABLED "$phase_after_clean_enabled"
 print_kv PHASE_AFTER_CLEAN_ENABLED "$phase_after_clean_enabled"
 [ -n "$phase_after_clean_filtered_out" ] && \
+  print_kv READY_PHASE_FILTERED_OUT "$phase_after_clean_filtered_out"
+[ -n "$phase_after_clean_filtered_out" ] && \
   print_kv PHASE_AFTER_CLEAN_FILTERED_OUT "$phase_after_clean_filtered_out"
+[ "$phase_after_clean_enabled" -eq 1 ] && \
+  print_kv READY_PHASE_PLATFORM_LIST "$(IFS=,; printf '%s' "${phase_after_clean_platforms[*]}")"
 [ "$phase_after_clean_enabled" -eq 1 ] && \
   print_kv PHASE_AFTER_CLEAN_PLATFORM_LIST "$(IFS=,; printf '%s' "${phase_after_clean_platforms[*]}")"
 print_kv CHANGED_FILES_COUNT "${changed_files_count:--1}"
@@ -4164,7 +4287,7 @@ for index in "${!platforms[@]}"; do
       && is_phase_after_clean_platform "$platform_name"; then
     if [ "$compare_mode" -eq 0 ] || [ -z "$compare_first_blocking_result" ]; then
       set +e
-      ensure_pr_ready_for_after_clean "$pr_number"
+      ensure_pr_ready_for_ready_phase "$pr_number"
       ready_status=$?
       set -e
       if [ "$ready_status" -ne 0 ]; then
@@ -4348,11 +4471,9 @@ done
 # hasReviewSummary check is satisfied automatically. The comment body matches
 # the regex used by workflow-next-action.sh and Protocol 90 Step 5.1:
 #   "Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"
-# Post on `clean` and `escalate` exits unconditionally. For `needs_fixes` exits,
-# post only when --post-final-summary is set — i.e. when the orchestrator has
-# determined this is the terminal run (cycle >= max_cycles) and will not dispatch
-# another fixer regardless of the exit code. Posting on every `needs_fixes` exit
-# would create duplicate comments per fix cycle.
+# Post on `clean`, `escalate`, and `needs_fixes` exits. The summary comment is
+# updated in place, so posting on fixable `needs_fixes` cycles does not create
+# duplicates and prevents stale clean summaries from masking active findings.
 # `skipped` exits (no platforms configured) also do not post per protocol spec.
 _post_review_summary() {
   local result="$1"
@@ -4383,13 +4504,13 @@ _post_review_summary() {
       fi
       ;;
     needs_fixes)
-      result_line="max cycles reached — ${blocking} blocking finding(s) unresolved"
+      result_line="${blocking} blocking finding(s) require fixes"
       ;;
     escalate)
       result_line="escalated (${reason:-unknown})"
       ;;
     skipped)
-      result_line="skipped — no platforms configured in review.platforms"
+      result_line="skipped — no GitHub reviewers configured in review.on_draft.github or review.on_ready.github"
       ;;
     *)
       result_line="$result"
@@ -4507,22 +4628,22 @@ Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs afte
   local phase_section=""
   if [ "$phase_enabled" -eq 1 ]; then
     local _phase_value_line
-    local _phase_subject="${phase_platform_list:-after-clean reviewer}"
+    local _phase_subject="${phase_platform_list:-ready-phase reviewer}"
     if [ "$phase_started" -eq 1 ]; then
       if [ "$phase_net_new_blocker" -eq 1 ]; then
-        _phase_value_line="${_phase_subject} found a net-new blocker after the clean gate (${phase_blocking_platform:-unknown})."
+        _phase_value_line="${_phase_subject} found a net-new blocker after the draft GitHub gate (${phase_blocking_platform:-unknown})."
       else
-        _phase_value_line="No net-new blocker was found after the PR-Agent-clean gate."
+        _phase_value_line="No net-new blocker was found after the draft GitHub gate."
       fi
     elif [ "$pre_after_clean_only_mode" -eq 1 ]; then
-      _phase_value_line="After-clean phase was not run — invoked in pre-after-clean-only mode."
+      _phase_value_line="Ready phase was not run — invoked in draft-GitHub-only mode."
     else
-      _phase_value_line="After-clean phase was not reached because an earlier platform did not exit clean."
+      _phase_value_line="Ready phase was not reached because an earlier draft GitHub reviewer did not exit clean."
     fi
     phase_section="
 
-**After-clean reviewer phase:** ${_phase_value_line}
-**After-clean platforms:** ${phase_platform_list:-none}"
+**Ready reviewer phase:** ${_phase_value_line}
+**Ready-phase platforms:** ${phase_platform_list:-none}"
   fi
 
   local policy_status_section=""
@@ -4530,7 +4651,7 @@ Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs afte
       && [ "${#platform_policy_status_notes[@]}" -gt 0 ]; then
     local _policy_status_note
     policy_status_section="
-**Review policy status:**"
+**Policy acknowledgements:**"
     for _policy_status_note in "${platform_policy_status_notes[@]}"; do
       policy_status_section="${policy_status_section}
 - ${_policy_status_note}"
@@ -4817,13 +4938,19 @@ if [ "$phase_after_clean_enabled" -eq 1 ] && [ "$phase_after_clean_started" -eq 
   phase_after_clean_skip_reason="$aggregate_result"
 fi
 print_kv PHASE_AFTER_CLEAN_STARTED "$phase_after_clean_started"
+print_kv READY_PHASE_STARTED "$phase_after_clean_started"
 if [ "$phase_after_clean_enabled" -eq 1 ]; then
   if [ "$phase_after_clean_started" -eq 1 ]; then
+    print_kv READY_PHASE_GATE_RESULT "$phase_after_clean_gate_result"
     print_kv PHASE_AFTER_CLEAN_GATE_RESULT "$phase_after_clean_gate_result"
   else
+    print_kv READY_PHASE_SKIP_REASON "$phase_after_clean_skip_reason"
     print_kv PHASE_AFTER_CLEAN_SKIP_REASON "$phase_after_clean_skip_reason"
   fi
+  print_kv READY_PHASE_NET_NEW_BLOCKER "$phase_after_clean_net_new_blocker"
   print_kv PHASE_AFTER_CLEAN_NET_NEW_BLOCKER "$phase_after_clean_net_new_blocker"
+  [ -n "$phase_after_clean_blocking_platform" ] && \
+    print_kv READY_PHASE_BLOCKING_PLATFORM "$phase_after_clean_blocking_platform"
   [ -n "$phase_after_clean_blocking_platform" ] && \
     print_kv PHASE_AFTER_CLEAN_BLOCKING_PLATFORM "$phase_after_clean_blocking_platform"
 fi
@@ -4884,6 +5011,10 @@ if [ "${#platform_result_tokens[@]}" -gt 0 ]; then
 fi
 [ -z "$_summary_platform_list" ] && _summary_platform_list="none"
 
+# Compatibility flag retained for older orchestrators; summaries now post on
+# every needs_fixes exit regardless of this value.
+: "$post_final_summary"
+
 case "$aggregate_result" in
   clean)
     _post_review_summary "$aggregate_result" "$aggregate_reason" \
@@ -4900,16 +5031,14 @@ case "$aggregate_result" in
     exit 0
     ;;
   needs_fixes)
-    if [ "$post_final_summary" -eq 1 ]; then
-      _post_review_summary "$aggregate_result" "$aggregate_reason" \
-        "$_summary_platform_list" \
-        "$total_blocking_count" "$total_suggestion_count" \
-        "$aggregate_advisory_labels" \
-        "$aggregate_possible_issue_eval_outcome" \
-        "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
-        "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
-        "$phase_after_clean_blocking_platform" "$pre_after_clean_only"
-    fi
+    _post_review_summary "$aggregate_result" "$aggregate_reason" \
+      "$_summary_platform_list" \
+      "$total_blocking_count" "$total_suggestion_count" \
+      "$aggregate_advisory_labels" \
+      "$aggregate_possible_issue_eval_outcome" \
+      "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
+      "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
+      "$phase_after_clean_blocking_platform" "$pre_after_clean_only"
     exit 1
     ;;
   needs_rerun)

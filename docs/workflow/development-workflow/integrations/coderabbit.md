@@ -42,7 +42,7 @@ The `.coderabbit.yaml` at the repo root ships with `auto_review.enabled: false` 
 To enable CodeRabbit as a Step 7 automated PR reviewer platform:
 
 1. Set `reviews.auto_review.enabled: true` in `.coderabbit.yaml`
-2. Add `coderabbit` to `review.platforms` in `.ai-dev-workflow.yaml`
+2. Add `coderabbit` to `review.on_draft.github` or `review.on_ready.github` in `.ai-dev-workflow.yaml`
 3. Install the CodeRabbit GitHub App on the repository
 
 ---
@@ -53,13 +53,14 @@ CodeRabbit can act as a Step 7a internal reviewer, running on a draft PR before 
 
 ### Configuration
 
-Add `coderabbit` to `review.internal_reviewers` in `.ai-dev-workflow.yaml`:
+Add `coderabbit` to `review.on_draft.runner` in `.ai-dev-workflow.yaml`:
 
 ```yaml
 review:
-  internal_reviewers:
-    - claude
-    - coderabbit
+  on_draft:
+    runner:
+      - claude
+      - coderabbit
 ```
 
 All reviewers in the list must APPROVE before `gh pr ready` is called. Reviewers run sequentially in the listed order.
@@ -104,7 +105,7 @@ If either check fails, `coderabbit` is classified as `unreachable`. The configur
 | `coderabbit` classified as `unreachable` — warning comment posted       | CodeRabbit GitHub App is not installed on the repository                 | Install the CodeRabbit GitHub App at [coderabbit.ai](https://www.coderabbit.ai) and verify it has access to the repository                                                               |
 | `coderabbit` classified as `unreachable` — `auto_review.enabled: false` | `.coderabbit.yaml` has auto-review disabled                              | Set `reviews.auto_review.enabled: true` in `.coderabbit.yaml`                                                                                                                            |
 | `coderabbit` classified as `unreachable` — draft PRs not enabled        | CodeRabbit App configuration or `.coderabbit.yaml` filters out draft PRs | Confirm the CodeRabbit App settings permit draft PR reviews and that `.coderabbit.yaml` does not restrict to non-draft only                                                              |
-| All Step 7a reviewers unreachable — hard-fail                           | No reachable internal reviewers available                                | Run Step 7a from a context where at least one reviewer is reachable, or temporarily override `review.internal_reviewers` via `.tmp/template-config.json` to remove unreachable reviewers |
+| All Step 7a reviewers unreachable — hard-fail                           | No reachable runner reviewers available                                  | Run Step 7a from a context where at least one reviewer is reachable, or temporarily override `review.on_draft.runner` via `.tmp/template-config.json` to remove unreachable reviewers |
 | CodeRabbit does not post a review after push                            | App installed but auto-review trigger not firing                         | Push a new commit to the draft PR, confirm the App is active, and check the CodeRabbit dashboard for any rate limiting or quota issues                                                   |
 
 ---
@@ -127,8 +128,9 @@ reviews:
 
 ```yaml
 review:
-  platforms:
-    - coderabbit
+  on_draft:
+    github:
+      - coderabbit
 ```
 
 ### 4. Verify Auto-Review Is Active

@@ -52,12 +52,26 @@ Diff-based guard for newly added lines in `scripts/development-workflow/**/*.sh`
 
 - **SH001** - Critical command failure suppression: detects added lines that run
   `gh`, `git`, `curl`, or `haystack` and suppress failures with `|| true`.
+- **SH002** - Command substitution masking in `local` / `declare` / `export`:
+  flags shell assignments that can hide a failed command substitution.
+- **SH003** - Unguarded `jq -r` assignment: flags control-flow assignments that
+  read from `jq -r` without `-e` or an explicit exit-code guard.
+- **SH004** - Unanchored branch-prefix grep: flags workflow grep checks that
+  can match substrings such as `hotfix/` instead of a true branch prefix.
+- **SH005** - Bash 4 associative arrays: flags `local -A` and `declare -A` in
+  workflow scripts because the repo supports macOS bash 3.2.
 
 Use explicit control flow instead of blanket suppression. If a best-effort
 failure is intentional, keep the suppression local and add a rationale:
 
 ```bash
 git fetch origin "$base" 2>/dev/null || true # workflow-shell-guard: allow SH001 - best effort cache refresh
+```
+
+Rule-specific suppressions use the same shape:
+
+```bash
+RESULT=$(jq -r '.state' <<< "$payload") # workflow-shell-guard: allow SH003 - caller checks the exit code elsewhere
 ```
 
 **Usage:**

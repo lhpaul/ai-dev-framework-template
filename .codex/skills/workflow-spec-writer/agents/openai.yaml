@@ -1,7 +1,7 @@
 interface:
   display_name: "Workflow Spec Writer"
   short_description: "Draft a feature spec for the workflow."
-  default_prompt: "Use $workflow-spec-writer to draft the next feature spec from the current product brief."
+  default_prompt: "Use $workflow-spec-writer to draft the next feature spec from the current product brief, resolving repository mode and keeping workflow_hub specs hub-owned."
 
 policy:
   allow_implicit_invocation: true

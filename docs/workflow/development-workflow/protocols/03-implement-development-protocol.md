@@ -436,6 +436,15 @@ Extract from your reading:
 
 Complete this checklist **before writing any code**. It takes 5–10 minutes and prevents review round-trips caused by missed files, scope drift, or inconsistencies with related protocols.
 
+**Repository mode pre-mutation check**: Resolve repository mode before file
+edits, branch creation, commits, or implementation PR creation. Missing mode or
+explicit `single_repo` keeps the current repository as the mutation target and
+does not require `--repo`. In `workflow_hub`, state the selected product
+repository, local path or remote identity, hub-owned tracker/spec/plan context,
+and product mutation target before changing files. If the selected product
+repository is missing or ambiguous for product-owned implementation work, stop
+before mutation.
+
 1. **Enumerate all files** that need changes. List every file path explicitly.
 2. **For each file**, describe the specific changes needed (e.g., "add section X", "update step Y to handle case Z").
 3. **Verify scope**: confirm all listed changes are within the issue's stated scope. Remove anything that is not.
@@ -544,10 +553,12 @@ if [ -n "$CHANGED_SH" ]; then
   echo "Running ShellCheck on modified .sh files..."
   # shellcheck disable=SC2086
   shellcheck --severity=warning $CHANGED_SH
+  echo "Running workflow shell guard on modified .sh files..."
+  python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop
 fi
 ```
 
-Fix all ShellCheck warnings before committing. Do not commit `.sh` files with ShellCheck violations — they will fail the CI `shellcheck.yml` check and trigger unnecessary review-loop churn. Workflow scripts must also be bash 3.2 compatible (macOS ships bash 3.2 by default); do not use `local -A`, `declare -A`, or other bash 4+-only syntax — use parallel indexed arrays instead (e.g., `local -a keys; local -a vals`). ShellCheck does not warn on this by default when the shebang is `#!/usr/bin/env bash`.
+Fix all ShellCheck warnings before committing. Do not commit `.sh` files with ShellCheck violations — they will fail the CI `shellcheck.yml` check and trigger unnecessary review-loop churn. Workflow scripts must also be bash 3.2 compatible (macOS ships bash 3.2 by default); do not use `local -A`, `declare -A`, or other bash 4+-only syntax — use parallel indexed arrays instead (e.g., `local -a keys; local -a vals`). ShellCheck does not warn on this by default when the shebang is `#!/usr/bin/env bash`. Run the workflow shell guard as well; it catches added-line problems that ShellCheck misses.
 
 ```bash
 # Build — must succeed
@@ -879,14 +890,16 @@ git checkout -b refactor/[branch-slug]
 
    ```bash
    CHANGED_SH=$({ git diff --name-only --diff-filter=d; git ls-files --others --exclude-standard; } | grep '\.sh$' | sort -u || true)
-   if [ -n "$CHANGED_SH" ]; then
-     echo "Running ShellCheck on modified .sh files..."
-     # shellcheck disable=SC2086
-     shellcheck --severity=warning $CHANGED_SH
-   fi
-   ```
+if [ -n "$CHANGED_SH" ]; then
+  echo "Running ShellCheck on modified .sh files..."
+  # shellcheck disable=SC2086
+  shellcheck --severity=warning $CHANGED_SH
+  echo "Running workflow shell guard on modified .sh files..."
+  python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop
+fi
+```
 
-   Fix all ShellCheck warnings before committing. Workflow scripts must also be bash 3.2 compatible (macOS ships bash 3.2 by default); do not use `local -A`, `declare -A`, or other bash 4+-only syntax — use parallel indexed arrays instead (e.g., `local -a keys; local -a vals`). ShellCheck does not warn on this by default when the shebang is `#!/usr/bin/env bash`.
+Fix all ShellCheck warnings before committing. Workflow scripts must also be bash 3.2 compatible (macOS ships bash 3.2 by default); do not use `local -A`, `declare -A`, or other bash 4+-only syntax — use parallel indexed arrays instead (e.g., `local -a keys; local -a vals`). ShellCheck does not warn on this by default when the shebang is `#!/usr/bin/env bash`. Run the workflow shell guard as well; it catches added-line problems that ShellCheck misses.
 
 6. Update CHANGELOG under `[Unreleased]` with a `Changed` entry (skip if this refactor adjusts unreleased work that already has an entry — update the existing entry instead, or leave it unchanged if it already describes the correct behavior).
 
@@ -1094,10 +1107,12 @@ if [ -n "$CHANGED_SH" ]; then
   echo "Running ShellCheck on modified .sh files..."
   # shellcheck disable=SC2086
   shellcheck --severity=warning $CHANGED_SH
+  echo "Running workflow shell guard on modified .sh files..."
+  python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop
 fi
 ```
 
-Fix all ShellCheck warnings before committing. Do not commit `.sh` files with ShellCheck violations — they will fail the CI `shellcheck.yml` check and trigger unnecessary review-loop churn. Workflow scripts must also be bash 3.2 compatible (macOS ships bash 3.2 by default); do not use `local -A`, `declare -A`, or other bash 4+-only syntax — use parallel indexed arrays instead (e.g., `local -a keys; local -a vals`). ShellCheck does not warn on this by default when the shebang is `#!/usr/bin/env bash`.
+Fix all ShellCheck warnings before committing. Do not commit `.sh` files with ShellCheck violations — they will fail the CI `shellcheck.yml` check and trigger unnecessary review-loop churn. Workflow scripts must also be bash 3.2 compatible (macOS ships bash 3.2 by default); do not use `local -A`, `declare -A`, or other bash 4+-only syntax — use parallel indexed arrays instead (e.g., `local -a keys; local -a vals`). ShellCheck does not warn on this by default when the shebang is `#!/usr/bin/env bash`. Run the workflow shell guard as well; it catches added-line problems that ShellCheck misses.
 
 ### Step 6: Update CHANGELOG
 
@@ -1334,10 +1349,12 @@ if [ -n "$CHANGED_SH" ]; then
   echo "Running ShellCheck on modified .sh files..."
   # shellcheck disable=SC2086
   shellcheck --severity=warning $CHANGED_SH
+  echo "Running workflow shell guard on modified .sh files..."
+  python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop
 fi
 ```
 
-Fix all ShellCheck warnings before committing. Do not commit `.sh` files with ShellCheck violations — they will fail the CI `shellcheck.yml` check and trigger unnecessary review-loop churn. Workflow scripts must also be bash 3.2 compatible (macOS ships bash 3.2 by default); do not use `local -A`, `declare -A`, or other bash 4+-only syntax — use parallel indexed arrays instead (e.g., `local -a keys; local -a vals`). ShellCheck does not warn on this by default when the shebang is `#!/usr/bin/env bash`.
+Fix all ShellCheck warnings before committing. Do not commit `.sh` files with ShellCheck violations — they will fail the CI `shellcheck.yml` check and trigger unnecessary review-loop churn. Workflow scripts must also be bash 3.2 compatible (macOS ships bash 3.2 by default); do not use `local -A`, `declare -A`, or other bash 4+-only syntax — use parallel indexed arrays instead (e.g., `local -a keys; local -a vals`). ShellCheck does not warn on this by default when the shebang is `#!/usr/bin/env bash`. Run the workflow shell guard as well; it catches added-line problems that ShellCheck misses.
 
 ### Step 6: Update CHANGELOG
 
@@ -1491,7 +1508,7 @@ echo "Post-create assertion passed: backport PR base is '$ACTUAL_BASE'"
 
 **Backport PR readiness steps (mandatory — mirrors the main hotfix PR path)**:
 
-**Haystack "Rules violation" false positive on backport PRs**: When Haystack is configured in `review.platforms`, it may flag a `Rules violation` finding on the backport PR related to CHANGELOG structure. This is a known false positive: the diff of the backport branch against `develop` shows an empty `[Unreleased]` section (from `main`'s CHANGELOG), which Haystack misidentifies as a structure violation. As of v0.29.2, `haystack-reviewer.sh` classifies `Rules violation` as advisory (non-blocking), so this finding will not block the reviewer loop. If you see it reported as a suggestion, verify that `develop`'s `[Unreleased]` section is also empty or equivalent, confirming the merged result will be structurally correct. See [`haystack-triage.md`](../integrations/haystack-triage.md) for details.
+**Haystack "Rules violation" false positive on backport PRs**: When Haystack is configured in `review.on_ready.github`, it may flag a `Rules violation` finding on the backport PR related to CHANGELOG structure. This is a known false positive: the diff of the backport branch against `develop` shows an empty `[Unreleased]` section (from `main`'s CHANGELOG), which Haystack misidentifies as a structure violation. As of v0.29.2, `haystack-reviewer.sh` classifies `Rules violation` as advisory (non-blocking), so this finding will not block the reviewer loop. If you see it reported as a suggestion, verify that `develop`'s `[Unreleased]` section is also empty or equivalent, confirming the merged result will be structurally correct. See [`haystack-triage.md`](../integrations/haystack-triage.md) for details.
 
 Regardless of whether the backport is an identical cherry-pick or introduces conflict-resolution changes, the following steps are required before the human merges:
 

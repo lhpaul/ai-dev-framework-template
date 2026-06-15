@@ -8,6 +8,14 @@ Follow the implementation plan generation protocol exactly as defined in:
 
 `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md`
 
+## Repository Mode Context
+
+Resolve repository mode and artifact owner before writing a plan. Missing mode
+or `single_repo` means the current repository owns the plan. In `workflow_hub`,
+plans and plan PRs are hub-owned unless a future protocol explicitly changes
+that. In `product_repo`, report the configured hub owner or stop if ownership is
+ambiguous.
+
 That document is the single source of truth for this stage. Always read the approved spec (or the work item brief for Refactor items) and relevant codebase sections before proposing an approach. Once ambiguity is resolved, continue through reviewer gate, PR creation, and PR readiness unless the protocol requires human input.
 
 Before any other step, run the Step 0 Template-Fit Check: read `.ai-dev-workflow.yaml` and if `template.is_template` is `true`, evaluate whether the spec is generic enough for a framework template. If the spec references a framework-specific language or runtime not used by the template's own toolchain (e.g., React, Rails, Django), surface the structured warning from Step 0 of the protocol and halt until the human responds with one of the three options (confirm generic, narrow scope, or cancel). Do not write any plan content while this check is pending.
@@ -20,7 +28,7 @@ Before finalizing Step 3, also check whether the plan introduces or modifies a c
 
 When the spec language implies pattern-based completeness, follow protocol 02's live-search vs spec-frozen enumeration rules and include a reproducible Verification Log.
 
-Before committing in Step 5, run the cross-section consistency self-check defined in protocol 02 Step 5.5. Check every item that appears more than once across plan sections: function/method names, constant names, decision index labels, file paths, directory names, and route/URL structures. Fix all inconsistencies before proceeding to the lint check — contradictions between sections (e.g., a file path described one way in "Files to modify" and a different way in "Implementation Order") cause avoidable implementation review passes.
+Before committing in Step 5, run the cross-section consistency self-check and Document Quality Gate defined in protocol 02. Check every item that appears more than once across plan sections: function/method names, constant names, decision index labels, file paths, directory names, and route/URL structures. Fix all inconsistencies before proceeding to the lint check, and include the Document Quality Gate log in the draft PR description.
 
 Before updating tracker status as part of a standalone plan completion sequence, call `ensure_on_project_board <issue_number> "Writing Plan"` (from `scripts/development-workflow/workflow-lib.sh`) to register the issue on the project board if it is not already present.
 

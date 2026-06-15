@@ -9,6 +9,14 @@ Follow the batch orchestration protocol exactly as defined in:
 
 `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
 
+## Repository Mode Context
+
+For `workflow_hub` implementation work, include workflow mode, artifact owner,
+selected product repository, local path or remote identity, and mutation target
+in each Work Item Runner handoff. Missing or ambiguous product repository
+context blocks mutation-oriented dispatch. Missing mode or `single_repo` keeps
+current behavior and does not require `--repo`.
+
 ## Tracker Classification
 
 When `issue_tracker.provider: github_projects` is configured, the GitHub

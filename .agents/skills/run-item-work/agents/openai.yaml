@@ -1,7 +1,7 @@
 interface:
   display_name: "Run item work"
   short_description: "Advance one workflow item until a terminal condition."
-  default_prompt: "Use $run-item-work to resume or advance the specific workflow item, branch, or PR I provide."
+  default_prompt: "Use $run-item-work to resume the specific workflow item, branch, or PR. In workflow_hub mode, state selected product repository and mutation target before implementation mutation."
 
 policy:
   allow_implicit_invocation: false

@@ -527,6 +527,40 @@ item is dispatched. The ordering among multiple tool-fix items follows the stand
 order — due date within 2 weeks (earliest first), then priority (Urgent → High → Normal → Low),
 then creation date (earliest first) — mirroring the Step 2 priority rules.
 
+#### Foundational reviewer-tool merge ordering
+
+Dispatch serialization alone is not enough when one tool-fix repairs reviewer-loop or
+reviewer-action behavior that another same-batch tool-fix needs in order to trust its own
+reviewer loop.
+
+A **foundational reviewer-tool fix** is a tool-fix item that repairs behavior in a reviewer
+loop, reviewer adapter, review-action workflow, reviewer summary guard, reviewer status check,
+or related protocol that another same-batch tool-fix will invoke while proving readiness.
+
+A **dependent reviewer-tool fix** is a tool-fix item whose own reviewer loop, CI/review
+readiness proof, or prior escalation depends on the foundational fix being present on the
+target base branch.
+
+When a foundational/dependent relationship is detected:
+
+1. Dispatch the foundational item first and hold dependent tool-fix items.
+2. Do not trust a dependent item's reviewer-loop result until the foundational PR has merged
+   to the dependent item's target base branch.
+3. After the foundational PR merges, update each dependent branch or PR from the target base
+   before rerunning reviewer loop and CI.
+4. Treat any dependent reviewer-loop escalation that happened before the foundational merge as
+   stale until a fresh post-update reviewer loop runs.
+5. Only mark the dependent item ready after the post-update reviewer loop and CI are clean, or
+   escalate if fresh post-update findings remain.
+
+The batch summary must list the foundational item, each held dependent item, the merge-ordering
+reason, any stale pre-merge escalation being re-evaluated, and the exact resume condition
+(for example, `held — merge PR #N, update from develop, rerun reviewer loop and CI`).
+
+This guidance changes sequencing only. The orchestrator must not merge any foundational or
+dependent PR autonomously; every PR merge still requires human approval under the repository's
+normal merge rules.
+
 **Already-waiting tool-fix**: If the tool-fix item is already `ready-for-human-review`, `Spec in
 Review`, or `Plan in Review` (already waiting for merge) before batch dispatch, the orchestrator
 reports it as a "pending tool-fix" blocker for the consumer items and holds those items without
@@ -639,6 +673,19 @@ If an `integration-branch:<slug>` label is found:
    Log: `INFO: created integration branch develop-<slug> from origin/develop for epic sub-item #<issue-number>.`
 
 4. **Pass the base branch override to the Work Item Runner handoff**: include `BASE_BRANCH=develop-<slug>` in the handoff metadata so the Work Item Runner and stage agents open PRs against `develop-<slug>` instead of `develop`.
+
+### Repository-mode handoff context
+
+Before dispatching implementation work, resolve repository mode using the shared
+repository-context helpers. In `single_repo`, the current repository remains the
+artifact owner and no product repository selector is required. In `workflow_hub`,
+specs, plans, tracker updates, and hub-only workflow changes stay hub-owned; a
+product-code implementation handoff must include workflow mode, artifact owner,
+selected product repository name, local path or remote identity when available,
+and mutation target. If product repository context is missing or ambiguous, stop
+before dispatching mutation-oriented work. Do not let command wrappers invent
+their own selection rules; pass context through to `workflow-next-action.sh`,
+`workflow-batch-plan.sh`, reviewer-loop scripts, and cleanup helpers.
 
 ---
 
@@ -1276,7 +1323,7 @@ For each PR identified in the detection step:
 
 Skip Step 5.3 entirely when any of the following is true:
 
-- CodeRabbit is not listed in `review.platforms` in `.ai-dev-workflow.yaml` — there is no CodeRabbit to re-trigger.
+- CodeRabbit is not listed in `review.on_draft.github` or `review.on_ready.github` in `.ai-dev-workflow.yaml` — there is no CodeRabbit to re-trigger.
 - The batch contained only a single PR — rate-limit budget exhaustion across a batch requires multiple concurrent PRs.
 - No PR in the batch has a `skipped (no_review)` CodeRabbit signal in its reviewer loop summary — all PRs received a full or status-fallback review.
 
