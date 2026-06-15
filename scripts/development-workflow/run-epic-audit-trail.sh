@@ -23,7 +23,9 @@ EOF
 }
 
 command="${1:-}"
-[ "$#" -gt 0 ] && shift || true
+if [ "$#" -gt 0 ]; then
+  shift
+fi
 input_file=""
 pr_number=""
 epic_number=""

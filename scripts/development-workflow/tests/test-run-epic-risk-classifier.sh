@@ -188,6 +188,17 @@ test_script_fixture="$(write_fixture test-script '{
 test_script_output="$(classify_fixture "$test_script_fixture" low)"
 run_test "classifies_workflow_test_script_low" "low" "$(printf '%s\n' "$test_script_output" | jq -r '.risk')"
 
+boundary_fixture="$(write_fixture boundary-risk '{
+  "pr_number": 1,
+  "merge_state": "CLEAN",
+  "labels": ["ready-for-human-review"],
+  "status_checks": [{"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+  "changed_files": ["docs/authenticate-button.md"],
+  "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 0}
+}')"
+boundary_output="$(classify_fixture "$boundary_fixture" low)"
+run_test "auth_substring_not_high_risk" "low" "$(printf '%s\n' "$boundary_output" | jq -r '.risk')"
+
 medium_fixture="$(write_fixture medium '{
   "pr_number": 2,
   "merge_state": "CLEAN",
@@ -307,8 +318,8 @@ mixed_timestamp_fixture="$(write_fixture mixed-timestamp-checks '{
   "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 0}
 }')"
 mixed_timestamp_output="$(classify_fixture "$mixed_timestamp_fixture" low)"
-run_test "mixed_timestamp_checks_block_as_ambiguous" "blocked" "$(printf '%s\n' "$mixed_timestamp_output" | jq -r '.risk')"
-run_test "mixed_timestamp_checks_not_mergeable" "false" "$(printf '%s\n' "$mixed_timestamp_output" | jq -r '.merge_permitted')"
+run_test "mixed_timestamp_checks_use_latest_input_entry" "low" "$(printf '%s\n' "$mixed_timestamp_output" | jq -r '.risk')"
+run_test "mixed_timestamp_checks_merge_permitted" "true" "$(printf '%s\n' "$mixed_timestamp_output" | jq -r '.merge_permitted')"
 
 reviewer_available_fixture="$(write_fixture reviewer-available '{
   "pr_number": 9,

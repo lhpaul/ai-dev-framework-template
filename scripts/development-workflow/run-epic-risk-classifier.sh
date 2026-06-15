@@ -179,7 +179,7 @@ collect_check_blockers() {
     | map(
         if length == 1 then .[0]
         elif all(.__run_epic_timestamp != "") then max_by(.__run_epic_timestamp)
-        else .[]
+        else max_by(.__run_epic_idx)
         end
         | del(.__run_epic_idx, .__run_epic_name, .__run_epic_timestamp)
       )
@@ -236,7 +236,15 @@ changed_file_risk() {
   while IFS= read -r file; do
     [ -n "$file" ] || continue
     case "$file" in
-      *secret*|*credential*|*auth*|*permission*|*release*|*branch-deletion*|*delete-branch*|.github/workflows/*)
+      .github/workflows/*|*release*|*branch-deletion*|*delete-branch*|\
+      auth/*|*/auth/*|*/auth|\
+      authentication/*|*/authentication/*|*/authentication|\
+      secret/*|*/secret/*|*/secret|\
+      secrets/*|*/secrets/*|*/secrets|\
+      credential/*|*/credential/*|*/credential|\
+      credentials/*|*/credentials/*|*/credentials|\
+      permission/*|*/permission/*|*/permission|\
+      permissions/*|*/permissions/*|*/permissions)
         risk="high"
         reasons="$(append_json_array_string "$reasons" "sensitive or broad file category: ${file}")"
         ;;
