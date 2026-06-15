@@ -199,7 +199,8 @@ def is_unguarded_jq_r_assignment(content: str) -> bool:
         return False
 
     jq_segment = content[content.index("jq") :]
-    if "-e" in jq_segment or "||" in jq_segment:
+    shell_level_segment = re.sub(r"'[^']*'|\"[^\"]*\"", "", jq_segment)
+    if "-e" in shell_level_segment or "||" in shell_level_segment:
         return False
 
     return True
@@ -209,11 +210,14 @@ def has_unanchored_branch_prefix_grep(content: str) -> bool:
     if "grep" not in content:
         return False
 
+    grep_start = content.index("grep")
+    grep_segment = content[grep_start:]
     for prefix in GREP_PREFIXES:
-        idx = content.find(prefix)
+        idx = grep_segment.find(prefix)
         if idx == -1:
             continue
-        if "^" not in content[max(0, idx - 3) : idx]:
+        prefix_start = grep_start + idx
+        if "^" not in content[grep_start:prefix_start]:
             return True
     return False
 

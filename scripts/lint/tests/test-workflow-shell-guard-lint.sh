@@ -108,6 +108,33 @@ diff --git a/scripts/development-workflow/example.sh b/scripts/development-workf
 +RESULT=$(jq -r '.state' <<< "$payload")
 DIFF
 
+cat > "$TMP_DIR/bad-sh003-filter.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,2 @@
++#!/usr/bin/env bash
++RESULT=$(jq -r '.state || .fallback' <<< "$payload")
+DIFF
+
+cat > "$TMP_DIR/allowed-sh003.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,2 @@
++#!/usr/bin/env bash
++RESULT=$(jq -r '.state || .fallback' <<< "$payload") # workflow-shell-guard: allow SH003 - jq filter uses fallback logic intentionally
+DIFF
+
+cat > "$TMP_DIR/allowed-sh003-e.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,2 @@
++#!/usr/bin/env bash
++RESULT=$(jq -e -r '.state' <<< "$payload")
+DIFF
+
 cat > "$TMP_DIR/bad-sh003-continuation.diff" <<'DIFF'
 diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
 --- a/scripts/development-workflow/example.sh
@@ -125,6 +152,15 @@ diff --git a/scripts/development-workflow/example.sh b/scripts/development-workf
 @@ -1,0 +1,2 @@
 +#!/usr/bin/env bash
 +echo "$branch" | grep "fix/"
+DIFF
+
+cat > "$TMP_DIR/allowed-sh004.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,2 @@
++#!/usr/bin/env bash
++echo "$branch" | grep "^feature/"
 DIFF
 
 cat > "$TMP_DIR/bad-sh005.diff" <<'DIFF'
@@ -204,8 +240,12 @@ run_test "continued_critical_suppression_fails" "fail" "$(run_linter "$TMP_DIR/b
 run_test "inline_suppression_passes" "pass" "$(run_linter "$TMP_DIR/allowed.diff")"
 run_test "sh002_local_assignment_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh002.diff")"
 run_test "sh003_unguarded_jq_assignment_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh003.diff")"
+run_test "sh003_filter_lookalike_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh003-filter.diff")"
+run_test "sh003_allowed_directive_passes" "pass" "$(run_linter "$TMP_DIR/allowed-sh003.diff")"
+run_test "sh003_jq_e_passes" "pass" "$(run_linter "$TMP_DIR/allowed-sh003-e.diff")"
 run_test "sh003_continuation_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh003-continuation.diff")"
 run_test "sh004_unanchored_grep_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh004.diff")"
+run_test "sh004_anchored_grep_passes" "pass" "$(run_linter "$TMP_DIR/allowed-sh004.diff")"
 run_test "sh005_assoc_array_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh005.diff")"
 run_test "noncritical_grep_passes" "pass" "$(run_linter "$TMP_DIR/benign.diff")"
 run_test "blank_and_comment_added_lines_pass" "pass" "$(run_linter "$TMP_DIR/comment-only.diff")"
