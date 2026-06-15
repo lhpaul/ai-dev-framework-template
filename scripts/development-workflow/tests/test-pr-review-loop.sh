@@ -1250,8 +1250,22 @@ platform_policy_status_notes=()
 pr_number=42
 # shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
 branch_name="fix/42-summary"
-_summary_call_log="$(mktemp)"
-_summary_body_capture="$(mktemp)"
+if ! _summary_call_log="$(mktemp)"; then
+  echo "ERROR: failed to allocate summary call log temp file" >&2
+  exit 1
+fi
+if [ -z "$_summary_call_log" ]; then
+  echo "ERROR: mktemp returned an empty summary call log path" >&2
+  exit 1
+fi
+if ! _summary_body_capture="$(mktemp)"; then
+  echo "ERROR: failed to allocate summary body capture temp file" >&2
+  exit 1
+fi
+if [ -z "$_summary_body_capture" ]; then
+  echo "ERROR: mktemp returned an empty summary body capture path" >&2
+  exit 1
+fi
 export MOCK_GH_CALL_LOG="$_summary_call_log"
 export MOCK_GH_BODY_CAPTURE="$_summary_body_capture"
 MOCK_GH_EXIT=0
@@ -1311,7 +1325,10 @@ _SUMMARY_COMMENT_JSON='[{"id":1,"body":"### Automated Reviewer Loop Summary\nAll
 # Test 11.1: label absent + summary comment PRESENT on an implementation branch
 # → gh pr edit IS called (the #805 scenario: loop ran before, label was dropped
 # by a push, restore is correct).
-_call_log_11="$(mktemp)"
+if ! _call_log_11="$(mktemp)"; then
+  echo "ERROR: failed to allocate regression-label test temp file" >&2
+  exit 1
+fi
 export MOCK_GH_OUTPUT="false"
 export MOCK_GH_COMMENTS_OUTPUT="$_SUMMARY_COMMENT_JSON"
 export MOCK_GH_CALL_LOG="$_call_log_11"
@@ -1323,7 +1340,10 @@ unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT
 
 # Test 11.2: label already present on an implementation branch → NO gh pr edit.
 # MOCK_GH_OUTPUT is "true" (label present); summary-comment gate is not reached.
-_call_log_11="$(mktemp)"
+if ! _call_log_11="$(mktemp)"; then
+  echo "ERROR: failed to allocate regression-label test temp file" >&2
+  exit 1
+fi
 export MOCK_GH_OUTPUT="true"
 export MOCK_GH_CALL_LOG="$_call_log_11"
 restore_regression_label_if_missing "42" "feature/42-my-feature" 2>/dev/null
@@ -1334,7 +1354,10 @@ unset MOCK_GH_CALL_LOG
 
 # Test 11.3: non-implementation branch (spec/) → NO gh pr edit regardless of
 # label state or summary-comment presence.
-_call_log_11="$(mktemp)"
+if ! _call_log_11="$(mktemp)"; then
+  echo "ERROR: failed to allocate regression-label test temp file" >&2
+  exit 1
+fi
 export MOCK_GH_OUTPUT="false"
 export MOCK_GH_COMMENTS_OUTPUT="$_SUMMARY_COMMENT_JSON"
 export MOCK_GH_CALL_LOG="$_call_log_11"
@@ -1348,7 +1371,10 @@ unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT
 # gh pr edit is NOT called (no false re-apply on unknown label state).
 # Note: MOCK_GH_EXIT=1 affects the label-check `gh pr view` call; the function
 # returns early before reaching the summary-comment gate.
-_call_log_11="$(mktemp)"
+if ! _call_log_11="$(mktemp)"; then
+  echo "ERROR: failed to allocate regression-label test temp file" >&2
+  exit 1
+fi
 export MOCK_GH_EXIT=1
 export MOCK_GH_CALL_LOG="$_call_log_11"
 _restore_exit=0
@@ -1361,7 +1387,10 @@ unset MOCK_GH_CALL_LOG MOCK_GH_EXIT
 
 # Test 11.5: hotfix/* branch + label absent + summary comment PRESENT
 # → gh pr edit called (hotfix is an implementation branch; must be in scope).
-_call_log_11="$(mktemp)"
+if ! _call_log_11="$(mktemp)"; then
+  echo "ERROR: failed to allocate regression-label test temp file" >&2
+  exit 1
+fi
 export MOCK_GH_OUTPUT="false"
 export MOCK_GH_COMMENTS_OUTPUT="$_SUMMARY_COMMENT_JSON"
 export MOCK_GH_CALL_LOG="$_call_log_11"
