@@ -48,6 +48,11 @@ run_linter() {
   fi
 }
 
+run_linter_output() {
+  local diff_file="$1"
+  python3 "$LINTER" --diff-file "$diff_file" 2>&1
+}
+
 run_git_linter() {
   local repo_dir="$1"
   if (cd "$repo_dir" && python3 "$LINTER" --base-ref main) >/dev/null 2>&1; then
@@ -83,6 +88,52 @@ diff --git a/scripts/development-workflow/example.sh b/scripts/development-workf
 @@ -1,0 +1,2 @@
 +#!/usr/bin/env bash
 +git fetch origin develop 2>/dev/null || true # workflow-shell-guard: allow SH001 - best effort cache refresh
+DIFF
+
+cat > "$TMP_DIR/bad-sh002.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,2 @@
++#!/usr/bin/env bash
++local RESULT=$(gh api "repos/example/repo/pulls/1" --jq '.state')
+DIFF
+
+cat > "$TMP_DIR/bad-sh003.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,2 @@
++#!/usr/bin/env bash
++RESULT=$(jq -r '.state' <<< "$payload")
+DIFF
+
+cat > "$TMP_DIR/bad-sh003-continuation.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,3 @@
++#!/usr/bin/env bash
++RESULT=$(jq -r '.state' \
++  <<< "$payload")
+DIFF
+
+cat > "$TMP_DIR/bad-sh004.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,2 @@
++#!/usr/bin/env bash
++echo "$branch" | grep "fix/"
+DIFF
+
+cat > "$TMP_DIR/bad-sh005.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,2 @@
++#!/usr/bin/env bash
++declare -A seen=([one]=1)
 DIFF
 
 cat > "$TMP_DIR/benign.diff" <<'DIFF'
@@ -122,6 +173,16 @@ diff --git a/scripts/development-workflow/example.sh b/scripts/development-workf
 +echo "safe"
 DIFF
 
+cat > "$TMP_DIR/multi-finding.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,3 @@
++#!/usr/bin/env bash
++local RESULT=$(gh api "repos/example/repo/pulls/1" --jq '.state' 2>/dev/null || true)
++declare -A seen=([one]=1)
+DIFF
+
 git_repo="$TMP_DIR/git-repo"
 mkdir -p "$git_repo/scripts/development-workflow"
 (
@@ -141,11 +202,20 @@ mkdir -p "$git_repo/scripts/development-workflow"
 run_test "critical_suppression_fails" "fail" "$(run_linter "$TMP_DIR/bad.diff")"
 run_test "continued_critical_suppression_fails" "fail" "$(run_linter "$TMP_DIR/bad-continuation.diff")"
 run_test "inline_suppression_passes" "pass" "$(run_linter "$TMP_DIR/allowed.diff")"
+run_test "sh002_local_assignment_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh002.diff")"
+run_test "sh003_unguarded_jq_assignment_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh003.diff")"
+run_test "sh003_continuation_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh003-continuation.diff")"
+run_test "sh004_unanchored_grep_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh004.diff")"
+run_test "sh005_assoc_array_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh005.diff")"
 run_test "noncritical_grep_passes" "pass" "$(run_linter "$TMP_DIR/benign.diff")"
 run_test "blank_and_comment_added_lines_pass" "pass" "$(run_linter "$TMP_DIR/comment-only.diff")"
 run_test "out_of_scope_path_passes" "pass" "$(run_linter "$TMP_DIR/out-of-scope.diff")"
 run_test "context_line_ignored" "pass" "$(run_linter "$TMP_DIR/context-only.diff")"
 run_test "git_diff_mode_detects_added_suppression" "fail" "$(run_git_linter "$git_repo")"
+
+multi_output="$(run_linter_output "$TMP_DIR/multi-finding.diff" || true)"
+run_test "multi_finding_reports_sh001" "1" "$(printf '%s\n' "$multi_output" | grep -c 'SH001')"
+run_test "multi_finding_reports_sh005" "1" "$(printf '%s\n' "$multi_output" | grep -c 'SH005')"
 
 echo ""
 echo "Summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"

@@ -202,6 +202,7 @@ Additional checks for **shell scripts** (`*.sh`):
 - All error paths emit structured output consistent with the script's output contract
 - User-supplied input (PR numbers, branch names) is validated before interpolation into file paths or commands
 - `|| true` does not silently swallow failures from external commands (e.g., `gh`, `git`) that the caller needs to know about
+- Workflow shell PRs run `python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop` in addition to ShellCheck; missing guard execution is an important finding
 
 Additional checks for **database migrations** (when a migration adds or changes triggers, functions, or backfills):
 

@@ -553,10 +553,12 @@ if [ -n "$CHANGED_SH" ]; then
   echo "Running ShellCheck on modified .sh files..."
   # shellcheck disable=SC2086
   shellcheck --severity=warning $CHANGED_SH
+  echo "Running workflow shell guard on modified .sh files..."
+  python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop
 fi
 ```
 
-Fix all ShellCheck warnings before committing. Do not commit `.sh` files with ShellCheck violations — they will fail the CI `shellcheck.yml` check and trigger unnecessary review-loop churn. Workflow scripts must also be bash 3.2 compatible (macOS ships bash 3.2 by default); do not use `local -A`, `declare -A`, or other bash 4+-only syntax — use parallel indexed arrays instead (e.g., `local -a keys; local -a vals`). ShellCheck does not warn on this by default when the shebang is `#!/usr/bin/env bash`.
+Fix all ShellCheck warnings before committing. Do not commit `.sh` files with ShellCheck violations — they will fail the CI `shellcheck.yml` check and trigger unnecessary review-loop churn. Workflow scripts must also be bash 3.2 compatible (macOS ships bash 3.2 by default); do not use `local -A`, `declare -A`, or other bash 4+-only syntax — use parallel indexed arrays instead (e.g., `local -a keys; local -a vals`). ShellCheck does not warn on this by default when the shebang is `#!/usr/bin/env bash`. Run the workflow shell guard as well; it catches added-line problems that ShellCheck misses.
 
 ```bash
 # Build — must succeed
@@ -888,14 +890,16 @@ git checkout -b refactor/[branch-slug]
 
    ```bash
    CHANGED_SH=$({ git diff --name-only --diff-filter=d; git ls-files --others --exclude-standard; } | grep '\.sh$' | sort -u || true)
-   if [ -n "$CHANGED_SH" ]; then
-     echo "Running ShellCheck on modified .sh files..."
-     # shellcheck disable=SC2086
-     shellcheck --severity=warning $CHANGED_SH
-   fi
-   ```
+if [ -n "$CHANGED_SH" ]; then
+  echo "Running ShellCheck on modified .sh files..."
+  # shellcheck disable=SC2086
+  shellcheck --severity=warning $CHANGED_SH
+  echo "Running workflow shell guard on modified .sh files..."
+  python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop
+fi
+```
 
-   Fix all ShellCheck warnings before committing. Workflow scripts must also be bash 3.2 compatible (macOS ships bash 3.2 by default); do not use `local -A`, `declare -A`, or other bash 4+-only syntax — use parallel indexed arrays instead (e.g., `local -a keys; local -a vals`). ShellCheck does not warn on this by default when the shebang is `#!/usr/bin/env bash`.
+Fix all ShellCheck warnings before committing. Workflow scripts must also be bash 3.2 compatible (macOS ships bash 3.2 by default); do not use `local -A`, `declare -A`, or other bash 4+-only syntax — use parallel indexed arrays instead (e.g., `local -a keys; local -a vals`). ShellCheck does not warn on this by default when the shebang is `#!/usr/bin/env bash`. Run the workflow shell guard as well; it catches added-line problems that ShellCheck misses.
 
 6. Update CHANGELOG under `[Unreleased]` with a `Changed` entry (skip if this refactor adjusts unreleased work that already has an entry — update the existing entry instead, or leave it unchanged if it already describes the correct behavior).
 
@@ -1103,10 +1107,12 @@ if [ -n "$CHANGED_SH" ]; then
   echo "Running ShellCheck on modified .sh files..."
   # shellcheck disable=SC2086
   shellcheck --severity=warning $CHANGED_SH
+  echo "Running workflow shell guard on modified .sh files..."
+  python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop
 fi
 ```
 
-Fix all ShellCheck warnings before committing. Do not commit `.sh` files with ShellCheck violations — they will fail the CI `shellcheck.yml` check and trigger unnecessary review-loop churn. Workflow scripts must also be bash 3.2 compatible (macOS ships bash 3.2 by default); do not use `local -A`, `declare -A`, or other bash 4+-only syntax — use parallel indexed arrays instead (e.g., `local -a keys; local -a vals`). ShellCheck does not warn on this by default when the shebang is `#!/usr/bin/env bash`.
+Fix all ShellCheck warnings before committing. Do not commit `.sh` files with ShellCheck violations — they will fail the CI `shellcheck.yml` check and trigger unnecessary review-loop churn. Workflow scripts must also be bash 3.2 compatible (macOS ships bash 3.2 by default); do not use `local -A`, `declare -A`, or other bash 4+-only syntax — use parallel indexed arrays instead (e.g., `local -a keys; local -a vals`). ShellCheck does not warn on this by default when the shebang is `#!/usr/bin/env bash`. Run the workflow shell guard as well; it catches added-line problems that ShellCheck misses.
 
 ### Step 6: Update CHANGELOG
 
@@ -1343,10 +1349,12 @@ if [ -n "$CHANGED_SH" ]; then
   echo "Running ShellCheck on modified .sh files..."
   # shellcheck disable=SC2086
   shellcheck --severity=warning $CHANGED_SH
+  echo "Running workflow shell guard on modified .sh files..."
+  python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop
 fi
 ```
 
-Fix all ShellCheck warnings before committing. Do not commit `.sh` files with ShellCheck violations — they will fail the CI `shellcheck.yml` check and trigger unnecessary review-loop churn. Workflow scripts must also be bash 3.2 compatible (macOS ships bash 3.2 by default); do not use `local -A`, `declare -A`, or other bash 4+-only syntax — use parallel indexed arrays instead (e.g., `local -a keys; local -a vals`). ShellCheck does not warn on this by default when the shebang is `#!/usr/bin/env bash`.
+Fix all ShellCheck warnings before committing. Do not commit `.sh` files with ShellCheck violations — they will fail the CI `shellcheck.yml` check and trigger unnecessary review-loop churn. Workflow scripts must also be bash 3.2 compatible (macOS ships bash 3.2 by default); do not use `local -A`, `declare -A`, or other bash 4+-only syntax — use parallel indexed arrays instead (e.g., `local -a keys; local -a vals`). ShellCheck does not warn on this by default when the shebang is `#!/usr/bin/env bash`. Run the workflow shell guard as well; it catches added-line problems that ShellCheck misses.
 
 ### Step 6: Update CHANGELOG
 

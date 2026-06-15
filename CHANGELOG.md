@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Workflow shell guard lint** (#910): expands the workflow shell guard to catch added-line command-substitution masking, unguarded `jq -r` assignments, unanchored branch-prefix grep checks, and bash 4 associative arrays before PR submission.
 - **Sync-template workflow-hub scopes** (#881): makes template sync role-aware so workflow hubs receive hub-owned files while product repositories receive only injection-safe files.
 - **Workflow agent product repository awareness** (#879): teaches Claude, Cursor, Codex, and command-wrapper prompts to declare repository context and route implementation work to selected product repositories in workflow hub mode.
 - **Workflow hub orchestration repository awareness** (#878): routes implementation branch, pull request, reviewer, CI, and cleanup operations to the selected product repository while keeping tracker/spec/plan state in the hub.
