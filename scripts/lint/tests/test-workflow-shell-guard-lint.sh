@@ -160,6 +160,15 @@ diff --git a/scripts/development-workflow/example.sh b/scripts/development-workf
 +RESULT=$(jq -e -r '.state' <<< "$payload")
 DIFF
 
+cat > "$TMP_DIR/allowed-sh003-exit-status.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,2 @@
++#!/usr/bin/env bash
++RESULT=$(jq --exit-status -r '.state' <<< "$payload")
+DIFF
+
 cat > "$TMP_DIR/allowed-sh003-er.diff" <<'DIFF'
 diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
 --- a/scripts/development-workflow/example.sh
@@ -204,6 +213,15 @@ diff --git a/scripts/development-workflow/example.sh b/scripts/development-workf
 @@ -1,0 +1,2 @@
 +#!/usr/bin/env bash
 +grep README.md -e fix/foo
+DIFF
+
+cat > "$TMP_DIR/malformed-snippet.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,2 @@
++#!/usr/bin/env bash
++RESULT=$(jq -r '.state <<< "$payload")
 DIFF
 
 cat > "$TMP_DIR/allowed-sh004.diff" <<'DIFF'
@@ -352,6 +370,7 @@ run_test "sh003_local_assignment_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh003
 run_test "sh003_filter_lookalike_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh003-filter.diff")"
 run_test "sh003_allowed_directive_passes" "pass" "$(run_linter "$TMP_DIR/allowed-sh003.diff")"
 run_test "sh003_jq_e_passes" "pass" "$(run_linter "$TMP_DIR/allowed-sh003-e.diff")"
+run_test "sh003_jq_exit_status_passes" "pass" "$(run_linter "$TMP_DIR/allowed-sh003-exit-status.diff")"
 run_test "sh003_jq_er_passes" "pass" "$(run_linter "$TMP_DIR/allowed-sh003-er.diff")"
 run_test "sh003_continuation_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh003-continuation.diff")"
 run_test "sh004_unanchored_grep_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh004.diff")"
@@ -362,6 +381,7 @@ run_test "sh004_attached_regexp_passes" "pass" "$(run_linter "$TMP_DIR/allowed-s
 run_test "sh005_assoc_array_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh005.diff")"
 run_test "sh005_allowed_directive_passes" "pass" "$(run_linter "$TMP_DIR/allowed-sh005.diff")"
 run_test "invalid_suppression_tag_does_not_pass" "fail" "$(run_linter "$TMP_DIR/bad-invalid-suppression.diff")"
+run_test "malformed_snippet_does_not_crash" "pass" "$(run_linter "$TMP_DIR/malformed-snippet.diff")"
 run_test "noncritical_grep_passes" "pass" "$(run_linter "$TMP_DIR/benign.diff")"
 run_test "blank_and_comment_added_lines_pass" "pass" "$(run_linter "$TMP_DIR/comment-only.diff")"
 run_test "out_of_scope_path_passes" "pass" "$(run_linter "$TMP_DIR/out-of-scope.diff")"

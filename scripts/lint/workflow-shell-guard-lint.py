@@ -232,6 +232,7 @@ def is_unguarded_jq_r_assignment(content: str) -> bool:
             and not token.startswith("--")
             and "e" in token[1:]
         )
+        or token == "--exit-status"
         for token in tokens
     )
     if has_shell_level_guard:
@@ -248,19 +249,24 @@ def has_unanchored_branch_prefix_grep(content: str) -> bool:
     # anchors that appear earlier in the same regex as missing just because
     # they are separated from the branch prefix by more than a few characters,
     # and it also handles attached-argument forms such as `--regexp=fix/foo`.
-    match = re.search(r"\bgrep\b(?P<tail>.*)", content)
-    if not match:
+    grep_match = re.search(r"\bgrep\b", content)
+    if not grep_match:
         return False
 
     try:
-        tokens = shlex.split(match.group("tail"), posix=True)
+        tokens = shlex.split(content[grep_match.start() :], posix=True)
     except ValueError:
         return False
 
+    grep_index = next((index for index, token in enumerate(tokens) if token == "grep"), -1)
+    if grep_index == -1:
+        return False
+
+    tail_tokens = tokens[grep_index + 1 :]
     patterns: list[str] = []
     first_bare_pattern = ""
     consume_next = False
-    for token in tokens:
+    for token in tail_tokens:
         if consume_next:
             patterns.append(token)
             consume_next = False
