@@ -82,6 +82,10 @@ not a rewrite of workflow scripts.
 - [ ] Update `.codex/skills/workflow-implementer/SKILL.md` only if the
   implementation protocol reference is not enough for Codex to run the new guard
   before draft PR creation.
+- [ ] Confirm `.claude/agents/tech-lead.md`, `.cursor/agents/tech-lead.md`, and
+  `.codex/skills/workflow-plan-writer/SKILL.md` do not need text changes. These
+  files appeared in the cross-cutting search because they reference the planning
+  protocol, but this change affects implementation-stage shell verification.
 - [ ] Update `REVIEW.md` so reviewers treat missing shell guard execution as an
   important finding on workflow shell PRs.
 
@@ -167,6 +171,10 @@ fixtures generated inside `scripts/lint/tests/test-workflow-shell-guard-lint.sh`
 - [ ] `.cursor/agents/developer.md` — mirror the new developer guidance.
 - [ ] `.codex/skills/workflow-implementer/SKILL.md` — update only if protocol
   delegation is insufficient after implementation review.
+- [ ] `.claude/agents/tech-lead.md`, `.cursor/agents/tech-lead.md`, and
+  `.codex/skills/workflow-plan-writer/SKILL.md` — review and leave unchanged
+  unless implementation discovers planning-stage wording that directly conflicts
+  with the new implementation-stage guard.
 - [ ] `REVIEW.md` — add reviewer expectation for the guard on workflow shell
   changes.
 
