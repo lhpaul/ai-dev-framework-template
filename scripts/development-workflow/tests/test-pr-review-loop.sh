@@ -60,6 +60,22 @@ cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 if [ -n "${MOCK_GH_CALL_LOG:-}" ]; then
   printf '%s\n' "$*" >> "$MOCK_GH_CALL_LOG"
 fi
+# Capture comment body files when requested so tests can inspect the rendered
+# summary after pr-review-loop.sh removes the temporary file.
+if [ -n "${MOCK_GH_BODY_CAPTURE:-}" ]; then
+  _gh_body_file=""
+  _prev_arg=""
+  for _gh_arg in "$@"; do
+    if [ "$_prev_arg" = "--body-file" ]; then
+      _gh_body_file="$_gh_arg"
+      break
+    fi
+    _prev_arg="$_gh_arg"
+  done
+  if [ -n "$_gh_body_file" ] && [ -f "$_gh_body_file" ]; then
+    cat "$_gh_body_file" > "$MOCK_GH_BODY_CAPTURE"
+  fi
+fi
 # Differentiate call types.
 case "$*" in
   *"pr ready"*)
@@ -1218,6 +1234,61 @@ fi
 run_test "summary_policy_acknowledgements_section" "1" "$_policy_status_summary_count"
 unset _policy_status_summary_count
 
+# Test 10.7: blocking findings and advisory findings both remain visible in the summary.
+_post_summary_source="$(awk '/^_post_review_summary\(\)/,/^}$/' \
+  "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
+eval "$_post_summary_source"
+# shellcheck disable=SC2329 # Invoked indirectly by the eval-loaded function.
+repo_slug() { printf "owner/repo\n"; }
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+compare_mode=0
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+compare_verdicts=()
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+platform_policy_status_notes=()
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+pr_number=42
+# shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
+branch_name="fix/42-summary"
+if ! _summary_call_log="$(mktemp)"; then
+  echo "ERROR: failed to allocate summary call log temp file" >&2
+  exit 1
+fi
+if [ -z "$_summary_call_log" ]; then
+  echo "ERROR: mktemp returned an empty summary call log path" >&2
+  exit 1
+fi
+if ! _summary_body_capture="$(mktemp)"; then
+  echo "ERROR: failed to allocate summary body capture temp file" >&2
+  exit 1
+fi
+if [ -z "$_summary_body_capture" ]; then
+  echo "ERROR: mktemp returned an empty summary body capture path" >&2
+  exit 1
+fi
+export MOCK_GH_CALL_LOG="$_summary_call_log"
+export MOCK_GH_BODY_CAPTURE="$_summary_body_capture"
+MOCK_GH_EXIT=0
+export MOCK_GH_EXIT
+MOCK_GH_COMMENTS_OUTPUT='[]'
+export MOCK_GH_COMMENTS_OUTPUT
+_post_review_summary "needs_fixes" "haystack_blocking_findings" "haystack (needs_fixes)" "1" "1" \
+  "Rules violation@@@https://github.com/lhpaul/ai-dev-framework-template/pull/952#issuecomment-1"
+if [ -n "${_summary_body_capture:-}" ] && grep -q "1 blocking finding(s) require fixes" "$_summary_body_capture" \
+    && grep -q "Advisory findings (non-blocking):" "$_summary_body_capture" \
+    && grep -q "Rules violation" "$_summary_body_capture"; then
+  _summary_advisory_split="yes"
+else
+  _summary_advisory_split="no"
+fi
+run_test "summary_advisory_split_visible" "yes" "$_summary_advisory_split"
+rm -f "$_summary_call_log"
+rm -f "$_summary_body_capture"
+unset MOCK_GH_CALL_LOG MOCK_GH_BODY_CAPTURE MOCK_GH_EXIT MOCK_GH_COMMENTS_OUTPUT
+unset _summary_advisory_split _post_summary_source
+unset -f _post_review_summary
+unset compare_mode compare_verdicts platform_policy_status_notes pr_number branch_name
+
 # ---------------------------------------------------------------------------
 # Area 11: Step 7b regression-label auto-restore (Option C, issue #805)
 #
@@ -1254,7 +1325,10 @@ _SUMMARY_COMMENT_JSON='[{"id":1,"body":"### Automated Reviewer Loop Summary\nAll
 # Test 11.1: label absent + summary comment PRESENT on an implementation branch
 # → gh pr edit IS called (the #805 scenario: loop ran before, label was dropped
 # by a push, restore is correct).
-_call_log_11="$(mktemp)"
+if ! _call_log_11="$(mktemp)"; then
+  echo "ERROR: failed to allocate regression-label test temp file" >&2
+  exit 1
+fi
 export MOCK_GH_OUTPUT="false"
 export MOCK_GH_COMMENTS_OUTPUT="$_SUMMARY_COMMENT_JSON"
 export MOCK_GH_CALL_LOG="$_call_log_11"
@@ -1266,7 +1340,10 @@ unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT
 
 # Test 11.2: label already present on an implementation branch → NO gh pr edit.
 # MOCK_GH_OUTPUT is "true" (label present); summary-comment gate is not reached.
-_call_log_11="$(mktemp)"
+if ! _call_log_11="$(mktemp)"; then
+  echo "ERROR: failed to allocate regression-label test temp file" >&2
+  exit 1
+fi
 export MOCK_GH_OUTPUT="true"
 export MOCK_GH_CALL_LOG="$_call_log_11"
 restore_regression_label_if_missing "42" "feature/42-my-feature" 2>/dev/null
@@ -1277,7 +1354,10 @@ unset MOCK_GH_CALL_LOG
 
 # Test 11.3: non-implementation branch (spec/) → NO gh pr edit regardless of
 # label state or summary-comment presence.
-_call_log_11="$(mktemp)"
+if ! _call_log_11="$(mktemp)"; then
+  echo "ERROR: failed to allocate regression-label test temp file" >&2
+  exit 1
+fi
 export MOCK_GH_OUTPUT="false"
 export MOCK_GH_COMMENTS_OUTPUT="$_SUMMARY_COMMENT_JSON"
 export MOCK_GH_CALL_LOG="$_call_log_11"
@@ -1291,7 +1371,10 @@ unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT
 # gh pr edit is NOT called (no false re-apply on unknown label state).
 # Note: MOCK_GH_EXIT=1 affects the label-check `gh pr view` call; the function
 # returns early before reaching the summary-comment gate.
-_call_log_11="$(mktemp)"
+if ! _call_log_11="$(mktemp)"; then
+  echo "ERROR: failed to allocate regression-label test temp file" >&2
+  exit 1
+fi
 export MOCK_GH_EXIT=1
 export MOCK_GH_CALL_LOG="$_call_log_11"
 _restore_exit=0
@@ -1304,7 +1387,10 @@ unset MOCK_GH_CALL_LOG MOCK_GH_EXIT
 
 # Test 11.5: hotfix/* branch + label absent + summary comment PRESENT
 # → gh pr edit called (hotfix is an implementation branch; must be in scope).
-_call_log_11="$(mktemp)"
+if ! _call_log_11="$(mktemp)"; then
+  echo "ERROR: failed to allocate regression-label test temp file" >&2
+  exit 1
+fi
 export MOCK_GH_OUTPUT="false"
 export MOCK_GH_COMMENTS_OUTPUT="$_SUMMARY_COMMENT_JSON"
 export MOCK_GH_CALL_LOG="$_call_log_11"

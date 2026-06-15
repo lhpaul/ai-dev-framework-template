@@ -21,6 +21,10 @@ Use it for every pre-PR review gate and as the normalization layer for PR review
 | `important`  | Edge-case gap, maintainability issue, unclear design choice, incomplete workflow update                                 | Fix by default unless a human decision is required                       |
 | `suggestion` | Improvement that is optional and low-risk                                                                               | Fix by default; report if scope-expanding or requires a product decision |
 
+### Haystack mirror findings
+
+When a review references mirrored agent docs, compare the live repository surface map before treating the finding as blocking. A `Rules violation` that only points at tool-specific front matter differences or an absent `.cursor/skills` tree is advisory only; a real mismatch between mirrored workflow bodies is actionable.
+
 ### Fix vs. Report
 
 Fix directly when:
