@@ -115,6 +115,15 @@ diff --git a/scripts/development-workflow/example.sh b/scripts/development-workf
 +RESULT=$(jq -r '.state' <<< "$payload")
 DIFF
 
+cat > "$TMP_DIR/bad-sh003-local.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,2 @@
++#!/usr/bin/env bash
++local RESULT=$(jq -r '.state' <<< "$payload")
+DIFF
+
 cat > "$TMP_DIR/bad-sh003-filter.diff" <<'DIFF'
 diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
 --- a/scripts/development-workflow/example.sh
@@ -261,6 +270,7 @@ run_test "continued_critical_suppression_fails" "fail" "$(run_linter "$TMP_DIR/b
 run_test "inline_suppression_passes" "pass" "$(run_linter "$TMP_DIR/allowed.diff")"
 run_test "sh002_local_assignment_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh002.diff")"
 run_test "sh003_unguarded_jq_assignment_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh003.diff")"
+run_test "sh003_local_assignment_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh003-local.diff")"
 run_test "sh003_filter_lookalike_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh003-filter.diff")"
 run_test "sh003_allowed_directive_passes" "pass" "$(run_linter "$TMP_DIR/allowed-sh003.diff")"
 run_test "sh003_jq_e_passes" "pass" "$(run_linter "$TMP_DIR/allowed-sh003-e.diff")"

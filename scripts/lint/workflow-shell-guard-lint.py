@@ -191,7 +191,7 @@ def lint_logical_line(line: AddedLine) -> list[Finding]:
 
 def is_unguarded_jq_r_assignment(content: str) -> bool:
     if not re.search(
-        r"^\s*(?:local|declare|export\s+)?[A-Za-z_][A-Za-z0-9_]*=\$\(",
+        r"^\s*(?:(?:local|declare|export)\s+)?[A-Za-z_][A-Za-z0-9_]*=\$\(",
         content,
     ):
         return False
