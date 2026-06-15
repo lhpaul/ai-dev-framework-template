@@ -1,5 +1,5 @@
 ---
-description: Resolve a native GitHub epic or explicit item list into a bounded workflow execution scope, with PR risk classification before delegated merge decisions. Usage: /run-epic --epic <issue-number> | --items <issue-number>[,<issue-number>...] [--base <branch>] [--json]
+description: Resolve a native GitHub epic or explicit item list into a bounded workflow execution scope, with optional delegated review and merge gates. Usage: /run-epic --epic <issue-number> | --items <issue-number>[,<issue-number>...] [--base <branch>] [--delegate-review] [--may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--json]
 ---
 
 # Claude Code Command: Run Epic
@@ -22,6 +22,8 @@ Key responsibilities:
   respect its `--max-risk` gate.
 - After delegated review, fix, merge, block, or escalation decisions, update
   stable PR disposition and epic ledger audit comments.
+- Before merge, run the delegated gate with current scope, policy, reviewer,
+  CI, risk, and audit evidence. Merge only when it reports `merge_allowed`.
 
 Use the helper script:
 
@@ -29,10 +31,25 @@ Use the helper script:
 ./scripts/development-workflow/run-epic-scope-resolver.sh "$@"
 ```
 
+Optional delegation policy flags:
+
+```bash
+--delegate-review
+--may-merge
+--may-start-backlog <true|false>
+--max-risk <low|medium|high>
+```
+
 Use the read-only risk helper before delegated merge decisions:
 
 ```bash
 ./scripts/development-workflow/run-epic-risk-classifier.sh --pr <pr-number> --max-risk <low|medium|high>
+```
+
+Use the final delegated gate before merge:
+
+```bash
+./scripts/development-workflow/run-epic-delegated-gate.sh --input <file> [--policy <file>]
 ```
 
 Use the audit helper after delegated decisions:

@@ -218,15 +218,28 @@ run_fails_contains "requires_scope" "pass exactly one of --epic or --items" "$RE
 run_fails_contains "rejects_both_scope_inputs" "not both" "$RESOLVER" --epic 900 --items 101
 run_fails_contains "rejects_invalid_items" "not a positive integer" "$RESOLVER" --items "101,nope"
 run_fails_contains "rejects_empty_item_token" "contains an empty item" "$RESOLVER" --items "101,,102"
+run_fails_contains "rejects_invalid_may_start_backlog" "--may-start-backlog must be true or false" "$RESOLVER" --items 101 --may-start-backlog maybe
+run_fails_contains "rejects_invalid_max_risk" "--max-risk must be one of low, medium, or high" "$RESOLVER" --items 101 --max-risk blocked
+run_fails_contains "rejects_flag_as_may_start_backlog_value" "--may-start-backlog requires a value" "$RESOLVER" --items 101 --may-start-backlog --json
+run_fails_contains "rejects_flag_as_max_risk_value" "--max-risk requires a value" "$RESOLVER" --items 101 --max-risk --json
 run_fails_contains "missing_epic_clear_error" "not found or inaccessible" env MOCK_EPIC_MODE=missing "$RESOLVER" --epic 900
 run_fails_contains "parent_mismatch_rejected" "does not point back" env MOCK_PARENT_MODE=mismatch "$RESOLVER" --epic 900
 
-items_output="$(run_json --items 101,101,102)"
+items_output="$(run_json --items 101,101,102 --delegate-review --may-merge --may-start-backlog true --max-risk medium)"
 run_test "explicit_items_deduped" "2" "$(printf '%s\n' "$items_output" | jq '.items | length')"
 run_test "explicit_items_no_expansion" "101,102" "$(printf '%s\n' "$items_output" | jq -r '[.items[].number] | join(",")')"
+run_test "policy_delegate_review" "true" "$(printf '%s\n' "$items_output" | jq -r '.policy.delegateReview')"
+run_test "policy_may_merge" "true" "$(printf '%s\n' "$items_output" | jq -r '.policy.mayMerge')"
+run_test "policy_may_start_backlog" "true" "$(printf '%s\n' "$items_output" | jq -r '.policy.mayStartBacklog')"
+run_test "policy_max_risk" "medium" "$(printf '%s\n' "$items_output" | jq -r '.policy.maxRisk')"
 run_test "shared_integration_label_base" "develop-delegated-epic-orchestration" "$(printf '%s\n' "$items_output" | jq -r '.baseBranch')"
 run_test "merged_plan_pr_not_complete" "eligible" "$(printf '%s\n' "$items_output" | jq -r '.items[] | select(.number == 101) | .group')"
 run_test "in_review_group_detected" "102" "$(printf '%s\n' "$items_output" | jq -r '.groups.in_review[0].number')"
+
+text_output="$("$RESOLVER" --items 101 --delegate-review --may-start-backlog false --max-risk high)"
+run_test "text_policy_includes_delegate_review" "yes" "$(grep -q 'Delegated review: true' <<< "$text_output" && echo yes || echo no)"
+run_test "text_policy_includes_backlog_policy" "yes" "$(grep -q 'May start Backlog: false' <<< "$text_output" && echo yes || echo no)"
+run_test "text_policy_includes_max_risk" "yes" "$(grep -q 'Max risk: high' <<< "$text_output" && echo yes || echo no)"
 
 override_output="$(run_json --items 105,106 --base develop-custom)"
 run_test "base_override_wins" "develop-custom" "$(printf '%s\n' "$override_output" | jq -r '.baseBranch')"
