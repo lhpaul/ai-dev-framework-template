@@ -79,6 +79,8 @@ The gate is read-only. It explains whether the runner may proceed to merge,
 must fix and rerun, must stop for human authority/setup, or is blocked by
 missing state. It does not replace `/run-item-work`, reviewer-loop, CI-loop,
 risk classification, audit comments, merge, cleanup, or tracker updates.
+The gate consumes an assembled evidence file; live PR reads happen in the risk
+classifier, audit helper, reviewer loop, CI loop, and normal GitHub checks.
 
 ---
 

@@ -188,6 +188,7 @@ collect_check_blockers() {
         elif all(.__run_epic_timestamp != "") then max_by(.__run_epic_timestamp)
         else max_by(.__run_epic_idx)
         end
+        | . + {dedupe_policy: (if .__run_epic_timestamp == "" then "latest-input-entry" else "latest-timestamp" end)}
         | del(.__run_epic_idx, .__run_epic_name, .__run_epic_timestamp)
       )
   ')"; then
