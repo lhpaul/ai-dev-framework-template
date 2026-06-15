@@ -124,7 +124,7 @@ cat > "$pr_fixture" <<'JSON'
   "pr": {"number": 10, "head_sha": "abc123"},
   "reviewer": {"result": "clean", "blocking_count": 0, "advisory_count": 2},
   "advisories": [
-    {"source": "haystack|triage", "category": "docs\nsync", "decision": "accepted", "rationale": "stale after rg verification with Authorization: secret Bearer abc.def"},
+    {"source": "haystack|triage", "category": "docs\nsync", "decision": "accepted", "rationale": "stale after rg verification with Authorization: dummy Bearer dummy.value"},
     {"source": "pr-agent", "category": "tests", "decision": "fixed", "rationale": ""}
   ],
   "risk": {"level": "medium", "reasons": ["workflow script change"]},
@@ -140,9 +140,9 @@ cat > "$pr_fixture" <<'JSON'
     "project_status": "In Development"
   },
   "protocol_deviations": [
-    {"action": "accepted advisory", "impact": "none | expected", "mitigation": "documented\nrationale\twith ghp_abc123 /Users/example/secret /tmp/local"}
+    {"action": "accepted advisory", "impact": "none | expected", "mitigation": "documented\nrationale\twith ghp_FAKE_PLACEHOLDER /tmp/fake-placeholder/local"}
   ],
-  "notes": "token ghp_abc123 /Users/example/secret /tmp/local"
+  "notes": "token ghp_FAKE_PLACEHOLDER /tmp/fake-placeholder/local"
 }
 JSON
 
@@ -195,7 +195,7 @@ run_test "renders_advisory_decision" "yes" "$(grep -q 'accepted' <<< "$pr_output
 run_test "renders_protocol_deviation" "yes" "$(grep -q 'documented<br>rationale' <<< "$pr_output" && echo yes || echo no)"
 run_test "escapes_pr_table_pipes" "yes" "$(grep -Fq 'haystack\\|triage' <<< "$pr_output" && grep -Fq 'none \\| expected' <<< "$pr_output" && echo yes || echo no)"
 run_test "normalizes_pr_table_newlines_tabs" "yes" "$(grep -Fq 'docs<br>sync' <<< "$pr_output" && grep -Fq 'documented<br>rationale with' <<< "$pr_output" && echo yes || echo no)"
-run_test "redacts_sensitive_values" "yes" "$(! grep -Eq 'ghp_abc123|Authorization: secret|Bearer abc\\.def|/Users/example|/tmp/local' <<< "$pr_output" && grep -Fq 'Authorization: [REDACTED]' <<< "$pr_output" && grep -Fq 'Bearer [REDACTED]' <<< "$pr_output" && echo yes || echo no)"
+run_test "redacts_sensitive_values" "yes" "$(! grep -Eq 'ghp_FAKE_PLACEHOLDER|Authorization: dummy|Bearer dummy\\.value|/tmp/fake-placeholder' <<< "$pr_output" && grep -Fq 'Authorization: [REDACTED]' <<< "$pr_output" && grep -Fq 'Bearer [REDACTED]' <<< "$pr_output" && echo yes || echo no)"
 
 ledger_output="$("$HELPER" render-epic-ledger --input "$ledger_fixture")"
 run_test "renders_ledger_marker" "yes" "$(grep -q '<!-- run-epic:epic-ledger -->' <<< "$ledger_output" && echo yes || echo no)"

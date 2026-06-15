@@ -442,7 +442,13 @@ enrich_item() {
   if ! type="$(get_tracker_type_for_issue "$issue" 2>/dev/null)"; then
     error_exit "failed to read tracker type for issue #${issue}."
   fi
-  if ! priority="$(printf '%s\n' "$issue_json" | jq -r '.projectItems[0].priority.name // .projectItems[0].priority // ""')"; then
+  if ! priority="$(printf '%s\n' "$issue_json" | jq -r '
+    .projectItems[0].priority as $priority |
+    if ($priority | type) == "object" then ($priority.name // "")
+    elif ($priority | type) == "string" then $priority
+    else ""
+    end
+  ')"; then
     error_exit "failed to parse issue #${issue} priority."
   fi
   pr_json="$(linked_pr_json "$issue")"

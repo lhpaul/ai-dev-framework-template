@@ -168,9 +168,20 @@ collect_check_blockers() {
 
   if ! checks_json="$(printf '%s\n' "$state_json" | jq -c '
     [.status_checks[]?, .required_checks[]?, .checks[]?]
-    | sort_by((.name // .context // "unnamed check"), (.completed_at // .completedAt // .startedAt // ""))
-    | group_by(.name // .context // "unnamed check")
-    | map(.[-1])
+    | to_entries
+    | map(.value + {
+        __run_epic_idx: .key,
+        __run_epic_name: (.value.name // .value.context // "unnamed check"),
+        __run_epic_timestamp: (.value.completed_at // .value.completedAt // .value.startedAt // "")
+      })
+    | sort_by(.__run_epic_name, .__run_epic_idx)
+    | group_by(.__run_epic_name)
+    | map(
+        if all(.__run_epic_timestamp != "") then max_by(.__run_epic_timestamp)
+        else max_by(.__run_epic_idx)
+        end
+        | del(.__run_epic_idx, .__run_epic_name, .__run_epic_timestamp)
+      )
   ')"; then
     error_exit "failed to normalize required CI checks"
   fi
