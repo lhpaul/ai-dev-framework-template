@@ -120,6 +120,30 @@ render_pr_disposition() {
     '
     printf '\n### Risk Reasons\n\n'
     printf '%s\n' "$json" | jq -r '(.risk.reasons // [])[]? | "- " + (.|tostring)'
+    printf '\n### Invocation Policy\n\n'
+    if [ "$(printf '%s\n' "$json" | jq 'if (.invocation_policy // null) == null then 0 else 1 end')" -eq 0 ]; then
+      printf 'Not recorded.\n'
+    else
+      printf '%s\n' "$json" | jq -r '
+        (.invocation_policy // {}) as $p |
+        "- Original command: `" + (($p.original_command // $p.originalCommand // "") | tostring) + "`",
+        "- Copy-paste equivalent: `" + (($p.copy_paste_command // $p.copyPasteCommand // "") | tostring) + "`",
+        "- Confirmation: " + (($p.confirmation // $p.confirmationReason // "not recorded") | tostring)
+      '
+      printf '\n| Field | Recommended | Selected | Effective |\n'
+      printf '| --- | --- | --- | --- |\n'
+      printf '%s\n' "$json" | jq -r "$table_cell_filter"'
+        (.invocation_policy // {}) as $p |
+        ($p.recommended_policy // $p.recommendedPolicy // {}) as $r |
+        ($p.selected_policy // $p.selectedPolicy // {}) as $s |
+        ($p.effective_policy // $p.effectivePolicy // {}) as $e |
+        ["mayStartBacklog", "delegateReview", "mayMerge", "maxRisk", "base"][] as $field |
+        "| " + $field +
+        " | " + (($r[$field] // "") | cell) +
+        " | " + (($s[$field] // "") | cell) +
+        " | " + (($e[$field] // "") | cell) + " |"
+      '
+    fi
     printf '\n### Advisory Decisions\n\n'
     if [ "$(printf '%s\n' "$json" | jq '(.advisories // []) | length')" -eq 0 ]; then
       printf 'None.\n'
@@ -197,7 +221,27 @@ render_epic_ledger() {
     printf '| Issue | PR | Tracker status | Risk | Review | Decision | Merge / cleanup | Notes |\n'
     printf '| --- | --- | --- | --- | --- | --- | --- | --- |\n'
     printf '%s\n' "$json" | jq -r "$table_cell_filter"'
+      (.invocation_policy // {}) as $rootInvocationPolicy |
+      ($rootInvocationPolicy.effective_policy // $rootInvocationPolicy.effectivePolicy // {}) as $rootEffectivePolicy |
+      def policy_note($policy):
+        if (($policy | type) == "object") and (($policy | length) > 0) then
+          "Effective policy: mayStartBacklog=" + (($policy.mayStartBacklog // "") | tostring) +
+          ", delegateReview=" + (($policy.delegateReview // "") | tostring) +
+          ", mayMerge=" + (($policy.mayMerge // "") | tostring) +
+          ", maxRisk=" + (($policy.maxRisk // "") | tostring) +
+          ", base=" + (($policy.base // "") | tostring)
+        else "" end;
+      def notes_with_policy($base; $policy; $gate):
+        [
+          ($base // ""),
+          policy_note($policy),
+          (if (($gate // "") | tostring | length) > 0 then "Stop gate: " + ($gate | tostring) else "" end)
+        ]
+        | map(select((. | tostring | length) > 0))
+        | join("\n");
       .items[] |
+      (.effective_policy // .effectivePolicy // $rootEffectivePolicy) as $effectivePolicy |
+      (.stop_gate // .stopGate // .final_stop_gate // .finalStopGate // "") as $stopGate |
       "| #" + (.issue_number | tostring) + " " + ((.title // "") | cell) +
       " | " + (if .pr_number then "#" + (.pr_number | tostring) else "-" end) +
       " | " + ((.tracker_status // "") | cell) +
@@ -205,7 +249,7 @@ render_epic_ledger() {
       " | " + ((.review_result // "") | cell) +
       " | " + ((.decision // "") | cell) +
       " | " + ((.merge_cleanup // "") | cell) +
-      " | " + ((.notes // "") | cell) + " |"
+      " | " + (notes_with_policy(.notes; $effectivePolicy; $stopGate) | cell) + " |"
     '
   } | redact_text
 }

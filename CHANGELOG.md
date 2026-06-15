@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Improve run-epic autonomy defaults** (#949): add policy recommendations and audit evidence for underspecified /run-epic invocations.
 - **Add delegated run-epic review and merge loop** (#918): add explicit delegation policy and final readiness gating for bounded `/run-epic` executions.
 - **Add autonomous epic audit trail** (#920): add stable PR disposition and epic ledger comments for delegated `/run-epic` decisions.
 - **Add PR risk classification** (#919): add a conservative risk gate for delegated `/run-epic` merge decisions.

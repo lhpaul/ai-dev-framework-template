@@ -4,7 +4,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
-REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
+GIT_COMMON_DIR="$(cd "$SCRIPT_DIR" && git rev-parse --git-common-dir)"
+case "$GIT_COMMON_DIR" in
+  /*) REPO_ROOT="$(cd "$GIT_COMMON_DIR/.." && pwd -P)" ;;
+  *) REPO_ROOT="$(cd "$SCRIPT_DIR/$GIT_COMMON_DIR/.." && pwd -P)" ;;
+esac
 HELPER="$REPO_ROOT/scripts/development-workflow/run-epic-audit-trail.sh"
 
 TMP_ROOT="$(mktemp -d)"
@@ -130,6 +134,32 @@ cat > "$pr_fixture" <<'JSON'
   "risk": {"level": "medium", "reasons": ["workflow script change"]},
   "merge_authority": "--max-risk medium delegated by user",
   "final_decision": "merge_approved",
+  "invocation_policy": {
+    "original_command": "$run-epic issues 920 /tmp/fake-placeholder/local",
+    "copy_paste_command": "$run-epic --items 920 --delegate-review --may-merge --may-start-backlog true --max-risk medium --base develop-delegated-epic-orchestration",
+    "confirmation": "accepted recommended policy",
+    "recommended_policy": {
+      "mayStartBacklog": true,
+      "delegateReview": true,
+      "mayMerge": true,
+      "maxRisk": "medium",
+      "base": "develop-delegated-epic-orchestration"
+    },
+    "selected_policy": {
+      "mayStartBacklog": true,
+      "delegateReview": true,
+      "mayMerge": true,
+      "maxRisk": "medium",
+      "base": "develop-delegated-epic-orchestration"
+    },
+    "effective_policy": {
+      "mayStartBacklog": true,
+      "delegateReview": true,
+      "mayMerge": true,
+      "maxRisk": "medium",
+      "base": "develop-delegated-epic-orchestration"
+    }
+  },
   "verification": {
     "labels": ["ready-for-human-review", "ready-for-regression"],
     "ci_result": "green",
@@ -150,9 +180,18 @@ ledger_fixture="$TMP_ROOT/ledger.json"
 cat > "$ledger_fixture" <<'JSON'
 {
   "epic": {"number": 916, "title": "Delegated epic orchestration"},
+  "invocation_policy": {
+    "effective_policy": {
+      "mayStartBacklog": true,
+      "delegateReview": true,
+      "mayMerge": true,
+      "maxRisk": "medium",
+      "base": "develop-delegated-epic-orchestration"
+    }
+  },
   "items": [
     {"issue_number": 920, "title": "Add autonomous | epic audit trail", "pr_number": 10, "tracker_status": "In Development", "risk_level": "medium", "review_result": "clean", "decision": "merge_approved", "merge_cleanup": "verified", "notes": "ready\nBearer token.value"},
-    {"issue_number": 918, "title": "Add delegated review and merge loop", "tracker_status": "Backlog", "risk_level": "-", "review_result": "-", "decision": "blocked", "merge_cleanup": "-", "notes": "depends on #920"}
+    {"issue_number": 918, "title": "Add delegated review and merge loop", "tracker_status": "Backlog", "risk_level": "-", "review_result": "-", "decision": "blocked", "merge_cleanup": "-", "notes": "depends on #920", "stop_gate": "blocked dependency"}
   ]
 }
 JSON
@@ -166,6 +205,8 @@ bad_advisory_fixture="$TMP_ROOT/bad-advisory.json"
 jq '.advisories[0].rationale = ""' "$pr_fixture" > "$bad_advisory_fixture"
 missing_pr_field_fixture="$TMP_ROOT/missing-pr-field.json"
 jq 'del(.pr.head_sha)' "$pr_fixture" > "$missing_pr_field_fixture"
+legacy_policy_fixture="$TMP_ROOT/legacy-policy.json"
+jq 'del(.invocation_policy)' "$pr_fixture" > "$legacy_policy_fixture"
 bad_ledger_fixture="$TMP_ROOT/bad-ledger.json"
 cat > "$bad_ledger_fixture" <<'JSON'
 {"epic": {"number": 916, "title": "Bad"}, "items": "not an array"}
@@ -193,15 +234,22 @@ run_test "renders_pr_marker" "yes" "$(grep -q '<!-- run-epic:pr-disposition -->'
 run_test "renders_reviewed_sha" "yes" "$(grep -q 'abc123' <<< "$pr_output" && echo yes || echo no)"
 run_test "renders_advisory_decision" "yes" "$(grep -q 'accepted' <<< "$pr_output" && echo yes || echo no)"
 run_test "renders_protocol_deviation" "yes" "$(grep -q 'documented<br>rationale' <<< "$pr_output" && echo yes || echo no)"
+run_test "renders_invocation_policy" "yes" "$(grep -q '### Invocation Policy' <<< "$pr_output" && grep -q 'accepted recommended policy' <<< "$pr_output" && echo yes || echo no)"
+run_test "renders_policy_table" "yes" "$(grep -q '| mayStartBacklog | true | true | true |' <<< "$pr_output" && grep -q '| maxRisk | medium | medium | medium |' <<< "$pr_output" && echo yes || echo no)"
 run_test "escapes_pr_table_pipes" "yes" "$(grep -Fq 'haystack\\|triage' <<< "$pr_output" && grep -Fq 'none \\| expected' <<< "$pr_output" && echo yes || echo no)"
 run_test "normalizes_pr_table_newlines_tabs" "yes" "$(grep -Fq 'docs<br>sync' <<< "$pr_output" && grep -Fq 'documented<br>rationale with' <<< "$pr_output" && echo yes || echo no)"
 run_test "redacts_sensitive_values" "yes" "$(! grep -Eq 'ghp_FAKE_PLACEHOLDER|Authorization: dummy|Bearer dummy\\.value|/tmp/fake-placeholder' <<< "$pr_output" && grep -Fq 'Authorization: [REDACTED]' <<< "$pr_output" && grep -Fq 'Bearer [REDACTED]' <<< "$pr_output" && echo yes || echo no)"
+
+legacy_policy_output="$("$HELPER" render-pr-disposition --input "$legacy_policy_fixture")"
+run_test "legacy_pr_disposition_policy_optional" "yes" "$(grep -q 'Not recorded' <<< "$legacy_policy_output" && echo yes || echo no)"
 
 ledger_output="$("$HELPER" render-epic-ledger --input "$ledger_fixture")"
 run_test "renders_ledger_marker" "yes" "$(grep -q '<!-- run-epic:epic-ledger -->' <<< "$ledger_output" && echo yes || echo no)"
 run_test "renders_ledger_row" "yes" "$(grep -q '#920' <<< "$ledger_output" && echo yes || echo no)"
 run_test "escapes_ledger_table_pipes" "yes" "$(grep -Fq 'Add autonomous \\| epic audit trail' <<< "$ledger_output" && echo yes || echo no)"
 run_test "normalizes_ledger_newlines" "yes" "$(grep -Fq 'ready<br>Bearer [REDACTED]' <<< "$ledger_output" && echo yes || echo no)"
+run_test "ledger_notes_include_effective_policy" "yes" "$(grep -Fq 'Effective policy: mayStartBacklog=true, delegateReview=true, mayMerge=true, maxRisk=medium, base=develop-delegated-epic-orchestration' <<< "$ledger_output" && echo yes || echo no)"
+run_test "ledger_notes_include_stop_gate" "yes" "$(grep -Fq 'Stop gate: blocked dependency' <<< "$ledger_output" && echo yes || echo no)"
 
 explicit_output="$("$HELPER" render-epic-ledger --input "$explicit_fixture")"
 run_test "explicit_items_skip_epic_ledger" "yes" "$(grep -q 'Not applicable' <<< "$explicit_output" && echo yes || echo no)"

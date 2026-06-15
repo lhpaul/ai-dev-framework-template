@@ -18,10 +18,14 @@ Key responsibilities:
   `ambiguous`, or `out_of_scope`.
 - Keep the command read-only: no tracker updates, branches, PRs, merges, issue
   closure, or cleanup.
+- When autonomy policy is missing or ambiguous, run the read-only policy
+  recommender, present the recommended config in-place, and continue the same
+  run when the human accepts or customizes it.
 - Before any later delegated merge decision, run the PR risk classifier and
   respect its `--max-risk` gate.
 - After delegated review, fix, merge, block, or escalation decisions, update
-  stable PR disposition and epic ledger audit comments.
+  stable PR disposition and epic ledger audit comments, including original,
+  recommended, selected, and effective policy.
 - Before merge, run the delegated gate with current scope, policy, reviewer,
   CI, risk, and audit evidence. Merge only when it reports `merge_allowed`.
 
@@ -39,6 +43,16 @@ Optional delegation policy flags:
 --may-start-backlog <true|false>
 --max-risk <low|medium|high>
 ```
+
+Use the read-only policy recommender before mutation when policy is missing or
+ambiguous:
+
+```bash
+./scripts/development-workflow/run-epic-policy-recommender.sh --scope <resolver-json> --original-command "<requested command>"
+```
+
+Pass `--no-delegate-review` or `--no-may-merge` to the recommender when the
+selected policy explicitly disables a recommended positive default.
 
 Use the read-only risk helper before delegated merge decisions:
 
