@@ -182,6 +182,16 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
     if $override == "" then $recommended else bool_override($override) end;
   def value_string($override; $recommended):
     if $override == "" then $recommended else $override end;
+  def command_prefix:
+    if ($originalCommand | test("^/run-epic(\\s|$)")) then "/run-epic" else "$run-epic" end;
+  def canonical_scope_command:
+    if (.scopeSource // "") == "epic" and (.epicNumber // null) != null then
+      command_prefix + " issues " + (.epicNumber | tostring)
+    elif (.scopeSource // "") == "items" and ((.itemInput // "") | tostring | length) > 0 then
+      command_prefix + " --items " + ((.itemInput // "") | tostring)
+    else
+      $originalCommand
+    end;
 
   (recommended_start) as $recStart |
   (recommended_review) as $recReview |
@@ -272,7 +282,7 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
       )
     },
     copyPasteCommand: (
-      $originalCommand +
+      canonical_scope_command +
       (if value_bool($delegateReviewOverride; $recReview) then " --delegate-review" else "" end) +
       (if value_bool($mayMergeOverride; $recMerge) then " --may-merge" else "" end) +
       " --may-start-backlog " + (value_bool($mayStartBacklogOverride; $recStart) | tostring) +
