@@ -175,6 +175,23 @@ run_test() {
   fi
 }
 
+grep_count_or_zero() {
+  local pattern="$1"
+  local file="$2"
+  local count
+  local status
+
+  set +e
+  count="$(grep -c -- "$pattern" "$file")"
+  status=$?
+  set -e
+
+  case "$status" in
+    0|1) printf '%s\n' "${count:-0}" ;;
+    *) return "$status" ;;
+  esac
+}
+
 # ---------------------------------------------------------------------------
 # Area 0: draft/ready lifecycle config parsing
 # ---------------------------------------------------------------------------
@@ -1678,8 +1695,8 @@ export MOCK_GH_COMMENTS_OUTPUT
 _summary_call_log="$(mktemp)"
 export MOCK_GH_CALL_LOG="$_summary_call_log"
 _post_review_summary "needs_fixes" "haystack_blocking_findings" "pr-agent (clean), haystack (needs_fixes)" "2" "0"
-_needs_fixes_create_calls="$(grep -c 'pr comment 42 --body-file' "$_summary_call_log" || true)"
-_needs_fixes_patch_calls="$(grep -c -- '--method PATCH' "$_summary_call_log" || true)"
+_needs_fixes_create_calls="$(grep_count_or_zero 'pr comment 42 --body-file' "$_summary_call_log")"
+_needs_fixes_patch_calls="$(grep_count_or_zero '--method PATCH' "$_summary_call_log")"
 run_test "post_summary_needs_fixes_creates_when_missing" "1" "$_needs_fixes_create_calls"
 run_test "post_summary_needs_fixes_missing_does_not_patch" "0" "$_needs_fixes_patch_calls"
 rm -f "$_summary_call_log"
@@ -1692,8 +1709,8 @@ export MOCK_GH_COMMENTS_OUTPUT
 _summary_call_log="$(mktemp)"
 export MOCK_GH_CALL_LOG="$_summary_call_log"
 _post_review_summary "needs_fixes" "haystack_blocking_findings" "pr-agent (clean), haystack (needs_fixes)" "2" "0"
-_needs_fixes_create_calls="$(grep -c 'pr comment 42 --body-file' "$_summary_call_log" || true)"
-_needs_fixes_patch_calls="$(grep -c -- '--method PATCH' "$_summary_call_log" || true)"
+_needs_fixes_create_calls="$(grep_count_or_zero 'pr comment 42 --body-file' "$_summary_call_log")"
+_needs_fixes_patch_calls="$(grep_count_or_zero '--method PATCH' "$_summary_call_log")"
 run_test "post_summary_needs_fixes_repeated_no_duplicate" "0" "$_needs_fixes_create_calls"
 run_test "post_summary_needs_fixes_repeated_updates_in_place" "1" "$_needs_fixes_patch_calls"
 rm -f "$_summary_call_log"
