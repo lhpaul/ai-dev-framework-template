@@ -142,6 +142,15 @@ diff --git a/scripts/development-workflow/example.sh b/scripts/development-workf
 +RESULT=$(jq -r '.state || .fallback' <<< "$payload")
 DIFF
 
+cat > "$TMP_DIR/bad-sh003-filter-like-flag.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,2 @@
++#!/usr/bin/env bash
++RESULT=$(jq -r '-e' <<< "$payload")
+DIFF
+
 cat > "$TMP_DIR/allowed-sh003.diff" <<'DIFF'
 diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
 --- a/scripts/development-workflow/example.sh
@@ -368,6 +377,7 @@ run_test "sh002_allowed_directive_passes" "pass" "$(run_linter "$TMP_DIR/allowed
 run_test "sh003_unguarded_jq_assignment_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh003.diff")"
 run_test "sh003_local_assignment_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh003-local.diff")"
 run_test "sh003_filter_lookalike_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh003-filter.diff")"
+run_test "sh003_filter_like_flag_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh003-filter-like-flag.diff")"
 run_test "sh003_allowed_directive_passes" "pass" "$(run_linter "$TMP_DIR/allowed-sh003.diff")"
 run_test "sh003_jq_e_passes" "pass" "$(run_linter "$TMP_DIR/allowed-sh003-e.diff")"
 run_test "sh003_jq_exit_status_passes" "pass" "$(run_linter "$TMP_DIR/allowed-sh003-exit-status.diff")"

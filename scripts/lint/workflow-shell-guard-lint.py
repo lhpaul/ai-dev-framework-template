@@ -211,7 +211,35 @@ def is_unguarded_jq_r_assignment(content: str) -> bool:
     if jq_index == -1:
         return False
 
-    flag_tokens = tokens[jq_index + 1 :]
+    def is_shell_operator(token: str) -> bool:
+        return token in {"||", "&&", "|", ";", "(", ")", "<<<", "<<", "<", ">", ">>"}
+
+    flag_tokens: list[str] = []
+    tail_tokens = tokens[jq_index + 1 :]
+    index = 0
+    while index < len(tail_tokens):
+        token = tail_tokens[index]
+        next_token = tail_tokens[index + 1] if index + 1 < len(tail_tokens) else ""
+        if token == "--":
+            index += 1
+            break
+        if token in {"-r", "-e", "--exit-status", "-n", "--raw-input", "--null-input"}:
+            if token in {"-e", "--exit-status"} and (not next_token or is_shell_operator(next_token)):
+                break
+            flag_tokens.append(token)
+            index += 1
+            continue
+        if token.startswith("-") and not token.startswith("--") and "r" in token[1:]:
+            flag_tokens.append(token)
+            index += 1
+            continue
+        if token.startswith("-") and not token.startswith("--") and "e" in token[1:]:
+            if not next_token or is_shell_operator(next_token):
+                break
+            flag_tokens.append(token)
+            index += 1
+            continue
+        break
 
     has_raw_output = any(
         token == "-r"
@@ -225,15 +253,21 @@ def is_unguarded_jq_r_assignment(content: str) -> bool:
     if not has_raw_output:
         return False
 
-    has_shell_level_guard = any(
-        token == "||"
+    has_exit_status_guard = any(
+        token == "-e"
+        or token == "--exit-status"
         or (
             token.startswith("-")
             and not token.startswith("--")
             and "e" in token[1:]
         )
-        or token == "--exit-status"
-        for token in tokens
+        for token in flag_tokens
+    )
+    if has_exit_status_guard:
+        return False
+
+    has_shell_level_guard = any(
+        token == "||" for token in tail_tokens[index:]
     )
     if has_shell_level_guard:
         return False
