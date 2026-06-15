@@ -325,6 +325,18 @@ spec_neutral_output="$(classify_fixture "$spec_neutral_fixture" low)"
 run_test "spec_neutral_regression_check_allowed" "low" "$(printf '%s\n' "$spec_neutral_output" | jq -r '.risk')"
 run_test "spec_neutral_regression_merge_permitted" "true" "$(printf '%s\n' "$spec_neutral_output" | jq -r '.merge_permitted')"
 
+state_only_success_fixture="$(write_fixture state-only-success '{
+  "pr_number": 7,
+  "merge_state": "CLEAN",
+  "labels": ["ready-for-human-review"],
+  "status_checks": [{"name": "legacy", "conclusion": "SUCCESS"}],
+  "changed_files": ["docs/README.md"],
+  "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 0}
+}')"
+state_only_success_output="$(classify_fixture "$state_only_success_fixture" low)"
+run_test "empty_status_success_conclusion_allowed" "low" "$(printf '%s\n' "$state_only_success_output" | jq -r '.risk')"
+run_test "empty_status_success_conclusion_merge_permitted" "true" "$(printf '%s\n' "$state_only_success_output" | jq -r '.merge_permitted')"
+
 for terminal_conclusion in FAILURE CANCELLED TIMED_OUT ACTION_REQUIRED STARTUP_FAILURE ""; do
   fixture_suffix="${terminal_conclusion:-missing}"
   terminal_fixture="$(write_fixture "terminal-${fixture_suffix}" "{
