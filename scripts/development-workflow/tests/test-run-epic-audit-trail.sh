@@ -28,7 +28,7 @@ case "$*" in
   repo\ view\ --json\ nameWithOwner\ --jq\ .nameWithOwner)
     printf 'lhpaul/ai-dev-framework-template\n'
     ;;
-  api\ --paginate\ --slurp\ repos/lhpaul/ai-dev-framework-template/issues/10/comments)
+  api\ --paginate\ --slurp\ repos/lhpaul/ai-dev-framework-template/issues/10/comments\?per_page=100)
     if [ "${MOCK_COMMENT_MODE:-missing}" = "list-fail" ]; then
       printf 'list failed\n' >&2
       exit 1
@@ -41,7 +41,7 @@ JSON
       printf '[]\n'
     fi
     ;;
-  api\ --paginate\ --slurp\ repos/lhpaul/ai-dev-framework-template/issues/900/comments)
+  api\ --paginate\ --slurp\ repos/lhpaul/ai-dev-framework-template/issues/900/comments\?per_page=100)
     if [ "${MOCK_COMMENT_MODE:-missing}" = "list-fail" ]; then
       printf 'list failed\n' >&2
       exit 1

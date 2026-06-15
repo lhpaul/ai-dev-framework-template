@@ -104,7 +104,7 @@ normalize_fixture() {
 
 live_pr_state() {
   local number="$1"
-  local pr_json files_json
+  local pr_json files_output files_json file_count
 
   require_gh
 
@@ -115,8 +115,15 @@ live_pr_state() {
   if [ -z "$pr_json" ]; then
     error_exit "empty PR response for #$number"
   fi
-  if ! files_json="$(gh pr diff "$number" --name-only 2>/dev/null | jq -R -s -c 'split("\n") | map(select(length > 0))')"; then
+  if ! files_output="$(gh pr diff "$number" --name-only 2>/dev/null)"; then
     error_exit "failed to read changed files for PR #$number"
+  fi
+  file_count="$(printf '%s\n' "$files_output" | sed '/^$/d' | wc -l | tr -d ' ')"
+  if [ "$file_count" -gt 1000 ]; then
+    error_exit "changed file list exceeds explicit risk classifier limit of 1000 files"
+  fi
+  if ! files_json="$(printf '%s\n' "$files_output" | jq -R -s -c 'split("\n") | map(select(length > 0))')"; then
+    error_exit "failed to normalize changed files for PR #$number"
   fi
 
   printf '%s\n' "$pr_json" | jq --argjson files "$files_json" '{

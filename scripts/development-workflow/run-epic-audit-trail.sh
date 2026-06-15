@@ -216,7 +216,7 @@ find_marker_comment_id() {
   local repo comments
 
   repo="$(repo_slug)"
-  if ! comments="$(gh api --paginate --slurp "repos/${repo}/issues/${target}/comments" 2>/dev/null)"; then
+  if ! comments="$(gh api --paginate --slurp "repos/${repo}/issues/${target}/comments?per_page=100" 2>/dev/null)"; then
     error_exit "failed to read comments for issue/PR #$target"
   fi
   printf '%s\n' "$comments" |
