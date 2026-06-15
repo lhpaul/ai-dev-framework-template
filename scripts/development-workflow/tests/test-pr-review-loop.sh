@@ -1174,7 +1174,22 @@ fi
 run_test "summary_needs_fixes_active_findings" "1" "$_needs_fixes_summary_count"
 unset _needs_fixes_summary_count
 
-# Test 10.5: _post_review_summary source renders policy-status details.
+# Test 10.5: main needs_fixes exit branch posts the summary before exiting.
+_needs_fixes_case_block="$(awk '
+  /^  needs_fixes\)/ {capture=1}
+  capture {print}
+  capture && /^    ;;/ {exit}
+' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
+if grep -qF '_post_review_summary "$aggregate_result" "$aggregate_reason"' <<<"$_needs_fixes_case_block" \
+    && grep -qF 'exit 1' <<<"$_needs_fixes_case_block"; then
+  _needs_fixes_main_summary_count=1
+else
+  _needs_fixes_main_summary_count=0
+fi
+run_test "main_needs_fixes_exit_posts_summary" "1" "$_needs_fixes_main_summary_count"
+unset _needs_fixes_case_block _needs_fixes_main_summary_count
+
+# Test 10.6: _post_review_summary source renders policy-status details.
 if grep -qF '**Review policy status:**' \
     "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" \
     && grep -qF 'platform_policy_status_notes' \
