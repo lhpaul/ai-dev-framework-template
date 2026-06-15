@@ -197,11 +197,9 @@ Subcommands:
     remove it manually with: rm -rf /tmp/pr-review-loop-<pr>.lockdir
 
 --post-final-summary:
-  Post the "Automated Reviewer Loop Summary" comment even when the result is
-  needs_fixes. Use this when the orchestrator has reached cycle >= max_cycles and
-  will not dispatch another fixer — i.e. the run is terminal regardless of the
-  script exit code. On clean and escalate exits the summary is always posted
-  (this flag has no additional effect for those exits).
+  Compatibility no-op. The script now posts or updates the
+  "Automated Reviewer Loop Summary" comment on every needs_fixes exit, not only
+  final/max-cycle exits. Existing callers may keep passing this flag.
 
 --compare:
   Run all configured platforms to completion regardless of individual verdicts
@@ -4473,11 +4471,9 @@ done
 # hasReviewSummary check is satisfied automatically. The comment body matches
 # the regex used by workflow-next-action.sh and Protocol 90 Step 5.1:
 #   "Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"
-# Post on `clean` and `escalate` exits unconditionally. For `needs_fixes` exits,
-# post only when --post-final-summary is set — i.e. when the orchestrator has
-# determined this is the terminal run (cycle >= max_cycles) and will not dispatch
-# another fixer regardless of the exit code. Posting on every `needs_fixes` exit
-# would create duplicate comments per fix cycle.
+# Post on `clean`, `escalate`, and `needs_fixes` exits. The summary comment is
+# updated in place, so posting on fixable `needs_fixes` cycles does not create
+# duplicates and prevents stale clean summaries from masking active findings.
 # `skipped` exits (no platforms configured) also do not post per protocol spec.
 _post_review_summary() {
   local result="$1"
@@ -4508,7 +4504,7 @@ _post_review_summary() {
       fi
       ;;
     needs_fixes)
-      result_line="max cycles reached — ${blocking} blocking finding(s) unresolved"
+      result_line="${blocking} blocking finding(s) require fixes"
       ;;
     escalate)
       result_line="escalated (${reason:-unknown})"
@@ -5015,6 +5011,10 @@ if [ "${#platform_result_tokens[@]}" -gt 0 ]; then
 fi
 [ -z "$_summary_platform_list" ] && _summary_platform_list="none"
 
+# Compatibility flag retained for older orchestrators; summaries now post on
+# every needs_fixes exit regardless of this value.
+: "$post_final_summary"
+
 case "$aggregate_result" in
   clean)
     _post_review_summary "$aggregate_result" "$aggregate_reason" \
@@ -5031,16 +5031,14 @@ case "$aggregate_result" in
     exit 0
     ;;
   needs_fixes)
-    if [ "$post_final_summary" -eq 1 ]; then
-      _post_review_summary "$aggregate_result" "$aggregate_reason" \
-        "$_summary_platform_list" \
-        "$total_blocking_count" "$total_suggestion_count" \
-        "$aggregate_advisory_labels" \
-        "$aggregate_possible_issue_eval_outcome" \
-        "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
-        "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
-        "$phase_after_clean_blocking_platform" "$pre_after_clean_only"
-    fi
+    _post_review_summary "$aggregate_result" "$aggregate_reason" \
+      "$_summary_platform_list" \
+      "$total_blocking_count" "$total_suggestion_count" \
+      "$aggregate_advisory_labels" \
+      "$aggregate_possible_issue_eval_outcome" \
+      "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
+      "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
+      "$phase_after_clean_blocking_platform" "$pre_after_clean_only"
     exit 1
     ;;
   needs_rerun)

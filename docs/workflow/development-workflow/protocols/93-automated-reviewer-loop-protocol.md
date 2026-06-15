@@ -722,8 +722,8 @@ gh api repos/{owner}/{repo}/issues/{pr_number}/comments \
   --jq '[.[] | select(.user.login | test("coderabbit|devin|greptile|pr-agent"))] | last'
 ```
 
-For script-posted summaries (`pr-review-loop.sh --post-final-summary` or auto-posted by the
-script on `clean`/`escalate` exits), the script itself is the authoritative transcript
+For script-posted summaries (auto-posted by `pr-review-loop.sh` on
+`clean`/`needs_fixes`/`escalate` exits), the script itself is the authoritative transcript
 source — this guard applies to agent-composed comments, not script-composed output.
 
 **Step 2 — Cross-check every claim against the transcript.**
@@ -814,7 +814,7 @@ Follow the "PR feedback tracking and comments" subsection of Step 7 in `91-orche
 - Maintain a PR feedback ledger tracking all blocking findings across cycles (keyed by `(platform, path, body_snippet)`).
 - After each fixer push, post a **fix commit comment** on the PR listing which findings that commit resolved and any remaining open findings. Apply the [Pre-post verification guard](#pre-post-verification-guard-mandatory-before-every-gh-pr-comment--gh-pr-review-call) before composing each fix commit comment.
 - After each fixer push, **reply to each addressed inline review comment** on the PR to mark it as resolved. This is mandatory. Follow Protocol 91 ("Resolve inline review comments") for the exact `gh api` command format and delegation requirements for fixer subagents.
-- When the loop terminates with `clean` or `escalate`, **`pr-review-loop.sh` automatically posts the "Automated Reviewer Loop Summary" comment** — you do not need to post it manually for those exits. For `needs_fixes` at `cycle >= max_cycles`, pass `--post-final-summary` to the final script invocation and the summary is posted automatically. The script-posted comment satisfies the Step 8c `hasReviewSummary` check in all three cases.
+- When the loop terminates with `clean`, `needs_fixes`, or `escalate`, **`pr-review-loop.sh` automatically posts or updates the "Automated Reviewer Loop Summary" comment** — you do not need to post it manually for those exits. On `needs_fixes`, the script updates the existing summary in place so active findings are visible while the fixer loop continues. The script-posted comment satisfies the Step 8c `hasReviewSummary` check.
 - If the result is `skipped` (no platforms configured), do not post a summary comment.
 
 ### Review comments audit (post-clean gate)

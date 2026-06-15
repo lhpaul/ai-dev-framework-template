@@ -1162,7 +1162,19 @@ fi
 run_test "summary_result_line_skipped" "1" "$_skipped_constant_count"
 unset _skipped_constant_count
 
-# Test 10.4: _post_review_summary source renders policy-status details.
+# Test 10.4: _post_review_summary source renders needs_fixes as active findings.
+if grep -qF 'result_line="${blocking} blocking finding(s) require fixes"' \
+    "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" \
+    && grep -qF 'needs_fixes)' \
+      "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"; then
+  _needs_fixes_summary_count=1
+else
+  _needs_fixes_summary_count=0
+fi
+run_test "summary_needs_fixes_active_findings" "1" "$_needs_fixes_summary_count"
+unset _needs_fixes_summary_count
+
+# Test 10.5: _post_review_summary source renders policy-status details.
 if grep -qF '**Review policy status:**' \
     "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" \
     && grep -qF 'platform_policy_status_notes' \
