@@ -208,6 +208,7 @@ post-merge-cleanup
 prepare-release
 retrospective
 run-item-work
+run-epic
 run-reviewer-loop
 run-work
 sync-template
