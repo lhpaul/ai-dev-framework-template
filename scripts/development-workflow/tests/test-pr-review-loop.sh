@@ -1655,8 +1655,34 @@ else
 fi
 run_test "post_summary_removes_body_file_on_failure" "yes" "$_body_file_removed"
 rm -f "$_summary_call_log"
+
+MOCK_GH_EXIT=0
+export MOCK_GH_EXIT
+MOCK_GH_COMMENTS_OUTPUT='[]'
+export MOCK_GH_COMMENTS_OUTPUT
+_summary_call_log="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_summary_call_log"
+_post_review_summary "needs_fixes" "haystack_blocking_findings" "pr-agent (clean), haystack (needs_fixes)" "2" "0"
+_needs_fixes_create_calls="$(grep -c 'pr comment 42 --body-file' "$_summary_call_log" || true)"
+_needs_fixes_patch_calls="$(grep -c -- '--method PATCH' "$_summary_call_log" || true)"
+run_test "post_summary_needs_fixes_creates_when_missing" "1" "$_needs_fixes_create_calls"
+run_test "post_summary_needs_fixes_missing_does_not_patch" "0" "$_needs_fixes_patch_calls"
+rm -f "$_summary_call_log"
+
+MOCK_GH_COMMENTS_OUTPUT='[{"id":123,"body":"### Automated Reviewer Loop Summary\n\n*Posted automatically by `pr-review-loop.sh`.*"}]'
+export MOCK_GH_COMMENTS_OUTPUT
+_summary_call_log="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_summary_call_log"
+_post_review_summary "needs_fixes" "haystack_blocking_findings" "pr-agent (clean), haystack (needs_fixes)" "2" "0"
+_needs_fixes_create_calls="$(grep -c 'pr comment 42 --body-file' "$_summary_call_log" || true)"
+_needs_fixes_patch_calls="$(grep -c -- '--method PATCH' "$_summary_call_log" || true)"
+run_test "post_summary_needs_fixes_repeated_no_duplicate" "0" "$_needs_fixes_create_calls"
+run_test "post_summary_needs_fixes_repeated_updates_in_place" "1" "$_needs_fixes_patch_calls"
+rm -f "$_summary_call_log"
+
 unset MOCK_GH_CALL_LOG MOCK_GH_EXIT MOCK_GH_COMMENTS_OUTPUT
 unset _post_summary_source _summary_call_log _body_file _body_file_used _body_file_removed
+unset _needs_fixes_create_calls _needs_fixes_patch_calls
 unset -f _post_review_summary repo_slug
 
 # ---------------------------------------------------------------------------
