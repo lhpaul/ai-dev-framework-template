@@ -7,43 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- **Workflow shell guard lint** (#910): expands the workflow shell guard to catch added-line command-substitution masking, unguarded `jq -r` assignments, unanchored branch-prefix grep checks, and bash 4 associative arrays before PR submission.
-- **Sync-template workflow-hub scopes** (#881): makes template sync role-aware so workflow hubs receive hub-owned files while product repositories receive only injection-safe files.
-- **Workflow agent product repository awareness** (#879): teaches Claude, Cursor, Codex, and command-wrapper prompts to declare repository context and route implementation work to selected product repositories in workflow hub mode.
-- **Workflow hub orchestration repository awareness** (#878): routes implementation branch, pull request, reviewer, CI, and cleanup operations to the selected product repository while keeping tracker/spec/plan state in the hub.
-- **Two-phase review config** (#868): replaces overlapping reviewer config keys with explicit draft and ready lifecycle buckets while preserving legacy aliases for one transition release.
-- **Codex review routing default**: makes `codex` the default Step 7a internal reviewer and replaces the Claude Code Action after-clean reviewer with `codex-github`.
+## [0.31.0] - 2026-06-15
 
 ### Added
 
-- **Improve run-epic autonomy defaults** (#949): add policy recommendations and audit evidence for underspecified /run-epic invocations.
-- **Add delegated run-epic review and merge loop** (#918): add explicit delegation policy and final readiness gating for bounded `/run-epic` executions.
-- **Add autonomous epic audit trail** (#920): add stable PR disposition and epic ledger comments for delegated `/run-epic` decisions.
-- **Add PR risk classification** (#919): add a conservative risk gate for delegated `/run-epic` merge decisions.
-- **Add run-epic scope resolver** (#917): add a read-only resolver for epic and explicit item-list execution sets before delegated review or merge behavior begins.
-- **Workflow hub setup and operations docs** (#882): documents workflow-hub setup, product-repo injection, cross-repo PR flow, and troubleshooting with non-secret example repositories.
-- **Workflow hub smoke fixtures** (#883): adds non-secret workflow hub and product repository fixture coverage with single-repository regression checks.
-- **Workflow hub product repository commands** (#877): adds workflow-hub status, sync, and pull-request visibility commands for product repository checkouts.
-- **Workflow hub product repository PR authentication** (#880): adds local-only GitHub App auth guidance and helpers for opening product repository pull requests without exposing secrets.
-- **Workflow hub template skeletons** (#876): adds inspectable workflow-hub and product-repo-injection skeletons with mode-specific sync-scope metadata.
-- **Shared and local workflow configuration** (#875): separates versioned repository identity from local checkout and secret references, with repository-context helpers for workflow hub routing.
-- **Workflow hub operating model** (#874): documents repository modes, artifact ownership, target repository selection, and PR ownership for workflow hub deployments.
-- **Release stamping** (#829): records the production release version on shipped tracker issues using provider-native release markers such as GitHub Milestones, while failing softly for unsupported providers.
-- **Document PR quality gate** (#816): adds a pre-submission quality gate for spec and implementation-plan PRs so document authors check brief coverage, consistency, behavioral guarantees, and recurring reviewer categories before opening draft PRs.
+- **Workflow hub operating model** (#874): repository modes, artifact ownership, target repository selection, and PR ownership for hub deployments.
+- **Shared and local workflow configuration** (#875): separates versioned repository identity from local checkout and secret references, with repository-context helpers for hub routing.
+- **Workflow hub template skeletons** (#876): inspectable hub and product-repo-injection skeletons with mode-specific sync-scope metadata.
+- **Workflow hub product repository commands** (#877): status, sync, and pull-request visibility for product repository checkouts.
+- **Workflow hub PR authentication** (#880): local-only GitHub App auth guidance for opening product repository pull requests.
+- **Workflow hub setup and operations docs** (#882): setup, product-repo injection, cross-repo PR flow, and troubleshooting.
+- **Workflow hub smoke fixtures** (#883): non-secret hub and product repository fixture coverage.
+- **`/run-epic` autonomy and delegation** (#917, #918, #919, #920, #949): scope resolver, PR risk classification, delegated review/merge loop, audit trail, and autonomy policy recommendations.
+- **Release stamping** (#829): records the production release version on shipped tracker issues using provider-native release markers.
+- **Document PR quality gate** (#816): pre-submission quality gate for spec and implementation-plan PRs.
+
+### Changed
+
+- **Two-phase review config** (#868): explicit draft and ready lifecycle buckets, with legacy aliases for one transition release.
+- **Codex review routing**: Codex is the default Step 7a internal reviewer; Claude Code Action after-clean reviewer replaced with `codex-github`.
+- **Workflow hub orchestration** (#878): routes branch, PR, reviewer, CI, and cleanup operations to the selected product repository while keeping tracker/spec/plan state in the hub.
+- **Workflow agent product-repo awareness** (#879): Claude, Cursor, Codex, and command wrappers declare repository context and route implementation to product repos in hub mode.
+- **Sync-template hub scopes** (#881): role-aware template sync so hubs receive hub-owned files and product repos receive injection-safe files.
+- **Workflow shell guard lint** (#910): catches command-substitution masking, unguarded `jq -r` assignments, unanchored branch-prefix grep, and bash 4 associative arrays.
 
 ### Fixed
 
-- **Run-epic skipped regression checks** (#955): allows delegated `/run-epic` merge gates to accept completed skipped or neutral label-gated regression checks while still blocking real failures, pending checks, and implementation PRs missing `ready-for-regression`.
-- **Haystack policy acknowledgements** (#890): labels policy-only Haystack human-review signals as explicit acknowledgements in reviewer-loop summaries while keeping concrete findings blocking.
-- **Reviewer-loop Haystack summaries** (#909): updates automated reviewer summaries on `needs_fixes` exits so active Haystack findings cannot be hidden behind stale clean summaries.
-- **Prepare-release Linear tracker completion** (#914): makes release post-merge cleanup derive shipped issue scope from the finalized changelog, fail closed when tracker scope or Linear completion is missing, and emit actionable Linear MCP/API handoff signals.
-- **Post-merge cleanup integration branch awareness** (#911): makes cleanup switch to the merged PR base branch, including workflow hub integration branches, instead of always defaulting to `develop`.
-- **Native GitHub sub-issues for epics** (#884): documents native sub-issue linking and verification for multi-item GitHub epics while preserving `integration-branch:<slug>` labels as the routing contract and fallback.
-- **Codex GitHub reviewer loop**: aligns the documented Codex bot default with the reviewer scripts, ignores outdated Codex review threads, and waits for Codex's definitive thumbs-up or inline-comment signal instead of treating review boilerplate as approval.
-- **Claude Code Action reviewer no-op guard** (#866): passes an explicit code-review prompt to the workflow and fails closed when a successful run log shows Claude did not actually execute.
-- **Tool-fix merge ordering** (#825): documents that foundational reviewer-tool fixes must merge before dependent tool-fixes are trusted, and that dependents must update from the fixed base before rerunning reviewer loops.
+- **`/run-epic` regression gates** (#955): delegated merge gates accept completed skipped or neutral regression checks while still blocking real failures and pending checks.
+- **Haystack reviewer-loop** (#890, #909): policy acknowledgements stay advisory; stale clean summaries cannot hide active findings.
+- **Prepare-release Linear cleanup** (#914): derives shipped issue scope from the finalized changelog and emits actionable Linear MCP/API handoff when tracker completion is missing.
+- **Post-merge cleanup** (#911): switches to the merged PR base branch, including workflow hub integration branches, instead of always defaulting to `develop`.
+- **Native GitHub sub-issues** (#884): documents native sub-issue linking for epics; preserves `integration-branch:<slug>` as the routing contract.
+- **Codex GitHub reviewer loop**: aligns bot default with reviewer scripts, ignores outdated threads, and waits for a definitive approval signal.
+- **Claude Code Action reviewer** (#866): explicit code-review prompt; fails closed when Claude did not execute.
+- **Tool-fix merge ordering** (#825): foundational reviewer-tool fixes must merge before dependent tool-fixes are trusted.
 
 ## [0.30.2] - 2026-06-08
 
@@ -927,7 +924,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.30.2...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.31.0...HEAD
+[0.31.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.30.2...v0.31.0
 [0.30.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.30.1...v0.30.2
 [0.30.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.30.0...v0.30.1
 [0.30.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.29.1...v0.30.0
