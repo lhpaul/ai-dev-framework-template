@@ -196,12 +196,31 @@ def is_unguarded_jq_r_assignment(content: str) -> bool:
     ):
         return False
     jq_match = re.search(r"\bjq\b", content)
-    if not jq_match or "-r" not in content:
+    if not jq_match:
         return False
 
     jq_segment = content[jq_match.start() :]
-    shell_level_segment = re.sub(r"'[^']*'|\"[^\"]*\"", "", jq_segment)
-    if "-e" in shell_level_segment or "||" in shell_level_segment:
+    tokens = re.findall(r"""'[^']*'|"[^"]*"|\S+""", jq_segment)
+
+    has_raw_output = any(
+        token.startswith("-")
+        and not token.startswith("--")
+        and "r" in token[1:]
+        for token in tokens
+    )
+    if not has_raw_output:
+        return False
+
+    has_shell_level_guard = any(
+        token == "||"
+        or (
+            token.startswith("-")
+            and not token.startswith("--")
+            and "e" in token[1:]
+        )
+        for token in tokens
+    )
+    if has_shell_level_guard:
         return False
 
     return True
@@ -211,49 +230,50 @@ def has_unanchored_branch_prefix_grep(content: str) -> bool:
     if "grep" not in content:
         return False
 
-    # Inspect the first grep pattern token after the command. This avoids
-    # treating anchors that appear earlier in the same regex as missing just
-    # because they are separated from the branch prefix by more than a few
-    # characters, and it also handles attached-argument forms such as
-    # `--regexp=fix/foo`.
+    # Inspect grep pattern tokens after the command. This avoids treating
+    # anchors that appear earlier in the same regex as missing just because
+    # they are separated from the branch prefix by more than a few characters,
+    # and it also handles attached-argument forms such as `--regexp=fix/foo`.
     match = re.search(r"\bgrep\b(?P<tail>.*)", content)
     if not match:
         return False
 
     tokens = re.findall(r"""'[^']*'|"[^"]*"|\S+""", match.group("tail"))
-    pattern = ""
+    patterns: list[str] = []
     consume_next = False
     for token in tokens:
         if consume_next:
-            pattern = token
-            break
+            patterns.append(token)
+            consume_next = False
+            continue
         if token in {"-e", "--regexp"}:
             consume_next = True
             continue
         if token.startswith("--regexp="):
-            pattern = token.split("=", 1)[1]
-            break
+            patterns.append(token.split("=", 1)[1])
+            continue
         if token.startswith("-e") and token != "-e":
-            pattern = token[2:]
-            break
+            patterns.append(token[2:])
+            continue
         if token.startswith("-P") and token != "-P":
-            pattern = token[2:]
-            break
+            patterns.append(token[2:])
+            continue
         if token.startswith("-"):
             continue
-        pattern = token
-        break
+        if not patterns:
+            patterns.append(token)
 
-    if not pattern:
+    if not patterns:
         return False
 
-    pattern = pattern.strip("'\"")
-    for prefix in GREP_PREFIXES:
-        idx = pattern.find(prefix)
-        if idx == -1:
-            continue
-        if "^" not in pattern[:idx]:
-            return True
+    for pattern in patterns:
+        pattern = pattern.strip("'\"")
+        for prefix in GREP_PREFIXES:
+            idx = pattern.find(prefix)
+            if idx == -1:
+                continue
+            if "^" not in pattern[:idx]:
+                return True
     return False
 
 
