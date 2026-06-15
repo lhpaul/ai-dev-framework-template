@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Run-epic skipped regression checks** (#955): allows delegated `/run-epic` merge gates to accept completed skipped or neutral label-gated regression checks while still blocking real failures, pending checks, and implementation PRs missing `ready-for-regression`.
 - **Haystack policy acknowledgements** (#890): labels policy-only Haystack human-review signals as explicit acknowledgements in reviewer-loop summaries while keeping concrete findings blocking.
 - **Reviewer-loop Haystack summaries** (#909): updates automated reviewer summaries on `needs_fixes` exits so active Haystack findings cannot be hidden behind stale clean summaries.
 - **Prepare-release Linear tracker completion** (#914): makes release post-merge cleanup derive shipped issue scope from the finalized changelog, fail closed when tracker scope or Linear completion is missing, and emit actionable Linear MCP/API handoff signals.

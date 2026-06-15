@@ -149,6 +149,8 @@ printf '{not-json\n' > "$TMP_ROOT/malformed.json"
 run_fails_contains "rejects_malformed_fixture" "not valid JSON" "$CLASSIFIER" --input "$TMP_ROOT/malformed.json"
 : > "$TMP_ROOT/empty.json"
 run_fails_contains "rejects_empty_fixture" "input file is empty" "$CLASSIFIER" --input "$TMP_ROOT/empty.json"
+printf ' \n\t\n' > "$TMP_ROOT/whitespace.json"
+run_fails_contains "rejects_whitespace_fixture" "not valid JSON" "$CLASSIFIER" --input "$TMP_ROOT/whitespace.json"
 
 low_fixture="$(write_fixture low '{
   "pr_number": 1,
@@ -290,6 +292,77 @@ incomplete_success_fixture="$(write_fixture incomplete-success '{
 }')"
 incomplete_success_output="$(classify_fixture "$incomplete_success_fixture" high)"
 run_test "incomplete_success_check_blocks" "blocked" "$(printf '%s\n' "$incomplete_success_output" | jq -r '.risk')"
+
+implementation_plan_skipped_fixture="$(write_fixture implementation-plan-skipped '{
+  "pr_number": 7,
+  "head": "implementation-plan/955-run-epic-skipped-regression-checks",
+  "merge_state": "CLEAN",
+  "labels": ["ready-for-human-review"],
+  "status_checks": [
+    {"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"},
+    {"name": "E2E regression (placeholder)", "status": "COMPLETED", "conclusion": "SKIPPED"}
+  ],
+  "changed_files": ["docs/specs/developments/2026-06-15_run-epic-skipped-regression-checks/2_run-epic-skipped-regression-checks_implementation-plan.md"],
+  "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 0}
+}')"
+implementation_plan_skipped_output="$(classify_fixture "$implementation_plan_skipped_fixture" low)"
+run_test "implementation_plan_skipped_regression_check_allowed" "low" "$(printf '%s\n' "$implementation_plan_skipped_output" | jq -r '.risk')"
+run_test "implementation_plan_skipped_regression_merge_permitted" "true" "$(printf '%s\n' "$implementation_plan_skipped_output" | jq -r '.merge_permitted')"
+
+spec_neutral_fixture="$(write_fixture spec-neutral '{
+  "pr_number": 7,
+  "head": "spec/955-run-epic-skipped-regression-checks",
+  "merge_state": "CLEAN",
+  "labels": ["ready-for-human-review"],
+  "status_checks": [
+    {"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"},
+    {"name": "E2E regression (placeholder)", "status": "COMPLETED", "conclusion": "NEUTRAL"}
+  ],
+  "changed_files": ["docs/specs/developments/2026-06-15_run-epic-skipped-regression-checks/1_run-epic-skipped-regression-checks_specs.md"],
+  "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 0}
+}')"
+spec_neutral_output="$(classify_fixture "$spec_neutral_fixture" low)"
+run_test "spec_neutral_regression_check_allowed" "low" "$(printf '%s\n' "$spec_neutral_output" | jq -r '.risk')"
+run_test "spec_neutral_regression_merge_permitted" "true" "$(printf '%s\n' "$spec_neutral_output" | jq -r '.merge_permitted')"
+
+state_only_success_fixture="$(write_fixture state-only-success '{
+  "pr_number": 7,
+  "merge_state": "CLEAN",
+  "labels": ["ready-for-human-review"],
+  "status_checks": [{"name": "legacy", "conclusion": "SUCCESS"}],
+  "changed_files": ["docs/README.md"],
+  "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 0}
+}')"
+state_only_success_output="$(classify_fixture "$state_only_success_fixture" low)"
+run_test "empty_status_success_conclusion_allowed" "low" "$(printf '%s\n' "$state_only_success_output" | jq -r '.risk')"
+run_test "empty_status_success_conclusion_merge_permitted" "true" "$(printf '%s\n' "$state_only_success_output" | jq -r '.merge_permitted')"
+
+for terminal_conclusion in FAILURE CANCELLED TIMED_OUT ACTION_REQUIRED STARTUP_FAILURE ""; do
+  fixture_suffix="${terminal_conclusion:-missing}"
+  terminal_fixture="$(write_fixture "terminal-${fixture_suffix}" "{
+    \"pr_number\": 7,
+    \"merge_state\": \"CLEAN\",
+    \"labels\": [\"ready-for-human-review\"],
+    \"status_checks\": [{\"name\": \"guard\", \"status\": \"COMPLETED\", \"conclusion\": \"${terminal_conclusion}\"}],
+    \"changed_files\": [\"docs/README.md\"],
+    \"reviewer\": {\"status\": \"clean\", \"blocking_count\": 0, \"unresolved_blocking_threads\": 0}
+  }")"
+  terminal_output="$(classify_fixture "$terminal_fixture" high)"
+  run_test "completed_${fixture_suffix}_check_blocks" "blocked" "$(printf '%s\n' "$terminal_output" | jq -r '.risk')"
+done
+
+for pending_state in IN_PROGRESS QUEUED PENDING EXPECTED; do
+  pending_fixture="$(write_fixture "pending-${pending_state}" "{
+    \"pr_number\": 7,
+    \"merge_state\": \"CLEAN\",
+    \"labels\": [\"ready-for-human-review\"],
+    \"status_checks\": [{\"name\": \"guard\", \"status\": \"${pending_state}\", \"conclusion\": \"SUCCESS\"}],
+    \"changed_files\": [\"docs/README.md\"],
+    \"reviewer\": {\"status\": \"clean\", \"blocking_count\": 0, \"unresolved_blocking_threads\": 0}
+  }")"
+  pending_output="$(classify_fixture "$pending_fixture" high)"
+  run_test "${pending_state}_check_blocks" "blocked" "$(printf '%s\n' "$pending_output" | jq -r '.risk')"
+done
 
 dedupe_checks_fixture="$(write_fixture dedupe-checks '{
   "pr_number": 8,
