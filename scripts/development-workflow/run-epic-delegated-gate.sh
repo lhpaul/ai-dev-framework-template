@@ -38,13 +38,18 @@ require_value() {
 
 load_input_json() {
   local file="$1"
+  local raw
   if [ ! -f "$file" ]; then
     error_exit "input file not found: $file"
   fi
   if [ ! -s "$file" ]; then
     error_exit "input file is empty: $file"
   fi
-  jq -c '.' "$file" 2>/dev/null || error_exit "input file is not valid JSON: $file"
+  raw="$(jq -c '.' "$file" 2>/dev/null)" || error_exit "input file is not valid JSON: $file"
+  if [ -z "$raw" ]; then
+    error_exit "input file is not valid JSON: $file"
+  fi
+  printf '%s\n' "$raw"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -96,7 +101,8 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
       ((.state // "") | ascii_downcase) == "success"
     else
       (((.status // "") | ascii_downcase) == "completed" and
-       ((.conclusion // "") | ascii_downcase) == "success")
+       (((.conclusion // "") | ascii_downcase) as $conclusion |
+        $conclusion == "success" or $conclusion == "skipped" or $conclusion == "neutral"))
     end;
   def implementation_branch:
     (.pr.headRefName // "") | test("^(feature|fix|refactor|hotfix|backport/hotfix)/");

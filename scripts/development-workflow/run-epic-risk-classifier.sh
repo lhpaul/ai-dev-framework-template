@@ -98,6 +98,9 @@ normalize_fixture() {
   if ! raw="$(jq -c '.' "$file" 2>/dev/null)"; then
     error_exit "input file is not valid JSON: $file"
   fi
+  if [ -z "$raw" ]; then
+    error_exit "input file is not valid JSON: $file"
+  fi
 
   printf '%s\n' "$raw"
 }
@@ -161,10 +164,17 @@ check_status_is_success() {
   local status="$1"
   local conclusion="$2"
 
-  case "${status}:${conclusion}" in
-    COMPLETED:SUCCESS|completed:success) return 0 ;;
-    *) return 1 ;;
-  esac
+  status="$(printf '%s\n' "$status" | tr '[:upper:]' '[:lower:]')"
+  conclusion="$(printf '%s\n' "$conclusion" | tr '[:upper:]' '[:lower:]')"
+
+  if [ "$status" = "completed" ]; then
+    case "$conclusion" in
+      success|skipped|neutral) return 0 ;;
+      *) return 1 ;;
+    esac
+  fi
+
+  [ -z "$status" ] && [ "$conclusion" = "success" ]
 }
 
 collect_check_blockers() {

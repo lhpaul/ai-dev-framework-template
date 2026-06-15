@@ -148,6 +148,8 @@ empty_file="$TMP_ROOT/empty.json"
 : > "$empty_file"
 malformed_file="$TMP_ROOT/malformed.json"
 printf '{"oops"\n' > "$malformed_file"
+whitespace_file="$TMP_ROOT/whitespace.json"
+printf ' \n\t\n' > "$whitespace_file"
 
 echo ""
 echo "=== Run epic delegated gate ==="
@@ -157,6 +159,7 @@ run_fails_contains "rejects_pr_mode" "Unknown option: --pr" "$GATE" --pr 42
 run_fails_contains "rejects_missing_fixture" "input file not found" "$GATE" --input "$missing_file"
 run_fails_contains "rejects_empty_fixture" "input file is empty" "$GATE" --input "$empty_file"
 run_fails_contains "rejects_malformed_fixture" "input file is not valid JSON" "$GATE" --input "$malformed_file"
+run_fails_contains "rejects_whitespace_fixture" "input file is not valid JSON" "$GATE" --input "$whitespace_file"
 
 clean_fixture="$(write_fixture clean)"
 run_test "merge_allowed_when_all_gates_clean" "merge_allowed" "$(decision_for "$clean_fixture")"
@@ -197,6 +200,18 @@ run_test "feature_pr_requires_regression_label" "blocked" "$(decision_for "$miss
 spec_without_regression_fixture="$(write_fixture spec-no-regression '.pr.headRefName = "spec/918-delegated-review-merge-loop" | .pr.labels = ["ready-for-human-review"]')"
 run_test "spec_pr_skips_regression_label" "merge_allowed" "$(decision_for "$spec_without_regression_fixture")"
 
+implementation_plan_skipped_fixture="$(write_fixture implementation-plan-skipped '.pr.headRefName = "implementation-plan/918-delegated-review-merge-loop" | .pr.labels = ["ready-for-human-review"] | .statusChecks += [{"name": "E2E regression (placeholder)", "status": "COMPLETED", "conclusion": "SKIPPED"}]')"
+run_test "implementation_plan_pr_allows_skipped_regression_check" "merge_allowed" "$(decision_for "$implementation_plan_skipped_fixture")"
+
+spec_neutral_fixture="$(write_fixture spec-neutral '.pr.headRefName = "spec/918-delegated-review-merge-loop" | .pr.labels = ["ready-for-human-review"] | .statusChecks += [{"name": "E2E regression (placeholder)", "status": "COMPLETED", "conclusion": "NEUTRAL"}]')"
+run_test "spec_pr_allows_neutral_regression_check" "merge_allowed" "$(decision_for "$spec_neutral_fixture")"
+
+implementation_skipped_missing_label_fixture="$(write_fixture implementation-skipped-missing-label '.pr.labels = ["ready-for-human-review"] | .statusChecks += [{"name": "E2E regression (placeholder)", "status": "COMPLETED", "conclusion": "SKIPPED"}]')"
+run_test "implementation_pr_still_requires_regression_label" "blocked" "$(decision_for "$implementation_skipped_missing_label_fixture")"
+
+implementation_skipped_with_label_fixture="$(write_fixture implementation-skipped-with-label '.statusChecks += [{"name": "E2E regression (placeholder)", "status": "COMPLETED", "conclusion": "SKIPPED"}]')"
+run_test "implementation_pr_with_regression_label_allows_skipped_check" "merge_allowed" "$(decision_for "$implementation_skipped_with_label_fixture")"
+
 setup_fixture="$(write_fixture setup '.pr.labels += ["needs-setup"]')"
 run_test "needs_setup_requires_human" "human_required" "$(decision_for "$setup_fixture")"
 
@@ -205,6 +220,17 @@ run_test "ci_failure_requires_fix" "fix_required" "$(decision_for "$ci_failure_f
 
 ci_in_progress_fixture="$(write_fixture ci-in-progress '.statusChecks[0].status = "IN_PROGRESS" | .statusChecks[0].conclusion = "SUCCESS"')"
 run_test "ci_in_progress_success_conclusion_requires_fix" "fix_required" "$(decision_for "$ci_in_progress_fixture")"
+
+for terminal_conclusion in FAILURE CANCELLED TIMED_OUT ACTION_REQUIRED STARTUP_FAILURE ""; do
+  fixture_suffix="${terminal_conclusion:-missing}"
+  terminal_fixture="$(write_fixture "terminal-${fixture_suffix}" ".statusChecks = [{\"name\": \"guard\", \"status\": \"COMPLETED\", \"conclusion\": \"${terminal_conclusion}\"}]")"
+  run_test "completed_${fixture_suffix}_check_requires_fix" "fix_required" "$(decision_for "$terminal_fixture")"
+done
+
+for pending_state in IN_PROGRESS QUEUED PENDING EXPECTED; do
+  pending_fixture="$(write_fixture "pending-${pending_state}" ".statusChecks = [{\"name\": \"guard\", \"status\": \"${pending_state}\", \"conclusion\": \"SUCCESS\"}]")"
+  run_test "${pending_state}_check_requires_fix" "fix_required" "$(decision_for "$pending_fixture")"
+done
 
 status_context_fixture="$(write_fixture status-context '.statusChecks = [{"name": "legacy", "state": "SUCCESS", "conclusion": "SUCCESS"}]')"
 run_test "status_context_success_is_terminal" "merge_allowed" "$(decision_for "$status_context_fixture")"
