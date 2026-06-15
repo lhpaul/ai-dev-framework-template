@@ -1,7 +1,7 @@
 interface:
   display_name: "Run epic"
   short_description: "Resolve an epic or explicit item list into bounded execution scope with delegated review, risk, audit, and merge gates."
-  default_prompt: "Use $run-epic to resolve a native GitHub epic or explicit item list before delegated workflow execution. Keep the resolver read-only; capture invocation policy flags such as --delegate-review, --may-merge, --may-start-backlog, --max-risk, and --base. If policy is missing or ambiguous, run the read-only policy recommender, present the recommended config in-place, and continue in the same run when accepted. Before delegated merge decisions run the read-only PR risk classifier and delegated gate, then create or update stable PR disposition and epic ledger audit comments including original, recommended, selected, and effective policy."
+  default_prompt: "Use $run-epic to resolve a native GitHub epic or explicit item list before delegated workflow execution. Keep the resolver read-only; capture invocation policy flags such as --delegate-review, --no-delegate-review, --may-merge, --no-may-merge, --may-start-backlog, --max-risk, and --base. If policy is missing or ambiguous, run the read-only policy recommender, present the recommended config in-place, and continue in the same run when accepted. Before delegated merge decisions run the read-only PR risk classifier and delegated gate, then create or update stable PR disposition and epic ledger audit comments including original, recommended, selected, and effective policy."
 
 policy:
   allow_implicit_invocation: false

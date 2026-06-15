@@ -48,13 +48,15 @@ When autonomy policy is missing or ambiguous, derive a recommended policy from
 the resolver output before any mutating stage begins:
 
 ```bash
-./scripts/development-workflow/run-epic-policy-recommender.sh --scope <resolver-json> --original-command "<requested command>" [--base <branch>] [--delegate-review] [--may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--json]
+./scripts/development-workflow/run-epic-policy-recommender.sh --scope <resolver-json> --original-command "<requested command>" [--base <branch>] [--delegate-review|--no-delegate-review] [--may-merge|--no-may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--json]
 ```
 
 The recommender is also read-only. It must not update tracker status, create
 branches, open or edit PRs, merge PRs, close issues, delete branches, or post
 comments. It produces recommended, selected, and effective policy values plus a
-copy-paste equivalent command for audit evidence.
+copy-paste equivalent command for audit evidence. Use `--no-delegate-review` or
+`--no-may-merge` when the selected policy explicitly disables a recommended
+positive default.
 
 When a later delegated run reaches a candidate PR merge decision, classify that
 PR with:

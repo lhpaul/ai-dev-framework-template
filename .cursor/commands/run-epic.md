@@ -51,6 +51,9 @@ ambiguous:
 ./scripts/development-workflow/run-epic-policy-recommender.sh --scope <resolver-json> --original-command "<requested command>"
 ```
 
+Pass `--no-delegate-review` or `--no-may-merge` to the recommender when the
+selected policy explicitly disables a recommended positive default.
+
 Use the read-only risk helper before delegated merge decisions:
 
 ```bash

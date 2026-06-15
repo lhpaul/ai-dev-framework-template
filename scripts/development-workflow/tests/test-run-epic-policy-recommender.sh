@@ -4,7 +4,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
-REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
+GIT_COMMON_DIR="$(cd "$SCRIPT_DIR" && git rev-parse --git-common-dir)"
+case "$GIT_COMMON_DIR" in
+  /*) REPO_ROOT="$(cd "$GIT_COMMON_DIR/.." && pwd -P)" ;;
+  *) REPO_ROOT="$(cd "$SCRIPT_DIR/$GIT_COMMON_DIR/.." && pwd -P)" ;;
+esac
 HELPER="$REPO_ROOT/scripts/development-workflow/run-epic-policy-recommender.sh"
 
 TMP_ROOT="$(mktemp -d)"
@@ -108,6 +112,8 @@ run_fails_contains "requires_original_command" "--original-command is required" 
 run_fails_contains "rejects_flag_as_scope_value" "--scope requires a value" "$HELPER" --scope --json --original-command x
 run_fails_contains "rejects_flag_as_original_command_value" "--original-command requires a value" "$HELPER" --scope "$missing_file" --original-command --json
 run_fails_contains "rejects_bad_backlog_bool" "--may-start-backlog must be true or false" "$HELPER" --scope "$missing_file" --original-command x --may-start-backlog maybe
+run_fails_contains "rejects_bad_delegate_bool" "--delegate-review must be true or false" "$HELPER" --scope "$missing_file" --original-command x --delegate-review=maybe
+run_fails_contains "rejects_bad_merge_bool" "--may-merge must be true or false" "$HELPER" --scope "$missing_file" --original-command x --may-merge=maybe
 run_fails_contains "rejects_bad_max_risk" "--max-risk must be one of low, medium, or high" "$HELPER" --scope "$missing_file" --original-command x --max-risk blocked
 run_fails_contains "rejects_missing_scope" "scope file not found" "$HELPER" --scope "$missing_file" --original-command x
 run_fails_contains "rejects_empty_scope" "scope file is empty" "$HELPER" --scope "$empty_file" --original-command x
@@ -167,6 +173,31 @@ run_test "explicit_policy_skips_confirmation" "false" "$(printf '%s\n' "$explici
 run_test "explicit_backlog_choice_preserved" "false" "$(printf '%s\n' "$explicit_output" | jq -r '.effectivePolicy.mayStartBacklog')"
 run_test "explicit_sources_recorded" "explicit" "$(printf '%s\n' "$explicit_output" | jq -r '.fieldSources.maxRisk')"
 run_test "copy_paste_command_is_canonical" "1" "$(printf '%s\n' "$explicit_output" | jq -r '.copyPasteCommand' | grep -o -- '--max-risk' | wc -l | tr -d ' ')"
+
+disabled_output="$("$HELPER" \
+  --scope "$backlog_fixture" \
+  --original-command "\$run-epic --items 949 --delegate-review --may-merge" \
+  --no-delegate-review \
+  --no-may-merge \
+  --may-start-backlog false \
+  --max-risk low \
+  --base develop \
+  --json)"
+run_test "explicit_delegate_disable_preserved" "false" "$(printf '%s\n' "$disabled_output" | jq -r '.effectivePolicy.delegateReview')"
+run_test "explicit_merge_disable_preserved" "false" "$(printf '%s\n' "$disabled_output" | jq -r '.effectivePolicy.mayMerge')"
+run_test "disabled_sources_recorded" "explicit" "$(printf '%s\n' "$disabled_output" | jq -r '.fieldSources.delegateReview')"
+run_test "disabled_copy_paste_omits_positive_flags" "yes" "$(printf '%s\n' "$disabled_output" | jq -r '.copyPasteCommand' | grep -Eq -- '--delegate-review|--may-merge' && echo no || echo yes)"
+
+assignment_output="$("$HELPER" \
+  --scope "$backlog_fixture" \
+  --original-command "\$run-epic --items 949" \
+  --delegate-review=false \
+  --may-merge=false \
+  --may-start-backlog false \
+  --max-risk low \
+  --base develop \
+  --json)"
+run_test "assignment_false_supported" "false:false" "$(printf '%s\n' "$assignment_output" | jq -r '(.effectivePolicy.delegateReview | tostring) + ":" + (.effectivePolicy.mayMerge | tostring)')"
 
 docs_fixture="$(write_fixture docs '{
   "scopeSource": "items",

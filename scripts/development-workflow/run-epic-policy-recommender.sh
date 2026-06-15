@@ -9,7 +9,7 @@ source "$SCRIPT_DIR/workflow-lib.sh"
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/development-workflow/run-epic-policy-recommender.sh --scope <resolver-json> --original-command <text> [--base <branch>] [--delegate-review] [--may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--json]
+  ./scripts/development-workflow/run-epic-policy-recommender.sh --scope <resolver-json> --original-command <text> [--base <branch>] [--delegate-review|--no-delegate-review] [--may-merge|--no-may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--json]
 
 Derives a read-only recommended /run-epic autonomy policy from resolver output.
 The helper does not update trackers, create branches, open PRs, edit labels,
@@ -54,6 +54,15 @@ valid_max_risk() {
   esac
 }
 
+parse_boolean_assignment() {
+  local option="$1" value="$2"
+  if ! is_boolean "$value"; then
+    echo "ERROR: $option must be true or false." >&2
+    exit 64
+  fi
+  printf '%s\n' "$value"
+}
+
 load_scope_json() {
   local file="$1"
   if [ ! -f "$file" ]; then
@@ -86,8 +95,24 @@ while [ "$#" -gt 0 ]; do
       delegate_review_override="true"
       shift
       ;;
+    --delegate-review=*)
+      delegate_review_override="$(parse_boolean_assignment "--delegate-review" "${1#*=}")"
+      shift
+      ;;
+    --no-delegate-review)
+      delegate_review_override="false"
+      shift
+      ;;
     --may-merge)
       may_merge_override="true"
+      shift
+      ;;
+    --may-merge=*)
+      may_merge_override="$(parse_boolean_assignment "--may-merge" "${1#*=}")"
+      shift
+      ;;
+    --no-may-merge)
+      may_merge_override="false"
       shift
       ;;
     --may-start-backlog)
@@ -138,7 +163,10 @@ if ! printf '%s\n' "$scope_json" | jq -e '
   error_exit "scope JSON must include object fields groups and policy plus array field items"
 fi
 
-reviewers="$(workflow_config_review_on_draft_runner "$(workflow_config_file)" 2>/dev/null || true)"
+config_file="$(workflow_config_file)"
+if ! reviewers="$(workflow_config_review_on_draft_runner "$config_file")"; then
+  error_exit "failed to read review.on_draft.runner from workflow config: $config_file"
+fi
 reviewer_count="$(printf '%s\n' "$reviewers" | sed '/^$/d' | wc -l | tr -d ' ')"
 
 recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
