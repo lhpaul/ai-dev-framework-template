@@ -44,6 +44,18 @@ The resolver is read-only even when delegation flags are supplied. It must not
 update tracker status, create branches, open or edit PRs, merge PRs, close
 issues, or delete branches.
 
+When autonomy policy is missing or ambiguous, derive a recommended policy from
+the resolver output before any mutating stage begins:
+
+```bash
+./scripts/development-workflow/run-epic-policy-recommender.sh --scope <resolver-json> --original-command "<requested command>" [--base <branch>] [--delegate-review] [--may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--json]
+```
+
+The recommender is also read-only. It must not update tracker status, create
+branches, open or edit PRs, merge PRs, close issues, delete branches, or post
+comments. It produces recommended, selected, and effective policy values plus a
+copy-paste equivalent command for audit evidence.
+
 When a later delegated run reaches a candidate PR merge decision, classify that
 PR with:
 
@@ -185,6 +197,43 @@ The output must also include the invocation policy:
 - Backlog-start policy.
 - Maximum allowed autonomous merge risk.
 
+### Step 6a: Recommend Missing Autonomy Policy
+
+If any effective policy value was not explicitly supplied by the human, or if
+the base branch is ambiguous, run the policy recommender against the saved
+resolver output before tracker, branch, PR, label, or merge mutation.
+
+Recommended defaults should favor the most automatic safe configuration:
+
+- `--may-start-backlog true` when the requested scope includes Backlog items
+  and no dependency blocker or ambiguity is detected.
+- `--delegate-review` when configured internal reviewers are available for the
+  current runner.
+- `--may-merge` when delegated review is available, the scope is explicit, and
+  no authority, setup, or base ambiguity is present.
+- `--base <branch>` when the resolver inferred one unambiguously.
+- `--max-risk low` for docs, spec, plan, test, or narrow text-only changes.
+- `--max-risk medium` for workflow scripts, orchestration behavior, merge or
+  cleanup automation, or shared workflow tooling when later
+  `why_safe_to_merge` evidence can be produced.
+- Never recommend `high` by default. High-risk work requires explicit human
+  selection.
+
+Present a preflight summary before mutation: scoped issues, grouped states,
+base branch, recommended policy, risk rationale, and the copy-paste equivalent
+command. If confirmation is required, ask in-place and continue in the same run
+when the human accepts. Do not ask repeatedly for the same policy choice within
+the same invocation once selected/effective policy has been recorded.
+
+Exact invocations with all effective policy values already supplied may skip the
+confirmation prompt, but they still record the original command, recommended
+policy, selected policy, effective policy, and copy-paste equivalent command in
+the later audit trail.
+
+If the recommender reports an ambiguous base, unavailable reviewers, missing
+authority, or risk tolerance above the safe recommendation, stop before mutation
+and explain the specific gate.
+
 ---
 
 ## Step 7: Classify PR Risk Before Delegated Merge
@@ -274,7 +323,9 @@ Required behavior:
   not applicable while still writing PR disposition comments.
 - Include reviewed head SHA, reviewer-loop result, blocking/advisory counts,
   advisory decisions and rationales, risk classification and reasons, merge
-  authority, final decision, verification evidence, and protocol deviations.
+  authority, original command, recommended policy, selected policy, effective
+  policy, copy-paste equivalent command, final decision, verification evidence,
+  and protocol deviations.
 - Redact secrets, credentials, tokens, and local-only paths before rendering or
   applying comments.
 
@@ -334,4 +385,7 @@ resolver output alone.
 
 Stop only when all in-scope items are merged, remaining items are blocked by a
 real external condition or authority boundary, or the invocation policy forbids
-starting the remaining Backlog work.
+starting the remaining Backlog work. Final stop messages must name the exact
+gate: missing authority, risk classification, CI/check state, unresolved
+reviewer findings, tracker ambiguity, delegated gate state, or backlog-start
+policy.
