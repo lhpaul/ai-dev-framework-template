@@ -210,14 +210,23 @@ def has_unanchored_branch_prefix_grep(content: str) -> bool:
     if "grep" not in content:
         return False
 
-    grep_start = content.index("grep")
-    grep_segment = content[grep_start:]
+    # Inspect the first grep pattern token after the command. This avoids
+    # treating anchors that appear earlier in the same regex as missing just
+    # because they are separated from the branch prefix by more than a few
+    # characters.
+    match = re.search(
+        r"\bgrep\b(?:\s+-\S+)*\s+(?P<pattern>'[^']*'|\"[^\"]*\"|[^\s#]+)",
+        content,
+    )
+    if not match:
+        return False
+
+    pattern = match.group("pattern").strip("'\"")
     for prefix in GREP_PREFIXES:
-        idx = grep_segment.find(prefix)
+        idx = pattern.find(prefix)
         if idx == -1:
             continue
-        prefix_start = grep_start + idx
-        if "^" not in content[grep_start:prefix_start]:
+        if "^" not in pattern[:idx]:
             return True
     return False
 

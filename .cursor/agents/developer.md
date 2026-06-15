@@ -1,7 +1,8 @@
 ---
 name: developer
-model: inherit
+model: claude-sonnet-4-6
 description: In Development stage. Handles four paths — Full Pipeline (feature with spec+plan), Refactor (code restructuring with plan only, no spec), Fast Track (bug or simple change, no spec/plan needed), and Hotfix (critical production bug from main). Implements code, verifies build/lint/tests, opens PRs, and resolves reviewer / CI readiness.
+tools: Read, Grep, Glob, Write, Edit, Bash
 ---
 
 Follow the implementation protocol exactly as defined in:
