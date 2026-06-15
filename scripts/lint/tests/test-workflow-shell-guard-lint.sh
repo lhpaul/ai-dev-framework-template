@@ -106,6 +106,15 @@ diff --git a/scripts/development-workflow/example.sh b/scripts/development-workf
 +local RESULT=$(gh api "repos/example/repo/pulls/1" --jq '.state')
 DIFF
 
+cat > "$TMP_DIR/allowed-sh002.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,2 @@
++#!/usr/bin/env bash
++local RESULT=$(gh api "repos/example/repo/pulls/1" --jq '.state') # workflow-shell-guard: allow SH002 - compound assignment is intentional here
+DIFF
+
 cat > "$TMP_DIR/bad-sh003.diff" <<'DIFF'
 diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
 --- a/scripts/development-workflow/example.sh
@@ -170,6 +179,15 @@ diff --git a/scripts/development-workflow/example.sh b/scripts/development-workf
 +echo "$branch" | grep "fix/"
 DIFF
 
+cat > "$TMP_DIR/bad-sh004-attached.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,2 @@
++#!/usr/bin/env bash
++echo "$branch" | grep --regexp=fix/foo
+DIFF
+
 cat > "$TMP_DIR/allowed-sh004.diff" <<'DIFF'
 diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
 --- a/scripts/development-workflow/example.sh
@@ -179,6 +197,15 @@ diff --git a/scripts/development-workflow/example.sh b/scripts/development-workf
 +echo "$branch" | grep "^feature/"
 DIFF
 
+cat > "$TMP_DIR/allowed-sh004-attached.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,2 @@
++#!/usr/bin/env bash
++echo "$branch" | grep --regexp='^feature/'
+DIFF
+
 cat > "$TMP_DIR/bad-sh005.diff" <<'DIFF'
 diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
 --- a/scripts/development-workflow/example.sh
@@ -186,6 +213,24 @@ diff --git a/scripts/development-workflow/example.sh b/scripts/development-workf
 @@ -1,0 +1,2 @@
 +#!/usr/bin/env bash
 +declare -A seen=([one]=1)
+DIFF
+
+cat > "$TMP_DIR/allowed-sh005.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,2 @@
++#!/usr/bin/env bash
++declare -A seen=([one]=1) # workflow-shell-guard: allow SH005 - associative array is intentional here
+DIFF
+
+cat > "$TMP_DIR/bad-invalid-suppression.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,2 @@
++#!/usr/bin/env bash
++git fetch origin develop 2>/dev/null __BEST_EFFORT_SUPPRESSION__ # workflow-shell-guard: allow BADTAG - malformed tag must not suppress
 DIFF
 
 cat > "$TMP_DIR/benign.diff" <<'DIFF'
@@ -256,11 +301,16 @@ for _fixture in \
   "$TMP_DIR/bad.diff" \
   "$TMP_DIR/bad-continuation.diff" \
   "$TMP_DIR/allowed.diff" \
+  "$TMP_DIR/allowed-sh002.diff" \
   "$TMP_DIR/benign.diff" \
   "$TMP_DIR/out-of-scope.diff" \
   "$TMP_DIR/context-only.diff" \
   "$TMP_DIR/comment-only.diff" \
-  "$TMP_DIR/multi-finding.diff"; do
+  "$TMP_DIR/multi-finding.diff" \
+  "$TMP_DIR/bad-sh004-attached.diff" \
+  "$TMP_DIR/allowed-sh004-attached.diff" \
+  "$TMP_DIR/allowed-sh005.diff" \
+  "$TMP_DIR/bad-invalid-suppression.diff"; do
   [ -e "$_fixture" ] && materialize_best_effort_suppression "$_fixture"
 done
 unset _fixture
@@ -269,6 +319,7 @@ run_test "critical_suppression_fails" "fail" "$(run_linter "$TMP_DIR/bad.diff")"
 run_test "continued_critical_suppression_fails" "fail" "$(run_linter "$TMP_DIR/bad-continuation.diff")"
 run_test "inline_suppression_passes" "pass" "$(run_linter "$TMP_DIR/allowed.diff")"
 run_test "sh002_local_assignment_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh002.diff")"
+run_test "sh002_allowed_directive_passes" "pass" "$(run_linter "$TMP_DIR/allowed-sh002.diff")"
 run_test "sh003_unguarded_jq_assignment_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh003.diff")"
 run_test "sh003_local_assignment_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh003-local.diff")"
 run_test "sh003_filter_lookalike_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh003-filter.diff")"
@@ -276,8 +327,12 @@ run_test "sh003_allowed_directive_passes" "pass" "$(run_linter "$TMP_DIR/allowed
 run_test "sh003_jq_e_passes" "pass" "$(run_linter "$TMP_DIR/allowed-sh003-e.diff")"
 run_test "sh003_continuation_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh003-continuation.diff")"
 run_test "sh004_unanchored_grep_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh004.diff")"
+run_test "sh004_attached_regexp_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh004-attached.diff")"
 run_test "sh004_anchored_grep_passes" "pass" "$(run_linter "$TMP_DIR/allowed-sh004.diff")"
+run_test "sh004_attached_regexp_passes" "pass" "$(run_linter "$TMP_DIR/allowed-sh004-attached.diff")"
 run_test "sh005_assoc_array_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh005.diff")"
+run_test "sh005_allowed_directive_passes" "pass" "$(run_linter "$TMP_DIR/allowed-sh005.diff")"
+run_test "invalid_suppression_tag_does_not_pass" "fail" "$(run_linter "$TMP_DIR/bad-invalid-suppression.diff")"
 run_test "noncritical_grep_passes" "pass" "$(run_linter "$TMP_DIR/benign.diff")"
 run_test "blank_and_comment_added_lines_pass" "pass" "$(run_linter "$TMP_DIR/comment-only.diff")"
 run_test "out_of_scope_path_passes" "pass" "$(run_linter "$TMP_DIR/out-of-scope.diff")"
