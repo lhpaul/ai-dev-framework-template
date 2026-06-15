@@ -1162,8 +1162,8 @@ fi
 run_test "summary_result_line_skipped" "1" "$_skipped_constant_count"
 unset _skipped_constant_count
 
-# Test 10.4: _post_review_summary source renders policy-status details.
-if grep -qF '**Review policy status:**' \
+# Test 10.4: _post_review_summary source renders policy acknowledgement details.
+if grep -qF '**Policy acknowledgements:**' \
     "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" \
     && grep -qF 'platform_policy_status_notes' \
       "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"; then
@@ -1171,7 +1171,7 @@ if grep -qF '**Review policy status:**' \
 else
   _policy_status_summary_count=0
 fi
-run_test "summary_policy_status_section" "1" "$_policy_status_summary_count"
+run_test "summary_policy_acknowledgements_section" "1" "$_policy_status_summary_count"
 unset _policy_status_summary_count
 
 # ---------------------------------------------------------------------------

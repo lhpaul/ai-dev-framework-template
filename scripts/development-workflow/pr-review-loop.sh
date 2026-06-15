@@ -4655,7 +4655,7 @@ Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs afte
       && [ "${#platform_policy_status_notes[@]}" -gt 0 ]; then
     local _policy_status_note
     policy_status_section="
-**Review policy status:**"
+**Policy acknowledgements:**"
     for _policy_status_note in "${platform_policy_status_notes[@]}"; do
       policy_status_section="${policy_status_section}
 - ${_policy_status_note}"
