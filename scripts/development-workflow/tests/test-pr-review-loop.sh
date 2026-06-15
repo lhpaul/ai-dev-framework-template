@@ -175,6 +175,23 @@ run_test() {
   fi
 }
 
+grep_count_or_zero() {
+  local pattern="$1"
+  local file="$2"
+  local count
+  local status
+
+  set +e
+  count="$(grep -c -- "$pattern" "$file")"
+  status=$?
+  set -e
+
+  case "$status" in
+    0|1) printf '%s\n' "${count:-0}" ;;
+    *) return "$status" ;;
+  esac
+}
+
 # ---------------------------------------------------------------------------
 # Area 0: draft/ready lifecycle config parsing
 # ---------------------------------------------------------------------------
@@ -1162,7 +1179,34 @@ fi
 run_test "summary_result_line_skipped" "1" "$_skipped_constant_count"
 unset _skipped_constant_count
 
-# Test 10.4: _post_review_summary source renders policy acknowledgement details.
+# Test 10.4: _post_review_summary source renders needs_fixes as active findings.
+if grep -qF 'result_line="${blocking} blocking finding(s) require fixes"' \
+    "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" \
+    && grep -qF 'needs_fixes)' \
+      "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"; then
+  _needs_fixes_summary_count=1
+else
+  _needs_fixes_summary_count=0
+fi
+run_test "summary_needs_fixes_active_findings" "1" "$_needs_fixes_summary_count"
+unset _needs_fixes_summary_count
+
+# Test 10.5: main needs_fixes exit branch posts the summary before exiting.
+_needs_fixes_case_block="$(awk '
+  /^  needs_fixes\)/ {capture=1}
+  capture {print}
+  capture && /^    ;;/ {exit}
+' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
+if grep -qF '_post_review_summary "$aggregate_result" "$aggregate_reason"' <<<"$_needs_fixes_case_block" \
+    && grep -qF 'exit 1' <<<"$_needs_fixes_case_block"; then
+  _needs_fixes_main_summary_count=1
+else
+  _needs_fixes_main_summary_count=0
+fi
+run_test "main_needs_fixes_exit_posts_summary" "1" "$_needs_fixes_main_summary_count"
+unset _needs_fixes_case_block _needs_fixes_main_summary_count
+
+# Test 10.6: _post_review_summary source renders policy acknowledgement details.
 if grep -qF '**Policy acknowledgements:**' \
     "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" \
     && grep -qF 'platform_policy_status_notes' \
@@ -1643,8 +1687,37 @@ else
 fi
 run_test "post_summary_removes_body_file_on_failure" "yes" "$_body_file_removed"
 rm -f "$_summary_call_log"
+
+MOCK_GH_EXIT=0
+export MOCK_GH_EXIT
+MOCK_GH_COMMENTS_OUTPUT='[]'
+export MOCK_GH_COMMENTS_OUTPUT
+_summary_call_log="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_summary_call_log"
+_post_review_summary "needs_fixes" "haystack_blocking_findings" "pr-agent (clean), haystack (needs_fixes)" "2" "0"
+_needs_fixes_create_calls="$(grep_count_or_zero 'pr comment 42 --body-file' "$_summary_call_log")"
+_needs_fixes_patch_calls="$(grep_count_or_zero '--method PATCH' "$_summary_call_log")"
+run_test "post_summary_needs_fixes_creates_when_missing" "1" "$_needs_fixes_create_calls"
+run_test "post_summary_needs_fixes_missing_does_not_patch" "0" "$_needs_fixes_patch_calls"
+rm -f "$_summary_call_log"
+
+MOCK_GH_COMMENTS_OUTPUT="$(
+  jq -nc --arg body $'### Automated Reviewer Loop Summary\n\n*Posted automatically by `pr-review-loop.sh`.*' \
+    '[{id: 123, body: $body}]'
+)"
+export MOCK_GH_COMMENTS_OUTPUT
+_summary_call_log="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_summary_call_log"
+_post_review_summary "needs_fixes" "haystack_blocking_findings" "pr-agent (clean), haystack (needs_fixes)" "2" "0"
+_needs_fixes_create_calls="$(grep_count_or_zero 'pr comment 42 --body-file' "$_summary_call_log")"
+_needs_fixes_patch_calls="$(grep_count_or_zero '--method PATCH' "$_summary_call_log")"
+run_test "post_summary_needs_fixes_repeated_no_duplicate" "0" "$_needs_fixes_create_calls"
+run_test "post_summary_needs_fixes_repeated_updates_in_place" "1" "$_needs_fixes_patch_calls"
+rm -f "$_summary_call_log"
+
 unset MOCK_GH_CALL_LOG MOCK_GH_EXIT MOCK_GH_COMMENTS_OUTPUT
 unset _post_summary_source _summary_call_log _body_file _body_file_used _body_file_removed
+unset _needs_fixes_create_calls _needs_fixes_patch_calls
 unset -f _post_review_summary repo_slug
 
 # ---------------------------------------------------------------------------
