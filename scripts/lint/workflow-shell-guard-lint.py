@@ -211,20 +211,23 @@ def is_unguarded_jq_r_assignment(content: str) -> bool:
     if jq_index == -1:
         return False
 
-    def is_shell_operator(token: str) -> bool:
-        return token in {"||", "&&", "|", ";", "(", ")", "<<<", "<<", "<", ">", ">>"}
+    shell_operators = {"||", "&&", "|", ";", "(", ")", "<<<", "<<", "<", ">", ">>"}
+    command_tokens: list[str] = []
+    for token in tokens[jq_index + 1 :]:
+        if token in shell_operators:
+            break
+        command_tokens.append(token)
 
     flag_tokens: list[str] = []
-    tail_tokens = tokens[jq_index + 1 :]
     index = 0
-    while index < len(tail_tokens):
-        token = tail_tokens[index]
-        next_token = tail_tokens[index + 1] if index + 1 < len(tail_tokens) else ""
+    while index < len(command_tokens):
+        token = command_tokens[index]
+        next_token = command_tokens[index + 1] if index + 1 < len(command_tokens) else ""
         if token == "--":
             index += 1
             break
         if token in {"-r", "-e", "--exit-status", "-n", "--raw-input", "--null-input"}:
-            if token in {"-e", "--exit-status"} and (not next_token or is_shell_operator(next_token)):
+            if token in {"-e", "--exit-status"} and (not next_token or next_token in shell_operators):
                 break
             flag_tokens.append(token)
             index += 1
@@ -234,8 +237,6 @@ def is_unguarded_jq_r_assignment(content: str) -> bool:
             index += 1
             continue
         if token.startswith("-") and not token.startswith("--") and "e" in token[1:]:
-            if not next_token or is_shell_operator(next_token):
-                break
             flag_tokens.append(token)
             index += 1
             continue
@@ -267,7 +268,7 @@ def is_unguarded_jq_r_assignment(content: str) -> bool:
         return False
 
     has_shell_level_guard = any(
-        token == "||" for token in tail_tokens[index:]
+        token == "||" for token in tokens[jq_index + 1 + len(command_tokens) :]
     )
     if has_shell_level_guard:
         return False
@@ -296,16 +297,25 @@ def has_unanchored_branch_prefix_grep(content: str) -> bool:
     if grep_index == -1:
         return False
 
-    tail_tokens = tokens[grep_index + 1 :]
+    shell_operators = {"||", "&&", "|", ";", "(", ")", "<<<", "<<", "<", ">", ">>"}
+    command_tokens: list[str] = []
+    for token in tokens[grep_index + 1 :]:
+        if token in shell_operators:
+            break
+        command_tokens.append(token)
+
     patterns: list[str] = []
     first_bare_pattern = ""
     consume_next = False
-    for token in tail_tokens:
+    for token in command_tokens:
         if consume_next:
             patterns.append(token)
             consume_next = False
             continue
         if token in {"-e", "--regexp"}:
+            consume_next = True
+            continue
+        if token == "-P":
             consume_next = True
             continue
         if token.startswith("--regexp="):

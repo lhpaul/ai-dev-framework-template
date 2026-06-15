@@ -206,6 +206,15 @@ diff --git a/scripts/development-workflow/example.sh b/scripts/development-workf
 +echo "$branch" | grep "fix/"
 DIFF
 
+cat > "$TMP_DIR/bad-sh004-compound.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,2 @@
++#!/usr/bin/env bash
++foo && grep "fix/"
+DIFF
+
 cat > "$TMP_DIR/bad-sh004-attached.diff" <<'DIFF'
 diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
 --- a/scripts/development-workflow/example.sh
@@ -213,6 +222,15 @@ diff --git a/scripts/development-workflow/example.sh b/scripts/development-workf
 @@ -1,0 +1,2 @@
 +#!/usr/bin/env bash
 +echo "$branch" | grep --regexp=fix/foo
+DIFF
+
+cat > "$TMP_DIR/bad-sh004-perl.diff" <<'DIFF'
+diff --git a/scripts/development-workflow/example.sh b/scripts/development-workflow/example.sh
+--- a/scripts/development-workflow/example.sh
++++ b/scripts/development-workflow/example.sh
+@@ -1,0 +1,2 @@
++#!/usr/bin/env bash
++grep -P fix/foo README.md
 DIFF
 
 cat > "$TMP_DIR/bad-sh004-file-before-e.diff" <<'DIFF'
@@ -384,7 +402,9 @@ run_test "sh003_jq_exit_status_passes" "pass" "$(run_linter "$TMP_DIR/allowed-sh
 run_test "sh003_jq_er_passes" "pass" "$(run_linter "$TMP_DIR/allowed-sh003-er.diff")"
 run_test "sh003_continuation_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh003-continuation.diff")"
 run_test "sh004_unanchored_grep_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh004.diff")"
+run_test "sh004_compound_operator_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh004-compound.diff")"
 run_test "sh004_attached_regexp_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh004-attached.diff")"
+run_test "sh004_perl_regexp_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh004-perl.diff")"
 run_test "sh004_file_before_e_fails" "fail" "$(run_linter "$TMP_DIR/bad-sh004-file-before-e.diff")"
 run_test "sh004_anchored_grep_passes" "pass" "$(run_linter "$TMP_DIR/allowed-sh004.diff")"
 run_test "sh004_attached_regexp_passes" "pass" "$(run_linter "$TMP_DIR/allowed-sh004-attached.diff")"
