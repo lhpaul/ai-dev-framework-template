@@ -73,7 +73,6 @@ candidate PR, resolver policy, reviewer, CI, risk, scope, and audit evidence:
 
 ```bash
 ./scripts/development-workflow/run-epic-delegated-gate.sh --input <file> [--policy <file>]
-./scripts/development-workflow/run-epic-delegated-gate.sh --pr <pr-number> [--policy <file>]
 ```
 
 The gate is read-only. It explains whether the runner may proceed to merge,

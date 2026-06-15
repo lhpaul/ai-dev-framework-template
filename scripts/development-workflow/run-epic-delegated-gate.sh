@@ -10,7 +10,6 @@ usage() {
   cat <<'EOF'
 Usage:
   ./scripts/development-workflow/run-epic-delegated-gate.sh --input <file> [--policy <file>] [--json]
-  ./scripts/development-workflow/run-epic-delegated-gate.sh --pr <number> [--policy <file>] [--json]
 
 Evaluates whether a delegated /run-epic candidate PR may proceed to the
 repository merge protocol. The gate is read-only: it does not run reviewers,
@@ -21,7 +20,6 @@ EOF
 
 input_file=""
 policy_file=""
-pr_number=""
 json_output=0
 
 error_exit() {
@@ -38,14 +36,6 @@ require_value() {
   fi
 }
 
-is_positive_int() {
-  case "$1" in
-    ''|*[!0-9]*) return 1 ;;
-    0*) return 1 ;;
-    *) return 0 ;;
-  esac
-}
-
 load_input_json() {
   local file="$1"
   if [ ! -f "$file" ]; then
@@ -55,78 +45,6 @@ load_input_json() {
     error_exit "input file is empty: $file"
   fi
   jq -c '.' "$file" 2>/dev/null || error_exit "input file is not valid JSON: $file"
-}
-
-live_pr_state() {
-  local number="$1"
-  local pr_json
-
-  require_gh
-
-  if ! pr_json="$(gh pr view "$number" \
-    --json number,title,headRefName,baseRefName,isDraft,mergeStateStatus,labels,statusCheckRollup 2>/dev/null)"; then
-    error_exit "failed to read PR #$number"
-  fi
-  if [ -z "$pr_json" ]; then
-    error_exit "empty PR response for #$number"
-  fi
-
-  printf '%s\n' "$pr_json" | jq '{
-    policy: {
-      delegateReview: false,
-      mayMerge: false,
-      mayStartBacklog: false,
-      maxRisk: "low"
-    },
-    scope: {
-      source: "live-pr",
-      itemNumbers: []
-    },
-    item: {
-      number: null,
-      status: "",
-      group: ""
-    },
-    pr: {
-      number,
-      title,
-      headRefName,
-      baseRefName,
-      isDraft,
-      mergeStateStatus,
-      labels: [.labels[]?.name],
-      inScope: false,
-      unresolvedBlockingThreads: null,
-      auditDispositionPresent: false
-    },
-    reviewer: {
-      status: "unknown",
-      blockingCount: null,
-      advisoryCount: null,
-      acceptedAdvisoriesWithoutRationale: 0
-    },
-    risk: {
-      risk: "blocked",
-      mergePermitted: false,
-      blockers: ["live PR mode requires explicit delegated policy and risk evidence fixture"]
-    },
-    statusChecks: [
-      .statusCheckRollup[]? |
-      if .__typename == "CheckRun" then
-        {
-          name: .name,
-          status: (.status // ""),
-          conclusion: (.conclusion // "")
-        }
-      else
-        {
-          name: .context,
-          state: (.state // ""),
-          conclusion: (.state // "")
-        }
-      end
-    ]
-  }'
 }
 
 while [ "$#" -gt 0 ]; do
@@ -139,11 +57,6 @@ while [ "$#" -gt 0 ]; do
     --policy)
       require_value "$@"
       policy_file="$2"
-      shift 2
-      ;;
-    --pr)
-      require_value "$@"
-      pr_number="$2"
       shift 2
       ;;
     --json)
@@ -162,24 +75,12 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-if [ -n "$input_file" ] && [ -n "$pr_number" ]; then
-  echo "ERROR: pass exactly one of --input or --pr, not both." >&2
-  exit 64
-fi
-if [ -z "$input_file" ] && [ -z "$pr_number" ]; then
-  echo "ERROR: pass exactly one of --input or --pr." >&2
-  exit 64
-fi
-if [ -n "$pr_number" ] && ! is_positive_int "$pr_number"; then
-  echo "ERROR: --pr must be a positive integer." >&2
+if [ -z "$input_file" ]; then
+  echo "ERROR: --input is required." >&2
   exit 64
 fi
 
-if [ -n "$input_file" ]; then
-  state_json="$(load_input_json "$input_file")"
-else
-  state_json="$(live_pr_state "$pr_number")"
-fi
+state_json="$(load_input_json "$input_file")"
 
 if [ -n "$policy_file" ]; then
   policy_json="$(load_input_json "$policy_file")"

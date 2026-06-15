@@ -4,7 +4,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
-REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../../.." && pwd)"
+REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 HELPER="$REPO_ROOT/scripts/development-workflow/run-epic-audit-trail.sh"
 
 TMP_ROOT="$(mktemp -d)"

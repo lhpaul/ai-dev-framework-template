@@ -284,6 +284,21 @@ dedupe_checks_output="$(classify_fixture "$dedupe_checks_fixture" low)"
 run_test "stale_check_failure_deduped_by_latest_success" "low" "$(printf '%s\n' "$dedupe_checks_output" | jq -r '.risk')"
 run_test "stale_check_failure_does_not_block" "true" "$(printf '%s\n' "$dedupe_checks_output" | jq -r '.merge_permitted')"
 
+mixed_timestamp_fixture="$(write_fixture mixed-timestamp-checks '{
+  "pr_number": 8,
+  "merge_state": "CLEAN",
+  "labels": ["ready-for-human-review"],
+  "status_checks": [
+    {"name": "guard", "status": "COMPLETED", "conclusion": "FAILURE", "completed_at": "2026-06-12T10:00:00Z"},
+    {"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}
+  ],
+  "changed_files": ["docs/README.md"],
+  "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 0}
+}')"
+mixed_timestamp_output="$(classify_fixture "$mixed_timestamp_fixture" low)"
+run_test "mixed_timestamp_checks_block_as_ambiguous" "blocked" "$(printf '%s\n' "$mixed_timestamp_output" | jq -r '.risk')"
+run_test "mixed_timestamp_checks_not_mergeable" "false" "$(printf '%s\n' "$mixed_timestamp_output" | jq -r '.merge_permitted')"
+
 reviewer_available_fixture="$(write_fixture reviewer-available '{
   "pr_number": 9,
   "merge_state": "CLEAN",

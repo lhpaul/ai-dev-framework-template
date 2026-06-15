@@ -177,8 +177,9 @@ collect_check_blockers() {
     | sort_by(.__run_epic_name, .__run_epic_idx)
     | group_by(.__run_epic_name)
     | map(
-        if all(.__run_epic_timestamp != "") then max_by(.__run_epic_timestamp)
-        else max_by(.__run_epic_idx)
+        if length == 1 then .[0]
+        elif all(.__run_epic_timestamp != "") then max_by(.__run_epic_timestamp)
+        else .[]
         end
         | del(.__run_epic_idx, .__run_epic_name, .__run_epic_timestamp)
       )

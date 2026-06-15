@@ -22,28 +22,6 @@ cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$MOCK_GH_CALL_LOG"
 case "$*" in
-  auth\ status)
-    exit 0
-    ;;
-  repo\ view\ --json\ nameWithOwner\ --jq\ .nameWithOwner)
-    printf 'lhpaul/ai-dev-framework-template\n'
-    ;;
-  pr\ view\ 42\ --json*)
-    cat <<'JSON'
-{
-  "number": 42,
-  "title": "Live PR",
-  "headRefName": "feature/42-live",
-  "baseRefName": "develop",
-  "isDraft": false,
-  "mergeStateStatus": "CLEAN",
-  "labels": [{"name": "ready-for-human-review"}],
-  "statusCheckRollup": [
-    {"__typename": "CheckRun", "name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}
-  ]
-}
-JSON
-    ;;
   issue\ edit*|pr\ create*|pr\ merge*|pr\ edit*|pr\ comment*|project\ item-edit*|project\ item-add*)
     printf 'mutating gh command was called: gh %s\n' "$*" >&2
     exit 99
@@ -174,9 +152,8 @@ printf '{"oops"\n' > "$malformed_file"
 echo ""
 echo "=== Run epic delegated gate ==="
 
-run_fails_contains "requires_one_pr_source" "pass exactly one of --input or --pr" "$GATE"
-run_fails_contains "rejects_conflicting_sources" "not both" "$GATE" --input "$base_fixture" --pr 42
-run_fails_contains "rejects_invalid_pr_number" "--pr must be a positive integer" "$GATE" --pr nope
+run_fails_contains "requires_input" "--input is required" "$GATE"
+run_fails_contains "rejects_pr_mode" "Unknown option: --pr" "$GATE" --pr 42
 run_fails_contains "rejects_missing_fixture" "input file not found" "$GATE" --input "$missing_file"
 run_fails_contains "rejects_empty_fixture" "input file is empty" "$GATE" --input "$empty_file"
 run_fails_contains "rejects_malformed_fixture" "input file is not valid JSON" "$GATE" --input "$malformed_file"
@@ -255,9 +232,6 @@ run_test "audit_required_before_merge" "blocked" "$(decision_for "$audit_fixture
 
 text_output="$("$GATE" --input "$risk_fixture")"
 run_test "text_output_includes_decision" "yes" "$(grep -q 'Decision: human_required' <<< "$text_output" && echo yes || echo no)"
-
-live_output="$("$GATE" --pr 42 --json)"
-run_test "live_pr_mode_is_read_only_and_blocked" "human_required" "$(printf '%s\n' "$live_output" | jq -r '.decision')"
 
 run_test "json_read_only_guarantee" "yes" "$(
   "$GATE" --input "$clean_fixture" --json | jq -e '.readOnlyGuarantee | test("No reviewer-loop")' >/dev/null && echo yes || echo no
