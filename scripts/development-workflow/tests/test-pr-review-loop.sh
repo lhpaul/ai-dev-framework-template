@@ -1684,7 +1684,10 @@ run_test "post_summary_needs_fixes_creates_when_missing" "1" "$_needs_fixes_crea
 run_test "post_summary_needs_fixes_missing_does_not_patch" "0" "$_needs_fixes_patch_calls"
 rm -f "$_summary_call_log"
 
-MOCK_GH_COMMENTS_OUTPUT='[{"id":123,"body":"### Automated Reviewer Loop Summary\n\n*Posted automatically by `pr-review-loop.sh`.*"}]'
+MOCK_GH_COMMENTS_OUTPUT="$(
+  jq -nc --arg body $'### Automated Reviewer Loop Summary\n\n*Posted automatically by `pr-review-loop.sh`.*' \
+    '[{id: 123, body: $body}]'
+)"
 export MOCK_GH_COMMENTS_OUTPUT
 _summary_call_log="$(mktemp)"
 export MOCK_GH_CALL_LOG="$_summary_call_log"
