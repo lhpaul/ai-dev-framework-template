@@ -2,13 +2,16 @@
 
 **Agent role**: Epic Runner (`run-epic`)
 **Purpose**: Convert a native GitHub epic or explicit item list into a bounded
-execution set, then apply delegated pre-merge risk classification when a
-candidate PR reaches the merge decision point
+execution set, then run an explicitly authorized delegated review and merge
+loop with pre-merge risk classification, audit evidence, cleanup, and
+rediscovery
 
 The first phase is a **read-only resolver protocol**, not an implementation
 protocol. It exists to make scoped multi-item work explicit before an agent
 starts specs, plans, branches, PRs, tracker updates, reviewer loops, merges, or
-cleanup. Later delegated execution phases must stay inside that resolved scope.
+cleanup. Delegation flags are captured during resolution but do not make the
+resolver mutating. Later delegated execution phases must stay inside that
+resolved scope.
 
 ---
 
@@ -27,10 +30,19 @@ The resolver supports exactly one scope source:
 Optional flags:
 
 - `--base <branch>`: override base-branch inference.
+- `--delegate-review`: allow the runner to make the normal human-review gate
+  decision for this invocation.
+- `--may-merge`: allow the runner to merge acceptable in-scope PRs through the
+  repository merge protocol.
+- `--may-start-backlog <true|false>`: control whether in-scope Backlog items
+  may be started.
+- `--max-risk <low|medium|high>`: maximum risk the runner may merge without
+  human input.
 - `--json`: emit machine-readable output for an orchestrator handoff.
 
-The resolver is read-only. It must not update tracker status, create branches,
-open or edit PRs, merge PRs, close issues, or delete branches.
+The resolver is read-only even when delegation flags are supplied. It must not
+update tracker status, create branches, open or edit PRs, merge PRs, close
+issues, or delete branches.
 
 When a later delegated run reaches a candidate PR merge decision, classify that
 PR with:
@@ -55,6 +67,19 @@ Delegated decision runs also record audit comments with:
 ```
 
 Audit comments are evidence records only; they do not grant merge authority.
+
+Before an authorized merge decision, run the delegated gate with the current
+candidate PR, resolver policy, reviewer, CI, risk, scope, and audit evidence:
+
+```bash
+./scripts/development-workflow/run-epic-delegated-gate.sh --input <file> [--policy <file>]
+./scripts/development-workflow/run-epic-delegated-gate.sh --pr <pr-number> [--policy <file>]
+```
+
+The gate is read-only. It explains whether the runner may proceed to merge,
+must fix and rerun, must stop for human authority/setup, or is blocked by
+missing state. It does not replace `/run-item-work`, reviewer-loop, CI-loop,
+risk classification, audit comments, merge, cleanup, or tracker updates.
 
 ---
 
@@ -152,6 +177,13 @@ When `--json` is supplied, emit valid JSON containing the same fields plus the
 full item metadata. Downstream orchestrators must treat this JSON as the bounded
 scope contract and must not opportunistically mutate items outside it.
 
+The output must also include the invocation policy:
+
+- Delegated review authority.
+- Delegated merge authority.
+- Backlog-start policy.
+- Maximum allowed autonomous merge risk.
+
 ---
 
 ## Step 7: Classify PR Risk Before Delegated Merge
@@ -196,7 +228,35 @@ cleanup risk. Missing evidence blocks the merge decision.
 
 ---
 
-## Step 8: Record Audit Trail
+## Step 8: Delegated Review and Fix Loop
+
+This step applies only when the invocation policy includes `--delegate-review`.
+Without delegated review authority, any PR that reaches the normal
+`ready-for-human-review` handoff remains waiting for human review.
+
+For each in-scope item:
+
+1. Advance the item with the existing `/run-item-work` or stage protocol. Do not
+   duplicate spec, plan, implementation, reviewer-loop, or CI-loop behavior in
+   this protocol.
+2. When a PR reaches review handoff, inspect the latest reviewer-loop and
+   Haystack result yourself.
+3. If blocking findings are present, remove `ready-for-human-review` and
+   `ready-for-regression`, apply deterministic fixes, push a normal follow-up
+   commit, rerun local validation, rerun reviewer-loop, rerun CI-loop, audit
+   unresolved threads, and reassess.
+4. Do not amend and force-push published PR commits during delegated review or
+   merge work.
+5. If advisory findings remain, make an explicit fix-or-accept decision. Fix an
+   advisory when it materially improves risk, maintainability, security, test
+   coverage, or workflow reliability. Accepted advisories require rationale in
+   the PR disposition audit.
+6. Restore readiness labels only after reviewer-loop, CI-loop, unresolved
+   threads, and final readiness checks are clean.
+
+---
+
+## Step 9: Record Audit Trail
 
 After a delegated review, fix, merge, block, or escalation decision, create or
 update the audit trail before considering the item complete.
@@ -218,3 +278,59 @@ Required behavior:
   applying comments.
 
 Reruns must update existing marker comments instead of creating duplicates.
+
+---
+
+## Step 10: Final Delegated Merge Gate
+
+This step applies only when the invocation policy includes `--may-merge`.
+Without delegated merge authority, the runner may prepare the PR for human
+review but must not merge it.
+
+Before merge:
+
+1. Confirm the PR belongs to the resolved execution set.
+2. Confirm the PR is not draft.
+3. Confirm `ready-for-human-review` is present.
+4. Confirm `ready-for-regression` is present when the branch prefix is
+   `feature/*`, `fix/*`, `hotfix/*`, `refactor/*`, or `backport/hotfix/*`.
+   Spec and implementation-plan PRs do not require this label.
+5. Confirm CI is green and no required check is pending, failing, unavailable,
+   or ambiguous.
+6. Confirm merge state is clean.
+7. Confirm `needs-setup` is absent.
+8. Confirm no unresolved blocking automated-reviewer thread remains.
+9. Confirm reviewer disposition is acceptable.
+10. Confirm the risk classifier permits merge under the invocation's
+    `--max-risk`.
+11. Confirm the PR disposition audit comment exists for the reviewed head SHA.
+12. Run `run-epic-delegated-gate.sh` against the assembled evidence.
+
+Proceed to the repository merge protocol only when the delegated gate reports
+`merge_allowed`. If the gate reports `fix_required`, remove readiness labels,
+fix, rerun validation/reviewer/CI, and return to Step 8. If it reports
+`human_required`, stop for human authority, setup, or risk tolerance. If it
+reports `blocked`, stop until required state is available.
+
+---
+
+## Step 11: Merge, Cleanup, Rediscovery, and Epic Closeout
+
+When all gates permit merge:
+
+1. Merge with the repository-approved merge path for the PR target branch.
+2. Verify GitHub reports the PR state as `MERGED`.
+3. Delete or prune the merged branch as appropriate.
+4. Run post-merge cleanup for the correct base branch.
+5. Verify issue state and Project status.
+6. Update the epic ledger.
+7. Rerun scope resolution so newly unblocked items can advance.
+
+After the final native child item reaches a terminal state, verify live native
+sub-issues and Project statuses before closing the parent epic or marking it
+complete. Do not close the parent epic from stale memory, branch names, or prior
+resolver output alone.
+
+Stop only when all in-scope items are merged, remaining items are blocked by a
+real external condition or authority boundary, or the invocation policy forbids
+starting the remaining Backlog work.

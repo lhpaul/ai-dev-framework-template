@@ -1,6 +1,6 @@
 ---
 name: run-epic
-description: Command-style Codex alias for resolving a native GitHub epic or explicit item list into a bounded workflow execution scope, with read-only PR risk classification before delegated merge decisions. Use when the user asks for /run-epic, run-epic, or wants a bounded epic execution set.
+description: Command-style Codex alias for resolving a native GitHub epic or explicit item list into a bounded workflow execution scope, with optional delegated review and merge gates. Use when the user asks for /run-epic, run-epic, or wants a bounded epic execution set.
 ---
 
 # Run Epic
@@ -10,7 +10,9 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
 1. Read `AGENTS.md` for repository-wide rules.
 2. Read `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md`.
 3. Run `./scripts/development-workflow/run-epic-scope-resolver.sh` with the
-   requested `--epic` or `--items` arguments.
+   requested `--epic` or `--items` arguments plus any invocation policy flags:
+   `--delegate-review`, `--may-merge`, `--may-start-backlog <true|false>`,
+   `--max-risk <low|medium|high>`, and `--base <branch>`.
 4. Treat resolver output as the bounded scope contract. The resolver itself is
    read-only: do not update tracker status, create branches, open PRs, merge
    PRs, close issues, or delete branches from the resolver phase.
@@ -26,3 +28,8 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
    - `apply-pr-disposition --input <file> --pr <pr-number>`
    - `render-epic-ledger --input <file>`
    - `apply-epic-ledger --input <file> --epic <issue-number>`
+7. Before any delegated merge, run
+   `./scripts/development-workflow/run-epic-delegated-gate.sh` with current
+   scope, reviewer, CI, risk, and audit evidence; pass `--policy <file>` when
+   the resolver policy is captured separately. Merge only when the gate reports
+   `merge_allowed`.

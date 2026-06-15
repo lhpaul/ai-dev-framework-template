@@ -9,8 +9,8 @@ source "$SCRIPT_DIR/workflow-lib.sh"
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/development-workflow/run-epic-scope-resolver.sh --epic <issue-number> [--base <branch>] [--json]
-  ./scripts/development-workflow/run-epic-scope-resolver.sh --items <issue-number>[,<issue-number>...] [--base <branch>] [--json]
+  ./scripts/development-workflow/run-epic-scope-resolver.sh --epic <issue-number> [--base <branch>] [--delegate-review] [--may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--json]
+  ./scripts/development-workflow/run-epic-scope-resolver.sh --items <issue-number>[,<issue-number>...] [--base <branch>] [--delegate-review] [--may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--json]
 
 Resolves a delegated epic or explicit item list into a read-only execution set.
 The resolver never starts backlog items, updates tracker status, creates
@@ -22,6 +22,10 @@ json_output=0
 epic_number=""
 items_arg=""
 base_override=""
+delegate_review=0
+may_merge=0
+may_start_backlog="false"
+max_risk="low"
 
 error_exit() {
   echo "ERROR: $*" >&2
@@ -30,7 +34,7 @@ error_exit() {
 
 require_value() {
   local option="$1"
-  if [ "$#" -lt 2 ] || [ -z "${2:-}" ]; then
+  if [ "$#" -lt 2 ] || [ -z "${2:-}" ] || [ "${2#--}" != "$2" ]; then
     echo "$option requires a value." >&2
     usage >&2
     exit 64
@@ -42,6 +46,20 @@ is_positive_int() {
     ''|*[!0-9]*) return 1 ;;
     0*) return 1 ;;
     *) return 0 ;;
+  esac
+}
+
+is_boolean() {
+  case "$1" in
+    true|false) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+valid_max_risk() {
+  case "$1" in
+    low|medium|high) return 0 ;;
+    *) return 1 ;;
   esac
 }
 
@@ -60,6 +78,24 @@ while [ "$#" -gt 0 ]; do
     --base)
       require_value "$@"
       base_override="$2"
+      shift 2
+      ;;
+    --delegate-review)
+      delegate_review=1
+      shift
+      ;;
+    --may-merge)
+      may_merge=1
+      shift
+      ;;
+    --may-start-backlog)
+      require_value "$@"
+      may_start_backlog="$2"
+      shift 2
+      ;;
+    --max-risk)
+      require_value "$@"
+      max_risk="$2"
       shift 2
       ;;
     --json)
@@ -88,6 +124,14 @@ if [ -z "$epic_number" ] && [ -z "$items_arg" ]; then
 fi
 if [ -n "$epic_number" ] && ! is_positive_int "$epic_number"; then
   echo "ERROR: --epic must be a positive integer." >&2
+  exit 64
+fi
+if ! is_boolean "$may_start_backlog"; then
+  echo "ERROR: --may-start-backlog must be true or false." >&2
+  exit 64
+fi
+if ! valid_max_risk "$max_risk"; then
+  echo "ERROR: --max-risk must be one of low, medium, or high." >&2
   exit 64
 fi
 
@@ -514,6 +558,10 @@ summary_json="$(jq -n \
   --arg itemInput "$items_arg" \
   --arg baseBranch "$base_branch" \
   --arg baseReason "$base_reason" \
+  --argjson delegateReview "$delegate_review" \
+  --argjson mayMerge "$may_merge" \
+  --arg mayStartBacklog "$may_start_backlog" \
+  --arg maxRisk "$max_risk" \
   --argjson items "$items_json" \
   --argjson emptyEpic "$empty_epic" \
   '{
@@ -523,6 +571,12 @@ summary_json="$(jq -n \
     baseBranch: (if $baseBranch == "" then null else $baseBranch end),
     baseAmbiguous: ($baseBranch == ""),
     baseReason: $baseReason,
+    policy: {
+      delegateReview: ($delegateReview == 1),
+      mayMerge: ($mayMerge == 1),
+      mayStartBacklog: ($mayStartBacklog == "true"),
+      maxRisk: $maxRisk
+    },
     emptyEpicScope: ($emptyEpic == 1),
     readOnlyGuarantee: "No tracker status, branch, PR, merge, issue-close, or cleanup mutation was performed.",
     groups: {
@@ -550,6 +604,10 @@ if [ "$(printf '%s\n' "$summary_json" | jq -r '.emptyEpicScope')" = "true" ]; th
   printf 'Native sub-issues: none resolved for epic #%s\n' "$epic_number"
 fi
 printf 'Base branch: %s (%s)\n' "${base_branch:-ambiguous}" "$base_reason"
+printf 'Delegated review: %s\n' "$(printf '%s\n' "$summary_json" | jq -r '.policy.delegateReview')"
+printf 'May merge: %s\n' "$(printf '%s\n' "$summary_json" | jq -r '.policy.mayMerge')"
+printf 'May start Backlog: %s\n' "$(printf '%s\n' "$summary_json" | jq -r '.policy.mayStartBacklog')"
+printf 'Max risk: %s\n' "$(printf '%s\n' "$summary_json" | jq -r '.policy.maxRisk')"
 printf 'Read-only: %s\n\n' "$(printf '%s\n' "$summary_json" | jq -r '.readOnlyGuarantee')"
 
 for group in eligible blocked already_merged in_review ambiguous out_of_scope; do
