@@ -166,6 +166,12 @@ no_review_fixture="$(write_fixture no-review '.policy.delegateReview = false')"
 run_test "missing_delegate_review_requires_human" "human_required" "$(decision_for "$no_review_fixture")"
 run_test "missing_delegate_review_reason" "true" "$(reason_match_for "$no_review_fixture" "delegated review")"
 
+null_policy_fixture="$(write_fixture null-policy '.policy = null')"
+run_test "null_policy_requires_human" "human_required" "$(decision_for "$null_policy_fixture")"
+
+string_policy_fixture="$(write_fixture string-policy '.policy = "delegate"')"
+run_test "non_object_policy_requires_human" "human_required" "$(decision_for "$string_policy_fixture")"
+
 no_merge_fixture="$(write_fixture no-merge '.policy.mayMerge = false')"
 run_test "missing_merge_authority_requires_human" "human_required" "$(decision_for "$no_merge_fixture")"
 

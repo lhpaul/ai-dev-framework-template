@@ -88,6 +88,7 @@ if [ -n "$policy_file" ]; then
 fi
 
 decision_json="$(printf '%s\n' "$state_json" | jq '
+  def policy: if (.policy | type) == "object" then .policy else {} end;
   def labels: (.pr.labels // []);
   def has_label($name): labels | index($name) != null;
   def success_check:
@@ -109,13 +110,13 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
 
   . as $state |
   [] as $reasons |
-  (if (.policy.delegateReview // false) != true
+  (if (policy.delegateReview // false) != true
    then add_reason($reasons; "delegated review authority is missing")
    else $reasons end) as $reasons |
-  (if (.policy.mayMerge // false) != true
+  (if (policy.mayMerge // false) != true
    then add_reason($reasons; "delegated merge authority is missing")
    else $reasons end) as $reasons |
-  (if (.item.status // "") == "Backlog" and ((.policy.mayStartBacklog // false) != true)
+  (if (.item.status // "") == "Backlog" and ((policy.mayStartBacklog // false) != true)
    then add_reason($reasons; "Backlog item cannot start without explicit may-start-backlog authority")
    else $reasons end) as $reasons |
   (if (.pr.inScope // false) != true
@@ -180,7 +181,7 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
       headRefName: (.pr.headRefName // ""),
       baseRefName: (.pr.baseRefName // "")
     },
-    policy: (.policy // {}),
+    policy: policy,
     readOnlyGuarantee: "No reviewer-loop runs, CI polling, label edits, tracker updates, comments, merges, issue closure, or branch deletion were performed."
   }
 ')"

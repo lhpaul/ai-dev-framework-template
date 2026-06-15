@@ -140,7 +140,7 @@ live_pr_state() {
       else
         {
           name: .context,
-          status: (.state // ""),
+          status: (if (.state // "") == "SUCCESS" then "COMPLETED" else (.state // "") end),
           conclusion: (.state // ""),
           completed_at: (.startedAt // "")
         }
@@ -154,8 +154,8 @@ check_status_is_success() {
   local status="$1"
   local conclusion="$2"
 
-  case "$status:$conclusion" in
-    COMPLETED:SUCCESS|completed:success|SUCCESS:SUCCESS|success:success) return 0 ;;
+  case "${status}:${conclusion}" in
+    COMPLETED:SUCCESS|completed:success) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -164,7 +164,7 @@ collect_check_blockers() {
   local state_json="$1"
   local blockers='[]'
   local checks_json check_count
-  local encoded status conclusion name
+  local encoded decoded status conclusion name
 
   if ! checks_json="$(printf '%s\n' "$state_json" | jq -c '
     [.status_checks[]?, .required_checks[]?, .checks[]?]
@@ -195,9 +195,18 @@ collect_check_blockers() {
 
   while IFS= read -r encoded; do
     [ -n "$encoded" ] || continue
-    status="$(printf '%s' "$encoded" | base64_decode | jq -r '.status // .state // ""')"
-    conclusion="$(printf '%s' "$encoded" | base64_decode | jq -r '.conclusion // .state // ""')"
-    name="$(printf '%s' "$encoded" | base64_decode | jq -r '.name // .context // "unnamed check"')"
+    if ! decoded="$(printf '%s' "$encoded" | base64_decode)"; then
+      error_exit "failed to decode required CI check state"
+    fi
+    if ! status="$(printf '%s\n' "$decoded" | jq -r '.status // .state // ""')"; then
+      error_exit "failed to parse required CI check status"
+    fi
+    if ! conclusion="$(printf '%s\n' "$decoded" | jq -r '.conclusion // .state // ""')"; then
+      error_exit "failed to parse required CI check conclusion"
+    fi
+    if ! name="$(printf '%s\n' "$decoded" | jq -r '.name // .context // "unnamed check"')"; then
+      error_exit "failed to parse required CI check name"
+    fi
     if [ -z "$status" ] && [ -z "$conclusion" ]; then
       blockers="$(append_json_array_string "$blockers" "required CI state is missing or ambiguous: ${name}")"
       continue
@@ -231,6 +240,11 @@ changed_file_risk() {
         risk="high"
         reasons="$(append_json_array_string "$reasons" "sensitive or broad file category: ${file}")"
         ;;
+      scripts/development-workflow/tests/*|test/*|tests/*)
+        if [ "$risk" = "low" ]; then
+          reasons="$(append_json_array_string "$reasons" "low-risk docs or tests change: ${file}")"
+        fi
+        ;;
       scripts/development-workflow/*.sh)
         if [ "$risk" != "high" ]; then
           risk="medium"
@@ -242,7 +256,7 @@ changed_file_risk() {
           reasons="$(append_json_array_string "$reasons" "workflow guidance change: ${file}")"
         fi
         ;;
-      docs/*|*.md|test/*|tests/*|scripts/development-workflow/tests/*)
+      docs/*|*.md)
         if [ "$risk" = "low" ]; then
           reasons="$(append_json_array_string "$reasons" "low-risk docs or tests change: ${file}")"
         fi

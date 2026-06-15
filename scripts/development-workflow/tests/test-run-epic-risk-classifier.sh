@@ -177,6 +177,17 @@ run_test "json_output_shape_stable" "yes" "$(
     ' >/dev/null && echo yes || echo no
 )"
 
+test_script_fixture="$(write_fixture test-script '{
+  "pr_number": 1,
+  "merge_state": "CLEAN",
+  "labels": ["ready-for-human-review"],
+  "status_checks": [{"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+  "changed_files": ["scripts/development-workflow/tests/test-run-epic-risk-classifier.sh"],
+  "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 0}
+}')"
+test_script_output="$(classify_fixture "$test_script_fixture" low)"
+run_test "classifies_workflow_test_script_low" "low" "$(printf '%s\n' "$test_script_output" | jq -r '.risk')"
+
 medium_fixture="$(write_fixture medium '{
   "pr_number": 2,
   "merge_state": "CLEAN",
