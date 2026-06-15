@@ -108,6 +108,19 @@ esac
 3. Prefer the narrowest scope: use a line-level disable rather than a function-level or file-level one.
 4. If the same construct recurs throughout the file, extract it into a helper function and suppress once there.
 
+### Workflow Shell Guard
+
+For workflow scripts under `scripts/development-workflow/`, run the diff-based
+workflow shell guard in addition to ShellCheck before opening a PR:
+
+```bash
+python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop
+```
+
+The guard catches added-line patterns that ShellCheck does not flag by default,
+including command-substitution masking, unguarded `jq -r` extraction, branch-
+prefix grep false positives, and bash 4 associative arrays.
+
 ### Fail-open error handling
 
 Never use `|| echo 0` (or similar) to suppress command failures — this masks real errors and silently returns wrong data. Use an explicit fallback block instead:
