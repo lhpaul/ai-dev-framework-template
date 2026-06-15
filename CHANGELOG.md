@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Haystack policy acknowledgements** (#890): labels policy-only Haystack human-review signals as explicit acknowledgements in reviewer-loop summaries while keeping concrete findings blocking.
 - **Prepare-release Linear tracker completion** (#914): makes release post-merge cleanup derive shipped issue scope from the finalized changelog, fail closed when tracker scope or Linear completion is missing, and emit actionable Linear MCP/API handoff signals.
 - **Post-merge cleanup integration branch awareness** (#911): makes cleanup switch to the merged PR base branch, including workflow hub integration branches, instead of always defaulting to `develop`.
 - **Native GitHub sub-issues for epics** (#884): documents native sub-issue linking and verification for multi-item GitHub epics while preserving `integration-branch:<slug>` labels as the routing contract and fallback.

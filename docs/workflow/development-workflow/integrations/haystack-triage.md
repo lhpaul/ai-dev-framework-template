@@ -121,10 +121,10 @@ triage result with a policy verdict appears as:
 haystack (needs-review: policy)
 ```
 
-The same summary comment includes an explicit status handoff:
+The same summary comment includes an explicit policy acknowledgement handoff:
 
 ```text
-Review policy status:
+Policy acknowledgements:
 - haystack: bucket=needs-assignment; needsHumanReview=true; disposition=policy-human-review; verdict=needs-review; analysisStatus=ready; rating=5; hasReviewer=false;
 ```
 
