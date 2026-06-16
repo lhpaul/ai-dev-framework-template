@@ -3963,11 +3963,29 @@ _check_release_pr_guard() {
   guard_head="$given_branch"
 
   if [ -z "$guard_head" ]; then
+    # Fetch the head branch from GitHub. Steps are separated so that gh failures
+    # and jq parse failures are each caught explicitly.
+    #
+    # Fail-safe design: if the branch cannot be determined (gh failure, empty
+    # JSON, or jq error), guard_head stays empty. An empty guard_head does NOT
+    # match release/* or hotfix/*, so the guard does not fire and the reviewer
+    # loop runs normally. For this SKIP guard (not a BLOCK guard), failing open
+    # means running the reviewer loop — the safe default, not a dangerous one.
+    local _gh_json=""
+    local _gh_exit=0
     set +e
-    guard_head="$(gh pr view "$pr_num" --json headRefName --jq '.headRefName // ""' 2>/dev/null)" || guard_head=""
+    _gh_json="$(gh pr view "$pr_num" --json headRefName 2>/dev/null)"
+    _gh_exit=$?
     set -e
-    # On fetch failure, guard_head stays empty — no branch match, guard does
-    # not fire (fail-safe: run the reviewer loop rather than silently skipping).
+    if [ "$_gh_exit" -eq 0 ] && [ -n "$_gh_json" ]; then
+      local _jq_exit=0
+      set +e
+      guard_head="$(printf '%s\n' "$_gh_json" | jq -r '.headRefName // ""' 2>/dev/null)"
+      _jq_exit=$?
+      set -e
+      [ "$_jq_exit" -ne 0 ] && guard_head=""
+    fi
+    # guard_head remains empty on any failure — guard does not fire.
   fi
 
   case "$guard_head" in

@@ -1850,12 +1850,11 @@ _guard_out="$(_check_release_pr_guard "104" "fix/some-fix")" || _guard_exit=$?
 run_test "release_guard_fix_no_fire" "RELEASE_GUARD_FIRED=0" \
   "$(printf '%s\n' "$_guard_out" | grep "^RELEASE_GUARD_FIRED=")"
 
-# Test 14.5: no --branch provided; head branch fetched from PR via jq
-# The mock returns MOCK_GH_OUTPUT for the default case. The function calls
-# gh pr view with --json headRefName --jq '.headRefName // ""' which the mock
-# does not apply jq to — it returns MOCK_GH_OUTPUT verbatim. Set it to the
-# expected jq-filtered value: the plain branch name string.
-export MOCK_GH_OUTPUT='release/v2.0.0'
+# Test 14.5: no --branch provided; head branch fetched from PR, parsed via jq.
+# The mock returns MOCK_GH_OUTPUT for the default gh pr view call. The function
+# now calls gh pr view WITHOUT --jq and then pipes to jq itself, so the mock
+# must return valid JSON rather than a pre-filtered plain branch name.
+export MOCK_GH_OUTPUT='{"headRefName":"release/v2.0.0"}'
 _guard_out=""
 _guard_exit=0
 _guard_out="$(_check_release_pr_guard "105")" || _guard_exit=$?
@@ -1865,8 +1864,9 @@ run_test "release_guard_fetched_head_value" "RELEASE_GUARD_HEAD=release/v2.0.0" 
   "$(printf '%s\n' "$_guard_out" | grep "^RELEASE_GUARD_HEAD=")"
 export MOCK_GH_OUTPUT='[]'
 
-# Test 14.6: no --branch provided; gh pr view failure — guard does not fire
-# (fail-safe: run the reviewer loop rather than silently skipping)
+# Test 14.6: no --branch provided; gh pr view failure — guard does not fire.
+# Fail-safe design: a SKIP guard that can't determine the branch defaults to
+# NOT firing, so the reviewer loop runs normally (fail-open is safe here).
 export MOCK_GH_EXIT=1
 export MOCK_GH_OUTPUT=''
 _guard_out=""
@@ -1878,7 +1878,118 @@ run_test "release_guard_fetch_failure_exit1" "1" "$_guard_exit"
 unset MOCK_GH_EXIT
 export MOCK_GH_OUTPUT='[]'
 
+# Test 14.7: no --branch provided; gh succeeds but jq parse fails (malformed
+# JSON) — guard does not fire (fail-safe).
+export MOCK_GH_OUTPUT='not-valid-json'
+_guard_out=""
+_guard_exit=1
+_guard_out="$(_check_release_pr_guard "107")" || _guard_exit=$?
+run_test "release_guard_jq_parse_fail_no_fire" "RELEASE_GUARD_FIRED=0" \
+  "$(printf '%s\n' "$_guard_out" | grep "^RELEASE_GUARD_FIRED=")"
+run_test "release_guard_jq_parse_fail_exit1" "1" "$_guard_exit"
+export MOCK_GH_OUTPUT='[]'
+
+# Test 14.8: no --branch provided; gh succeeds with null headRefName field —
+# guard does not fire (null collapses to empty string via jq // "").
+export MOCK_GH_OUTPUT='{"headRefName":null}'
+_guard_out=""
+_guard_exit=1
+_guard_out="$(_check_release_pr_guard "108")" || _guard_exit=$?
+run_test "release_guard_null_head_no_fire" "RELEASE_GUARD_FIRED=0" \
+  "$(printf '%s\n' "$_guard_out" | grep "^RELEASE_GUARD_FIRED=")"
+run_test "release_guard_null_head_exit1" "1" "$_guard_exit"
+export MOCK_GH_OUTPUT='[]'
+
 unset _guard_out _guard_exit
+
+# ---------------------------------------------------------------------------
+# Area 15: main-loop integration — release guard in full-script execution
+# ---------------------------------------------------------------------------
+# The harness-mode early-return prevents the Area 14 function tests from
+# exercising the main-loop code that calls _check_release_pr_guard (lines
+# 4127–4163 in pr-review-loop.sh). These integration tests run the full
+# script as a subprocess with a mocked gh so the main-loop path is covered.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 15: main-loop integration — release guard ==="
+
+_integration_mock_bin="$(mktemp -d)"
+_integration_cleanup() { rm -rf "${_integration_mock_bin:-}"; }
+trap '_integration_cleanup' EXIT
+
+# Minimal mock gh for the integration tests:
+#  - headRefName queries: return INTEG_MOCK_HEAD_JSON
+#  - pr edit (sync_reviewer_failed_label): succeed silently
+#  - everything else: succeed silently
+cat > "$_integration_mock_bin/gh" <<'INTEG_GH_MOCK'
+#!/usr/bin/env bash
+case "$*" in
+  *"headRefName"*)
+    # Use a variable for the default to avoid the bash brace-balance issue:
+    # ${VAR:-{"key":""}} closes ${...} at the inner }, producing a stray }
+    # in the output and therefore invalid JSON.
+    _hdr_default='{"headRefName":""}'
+    printf '%s\n' "${INTEG_MOCK_HEAD_JSON:-$_hdr_default}"
+    exit 0
+    ;;
+  *"pr edit"*|*"api"*|*"pr view"*)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+INTEG_GH_MOCK
+chmod +x "$_integration_mock_bin/gh"
+
+_run_loop_integration() {
+  # Run pr-review-loop.sh as a subprocess with the integration mock in PATH.
+  # Captures combined stdout; ignores stderr (diagnostic messages).
+  PATH="$_integration_mock_bin:$PATH" \
+    bash "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" "$@" 2>/dev/null
+}
+
+# Test 15.1: release/* head branch → main loop emits RESULT=skipped, REASON=release_pr, exits 0
+export INTEG_MOCK_HEAD_JSON='{"headRefName":"release/v9.9.9"}'
+_integ_out=""
+_integ_exit=0
+set +e
+_integ_out="$(_run_loop_integration 999)"
+_integ_exit=$?
+set -e
+run_test "mainloop_release_guard_result_skipped" "RESULT=skipped" \
+  "$(printf '%s\n' "$_integ_out" | grep '^RESULT=')"
+run_test "mainloop_release_guard_reason_release_pr" "REASON=release_pr" \
+  "$(printf '%s\n' "$_integ_out" | grep '^REASON=')"
+run_test "mainloop_release_guard_exit0" "0" "$_integ_exit"
+unset INTEG_MOCK_HEAD_JSON
+
+# Test 15.2: hotfix/* head branch → main loop also emits RESULT=skipped, exits 0
+export INTEG_MOCK_HEAD_JSON='{"headRefName":"hotfix/v9.9.1"}'
+_integ_out=""
+_integ_exit=0
+set +e
+_integ_out="$(_run_loop_integration 998)"
+_integ_exit=$?
+set -e
+run_test "mainloop_hotfix_guard_result_skipped" "RESULT=skipped" \
+  "$(printf '%s\n' "$_integ_out" | grep '^RESULT=')"
+run_test "mainloop_hotfix_guard_exit0" "0" "$_integ_exit"
+unset INTEG_MOCK_HEAD_JSON
+
+# Test 15.3: --branch release/v9.9.9 flag → guard fires without a gh call, exits 0
+_integ_out=""
+_integ_exit=0
+set +e
+_integ_out="$(_run_loop_integration 997 --branch release/v9.9.9)"
+_integ_exit=$?
+set -e
+run_test "mainloop_branch_flag_release_result_skipped" "RESULT=skipped" \
+  "$(printf '%s\n' "$_integ_out" | grep '^RESULT=')"
+run_test "mainloop_branch_flag_release_exit0" "0" "$_integ_exit"
+
+_integration_cleanup
+unset _integ_out _integ_exit INTEG_MOCK_HEAD_JSON
 
 # ---------------------------------------------------------------------------
 # Summary

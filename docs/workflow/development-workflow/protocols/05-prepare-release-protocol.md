@@ -114,7 +114,7 @@ Apply only to the **release PR that targets `main`**. Do **not** apply the regre
 
 **No external reviewer tools for release PRs.** External automated reviewers (Haystack, CodeRabbit, PR-Agent, Claude Code Action, etc.) are not required for release PRs and must not be waited on. Every change in a release PR was already reviewed when its feature/fix PR merged into `develop`. Running `pr-review-loop.sh` on a release PR automatically exits with `RESULT=skipped` (release PR guard fires) — treat that as a clean non-blocking result and proceed directly to release artifact validation and CI.
 
-Note: release PRs use a simplified readiness flow (Step 7.4 applies `ready-for-human-review` directly after CI is green) and do not run Protocol 91's Step 8a/8b label checklist.
+Note: release PRs use a simplified readiness flow (the CI loop step applies `ready-for-human-review` directly after CI is green) and do not run Protocol 91's Step 8a/8b label checklist.
 
 ### 7.1 Resolve the production PR number
 
@@ -177,7 +177,7 @@ Run `pr-ci-loop.sh` and wait until required checks settle (including the e2e/reg
 | Result    | Action                                                                                                                                                            |
 | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `green`   | Apply `ready-for-human-review` per [`92-pr-readiness-signal-protocol.md`](92-pr-readiness-signal-protocol.md); the production PR is ready for human merge review. |
-| `red`     | Apply `needs-fixes`, fix, push, then return to Step 7.2 (artifact validation) and repeat through Step 7.4.                                                        |
+| `red`     | Apply `needs-fixes`, fix, push, then return to the artifact validation step (§7.2) and repeat through the CI loop step (§7.4).                                                        |
 | `timeout` | Escalate to a human; do not apply `ready-for-human-review`.                                                                                                       |
 
 ### 7.5 Backport PR (`develop` target)
