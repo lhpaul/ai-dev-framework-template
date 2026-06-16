@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Release PR reviewer loop skip** (#960): `pr-review-loop.sh` now exits immediately with `RESULT=skipped` for release and hotfix PRs targeting `main`, eliminating the ~40-minute poll timeout that added no review value. Release readiness uses a dedicated artifact-validation and CI path instead of external reviewer tools.
 
+### Fixed
+
+- **Per-finding advisory decisions in run-epic Step 8** (#962): Protocol 95 Step 8 now requires the runner to fetch individual Haystack findings and record one `advisories[]` entry per finding — bulk-acceptance of multiple findings with a single rationale is no longer permitted. `run-epic-audit-trail.sh` emits non-fatal warnings when advisory entries are fewer than the reported count or contain generic bulk-acceptance rationale. `run-epic-delegated-gate.sh` emits a process reminder when `advisory_count > 1` but only one `advisories[]` entry is recorded.
+
 ## [0.31.0] - 2026-06-15
 
 ### Added

@@ -271,6 +271,32 @@ run_test "updates_existing_epic_ledger_comment" "UPDATED_COMMENT_ID=456" "$ledge
 
 run_test "uses_json_input_for_comments" "yes" "$(grep -q -- '--input -' "$CALL_LOG" && echo yes || echo no)"
 
+# --- per-finding advisory warnings ---
+
+# Fixture: advisory_count=2 but only 1 advisories[] entry (under-reported)
+sparse_advisory_fixture="$TMP_ROOT/sparse-advisory.json"
+jq '.reviewer.advisory_count = 2 | .advisories = [.advisories[0]]' "$pr_fixture" > "$sparse_advisory_fixture"
+
+# Fixture: advisory_count=2 with bulk-acceptance rationale pattern
+bulk_accepted_fixture="$TMP_ROOT/bulk-accepted.json"
+jq '.reviewer.advisory_count = 2 | .advisories[0].rationale = "reviewed and accepted all advisories"' "$pr_fixture" > "$bulk_accepted_fixture"
+
+# Fixture: advisory_count=0 with no advisories — should produce no warnings
+no_advisory_fixture="$TMP_ROOT/no-advisory.json"
+jq '.reviewer.advisory_count = 0 | .advisories = []' "$pr_fixture" > "$no_advisory_fixture"
+
+sparse_stderr="$("$HELPER" render-pr-disposition --input "$sparse_advisory_fixture" 2>&1 >/dev/null)"
+run_test "warns_when_advisory_entries_less_than_count" "yes" \
+  "$(grep -q 'protocol requires one entry per finding' <<< "$sparse_stderr" && echo yes || echo no)"
+
+bulk_stderr="$("$HELPER" render-pr-disposition --input "$bulk_accepted_fixture" 2>&1 >/dev/null)"
+run_test "warns_on_bulk_acceptance_rationale" "yes" \
+  "$(grep -q 'generic bulk-acceptance rationale' <<< "$bulk_stderr" && echo yes || echo no)"
+
+no_advisory_stderr="$("$HELPER" render-pr-disposition --input "$no_advisory_fixture" 2>&1 >/dev/null)"
+run_test "no_warn_when_advisory_count_zero" "yes" \
+  "$(printf '%s' "$no_advisory_stderr" | wc -c | tr -d ' ' | grep -qx '0' && echo yes || echo no)"
+
 echo ""
 echo "=== Summary ==="
 echo "Passed: $PASS_COUNT"

@@ -192,7 +192,20 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
   }
 ')"
 
+bulk_advisory_warning=""
+bulk_advisory_warning="$(printf '%s\n' "$state_json" | jq -r '
+  (.reviewer.advisoryCount // .reviewer.advisory_count // 0 | tonumber) as $count |
+  (.advisories // [] | length) as $len |
+  if $count > 0 and $len == 1 then
+    "WARN: advisory_count=" + ($count | tostring) +
+    " but only 1 advisories[] entry recorded; protocol requires per-finding review (Step 8 item 5)"
+  else "" end
+')"
+
 if [ "$json_output" -eq 1 ]; then
+  if [ -n "$bulk_advisory_warning" ]; then
+    printf '%s\n' "$bulk_advisory_warning" >&2
+  fi
   printf '%s\n' "$decision_json"
   exit 0
 fi
@@ -204,3 +217,6 @@ printf 'Next action: %s\n' "$(printf '%s\n' "$decision_json" | jq -r '.nextActio
 printf 'Read-only: %s\n' "$(printf '%s\n' "$decision_json" | jq -r '.readOnlyGuarantee')"
 printf 'Reasons:\n'
 printf '%s\n' "$decision_json" | jq -r '.reasons[]? | "- " + .'
+if [ -n "$bulk_advisory_warning" ]; then
+  printf '%s\n' "$bulk_advisory_warning" >&2
+fi

@@ -198,6 +198,28 @@ validate_advisories() {
   fi
 }
 
+warn_per_finding_advisories() {
+  local json="$1"
+  local advisory_count advisories_len bulk_rationale
+  advisory_count="$(printf '%s\n' "$json" | jq -r '(.reviewer.advisory_count // 0) | tonumber')"
+  if [ "$advisory_count" -gt 0 ]; then
+    advisories_len="$(printf '%s\n' "$json" | jq -r '(.advisories // []) | length')"
+    if [ "$advisories_len" -lt "$advisory_count" ]; then
+      printf 'WARN: advisory_count=%d but only %d advisories[] entries recorded; protocol requires one entry per finding\n' \
+        "$advisory_count" "$advisories_len" >&2
+    fi
+    bulk_rationale="$(printf '%s\n' "$json" | jq -r '
+      (.advisories // [])
+      | map(select((.rationale // "") | test("reviewed and accepted|in bulk"; "i")))
+      | length
+    ')"
+    if [ "$bulk_rationale" -gt 0 ]; then
+      printf 'WARN: %d advisory entry/entries contain generic bulk-acceptance rationale; per-finding rationale is required by protocol\n' \
+        "$bulk_rationale" >&2
+    fi
+  fi
+}
+
 render_epic_ledger() {
   local json="$1"
 
@@ -332,6 +354,7 @@ input_json="$(load_input_json "$input_file")"
 case "$command" in
   render-pr-disposition)
     validate_advisories "$input_json"
+    warn_per_finding_advisories "$input_json"
     render_pr_disposition "$input_json"
     ;;
   apply-pr-disposition)
@@ -339,6 +362,7 @@ case "$command" in
       error_exit "--pr must be a positive integer"
     fi
     validate_advisories "$input_json"
+    warn_per_finding_advisories "$input_json"
     body="$(render_pr_disposition "$input_json")"
     apply_comment "$pr_number" "$PR_MARKER" "$body"
     ;;
