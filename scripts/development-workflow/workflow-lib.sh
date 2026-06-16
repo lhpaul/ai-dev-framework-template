@@ -871,6 +871,10 @@ __workflow_project_status_field_cache_project_id=""
 __workflow_project_status_field_cache_json=""
 __workflow_project_type_field_cache_project_id=""
 __workflow_project_type_field_cache_json=""
+# Cache for named single-select fields (Priority, Size, etc.) — indexed by
+# "<project_id>:<field_name>" stored in parallel arrays.
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
 __workflow_last_gh_stdout=""
 __workflow_last_gh_stderr=""
 
@@ -1933,6 +1937,274 @@ print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
     echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker Type not updated."
     workflow_print_captured_gh_stderr
   fi
+}
+
+# workflow_github_project_named_field_json <project_id> <field_name>
+#
+# Prints compact JSON {"field_id":"...","options":{"Name":"optionId",...}} for
+# any single-select field whose name matches <field_name> exactly (case-sensitive).
+# Uses an in-process parallel-array cache keyed by "<project_id>:<field_name>".
+# Returns non-zero when the project ID is empty, the GraphQL fetch fails, or the
+# named field is not found. Callers must treat those cases as lookup failures.
+workflow_github_project_named_field_json() {
+  local project_id="$1"
+  local field_name="$2"
+  local cache_key response cursor page_state field_json has_next end_cursor page_count line
+  local -a graphql_args
+  local _i _found_val
+
+  if [ -z "$project_id" ]; then
+    echo "Warning: project ID is empty; '${field_name}' field lookup cannot run." >&2
+    printf ''
+    return 1
+  fi
+  if [ -z "$field_name" ]; then
+    echo "Warning: field_name is empty; named field lookup cannot run." >&2
+    printf ''
+    return 1
+  fi
+
+  cache_key="${project_id}:${field_name}"
+  _found_val=""
+  for _i in "${!__workflow_project_named_field_cache_keys[@]}"; do
+    if [ "${__workflow_project_named_field_cache_keys[$_i]}" = "$cache_key" ]; then
+      _found_val="${__workflow_project_named_field_cache_vals[$_i]}"
+      break
+    fi
+  done
+  if [ -n "$_found_val" ]; then
+    printf '%s' "$_found_val"
+    return 0
+  fi
+
+  cursor=""
+  page_count=0
+  field_json=""
+  while :; do
+    graphql_args=(
+      api graphql
+      -f projectId="$project_id"
+    )
+    if [ -n "$cursor" ]; then
+      graphql_args+=(-f after="$cursor")
+    fi
+    # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
+    graphql_args+=(
+      -f query='
+        query($projectId: ID!, $after: String) {
+          node(id: $projectId) {
+            ... on ProjectV2 {
+              fields(first: 100, after: $after) {
+                nodes {
+                  ... on ProjectV2SingleSelectField {
+                    id
+                    name
+                    options { id name }
+                  }
+                }
+                pageInfo { hasNextPage endCursor }
+              }
+            }
+          }
+        }
+      '
+    )
+
+    if ! workflow_run_gh_capture_stderr "${graphql_args[@]}"; then
+      echo "Warning: GraphQL project '${field_name}' field lookup failed for project '${project_id}'." >&2
+      workflow_print_captured_gh_stderr
+      printf ''
+      return 1
+    fi
+    response="$__workflow_last_gh_stdout"
+
+    if ! page_state="$(printf '%s' "$response" | python3 -c "
+import json, sys
+try:
+    data = json.loads(sys.stdin.read(), strict=False)
+except Exception:
+    sys.exit(2)
+target = sys.argv[1]
+field_connection = (((data.get('data') or {}).get('node') or {}).get('fields') or {})
+fields = field_connection.get('nodes') or []
+field_json = ''
+for field in fields:
+    if field.get('name') == target:
+        field_json = json.dumps({
+            'field_id': field.get('id') or '',
+            'options': {option.get('name') or '': option.get('id') or '' for option in field.get('options') or []},
+        }, separators=(',', ':'))
+        break
+page_info = field_connection.get('pageInfo') or {}
+has_next = 'true' if page_info.get('hasNextPage') else 'false'
+end_cursor = page_info.get('endCursor') or ''
+print('FIELD_JSON=' + field_json)
+print('HAS_NEXT=' + has_next)
+print('END_CURSOR=' + end_cursor)
+" "$field_name" 2>/dev/null)"; then
+      echo "Warning: could not parse GraphQL '${field_name}' field response for project '${project_id}'." >&2
+      printf ''
+      return 1
+    fi
+
+    has_next="false"
+    end_cursor=""
+    while IFS= read -r line; do
+      case "$line" in
+        FIELD_JSON=*) field_json="${line#FIELD_JSON=}" ;;
+        HAS_NEXT=*)   has_next="${line#HAS_NEXT=}" ;;
+        END_CURSOR=*) end_cursor="${line#END_CURSOR=}" ;;
+      esac
+    done <<EOF
+$page_state
+EOF
+    if [ -n "$field_json" ]; then
+      break
+    fi
+    if [ "$has_next" != "true" ] || [ -z "$end_cursor" ]; then
+      break
+    fi
+    page_count=$((page_count + 1))
+    if [ "$page_count" -ge 20 ]; then
+      echo "Warning: project '${field_name}' field lookup exceeded pagination limit for project '${project_id}'." >&2
+      printf ''
+      return 1
+    fi
+    cursor="$end_cursor"
+  done
+
+  if [ -z "$field_json" ]; then
+    echo "Warning: project '${field_name}' field not found for project '${project_id}'." >&2
+    printf ''
+    return 1
+  fi
+
+  __workflow_project_named_field_cache_keys+=("$cache_key")
+  __workflow_project_named_field_cache_vals+=("$field_json")
+  printf '%s' "$field_json"
+}
+
+# update_tracker_named_field_best_effort <issue_number> <field_name> <option_value>
+#
+# Best-effort update for any single-select GitHub Projects field by name.
+# Supports github_projects provider only; emits warnings for all other providers.
+# Returns 0 in all warning/failure cases to avoid blocking caller flows.
+update_tracker_named_field_best_effort() {
+  local issue_number="$1"
+  local field_name="$2"
+  local option_value="$3"
+  local project_number project_id field_json field_id option_id item_json item_id
+
+  local _utnfbe_provider
+  _utnfbe_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+  if [ "$_utnfbe_provider" != "github_projects" ]; then
+    echo "Warning: issue tracker provider '${_utnfbe_provider:-unknown}' does not support GitHub Projects '${field_name}' updates via this helper."
+    return 0
+  fi
+
+  project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
+  if [ -z "$project_number" ]; then
+    echo "Warning: GITHUB_PROJECT_NUMBER not set and no project_number in .ai-dev-workflow.yaml; skipping tracker '${field_name}' update."
+    return 0
+  fi
+
+  item_json="$(workflow_github_project_item_for_issue "$issue_number" "$project_number")"
+  if ! item_id=$(printf '%s' "$item_json" | python3 -c "
+import json, sys
+item = json.loads(sys.stdin.read(), strict=False)
+print(item.get('item_id') or '', end='')
+"); then
+    echo "Warning: could not parse project item ID for issue #${issue_number}; skipping tracker '${field_name}' update."
+    return 0
+  fi
+  if ! project_id=$(printf '%s' "$item_json" | python3 -c "
+import json, sys
+item = json.loads(sys.stdin.read(), strict=False)
+print(item.get('project_id') or '', end='')
+"); then
+    echo "Warning: could not parse project ID for issue #${issue_number}; skipping tracker '${field_name}' update."
+    return 0
+  fi
+  if [ -z "$item_id" ]; then
+    echo "Warning: issue #${issue_number} not found in project #${project_number}; skipping tracker '${field_name}' update."
+    return 0
+  fi
+  if [ -z "$project_id" ]; then
+    echo "Warning: could not resolve project ID for issue #${issue_number}; skipping tracker '${field_name}' update."
+    return 0
+  fi
+
+  if ! field_json="$(workflow_github_project_named_field_json "$project_id" "$field_name")"; then
+    echo "Warning: could not read project '${field_name}' field metadata; skipping tracker '${field_name}' update."
+    return 0
+  fi
+  if ! field_id=$(printf '%s' "$field_json" | python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read(), strict=False)
+print(data.get('field_id') or '', end='')
+"); then
+    echo "Warning: could not parse '${field_name}' field metadata; skipping tracker '${field_name}' update."
+    return 0
+  fi
+  if ! option_id=$(printf '%s' "$field_json" | python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read(), strict=False)
+print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
+" "$option_value"); then
+    echo "Warning: could not parse '${field_name}' option '${option_value}'; skipping tracker '${field_name}' update."
+    return 0
+  fi
+  if [ -z "$field_id" ] || [ -z "$option_id" ]; then
+    echo "Warning: could not resolve '${field_name}' field or option '${option_value}'; skipping tracker '${field_name}' update."
+    return 0
+  fi
+
+  echo "Updating tracker '${field_name}' for issue #${issue_number} to '${option_value}'..."
+  # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
+  if workflow_run_gh_capture_stderr api graphql \
+    -f projectId="$project_id" \
+    -f itemId="$item_id" \
+    -f fieldId="$field_id" \
+    -f optionId="$option_id" \
+    -f query='
+      mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+        updateProjectV2ItemFieldValue(input: {
+          projectId: $projectId
+          itemId: $itemId
+          fieldId: $fieldId
+          value: { singleSelectOptionId: $optionId }
+        }) {
+          projectV2Item { id }
+        }
+      }
+    '; then
+    printf '%s' "$__workflow_last_gh_stdout"
+  else
+    echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker '${field_name}' not updated."
+    workflow_print_captured_gh_stderr
+  fi
+}
+
+# update_tracker_priority_best_effort <issue_number> <priority_value>
+#
+# Best-effort update for the GitHub Projects Priority field.
+# Valid values: Urgent, High, Medium, Low
+# Returns 0 in all failure cases (fail-open).
+update_tracker_priority_best_effort() {
+  local issue_number="$1"
+  local priority_value="$2"
+  update_tracker_named_field_best_effort "$issue_number" "Priority" "$priority_value"
+}
+
+# update_tracker_size_best_effort <issue_number> <size_value>
+#
+# Best-effort update for the GitHub Projects Size field.
+# Valid values: XS, S, M, L, XL
+# Returns 0 in all failure cases (fail-open).
+update_tracker_size_best_effort() {
+  local issue_number="$1"
+  local size_value="$2"
+  update_tracker_named_field_best_effort "$issue_number" "Size" "$size_value"
 }
 
 # list_open_workflow_type_issues

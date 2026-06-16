@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Per-finding advisory decisions in run-epic Step 8** (#962): Protocol 95 Step 8 now requires the runner to fetch individual Haystack findings and record one `advisories[]` entry per finding — bulk-acceptance of multiple findings with a single rationale is no longer permitted. `run-epic-audit-trail.sh` emits non-fatal warnings when advisory entries are fewer than the reported count or contain generic bulk-acceptance rationale. `run-epic-delegated-gate.sh` emits a process reminder when `advisory_count > 1` but only one `advisories[]` entry is recorded.
+- **Backlog creation now sets `Priority` (default `Medium`) and `Size` project fields** when GitHub Projects is configured; fixes documentation drift where `Normal` was listed instead of `Medium` for the Priority field (`#965`).
 
 ## [0.31.0] - 2026-06-15
 

@@ -55,11 +55,45 @@ If any of the above are missing or contradictory, ask **targeted** clarifying qu
 
 1. Create **one** item in the **confirmed** destination.
 2. For **GitHub Issues** (including when `issue_tracker.provider` is `github_projects`), prefer:
-   - `./scripts/development-workflow/add-backlog-item.sh create --title "..." --body-file -` (requires `gh` authenticated), **or**
-   - Equivalent `gh issue create` with the same title/body.
+   - `./scripts/development-workflow/add-backlog-item.sh create --title "..." --body-file - [--priority <value>] [--size <value>]` (requires `gh` authenticated), **or**
+   - Equivalent `gh issue create` with the same title/body, followed by manual project field updates.
 3. For **Linear**, use the Linear API/MCP per [`linear.md`](../integrations/linear.md). The `add-backlog-item.sh create` command exits with a non-success code for Linear when the shell helper cannot perform the operation — follow the protocol manually instead of failing silently.
 4. For **GitHub Projects** after the issue exists: if the team uses a project board, add/update the project item per `github-projects.md` (optional field updates such as Status = Backlog and Type = Feature/Bug/Refactor/Workflow) **only when** the human or repo docs supply enough context (project number, owner). If project context is missing, **ask** rather than guessing.
 5. When GitHub Projects is configured, use the project **Type** field for classification instead of repository labels. Set `Type = Workflow` for AI-development-framework/process/tooling work, `Type = Feature` for full-pipeline product work, `Type = Bug` for fast-track fixes, and `Type = Refactor` for plan-only refactors. Do not apply legacy classification labels such as `workflow`, `bug`, `enhancement`, or `type:*`; operational labels such as `integration-branch:<slug>` remain valid when the protocol requires them.
+6. When GitHub Projects is configured, set **Priority** and **Size** on the project item. Use the inference heuristics below to determine values without asking the human for every routine item.
+
+### Priority and Size inference heuristics (GitHub Projects)
+
+**Priority** — default `Medium` unless there is explicit urgency signal:
+
+| Signal | Priority |
+| ------ | -------- |
+| Human uses words like "urgent", "blocking", "ASAP", "critical", or "production issue" | `Urgent` or `High` |
+| Item blocks another in-progress item or a pending release | `High` |
+| Standard new feature, improvement, or process fix | `Medium` (default) |
+| Nice-to-have, polish, or exploratory work | `Low` |
+
+**Size** — infer from the scope of the change implied by the request:
+
+| Scope | Size |
+| ----- | ---- |
+| Tiny doc fix, single-line config tweak, one-word rename | `XS` |
+| Single narrow file: typo fix, one-protocol update, single-field doc change | `S` |
+| 2–4 files, one feature toggle, small helper addition | `M` |
+| Multiple scripts + protocol + docs touched, or new reusable function | `L` |
+| New subsystem, major refactor spanning many files, cross-cutting change | `XL` |
+
+Pass inferred values directly to the helper:
+
+```bash
+./scripts/development-workflow/add-backlog-item.sh create \
+  --title "..." \
+  --body-file - \
+  --priority Medium \
+  --size S
+```
+
+When the scope is genuinely unclear after reading the request, omit `--size` (leave it unset) rather than guessing. Do not omit `--priority` — the script defaults to `Medium` when the flag is absent.
 
 ---
 
