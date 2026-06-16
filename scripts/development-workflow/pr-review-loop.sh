@@ -3938,50 +3938,43 @@ doc_branch_default_poll_interval() {
 # the automated reviewer loop. Returns 0 (guard fires → skip) or 1 (guard
 # does not fire → continue normally).
 #
+# Detection is based exclusively on the head branch name:
+#   release/* — release PR (release/vX.Y.Z → main or develop backport)
+#   hotfix/*  — hotfix PR (hotfix/vX.Y.Z → main)
+#
+# Relying on the head branch name (not base branch) avoids false-positive
+# matches for non-release PRs that might target main outside the standard
+# gitflow workflow. In this workflow, all release and hotfix PRs use the
+# release/* or hotfix/* prefix by convention.
+#
 # Output (stdout, key=value lines):
 #   RELEASE_GUARD_HEAD=<head branch or empty>
-#   RELEASE_GUARD_BASE=<base branch or empty>
 #   RELEASE_GUARD_FIRED=0|1
 #
 # When <branch_name> is provided, it is used directly for head-branch matching
-# without a network call. When omitted, both head and base are fetched from the
-# PR in a single gh pr view call.
+# without a network call. When omitted, the head branch is fetched from the PR.
 # ---------------------------------------------------------------------------
 _check_release_pr_guard() {
   local pr_num="$1"
   local given_branch="${2:-}"
   local guard_head=""
-  local guard_base=""
   local is_release=0
-  local pr_json=""
-  local pr_exit=0
 
   guard_head="$given_branch"
 
   if [ -z "$guard_head" ]; then
     set +e
-    pr_json="$(gh pr view "$pr_num" --json headRefName,baseRefName 2>/dev/null)"
-    pr_exit=$?
+    guard_head="$(gh pr view "$pr_num" --json headRefName --jq '.headRefName // ""' 2>/dev/null)" || guard_head=""
     set -e
-    if [ "$pr_exit" -eq 0 ] && [ -n "$pr_json" ]; then
-      guard_head="$(printf '%s\n' "$pr_json" | jq -re '.headRefName // ""' 2>/dev/null)" || guard_head=""
-      guard_base="$(printf '%s\n' "$pr_json" | jq -re '.baseRefName // ""' 2>/dev/null)" || guard_base=""
-    fi
-  else
-    set +e
-    guard_base="$(gh pr view "$pr_num" --json baseRefName --jq '.baseRefName // ""' 2>/dev/null)" || guard_base=""
-    set -e
+    # On fetch failure, guard_head stays empty — no branch match, guard does
+    # not fire (fail-safe: run the reviewer loop rather than silently skipping).
   fi
 
   case "$guard_head" in
     release/*|hotfix/*) is_release=1 ;;
   esac
-  if [ "$guard_base" = "main" ]; then
-    is_release=1
-  fi
 
   printf 'RELEASE_GUARD_HEAD=%s\n' "$guard_head"
-  printf 'RELEASE_GUARD_BASE=%s\n' "$guard_base"
   printf 'RELEASE_GUARD_FIRED=%s\n' "$is_release"
 
   if [ "$is_release" -eq 1 ]; then
@@ -4140,9 +4133,7 @@ fi
 # loop entirely for these PR types and return RESULT=skipped so callers treat
 # the result as a clean non-blocking outcome.
 #
-# Detection criteria (OR logic — either condition triggers the skip):
-#   1. Head branch matches release/* or hotfix/*
-#   2. Base branch is main (any PR targeting main skips the reviewer loop)
+# Detection: head branch matches release/* or hotfix/*
 _release_guard_output=""
 set +e
 _release_guard_output="$(_check_release_pr_guard "$pr_number" "${branch_name:-}")"
@@ -4150,7 +4141,6 @@ _release_guard_fired=$?
 set -e
 
 _release_guard_head="$(printf '%s\n' "$_release_guard_output" | awk -F= '/^RELEASE_GUARD_HEAD=/{sub(/^[^=]*=/,""); print; exit}')"
-_release_guard_base="$(printf '%s\n' "$_release_guard_output" | awk -F= '/^RELEASE_GUARD_BASE=/{sub(/^[^=]*=/,""); print; exit}')"
 
 # Propagate the fetched head branch to branch_name so later blocks do not
 # need to re-fetch it (mirrors the existing pattern in the platforms block).
@@ -4160,7 +4150,7 @@ fi
 
 if [ "$_release_guard_fired" -eq 0 ]; then
   echo "Release PR detected — reviewer loop skipped." >&2
-  echo "Review happens on develop-targeting feature/fix PRs, not on release/* or hotfix/* branches or PRs targeting main." >&2
+  echo "Review happens on develop-targeting feature/fix PRs, not on release/* or hotfix/* branches." >&2
   echo "Release readiness path: validate release artifacts → run pr-ci-loop.sh → apply ready-for-human-review when CI is green." >&2
   print_kv RESULT skipped
   print_kv REASON release_pr

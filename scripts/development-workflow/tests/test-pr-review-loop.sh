@@ -1818,8 +1818,8 @@ echo "=== Area 14: _check_release_pr_guard ==="
 # For tests that pass --branch, the head is known; only the base is fetched.
 
 # Test 14.1: release/* head branch detected as release PR (branch provided)
-# MOCK_GH_OUTPUT returns the jq-filtered base ref string (mock does not run jq)
-export MOCK_GH_OUTPUT='main'
+# When branch is provided, no gh call is made; mock output is irrelevant.
+export MOCK_GH_OUTPUT='[]'
 _guard_out=""
 _guard_exit=0
 _guard_out="$(_check_release_pr_guard "100" "release/v1.0.0")" || _guard_exit=$?
@@ -1828,7 +1828,6 @@ run_test "release_guard_release_head_fires" "RELEASE_GUARD_FIRED=1" \
 run_test "release_guard_release_head_exit0" "0" "$_guard_exit"
 
 # Test 14.2: hotfix/* head branch detected as release PR (branch provided)
-export MOCK_GH_OUTPUT='develop'
 _guard_out=""
 _guard_exit=0
 _guard_out="$(_check_release_pr_guard "101" "hotfix/v1.0.1")" || _guard_exit=$?
@@ -1836,21 +1835,7 @@ run_test "release_guard_hotfix_head_fires" "RELEASE_GUARD_FIRED=1" \
   "$(printf '%s\n' "$_guard_out" | grep "^RELEASE_GUARD_FIRED=")"
 run_test "release_guard_hotfix_head_exit0" "0" "$_guard_exit"
 
-# Test 14.3: base branch is main — fires regardless of head branch
-# When --branch is provided, the function calls gh pr view with --jq to get
-# just the base ref name. The mock returns MOCK_GH_OUTPUT verbatim (no jq
-# processing), so set it to the expected jq-filtered result: the plain string.
-export MOCK_GH_OUTPUT='main'
-_guard_out=""
-_guard_exit=0
-_guard_out="$(_check_release_pr_guard "102" "feature/some-feature")" || _guard_exit=$?
-run_test "release_guard_main_base_fires" "RELEASE_GUARD_FIRED=1" \
-  "$(printf '%s\n' "$_guard_out" | grep "^RELEASE_GUARD_FIRED=")"
-run_test "release_guard_main_base_exit0" "0" "$_guard_exit"
-
-# Test 14.4: develop-targeting feature branch — guard does NOT fire
-# MOCK_GH_OUTPUT="develop" simulates jq-filtered base branch = develop
-export MOCK_GH_OUTPUT='develop'
+# Test 14.3: develop-targeting feature branch — guard does NOT fire
 _guard_out=""
 _guard_exit=1
 _guard_out="$(_check_release_pr_guard "103" "feature/some-feature")" || _guard_exit=$?
@@ -1858,17 +1843,19 @@ run_test "release_guard_feature_no_fire" "RELEASE_GUARD_FIRED=0" \
   "$(printf '%s\n' "$_guard_out" | grep "^RELEASE_GUARD_FIRED=")"
 run_test "release_guard_feature_exit1" "1" "$_guard_exit"
 
-# Test 14.5: fix/* branch targeting develop — guard does NOT fire
-export MOCK_GH_OUTPUT='develop'
+# Test 14.4: fix/* branch — guard does NOT fire
 _guard_out=""
 _guard_exit=1
 _guard_out="$(_check_release_pr_guard "104" "fix/some-fix")" || _guard_exit=$?
 run_test "release_guard_fix_no_fire" "RELEASE_GUARD_FIRED=0" \
   "$(printf '%s\n' "$_guard_out" | grep "^RELEASE_GUARD_FIRED=")"
 
-# Test 14.6: no --branch provided; head and base fetched from PR JSON
-# Mock gh returns the full JSON object for the default case (headRefName + baseRefName)
-export MOCK_GH_OUTPUT='{"headRefName":"release/v2.0.0","baseRefName":"main"}'
+# Test 14.5: no --branch provided; head branch fetched from PR via jq
+# The mock returns MOCK_GH_OUTPUT for the default case. The function calls
+# gh pr view with --json headRefName --jq '.headRefName // ""' which the mock
+# does not apply jq to — it returns MOCK_GH_OUTPUT verbatim. Set it to the
+# expected jq-filtered value: the plain branch name string.
+export MOCK_GH_OUTPUT='release/v2.0.0'
 _guard_out=""
 _guard_exit=0
 _guard_out="$(_check_release_pr_guard "105")" || _guard_exit=$?
@@ -1876,10 +1863,10 @@ run_test "release_guard_fetched_head_fires" "RELEASE_GUARD_FIRED=1" \
   "$(printf '%s\n' "$_guard_out" | grep "^RELEASE_GUARD_FIRED=")"
 run_test "release_guard_fetched_head_value" "RELEASE_GUARD_HEAD=release/v2.0.0" \
   "$(printf '%s\n' "$_guard_out" | grep "^RELEASE_GUARD_HEAD=")"
-run_test "release_guard_fetched_base_value" "RELEASE_GUARD_BASE=main" \
-  "$(printf '%s\n' "$_guard_out" | grep "^RELEASE_GUARD_BASE=")"
+export MOCK_GH_OUTPUT='[]'
 
-# Test 14.7: gh pr view failure — guard does not fire (fail-safe: run the loop)
+# Test 14.6: no --branch provided; gh pr view failure — guard does not fire
+# (fail-safe: run the reviewer loop rather than silently skipping)
 export MOCK_GH_EXIT=1
 export MOCK_GH_OUTPUT=''
 _guard_out=""
