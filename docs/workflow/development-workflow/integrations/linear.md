@@ -80,6 +80,71 @@ When the **Portfolio Orchestrator** has Linear access, it should:
 
 ---
 
+## Bridge Pattern
+
+The shell helper scripts (`workflow-lib.sh`, `workflow-batch-plan.sh`,
+`add-backlog-item.sh`, `run-epic-scope-resolver.sh`) cannot reach the Linear API
+directly. Instead, they implement a **bridge pattern** so that the orchestrator —
+the only actor with Linear access — handles all reads and writes.
+
+### Three-phase flow
+
+1. **Pre-resolve** — Before dispatching any Work Item Runner, the orchestrator
+   queries the configured Linear team via MCP to fetch open items with their
+   status, type, priority, and dependencies. The orchestrator holds this resolved
+   data set and makes it available to each batch step.
+
+2. **Emit deferred action** — When a helper script needs a Linear mutation
+   (status change, item creation) or needs to signal that a status read was
+   deferred, it prints a structured `TRACKER_ACTION_REQUIRED=` line to stdout
+   instead of attempting the operation itself.
+
+3. **Orchestrator applies** — After each Work Item Runner step completes, the
+   orchestrator scans the output for `TRACKER_ACTION_REQUIRED=` and
+   `TRACKER_UPDATE_REQUIRED:` lines and applies the corresponding Linear
+   mutations via MCP.
+
+### `TRACKER_ACTION_REQUIRED=` output format reference
+
+Every deferred-action line follows this structure:
+
+```
+TRACKER_ACTION_REQUIRED=<action_type> issue=<issue_id>[ <extra_fields>]
+```
+
+| Action type   | Emitted by                           | Extra fields example                     | Description                                               |
+| ------------- | ------------------------------------ | ---------------------------------------- | --------------------------------------------------------- |
+| `set_status`  | `update_tracker_status_best_effort`  | `target_status='Plan in Review'`         | Linear item status should be moved to `<status>` via MCP. |
+| `read_status` | `get_tracker_status_for_issue`       | _(none)_                                 | Status read was deferred; orchestrator supplies the value. |
+| `create_item` | `add-backlog-item.sh create`         | `title='My New Feature'`                 | New Linear item should be created via MCP.                |
+
+**Quoting convention**: when a field value contains spaces, it is
+single-quoted in the output — for example, `target_status='Plan in Review'`
+rather than `target_status=Plan in Review`. Single-word values are not
+quoted. Strip the surrounding single quotes when reading the value.
+Linear status names do not contain single quotes, making this quoting safe
+for all controlled-vocabulary values in the workflow.
+
+**Orchestrator collection loop** (pseudocode):
+
+```
+for each Work Item Runner output line:
+  if line starts with "TRACKER_ACTION_REQUIRED=":
+    parse action_type from "TRACKER_ACTION_REQUIRED=<action_type> ..."
+    parse issue from "... issue=<id> ..."
+    parse extra_field value (strip single quotes if present)
+    apply via Linear MCP (e.g., updateIssue, createIssue)
+  if line starts with "TRACKER_UPDATE_REQUIRED:":
+    parse issue number and target_status
+    apply via Linear MCP updateIssue
+```
+
+The `TRACKER_UPDATE_REQUIRED:` format (used in protocol 91 Step 8b) is a
+complementary signal emitted by the agent-level summary when a tracker update
+could not be performed inline. Both formats must be collected and applied.
+
+---
+
 ## Branch Naming with Linear
 
 When a Linear work item exists, use the Linear identifier as the branch slug prefix:

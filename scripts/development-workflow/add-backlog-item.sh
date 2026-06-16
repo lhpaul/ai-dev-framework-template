@@ -154,8 +154,18 @@ create_cmd() {
   fi
 
   if [ "$kind" = "linear" ]; then
-    echo "add-backlog-item: Linear backlog creation is not performed by this script. Use Linear MCP/API per docs/workflow/development-workflow/integrations/linear.md" >&2
-    exit 2
+    # Single-quote the title when it contains spaces so downstream parsers can
+    # unambiguously extract the value without splitting on internal whitespace.
+    case "$title" in
+      *' '*)
+        printf "TRACKER_ACTION_REQUIRED=create_item title='%s'\n" "$title"
+        ;;
+      *)
+        printf 'TRACKER_ACTION_REQUIRED=create_item title=%s\n' "$title"
+        ;;
+    esac
+    echo "add-backlog-item: Linear backlog creation requires the orchestrator. Use Linear MCP/API per docs/workflow/development-workflow/integrations/linear.md" >&2
+    return 0
   fi
 
   if [ "$kind" = "none" ]; then

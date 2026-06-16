@@ -15,8 +15,18 @@ CALL_LOG="$TMP_ROOT/gh-calls.log"
 mkdir -p "$MOCK_BIN"
 : > "$CALL_LOG"
 
+# _config_backup / _config_file track any temporary .ai-dev-workflow.yaml swap
+# made during provider-normalization tests. _harness_exit restores the file on
+# any exit so a set -e abort cannot leave the repo config permanently clobbered.
+_config_file="$REPO_ROOT/.ai-dev-workflow.yaml"
+_config_backup=""
+
 _harness_exit() {
   local status=$?
+  # Restore .ai-dev-workflow.yaml if it was swapped out during provider tests.
+  if [ -n "$_config_backup" ] && [ -f "$_config_backup" ]; then
+    cp -- "$_config_backup" "$_config_file"
+  fi
   rm -rf "$TMP_ROOT"
   case "$status" in
     141) exit 0 ;;
@@ -282,6 +292,64 @@ run_test "json_read_only_guarantee" "yes" "$(
 run_test "no_mutating_gh_commands" "no" "$(
   grep -Eq '(^issue edit|^pr create|^pr merge|^project item-edit|^project item-add|mutation)' "$CALL_LOG" && echo yes || echo no
 )"
+
+echo ""
+echo "=== Provider normalization and deferred-read signals (#966) ==="
+
+# Text-output mode (no --json) emits PROVIDER= and TRACKER_READ_DEFERRED= lines.
+# Temporarily swap .ai-dev-workflow.yaml to test non-default providers.
+# _harness_exit() restores the real config on any exit.
+_config_backup="$TMP_ROOT/ai-dev-workflow.yaml.bak"
+cp -- "$_config_file" "$_config_backup"
+
+# --- github_projects provider ---
+# The real config already has github_projects; run text-mode and verify PROVIDER=.
+github_text_output="$("$RESOLVER" --items 101 2>/dev/null)"
+case "$github_text_output" in
+  *"PROVIDER=github_projects"*) github_provider_result="emitted" ;;
+  *) github_provider_result="missing" ;;
+esac
+run_test "text_output_emits_provider_github_projects" "emitted" "$github_provider_result"
+
+# TRACKER_READ_DEFERRED must NOT appear for github_projects.
+case "$github_text_output" in
+  *"TRACKER_READ_DEFERRED"*) github_deferred_result="leaked" ;;
+  *) github_deferred_result="not-present" ;;
+esac
+run_test "github_provider_no_tracker_read_deferred" "not-present" "$github_deferred_result"
+
+# --- linear provider ---
+cat > "$_config_file" <<'LINEAR_CONFIG'
+schema_version: 2
+issue_tracker:
+  provider: linear
+LINEAR_CONFIG
+
+linear_text_output="$("$RESOLVER" --items 101 2>/dev/null)"
+
+# Restore immediately; _harness_exit is the safety net.
+cp -- "$_config_backup" "$_config_file"
+
+case "$linear_text_output" in
+  *"PROVIDER=linear"*) linear_provider_result="emitted" ;;
+  *) linear_provider_result="missing" ;;
+esac
+run_test "text_output_emits_provider_linear" "emitted" "$linear_provider_result"
+
+# TRACKER_READ_DEFERRED=yes must appear for linear.
+case "$linear_text_output" in
+  *"TRACKER_READ_DEFERRED=yes"*) linear_deferred_result="emitted" ;;
+  *) linear_deferred_result="missing" ;;
+esac
+run_test "linear_provider_emits_tracker_read_deferred" "emitted" "$linear_deferred_result"
+
+# TRACKER_READ_DEFERRED must appear BEFORE the human-readable header line.
+case "$linear_text_output" in
+  *"TRACKER_READ_DEFERRED=yes"*"Run Epic Scope Resolver"*)
+    deferred_before_header="yes" ;;
+  *) deferred_before_header="no" ;;
+esac
+run_test "tracker_read_deferred_before_human_header" "yes" "$deferred_before_header"
 
 echo ""
 echo "=== Summary ==="

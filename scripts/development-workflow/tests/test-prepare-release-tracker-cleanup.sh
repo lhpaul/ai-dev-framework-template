@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 # test-prepare-release-tracker-cleanup.sh - release cleanup tracker scope tests.
 #
+# Covers:
+#   1. Linear provider: --from-changelog extracts issues and emits action signal
+#   2. Linear provider: --best-effort exits 0 but still emits action signal
+#   3. Missing scope (no --issue / --from-changelog): emits no_issue_scope signal
+#   4. Missing CHANGELOG version: emits changelog_scope_unavailable signal
+#   5. Issue loop / TRACKER_UPDATED counting:
+#      a. update_tracker_status_best_effort emits "Updating tracker status" -> UPDATED
+#      b. update_tracker_status_best_effort emits TRACKER_ACTION_REQUIRED=set_status -> UPDATED
+#      c. update_tracker_status_best_effort emits Warning: -> SKIPPED
+#
 # Usage: bash scripts/development-workflow/tests/test-prepare-release-tracker-cleanup.sh
 
 set -euo pipefail
@@ -43,6 +53,23 @@ case "$*" in
   "pr list --state open --head release/v1.17.0 --base develop --json number --jq .[0].number // empty")
     printf '\n'
     ;;
+  "pr list --state merged --head release/v1.18.0 --base main --json number --jq .[0].number // empty")
+    printf '400\n'
+    ;;
+  "pr list --state merged --head release/v1.18.0 --base develop --json number --jq .[0].number // empty")
+    printf '401\n'
+    ;;
+  "pr list --state open --head release/v1.18.0 --base main --json number --jq .[0].number // empty")
+    printf '\n'
+    ;;
+  "pr list --state open --head release/v1.18.0 --base develop --json number --jq .[0].number // empty")
+    printf '\n'
+    ;;
+  issue\ view\ *\ --json\ state\ --jq\ .state)
+    # Return OPEN for any issue view query so the issue loop proceeds to
+    # update_tracker_status_best_effort (which is stubbed in the fixture lib).
+    printf 'OPEN\n'
+    ;;
   *)
     printf 'unexpected gh invocation: gh %s\n' "$*" >&2
     exit 64
@@ -60,6 +87,12 @@ case "$*" in
     exit 2
     ;;
   "show-ref --quiet refs/heads/release/v1.17.0")
+    exit 1
+    ;;
+  "ls-remote --exit-code --heads origin release/v1.18.0")
+    exit 2
+    ;;
+  "show-ref --quiet refs/heads/release/v1.18.0")
     exit 1
     ;;
   *)
@@ -176,6 +209,96 @@ run_test "missing_changelog_version_exits_nonzero" "1" "$status"
 run_contains "missing_changelog_version_signal" "TRACKER_INCOMPLETE=1 REASON=changelog_scope_unavailable" "$output"
 
 echo ""
+echo "=== Issue loop / TRACKER_UPDATED counting (stub workflow-lib.sh) ==="
+#
+# These tests verify how prepare-release-post-merge-cleanup.sh classifies the
+# output of update_tracker_status_best_effort when processing individual issues.
+# A stub workflow-lib.sh is used so the test controls exactly what
+# update_tracker_status_best_effort emits without requiring live GitHub API calls.
+#
+# The stub uses a STUB_TRACKER_OUT environment variable to control the
+# update_tracker_status_best_effort return value for each fixture run.
+
+fixture_repo_issue_loop() {
+  local name="$1"
+  local path="$TMP_ROOT/$name"
+  mkdir -p "$path/scripts/development-workflow"
+  # The real cleanup script is used; workflow-lib.sh is a stub.
+  cp "$REPO_ROOT/scripts/development-workflow/prepare-release-post-merge-cleanup.sh" \
+     "$path/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+  chmod +x "$path/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+  cat > "$path/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+issue_tracker:
+  provider: github_projects
+  project_number: 1
+YAML
+  # Stub workflow-lib.sh: provides the bare-minimum functions needed for the
+  # cleanup script's issue loop. update_tracker_status_best_effort returns
+  # the value of STUB_TRACKER_OUT (set per test run) so each branch of the
+  # pattern-matching block can be exercised independently.
+  cat > "$path/scripts/development-workflow/workflow-lib.sh" <<'STUB_LIB'
+#!/usr/bin/env bash
+# Stub workflow-lib.sh for test-prepare-release-tracker-cleanup.sh
+cd_workflow_repo_root() { return 0; }
+require_gh() { return 0; }
+workflow_issue_tracker_provider_raw() { printf 'github_projects\n'; }
+workflow_normalize_issue_tracker_provider() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+workflow_issue_tracker_project_number() { printf '1\n'; }
+record_release_for_issue_best_effort() {
+  local issue="$1" version="$2"
+  printf 'RELEASE_STAMP_SKIPPED issue=%s version=%s provider=github_projects reason=no_milestone\n' \
+    "$issue" "$version"
+}
+update_tracker_status_best_effort() {
+  # Return the canned output controlled by the test harness.
+  printf '%s\n' "${STUB_TRACKER_OUT:-Warning: STUB_TRACKER_OUT not set; skipping.}"
+}
+STUB_LIB
+  printf '%s\n' "$path"
+}
+
+# Helper: run cleanup on a stub-lib fixture repo and return "exit_code\noutput".
+run_cleanup_stub() {
+  local repo="$1"
+  shift
+  local output=""
+  local status=0
+  set +e
+  output="$(cd "$repo" && ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh "$@" 2>&1)"
+  status=$?
+  set -e
+  printf '%s\n%s\n' "$status" "$output"
+}
+
+# Test A: "Updating tracker status..." -> UPDATED=1
+stub_repo_updated="$(fixture_repo_issue_loop stub-updated)"
+result="$(STUB_TRACKER_OUT="Updating tracker status for issue 200 to Released..." \
+  run_cleanup_stub "$stub_repo_updated" v1.18.0 --issue 200 --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "stub_updated_exits_zero" "0" "$status"
+run_contains "stub_updated_counter" "UPDATED=1 SKIPPED=0 FAILED=0" "$output"
+
+# Test B: "TRACKER_ACTION_REQUIRED=set_status..." -> UPDATED=1 (deferred action
+# is counted as updated so the orchestrator knows it must apply it via MCP).
+stub_repo_deferred="$(fixture_repo_issue_loop stub-deferred)"
+result="$(STUB_TRACKER_OUT="TRACKER_ACTION_REQUIRED=set_status issue=200 target_status=Released" \
+  run_cleanup_stub "$stub_repo_deferred" v1.18.0 --issue 200 --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "stub_deferred_exits_zero" "0" "$status"
+run_contains "stub_deferred_counter" "UPDATED=1 SKIPPED=0 FAILED=0" "$output"
+
+# Test C: "Warning: ..." -> SKIPPED=1
+stub_repo_skipped="$(fixture_repo_issue_loop stub-skipped)"
+result="$(STUB_TRACKER_OUT="Warning: issue #200 not found in project #1; skipping tracker status update." \
+  run_cleanup_stub "$stub_repo_skipped" v1.18.0 --issue 200 --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "stub_skipped_exits_zero" "0" "$status"
+run_contains "stub_skipped_counter" "UPDATED=0 SKIPPED=1 FAILED=0" "$output"
+
 echo "=== Milestone stamping fix: uses API number not title ==="
 
 # Create a separate mock bin for github_projects milestone tests.

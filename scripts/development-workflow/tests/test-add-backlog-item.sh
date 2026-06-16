@@ -23,7 +23,21 @@ CALL_LOG="$TMP_ROOT/calls.log"
 mkdir -p "$MOCK_BIN"
 : > "$CALL_LOG"
 
-cleanup() { rm -rf "$TMP_ROOT"; }
+# _config_backup is set before the linear test section overwrites
+# .ai-dev-workflow.yaml; cleanup restores it on any exit (including set -e).
+_config_backup=""
+_config_file="$REPO_ROOT/.ai-dev-workflow.yaml"
+
+cleanup() {
+  # Restore .ai-dev-workflow.yaml if it was swapped out by the linear tests.
+  # The guard ([ -f "$_config_backup" ]) ensures cp is only called when the
+  # backup was successfully created; do not suppress errors — a restore failure
+  # means the workspace is clobbered and the test runner must know.
+  if [ -n "$_config_backup" ] && [ -f "$_config_backup" ]; then
+    cp -- "$_config_backup" "$_config_file"
+  fi
+  rm -rf "$TMP_ROOT"
+}
 trap cleanup EXIT
 
 cat > "$MOCK_BIN/gh" <<'MOCK_GH'
@@ -181,6 +195,69 @@ run_test "size_flag_exits_zero" "0" "$(get_exit)"
 run_test "size_flag_updates_size_field" "1" "$(count_log_matches 'fieldId=PVTSSF_size')"
 run_test "size_flag_uses_m_option" "1" "$(count_log_matches 'optionId=OPT_size_m')"
 run_test "size_flag_also_updates_priority" "1" "$(count_log_matches 'fieldId=PVTSSF_priority')"
+
+echo ""
+echo "=== create: Linear provider — emits TRACKER_ACTION_REQUIRED=create_item title=... ==="
+
+# To test the Linear path, temporarily replace .ai-dev-workflow.yaml with a
+# Linear-provider config. The cleanup() trap (registered at the top of this
+# script) restores the original on any exit — success or failure — so a
+# set -e abort between the overwrite and explicit restore cannot leave the
+# repo config permanently clobbered.
+# The add-backlog-item.sh script resolves the config file via workflow_config_file(),
+# which always points to $(workflow_repo_root)/.ai-dev-workflow.yaml.
+_config_backup="$TMP_ROOT/ai-dev-workflow.yaml.bak"
+
+if [ ! -f "$_config_file" ]; then
+  echo "SKIP: $_config_file not found; skipping Linear provider create_item tests." >&2
+  echo ""
+  echo "Test summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"
+  exit "$( [ "$FAIL_COUNT" -ne 0 ] && echo 1 || echo 0 )"
+fi
+
+cp -- "$_config_file" "$_config_backup"
+
+# Write a minimal linear config for the duration of these tests.
+cat > "$_config_file" <<'LINEAR_CONFIG'
+schema_version: 2
+issue_tracker:
+  provider: linear
+LINEAR_CONFIG
+
+run_create "ok" --title "Test Linear Item" --body "body"
+_linear_stdout="$(get_stdout)"
+_linear_stderr="$(get_stderr)"
+
+# Restore the real config immediately (cleanup() also does this on any exit).
+cp -- "$_config_backup" "$_config_file"
+
+# The create_item action emits TRACKER_ACTION_REQUIRED=create_item title='<title>'
+# to stdout and exits 0. Multi-word titles are single-quoted so parsers can
+# unambiguously extract the value. gh issue create must NOT be called.
+run_test "linear_create_item_exits_zero" "0" "$(get_exit)"
+
+case "$_linear_stdout" in
+  *"TRACKER_ACTION_REQUIRED=create_item"*) linear_signal_result="has-signal" ;;
+  *) linear_signal_result="no-signal" ;;
+esac
+run_test "linear_create_item_emits_tracker_action_required" "has-signal" "$linear_signal_result"
+
+# Multi-word title "Test Linear Item" must be single-quoted in the output.
+case "$_linear_stdout" in
+  *"title='Test Linear Item'"*) linear_title_result="has-title" ;;
+  *) linear_title_result="no-title" ;;
+esac
+run_test "linear_create_item_uses_title_key_not_issue_key" "has-title" "$linear_title_result"
+
+# No gh issue create should be invoked for Linear.
+run_test "linear_create_item_skips_gh_create" "0" "$(count_log_matches 'issue create')"
+
+# Guidance message goes to stderr.
+case "$_linear_stderr" in
+  *"Linear backlog creation requires the orchestrator"*) linear_guidance_result="has-guidance" ;;
+  *) linear_guidance_result="no-guidance" ;;
+esac
+run_test "linear_create_item_stderr_guidance" "has-guidance" "$linear_guidance_result"
 
 echo ""
 echo "Test summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"

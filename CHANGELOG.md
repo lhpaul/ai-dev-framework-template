@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Linear support for run-work / run-item-work / run-epic orchestration commands** (#966): Scripts emit structured `TRACKER_ACTION_REQUIRED=` deferred-action lines for the Linear provider (`set_status`, `read_status`, `create_item`) instead of unstructured warnings or silent empty returns; `workflow-batch-plan.sh` emits `TRACKER_STATUS_DEFERRED=<issue>` when a Linear status read is deferred; `run-epic-scope-resolver.sh` emits `PROVIDER=linear` and `TRACKER_READ_DEFERRED=yes`; protocols 90, 91, 95, and 00 document the bridge pattern end-to-end; the Linear integration guide gains a Bridge Pattern section with a complete `TRACKER_ACTION_REQUIRED=` reference table; `issue-tracker.md` documents the deferred-action protocol for non-CLI providers.
+
 ### Changed
 
 - **Release PR reviewer loop skip** (#960): `pr-review-loop.sh` now exits immediately with `RESULT=skipped` for release and hotfix PRs targeting `main`, eliminating the ~40-minute poll timeout that added no review value. Release readiness uses a dedicated artifact-validation and CI path instead of external reviewer tools.

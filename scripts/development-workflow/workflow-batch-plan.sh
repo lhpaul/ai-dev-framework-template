@@ -407,6 +407,9 @@ for development_path in "${development_paths[@]}"; do
   # expensive workflow-next-action.sh call.
   # get_tracker_status_for_issue returns empty string gracefully when no project
   # is configured, so we can call it unconditionally.
+  # For the Linear provider, it emits TRACKER_ACTION_REQUIRED=read_status instead
+  # of a status string; we detect this and emit TRACKER_STATUS_DEFERRED so the
+  # portfolio orchestrator can supply the Linear status from its own context.
   issue_number="$(extract_github_issue_number "$development_path")"
   _project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
   if [ -n "$_project_number" ] && [ -z "$issue_number" ]; then
@@ -434,6 +437,17 @@ for development_path in "${development_paths[@]}"; do
     continue
   fi
   tracker_status="$(get_tracker_status_for_issue "$issue_number")"
+  # Detect the Linear deferred-read signal: filter it out and record that
+  # the status read was deferred so the item block can emit
+  # TRACKER_STATUS_DEFERRED, signalling the portfolio orchestrator to supply
+  # the Linear status from its pre-resolved context.
+  _tracker_status_deferred=no
+  case "$tracker_status" in
+    TRACKER_ACTION_REQUIRED=read_status*)
+      _tracker_status_deferred=yes
+      tracker_status=""
+      ;;
+  esac
   if is_terminal_tracker_status "$tracker_status"; then
     echo "Skipping $development_path: tracker status is terminal ('$tracker_status') for issue #$issue_number" >&2
     continue
@@ -510,6 +524,7 @@ for development_path in "${development_paths[@]}"; do
   print_kv DEVELOPMENT_PATH "$development_path"
   print_kv SLUG "$slug"
   [ -n "$linear_issue" ] && print_kv LINEAR_ISSUE "$linear_issue"
+  [ "$_tracker_status_deferred" = "yes" ] && print_kv TRACKER_STATUS_DEFERRED "$issue_number"
   print_kv STATUS "$status"
   print_kv NEXT_ACTION "$next_action"
   [ -n "$workflow_mode" ] && print_kv WORKFLOW_MODE "$workflow_mode"
