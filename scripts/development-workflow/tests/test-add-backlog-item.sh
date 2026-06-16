@@ -30,8 +30,11 @@ _config_file="$REPO_ROOT/.ai-dev-workflow.yaml"
 
 cleanup() {
   # Restore .ai-dev-workflow.yaml if it was swapped out by the linear tests.
+  # The guard ([ -f "$_config_backup" ]) ensures cp is only called when the
+  # backup was successfully created; do not suppress errors — a restore failure
+  # means the workspace is clobbered and the test runner must know.
   if [ -n "$_config_backup" ] && [ -f "$_config_backup" ]; then
-    cp -- "$_config_backup" "$_config_file" 2>/dev/null || true
+    cp -- "$_config_backup" "$_config_file"
   fi
   rm -rf "$TMP_ROOT"
 }
