@@ -206,10 +206,6 @@ case "$*" in
   "api -X PATCH repos/test-owner/test-repo/issues/101 -F milestone=42")
     printf '{"number":101,"milestone":{"number":42}}\n'
     ;;
-  # Tracker status update for issue 101: project item lookup (skip silently)
-  "api graphql"*)
-    printf '{"data":{"repository":{"issue":{"projectItems":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}\n'
-    ;;
   "issue view 101 --json state --jq .state")
     printf 'closed\n'
     ;;
@@ -226,9 +222,20 @@ case "$*" in
   "pr list --state open --head release/v1.17.0 --base develop --json number --jq .[0].number // empty")
     printf '\n'
     ;;
-  # detect_omitted_merged_items: project item-list (no extra items)
-  "project item-list 1 --owner test-owner --limit 2000 --format json")
-    printf '{"items":[]}\n'
+  # detect_omitted_merged_items: project ID lookup via GraphQL (user query first, org fallback)
+  *"user(login"*"projectV2"*)
+    printf '{"data":{"user":{"projectV2":{"id":"PVT_test000001"}}}}\n'
+    ;;
+  *"organization(login"*"projectV2"*)
+    printf '{"data":{"organization":{"projectV2":{"id":"PVT_test000001"}}}}\n'
+    ;;
+  # detect_omitted_merged_items: paginated project items (no extra Merged items)
+  *"projectId"*"ProjectV2"*"items"*)
+    printf '{"data":{"node":{"items":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}\n'
+    ;;
+  # Tracker status update for issue 101: project item lookup (skip silently)
+  "api graphql"*)
+    printf '{"data":{"repository":{"issue":{"projectItems":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}\n'
     ;;
   # detect_omitted_merged_items: release tag date
   "api repos/test-owner/test-repo/releases/tags/v1.17.0 --jq .published_at // .created_at // empty")
@@ -344,12 +351,23 @@ case "$*" in
     printf '\n' ;;
   "pr list --state open --head release/v1.17.0 --base develop --json number --jq .[0].number // empty")
     printf '\n' ;;
-  # Project item-list returns TWO extra Merged items beyond issue #101:
+  # detect_omitted_merged_items: project ID lookup via GraphQL
+  *"user(login"*"projectV2"*)
+    printf '{"data":{"user":{"projectV2":{"id":"PVT_test000002"}}}}\n' ;;
+  *"organization(login"*"projectV2"*)
+    printf '{"data":{"organization":{"projectV2":{"id":"PVT_test000002"}}}}\n' ;;
+  # detect_omitted_merged_items: paginated project items.
+  # Returns TWO extra Merged items beyond issue #101 (which is in changelog scope):
   #   #200 — has a merged PR (regular shipped item)
   #   #201 — no merged PR (parent epic)
-  "project item-list 1 --owner test-owner --limit 2000 --format json")
-    printf '{"items":[{"status":"Merged","type":"ISSUE","content":{"number":101}},{"status":"Merged","type":"ISSUE","content":{"number":200}},{"status":"Merged","type":"ISSUE","content":{"number":201}},{"status":"Released","type":"ISSUE","content":{"number":99}}]}\n'
-    ;;
+  *"projectId"*"ProjectV2"*"items"*)
+    printf '{"data":{"node":{"items":{"nodes":[{"type":"ISSUE","content":{"__typename":"Issue","number":101},"status":{"name":"Merged"}},{"type":"ISSUE","content":{"__typename":"Issue","number":200},"status":{"name":"Merged"}},{"type":"ISSUE","content":{"__typename":"Issue","number":201},"status":{"name":"Merged"}},{"type":"ISSUE","content":{"__typename":"Issue","number":99},"status":{"name":"Released"}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}\n' ;;
+  # detect_omitted_merged_items: issue timeline for #200 — merged PR #500 references it
+  *"num=200"*"timelineItems"*|*"num = 200"*"timelineItems"*)
+    printf '{"data":{"repository":{"issue":{"timelineItems":{"nodes":[{"__typename":"CrossReferencedEvent","source":{"__typename":"PullRequest","number":500,"merged":true}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}\n' ;;
+  # detect_omitted_merged_items: issue timeline for #201 — no merged PR
+  *"num=201"*"timelineItems"*|*"num = 201"*"timelineItems"*)
+    printf '{"data":{"repository":{"issue":{"timelineItems":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}\n' ;;
   # Release tag dates
   "api repos/test-owner/test-repo/releases/tags/v1.17.0 --jq .published_at // .created_at // empty")
     printf '2026-06-11T12:00:00Z\n' ;;
@@ -362,11 +380,6 @@ case "$*" in
     printf '2026-06-10T12:00:00Z\n' ;;
   "api repos/test-owner/test-repo/issues/201 --jq .closed_at // empty")
     printf '2026-06-09T12:00:00Z\n' ;;
-  # PR search: #200 has a referencing merged PR; #201 does not
-  "pr list --repo test-owner/test-repo --state merged --search \"#200\" --limit 50 --json number --jq .[0].number // empty")
-    printf '500\n' ;;
-  "pr list --repo test-owner/test-repo --state merged --search \"#201\" --limit 50 --json number --jq .[0].number // empty")
-    printf '\n' ;;
   # Milestone lookup for milestone stamping of #101
   "api --paginate --slurp repos/test-owner/test-repo/milestones?state=all&per_page=100")
     printf '[{"number":42,"title":"v1.17.0","state":"closed"}]\n' ;;

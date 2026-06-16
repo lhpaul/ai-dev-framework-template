@@ -341,16 +341,88 @@ PY
     fi
   fi
 
-  # Fetch project items from the CLI.
-  if ! project_items="$(gh project item-list "$project_number" \
-      --owner "$owner" --limit 2000 --format json 2>/dev/null)"; then
-    echo "Warning: GitHub Projects item-list failed; skipping omitted-merged-items detection." >&2
+  # Fetch all project items via GraphQL pagination.
+  # gh project item-list caps at a fixed --limit (max 2000) and silently
+  # truncates larger projects.  The GraphQL API supports cursor-based
+  # pagination and can retrieve every item regardless of project size.
+  #
+  # The accumulated JSON is shaped to match the {"items":[...]} format that
+  # the Python parser below expects, so no changes are needed downstream.
+  local gql_project_id
+  gql_project_id="$(workflow_github_project_id "$owner" "$project_number" 2>/dev/null || true)"
+  if [ -z "$gql_project_id" ]; then
+    echo "Warning: could not resolve GitHub Projects ID for project #${project_number}; skipping omitted-merged-items detection." >&2
     return 0
   fi
-  if [ -z "$project_items" ]; then
-    echo "Warning: GitHub Projects item-list returned empty output; skipping omitted-merged-items detection." >&2
-    return 0
-  fi
+  # shellcheck disable=SC2016 # GraphQL variables are not Bash variables.
+  local _gql_items_query='query($projectId:ID!,$after:String){node(id:$projectId){...on ProjectV2{items(first:100,after:$after){nodes{type content{__typename ...on Issue{number}...on PullRequest{number}}status:fieldValueByName(name:"Status"){...on ProjectV2ItemFieldSingleSelectValue{name}}}pageInfo{hasNextPage endCursor}}}}}'
+  local gql_cursor="" gql_has_next="true" gql_page=0 gql_max_pages=500
+  local gql_resp_tmp gql_parse_out all_gql_nodes="[]"
+  project_items=""
+  while [ "$gql_has_next" = "true" ] && [ "$gql_page" -lt "$gql_max_pages" ]; do
+    gql_page=$(( gql_page + 1 ))
+    local gql_args=( api graphql -f "projectId=${gql_project_id}" -f "query=${_gql_items_query}" )
+    if [ -n "$gql_cursor" ]; then
+      gql_args+=( -f "after=${gql_cursor}" )
+    fi
+    if ! gql_resp_tmp="$(mktemp "${TMPDIR:-/tmp}/release-gql-items.XXXXXX")"; then
+      echo "Warning: could not create temp file for GQL response; skipping omitted-merged-items detection." >&2
+      return 0
+    fi
+    if ! gh "${gql_args[@]}" > "$gql_resp_tmp" 2>/dev/null; then
+      rm -f "$gql_resp_tmp"
+      echo "Warning: GraphQL project item fetch failed (page ${gql_page}); skipping omitted-merged-items detection." >&2
+      return 0
+    fi
+    gql_parse_out="$(python3 - "$gql_resp_tmp" "$all_gql_nodes" <<PY
+import json, sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    data = {}
+
+node      = ((data.get("data") or {}).get("node") or {})
+items_obj = node.get("items") or {}
+nodes     = items_obj.get("nodes") or []
+pi        = items_obj.get("pageInfo") or {}
+
+out = []
+for n in nodes:
+    sf = n.get("status") or {}
+    sname = sf.get("name", "") if isinstance(sf, dict) else ""
+    ct = n.get("content") or {}
+    out.append({
+        "type":    (n.get("type") or ""),
+        "content": {"number": ct.get("number")},
+        "status":  sname,
+    })
+
+try:
+    acc = json.loads(sys.argv[2])
+except Exception:
+    acc = []
+acc.extend(out)
+
+has_next   = "true"  if pi.get("hasNextPage") else "false"
+end_cursor = pi.get("endCursor") or ""
+
+print(json.dumps(acc))
+print(has_next)
+print(end_cursor)
+PY
+    )" || true
+    rm -f "$gql_resp_tmp"
+    if [ -z "$gql_parse_out" ]; then
+      echo "Warning: could not parse GraphQL project items (page ${gql_page}); skipping omitted-merged-items detection." >&2
+      return 0
+    fi
+    all_gql_nodes="$(printf '%s\n' "$gql_parse_out" | sed -n '1p')"
+    gql_has_next="$(printf '%s\n' "$gql_parse_out" | sed -n '2p')"
+    gql_cursor="$(printf '%s\n' "$gql_parse_out" | sed -n '3p')"
+  done
+  project_items="{\"items\":${all_gql_nodes}}"
 
   # Build a newline-separated list of issue numbers that have "Merged" project
   # status, are GitHub Issues (not PRs or drafts), and are not already in the
@@ -441,15 +513,17 @@ import sys
 from datetime import datetime, timezone
 
 def parse_dt(s):
-    # Normalise the string: strip a trailing 'Z' (UTC) so fromisoformat
-    # accepts it on Python < 3.11 (which doesn't handle Z natively).
+    # Normalise the string: strip a trailing Z (UTC) so fromisoformat
+    # accepts it on Python before 3.11 (which does not handle Z natively).
     s = s.rstrip("Z")
     dt = datetime.fromisoformat(s)
     if dt.tzinfo is None:
-        # No offset present – treat as UTC (e.g. after stripping 'Z').
-        return dt.replace(tzinfo=timezone.utc)
-    # Offset present (positive OR negative): convert to UTC, then return
-    # a naive-UTC datetime so all comparisons stay in the same coordinate.
+        # No offset present - treat as UTC (e.g. after stripping the Z).
+        # Return a naive UTC datetime so all comparisons stay in the same
+        # coordinate; mixing aware and naive raises TypeError in Python 3.
+        return dt
+    # Offset present (positive OR negative): convert to UTC, then strip
+    # tzinfo so the result is a naive UTC datetime, matching the branch above.
     return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 try:
@@ -467,16 +541,80 @@ PY
     fi
 
     # Check whether a merged PR in the repository references this issue.
-    # Use --limit 50 so that busy repositories with many merged PRs per issue
-    # are still classified correctly; a limit of 5 would miss PRs beyond the
-    # first page and misclassify shipped items as parent epics.
-    referencing_pr="$(gh pr list \
-        --repo "$repo_slug" \
-        --state merged \
-        --search "\"#${issue_num}\"" \
-        --limit 50 \
-        --json number \
-        --jq '.[0].number // empty' 2>/dev/null || true)"
+    # gh pr list --search uses full-text matching and can return false
+    # positives: searching for #12 can match PRs referencing #123, #1234, etc.
+    # Instead, use the GraphQL timeline API which records exact cross-references
+    # (CrossReferencedEvent) and PR-closed events (ClosedEvent), so only PRs
+    # that truly reference this specific issue number are returned.
+    # The query is inlined as a single-line variable to avoid <<'PY' heredoc
+    # quoting issues in bash 3.2 when the query spans multiple lines.
+    # shellcheck disable=SC2016 # GraphQL variables are not Bash variables.
+    local _gql_tl_query='query($owner:String!,$repo:String!,$num:Int!,$after:String){repository(owner:$owner,name:$repo){issue(number:$num){timelineItems(first:100,after:$after,itemTypes:[CROSS_REFERENCED_EVENT,CLOSED_EVENT]){nodes{__typename ...on CrossReferencedEvent{source{__typename ...on PullRequest{number merged}}}...on ClosedEvent{closer{__typename ...on PullRequest{number merged}}}}pageInfo{hasNextPage endCursor}}}}}'
+    local gql_pr_cursor="" gql_pr_has_next="true" gql_pr_page=0 gql_pr_max=20
+    referencing_pr=""
+    while [ "$gql_pr_has_next" = "true" ] && [ "$gql_pr_page" -lt "$gql_pr_max" ] && [ -z "$referencing_pr" ]; do
+      gql_pr_page=$(( gql_pr_page + 1 ))
+      local gql_pr_args=( api graphql
+          -f "owner=${repo_owner}"
+          -f "repo=${repo_name}"
+          -F "num=${issue_num}"
+          -f "query=${_gql_tl_query}" )
+      if [ -n "$gql_pr_cursor" ]; then
+        gql_pr_args+=( -f "after=${gql_pr_cursor}" )
+      fi
+      local gql_pr_tmp=""
+      if ! gql_pr_tmp="$(mktemp "${TMPDIR:-/tmp}/release-gql-tl.XXXXXX")"; then
+        break
+      fi
+      if ! gh "${gql_pr_args[@]}" > "$gql_pr_tmp" 2>/dev/null; then
+        rm -f "$gql_pr_tmp"
+        break
+      fi
+      local gql_pr_parse_out=""
+      gql_pr_parse_out="$(python3 - "$gql_pr_tmp" <<PY
+import json, sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    data = {}
+
+issue    = ((data.get("data") or {}).get("repository") or {}).get("issue") or {}
+tl       = issue.get("timelineItems") or {}
+nodes    = tl.get("nodes") or []
+pi       = tl.get("pageInfo") or {}
+found_pr = None
+
+for n in nodes:
+    t = n.get("__typename") or ""
+    if t == "CrossReferencedEvent":
+        src = n.get("source") or {}
+        if src.get("__typename") == "PullRequest" and src.get("merged"):
+            found_pr = src.get("number")
+            break
+    elif t == "ClosedEvent":
+        closer = n.get("closer") or {}
+        if closer.get("__typename") == "PullRequest" and closer.get("merged"):
+            found_pr = closer.get("number")
+            break
+
+has_next   = "true"  if pi.get("hasNextPage") else "false"
+end_cursor = pi.get("endCursor") or ""
+
+print(str(found_pr) if found_pr is not None else "")
+print(has_next)
+print(end_cursor)
+PY
+      )" || true
+      rm -f "$gql_pr_tmp"
+      if [ -z "$gql_pr_parse_out" ]; then
+        break
+      fi
+      referencing_pr="$(printf '%s\n' "$gql_pr_parse_out" | sed -n '1p')"
+      gql_pr_has_next="$(printf '%s\n' "$gql_pr_parse_out" | sed -n '2p')"
+      gql_pr_cursor="$(printf '%s\n' "$gql_pr_parse_out" | sed -n '3p')"
+    done
 
     if [ -n "$referencing_pr" ]; then
       omitted_shipped="${omitted_shipped}${issue_num}:pr_${referencing_pr}
