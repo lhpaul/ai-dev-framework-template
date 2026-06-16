@@ -302,7 +302,15 @@ For each in-scope item:
 5. If advisory findings remain, make an explicit fix-or-accept decision. Fix an
    advisory when it materially improves risk, maintainability, security, test
    coverage, or workflow reliability. Accepted advisories require rationale in
-   the PR disposition audit.
+   the PR disposition audit. When `advisory_count > 0`, the runner must:
+   - Fetch the individual findings from Haystack via:
+     `bash scripts/development-workflow/haystack-reviewer.sh <pr_number> <owner> <repo>`
+     (owner/repo can be resolved from the git remote or
+     `WORKFLOW_TARGET_GITHUB_REPO`)
+   - Assess each finding individually: decide fix or accept, and record the
+     rationale
+   - Write one `advisories[]` entry per finding in the PR disposition input —
+     never a single catch-all entry covering multiple findings
 6. Restore readiness labels only after reviewer-loop, CI-loop, unresolved
    threads, and final readiness checks are clean.
 

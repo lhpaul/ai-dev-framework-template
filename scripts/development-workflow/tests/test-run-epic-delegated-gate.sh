@@ -272,6 +272,31 @@ run_test "no_mutating_gh_commands" "no" "$(
   grep -Eq '(^issue edit|^pr create|^pr merge|^pr edit|^pr comment|^project item-edit|^project item-add|mutation)' "$CALL_LOG" && echo yes || echo no
 )"
 
+# --- bulk advisory warning (non-fatal) ---
+
+# Fixture: advisory_count=6 but only 1 advisories[] entry — should warn, not block
+bulk_advisory_gate_fixture="$(write_fixture bulk-advisory-gate \
+  '.reviewer.advisoryCount = 6 | .advisories = [{"source": "haystack", "category": "Minor", "decision": "accepted", "rationale": "reviewed and accepted"}]')"
+
+bulk_gate_stderr="$("$GATE" --input "$bulk_advisory_gate_fixture" --json 2>&1 >/dev/null)"
+run_test "bulk_advisory_gate_emits_warning" "yes" \
+  "$(grep -q 'per-finding review' <<< "$bulk_gate_stderr" && echo yes || echo no)"
+run_test "bulk_advisory_gate_does_not_block_merge" "merge_allowed" \
+  "$(decision_for "$bulk_advisory_gate_fixture")"
+
+# Fixture: advisory_count=0 — no warning even with no advisories[] entries
+no_advisory_gate_fixture="$(write_fixture no-advisory-gate '.reviewer.advisoryCount = 0 | .advisories = []')"
+no_advisory_gate_stderr="$("$GATE" --input "$no_advisory_gate_fixture" --json 2>&1 >/dev/null)"
+run_test "no_bulk_advisory_warn_when_count_zero" "yes" \
+  "$(printf '%s' "$no_advisory_gate_stderr" | wc -c | tr -d ' ' | grep -qx '0' && echo yes || echo no)"
+
+# Fixture: advisory_count=2 with two entries — no warning (each finding has its own entry)
+per_finding_gate_fixture="$(write_fixture per-finding-gate \
+  '.reviewer.advisoryCount = 2 | .advisories = [{"source": "haystack", "category": "Minor", "decision": "accepted", "rationale": "reason A"}, {"source": "haystack", "category": "Advisory", "decision": "fixed", "rationale": ""}]')"
+per_finding_gate_stderr="$("$GATE" --input "$per_finding_gate_fixture" --json 2>&1 >/dev/null)"
+run_test "no_bulk_advisory_warn_when_one_entry_per_finding" "yes" \
+  "$(printf '%s' "$per_finding_gate_stderr" | wc -c | tr -d ' ' | grep -qx '0' && echo yes || echo no)"
+
 echo ""
 echo "=== Summary ==="
 echo "Passed: $PASS_COUNT"
