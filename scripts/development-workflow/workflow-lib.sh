@@ -1761,7 +1761,7 @@ print(data.get("number") or "", end="")
 record_release_for_issue_best_effort() {
   local issue="$1"
   local version="$2"
-  local provider milestone_number
+  local provider milestone_number repo_owner repo_name
 
   provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
   case "$provider" in
@@ -1771,7 +1771,19 @@ record_release_for_issue_best_effort() {
         echo "RELEASE_STAMP_FAILED issue=${issue} version=${version} provider=${provider} reason=milestone_unavailable"
         return 0
       fi
-      if workflow_run_gh_capture_stderr issue edit "$issue" --milestone "$version"; then
+      repo_owner="$(workflow_resolve_github_repo_owner)"
+      repo_name="$(workflow_resolve_github_repo_name)"
+      if [ -z "$repo_owner" ] || [ -z "$repo_name" ]; then
+        echo "Warning: could not resolve GitHub repository for milestone stamping of issue '${issue}'." >&2
+        echo "RELEASE_STAMP_FAILED issue=${issue} version=${version} provider=${provider} reason=repo_unresolvable"
+        return 0
+      fi
+      # Use the GitHub Issues REST API with the resolved milestone number. This works for
+      # both open and closed milestones; 'gh issue edit --milestone <title>' fails when the
+      # milestone is already closed (e.g. after a previous release).
+      if workflow_run_gh_capture_stderr api -X PATCH \
+          "repos/${repo_owner}/${repo_name}/issues/${issue}" \
+          -F milestone="$milestone_number"; then
         echo "RELEASE_STAMPED issue=${issue} version=${version} provider=${provider}"
       else
         echo "Warning: could not assign GitHub milestone '${version}' to issue '${issue}'." >&2

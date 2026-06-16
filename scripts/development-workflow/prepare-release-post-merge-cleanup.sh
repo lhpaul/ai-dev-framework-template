@@ -204,6 +204,473 @@ PY
   done <<< "$deduped"
 }
 
+# detect_omitted_merged_items <version>
+#
+# Queries GitHub Projects for closed issues with "Merged" project status that
+# were closed in the release window (between the previous release tag and the
+# current release tag). Compares the found issues against ISSUE_NUMBERS[] (the
+# changelog-derived scope). Reports any omitted issues and auto-adds confirmed
+# shipped items (those with a merged PR referencing them) to ISSUE_NUMBERS[].
+# Parent epics (issues with no merged PR referencing them in the window) are
+# reported but emit TRACKER_INCOMPLETE rather than being auto-added.
+#
+# Skips silently when:
+#   - TRACKER_PROVIDER is not github_projects
+#   - GITHUB_PROJECT_NUMBER is not configured
+#   - the current or previous release tag cannot be resolved
+#   - the GitHub Projects item-list API call fails
+detect_omitted_merged_items() {
+  local version="$1"
+  local provider project_number owner repo_owner repo_name repo_slug
+  local current_tag_date prev_tag_name prev_tag_date project_items merged_items
+  local known_scope_arg issue_num issue_closed_at in_window referencing_pr
+  local entry iss detail total_omitted epic_nums
+  local omitted_epics omitted_shipped
+  omitted_epics=""
+  omitted_shipped=""
+
+  provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+  if [ "$provider" != "github_projects" ]; then
+    return 0
+  fi
+
+  project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
+  if [ -z "$project_number" ]; then
+    echo "Warning: GITHUB_PROJECT_NUMBER not set; skipping omitted-merged-items detection." >&2
+    return 0
+  fi
+  case "$project_number" in
+    *[!0-9]*)
+      echo "Warning: project number '${project_number}' is not numeric; skipping omitted-merged-items detection." >&2
+      return 0
+      ;;
+  esac
+
+  repo_owner="$(workflow_resolve_github_repo_owner)"
+  repo_name="$(workflow_resolve_github_repo_name)"
+  if [ -z "$repo_owner" ] || [ -z "$repo_name" ]; then
+    echo "Warning: could not resolve GitHub repository; skipping omitted-merged-items detection." >&2
+    return 0
+  fi
+  repo_slug="${repo_owner}/${repo_name}"
+
+  owner="$(workflow_resolve_github_project_owner 2>/dev/null)" || true
+  if [ -z "$owner" ]; then
+    owner="$repo_owner"
+  fi
+
+  # Resolve the current release tag date.
+  current_tag_date="$(gh api "repos/${repo_slug}/releases/tags/${version}" \
+      --jq '.published_at // .created_at // empty' 2>/dev/null || true)"  # workflow-shell-guard: allow SH001 - best-effort; empty triggers git-tag fallback below
+  if [ -z "$current_tag_date" ]; then
+    # Fallback: resolve via git tag annotation.
+    current_tag_date="$(git log -1 --format="%aI" "refs/tags/${version}" 2>/dev/null || true)"  # workflow-shell-guard: allow SH001 - best-effort fallback; empty causes early return
+  fi
+  if [ -z "$current_tag_date" ]; then
+    echo "Warning: could not resolve release tag date for '${version}'; skipping omitted-merged-items detection." >&2
+    return 0
+  fi
+
+  # Resolve the previous release tag name (latest semver tag before current one).
+  # Capture the tag list, write to a temp file, then read it in Python (cannot
+  # combine a pipe and a heredoc for the same process).
+  local all_tags=""
+  all_tags="$(gh api "repos/${repo_slug}/tags?per_page=100" --paginate \
+      --jq '[.[] | select(.name | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+"))] | .[].name' \
+      2>/dev/null || true)"  # workflow-shell-guard: allow SH001 - best-effort; empty list causes all items to qualify (safe lower bound)
+  prev_tag_name=""
+  if [ -n "$all_tags" ]; then
+    local tags_tmp=""
+    if ! tags_tmp="$(mktemp "${TMPDIR:-/tmp}/release-tags.XXXXXX")"; then
+      echo "Warning: could not create temp file for tag list; skipping previous-tag resolution." >&2
+      tags_tmp=""
+    fi
+    if [ -n "$tags_tmp" ]; then
+      printf '%s\n' "$all_tags" > "$tags_tmp"
+      prev_tag_name="$(python3 - "$version" "$tags_tmp" <<'PY'
+import sys
+import re
+
+current   = sys.argv[1].lstrip("v")
+tags_file = sys.argv[2]
+
+with open(tags_file, encoding="utf-8") as fh:
+    lines = [l.strip() for l in fh.read().splitlines() if l.strip()]
+
+def parse(v):
+    v = v.lstrip("v")
+    m = re.match(r"^(\d+)\.(\d+)\.(\d+)", v)
+    if not m:
+        return None
+    return tuple(int(x) for x in m.groups())
+
+current_tuple = parse(current)
+if current_tuple is None:
+    sys.exit(1)
+
+candidates = []
+for tag in lines:
+    t = parse(tag)
+    if t and t < current_tuple:
+        candidates.append((t, tag))
+
+if not candidates:
+    sys.exit(0)
+
+best = sorted(candidates, reverse=True)[0][1]
+print(best)
+PY
+      )" || true
+      rm -f "$tags_tmp"
+    fi
+  fi
+
+  if [ -z "$prev_tag_name" ]; then
+    # No previous tag found: use epoch as the lower bound so all closed items qualify.
+    prev_tag_date="1970-01-01T00:00:00Z"
+  else
+    # Resolve the date for the previous tag.
+    prev_tag_date="$(gh api "repos/${repo_slug}/releases/tags/${prev_tag_name}" \
+        --jq '.published_at // .created_at // empty' 2>/dev/null || true)"  # workflow-shell-guard: allow SH001 - best-effort; empty triggers git-tag fallback below
+    if [ -z "$prev_tag_date" ]; then
+      prev_tag_date="$(git log -1 --format="%aI" "refs/tags/${prev_tag_name}" 2>/dev/null || true)"  # workflow-shell-guard: allow SH001 - best-effort fallback; empty causes epoch lower bound
+    fi
+    if [ -z "$prev_tag_date" ]; then
+      echo "Warning: could not resolve date for previous tag '${prev_tag_name}'; using epoch as lower bound." >&2
+      prev_tag_date="1970-01-01T00:00:00Z"
+    fi
+  fi
+
+  # Fetch all project items via GraphQL pagination.
+  # gh project item-list caps at a fixed --limit (max 2000) and silently
+  # truncates larger projects.  The GraphQL API supports cursor-based
+  # pagination and can retrieve every item regardless of project size.
+  #
+  # The accumulated JSON is shaped to match the {"items":[...]} format that
+  # the Python parser below expects, so no changes are needed downstream.
+  local gql_project_id
+  gql_project_id="$(workflow_github_project_id "$owner" "$project_number" 2>/dev/null || true)"
+  if [ -z "$gql_project_id" ]; then
+    echo "Warning: could not resolve GitHub Projects ID for project #${project_number}; skipping omitted-merged-items detection." >&2
+    return 0
+  fi
+  # shellcheck disable=SC2016 # GraphQL variables are not Bash variables.
+  local _gql_items_query='query($projectId:ID!,$after:String){node(id:$projectId){...on ProjectV2{items(first:100,after:$after){nodes{type content{__typename ...on Issue{number}...on PullRequest{number}}status:fieldValueByName(name:"Status"){...on ProjectV2ItemFieldSingleSelectValue{name}}}pageInfo{hasNextPage endCursor}}}}}'
+  local gql_cursor="" gql_has_next="true" gql_page=0 gql_max_pages=500
+  local gql_resp_tmp gql_parse_out all_gql_nodes="[]"
+  project_items=""
+  while [ "$gql_has_next" = "true" ] && [ "$gql_page" -lt "$gql_max_pages" ]; do
+    gql_page=$(( gql_page + 1 ))
+    local gql_args=( api graphql -f "projectId=${gql_project_id}" -f "query=${_gql_items_query}" )
+    if [ -n "$gql_cursor" ]; then
+      gql_args+=( -f "after=${gql_cursor}" )
+    fi
+    if ! gql_resp_tmp="$(mktemp "${TMPDIR:-/tmp}/release-gql-items.XXXXXX")"; then
+      echo "Warning: could not create temp file for GQL response; skipping omitted-merged-items detection." >&2
+      return 0
+    fi
+    if ! gh "${gql_args[@]}" > "$gql_resp_tmp" 2>/dev/null; then
+      rm -f "$gql_resp_tmp"
+      echo "Warning: GraphQL project item fetch failed (page ${gql_page}); skipping omitted-merged-items detection." >&2
+      return 0
+    fi
+    gql_parse_out="$(python3 - "$gql_resp_tmp" "$all_gql_nodes" <<PY
+import json, sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    data = {}
+
+node      = ((data.get("data") or {}).get("node") or {})
+items_obj = node.get("items") or {}
+nodes     = items_obj.get("nodes") or []
+pi        = items_obj.get("pageInfo") or {}
+
+out = []
+for n in nodes:
+    sf = n.get("status") or {}
+    sname = sf.get("name", "") if isinstance(sf, dict) else ""
+    ct = n.get("content") or {}
+    out.append({
+        "type":    (n.get("type") or ""),
+        "content": {"number": ct.get("number")},
+        "status":  sname,
+    })
+
+try:
+    acc = json.loads(sys.argv[2])
+except Exception:
+    acc = []
+acc.extend(out)
+
+has_next   = "true"  if pi.get("hasNextPage") else "false"
+end_cursor = pi.get("endCursor") or ""
+
+print(json.dumps(acc))
+print(has_next)
+print(end_cursor)
+PY
+    )" || true
+    rm -f "$gql_resp_tmp"
+    if [ -z "$gql_parse_out" ]; then
+      echo "Warning: could not parse GraphQL project items (page ${gql_page}); skipping omitted-merged-items detection." >&2
+      return 0
+    fi
+    all_gql_nodes="$(printf '%s\n' "$gql_parse_out" | sed -n '1p')"
+    gql_has_next="$(printf '%s\n' "$gql_parse_out" | sed -n '2p')"
+    gql_cursor="$(printf '%s\n' "$gql_parse_out" | sed -n '3p')"
+  done
+  project_items="{\"items\":${all_gql_nodes}}"
+
+  # Build a newline-separated list of issue numbers that have "Merged" project
+  # status, are GitHub Issues (not PRs or drafts), and are not already in the
+  # changelog-derived scope.
+  known_scope_arg=""
+  if [ "${#ISSUE_NUMBERS[@]}" -gt 0 ]; then
+    known_scope_arg="$(IFS=,; printf '%s' "${ISSUE_NUMBERS[*]}")"
+  fi
+
+  # Extract omitted issue numbers from project_items using a temp file to avoid
+  # the pipe-plus-heredoc conflict (cannot use both | and <<'PY' for the same process).
+  local items_tmp=""
+  if ! items_tmp="$(mktemp "${TMPDIR:-/tmp}/release-project-items.XXXXXX")"; then
+    echo "Warning: could not create temp file for project items; skipping omitted-merged-items detection." >&2
+    return 0
+  fi
+  printf '%s' "$project_items" > "$items_tmp"
+  if ! merged_items="$(python3 - "$known_scope_arg" "$MERGED_LABEL" "$items_tmp" <<'PY'
+import json
+import sys
+
+known_scope   = set(sys.argv[1].split(",")) if sys.argv[1] else set()
+merged_status = sys.argv[2]
+items_file    = sys.argv[3]
+
+try:
+    with open(items_file, encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception as e:
+    print("JSON_PARSE_ERROR: " + str(e), file=sys.stderr)
+    sys.exit(2)
+
+items = data.get("items") or []
+
+omitted = []
+for item in items:
+    status = (item.get("status") or "").strip()
+    if status != merged_status:
+        continue
+    content = item.get("content") or {}
+    if not content:
+        continue
+    # Only GitHub Issues (not PRs): the CLI sets type="ISSUE" for issues
+    item_type = (item.get("type") or "").strip().upper()
+    if item_type and item_type not in ("ISSUE", ""):
+        continue
+    issue_number = str(content.get("number") or "").strip()
+    if not issue_number:
+        continue
+    if issue_number in known_scope:
+        continue
+    omitted.append(issue_number)
+
+print("\n".join(omitted))
+PY
+  )"; then
+    rm -f "$items_tmp"
+    echo "Warning: could not parse GitHub Projects items; skipping omitted-merged-items detection." >&2
+    return 0
+  fi
+  rm -f "$items_tmp"
+
+  if [ -z "$merged_items" ]; then
+    echo "Omitted-merged-items check: no additional Merged items found outside changelog scope."
+    return 0
+  fi
+
+  # For each candidate item, verify it was closed in the release window, then
+  # classify as parent epic (no merged PR referencing it) or regular shipped item.
+  # Use newline-delimited strings (bash 3.2 compatible; no associative arrays).
+  while IFS= read -r issue_num; do
+    [ -z "$issue_num" ] && continue
+
+    # Fetch the issue close date.
+    issue_closed_at="$(gh api "repos/${repo_slug}/issues/${issue_num}" \
+        --jq '.closed_at // empty' 2>/dev/null || true)"  # workflow-shell-guard: allow SH001 - best-effort; empty routes issue to manual-review bucket
+
+    if [ -z "$issue_closed_at" ]; then
+      # Can't determine close date; report for manual review.
+      omitted_epics="${omitted_epics}${issue_num}:unknown_close_date
+"
+      continue
+    fi
+
+    # Check if issue was closed inside the release window.
+    in_window="$(python3 - "$issue_closed_at" "$prev_tag_date" "$current_tag_date" <<'PY'
+import sys
+from datetime import datetime, timezone
+
+def parse_dt(s):
+    # Normalise the string: strip a trailing Z (UTC) so fromisoformat
+    # accepts it on Python before 3.11 (which does not handle Z natively).
+    s = s.rstrip("Z")
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        # No offset present - treat as UTC (e.g. after stripping the Z).
+        # Return a naive UTC datetime so all comparisons stay in the same
+        # coordinate; mixing aware and naive raises TypeError in Python 3.
+        return dt
+    # Offset present (positive OR negative): convert to UTC, then strip
+    # tzinfo so the result is a naive UTC datetime, matching the branch above.
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+try:
+    closed = parse_dt(sys.argv[1])
+    after  = parse_dt(sys.argv[2])
+    before = parse_dt(sys.argv[3])
+    print("yes" if after < closed <= before else "no")
+except Exception:
+    print("no")
+PY
+    )" || true
+
+    if [ "$in_window" != "yes" ]; then
+      continue
+    fi
+
+    # Check whether a merged PR in the repository references this issue.
+    # gh pr list --search uses full-text matching and can return false
+    # positives: searching for #12 can match PRs referencing #123, #1234, etc.
+    # Instead, use the GraphQL timeline API which records exact cross-references
+    # (CrossReferencedEvent) and PR-closed events (ClosedEvent), so only PRs
+    # that truly reference this specific issue number are returned.
+    # The query is inlined as a single-line variable to avoid <<'PY' heredoc
+    # quoting issues in bash 3.2 when the query spans multiple lines.
+    # shellcheck disable=SC2016 # GraphQL variables are not Bash variables.
+    local _gql_tl_query='query($owner:String!,$repo:String!,$num:Int!,$after:String){repository(owner:$owner,name:$repo){issue(number:$num){timelineItems(first:100,after:$after,itemTypes:[CROSS_REFERENCED_EVENT,CLOSED_EVENT]){nodes{__typename ...on CrossReferencedEvent{source{__typename ...on PullRequest{number merged}}}...on ClosedEvent{closer{__typename ...on PullRequest{number merged}}}}pageInfo{hasNextPage endCursor}}}}}'
+    local gql_pr_cursor="" gql_pr_has_next="true" gql_pr_page=0 gql_pr_max=20
+    referencing_pr=""
+    while [ "$gql_pr_has_next" = "true" ] && [ "$gql_pr_page" -lt "$gql_pr_max" ] && [ -z "$referencing_pr" ]; do
+      gql_pr_page=$(( gql_pr_page + 1 ))
+      local gql_pr_args=( api graphql
+          -f "owner=${repo_owner}"
+          -f "repo=${repo_name}"
+          -F "num=${issue_num}"
+          -f "query=${_gql_tl_query}" )
+      if [ -n "$gql_pr_cursor" ]; then
+        gql_pr_args+=( -f "after=${gql_pr_cursor}" )
+      fi
+      local gql_pr_tmp=""
+      if ! gql_pr_tmp="$(mktemp "${TMPDIR:-/tmp}/release-gql-tl.XXXXXX")"; then
+        break
+      fi
+      if ! gh "${gql_pr_args[@]}" > "$gql_pr_tmp" 2>/dev/null; then
+        rm -f "$gql_pr_tmp"
+        break
+      fi
+      local gql_pr_parse_out=""
+      gql_pr_parse_out="$(python3 - "$gql_pr_tmp" <<PY
+import json, sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    data = {}
+
+issue    = ((data.get("data") or {}).get("repository") or {}).get("issue") or {}
+tl       = issue.get("timelineItems") or {}
+nodes    = tl.get("nodes") or []
+pi       = tl.get("pageInfo") or {}
+found_pr = None
+
+for n in nodes:
+    t = n.get("__typename") or ""
+    if t == "CrossReferencedEvent":
+        src = n.get("source") or {}
+        if src.get("__typename") == "PullRequest" and src.get("merged"):
+            found_pr = src.get("number")
+            break
+    elif t == "ClosedEvent":
+        closer = n.get("closer") or {}
+        if closer.get("__typename") == "PullRequest" and closer.get("merged"):
+            found_pr = closer.get("number")
+            break
+
+has_next   = "true"  if pi.get("hasNextPage") else "false"
+end_cursor = pi.get("endCursor") or ""
+
+print(str(found_pr) if found_pr is not None else "")
+print(has_next)
+print(end_cursor)
+PY
+      )" || true
+      rm -f "$gql_pr_tmp"
+      if [ -z "$gql_pr_parse_out" ]; then
+        break
+      fi
+      referencing_pr="$(printf '%s\n' "$gql_pr_parse_out" | sed -n '1p')"
+      gql_pr_has_next="$(printf '%s\n' "$gql_pr_parse_out" | sed -n '2p')"
+      gql_pr_cursor="$(printf '%s\n' "$gql_pr_parse_out" | sed -n '3p')"
+    done
+
+    if [ -n "$referencing_pr" ]; then
+      omitted_shipped="${omitted_shipped}${issue_num}:pr_${referencing_pr}
+"
+    else
+      omitted_epics="${omitted_epics}${issue_num}:no_merged_pr
+"
+    fi
+  done <<< "$merged_items"
+
+  # Count omitted items (trim trailing newlines before counting).
+  local count_shipped=0 count_epics=0
+  if [ -n "$omitted_shipped" ]; then
+    count_shipped="$(printf '%s' "$omitted_shipped" | grep -c . || true)"
+  fi
+  if [ -n "$omitted_epics" ]; then
+    count_epics="$(printf '%s' "$omitted_epics" | grep -c . || true)"
+  fi
+  total_omitted=$(( count_shipped + count_epics ))
+
+  if [ "$total_omitted" -eq 0 ]; then
+    echo "Omitted-merged-items check: no additional Merged items found in release window outside changelog scope."
+    return 0
+  fi
+
+  echo "OMITTED_MERGED_ITEMS_DETECTED count=${total_omitted}"
+  if [ "$count_shipped" -gt 0 ]; then
+    echo "  Regular shipped items (will be auto-added to release scope):"
+    while IFS= read -r entry; do
+      [ -z "$entry" ] && continue
+      iss="${entry%%:*}"
+      detail="${entry#*:}"
+      pr_num="${detail#pr_}"
+      echo "    #${iss} (merged PR #${pr_num})"
+      ISSUE_NUMBERS+=("$iss")
+    done <<< "$omitted_shipped"
+  fi
+  if [ "$count_epics" -gt 0 ]; then
+    echo "  Likely parent epics or items without a merged PR (not auto-added):"
+    epic_nums=""
+    while IFS= read -r entry; do
+      [ -z "$entry" ] && continue
+      iss="${entry%%:*}"
+      detail="${entry#*:}"
+      case "$detail" in
+        no_merged_pr)       echo "    #${iss} (likely parent epic — no merged PR referencing this issue in release window)" ;;
+        unknown_close_date) echo "    #${iss} (could not determine close date — manual review required)" ;;
+        *)                  echo "    #${iss} (${detail})" ;;
+      esac
+      epic_nums="${epic_nums}${iss},"
+    done <<< "$omitted_epics"
+    epic_nums="${epic_nums%,}"
+    echo "TRACKER_INCOMPLETE=1 REASON=omitted_parent_epics ISSUES=${epic_nums}"
+  fi
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --issue)
@@ -275,6 +742,11 @@ if [ "$FROM_CHANGELOG" = "true" ]; then
 fi
 
 dedupe_issue_numbers
+
+if [ "$FROM_CHANGELOG" = "true" ]; then
+  detect_omitted_merged_items "$RELEASE_VERSION"
+  dedupe_issue_numbers
+fi
 
 echo "Verifying merged PRs for release branch..."
 MAIN_PR=$(gh pr list --state merged --head "$RELEASE_BRANCH" --base main --json number --jq '.[0].number // empty')
