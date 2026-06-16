@@ -204,6 +204,318 @@ PY
   done <<< "$deduped"
 }
 
+# detect_omitted_merged_items <version>
+#
+# Queries GitHub Projects for closed issues with "Merged" project status that
+# were closed in the release window (between the previous release tag and the
+# current release tag). Compares the found issues against ISSUE_NUMBERS[] (the
+# changelog-derived scope). Reports any omitted issues and auto-adds confirmed
+# shipped items (those with a merged PR referencing them) to ISSUE_NUMBERS[].
+# Parent epics (issues with no merged PR referencing them in the window) are
+# reported but emit TRACKER_INCOMPLETE rather than being auto-added.
+#
+# Skips silently when:
+#   - TRACKER_PROVIDER is not github_projects
+#   - GITHUB_PROJECT_NUMBER is not configured
+#   - the current or previous release tag cannot be resolved
+#   - the GitHub Projects item-list API call fails
+detect_omitted_merged_items() {
+  local version="$1"
+  local provider project_number owner repo_owner repo_name repo_slug
+  local current_tag_date prev_tag_name prev_tag_date project_items merged_items
+  local known_scope_arg issue_num issue_closed_at in_window referencing_pr
+  local entry iss detail total_omitted epic_nums
+  local omitted_epics omitted_shipped
+  omitted_epics=""
+  omitted_shipped=""
+
+  provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+  if [ "$provider" != "github_projects" ]; then
+    return 0
+  fi
+
+  project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
+  if [ -z "$project_number" ]; then
+    echo "Warning: GITHUB_PROJECT_NUMBER not set; skipping omitted-merged-items detection." >&2
+    return 0
+  fi
+  case "$project_number" in
+    *[!0-9]*)
+      echo "Warning: project number '${project_number}' is not numeric; skipping omitted-merged-items detection." >&2
+      return 0
+      ;;
+  esac
+
+  repo_owner="$(workflow_resolve_github_repo_owner)"
+  repo_name="$(workflow_resolve_github_repo_name)"
+  if [ -z "$repo_owner" ] || [ -z "$repo_name" ]; then
+    echo "Warning: could not resolve GitHub repository; skipping omitted-merged-items detection." >&2
+    return 0
+  fi
+  repo_slug="${repo_owner}/${repo_name}"
+
+  owner="$(workflow_resolve_github_project_owner 2>/dev/null)" || true
+  if [ -z "$owner" ]; then
+    owner="$repo_owner"
+  fi
+
+  # Resolve the current release tag date.
+  current_tag_date="$(gh api "repos/${repo_slug}/releases/tags/${version}" \
+      --jq '.published_at // .created_at // empty' 2>/dev/null || true)"
+  if [ -z "$current_tag_date" ]; then
+    # Fallback: resolve via git tag annotation.
+    current_tag_date="$(git log -1 --format="%aI" "refs/tags/${version}" 2>/dev/null || true)"
+  fi
+  if [ -z "$current_tag_date" ]; then
+    echo "Warning: could not resolve release tag date for '${version}'; skipping omitted-merged-items detection." >&2
+    return 0
+  fi
+
+  # Resolve the previous release tag name (latest semver tag before current one).
+  # Capture the tag list, write to a temp file, then read it in Python (cannot
+  # combine a pipe and a heredoc for the same process).
+  local all_tags=""
+  all_tags="$(gh api "repos/${repo_slug}/tags" --paginate \
+      --jq '[.[] | select(.name | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+"))] | .[].name' \
+      2>/dev/null || true)"
+  prev_tag_name=""
+  if [ -n "$all_tags" ]; then
+    local tags_tmp=""
+    tags_tmp="$(mktemp "${TMPDIR:-/tmp}/release-tags.XXXXXX")"
+    printf '%s\n' "$all_tags" > "$tags_tmp"
+    prev_tag_name="$(python3 - "$version" "$tags_tmp" <<'PY'
+import sys
+import re
+
+current   = sys.argv[1].lstrip("v")
+tags_file = sys.argv[2]
+
+with open(tags_file, encoding="utf-8") as fh:
+    lines = [l.strip() for l in fh.read().splitlines() if l.strip()]
+
+def parse(v):
+    v = v.lstrip("v")
+    m = re.match(r"^(\d+)\.(\d+)\.(\d+)", v)
+    if not m:
+        return None
+    return tuple(int(x) for x in m.groups())
+
+current_tuple = parse(current)
+if current_tuple is None:
+    sys.exit(1)
+
+candidates = []
+for tag in lines:
+    t = parse(tag)
+    if t and t < current_tuple:
+        candidates.append((t, tag))
+
+if not candidates:
+    sys.exit(0)
+
+best = sorted(candidates, reverse=True)[0][1]
+print(best)
+PY
+    )" || true
+    rm -f "$tags_tmp"
+  fi
+
+  if [ -z "$prev_tag_name" ]; then
+    # No previous tag found: use epoch as the lower bound so all closed items qualify.
+    prev_tag_date="1970-01-01T00:00:00Z"
+  else
+    # Resolve the date for the previous tag.
+    prev_tag_date="$(gh api "repos/${repo_slug}/releases/tags/${prev_tag_name}" \
+        --jq '.published_at // .created_at // empty' 2>/dev/null || true)"
+    if [ -z "$prev_tag_date" ]; then
+      prev_tag_date="$(git log -1 --format="%aI" "refs/tags/${prev_tag_name}" 2>/dev/null || true)"
+    fi
+    if [ -z "$prev_tag_date" ]; then
+      echo "Warning: could not resolve date for previous tag '${prev_tag_name}'; using epoch as lower bound." >&2
+      prev_tag_date="1970-01-01T00:00:00Z"
+    fi
+  fi
+
+  # Fetch project items from the CLI.
+  if ! project_items="$(gh project item-list "$project_number" \
+      --owner "$owner" --limit 2000 --format json 2>/dev/null)"; then
+    echo "Warning: GitHub Projects item-list failed; skipping omitted-merged-items detection." >&2
+    return 0
+  fi
+  if [ -z "$project_items" ]; then
+    echo "Warning: GitHub Projects item-list returned empty output; skipping omitted-merged-items detection." >&2
+    return 0
+  fi
+
+  # Build a newline-separated list of issue numbers that have "Merged" project
+  # status, are GitHub Issues (not PRs or drafts), and are not already in the
+  # changelog-derived scope.
+  known_scope_arg=""
+  if [ "${#ISSUE_NUMBERS[@]}" -gt 0 ]; then
+    known_scope_arg="$(IFS=,; printf '%s' "${ISSUE_NUMBERS[*]}")"
+  fi
+
+  # Extract omitted issue numbers from project_items using a temp file to avoid
+  # the pipe-plus-heredoc conflict (cannot use both | and <<'PY' for the same process).
+  local items_tmp=""
+  items_tmp="$(mktemp "${TMPDIR:-/tmp}/release-project-items.XXXXXX")"
+  printf '%s' "$project_items" > "$items_tmp"
+  if ! merged_items="$(python3 - "$known_scope_arg" "$MERGED_LABEL" "$items_tmp" <<'PY'
+import json
+import sys
+
+known_scope   = set(sys.argv[1].split(",")) if sys.argv[1] else set()
+merged_status = sys.argv[2]
+items_file    = sys.argv[3]
+
+try:
+    with open(items_file, encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception as e:
+    print("JSON_PARSE_ERROR: " + str(e), file=sys.stderr)
+    sys.exit(2)
+
+items = data.get("items") or []
+
+omitted = []
+for item in items:
+    status = (item.get("status") or "").strip()
+    if status != merged_status:
+        continue
+    content = item.get("content") or {}
+    if not content:
+        continue
+    # Only GitHub Issues (not PRs): the CLI sets type="ISSUE" for issues
+    item_type = (item.get("type") or "").strip().upper()
+    if item_type and item_type not in ("ISSUE", ""):
+        continue
+    issue_number = str(content.get("number") or "").strip()
+    if not issue_number:
+        continue
+    if issue_number in known_scope:
+        continue
+    omitted.append(issue_number)
+
+print("\n".join(omitted))
+PY
+  )"; then
+    rm -f "$items_tmp"
+    echo "Warning: could not parse GitHub Projects items; skipping omitted-merged-items detection." >&2
+    return 0
+  fi
+  rm -f "$items_tmp"
+
+  if [ -z "$merged_items" ]; then
+    echo "Omitted-merged-items check: no additional Merged items found outside changelog scope."
+    return 0
+  fi
+
+  # For each candidate item, verify it was closed in the release window, then
+  # classify as parent epic (no merged PR referencing it) or regular shipped item.
+  # Use newline-delimited strings (bash 3.2 compatible; no associative arrays).
+  while IFS= read -r issue_num; do
+    [ -z "$issue_num" ] && continue
+
+    # Fetch the issue close date.
+    issue_closed_at="$(gh api "repos/${repo_slug}/issues/${issue_num}" \
+        --jq '.closed_at // empty' 2>/dev/null || true)"
+
+    if [ -z "$issue_closed_at" ]; then
+      # Can't determine close date; report for manual review.
+      omitted_epics="${omitted_epics}${issue_num}:unknown_close_date
+"
+      continue
+    fi
+
+    # Check if issue was closed inside the release window.
+    in_window="$(python3 - "$issue_closed_at" "$prev_tag_date" "$current_tag_date" <<'PY'
+import sys
+from datetime import datetime, timezone
+
+def parse_dt(s):
+    s = s.rstrip("Z")
+    if "+" in s:
+        s = s[:s.index("+")]
+    return datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
+
+try:
+    closed = parse_dt(sys.argv[1])
+    after  = parse_dt(sys.argv[2])
+    before = parse_dt(sys.argv[3])
+    print("yes" if after < closed <= before else "no")
+except Exception:
+    print("no")
+PY
+    )" || true
+
+    if [ "$in_window" != "yes" ]; then
+      continue
+    fi
+
+    # Check whether a merged PR in the repository references this issue.
+    referencing_pr="$(gh pr list \
+        --repo "$repo_slug" \
+        --state merged \
+        --search "\"#${issue_num}\"" \
+        --limit 5 \
+        --json number \
+        --jq '.[0].number // empty' 2>/dev/null || true)"
+
+    if [ -n "$referencing_pr" ]; then
+      omitted_shipped="${omitted_shipped}${issue_num}:pr_${referencing_pr}
+"
+    else
+      omitted_epics="${omitted_epics}${issue_num}:no_merged_pr
+"
+    fi
+  done <<< "$merged_items"
+
+  # Count omitted items (trim trailing newlines before counting).
+  local count_shipped=0 count_epics=0
+  if [ -n "$omitted_shipped" ]; then
+    count_shipped="$(printf '%s' "$omitted_shipped" | grep -c . || true)"
+  fi
+  if [ -n "$omitted_epics" ]; then
+    count_epics="$(printf '%s' "$omitted_epics" | grep -c . || true)"
+  fi
+  total_omitted=$(( count_shipped + count_epics ))
+
+  if [ "$total_omitted" -eq 0 ]; then
+    echo "Omitted-merged-items check: no additional Merged items found in release window outside changelog scope."
+    return 0
+  fi
+
+  echo "OMITTED_MERGED_ITEMS_DETECTED count=${total_omitted}"
+  if [ "$count_shipped" -gt 0 ]; then
+    echo "  Regular shipped items (will be auto-added to release scope):"
+    while IFS= read -r entry; do
+      [ -z "$entry" ] && continue
+      iss="${entry%%:*}"
+      detail="${entry#*:}"
+      pr_num="${detail#pr_}"
+      echo "    #${iss} (merged PR #${pr_num})"
+      ISSUE_NUMBERS+=("$iss")
+    done <<< "$omitted_shipped"
+  fi
+  if [ "$count_epics" -gt 0 ]; then
+    echo "  Likely parent epics or items without a merged PR (not auto-added):"
+    epic_nums=""
+    while IFS= read -r entry; do
+      [ -z "$entry" ] && continue
+      iss="${entry%%:*}"
+      detail="${entry#*:}"
+      case "$detail" in
+        no_merged_pr)       echo "    #${iss} (likely parent epic — no merged PR referencing this issue in release window)" ;;
+        unknown_close_date) echo "    #${iss} (could not determine close date — manual review required)" ;;
+        *)                  echo "    #${iss} (${detail})" ;;
+      esac
+      epic_nums="${epic_nums}${iss},"
+    done <<< "$omitted_epics"
+    epic_nums="${epic_nums%,}"
+    echo "TRACKER_INCOMPLETE=1 REASON=omitted_parent_epics ISSUES=${epic_nums}"
+  fi
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --issue)
@@ -275,6 +587,11 @@ if [ "$FROM_CHANGELOG" = "true" ]; then
 fi
 
 dedupe_issue_numbers
+
+if [ "$FROM_CHANGELOG" = "true" ]; then
+  detect_omitted_merged_items "$RELEASE_VERSION"
+  dedupe_issue_numbers
+fi
 
 echo "Verifying merged PRs for release branch..."
 MAIN_PR=$(gh pr list --state merged --head "$RELEASE_BRANCH" --base main --json number --jq '.[0].number // empty')
