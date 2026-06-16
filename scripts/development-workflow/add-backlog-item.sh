@@ -11,7 +11,7 @@ usage() {
   cat <<'EOF'
 Usage:
   add-backlog-item.sh resolve
-  add-backlog-item.sh create --title <title> (--body <text> | --body-file <path>) [--label <name>] ...
+  add-backlog-item.sh create --title <title> (--body <text> | --body-file <path>) [--label <name>] ... [--priority <value>] [--size <value>]
 
 resolve
   Prints machine-readable lines:
@@ -22,6 +22,11 @@ resolve
 create
   When DESTINATION_KIND is github, creates one GitHub issue via gh (requires gh auth).
   For linear, other, or none, exits non-zero with guidance (agents follow 00-add-backlog-item-protocol.md).
+
+  --priority <value>  Optional. Set the project Priority field. Valid values: Urgent, High, Medium, Low.
+                      When omitted, defaults to Medium for GitHub Projects.
+  --size <value>      Optional. Set the project Size field. Valid values: XS, S, M, L, XL.
+                      When omitted, the Size field is left unset.
 EOF
 }
 
@@ -42,7 +47,7 @@ resolve_cmd() {
 
 create_cmd() {
   local caller_pwd="$PWD"
-  local title="" body="" body_file="" labels=()
+  local title="" body="" body_file="" priority="" size="" labels=()
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -64,6 +69,16 @@ create_cmd() {
       --label)
         [ $# -lt 2 ] || [ -z "${2:-}" ] && { echo "Missing value for --label" >&2; usage >&2; exit 2; }
         labels+=("$2")
+        shift 2
+        ;;
+      --priority)
+        [ $# -lt 2 ] || [ -z "${2:-}" ] && { echo "Missing value for --priority" >&2; usage >&2; exit 2; }
+        priority="$2"
+        shift 2
+        ;;
+      --size)
+        [ $# -lt 2 ] || [ -z "${2:-}" ] && { echo "Missing value for --size" >&2; usage >&2; exit 2; }
+        size="$2"
         shift 2
         ;;
       -h|--help)
@@ -104,7 +119,37 @@ create_cmd() {
       [ -n "$label" ] || continue
       gh_args+=(--label "$label")
     done
-    gh "${gh_args[@]}"
+    # Capture the issue URL. Under set -euo pipefail, a non-zero exit from
+    # gh issue create aborts the script immediately — no separate exit-code
+    # check is required. The URL is the only output on success.
+    local issue_url issue_number
+    issue_url="$(gh "${gh_args[@]}")"
+    # Trim leading/trailing whitespace so extraction is robust against any
+    # trailing newline or extra whitespace in the gh output.
+    issue_url="${issue_url#"${issue_url%%[! ]*}"}"  # ltrim spaces
+    issue_url="${issue_url%"${issue_url##*[! ]}"}"  # rtrim spaces
+    printf '%s\n' "$issue_url"
+    # Extract and validate the issue number from the URL (last path segment).
+    # The URL is always https://github.com/<owner>/<repo>/issues/<number>.
+    issue_number="${issue_url##*/}"
+    # Skip project field updates when the issue number cannot be resolved to a
+    # numeric value (e.g. gh output was unexpected or the URL was malformed).
+    case "$issue_number" in
+      ''|*[!0-9]*)
+        echo "Warning: could not extract a numeric issue number from gh output '${issue_url}'; skipping project field updates." >&2
+        return 0
+        ;;
+    esac
+    # Ensure the issue is on the project board (adds it with Status=Backlog if absent).
+    # The ensure_on_project_board helper is fail-open; it always returns 0.
+    ensure_on_project_board "$issue_number" "Backlog"
+    # Update project Priority (default Medium) and Size when GitHub Projects is configured.
+    # The update_tracker_*_best_effort helpers are fail-open; they always return 0.
+    local effective_priority="${priority:-Medium}"
+    update_tracker_priority_best_effort "$issue_number" "$effective_priority"
+    if [ -n "$size" ]; then
+      update_tracker_size_best_effort "$issue_number" "$size"
+    fi
     return 0
   fi
 

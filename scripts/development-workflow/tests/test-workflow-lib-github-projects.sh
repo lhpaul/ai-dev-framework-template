@@ -597,6 +597,141 @@ run_test "remote_repo_fallback_rejects_extra_path_segments" "" "$(resolve_repo_f
 run_test "remote_owner_fallback_rejects_invalid_owner" "" "$(resolve_owner_from_remote "git@github.com:bad_owner/ai-dev-framework-template.git")"
 run_test "remote_repo_fallback_rejects_invalid_repo" "" "$(resolve_repo_from_remote "git@github.com:lhpaul/bad!repo.git")"
 
+echo ""
+echo "=== workflow_github_project_named_field_json ==="
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+named_field_tmpout="$(mktemp)"
+workflow_github_project_named_field_json "PVT_project_1" "Status" > "$named_field_tmpout" 2>/dev/null
+named_field_id="$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('field_id',''))" < "$named_field_tmpout" 2>/dev/null)"
+run_test "named_field_lookup_returns_field_id" "PVTSSF_status" "$named_field_id"
+run_test "named_field_lookup_avoids_full_board_scan" "" "$(forbidden_project_reads)"
+
+reset_log
+workflow_github_project_named_field_json "PVT_project_1" "Status" > "$named_field_tmpout" 2>/dev/null
+cached_field_id="$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('field_id',''))" < "$named_field_tmpout" 2>/dev/null)"
+rm -f "$named_field_tmpout"
+run_test "named_field_cache_hit_returns_correct_id" "PVTSSF_status" "$cached_field_id"
+run_test "named_field_cache_hit_makes_zero_graphql_calls" "0" "$(count_log_matches 'api graphql')"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+named_not_found_exit=0
+named_not_found_stderr=""
+named_not_found_stderr="$(workflow_github_project_named_field_json "PVT_project_1" "Priority" 2>&1 >/dev/null)" || named_not_found_exit=$?
+run_test "named_field_not_found_returns_nonzero" "1" "$named_not_found_exit"
+case "$named_not_found_stderr" in
+  *"Priority"*"not found"*) named_not_found_result="warned" ;;
+  *) named_not_found_result="$named_not_found_stderr" ;;
+esac
+run_test "named_field_not_found_warns" "warned" "$named_not_found_result"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+empty_name_exit=0
+workflow_github_project_named_field_json "PVT_project_1" "" > /dev/null 2>&1; empty_name_exit=$?
+run_test "named_field_empty_name_returns_nonzero" "1" "$empty_name_exit"
+run_test "named_field_empty_name_avoids_graphql" "0" "$(count_log_matches 'api graphql')"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+export MOCK_STATUS_FIELD_MODE=graphql_fail
+named_gql_fail_exit=0
+named_gql_fail_out="$(workflow_github_project_named_field_json "PVT_project_1" "Status" 2>/dev/null)" || named_gql_fail_exit=$?
+unset MOCK_STATUS_FIELD_MODE
+run_test "named_field_graphql_failure_returns_nonzero" "1" "$named_gql_fail_exit"
+run_test "named_field_graphql_failure_empty_output" "" "$named_gql_fail_out"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+export MOCK_STATUS_FIELD_MODE=paginated
+named_paged_json="$(workflow_github_project_named_field_json "PVT_project_1" "Priority" 2>/dev/null)"
+named_paged_id="$(printf '%s' "$named_paged_json" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('field_id',''))" 2>/dev/null)"
+calls_page_one="$(count_log_matches 'api graphql')"
+reset_log
+named_paged_status_json="$(workflow_github_project_named_field_json "PVT_project_1" "Status" 2>/dev/null)"
+named_paged_status_id="$(printf '%s' "$named_paged_status_json" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('field_id',''))" 2>/dev/null)"
+calls_page_two="$(count_log_matches 'api graphql')"
+unset MOCK_STATUS_FIELD_MODE
+run_test "named_field_found_on_first_page" "PVTSSF_other" "$named_paged_id"
+run_test "named_field_first_page_uses_one_call" "1" "$calls_page_one"
+run_test "named_field_found_on_second_page" "PVTSSF_status" "$named_paged_status_id"
+run_test "named_field_second_page_uses_two_calls" "2" "$calls_page_two"
+
+echo ""
+echo "=== update_tracker_named_field_best_effort ==="
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+named_update_output="$(update_tracker_named_field_best_effort 824 "Status" "Spec Ready" 2>&1)"
+case "$named_update_output" in
+  *"Updating tracker 'Status' for issue #824 to 'Spec Ready'"*) named_update_result="updated" ;;
+  *) named_update_result="$named_update_output" ;;
+esac
+run_test "named_field_update_happy_path" "updated" "$named_update_result"
+run_test "named_field_update_mutates_project_item" "1" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+run_test "named_field_update_avoids_full_board_scan" "" "$(forbidden_project_reads)"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+named_miss_output="$(update_tracker_named_field_best_effort 824 "Priority" "High" 2>&1)"
+case "$named_miss_output" in
+  *"could not read project 'Priority' field metadata"*) named_miss_result="field-not-found" ;;
+  *) named_miss_result="$named_miss_output" ;;
+esac
+run_test "named_field_update_field_not_found_warns" "field-not-found" "$named_miss_result"
+run_test "named_field_update_field_not_found_no_mutation" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+named_opt_output="$(update_tracker_named_field_best_effort 824 "Status" "NonExistentOption" 2>&1)"
+case "$named_opt_output" in
+  *"could not resolve 'Status' field or option 'NonExistentOption'"*) named_opt_result="option-not-found" ;;
+  *) named_opt_result="$named_opt_output" ;;
+esac
+run_test "named_field_update_option_not_found_warns" "option-not-found" "$named_opt_result"
+run_test "named_field_update_option_not_found_no_mutation" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+
+reset_log
+export MOCK_TRACKER_PROVIDER=linear
+named_linear_output="$(update_tracker_named_field_best_effort 824 "Priority" "High" 2>&1)"
+unset MOCK_TRACKER_PROVIDER
+case "$named_linear_output" in
+  *"does not support GitHub Projects"*) named_linear_result="warned" ;;
+  *) named_linear_result="$named_linear_output" ;;
+esac
+run_test "named_field_update_wrong_provider_warns" "warned" "$named_linear_result"
+run_test "named_field_update_wrong_provider_no_mutation" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+priority_output="$(update_tracker_priority_best_effort 824 "High" 2>&1)"
+case "$priority_output" in
+  *"could not read project 'Priority' field metadata"*) priority_result="routed-to-priority" ;;
+  *) priority_result="$priority_output" ;;
+esac
+run_test "priority_convenience_routes_to_named_field" "routed-to-priority" "$priority_result"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+size_output="$(update_tracker_size_best_effort 824 "S" 2>&1)"
+case "$size_output" in
+  *"could not read project 'Size' field metadata"*) size_result="routed-to-size" ;;
+  *) size_result="$size_output" ;;
+esac
+run_test "size_convenience_routes_to_named_field" "routed-to-size" "$size_result"
+
 reset_log
 workflow_github_project_item_for_issue() {
   printf 'not json'

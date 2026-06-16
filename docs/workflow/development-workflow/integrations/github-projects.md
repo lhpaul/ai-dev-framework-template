@@ -90,7 +90,8 @@ Add these custom fields to the project (via project settings UI or GraphQL):
 
 | Field    | Type                                                         | Purpose                                                                                 |
 | -------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
-| Priority | Single select: `Urgent`, `High`, `Normal`, `Low`             | Drives orchestrator prioritization                                                      |
+| Priority | Single select: `Urgent`, `High`, `Medium`, `Low`             | Drives orchestrator prioritization                                                      |
+| Size     | Single select: `XS`, `S`, `M`, `L`, `XL`                    | Drives work sizing and sprint planning                                                  |
 | Due date | Date                                                         | Items due within 2 weeks get priority boost                                             |
 | Type     | Single select: `Feature`, `Bug`, `Refactor`, `Workflow`      | Source of truth for work-item classification and workflow path routing                  |
 
