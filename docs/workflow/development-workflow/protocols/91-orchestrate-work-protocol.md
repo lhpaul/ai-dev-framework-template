@@ -149,6 +149,19 @@ route classification. Repository labels such as `workflow`, `bug`,
 `enhancement`, and `type:*` are legacy classification hints only; do not rely on
 them when Type is available.
 
+> **Linear provider — deferred status reads**: When `workflow-next-action.sh`
+> (or `workflow-batch-plan.sh`) returns a `TRACKER_ACTION_REQUIRED=read_status
+> issue=<id>` line in place of an empty status, the item's status was deferred —
+> the shell helper could not reach Linear directly. The orchestrator must supply
+> the known Linear status from its pre-resolved context (fetched in Protocol 90
+> Step 1a) to determine the next action for this item. Do not treat the
+> `TRACKER_ACTION_REQUIRED=` line as a workflow status string; filter it out and
+> substitute the orchestrator's authoritative value. See
+> [Step 8b](#step-8b-update-tracker-status) for the `TRACKER_UPDATE_REQUIRED:`
+> contract, which also applies to Linear status transitions that subagents cannot
+> perform inline. See [`linear.md`](../integrations/linear.md) for the bridge
+> pattern and full reference table.
+
 ### Cross-layer scope check (mandatory before fast-track dispatch)
 
 **When to run**: Before classifying a backlog item as Fast Track and dispatching it to `03-implement-development-protocol.md` Path 3, run this check. It applies to any item whose tracker Type, issue metadata, or brief suggests a bug fix or simple change (i.e., not a feature requiring a spec).

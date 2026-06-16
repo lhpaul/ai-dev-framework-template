@@ -439,6 +439,12 @@ enrich_item() {
   if ! status="$(get_tracker_status_for_issue "$issue" 2>/dev/null)"; then
     error_exit "failed to read tracker status for issue #${issue}."
   fi
+  # For the Linear provider, get_tracker_status_for_issue emits a
+  # TRACKER_ACTION_REQUIRED=read_status line instead of a status string.
+  # Filter it out so it is not mistaken for a workflow status value.
+  case "$status" in
+    TRACKER_ACTION_REQUIRED=read_status*) status="" ;;
+  esac
   if ! type="$(get_tracker_type_for_issue "$issue" 2>/dev/null)"; then
     error_exit "failed to read tracker type for issue #${issue}."
   fi
@@ -601,6 +607,11 @@ if [ "$json_output" -eq 1 ]; then
   exit 0
 fi
 
+_resolver_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+printf 'PROVIDER=%s\n' "${_resolver_provider:-none}"
+if [ "$_resolver_provider" = "linear" ]; then
+  printf 'TRACKER_READ_DEFERRED=yes\n'
+fi
 printf 'Run Epic Scope Resolver\n'
 printf 'Scope source: %s\n' "$(printf '%s\n' "$summary_json" | jq -r '.scopeSource')"
 if [ -n "$epic_number" ]; then

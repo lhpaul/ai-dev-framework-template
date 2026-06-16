@@ -89,6 +89,7 @@ The `haystack triage --json` output schema uses a `.findings[].category` field a
 | `Trivial` | Advisory | Non-blocking; reported in SUGGESTION_COUNT |
 | `Weak test coverage` | Advisory | Non-blocking; reported in SUGGESTION_COUNT |
 | `Rules violation` | Advisory | Non-blocking; used for custom rule findings (e.g. CHANGELOG structure) that can produce false positives on correctly-formatted PRs and hotfix backport PRs — see the ["Rules violation" section](#rules-violation--changelog-false-positive-on-correctly-formatted-prs) below |
+| `Code contract violation` | Advisory | Non-blocking; used for API/protocol usage findings. Haystack's own policy verdict (`haystack pr-status`) classifies PRs with only this finding as "good-to-merge" / "clean", so the reviewer loop treats it as advisory-only |
 | Any unrecognised value | Blocking | Conservative safe-fail per spec BR-2 |
 
 The `COMMENT_COUNT` output equals `BLOCKING_COUNT + SUGGESTION_COUNT`.
@@ -344,6 +345,17 @@ RESULT=clean
 **Cause**: Haystack flagged a `Rules violation` finding for CHANGELOG structure on the backport PR. This is a known false positive (see the "Hotfix backport PRs" subsection above). The finding is advisory and does not block the reviewer loop.
 
 **Remediation**: Verify that the merged CHANGELOG on `develop` will have correct Keep-a-Changelog structure. No code change is required; the finding can be dismissed.
+
+### "Code contract violation" finding (stale or for fixed code)
+
+```text
+INFO: findings parsed — blocking: 0, advisory: 1, total: 1
+RESULT=clean
+```
+
+**Cause**: Haystack reported a `Code contract violation` finding, typically for API/protocol usage concerns such as unescaped free-form values in structured output lines. The category is advisory (`SUGGESTION_COUNT`), not blocking. Haystack's own policy verdict (`haystack pr-status`) classifies PRs with only this category as "good-to-merge" / "clean", so the reviewer loop exits `RESULT=clean`. This finding can also appear as a stale cached result after the underlying issue has been fixed.
+
+**Remediation**: Verify the finding is described accurately. If the cited issue is already fixed (e.g., multi-word values are already single-quoted), the finding is a stale Haystack cache result and can be dismissed. Push a new commit (e.g., a test addition) to force Haystack to re-analyze the latest code if needed.
 
 ### Unrecognised finding category
 

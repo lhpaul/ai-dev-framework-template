@@ -75,12 +75,12 @@ JSON
 {"number":7,"title":"v1.2.3","state":"closed"}
 JSON
     ;;
-  "issue edit 824 --milestone v1.2.3")
-    if [ "${MOCK_ISSUE_EDIT_MODE:-ok}" = "fail" ]; then
-      printf 'issue edit failed\n' >&2
+  "api -X PATCH repos/lhpaul/ai-dev-framework-template/issues/824 -F milestone=7"|"api -X PATCH repos/lhpaul/ai-dev-framework-template/issues/824 -F milestone=9")
+    if [ "${MOCK_ISSUE_PATCH_MODE:-ok}" = "fail" ]; then
+      printf 'issue patch failed\n' >&2
       exit 42
     fi
-    printf 'https://github.com/lhpaul/ai-dev-framework-template/issues/824\n'
+    printf '{"number":824,"milestone":{"number":7}}\n'
     ;;
   *"api graphql"* )
     case "$*" in
@@ -461,7 +461,7 @@ case "$stamp_output" in
 esac
 run_test "release_stamp_assigns_existing_milestone" "stamped" "$stamp_result"
 run_test "release_stamp_existing_does_not_create_milestone" "0" "$(count_log_matches 'api -X POST repos/.*/milestones')"
-run_test "release_stamp_assigns_issue_milestone" "1" "$(count_log_matches 'issue edit 824 --milestone v1.2.3')"
+run_test "release_stamp_assigns_issue_milestone" "1" "$(count_log_matches 'api -X PATCH repos/.*/issues/824 -F milestone=[0-9]')"
 
 reset_log
 export MOCK_MILESTONE_MODE=missing
@@ -475,9 +475,9 @@ run_test "release_stamp_creates_missing_milestone" "stamped" "$stamp_result"
 run_test "release_stamp_missing_creates_once" "1" "$(count_log_matches 'api -X POST repos/.*/milestones')"
 
 reset_log
-export MOCK_ISSUE_EDIT_MODE=fail
+export MOCK_ISSUE_PATCH_MODE=fail
 stamp_output="$(record_release_for_issue_best_effort 824 "v1.2.3" 2>&1)"
-unset MOCK_ISSUE_EDIT_MODE
+unset MOCK_ISSUE_PATCH_MODE
 case "$stamp_output" in
   *"RELEASE_STAMP_FAILED issue=824 version=v1.2.3 provider=github_projects reason=assignment_failed"*) stamp_result="failed" ;;
   *) stamp_result="$stamp_output" ;;
@@ -597,6 +597,141 @@ run_test "remote_repo_fallback_rejects_extra_path_segments" "" "$(resolve_repo_f
 run_test "remote_owner_fallback_rejects_invalid_owner" "" "$(resolve_owner_from_remote "git@github.com:bad_owner/ai-dev-framework-template.git")"
 run_test "remote_repo_fallback_rejects_invalid_repo" "" "$(resolve_repo_from_remote "git@github.com:lhpaul/bad!repo.git")"
 
+echo ""
+echo "=== workflow_github_project_named_field_json ==="
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+named_field_tmpout="$(mktemp)"
+workflow_github_project_named_field_json "PVT_project_1" "Status" > "$named_field_tmpout" 2>/dev/null
+named_field_id="$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('field_id',''))" < "$named_field_tmpout" 2>/dev/null)"
+run_test "named_field_lookup_returns_field_id" "PVTSSF_status" "$named_field_id"
+run_test "named_field_lookup_avoids_full_board_scan" "" "$(forbidden_project_reads)"
+
+reset_log
+workflow_github_project_named_field_json "PVT_project_1" "Status" > "$named_field_tmpout" 2>/dev/null
+cached_field_id="$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('field_id',''))" < "$named_field_tmpout" 2>/dev/null)"
+rm -f "$named_field_tmpout"
+run_test "named_field_cache_hit_returns_correct_id" "PVTSSF_status" "$cached_field_id"
+run_test "named_field_cache_hit_makes_zero_graphql_calls" "0" "$(count_log_matches 'api graphql')"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+named_not_found_exit=0
+named_not_found_stderr=""
+named_not_found_stderr="$(workflow_github_project_named_field_json "PVT_project_1" "Priority" 2>&1 >/dev/null)" || named_not_found_exit=$?
+run_test "named_field_not_found_returns_nonzero" "1" "$named_not_found_exit"
+case "$named_not_found_stderr" in
+  *"Priority"*"not found"*) named_not_found_result="warned" ;;
+  *) named_not_found_result="$named_not_found_stderr" ;;
+esac
+run_test "named_field_not_found_warns" "warned" "$named_not_found_result"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+empty_name_exit=0
+workflow_github_project_named_field_json "PVT_project_1" "" > /dev/null 2>&1 || empty_name_exit=$?
+run_test "named_field_empty_name_returns_nonzero" "1" "$empty_name_exit"
+run_test "named_field_empty_name_avoids_graphql" "0" "$(count_log_matches 'api graphql')"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+export MOCK_STATUS_FIELD_MODE=graphql_fail
+named_gql_fail_exit=0
+named_gql_fail_out="$(workflow_github_project_named_field_json "PVT_project_1" "Status" 2>/dev/null)" || named_gql_fail_exit=$?
+unset MOCK_STATUS_FIELD_MODE
+run_test "named_field_graphql_failure_returns_nonzero" "1" "$named_gql_fail_exit"
+run_test "named_field_graphql_failure_empty_output" "" "$named_gql_fail_out"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+export MOCK_STATUS_FIELD_MODE=paginated
+named_paged_json="$(workflow_github_project_named_field_json "PVT_project_1" "Priority" 2>/dev/null)"
+named_paged_id="$(printf '%s' "$named_paged_json" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('field_id',''))" 2>/dev/null)"
+calls_page_one="$(count_log_matches 'api graphql')"
+reset_log
+named_paged_status_json="$(workflow_github_project_named_field_json "PVT_project_1" "Status" 2>/dev/null)"
+named_paged_status_id="$(printf '%s' "$named_paged_status_json" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('field_id',''))" 2>/dev/null)"
+calls_page_two="$(count_log_matches 'api graphql')"
+unset MOCK_STATUS_FIELD_MODE
+run_test "named_field_found_on_first_page" "PVTSSF_other" "$named_paged_id"
+run_test "named_field_first_page_uses_one_call" "1" "$calls_page_one"
+run_test "named_field_found_on_second_page" "PVTSSF_status" "$named_paged_status_id"
+run_test "named_field_second_page_uses_two_calls" "2" "$calls_page_two"
+
+echo ""
+echo "=== update_tracker_named_field_best_effort ==="
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+named_update_output="$(update_tracker_named_field_best_effort 824 "Status" "Spec Ready" 2>&1)"
+case "$named_update_output" in
+  *"Updating tracker 'Status' for issue #824 to 'Spec Ready'"*) named_update_result="updated" ;;
+  *) named_update_result="$named_update_output" ;;
+esac
+run_test "named_field_update_happy_path" "updated" "$named_update_result"
+run_test "named_field_update_mutates_project_item" "1" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+run_test "named_field_update_avoids_full_board_scan" "" "$(forbidden_project_reads)"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+named_miss_output="$(update_tracker_named_field_best_effort 824 "Priority" "High" 2>&1)"
+case "$named_miss_output" in
+  *"could not read project 'Priority' field metadata"*) named_miss_result="field-not-found" ;;
+  *) named_miss_result="$named_miss_output" ;;
+esac
+run_test "named_field_update_field_not_found_warns" "field-not-found" "$named_miss_result"
+run_test "named_field_update_field_not_found_no_mutation" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+named_opt_output="$(update_tracker_named_field_best_effort 824 "Status" "NonExistentOption" 2>&1)"
+case "$named_opt_output" in
+  *"could not resolve 'Status' field or option 'NonExistentOption'"*) named_opt_result="option-not-found" ;;
+  *) named_opt_result="$named_opt_output" ;;
+esac
+run_test "named_field_update_option_not_found_warns" "option-not-found" "$named_opt_result"
+run_test "named_field_update_option_not_found_no_mutation" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+
+reset_log
+export MOCK_TRACKER_PROVIDER=linear
+named_linear_output="$(update_tracker_named_field_best_effort 824 "Priority" "High" 2>&1)"
+unset MOCK_TRACKER_PROVIDER
+case "$named_linear_output" in
+  *"does not support GitHub Projects"*) named_linear_result="warned" ;;
+  *) named_linear_result="$named_linear_output" ;;
+esac
+run_test "named_field_update_wrong_provider_warns" "warned" "$named_linear_result"
+run_test "named_field_update_wrong_provider_no_mutation" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+priority_output="$(update_tracker_priority_best_effort 824 "High" 2>&1)"
+case "$priority_output" in
+  *"could not read project 'Priority' field metadata"*) priority_result="routed-to-priority" ;;
+  *) priority_result="$priority_output" ;;
+esac
+run_test "priority_convenience_routes_to_named_field" "routed-to-priority" "$priority_result"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+size_output="$(update_tracker_size_best_effort 824 "S" 2>&1)"
+case "$size_output" in
+  *"could not read project 'Size' field metadata"*) size_result="routed-to-size" ;;
+  *) size_result="$size_output" ;;
+esac
+run_test "size_convenience_routes_to_named_field" "routed-to-size" "$size_result"
+
 reset_log
 workflow_github_project_item_for_issue() {
   printf 'not json'
@@ -608,6 +743,109 @@ case "$type_update_output" in
 esac
 run_test "type_update_item_parse_failure_warns" "item-parse-failed" "$type_update_result"
 run_test "type_update_item_parse_failure_no_mutation" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+
+echo ""
+echo "=== Linear deferred-action signal tests (#966) ==="
+
+# Restore workflow_github_project_item_for_issue to the real implementation
+# (a prior test overwrote it with a broken stub to test parse-failure handling).
+# Re-source workflow-lib.sh so the real function definition is available again.
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh"
+workflow_issue_tracker_provider_raw() {
+  printf '%s\n' "${MOCK_TRACKER_PROVIDER:-github_projects}"
+}
+workflow_issue_tracker_project_number() {
+  printf '%s\n' "${MOCK_TRACKER_PROJECT_NUMBER-1}"
+}
+
+# Test: emit_linear_deferred_action formats the canonical line.
+# Multi-word values are single-quoted to make the format unambiguous for parsers
+# (e.g. target_status='Plan in Review' rather than target_status=Plan in Review).
+emit_result="$(emit_linear_deferred_action "set_status" "ENG-123" "target_status=Plan in Review")"
+run_test "emit_linear_deferred_action_set_status" \
+  "TRACKER_ACTION_REQUIRED=set_status issue=ENG-123 target_status='Plan in Review'" \
+  "$emit_result"
+
+emit_read_result="$(emit_linear_deferred_action "read_status" "ENG-456")"
+run_test "emit_linear_deferred_action_read_status" \
+  "TRACKER_ACTION_REQUIRED=read_status issue=ENG-456" \
+  "$emit_read_result"
+
+# Single-word values are not quoted (no ambiguity).
+emit_single_word_result="$(emit_linear_deferred_action "set_status" "ENG-000" "target_status=Backlog")"
+run_test "emit_linear_deferred_action_single_word_unquoted" \
+  "TRACKER_ACTION_REQUIRED=set_status issue=ENG-000 target_status=Backlog" \
+  "$emit_single_word_result"
+
+# Note: create_item is NOT emitted via emit_linear_deferred_action.
+# add-backlog-item.sh uses printf directly with "title=<title>" (not "issue=<id>")
+# because there is no issue ID for a new item being created.
+# That path is covered in test-add-backlog-item.sh (linear_create_item_* tests).
+
+# Test: workflow_emit_deferred_tracker_action is a public alias
+alias_result="$(workflow_emit_deferred_tracker_action "set_status" "ENG-789" "target_status=Backlog")"
+run_test "workflow_emit_deferred_tracker_action_alias" \
+  "TRACKER_ACTION_REQUIRED=set_status issue=ENG-789 target_status=Backlog" \
+  "$alias_result"
+
+# Test: update_tracker_status_best_effort for Linear emits TRACKER_ACTION_REQUIRED=set_status
+reset_log
+export MOCK_TRACKER_PROVIDER=linear
+linear_update_out="$(update_tracker_status_best_effort ENG-123 "Plan in Review" 2>/dev/null)"
+unset MOCK_TRACKER_PROVIDER
+case "$linear_update_out" in
+  *"TRACKER_ACTION_REQUIRED=set_status"*) linear_update_result="deferred" ;;
+  *) linear_update_result="$linear_update_out" ;;
+esac
+run_test "linear_update_emits_deferred_action" "deferred" "$linear_update_result"
+
+# Multi-word status value must be single-quoted in the output.
+case "$linear_update_out" in
+  *"target_status='Plan in Review'"*) linear_update_target_result="has-target" ;;
+  *) linear_update_target_result="missing-target" ;;
+esac
+run_test "linear_update_deferred_action_has_target_status" "has-target" "$linear_update_target_result"
+
+# Confirm no unstructured Warning: line from old behavior
+case "$linear_update_out" in
+  *"Warning: Linear tracker detected"*) linear_update_warn_result="has-warning" ;;
+  *) linear_update_warn_result="no-warning" ;;
+esac
+run_test "linear_update_no_unstructured_warning" "no-warning" "$linear_update_warn_result"
+
+# Confirm no GitHub mutation was attempted
+run_test "linear_update_no_mutation" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+
+# Test: get_tracker_status_for_issue for Linear emits TRACKER_ACTION_REQUIRED=read_status
+reset_log
+export MOCK_TRACKER_PROVIDER=linear
+linear_status_out="$(get_tracker_status_for_issue ENG-123 2>/dev/null)"
+unset MOCK_TRACKER_PROVIDER
+case "$linear_status_out" in
+  *"TRACKER_ACTION_REQUIRED=read_status"*) linear_status_result="deferred" ;;
+  *) linear_status_result="$linear_status_out" ;;
+esac
+run_test "linear_get_status_emits_deferred_action" "deferred" "$linear_status_result"
+
+# Confirm no GitHub query was attempted
+run_test "linear_get_status_no_gh_query" "0" "$(count_log_matches 'api graphql')"
+
+# Test: GitHub provider status read is unaffected (regression guard)
+reset_log
+gh_status="$(get_tracker_status_for_issue 824 2>/dev/null)"
+run_test "github_get_status_unchanged" "Spec Ready" "$gh_status"
+
+# Test: GitHub provider update is unaffected (backward-guard regression)
+reset_log
+export MOCK_PROJECT_ITEM_MODE=released
+gh_backward_out="$(update_tracker_status_best_effort 824 "Merged" 2>&1)"
+unset MOCK_PROJECT_ITEM_MODE
+case "$gh_backward_out" in
+  *"skipping rollback"*) gh_backward_result="rollback-skipped" ;;
+  *) gh_backward_result="$gh_backward_out" ;;
+esac
+run_test "github_update_backward_guard_unchanged" "rollback-skipped" "$gh_backward_result"
 
 echo ""
 echo "Test summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"

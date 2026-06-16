@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-06-16
+
+### Added
+
+- **Linear orchestration support** (#966): `run-work`, `run-item-work`, and `run-epic` now emit structured `TRACKER_ACTION_REQUIRED=` deferred-action lines for the Linear provider (`set_status`, `read_status`, `create_item`) instead of silent empty returns or unstructured warnings. Protocols 90, 91, 95, and 00 document the bridge pattern end-to-end; `issue-tracker.md` and the Linear integration guide include a full `TRACKER_ACTION_REQUIRED=` reference table.
+
+### Changed
+
+- **Release PR reviewer loop skip** (#960): `pr-review-loop.sh` exits immediately with `RESULT=skipped` for release and hotfix PRs targeting `main`, eliminating the ~40-minute poll timeout that added no review value.
+
+### Fixed
+
+- **Per-finding advisory decisions in run-epic Step 8** (#962): Protocol 95 now requires one `advisories[]` entry per Haystack finding; bulk-acceptance with a single rationale is no longer permitted. `run-epic-audit-trail.sh` warns on under-populated or generic entries; `run-epic-delegated-gate.sh` reminds runners when the count is mismatched.
+- **Backlog creation sets `Priority` and `Size` fields** (#965): GitHub Projects backlog items now receive `Priority: Medium` (not `Normal`) and a `Size` field on creation.
+- **Release cleanup detects shipped issues outside changelog scope** (#964): `prepare-release-post-merge-cleanup.sh --from-changelog` cross-references closed `Merged` project items against the changelog-derived scope and auto-adds confirmed shipped items; parent epics without a referencing PR emit `TRACKER_INCOMPLETE=1`. Milestone stamping uses the GitHub Issues REST API with the resolved milestone number. Additional fixes: GraphQL timeline API replaces text-search PR matching (prevents substring false positives), project item enumeration uses paginated GraphQL (handles projects > 2000 items), and `parse_dt()` returns consistent naive UTC datetimes.
+
 ## [0.31.0] - 2026-06-15
 
 ### Added
@@ -924,7 +940,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.31.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.32.0...HEAD
+[0.32.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.30.2...v0.31.0
 [0.30.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.30.1...v0.30.2
 [0.30.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.30.0...v0.30.1
