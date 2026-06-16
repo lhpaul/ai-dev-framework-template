@@ -3931,6 +3931,76 @@ doc_branch_default_poll_interval() {
   printf '%s\n' "$interval"
 }
 
+# ---------------------------------------------------------------------------
+# _check_release_pr_guard <pr_number> [<branch_name>]
+#
+# Determines whether the given PR is a release or hotfix PR that should skip
+# the automated reviewer loop. Returns 0 (guard fires → skip) or 1 (guard
+# does not fire → continue normally).
+#
+# Detection is based exclusively on the head branch name:
+#   release/* — release PR (release/vX.Y.Z → main or develop backport)
+#   hotfix/*  — hotfix PR (hotfix/vX.Y.Z → main)
+#
+# Relying on the head branch name (not base branch) avoids false-positive
+# matches for non-release PRs that might target main outside the standard
+# gitflow workflow. In this workflow, all release and hotfix PRs use the
+# release/* or hotfix/* prefix by convention.
+#
+# Output (stdout, key=value lines):
+#   RELEASE_GUARD_HEAD=<head branch or empty>
+#   RELEASE_GUARD_FIRED=0|1
+#
+# When <branch_name> is provided, it is used directly for head-branch matching
+# without a network call. When omitted, the head branch is fetched from the PR.
+# ---------------------------------------------------------------------------
+_check_release_pr_guard() {
+  local pr_num="$1"
+  local given_branch="${2:-}"
+  local guard_head=""
+  local is_release=0
+
+  guard_head="$given_branch"
+
+  if [ -z "$guard_head" ]; then
+    # Fetch the head branch from GitHub. Steps are separated so that gh failures
+    # and jq parse failures are each caught explicitly.
+    #
+    # Fail-safe design: if the branch cannot be determined (gh failure, empty
+    # JSON, or jq error), guard_head stays empty. An empty guard_head does NOT
+    # match release/* or hotfix/*, so the guard does not fire and the reviewer
+    # loop runs normally. For this SKIP guard (not a BLOCK guard), failing open
+    # means running the reviewer loop — the safe default, not a dangerous one.
+    local _gh_json=""
+    local _gh_exit=0
+    set +e
+    _gh_json="$(gh pr view "$pr_num" --json headRefName 2>/dev/null)"
+    _gh_exit=$?
+    set -e
+    if [ "$_gh_exit" -eq 0 ] && [ -n "$_gh_json" ]; then
+      local _jq_exit=0
+      set +e
+      guard_head="$(printf '%s\n' "$_gh_json" | jq -r '.headRefName // ""' 2>/dev/null)"
+      _jq_exit=$?
+      set -e
+      [ "$_jq_exit" -ne 0 ] && guard_head=""
+    fi
+    # guard_head remains empty on any failure — guard does not fire.
+  fi
+
+  case "$guard_head" in
+    release/*|hotfix/*) is_release=1 ;;
+  esac
+
+  printf 'RELEASE_GUARD_HEAD=%s\n' "$guard_head"
+  printf 'RELEASE_GUARD_FIRED=%s\n' "$is_release"
+
+  if [ "$is_release" -eq 1 ]; then
+    return 0
+  fi
+  return 1
+}
+
 # Skip the main execution block when sourced in test-harness mode.
 # All function definitions above (including normalize_platform_verdict,
 # append_compare_metrics_row, and restore_regression_label_if_missing) are
@@ -4071,6 +4141,45 @@ if [ -n "$repo_selector" ]; then
   export GH_REPO="$target_github_repo"
   print_kv REPO "$target_github_repo"
 fi
+
+# --- Release PR early-exit guard ---
+# Release PRs (release/* -> main) and hotfix PRs (hotfix/* -> main) carry
+# large diffs that were already reviewed when each feature/fix PR merged into
+# develop. Running external reviewer tools (Haystack, CodeRabbit, PR-Agent,
+# etc.) on these PRs produces no review value and wastes the poll timeout
+# (historically ~40 min for large-diff Haystack waits). Skip the reviewer
+# loop entirely for these PR types and return RESULT=skipped so callers treat
+# the result as a clean non-blocking outcome.
+#
+# Detection: head branch matches release/* or hotfix/*
+_release_guard_output=""
+set +e
+_release_guard_output="$(_check_release_pr_guard "$pr_number" "${branch_name:-}")"
+_release_guard_fired=$?
+set -e
+
+_release_guard_head="$(printf '%s\n' "$_release_guard_output" | awk -F= '/^RELEASE_GUARD_HEAD=/{sub(/^[^=]*=/,""); print; exit}')"
+
+# Propagate the fetched head branch to branch_name so later blocks do not
+# need to re-fetch it (mirrors the existing pattern in the platforms block).
+if [ -z "$branch_name" ] && [ -n "$_release_guard_head" ]; then
+  branch_name="$_release_guard_head"
+fi
+
+if [ "$_release_guard_fired" -eq 0 ]; then
+  echo "Release PR detected — reviewer loop skipped." >&2
+  echo "Review happens on develop-targeting feature/fix PRs, not on release/* or hotfix/* branches." >&2
+  echo "Release readiness path: validate release artifacts → run pr-ci-loop.sh → apply ready-for-human-review when CI is green." >&2
+  print_kv RESULT skipped
+  print_kv REASON release_pr
+  print_kv PR_NUMBER "$pr_number"
+  print_kv BRANCH "${branch_name:-}"
+  # Remove any stale reviewer-failed label left from a prior failed run so the
+  # PR is not misleadingly labeled after a clean release-guard skip exit.
+  sync_reviewer_failed_label "$pr_number" 0
+  exit 0
+fi
+# --- End release PR early-exit guard ---
 
 if [ "${#platforms[@]}" -eq 0 ]; then
   # Resolve config from the PR's target branch so platform coverage is

@@ -112,12 +112,9 @@ Opening PRs is **not** a terminal condition. Continue with Step 7 for the produc
 
 Apply only to the **release PR that targets `main`**. Do **not** apply the regression-label requirement to the backport PR to `develop` (that PR may still run other CI; this step scopes expensive label-gated e2e/regression to production).
 
-Canonical loop semantics match [`91-orchestrate-work-protocol.md`](91-orchestrate-work-protocol.md) (Steps 7, 7b, 8) and [`93-automated-reviewer-loop-protocol.md`](93-automated-reviewer-loop-protocol.md) for standalone reviewer runs. Note: release PRs use a simplified readiness flow (Step 7.5 applies `ready-for-human-review` directly) and do not run Protocol 91's Step 8a/8b label checklist. Prefer the repository helpers:
+**No external reviewer tools for release PRs.** External automated reviewers (Haystack, CodeRabbit, PR-Agent, Claude Code Action, etc.) are not required for release PRs and must not be waited on. Every change in a release PR was already reviewed when its feature/fix PR merged into `develop`. Running `pr-review-loop.sh` on a release PR automatically exits with `RESULT=skipped` (release PR guard fires) — treat that as a clean non-blocking result and proceed directly to release artifact validation and CI.
 
-```bash
-./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch release/v[X.Y.Z]
-./scripts/development-workflow/pr-ci-loop.sh <pr_number>
-```
+Note: release PRs use a simplified readiness flow (the CI loop step applies `ready-for-human-review` directly after CI is green) and do not run Protocol 91's Step 8a/8b label checklist.
 
 ### 7.1 Resolve the production PR number
 
@@ -129,19 +126,15 @@ gh pr list --head "release/v[X.Y.Z]" --base main --state open --json number --jq
 
 If multiple or zero matches, stop and resolve with the human.
 
-### 7.2 Pre-flight (optional but recommended)
+### 7.2 Validate release artifacts
 
-Per `93-automated-reviewer-loop-protocol.md`, check for existing unresolved blocking review comments before re-running automation.
+Before applying any labels or starting CI, confirm the release artifacts are correct:
 
-### 7.3 Automated reviewer loop (Step 7)
+1. **CHANGELOG version header**: verify `## [X.Y.Z] - YYYY-MM-DD` is present and the version matches the release target.
+2. **Link definitions**: confirm the `[Unreleased]` and `[X.Y.Z]` reference-style link definitions at the bottom of `CHANGELOG.md` have been updated.
+3. **Version bump**: if a manifest file (`package.json`, `pyproject.toml`, etc.) is versioned, verify the bump is present.
 
-Run `pr-review-loop.sh` to completion **before** starting the CI loop. Do not run reviewer and CI in parallel.
-
-**Script-coverage requirement**: Before running the reviewer loop, confirm that
-CodeRabbit (when available) is configured to review all files in
-`scripts/development-workflow/` that were modified since the last release. If
-CodeRabbit is not installed, manually review changed workflow scripts for logic
-bugs before labeling the production PR `ready-for-human-review`.
+If any artifact is missing or incorrect, fix it on the release branch, push, and verify again before continuing.
 
 **Downstream script-bug review**: Before labeling the production PR
 `ready-for-human-review`, search for open workflow-framework GitHub issues that
@@ -163,18 +156,9 @@ gh issue list --label workflow --state open --limit 200
 If any known script bugs remain open and affect code in this release, address them
 in the release branch or document the decision to defer with a comment on the issue.
 
-Interpret `RESULT` from the script output:
+### 7.3 Regression label (release / `main` PR only)
 
-| Result        | Action                                                                                                                                                                                                                       |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `clean`       | Continue to Step 7.4 (regression label).                                                                                                                                                                                     |
-| `skipped`     | No review platforms configured in `.ai-dev-workflow.yaml`; continue to Step 7.4 and document that external review was skipped.                                                                                               |
-| `needs_fixes` | Address blocking findings (commit and push to the release branch), then re-run Step 7.3 from the top. Follow fixer guidance in `91` (e.g. `code-reviewer` for code changes). Do not hand off while blocking findings remain. |
-| `escalate`    | Stop and escalate to a human; do not mark the release as merge-ready.                                                                                                                                                        |
-
-### 7.4 Regression label (release / `main` PR only)
-
-After Step 7.3 ends with `clean` or `skipped`, apply the `ready-for-regression` label to the **production PR only** so label-gated e2e/regression runs (see [`integrations/e2e-regression.md`](../integrations/e2e-regression.md) and `.github/workflows/e2e-regression.yml`).
+Apply the `ready-for-regression` label to the **production PR only** so label-gated e2e/regression runs (see [`integrations/e2e-regression.md`](../integrations/e2e-regression.md) and `.github/workflows/e2e-regression.yml`).
 
 ```bash
 gh pr edit <pr_number> --add-label "ready-for-regression"
@@ -182,17 +166,21 @@ gh pr edit <pr_number> --add-label "ready-for-regression"
 
 This mirrors Step 7b in `91` for implementation PRs, but scoped here to the release PR targeting `main`.
 
-### 7.5 CI loop (Step 8)
+### 7.4 CI loop
 
-Run `pr-ci-loop.sh` and wait until required checks settle (including the e2e/regression check when configured).
+Run `pr-ci-loop.sh` and wait until required checks settle (including the e2e/regression check when configured):
+
+```bash
+./scripts/development-workflow/pr-ci-loop.sh <pr_number>
+```
 
 | Result    | Action                                                                                                                                                            |
 | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `green`   | Apply `ready-for-human-review` per [`92-pr-readiness-signal-protocol.md`](92-pr-readiness-signal-protocol.md); the production PR is ready for human merge review. |
-| `red`     | Apply `needs-fixes`, fix, push, then return to Step 7.3 (reviewer) and repeat through Step 7.5.                                                                   |
+| `red`     | Apply `needs-fixes`, fix, push, then return to the artifact validation step (§7.2) and repeat through the CI loop step (§7.4).                                                        |
 | `timeout` | Escalate to a human; do not apply `ready-for-human-review`.                                                                                                       |
 
-### 7.6 Backport PR (`develop` target)
+### 7.5 Backport PR (`develop` target)
 
 Do **not** require `ready-for-regression` on the backport PR as part of this protocol. It may proceed on its own CI; merge order remains: **merge `main` first**, then backport.
 

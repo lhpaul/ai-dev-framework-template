@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Release PR reviewer loop skip** (#960): `pr-review-loop.sh` now exits immediately with `RESULT=skipped` for release and hotfix PRs targeting `main`, eliminating the ~40-minute poll timeout that added no review value. Release readiness uses a dedicated artifact-validation and CI path instead of external reviewer tools.
+
 ## [0.31.0] - 2026-06-15
 
 ### Added
