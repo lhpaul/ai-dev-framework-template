@@ -114,7 +114,7 @@ Apply only to the **release PR that targets `main`**. Do **not** apply the regre
 
 **No external reviewer tools for release PRs.** External automated reviewers (Haystack, CodeRabbit, PR-Agent, Claude Code Action, etc.) are not required for release PRs and must not be waited on. Every change in a release PR was already reviewed when its feature/fix PR merged into `develop`. Running `pr-review-loop.sh` on a release PR automatically exits with `RESULT=skipped` (release PR guard fires) — treat that as a clean non-blocking result and proceed directly to release artifact validation and CI.
 
-Note: release PRs use a simplified readiness flow (Step 7.5 applies `ready-for-human-review` directly) and do not run Protocol 91's Step 8a/8b label checklist.
+Note: release PRs use a simplified readiness flow (Step 7.4 applies `ready-for-human-review` directly after CI is green) and do not run Protocol 91's Step 8a/8b label checklist.
 
 ### 7.1 Resolve the production PR number
 
