@@ -118,12 +118,26 @@ TRACKER_ACTION_REQUIRED=<action_type> issue=<issue_id>[ <extra_fields>]
 | `read_status` | `get_tracker_status_for_issue`       | _(none)_                                 | Status read was deferred; orchestrator supplies the value. |
 | `create_item` | `add-backlog-item.sh create`         | `title=<title>`                          | New Linear item should be created via MCP.                |
 
+**Parsing convention**: field values may contain spaces (e.g.,
+`target_status=Plan in Review`, `title=My New Feature`). Parse each
+`key=value` pair by matching from the `=` to the start of the next
+`<space>key=` sequence or the end of line — do **not** split on all
+whitespace. Recommended extraction pattern for each field:
+
+```
+# Pseudocode: extract value for a known key
+value = match(line, r'<key>=(.+?)(?= \w+=|$)')
+```
+
+This convention makes the format unambiguous for multi-word values
+without requiring quoting or escaping in the emitted lines.
+
 **Orchestrator collection loop** (pseudocode):
 
 ```
 for each Work Item Runner output line:
   if line starts with "TRACKER_ACTION_REQUIRED=":
-    parse action_type, issue, extra_fields
+    parse action_type, issue, extra_fields (using the parsing convention above)
     apply via Linear MCP (e.g., updateIssue, createIssue)
   if line starts with "TRACKER_UPDATE_REQUIRED:":
     parse issue number and target_status

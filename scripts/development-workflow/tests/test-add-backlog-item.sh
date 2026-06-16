@@ -23,7 +23,18 @@ CALL_LOG="$TMP_ROOT/calls.log"
 mkdir -p "$MOCK_BIN"
 : > "$CALL_LOG"
 
-cleanup() { rm -rf "$TMP_ROOT"; }
+# _config_backup is set before the linear test section overwrites
+# .ai-dev-workflow.yaml; cleanup restores it on any exit (including set -e).
+_config_backup=""
+_config_file="$REPO_ROOT/.ai-dev-workflow.yaml"
+
+cleanup() {
+  # Restore .ai-dev-workflow.yaml if it was swapped out by the linear tests.
+  if [ -n "$_config_backup" ] && [ -f "$_config_backup" ]; then
+    cp -- "$_config_backup" "$_config_file" 2>/dev/null || true
+  fi
+  rm -rf "$TMP_ROOT"
+}
 trap cleanup EXIT
 
 cat > "$MOCK_BIN/gh" <<'MOCK_GH'
@@ -186,10 +197,12 @@ echo ""
 echo "=== create: Linear provider — emits TRACKER_ACTION_REQUIRED=create_item title=... ==="
 
 # To test the Linear path, temporarily replace .ai-dev-workflow.yaml with a
-# Linear-provider config in a subshell so the real config is unaffected.
+# Linear-provider config. The cleanup() trap (registered at the top of this
+# script) restores the original on any exit — success or failure — so a
+# set -e abort between the overwrite and explicit restore cannot leave the
+# repo config permanently clobbered.
 # The add-backlog-item.sh script resolves the config file via workflow_config_file(),
 # which always points to $(workflow_repo_root)/.ai-dev-workflow.yaml.
-_config_file="$REPO_ROOT/.ai-dev-workflow.yaml"
 _config_backup="$TMP_ROOT/ai-dev-workflow.yaml.bak"
 
 cp -- "$_config_file" "$_config_backup"
@@ -205,7 +218,7 @@ run_create "ok" --title "Test Linear Item" --body "body"
 _linear_stdout="$(get_stdout)"
 _linear_stderr="$(get_stderr)"
 
-# Restore the real config immediately.
+# Restore the real config immediately (cleanup() also does this on any exit).
 cp -- "$_config_backup" "$_config_file"
 
 # The create_item action emits TRACKER_ACTION_REQUIRED=create_item title=<title>

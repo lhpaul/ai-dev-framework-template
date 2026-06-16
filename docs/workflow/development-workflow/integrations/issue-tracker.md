@@ -64,6 +64,11 @@ A deferred action that is not applied must be recorded explicitly so that
 observers can see the tracker is out of sync rather than assuming advancement
 occurred.
 
+Field values in `<extra_fields>` may contain spaces (e.g.,
+`target_status=Plan in Review`, `title=My New Feature`). Parse each
+`key=value` pair by matching from `=` to the start of the next `<space>key=`
+sequence or end of line — not by splitting on all whitespace.
+
 See [`linear.md`](linear.md) for the full reference table of action types
 (`set_status`, `read_status`, `create_item`) and the three-phase bridge pattern
 that defines how orchestrators pre-resolve Linear data and collect deferred
