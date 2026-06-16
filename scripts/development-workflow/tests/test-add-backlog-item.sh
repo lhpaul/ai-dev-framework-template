@@ -183,6 +183,58 @@ run_test "size_flag_uses_m_option" "1" "$(count_log_matches 'optionId=OPT_size_m
 run_test "size_flag_also_updates_priority" "1" "$(count_log_matches 'fieldId=PVTSSF_priority')"
 
 echo ""
+echo "=== create: Linear provider — emits TRACKER_ACTION_REQUIRED=create_item title=... ==="
+
+# To test the Linear path, temporarily replace .ai-dev-workflow.yaml with a
+# Linear-provider config in a subshell so the real config is unaffected.
+# The add-backlog-item.sh script resolves the config file via workflow_config_file(),
+# which always points to $(workflow_repo_root)/.ai-dev-workflow.yaml.
+_config_file="$REPO_ROOT/.ai-dev-workflow.yaml"
+_config_backup="$TMP_ROOT/ai-dev-workflow.yaml.bak"
+
+cp -- "$_config_file" "$_config_backup"
+
+# Write a minimal linear config for the duration of these tests.
+cat > "$_config_file" <<'LINEAR_CONFIG'
+schema_version: 2
+issue_tracker:
+  provider: linear
+LINEAR_CONFIG
+
+run_create "ok" --title "Test Linear Item" --body "body"
+_linear_stdout="$(get_stdout)"
+_linear_stderr="$(get_stderr)"
+
+# Restore the real config immediately.
+cp -- "$_config_backup" "$_config_file"
+
+# The create_item action emits TRACKER_ACTION_REQUIRED=create_item title=<title>
+# to stdout and exits 0. gh issue create must NOT be called.
+run_test "linear_create_item_exits_zero" "0" "$(get_exit)"
+
+case "$_linear_stdout" in
+  *"TRACKER_ACTION_REQUIRED=create_item"*) linear_signal_result="has-signal" ;;
+  *) linear_signal_result="no-signal" ;;
+esac
+run_test "linear_create_item_emits_tracker_action_required" "has-signal" "$linear_signal_result"
+
+case "$_linear_stdout" in
+  *"title=Test Linear Item"*) linear_title_result="has-title" ;;
+  *) linear_title_result="no-title" ;;
+esac
+run_test "linear_create_item_uses_title_key_not_issue_key" "has-title" "$linear_title_result"
+
+# No gh issue create should be invoked for Linear.
+run_test "linear_create_item_skips_gh_create" "0" "$(count_log_matches 'issue create')"
+
+# Guidance message goes to stderr.
+case "$_linear_stderr" in
+  *"Linear backlog creation requires the orchestrator"*) linear_guidance_result="has-guidance" ;;
+  *) linear_guidance_result="no-guidance" ;;
+esac
+run_test "linear_create_item_stderr_guidance" "has-guidance" "$linear_guidance_result"
+
+echo ""
 echo "Test summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"
 if [ "$FAIL_COUNT" -ne 0 ]; then
   exit 1

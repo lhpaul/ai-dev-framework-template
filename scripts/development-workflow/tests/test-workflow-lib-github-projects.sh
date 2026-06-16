@@ -633,7 +633,7 @@ reset_log
 __workflow_project_named_field_cache_keys=()
 __workflow_project_named_field_cache_vals=()
 empty_name_exit=0
-workflow_github_project_named_field_json "PVT_project_1" "" > /dev/null 2>&1; empty_name_exit=$?
+workflow_github_project_named_field_json "PVT_project_1" "" > /dev/null 2>&1 || empty_name_exit=$?
 run_test "named_field_empty_name_returns_nonzero" "1" "$empty_name_exit"
 run_test "named_field_empty_name_avoids_graphql" "0" "$(count_log_matches 'api graphql')"
 
@@ -770,10 +770,10 @@ run_test "emit_linear_deferred_action_read_status" \
   "TRACKER_ACTION_REQUIRED=read_status issue=ENG-456" \
   "$emit_read_result"
 
-emit_create_result="$(emit_linear_deferred_action "create_item" "My Title")"
-run_test "emit_linear_deferred_action_create_item" \
-  "TRACKER_ACTION_REQUIRED=create_item issue=My Title" \
-  "$emit_create_result"
+# Note: create_item is NOT emitted via emit_linear_deferred_action.
+# add-backlog-item.sh uses printf directly with "title=<title>" (not "issue=<id>")
+# because there is no issue ID for a new item being created.
+# That path is covered in test-add-backlog-item.sh (linear_create_item_* tests).
 
 # Test: workflow_emit_deferred_tracker_action is a public alias
 alias_result="$(workflow_emit_deferred_tracker_action "set_status" "ENG-789" "target_status=Backlog")"

@@ -812,10 +812,13 @@ workflow_normalize_issue_tracker_provider() {
 # Prints a structured TRACKER_ACTION_REQUIRED= line to stdout so the orchestrator
 # can collect and apply the deferred Linear action via MCP.
 #
+# Used for set_status and read_status actions only. The create_item action is
+# emitted directly by add-backlog-item.sh with "title=<title>" instead of
+# "issue=<id>", because for new items there is no issue ID yet.
+#
 # Examples:
 #   emit_linear_deferred_action set_status ENG-123 "target_status=Plan in Review"
 #   emit_linear_deferred_action read_status ENG-123
-#   emit_linear_deferred_action create_item "My Title"
 #
 # Output format: TRACKER_ACTION_REQUIRED=<action_type> issue=<issue_id>[ <extra>]
 emit_linear_deferred_action() {
