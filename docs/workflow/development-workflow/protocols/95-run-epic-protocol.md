@@ -126,6 +126,36 @@ Required behavior:
 - Do not fall back to integration branch labels as an epic membership source.
   Labels remain routing metadata, not membership metadata.
 
+### Linear provider
+
+When `issue_tracker.provider` is `linear`, GitHub GraphQL is not available for
+sub-issue enumeration. Apply this flow instead:
+
+1. **For `--epic`** — query the Linear parent item's child issues via the
+   Linear MCP `issue.children` or equivalent relationship query. Collect each
+   child item's identifier, title, status, type, priority, and dependencies.
+   If the Linear item has no children, report an empty scope clearly — do not
+   treat the parent item itself as the only scope item.
+
+2. **For `--items`** — the explicit list is a hard scope boundary (BR-7). Do
+   not expand to siblings, parent epics, or label-matched items. Fetch each
+   listed item's metadata via the Linear MCP before passing it to the scope
+   resolver.
+
+3. **Pass pre-resolved data** — the scope resolver (`run-epic-scope-resolver.sh`)
+   cannot reach Linear itself. Supply item metadata as structured input. The
+   resolver will emit `PROVIDER=linear` and `TRACKER_READ_DEFERRED=yes` in its
+   output, confirming that item statuses came from the orchestrator's
+   pre-resolved set rather than from a live Linear query by the script.
+
+4. **Interpret `TRACKER_READ_DEFERRED=yes`** — when this line appears in scope
+   output, it confirms the resolver consumed orchestrator-supplied item data.
+   Apply the statuses from your pre-resolved context when grouping items as
+   eligible, blocked, in review, etc.
+
+See [`linear.md`](../integrations/linear.md) for the bridge pattern and the
+full `TRACKER_ACTION_REQUIRED=` reference table.
+
 ---
 
 ## Step 3: Enrich Each Item

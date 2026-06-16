@@ -807,6 +807,30 @@ workflow_normalize_issue_tracker_provider() {
   printf '%s' "$raw" | tr '[:upper:]' '[:lower:]'
 }
 
+# emit_linear_deferred_action <action_type> <issue_id> [extra]
+#
+# Prints a structured TRACKER_ACTION_REQUIRED= line to stdout so the orchestrator
+# can collect and apply the deferred Linear action via MCP.
+#
+# Examples:
+#   emit_linear_deferred_action set_status ENG-123 "target_status=Plan in Review"
+#   emit_linear_deferred_action read_status ENG-123
+#   emit_linear_deferred_action create_item "My Title"
+#
+# Output format: TRACKER_ACTION_REQUIRED=<action_type> issue=<issue_id>[ <extra>]
+emit_linear_deferred_action() {
+  local action_type="$1"
+  local issue_id="$2"
+  local extra="${3:-}"
+  printf 'TRACKER_ACTION_REQUIRED=%s issue=%s%s\n' \
+    "$action_type" "$issue_id" "${extra:+ $extra}"
+}
+
+# workflow_emit_deferred_tracker_action — public alias for emit_linear_deferred_action
+workflow_emit_deferred_tracker_action() {
+  emit_linear_deferred_action "$@"
+}
+
 # Prints a coarse destination bucket for backlog creation: github | linear | other | none
 # none: missing provider, none, or empty string
 workflow_backlog_destination_kind() {
@@ -1420,11 +1444,15 @@ get_tracker_status_for_issue() {
   local project_number item_json current_status
 
   # Provider routing: Linear status reads require MCP/API and cannot be
-  # performed by this shell function. Return empty (caller treats as unknown).
+  # performed by this shell function. Emit a structured
+  # TRACKER_ACTION_REQUIRED=read_status line so the orchestrator knows the
+  # read was deferred (not silently empty). Callers that assign this function's
+  # output to a variable must filter lines beginning with TRACKER_ACTION_REQUIRED=
+  # to avoid treating the signal as a status string.
   local _gts_provider
   _gts_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
   if [ "$_gts_provider" = "linear" ]; then
-    printf ''
+    emit_linear_deferred_action "read_status" "$issue_number"
     return 0
   fi
 
@@ -1558,12 +1586,14 @@ update_tracker_status_best_effort() {
   local target_order current_order
 
   # Provider routing: Linear status updates require MCP/API and cannot be
-  # performed automatically by this shell function. Emit a clear, actionable
-  # message so callers (and operators) know what manual step is needed.
+  # performed automatically by this shell function. Emit a structured
+  # TRACKER_ACTION_REQUIRED= deferred-action line so the orchestrator can
+  # apply this transition via MCP.
   local _utsbe_provider
   _utsbe_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
   if [ "$_utsbe_provider" = "linear" ]; then
-    echo "Warning: Linear tracker detected — cannot update issue #${issue_number} status to '${status_label}' automatically. Use the Linear MCP server or API to transition this issue to '${status_label}'. See docs/workflow/development-workflow/integrations/linear.md for details."
+    emit_linear_deferred_action "set_status" "$issue_number" \
+      "target_status=${status_label}"
     return 0
   fi
 

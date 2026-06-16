@@ -745,6 +745,100 @@ run_test "type_update_item_parse_failure_warns" "item-parse-failed" "$type_updat
 run_test "type_update_item_parse_failure_no_mutation" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
 
 echo ""
+echo "=== Linear deferred-action signal tests (#966) ==="
+
+# Restore workflow_github_project_item_for_issue to the real implementation
+# (a prior test overwrote it with a broken stub to test parse-failure handling).
+# Re-source workflow-lib.sh so the real function definition is available again.
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh"
+workflow_issue_tracker_provider_raw() {
+  printf '%s\n' "${MOCK_TRACKER_PROVIDER:-github_projects}"
+}
+workflow_issue_tracker_project_number() {
+  printf '%s\n' "${MOCK_TRACKER_PROJECT_NUMBER-1}"
+}
+
+# Test: emit_linear_deferred_action formats the canonical line
+emit_result="$(emit_linear_deferred_action "set_status" "ENG-123" "target_status=Plan in Review")"
+run_test "emit_linear_deferred_action_set_status" \
+  "TRACKER_ACTION_REQUIRED=set_status issue=ENG-123 target_status=Plan in Review" \
+  "$emit_result"
+
+emit_read_result="$(emit_linear_deferred_action "read_status" "ENG-456")"
+run_test "emit_linear_deferred_action_read_status" \
+  "TRACKER_ACTION_REQUIRED=read_status issue=ENG-456" \
+  "$emit_read_result"
+
+emit_create_result="$(emit_linear_deferred_action "create_item" "My Title")"
+run_test "emit_linear_deferred_action_create_item" \
+  "TRACKER_ACTION_REQUIRED=create_item issue=My Title" \
+  "$emit_create_result"
+
+# Test: workflow_emit_deferred_tracker_action is a public alias
+alias_result="$(workflow_emit_deferred_tracker_action "set_status" "ENG-789" "target_status=Backlog")"
+run_test "workflow_emit_deferred_tracker_action_alias" \
+  "TRACKER_ACTION_REQUIRED=set_status issue=ENG-789 target_status=Backlog" \
+  "$alias_result"
+
+# Test: update_tracker_status_best_effort for Linear emits TRACKER_ACTION_REQUIRED=set_status
+reset_log
+export MOCK_TRACKER_PROVIDER=linear
+linear_update_out="$(update_tracker_status_best_effort ENG-123 "Plan in Review" 2>/dev/null)"
+unset MOCK_TRACKER_PROVIDER
+case "$linear_update_out" in
+  *"TRACKER_ACTION_REQUIRED=set_status"*) linear_update_result="deferred" ;;
+  *) linear_update_result="$linear_update_out" ;;
+esac
+run_test "linear_update_emits_deferred_action" "deferred" "$linear_update_result"
+
+case "$linear_update_out" in
+  *"target_status=Plan in Review"*) linear_update_target_result="has-target" ;;
+  *) linear_update_target_result="missing-target" ;;
+esac
+run_test "linear_update_deferred_action_has_target_status" "has-target" "$linear_update_target_result"
+
+# Confirm no unstructured Warning: line from old behavior
+case "$linear_update_out" in
+  *"Warning: Linear tracker detected"*) linear_update_warn_result="has-warning" ;;
+  *) linear_update_warn_result="no-warning" ;;
+esac
+run_test "linear_update_no_unstructured_warning" "no-warning" "$linear_update_warn_result"
+
+# Confirm no GitHub mutation was attempted
+run_test "linear_update_no_mutation" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+
+# Test: get_tracker_status_for_issue for Linear emits TRACKER_ACTION_REQUIRED=read_status
+reset_log
+export MOCK_TRACKER_PROVIDER=linear
+linear_status_out="$(get_tracker_status_for_issue ENG-123 2>/dev/null)"
+unset MOCK_TRACKER_PROVIDER
+case "$linear_status_out" in
+  *"TRACKER_ACTION_REQUIRED=read_status"*) linear_status_result="deferred" ;;
+  *) linear_status_result="$linear_status_out" ;;
+esac
+run_test "linear_get_status_emits_deferred_action" "deferred" "$linear_status_result"
+
+# Confirm no GitHub query was attempted
+run_test "linear_get_status_no_gh_query" "0" "$(count_log_matches 'api graphql')"
+
+# Test: GitHub provider status read is unaffected (regression guard)
+reset_log
+gh_status="$(get_tracker_status_for_issue 824 2>/dev/null)"
+run_test "github_get_status_unchanged" "Spec Ready" "$gh_status"
+
+# Test: GitHub provider update is unaffected (backward-guard regression)
+reset_log
+export MOCK_PROJECT_ITEM_MODE=released
+gh_backward_out="$(update_tracker_status_best_effort 824 "Merged" 2>&1)"
+unset MOCK_PROJECT_ITEM_MODE
+case "$gh_backward_out" in
+  *"skipping rollback"*) gh_backward_result="rollback-skipped" ;;
+  *) gh_backward_result="$gh_backward_out" ;;
+esac
+run_test "github_update_backward_guard_unchanged" "rollback-skipped" "$gh_backward_result"
+
+echo ""
 echo "Test summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"
 if [ "$FAIL_COUNT" -ne 0 ]; then
   exit 1

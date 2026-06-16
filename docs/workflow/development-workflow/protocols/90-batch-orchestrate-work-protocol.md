@@ -148,6 +148,40 @@ Consider waiting until the rate limit resets before dispatching the batch.
 
 The rate limit resets once per hour. When `remaining` is critically low (< 200 points), pause dispatch and report the reset time to the human.
 
+#### Linear provider (Step 1a)
+
+When `issue_tracker.provider` is `linear`, the orchestrator is the only actor
+with Linear access. Apply the following discovery flow instead of the GitHub
+Projects pagination approach above:
+
+1. **Query Linear via MCP** — call the Linear MCP `issues` or `team.issues`
+   query for all open items in the configured team. For each item, collect:
+   status (workflow stage label), type (Feature, Bug, Refactor), priority,
+   parent epic (if applicable), and dependency relationships.
+
+2. **Format item context** — for each item, record the status as a structured
+   context value (`ITEM_STATUS=<status>`) that the batch-planning step can
+   consume. For items whose status maps to a terminal stage (Merged, Released,
+   Cancelled), exclude them from the candidate set immediately.
+
+3. **Pass context to `workflow-batch-plan.sh`** — run the script for each
+   development folder as usual. When the script emits a
+   `TRACKER_STATUS_DEFERRED=<issue>` line, use the item's pre-resolved status
+   from step 1 to determine the workflow stage instead of treating the item as
+   unknown.
+
+4. **Classify items** — apply the same stage-to-action mapping used for GitHub
+   (e.g., `Plan Ready` → dispatch implementation). An item whose Linear status
+   cannot be mapped must be reported as unclassifiable, not silently skipped.
+
+**If Linear MCP is unavailable**: stop with a clear message such as:
+
+> Linear tracker is configured but Linear MCP is not available. Portfolio
+> discovery cannot proceed without Linear item status. Configure the Linear MCP
+> server and re-run, or provide the item list manually.
+
+Do not silently produce an empty plan.
+
 **Cross-check merged PRs**: Tracker statuses can be stale (e.g., a prior batch merged PRs but never updated the tracker). Before accepting a tracker status as authoritative, cross-check each candidate item against merged PRs:
 
 ```bash
@@ -450,6 +484,33 @@ For issue tracker providers where no CLI equivalent exists (e.g., Linear via MCP
 For GitHub Projects, subagents CAN perform their own Step 8b update via `gh` CLI, so the orchestrator does not need to collect and replay those transitions. The `TRACKER_UPDATE_REQUIRED:` pattern only arises for providers without CLI support.
 
 See `docs/workflow/development-workflow/integrations/github-projects.md` for the tracker API details used to add items to the project board and update their status.
+
+#### Deferred-action collection loop (Linear provider)
+
+After each Work Item Runner returns, the orchestrator must scan the runner's
+complete output for `TRACKER_ACTION_REQUIRED=` and `TRACKER_UPDATE_REQUIRED:`
+signals and apply each one via Linear MCP before proceeding to the next item:
+
+```
+for each line in Work Item Runner output:
+  case line:
+    "TRACKER_ACTION_REQUIRED=set_status issue=<id> target_status=<status>":
+      call Linear MCP updateIssue(id, status=<status>)
+    "TRACKER_ACTION_REQUIRED=create_item title=<title>":
+      call Linear MCP createIssue(title=<title>, teamId=<team>)
+    "TRACKER_UPDATE_REQUIRED: set issue #<N> status to \"<status>\"":
+      call Linear MCP updateIssue(id=<N>, status=<status>)
+```
+
+A deferred action that cannot be applied must be logged explicitly:
+
+```
+TRACKER_SYNC_SKIPPED: issue=<id> action=<action_type> reason=<reason>
+```
+
+Do not silently drop deferred actions — an unapplied transition leaves the
+Linear item out of sync with the workflow stage, which breaks future discovery.
+See [`linear.md`](../integrations/linear.md) for the full reference table.
 
 ---
 

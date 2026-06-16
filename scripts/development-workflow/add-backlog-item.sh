@@ -154,8 +154,9 @@ create_cmd() {
   fi
 
   if [ "$kind" = "linear" ]; then
-    echo "add-backlog-item: Linear backlog creation is not performed by this script. Use Linear MCP/API per docs/workflow/development-workflow/integrations/linear.md" >&2
-    exit 2
+    printf 'TRACKER_ACTION_REQUIRED=create_item title=%s\n' "$title"
+    echo "add-backlog-item: Linear backlog creation requires the orchestrator. Use Linear MCP/API per docs/workflow/development-workflow/integrations/linear.md" >&2
+    return 0
   fi
 
   if [ "$kind" = "none" ]; then

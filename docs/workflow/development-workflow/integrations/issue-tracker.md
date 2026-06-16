@@ -48,6 +48,29 @@ If the agent does not have direct tracker access, it must ask the human to paste
 
 ---
 
+## Deferred-action protocol
+
+For non-CLI providers (e.g., Linear) where helper scripts cannot reach the
+tracker API directly, scripts emit a structured deferred-action line to stdout
+instead of attempting the mutation:
+
+```
+TRACKER_ACTION_REQUIRED=<action_type> issue=<issue_id>[ <extra_fields>]
+```
+
+Orchestrators must scan every Work Item Runner's output for these lines and
+apply the corresponding mutations via MCP or API before moving to the next item.
+A deferred action that is not applied must be recorded explicitly so that
+observers can see the tracker is out of sync rather than assuming advancement
+occurred.
+
+See [`linear.md`](linear.md) for the full reference table of action types
+(`set_status`, `read_status`, `create_item`) and the three-phase bridge pattern
+that defines how orchestrators pre-resolve Linear data and collect deferred
+actions.
+
+---
+
 ## Release Stamping
 
 Release cleanup records which production version shipped each explicit issue via
