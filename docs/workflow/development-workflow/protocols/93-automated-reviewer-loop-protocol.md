@@ -13,6 +13,8 @@ This protocol is **standalone**: it can be invoked for any open PR (or set of PR
 - You want to advance one or more open PRs through automated review and CI without running full workflow discovery
 - After pushing fixes to a PR, to re-run the loop until clean or escalate
 
+> **Release PR exemption**: The automated reviewer loop applies only to PRs that target `develop` (feature, fix, refactor, hotfix backport). Release PRs (`release/*` or `hotfix/*` branches targeting `main`) are **exempt** — `pr-review-loop.sh` automatically exits with `RESULT=skipped` and `REASON=release_pr` for these PRs. All changes in a release PR were already reviewed when their individual feature/fix PRs merged into `develop`. For release PR readiness, follow [`05-prepare-release-protocol.md`](05-prepare-release-protocol.md) Step 7 instead.
+
 ---
 
 ## Scope: which PR(s)

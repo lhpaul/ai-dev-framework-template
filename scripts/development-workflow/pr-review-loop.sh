@@ -4072,6 +4072,65 @@ if [ -n "$repo_selector" ]; then
   print_kv REPO "$target_github_repo"
 fi
 
+# --- Release PR early-exit guard ---
+# Release PRs (release/* -> main) and hotfix PRs (hotfix/* -> main) carry
+# large diffs that were already reviewed when each feature/fix PR merged into
+# develop. Running external reviewer tools (Haystack, CodeRabbit, PR-Agent,
+# etc.) on these PRs produces no review value and wastes the poll timeout
+# (historically ~40 min for large-diff Haystack waits). Skip the reviewer
+# loop entirely for these PR types and return RESULT=skipped so callers treat
+# the result as a clean non-blocking outcome.
+#
+# Detection criteria (OR logic — either condition triggers the skip):
+#   1. Head branch matches release/* or hotfix/*
+#   2. Base branch is main (any PR targeting main skips the reviewer loop)
+#
+# When --branch was passed on the command line, use it for criterion 1 without
+# an additional API call. When --branch was not passed, fetch both head and
+# base from the PR in a single gh pr view call.
+_release_guard_head="${branch_name:-}"
+_release_guard_base=""
+if [ -z "$_release_guard_head" ]; then
+  set +e
+  _release_guard_pr_json="$(gh pr view "$pr_number" --json headRefName,baseRefName 2>/dev/null)"
+  _release_guard_pr_exit=$?
+  set -e
+  if [ "$_release_guard_pr_exit" -eq 0 ] && [ -n "$_release_guard_pr_json" ]; then
+    _release_guard_head="$(printf '%s\n' "$_release_guard_pr_json" | jq -r '.headRefName // ""')"
+    _release_guard_base="$(printf '%s\n' "$_release_guard_pr_json" | jq -r '.baseRefName // ""')"
+    # Populate branch_name from the fetched value so later blocks do not need
+    # to re-fetch it (mirrors the existing pattern in the platforms block).
+    if [ -z "$branch_name" ] && [ -n "$_release_guard_head" ]; then
+      branch_name="$_release_guard_head"
+    fi
+  fi
+else
+  # --branch was provided; fetch only the base branch for criterion 2.
+  set +e
+  _release_guard_base="$(gh pr view "$pr_number" --json baseRefName --jq '.baseRefName // ""' 2>/dev/null)" || _release_guard_base=""
+  set -e
+fi
+
+_is_release_pr=0
+case "$_release_guard_head" in
+  release/*|hotfix/*) _is_release_pr=1 ;;
+esac
+if [ "$_release_guard_base" = "main" ]; then
+  _is_release_pr=1
+fi
+
+if [ "$_is_release_pr" -eq 1 ]; then
+  echo "Release PR detected — reviewer loop skipped." >&2
+  echo "Review happens on develop-targeting feature/fix PRs, not on release/* or hotfix/* branches or PRs targeting main." >&2
+  echo "Release readiness path: validate release artifacts → run pr-ci-loop.sh → apply ready-for-human-review when CI is green." >&2
+  print_kv RESULT skipped
+  print_kv REASON release_pr
+  print_kv PR_NUMBER "$pr_number"
+  [ -n "$branch_name" ] && print_kv BRANCH "$branch_name"
+  exit 0
+fi
+# --- End release PR early-exit guard ---
+
 if [ "${#platforms[@]}" -eq 0 ]; then
   # Resolve config from the PR's target branch so platform coverage is
   # consistent regardless of the operator's local checkout state (#756).
