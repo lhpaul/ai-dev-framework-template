@@ -477,7 +477,7 @@ if [ -n "$CATEGORIES" ]; then
           SUGGESTION_COUNT=$((SUGGESTION_COUNT + 1))
         fi
         ;;
-      "Minor"|"Advisory"|"Nitpick"|"Trivial"|"Weak test coverage"|"Rules violation")
+      "Minor"|"Advisory"|"Nitpick"|"Trivial"|"Weak test coverage"|"Rules violation"|"Code contract violation")
         SUGGESTION_COUNT=$((SUGGESTION_COUNT + 1))
         ;;
       "__UNKNOWN__"|*)
