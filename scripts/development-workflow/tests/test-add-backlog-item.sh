@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+# test-add-backlog-item.sh — Unit tests for add-backlog-item.sh create flow.
+#
+# Exercises issue #965's Priority/Size field updates:
+#   1. Malformed gh output warns and skips project field updates
+#   2. Non-numeric issue number in URL warns and skips project field updates
+#   3. Happy path: URL parsed, board membership checked, Priority defaults to Medium
+#   4. --priority flag: uses supplied value instead of Medium default
+#   5. --size flag: triggers Size field update
+#   6. No --size: Size field update is not called
+#
+# Usage: bash scripts/development-workflow/tests/test-add-backlog-item.sh
+
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
+SCRIPT="$REPO_ROOT/scripts/development-workflow/add-backlog-item.sh"
+
+TMP_ROOT="$(mktemp -d)"
+MOCK_BIN="$TMP_ROOT/bin"
+CALL_LOG="$TMP_ROOT/calls.log"
+mkdir -p "$MOCK_BIN"
+: > "$CALL_LOG"
+
+cleanup() { rm -rf "$TMP_ROOT"; }
+trap cleanup EXIT
+
+cat > "$MOCK_BIN/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$MOCK_GH_CALL_LOG"
+case "$*" in
+  "auth status")
+    exit 0
+    ;;
+  "repo view --json owner --jq .owner.login")
+    printf 'lhpaul\n'
+    ;;
+  "repo view --json name --jq .name")
+    printf 'test-repo\n'
+    ;;
+  issue\ create\ *)
+    case "${MOCK_GH_ISSUE_CREATE_MODE:-ok}" in
+      malformed)   printf 'not-a-url\n' ;;
+      nonnumeric)  printf 'https://github.com/lhpaul/test-repo/issues/not-a-number\n' ;;
+      *)           printf 'https://github.com/lhpaul/test-repo/issues/123\n' ;;
+    esac
+    ;;
+  "project item-add "*)
+    printf 'PVTI_added\n'
+    ;;
+  *"api graphql"*)
+    case "$*" in
+      *"projectV2(number:"*)
+        printf '{"data":{"user":{"projectV2":{"id":"PVT_project_1"}},"organization":null}}\n'
+        ;;
+      *"projectItems(first:"*)
+        printf '{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_123","project":{"id":"PVT_project_1","number":1},"status":{"name":"Backlog"},"type":{"name":"Feature"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}\n'
+        ;;
+      *"fields(first:"*)
+        printf '{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_priority","name":"Priority","options":[{"id":"OPT_urgent","name":"Urgent"},{"id":"OPT_high","name":"High"},{"id":"OPT_medium","name":"Medium"},{"id":"OPT_low","name":"Low"}]},{"id":"PVTSSF_size","name":"Size","options":[{"id":"OPT_size_xs","name":"XS"},{"id":"OPT_size_s","name":"S"},{"id":"OPT_size_m","name":"M"},{"id":"OPT_size_l","name":"L"},{"id":"OPT_size_xl","name":"XL"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}\n'
+        ;;
+      *"updateProjectV2ItemFieldValue"*)
+        printf '{"data":{"updateProjectV2ItemFieldValue":{"projectV2Item":{"id":"PVTI_item_123"}}}}\n'
+        ;;
+      *)
+        printf '{}\n'
+        ;;
+    esac
+    ;;
+  *)
+    printf 'unexpected gh invocation: gh %s\n' "$*" >&2
+    exit 64
+    ;;
+esac
+MOCK_GH
+chmod +x "$MOCK_BIN/gh"
+
+export PATH="$MOCK_BIN:$PATH"
+export MOCK_GH_CALL_LOG="$CALL_LOG"
+export GITHUB_PROJECT_NUMBER="1"
+export GITHUB_PROJECT_OWNER="lhpaul"
+
+PASS_COUNT=0
+FAIL_COUNT=0
+
+run_test() {
+  local name="$1" expected="$2" actual="$3"
+  if [ "$actual" = "$expected" ]; then
+    echo "PASS: $name"
+    PASS_COUNT=$((PASS_COUNT + 1))
+  else
+    echo "FAIL: $name — expected '${expected}', got '${actual}'"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  fi
+}
+
+reset_log() { : > "$CALL_LOG"; }
+
+count_log_matches() {
+  local pattern="$1"
+  awk -v p="$pattern" '$0 ~ p { c++ } END { print c+0 }' "$CALL_LOG"
+}
+
+run_create() {
+  local mode="${1:-ok}"; shift
+  reset_log
+  local exit_code=0
+  set +e
+  MOCK_GH_ISSUE_CREATE_MODE="$mode" \
+    "$SCRIPT" create "$@" \
+    >"$TMP_ROOT/stdout.log" \
+    2>"$TMP_ROOT/stderr.log"
+  exit_code=$?
+  set -e
+  printf '%s' "$exit_code" >"$TMP_ROOT/exit.log"
+}
+
+get_stdout() { cat "$TMP_ROOT/stdout.log" 2>/dev/null || true; }
+get_stderr() { cat "$TMP_ROOT/stderr.log" 2>/dev/null || true; }
+get_exit()   { cat "$TMP_ROOT/exit.log" 2>/dev/null || true; }
+
+echo ""
+echo "=== create: URL parsing — malformed gh output ==="
+
+run_create "malformed" --title "Test" --body "body"
+run_test "malformed_url_exits_zero" "0" "$(get_exit)"
+malformed_stderr="$(get_stderr)"
+case "$malformed_stderr" in
+  *"Warning: could not extract a numeric issue number"*) malformed_warn="warned" ;;
+  *) malformed_warn="$malformed_stderr" ;;
+esac
+run_test "malformed_url_warns" "warned" "$malformed_warn"
+run_test "malformed_url_skips_board_check" "0" "$(count_log_matches 'projectItems')"
+run_test "malformed_url_skips_priority_update" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+
+echo ""
+echo "=== create: URL parsing — non-numeric issue number ==="
+
+run_create "nonnumeric" --title "Test" --body "body"
+run_test "nonnumeric_exits_zero" "0" "$(get_exit)"
+nonnumeric_stderr="$(get_stderr)"
+case "$nonnumeric_stderr" in
+  *"Warning: could not extract a numeric issue number"*) nonnumeric_warn="warned" ;;
+  *) nonnumeric_warn="$nonnumeric_stderr" ;;
+esac
+run_test "nonnumeric_warns" "warned" "$nonnumeric_warn"
+run_test "nonnumeric_skips_board_check" "0" "$(count_log_matches 'projectItems')"
+run_test "nonnumeric_skips_priority_update" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+
+echo ""
+echo "=== create: happy path — issue URL in output, Priority defaults to Medium ==="
+
+run_create "ok" --title "Test" --body "body"
+run_test "happy_path_exits_zero" "0" "$(get_exit)"
+happy_stdout="$(get_stdout)"
+case "$happy_stdout" in
+  *"https://github.com/lhpaul/test-repo/issues/123"*) url_in_output="yes" ;;
+  *) url_in_output="no" ;;
+esac
+run_test "happy_path_prints_issue_url" "yes" "$url_in_output"
+board_check_count="$(count_log_matches 'projectItems')"
+run_test "happy_path_checks_board_membership" "yes" "$([ "$board_check_count" -ge 1 ] && echo yes || echo no)"
+run_test "happy_path_updates_priority" "1" "$(count_log_matches 'fieldId=PVTSSF_priority')"
+run_test "happy_path_default_priority_is_medium" "1" "$(count_log_matches 'optionId=OPT_medium')"
+run_test "happy_path_skips_size_update" "0" "$(count_log_matches 'fieldId=PVTSSF_size')"
+
+echo ""
+echo "=== create: --priority flag overrides Medium default ==="
+
+run_create "ok" --title "Test" --body "body" --priority "High"
+run_test "explicit_priority_exits_zero" "0" "$(get_exit)"
+run_test "explicit_priority_high_used" "1" "$(count_log_matches 'optionId=OPT_high')"
+run_test "explicit_priority_not_medium" "0" "$(count_log_matches 'optionId=OPT_medium')"
+
+echo ""
+echo "=== create: --size flag updates Size field ==="
+
+run_create "ok" --title "Test" --body "body" --size "M"
+run_test "size_flag_exits_zero" "0" "$(get_exit)"
+run_test "size_flag_updates_size_field" "1" "$(count_log_matches 'fieldId=PVTSSF_size')"
+run_test "size_flag_uses_m_option" "1" "$(count_log_matches 'optionId=OPT_size_m')"
+run_test "size_flag_also_updates_priority" "1" "$(count_log_matches 'fieldId=PVTSSF_priority')"
+
+echo ""
+echo "Test summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"
+if [ "$FAIL_COUNT" -ne 0 ]; then
+  exit 1
+fi
