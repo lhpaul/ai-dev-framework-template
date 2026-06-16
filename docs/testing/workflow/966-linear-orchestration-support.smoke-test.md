@@ -144,11 +144,12 @@ rather than live Linear or GitHub API calls.
 
 **Maps to**: AC-3 (epic scope resolution signals Linear provider)
 
-1. Using the stub config from Step 2, run the scope resolver with no items:
+1. Using the stub config from Step 2, run the scope resolver with a placeholder item list and capture its output:
 
    ```bash
-   WORKFLOW_CONFIG_FILE="$tmp/.ai-dev-workflow.yaml" \
-     scripts/development-workflow/run-epic-scope-resolver.sh 2>/dev/null || true
+   resolver_output="$(WORKFLOW_CONFIG_FILE="$tmp/.ai-dev-workflow.yaml" \
+     scripts/development-workflow/run-epic-scope-resolver.sh --items 1 2>/dev/null)"
+   echo "$resolver_output"
    ```
 
 2. Confirm output contains `PROVIDER=linear`.
