@@ -885,9 +885,10 @@ for issue in "${ISSUE_NUMBERS[@]}"; do
   fi
   # Capture output from the best-effort helper to classify the outcome.
   # The helper always exits 0; we distinguish outcomes by its stdout:
-  #   "Updating tracker status..."  (followed by successful GraphQL JSON) -> updated
-  #   "Warning: ... skipping ..."                                          -> skipped
-  #   "Warning: GraphQL mutation failed ..."                               -> failed
+  #   "Updating tracker status..."         (GitHub Projects) -> updated
+  #   "TRACKER_ACTION_REQUIRED=set_status" (Linear provider) -> deferred (counted as updated)
+  #   "Warning: ... skipping ..."          (any provider)    -> skipped
+  #   "Warning: GraphQL mutation failed ..." (GitHub)        -> failed
   # When the issue is already in the target status (set by GitHub project automation
   # before this script runs), the helper emits a "does not match required source
   # status" message because the current status is already 'Released' (not 'Merged').
@@ -900,6 +901,10 @@ for issue in "${ISSUE_NUMBERS[@]}"; do
     else
       TRACKER_UPDATED=$((TRACKER_UPDATED + 1))
     fi
+  elif echo "$TRACKER_OUT" | grep -q "^TRACKER_ACTION_REQUIRED=set_status"; then
+    # Linear provider: the mutation is deferred to the orchestrator via MCP.
+    # Count as updated (the orchestrator must apply this signal after this script).
+    TRACKER_UPDATED=$((TRACKER_UPDATED + 1))
   elif echo "$TRACKER_OUT" | grep -q "current status '${RELEASED_LABEL}'"; then
     # Issue is already in the target Released status (set by GitHub project automation).
     # This is a no-op success — not a failure or a skip that warrants an error exit.

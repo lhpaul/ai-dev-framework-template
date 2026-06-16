@@ -208,6 +208,13 @@ echo "=== create: Linear provider — emits TRACKER_ACTION_REQUIRED=create_item 
 # which always points to $(workflow_repo_root)/.ai-dev-workflow.yaml.
 _config_backup="$TMP_ROOT/ai-dev-workflow.yaml.bak"
 
+if [ ! -f "$_config_file" ]; then
+  echo "SKIP: $_config_file not found; skipping Linear provider create_item tests." >&2
+  echo ""
+  echo "Test summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"
+  exit "$( [ "$FAIL_COUNT" -ne 0 ] && echo 1 || echo 0 )"
+fi
+
 cp -- "$_config_file" "$_config_backup"
 
 # Write a minimal linear config for the duration of these tests.
