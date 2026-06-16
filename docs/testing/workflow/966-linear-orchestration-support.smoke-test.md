@@ -225,15 +225,15 @@ rather than live Linear or GitHub API calls.
 
 ## Assertions Checklist
 
-- [ ] AC-1: `workflow-batch-plan.sh` emits `TRACKER_STATUS_DEFERRED` for Linear items; items are not silently dropped.
-- [ ] AC-2: `update_tracker_status_best_effort` emits `TRACKER_ACTION_REQUIRED=set_status`; orchestrator can apply via MCP.
-- [ ] AC-3: `run-epic-scope-resolver.sh` emits `PROVIDER=linear` and `TRACKER_READ_DEFERRED=yes`.
-- [ ] AC-4: `emit_linear_deferred_action` produces the canonical `TRACKER_ACTION_REQUIRED=` format; status progression order is unchanged for GitHub.
-- [ ] AC-5: `add-backlog-item.sh create` exits 0 and emits `TRACKER_ACTION_REQUIRED=create_item` for Linear.
-- [ ] AC-6: `get_tracker_type_for_issue` returns empty (not error) for Linear; caller can apply safe default.
-- [ ] AC-7: Commands that depend on Linear data emit actionable deferred-action lines rather than empty / misleading output.
-- [ ] AC-8: All `test-workflow-lib-github-projects.sh` GitHub-path tests pass with no regressions.
-- [ ] AC-9: `linear.md` Bridge Pattern section and reference table are present; protocols 90, 91, 95, and 00 are updated.
+- [ ] AC-1: `workflow-batch-plan.sh` emits `TRACKER_STATUS_DEFERRED` for Linear items; items are not silently dropped (Steps 5, 10).
+- [ ] AC-2: `run-item-work` can resolve the next action for a Linear item; deferred-action mechanism (`TRACKER_ACTION_REQUIRED=read_status`, `set_status`) enables the orchestrator to supply and apply Linear status (Steps 2, 3).
+- [ ] AC-3: `run-epic-scope-resolver.sh` emits `PROVIDER=linear` and `TRACKER_READ_DEFERRED=yes`; epic scope resolution signals the orchestrator to supply item statuses (Step 6).
+- [ ] AC-4: `emit_linear_deferred_action` produces the canonical `TRACKER_ACTION_REQUIRED=` format; `update_tracker_status_best_effort` emits `TRACKER_ACTION_REQUIRED=set_status` (not unstructured Warning); status progression order is unchanged for GitHub (Steps 1, 2, 8).
+- [ ] AC-5: `add-backlog-item.sh create` exits 0 and emits `TRACKER_ACTION_REQUIRED=create_item` for Linear (Step 4).
+- [ ] AC-6: `get_tracker_type_for_issue` returns empty (not error) for Linear; caller can apply safe default route (Step 7).
+- [ ] AC-7: Linear-dependent commands emit actionable `TRACKER_ACTION_REQUIRED=` lines rather than empty or misleading output, so the orchestrator receives an explicit signal when Linear access is needed (Steps 2, 3).
+- [ ] AC-8: All `test-workflow-lib-github-projects.sh` GitHub-path tests pass with no regressions (Step 8).
+- [ ] AC-9: `linear.md` Bridge Pattern section and reference table are present; protocols 90, 91, 95, and 00 are updated (Steps 9, 10).
 
 ---
 

@@ -38,7 +38,7 @@ of unit tests close coverage gaps.
 | Check | Command / query | Result |
 | --- | --- | --- |
 | Repo revision | `git rev-parse --short HEAD` | `6c84316` |
-| Linear provider paths in `workflow-lib.sh` | `grep -n "linear" scripts/development-workflow/workflow-lib.sh` | 18 hits; `get_tracker_status_for_issue` returns `''`, `update_tracker_status_best_effort` emits a `Warning:` string, `record_release_for_issue_best_effort` emits `RELEASE_STAMP_SKIPPED` |
+| Linear provider paths in `workflow-lib.sh` | `grep -n "linear" scripts/development-workflow/workflow-lib.sh` | 11 hits; `get_tracker_status_for_issue` returns `''`, `update_tracker_status_best_effort` emits a `Warning:` string, `record_release_for_issue_best_effort` emits `RELEASE_STAMP_SKIPPED` |
 | Deferred-action output consistency | `grep -n "TRACKER_ACTION\|TRACKER_UPDATE_REQUIRED\|deferred" scripts/development-workflow/workflow-lib.sh` | 0 hits — no structured `TRACKER_ACTION_REQUIRED=` signal exists yet |
 | `run-epic-scope-resolver.sh` Linear coverage | `grep -n "linear\|provider" scripts/development-workflow/run-epic-scope-resolver.sh` | 0 hits — no Linear-specific path |
 | `add-backlog-item.sh` Linear path | `grep -n "linear" scripts/development-workflow/add-backlog-item.sh` | exits non-zero with guidance message; no `TRACKER_ACTION_REQUIRED=` output |
