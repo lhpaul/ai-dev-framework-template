@@ -261,10 +261,10 @@ detect_omitted_merged_items() {
 
   # Resolve the current release tag date.
   current_tag_date="$(gh api "repos/${repo_slug}/releases/tags/${version}" \
-      --jq '.published_at // .created_at // empty' 2>/dev/null || true)"
+      --jq '.published_at // .created_at // empty' 2>/dev/null || true)"  # workflow-shell-guard: allow SH001 - best-effort; empty triggers git-tag fallback below
   if [ -z "$current_tag_date" ]; then
     # Fallback: resolve via git tag annotation.
-    current_tag_date="$(git log -1 --format="%aI" "refs/tags/${version}" 2>/dev/null || true)"
+    current_tag_date="$(git log -1 --format="%aI" "refs/tags/${version}" 2>/dev/null || true)"  # workflow-shell-guard: allow SH001 - best-effort fallback; empty causes early return
   fi
   if [ -z "$current_tag_date" ]; then
     echo "Warning: could not resolve release tag date for '${version}'; skipping omitted-merged-items detection." >&2
@@ -277,7 +277,7 @@ detect_omitted_merged_items() {
   local all_tags=""
   all_tags="$(gh api "repos/${repo_slug}/tags?per_page=100" --paginate \
       --jq '[.[] | select(.name | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+"))] | .[].name' \
-      2>/dev/null || true)"
+      2>/dev/null || true)"  # workflow-shell-guard: allow SH001 - best-effort; empty list causes all items to qualify (safe lower bound)
   prev_tag_name=""
   if [ -n "$all_tags" ]; then
     local tags_tmp=""
@@ -331,9 +331,9 @@ PY
   else
     # Resolve the date for the previous tag.
     prev_tag_date="$(gh api "repos/${repo_slug}/releases/tags/${prev_tag_name}" \
-        --jq '.published_at // .created_at // empty' 2>/dev/null || true)"
+        --jq '.published_at // .created_at // empty' 2>/dev/null || true)"  # workflow-shell-guard: allow SH001 - best-effort; empty triggers git-tag fallback below
     if [ -z "$prev_tag_date" ]; then
-      prev_tag_date="$(git log -1 --format="%aI" "refs/tags/${prev_tag_name}" 2>/dev/null || true)"
+      prev_tag_date="$(git log -1 --format="%aI" "refs/tags/${prev_tag_name}" 2>/dev/null || true)"  # workflow-shell-guard: allow SH001 - best-effort fallback; empty causes epoch lower bound
     fi
     if [ -z "$prev_tag_date" ]; then
       echo "Warning: could not resolve date for previous tag '${prev_tag_name}'; using epoch as lower bound." >&2
@@ -498,7 +498,7 @@ PY
 
     # Fetch the issue close date.
     issue_closed_at="$(gh api "repos/${repo_slug}/issues/${issue_num}" \
-        --jq '.closed_at // empty' 2>/dev/null || true)"
+        --jq '.closed_at // empty' 2>/dev/null || true)"  # workflow-shell-guard: allow SH001 - best-effort; empty routes issue to manual-review bucket
 
     if [ -z "$issue_closed_at" ]; then
       # Can't determine close date; report for manual review.
