@@ -441,10 +441,16 @@ import sys
 from datetime import datetime, timezone
 
 def parse_dt(s):
+    # Normalise the string: strip a trailing 'Z' (UTC) so fromisoformat
+    # accepts it on Python < 3.11 (which doesn't handle Z natively).
     s = s.rstrip("Z")
-    if "+" in s:
-        s = s[:s.index("+")]
-    return datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        # No offset present – treat as UTC (e.g. after stripping 'Z').
+        return dt.replace(tzinfo=timezone.utc)
+    # Offset present (positive OR negative): convert to UTC, then return
+    # a naive-UTC datetime so all comparisons stay in the same coordinate.
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 try:
     closed = parse_dt(sys.argv[1])
