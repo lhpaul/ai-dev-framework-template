@@ -3931,6 +3931,65 @@ doc_branch_default_poll_interval() {
   printf '%s\n' "$interval"
 }
 
+# ---------------------------------------------------------------------------
+# _check_release_pr_guard <pr_number> [<branch_name>]
+#
+# Determines whether the given PR is a release or hotfix PR that should skip
+# the automated reviewer loop. Returns 0 (guard fires → skip) or 1 (guard
+# does not fire → continue normally).
+#
+# Output (stdout, key=value lines):
+#   RELEASE_GUARD_HEAD=<head branch or empty>
+#   RELEASE_GUARD_BASE=<base branch or empty>
+#   RELEASE_GUARD_FIRED=0|1
+#
+# When <branch_name> is provided, it is used directly for head-branch matching
+# without a network call. When omitted, both head and base are fetched from the
+# PR in a single gh pr view call.
+# ---------------------------------------------------------------------------
+_check_release_pr_guard() {
+  local pr_num="$1"
+  local given_branch="${2:-}"
+  local guard_head=""
+  local guard_base=""
+  local is_release=0
+  local pr_json=""
+  local pr_exit=0
+
+  guard_head="$given_branch"
+
+  if [ -z "$guard_head" ]; then
+    set +e
+    pr_json="$(gh pr view "$pr_num" --json headRefName,baseRefName 2>/dev/null)"
+    pr_exit=$?
+    set -e
+    if [ "$pr_exit" -eq 0 ] && [ -n "$pr_json" ]; then
+      guard_head="$(printf '%s\n' "$pr_json" | jq -re '.headRefName // ""' 2>/dev/null)" || guard_head=""
+      guard_base="$(printf '%s\n' "$pr_json" | jq -re '.baseRefName // ""' 2>/dev/null)" || guard_base=""
+    fi
+  else
+    set +e
+    guard_base="$(gh pr view "$pr_num" --json baseRefName --jq '.baseRefName // ""' 2>/dev/null)" || guard_base=""
+    set -e
+  fi
+
+  case "$guard_head" in
+    release/*|hotfix/*) is_release=1 ;;
+  esac
+  if [ "$guard_base" = "main" ]; then
+    is_release=1
+  fi
+
+  printf 'RELEASE_GUARD_HEAD=%s\n' "$guard_head"
+  printf 'RELEASE_GUARD_BASE=%s\n' "$guard_base"
+  printf 'RELEASE_GUARD_FIRED=%s\n' "$is_release"
+
+  if [ "$is_release" -eq 1 ]; then
+    return 0
+  fi
+  return 1
+}
+
 # Skip the main execution block when sourced in test-harness mode.
 # All function definitions above (including normalize_platform_verdict,
 # append_compare_metrics_row, and restore_regression_label_if_missing) are
@@ -4084,49 +4143,29 @@ fi
 # Detection criteria (OR logic — either condition triggers the skip):
 #   1. Head branch matches release/* or hotfix/*
 #   2. Base branch is main (any PR targeting main skips the reviewer loop)
-#
-# When --branch was passed on the command line, use it for criterion 1 without
-# an additional API call. When --branch was not passed, fetch both head and
-# base from the PR in a single gh pr view call.
-_release_guard_head="${branch_name:-}"
-_release_guard_base=""
-if [ -z "$_release_guard_head" ]; then
-  set +e
-  _release_guard_pr_json="$(gh pr view "$pr_number" --json headRefName,baseRefName 2>/dev/null)"
-  _release_guard_pr_exit=$?
-  set -e
-  if [ "$_release_guard_pr_exit" -eq 0 ] && [ -n "$_release_guard_pr_json" ]; then
-    _release_guard_head="$(printf '%s\n' "$_release_guard_pr_json" | jq -r '.headRefName // ""')"
-    _release_guard_base="$(printf '%s\n' "$_release_guard_pr_json" | jq -r '.baseRefName // ""')"
-    # Populate branch_name from the fetched value so later blocks do not need
-    # to re-fetch it (mirrors the existing pattern in the platforms block).
-    if [ -z "$branch_name" ] && [ -n "$_release_guard_head" ]; then
-      branch_name="$_release_guard_head"
-    fi
-  fi
-else
-  # --branch was provided; fetch only the base branch for criterion 2.
-  set +e
-  _release_guard_base="$(gh pr view "$pr_number" --json baseRefName --jq '.baseRefName // ""' 2>/dev/null)" || _release_guard_base=""
-  set -e
+_release_guard_output=""
+set +e
+_release_guard_output="$(_check_release_pr_guard "$pr_number" "${branch_name:-}")"
+_release_guard_fired=$?
+set -e
+
+_release_guard_head="$(printf '%s\n' "$_release_guard_output" | awk -F= '/^RELEASE_GUARD_HEAD=/{sub(/^[^=]*=/,""); print; exit}')"
+_release_guard_base="$(printf '%s\n' "$_release_guard_output" | awk -F= '/^RELEASE_GUARD_BASE=/{sub(/^[^=]*=/,""); print; exit}')"
+
+# Propagate the fetched head branch to branch_name so later blocks do not
+# need to re-fetch it (mirrors the existing pattern in the platforms block).
+if [ -z "$branch_name" ] && [ -n "$_release_guard_head" ]; then
+  branch_name="$_release_guard_head"
 fi
 
-_is_release_pr=0
-case "$_release_guard_head" in
-  release/*|hotfix/*) _is_release_pr=1 ;;
-esac
-if [ "$_release_guard_base" = "main" ]; then
-  _is_release_pr=1
-fi
-
-if [ "$_is_release_pr" -eq 1 ]; then
+if [ "$_release_guard_fired" -eq 0 ]; then
   echo "Release PR detected — reviewer loop skipped." >&2
   echo "Review happens on develop-targeting feature/fix PRs, not on release/* or hotfix/* branches or PRs targeting main." >&2
   echo "Release readiness path: validate release artifacts → run pr-ci-loop.sh → apply ready-for-human-review when CI is green." >&2
   print_kv RESULT skipped
   print_kv REASON release_pr
   print_kv PR_NUMBER "$pr_number"
-  [ -n "$branch_name" ] && print_kv BRANCH "$branch_name"
+  print_kv BRANCH "${branch_name:-}"
   exit 0
 fi
 # --- End release PR early-exit guard ---
