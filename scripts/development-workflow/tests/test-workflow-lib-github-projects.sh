@@ -75,12 +75,12 @@ JSON
 {"number":7,"title":"v1.2.3","state":"closed"}
 JSON
     ;;
-  "issue edit 824 --milestone v1.2.3")
-    if [ "${MOCK_ISSUE_EDIT_MODE:-ok}" = "fail" ]; then
-      printf 'issue edit failed\n' >&2
+  "api -X PATCH repos/lhpaul/ai-dev-framework-template/issues/824 -F milestone=7"|"api -X PATCH repos/lhpaul/ai-dev-framework-template/issues/824 -F milestone=9")
+    if [ "${MOCK_ISSUE_PATCH_MODE:-ok}" = "fail" ]; then
+      printf 'issue patch failed\n' >&2
       exit 42
     fi
-    printf 'https://github.com/lhpaul/ai-dev-framework-template/issues/824\n'
+    printf '{"number":824,"milestone":{"number":7}}\n'
     ;;
   *"api graphql"* )
     case "$*" in
@@ -461,7 +461,7 @@ case "$stamp_output" in
 esac
 run_test "release_stamp_assigns_existing_milestone" "stamped" "$stamp_result"
 run_test "release_stamp_existing_does_not_create_milestone" "0" "$(count_log_matches 'api -X POST repos/.*/milestones')"
-run_test "release_stamp_assigns_issue_milestone" "1" "$(count_log_matches 'issue edit 824 --milestone v1.2.3')"
+run_test "release_stamp_assigns_issue_milestone" "1" "$(count_log_matches 'api -X PATCH repos/.*/issues/824 -F milestone=[0-9]')"
 
 reset_log
 export MOCK_MILESTONE_MODE=missing
@@ -475,9 +475,9 @@ run_test "release_stamp_creates_missing_milestone" "stamped" "$stamp_result"
 run_test "release_stamp_missing_creates_once" "1" "$(count_log_matches 'api -X POST repos/.*/milestones')"
 
 reset_log
-export MOCK_ISSUE_EDIT_MODE=fail
+export MOCK_ISSUE_PATCH_MODE=fail
 stamp_output="$(record_release_for_issue_best_effort 824 "v1.2.3" 2>&1)"
-unset MOCK_ISSUE_EDIT_MODE
+unset MOCK_ISSUE_PATCH_MODE
 case "$stamp_output" in
   *"RELEASE_STAMP_FAILED issue=824 version=v1.2.3 provider=github_projects reason=assignment_failed"*) stamp_result="failed" ;;
   *) stamp_result="$stamp_output" ;;

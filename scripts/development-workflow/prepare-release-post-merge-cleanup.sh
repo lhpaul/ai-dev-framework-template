@@ -275,15 +275,19 @@ detect_omitted_merged_items() {
   # Capture the tag list, write to a temp file, then read it in Python (cannot
   # combine a pipe and a heredoc for the same process).
   local all_tags=""
-  all_tags="$(gh api "repos/${repo_slug}/tags" --paginate \
+  all_tags="$(gh api "repos/${repo_slug}/tags?per_page=100" --paginate \
       --jq '[.[] | select(.name | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+"))] | .[].name' \
       2>/dev/null || true)"
   prev_tag_name=""
   if [ -n "$all_tags" ]; then
     local tags_tmp=""
-    tags_tmp="$(mktemp "${TMPDIR:-/tmp}/release-tags.XXXXXX")"
-    printf '%s\n' "$all_tags" > "$tags_tmp"
-    prev_tag_name="$(python3 - "$version" "$tags_tmp" <<'PY'
+    if ! tags_tmp="$(mktemp "${TMPDIR:-/tmp}/release-tags.XXXXXX")"; then
+      echo "Warning: could not create temp file for tag list; skipping previous-tag resolution." >&2
+      tags_tmp=""
+    fi
+    if [ -n "$tags_tmp" ]; then
+      printf '%s\n' "$all_tags" > "$tags_tmp"
+      prev_tag_name="$(python3 - "$version" "$tags_tmp" <<'PY'
 import sys
 import re
 
@@ -316,8 +320,9 @@ if not candidates:
 best = sorted(candidates, reverse=True)[0][1]
 print(best)
 PY
-    )" || true
-    rm -f "$tags_tmp"
+      )" || true
+      rm -f "$tags_tmp"
+    fi
   fi
 
   if [ -z "$prev_tag_name" ]; then
@@ -358,7 +363,10 @@ PY
   # Extract omitted issue numbers from project_items using a temp file to avoid
   # the pipe-plus-heredoc conflict (cannot use both | and <<'PY' for the same process).
   local items_tmp=""
-  items_tmp="$(mktemp "${TMPDIR:-/tmp}/release-project-items.XXXXXX")"
+  if ! items_tmp="$(mktemp "${TMPDIR:-/tmp}/release-project-items.XXXXXX")"; then
+    echo "Warning: could not create temp file for project items; skipping omitted-merged-items detection." >&2
+    return 0
+  fi
   printf '%s' "$project_items" > "$items_tmp"
   if ! merged_items="$(python3 - "$known_scope_arg" "$MERGED_LABEL" "$items_tmp" <<'PY'
 import json
@@ -453,11 +461,14 @@ PY
     fi
 
     # Check whether a merged PR in the repository references this issue.
+    # Use --limit 50 so that busy repositories with many merged PRs per issue
+    # are still classified correctly; a limit of 5 would miss PRs beyond the
+    # first page and misclassify shipped items as parent epics.
     referencing_pr="$(gh pr list \
         --repo "$repo_slug" \
         --state merged \
         --search "\"#${issue_num}\"" \
-        --limit 5 \
+        --limit 50 \
         --json number \
         --jq '.[0].number // empty' 2>/dev/null || true)"
 

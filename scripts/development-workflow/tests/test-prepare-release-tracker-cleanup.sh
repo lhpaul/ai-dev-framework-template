@@ -235,7 +235,7 @@ case "$*" in
     printf '2026-06-11T12:00:00Z\n'
     ;;
   # detect_omitted_merged_items: tag list for previous-tag resolution
-  "api repos/test-owner/test-repo/tags --paginate --jq [.[] | select(.name | test(\"^v?[0-9]+\\.[0-9]+\\.[0-9]+\"))] | .[].name")
+  "api repos/test-owner/test-repo/tags?per_page=100 --paginate --jq [.[] | select(.name | test(\"^v?[0-9]+\\.[0-9]+\\.[0-9]+\"))] | .[].name")
     printf 'v1.17.0\nv1.16.0\n'
     ;;
   # detect_omitted_merged_items: previous release date
@@ -353,7 +353,7 @@ case "$*" in
   # Release tag dates
   "api repos/test-owner/test-repo/releases/tags/v1.17.0 --jq .published_at // .created_at // empty")
     printf '2026-06-11T12:00:00Z\n' ;;
-  "api repos/test-owner/test-repo/tags --paginate --jq [.[] | select(.name | test(\"^v?[0-9]+\\.[0-9]+\\.[0-9]+\"))] | .[].name")
+  "api repos/test-owner/test-repo/tags?per_page=100 --paginate --jq [.[] | select(.name | test(\"^v?[0-9]+\\.[0-9]+\\.[0-9]+\"))] | .[].name")
     printf 'v1.17.0\nv1.16.0\n' ;;
   "api repos/test-owner/test-repo/releases/tags/v1.16.0 --jq .published_at // .created_at // empty")
     printf '2026-06-01T12:00:00Z\n' ;;
@@ -363,9 +363,9 @@ case "$*" in
   "api repos/test-owner/test-repo/issues/201 --jq .closed_at // empty")
     printf '2026-06-09T12:00:00Z\n' ;;
   # PR search: #200 has a referencing merged PR; #201 does not
-  "pr list --repo test-owner/test-repo --state merged --search \"#200\" --limit 5 --json number --jq .[0].number // empty")
+  "pr list --repo test-owner/test-repo --state merged --search \"#200\" --limit 50 --json number --jq .[0].number // empty")
     printf '500\n' ;;
-  "pr list --repo test-owner/test-repo --state merged --search \"#201\" --limit 5 --json number --jq .[0].number // empty")
+  "pr list --repo test-owner/test-repo --state merged --search \"#201\" --limit 50 --json number --jq .[0].number // empty")
     printf '\n' ;;
   # Milestone lookup for milestone stamping of #101
   "api --paginate --slurp repos/test-owner/test-repo/milestones?state=all&per_page=100")
