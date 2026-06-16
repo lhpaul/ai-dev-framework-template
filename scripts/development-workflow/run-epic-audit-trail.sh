@@ -192,7 +192,11 @@ validate_advisories() {
     (.advisories // [])
     | map(select((.decision // "") != "fixed" and ((.rationale // "") | gsub("\\s"; "") | length == 0)))
     | length
-  ')"
+  ' 2>/dev/null)" || error_exit "failed to validate advisory entries (jq parse error)"
+  if [ -z "$invalid" ]; then
+    error_exit "failed to validate advisory entries (empty result)"
+  fi
+  invalid="${invalid}" || error_exit "failed to validate advisory entries (invalid type)"
   if [ "$invalid" -gt 0 ]; then
     error_exit "non-fixed advisory decisions require rationale"
   fi
@@ -201,9 +205,15 @@ validate_advisories() {
 warn_per_finding_advisories() {
   local json="$1"
   local advisory_count advisories_len bulk_rationale
-  advisory_count="$(printf '%s\n' "$json" | jq -r '(.reviewer.advisory_count // 0) | tonumber')"
+  advisory_count="$(printf '%s\n' "$json" | jq -r '(.reviewer.advisoryCount // .reviewer.advisory_count // 0) | tonumber' 2>/dev/null)" || error_exit "failed to read advisory count (jq parse error)"
+  if [ -z "$advisory_count" ]; then
+    error_exit "failed to read advisory count (empty result)"
+  fi
   if [ "$advisory_count" -gt 0 ]; then
-    advisories_len="$(printf '%s\n' "$json" | jq -r '(.advisories // []) | length')"
+    advisories_len="$(printf '%s\n' "$json" | jq -r '(.advisories // []) | length' 2>/dev/null)" || error_exit "failed to read advisories length (jq parse error)"
+    if [ -z "$advisories_len" ]; then
+      error_exit "failed to read advisories length (empty result)"
+    fi
     if [ "$advisories_len" -lt "$advisory_count" ]; then
       printf 'WARN: advisory_count=%d but only %d advisories[] entries recorded; protocol requires one entry per finding\n' \
         "$advisory_count" "$advisories_len" >&2
@@ -212,7 +222,10 @@ warn_per_finding_advisories() {
       (.advisories // [])
       | map(select((.rationale // "") | test("reviewed and accepted|in bulk"; "i")))
       | length
-    ')"
+    ' 2>/dev/null)" || error_exit "failed to check bulk rationale (jq parse error)"
+    if [ -z "$bulk_rationale" ]; then
+      error_exit "failed to check bulk rationale (empty result)"
+    fi
     if [ "$bulk_rationale" -gt 0 ]; then
       printf 'WARN: %d advisory entry/entries contain generic bulk-acceptance rationale; per-finding rationale is required by protocol\n' \
         "$bulk_rationale" >&2

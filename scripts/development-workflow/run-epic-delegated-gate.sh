@@ -89,7 +89,10 @@ state_json="$(load_input_json "$input_file")"
 
 if [ -n "$policy_file" ]; then
   policy_json="$(load_input_json "$policy_file")"
-  state_json="$(printf '%s\n' "$state_json" | jq --argjson policy "$policy_json" '.policy = $policy')"
+  state_json="$(printf '%s\n' "$state_json" | jq --argjson policy "$policy_json" '.policy = $policy' 2>/dev/null)" || error_exit "failed to merge policy into state (jq parse error)"
+  if [ -z "$state_json" ]; then
+    error_exit "failed to merge policy into state (empty result)"
+  fi
 fi
 
 decision_json="$(printf '%s\n' "$state_json" | jq '
@@ -190,17 +193,21 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     policy: policy,
     readOnlyGuarantee: "No reviewer-loop runs, CI polling, label edits, tracker updates, comments, merges, issue closure, or branch deletion were performed."
   }
-')"
+' 2>/dev/null)" || error_exit "failed to evaluate delegated gate decision (jq parse error)"
+
+if [ -z "$decision_json" ]; then
+  error_exit "failed to evaluate delegated gate decision (empty result)"
+fi
 
 bulk_advisory_warning=""
 bulk_advisory_warning="$(printf '%s\n' "$state_json" | jq -r '
   (.reviewer.advisoryCount // .reviewer.advisory_count // 0 | tonumber) as $count |
   (.advisories // [] | length) as $len |
-  if $count > 0 and $len == 1 then
+  if $count > 0 and $len < $count then
     "WARN: advisory_count=" + ($count | tostring) +
-    " but only 1 advisories[] entry recorded; protocol requires per-finding review (Step 8 item 5)"
+    " but only " + ($len | tostring) + " advisories[] entries recorded; protocol requires per-finding review (Step 8 item 5)"
   else "" end
-')"
+' 2>/dev/null)" || error_exit "failed to check advisory coverage (jq parse error)"
 
 if [ "$json_output" -eq 1 ]; then
   if [ -n "$bulk_advisory_warning" ]; then
