@@ -759,16 +759,24 @@ workflow_issue_tracker_project_number() {
   printf '%s\n' "${MOCK_TRACKER_PROJECT_NUMBER-1}"
 }
 
-# Test: emit_linear_deferred_action formats the canonical line
+# Test: emit_linear_deferred_action formats the canonical line.
+# Multi-word values are single-quoted to make the format unambiguous for parsers
+# (e.g. target_status='Plan in Review' rather than target_status=Plan in Review).
 emit_result="$(emit_linear_deferred_action "set_status" "ENG-123" "target_status=Plan in Review")"
 run_test "emit_linear_deferred_action_set_status" \
-  "TRACKER_ACTION_REQUIRED=set_status issue=ENG-123 target_status=Plan in Review" \
+  "TRACKER_ACTION_REQUIRED=set_status issue=ENG-123 target_status='Plan in Review'" \
   "$emit_result"
 
 emit_read_result="$(emit_linear_deferred_action "read_status" "ENG-456")"
 run_test "emit_linear_deferred_action_read_status" \
   "TRACKER_ACTION_REQUIRED=read_status issue=ENG-456" \
   "$emit_read_result"
+
+# Single-word values are not quoted (no ambiguity).
+emit_single_word_result="$(emit_linear_deferred_action "set_status" "ENG-000" "target_status=Backlog")"
+run_test "emit_linear_deferred_action_single_word_unquoted" \
+  "TRACKER_ACTION_REQUIRED=set_status issue=ENG-000 target_status=Backlog" \
+  "$emit_single_word_result"
 
 # Note: create_item is NOT emitted via emit_linear_deferred_action.
 # add-backlog-item.sh uses printf directly with "title=<title>" (not "issue=<id>")
@@ -792,8 +800,9 @@ case "$linear_update_out" in
 esac
 run_test "linear_update_emits_deferred_action" "deferred" "$linear_update_result"
 
+# Multi-word status value must be single-quoted in the output.
 case "$linear_update_out" in
-  *"target_status=Plan in Review"*) linear_update_target_result="has-target" ;;
+  *"target_status='Plan in Review'"*) linear_update_target_result="has-target" ;;
   *) linear_update_target_result="missing-target" ;;
 esac
 run_test "linear_update_deferred_action_has_target_status" "has-target" "$linear_update_target_result"

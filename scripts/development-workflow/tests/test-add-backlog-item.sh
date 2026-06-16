@@ -224,8 +224,9 @@ _linear_stderr="$(get_stderr)"
 # Restore the real config immediately (cleanup() also does this on any exit).
 cp -- "$_config_backup" "$_config_file"
 
-# The create_item action emits TRACKER_ACTION_REQUIRED=create_item title=<title>
-# to stdout and exits 0. gh issue create must NOT be called.
+# The create_item action emits TRACKER_ACTION_REQUIRED=create_item title='<title>'
+# to stdout and exits 0. Multi-word titles are single-quoted so parsers can
+# unambiguously extract the value. gh issue create must NOT be called.
 run_test "linear_create_item_exits_zero" "0" "$(get_exit)"
 
 case "$_linear_stdout" in
@@ -234,8 +235,9 @@ case "$_linear_stdout" in
 esac
 run_test "linear_create_item_emits_tracker_action_required" "has-signal" "$linear_signal_result"
 
+# Multi-word title "Test Linear Item" must be single-quoted in the output.
 case "$_linear_stdout" in
-  *"title=Test Linear Item"*) linear_title_result="has-title" ;;
+  *"title='Test Linear Item'"*) linear_title_result="has-title" ;;
   *) linear_title_result="no-title" ;;
 esac
 run_test "linear_create_item_uses_title_key_not_issue_key" "has-title" "$linear_title_result"

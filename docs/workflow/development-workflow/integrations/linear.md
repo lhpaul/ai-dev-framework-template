@@ -112,32 +112,27 @@ Every deferred-action line follows this structure:
 TRACKER_ACTION_REQUIRED=<action_type> issue=<issue_id>[ <extra_fields>]
 ```
 
-| Action type   | Emitted by                           | Extra fields                             | Description                                               |
+| Action type   | Emitted by                           | Extra fields example                     | Description                                               |
 | ------------- | ------------------------------------ | ---------------------------------------- | --------------------------------------------------------- |
-| `set_status`  | `update_tracker_status_best_effort`  | `target_status=<status>`                 | Linear item status should be moved to `<status>` via MCP. |
+| `set_status`  | `update_tracker_status_best_effort`  | `target_status='Plan in Review'`         | Linear item status should be moved to `<status>` via MCP. |
 | `read_status` | `get_tracker_status_for_issue`       | _(none)_                                 | Status read was deferred; orchestrator supplies the value. |
-| `create_item` | `add-backlog-item.sh create`         | `title=<title>`                          | New Linear item should be created via MCP.                |
+| `create_item` | `add-backlog-item.sh create`         | `title='My New Feature'`                 | New Linear item should be created via MCP.                |
 
-**Parsing convention**: field values may contain spaces (e.g.,
-`target_status=Plan in Review`, `title=My New Feature`). Parse each
-`key=value` pair by matching from the `=` to the start of the next
-`<space>key=` sequence or the end of line — do **not** split on all
-whitespace. Recommended extraction pattern for each field:
-
-```
-# Pseudocode: extract value for a known key
-value = match(line, r'<key>=(.+?)(?= \w+=|$)')
-```
-
-This convention makes the format unambiguous for multi-word values
-without requiring quoting or escaping in the emitted lines.
+**Quoting convention**: when a field value contains spaces, it is
+single-quoted in the output — for example, `target_status='Plan in Review'`
+rather than `target_status=Plan in Review`. Single-word values are not
+quoted. Strip the surrounding single quotes when reading the value.
+Linear status names do not contain single quotes, making this quoting safe
+for all controlled-vocabulary values in the workflow.
 
 **Orchestrator collection loop** (pseudocode):
 
 ```
 for each Work Item Runner output line:
   if line starts with "TRACKER_ACTION_REQUIRED=":
-    parse action_type, issue, extra_fields (using the parsing convention above)
+    parse action_type from "TRACKER_ACTION_REQUIRED=<action_type> ..."
+    parse issue from "... issue=<id> ..."
+    parse extra_field value (strip single quotes if present)
     apply via Linear MCP (e.g., updateIssue, createIssue)
   if line starts with "TRACKER_UPDATE_REQUIRED:":
     parse issue number and target_status

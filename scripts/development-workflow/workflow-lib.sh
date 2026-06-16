@@ -807,7 +807,7 @@ workflow_normalize_issue_tracker_provider() {
   printf '%s' "$raw" | tr '[:upper:]' '[:lower:]'
 }
 
-# emit_linear_deferred_action <action_type> <issue_id> [extra]
+# emit_linear_deferred_action <action_type> <issue_id> [key=value]
 #
 # Prints a structured TRACKER_ACTION_REQUIRED= line to stdout so the orchestrator
 # can collect and apply the deferred Linear action via MCP.
@@ -816,17 +816,41 @@ workflow_normalize_issue_tracker_provider() {
 # emitted directly by add-backlog-item.sh with "title=<title>" instead of
 # "issue=<id>", because for new items there is no issue ID yet.
 #
+# The third argument must be a single "key=value" pair. When the value portion
+# contains spaces, it is single-quoted in the output so that parsers can
+# unambiguously extract the value (e.g. `target_status='Plan in Review'`).
+# Linear status names do not contain single quotes, so this quoting is safe for
+# all controlled-vocabulary values produced by the workflow.
+#
 # Examples:
 #   emit_linear_deferred_action set_status ENG-123 "target_status=Plan in Review"
 #   emit_linear_deferred_action read_status ENG-123
 #
-# Output format: TRACKER_ACTION_REQUIRED=<action_type> issue=<issue_id>[ <extra>]
+# Output format: TRACKER_ACTION_REQUIRED=<action_type> issue=<issue_id>[ key='value']
 emit_linear_deferred_action() {
   local action_type="$1"
   local issue_id="$2"
   local extra="${3:-}"
-  printf 'TRACKER_ACTION_REQUIRED=%s issue=%s%s\n' \
-    "$action_type" "$issue_id" "${extra:+ $extra}"
+  if [ -z "$extra" ]; then
+    printf 'TRACKER_ACTION_REQUIRED=%s issue=%s\n' "$action_type" "$issue_id"
+    return 0
+  fi
+  # Split at the first '=' to separate the key from the value.
+  local _ela_key _ela_val
+  _ela_key="${extra%%=*}"
+  _ela_val="${extra#*=}"
+  # Single-quote values that contain spaces so downstream parsers can
+  # unambiguously extract the value without splitting on internal whitespace.
+  case "$_ela_val" in
+    *' '*)
+      printf "TRACKER_ACTION_REQUIRED=%s issue=%s %s='%s'\n" \
+        "$action_type" "$issue_id" "$_ela_key" "$_ela_val"
+      ;;
+    *)
+      printf 'TRACKER_ACTION_REQUIRED=%s issue=%s %s=%s\n' \
+        "$action_type" "$issue_id" "$_ela_key" "$_ela_val"
+      ;;
+  esac
 }
 
 # workflow_emit_deferred_tracker_action — public alias for emit_linear_deferred_action

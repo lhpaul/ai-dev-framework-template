@@ -495,9 +495,11 @@ signals and apply each one via Linear MCP before proceeding to the next item:
 for each line in Work Item Runner output:
   case line:
     "TRACKER_ACTION_REQUIRED=set_status issue=<id> target_status=<status>":
-      call Linear MCP updateIssue(id, status=<status>)
+      status = strip_single_quotes(<status>)   # values with spaces are single-quoted
+      call Linear MCP updateIssue(id, status=status)
     "TRACKER_ACTION_REQUIRED=create_item title=<title>":
-      call Linear MCP createIssue(title=<title>, teamId=<team>)
+      title = strip_single_quotes(<title>)     # values with spaces are single-quoted
+      call Linear MCP createIssue(title=title, teamId=<team>)
     "TRACKER_UPDATE_REQUIRED: set issue #<N> status to \"<status>\"":
       call Linear MCP updateIssue(id=<N>, status=<status>)
 ```
