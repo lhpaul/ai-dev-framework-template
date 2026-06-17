@@ -511,6 +511,7 @@ Execute each step from the implementation plan in order.
 - Follow the implementation order in the plan
 - If you hit a spec gap (something not covered by the spec), **stop and report** — do not make unilateral decisions
 - If the scope is larger than the plan described, **stop and report**
+- Do not write, modify, or stage any file outside the plan's stated scope, even as a working-tree-only change. Discard any accidental out-of-scope modifications before committing.
 - After each logical chunk of work, verify your changes are still building
 
 **After schema/model changes** (if applicable):

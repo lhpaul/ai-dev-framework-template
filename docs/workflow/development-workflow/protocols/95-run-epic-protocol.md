@@ -354,6 +354,19 @@ This step applies only when the invocation policy includes `--delegate-review`.
 Without delegated review authority, any PR that reaches the normal
 `ready-for-human-review` handoff remains waiting for human review.
 
+**Pre-dispatch: create the integration branch once before dispatching parallel agents.**
+If the resolved base branch does not yet exist on the remote, create and push it
+exactly once before dispatching any in-scope item agents:
+
+```bash
+git checkout -b <base-branch> origin/develop  # or the appropriate upstream
+git push -u origin <base-branch>
+```
+
+Do this in the orchestrator context, not inside a dispatched agent. Parallel
+agents must not race to create the same branch from `develop` — this produces
+divergent starting HEADs and stacked-branch contamination across sibling items.
+
 For each in-scope item:
 
 1. Advance the item with the existing `/run-item-work` or stage protocol. Do not
