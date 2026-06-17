@@ -1,8 +1,15 @@
 ---
-description: Resolve a native GitHub epic or explicit item list into a bounded workflow execution scope, with optional delegated review and merge gates. Usage: /run-epic --epic <issue-number> | --items <issue-number>[,<issue-number>...] [--base <branch>] [--delegate-review] [--may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--json]
+description: "Compatibility/advanced alias: resolve a native GitHub epic or explicit item list into a bounded workflow execution scope, with optional delegated review and merge gates. For the recommended starting point, use /run-work <epic-target> instead. Usage: /run-epic --epic <issue-number> | --items <issue-number>[,<issue-number>...] [--base <branch>] [--delegate-review] [--may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--json]"
 ---
 
 # Cursor Command: Run Epic
+
+> **Compatibility/advanced alias**: `/run-epic` bypasses the `/run-work`
+> routing layer and invokes the bounded epic scope resolver directly with
+> explicit delegation flags. If you are not sure which command to use, start
+> with `/run-work <epic-number>` — it will route to this protocol automatically
+> when the target is epic-like. Use `/run-epic` when you need direct control
+> over delegation flags (`--delegate-review`, `--may-merge`, `--max-risk`).
 
 Follow the resolver protocol exactly as defined in:
 

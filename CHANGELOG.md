@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-06-17
+
+### Added
+
+- **Cursor Bugbot reviewer platform** (#990): `bugbot` is now a recognized value for `review.on_draft.github`/`review.on_ready.github` in `.ai-dev-workflow.yaml`. `pr-review-loop.sh` triggers Cursor Bugbot, polls its check run, classifies the verdict (clean/blocking/timeout/unavailable), summarizes blocking `cursor[bot]` findings with severity and location context, and includes Bugbot threads in platform thread auditing.
+- **Guardrails config and enforcement** (#979, #980): an optional `guardrails` section in `.ai-dev-workflow.yaml` defines autonomy modes, per-stage permissions, and risk limits. Orchestration enforces guardrails at backlog-start, PR-open, delegated review, delegated merge, and completion, naming the exact guardrail on every stop. New `guardrails.md` and `guardrails-enforcement.md` document the full policy.
+- **`/run-work` as the adaptive workflow entrypoint** (#978): `/run-work` routes to Protocol 90 (portfolio/explicit-list), Protocol 91 (single-item), or Protocol 95 (epic) via `run-work-router.sh`. New Protocol 96 documents the five routing modes and read-only contract. `/run-item-work` and `/run-epic` are now compatibility/advanced aliases.
+- **Cursor workflow surfaces** (#989, #991): adds `smoke-tester` and `graduate-development` Cursor slash commands, a Cursor Bugbot integration guide (`docs/workflow/development-workflow/integrations/bugbot.md`), and records the decision not to ship a Cursor-native skills mirror.
+- **Regression tests for `run_bugbot_review`** (#1009): four new test paths in `test-pr-review-loop.sh` covering idempotency fast-path, trigger-failed escalation, fetch-failed escalation, and neutral clean. All 219 tests pass.
+
+### Changed
+
+- **Cursor workflow documentation** (#989): AGENTS.md, README.md, and `docs/testing/README.md` updated to reflect `/graduate-development <slug>` and the corrected smoke-tester command name.
+
+### Fixed
+
+- **Pre-branch HEAD guard** (#1004): Protocols 01–03 now verify the current HEAD SHA against `origin/develop` or `origin/main` before `git checkout -b`, preventing silent stacked-branch creation when parallel agents share a checkout.
+- **Tracker verification after delegated merge** (#1005): Protocol 95 re-reads live GitHub Projects status after each delegated merge, re-applies if stale, and records the outcome in the audit comment.
+- **Bugbot polling sleep signal-safety** (#1008): inline comment confirms `_interruptible_sleep` in `run_bugbot_review` is SIGTERM-safe.
+
 ## [0.32.0] - 2026-06-16
 
 ### Added
@@ -940,7 +960,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.32.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.33.0...HEAD
+[0.33.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.30.2...v0.31.0
 [0.30.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.30.1...v0.30.2

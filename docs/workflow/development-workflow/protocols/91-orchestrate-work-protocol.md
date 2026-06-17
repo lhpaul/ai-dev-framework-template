@@ -14,6 +14,79 @@ This protocol may be entered in either of two ways:
 
 ---
 
+## Routing From /run-work
+
+`/run-work <single-non-epic-target>` enters this protocol after the routing
+classifier (`scripts/development-workflow/run-work-router.sh`, Protocol 96)
+determines the routing mode is `single_item`.
+
+**`single_item` → `epic` upgrade** (AC5): When a single target resolves to an
+epic-like issue (one with child items or native sub-issues), the router upgrades
+from `single_item` to `epic` and routes to `95-run-epic-protocol.md` instead.
+
+**Existing scope guard applies** (AC2): The hard-bounded scope guard in Step 1
+already prevents out-of-scope mutations for item-specific invocations. No
+additional scope narrowing is needed for the `single_item` routing case.
+
+`/run-item-work` invoked directly (without `/run-work`) is a **compatibility/
+advanced alias** that also enters this protocol. Its behavior is unchanged.
+
+See `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
+for the full routing specification.
+
+---
+
+## Step 0: Load Effective Guardrails
+
+Before any artifact-mutating action (before creating branches, opening PRs,
+updating tracker status, or dispatching stage agents), the Work Item Runner
+resolves and reports the **effective guardrails** for this run.
+
+See `docs/workflow/development-workflow/guardrails-enforcement.md` for the
+complete resolution rules, the config-field → run-epic-policy mapping table, the
+named stop conditions, and the audit-evidence rules. This section summarizes the
+in-protocol obligations only.
+
+### Resolution
+
+Resolve the effective guardrails by layering three sources (lowest to highest
+priority):
+
+1. Repository configuration — the `guardrails` block in `.ai-dev-workflow.yaml`.
+2. Session overrides — values set earlier in the same conversation.
+3. Invocation overrides — flags supplied with the current invocation (e.g.,
+   `--delegate-review`, `--may-merge`, `--max-risk`).
+
+When no `guardrails` section is present, apply the conservative defaults: mode
+`manual`, no delegated merge, backlog starts confirmation-gated. See section 7
+of `guardrails-enforcement.md`.
+
+If the `guardrails` block is present but unreadable or internally contradictory,
+stop immediately with the `guardrails_config_unreadable` stop condition before
+any mutation. See section 6 of `guardrails-enforcement.md`.
+
+### Report in the Work Item Runner Summary
+
+Before taking any artifact-mutating action, state the following in the run
+summary (including in dispatched-subagent handoffs when the Portfolio
+Orchestrator resolves guardrails at the portfolio level and passes them down):
+
+- Effective autonomy mode.
+- Per-stage open/merge permissions (`may_open_pr`, `may_merge_pr`).
+- Per-stage maximum merge risk (`max_merge_risk`).
+- Backlog-start policy (`backlog_start.allow_without_confirmation`).
+- Configured stop conditions.
+- Audit requirements.
+- Which values were changed by an invocation or session override (if any).
+
+When the Portfolio Orchestrator resolved guardrails at the portfolio level and
+passed them into this Work Item Runner handoff, the Work Item Runner inherits
+those resolved guardrails rather than re-resolving them independently. Invocation
+overrides supplied at the portfolio level flow through to the per-item gates
+without re-prompting.
+
+---
+
 ## Overview
 
 The Work Item Runner:
@@ -118,6 +191,14 @@ When dispatching a subagent for this item, include a short "Tracker Work Item Su
 
 ### What can advance now?
 
+> **Guardrails check — backlog-start gate**: Before transitioning any Backlog
+> item into Writing Spec, Writing Plan, or In Development for the first time,
+> apply the backlog-start gate from `guardrails-enforcement.md` section 3 Gate 2.
+> If `backlog_start.allow_without_confirmation` is not `true` in the effective
+> guardrails, stop before starting the item and ask the human to confirm, naming
+> the items proposed to start. Resuming an item already in progress is not a
+> backlog start.
+
 | Current state / detection                                          | Can advance if...                                                                                                                                   | Next action                                                                                                                                                                                                                                                                  |
 | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Backlog (Feature)                                                  | Human has requested this specific item and tracker Type/brief classifies it as Feature                                                              | Set tracker status to **Writing Spec**, then run `01-generate-spec-protocol.md`                                                                                                                                                                                              |
@@ -126,16 +207,16 @@ When dispatching a subagent for this item, include a short "Tracker Work Item Su
 | Backlog (Workflow)                                                 | Human has requested this specific item and tracker Type/brief classifies it as Workflow                                                             | Route by the brief's concrete path: full pipeline, refactor, or fast-track. If ambiguous, stop for a human decision rather than guessing.                                                                                                                                     |
 | Writing Spec                                                       | Tracker **Writing Spec** — spec PR not yet human-ready                                                                                              | Continue spec branch/PR work (generate, internal review, reviewer tools, CI) until tracker moves to **Spec in Review**                                                                                                                                                       |
 | Spec in Review                                                     | Tracker **Spec in Review** — spec PR ready for humans                                                                                               | Wait — human review / merge (unless addressing `needs-fixes`)                                                                                                                                                                                                                |
-| Spec branch pushed, no PR yet                                      | Branch exists on local / remote / worktree                                                                                                          | Run the spec review gate via `REVIEW.md` / `01-review-spec-protocol.md`, open the PR, then finish PR readiness                                                                                                                                                               |
+| Spec branch pushed, no PR yet                                      | Branch exists on local / remote / worktree; `stages.spec.may_open_pr` is `true` (default) — if `false`, do not open the PR and report the `stages.spec.may_open_pr` guardrail | Run the spec review gate via `REVIEW.md` / `01-review-spec-protocol.md`, open the PR, then finish PR readiness                                                                                                                                                               |
 | Spec Ready                                                         | Spec PR is merged                                                                                                                                   | Set tracker status to **Writing Plan**, then run `02-generate-implementation-plan-protocol.md`                                                                                                                                                                               |
 | Plan written locally, spec PR not yet merged                       | Plan branch exists locally or in worktree; spec PR is still open (not merged)                                                                       | **Ordering gate**: do NOT open the plan PR. Stop after the spec PR is `ready-for-human-review` and report: "spec PR is ready; plan is written and staged locally, but plan PR will not be opened until spec PR is confirmed merged." Resume in next run after spec PR merge. |
 | Writing Plan                                                       | Tracker **Writing Plan** — plan PR not yet human-ready — spec PR already merged (Full Pipeline only; Refactor items are exempt — no spec PR exists) | Continue plan branch/PR work until tracker moves to **Plan in Review**                                                                                                                                                                                                       |
 | Plan in Review                                                     | Tracker **Plan in Review** — plan PR ready for humans                                                                                               | Wait — human review / merge (unless addressing `needs-fixes`)                                                                                                                                                                                                                |
-| Plan branch pushed, no PR yet                                      | Branch exists on local / remote / worktree; spec PR already merged (Full Pipeline only; Refactor items are exempt — no spec PR exists)              | Run the plan review gate via `REVIEW.md` / `02-review-implementation-plan-protocol.md`, open the PR, then finish PR readiness                                                                                                                                                |
+| Plan branch pushed, no PR yet                                      | Branch exists on local / remote / worktree; spec PR already merged (Full Pipeline only; Refactor items are exempt — no spec PR exists); `stages.plan.may_open_pr` is `true` (default) — if `false`, do not open the PR and report the `stages.plan.may_open_pr` guardrail | Run the plan review gate via `REVIEW.md` / `02-review-implementation-plan-protocol.md`, open the PR, then finish PR readiness                                                                                                                                                |
 | Plan Ready                                                         | Plan PR is merged                                                                                                                                   | Set tracker status to **In Development**, then run `03-implement-development-protocol.md`                                                                                                                                                                                    |
 | In Development                                                     | Tracker **In Development** — feature/fix PR not yet human-ready                                                                                     | Continue implementation branch/PR work (Step 7a, 7, 8) until tracker moves to **Development in Review**                                                                                                                                                                      |
 | Development in Review                                              | Tracker **Development in Review** — feature/fix PR ready for humans                                                                                 | Wait — human review / merge (unless addressing `needs-fixes`)                                                                                                                                                                                                                |
-| Dev branch pushed, no PR yet                                       | Branch exists on local / remote / worktree                                                                                                          | Open draft PR, run the internal review gate (Step 7a), run `gh pr ready` to convert to non-draft, then run automated reviewer loop (Step 7) and CI loop (Step 8)                                                                                                             |
+| Dev branch pushed, no PR yet                                       | Branch exists on local / remote / worktree; `stages.implementation.may_open_pr` is `true` (default) — if `false`, do not open the PR and report the `stages.implementation.may_open_pr` guardrail | Open draft PR, run the internal review gate (Step 7a), run `gh pr ready` to convert to non-draft, then run automated reviewer loop (Step 7) and CI loop (Step 8)                                                                                                             |
 | Draft PR open, internal review pending                             | PR is draft and the relevant internal review gate has not run yet or has open findings                                                              | Run the stage-specific internal review gate (Step 7a); apply fixes, push, repeat until clean. Once APPROVED, run `gh pr ready` to convert to non-draft                                                                                                                       |
 | Non-draft PR open, no readiness label, external review not yet run | PR is non-draft (converted after Step 7a APPROVED), external review not yet run                                                                     | Run Step 7 (external automated reviewers) and Step 8 (CI)                                                                                                                                                                                                                    |
 | PR open (non-draft), no readiness label                            | PR exists and latest push has not fully cleared                                                                                                     | Run Step 7 and Step 8 until clean or escalated                                                                                                                                                                                                                               |
@@ -801,6 +882,16 @@ If the human agrees, follow `docs/workflow/development-workflow/protocols/06-ret
 ---
 
 ## Step 7a: Internal Review Gate (Draft PR)
+
+**Guardrails check — delegated review gate**: Before entering this review
+handoff, check whether the effective guardrails grant delegated review authority
+for this stage. Per `guardrails-enforcement.md` section 3 Gate 4:
+
+- If the effective mode is `delegated` or `autonomous` and the stage
+  `may_merge_pr` is not explicitly `false`: the runner may make the review
+  decision using the review-and-fix behavior described in this step.
+- Otherwise: leave the PR at its normal `ready-for-human-review` handoff — do
+  not make the review decision autonomously.
 
 Run this step immediately after opening a draft PR, and again after any push that addresses internal-review findings.
 
@@ -1558,6 +1649,25 @@ See [`integrations/e2e-regression.md`](../integrations/e2e-regression.md) for th
 
 ## Step 8: CI Loop
 
+**Guardrails check — delegated merge gate**: After the CI loop and readiness
+checks complete (Step 8a), before merging, apply the delegated merge gate from
+`guardrails-enforcement.md` section 3 Gate 5. When `stages.<stage>.may_merge_pr`
+is `true` in the effective guardrails, assemble the evidence object and run:
+
+```bash
+./scripts/development-workflow/run-epic-risk-classifier.sh \
+  --pr <pr-number> --max-risk <stages.<stage>.max_merge_risk>
+
+./scripts/development-workflow/run-epic-delegated-gate.sh --input <evidence-file>
+```
+
+Merge only when the gate returns `merge_allowed` **and** every required-evidence
+check in section 3 Gate 5 of `guardrails-enforcement.md` passes. For medium-risk
+decisions, include a complete "why safe to merge" explanation. A risk classified
+above the stage `max_merge_risk` stops the run and names the `high_risk_change`
+guardrail. When `may_merge_pr` is `false`, do not merge automatically — leave the
+PR at the `ready-for-human-review` handoff.
+
 **Only after Step 7 (and Step 7b for implementation PRs) has completed**, wait for required checks to settle.
 
 Prefer the helper script:
@@ -1944,6 +2054,20 @@ This checklist ensures the label sequence is always complete and all CI checks (
 
 ## Step 8b: Update Tracker Status
 
+**Guardrails check — completion gate**: Before marking an item complete for a
+stage (updating tracker status to `Spec in Review`, `Plan in Review`, or
+`Development in Review`), apply the completion gate from `guardrails-enforcement.md`
+section 3 Gate 6:
+
+1. Confirm the stage outcome against **live state** — the PR status must be
+   `MERGED` for stage-complete transitions, or the `ready-for-human-review`
+   label must be present and verified for in-review transitions. Never infer
+   completion from stale memory, branch names, or prior resolver output.
+2. If `audit.pr_disposition_record` is `required` in the effective guardrails,
+   confirm the PR disposition record has been written (or will be written
+   immediately after) before setting the tracker status. If the audit record
+   cannot be produced, apply the `missing_audit_evidence` stop condition.
+
 After the label readiness checklist passes, update the tracker status to reflect the PR is waiting for human review:
 
 - For **spec PRs** (`spec/*`): set tracker status to `Spec in Review`
@@ -2076,3 +2200,25 @@ git branch -D <merged-branch>           # force-delete local branch (squash merg
 ```
 
 If the item's tracker status is already in a further-advanced state (e.g., already `In Development` when a spec PR merges), do not roll it back — leave it as-is and only clean up local branches/worktrees.
+
+---
+
+## Step 11: Guardrails Audit Recording
+
+After any delegated review decision, fix, merge, block, or escalation decision,
+record audit evidence if `audit.pr_disposition_record` is `required` in the
+effective guardrails. See `guardrails-enforcement.md` section 8 for the full
+rules and helper invocations.
+
+**Named stop-and-name behavior**: At any decision point during the run, if a
+configured stop condition is met or required state is missing, stop before the
+guarded action and report:
+
+1. The exact stop condition name (from `guardrails-enforcement.md` section 4).
+2. The affected work item (issue number, PR number, or branch).
+3. The human action required to unblock.
+
+Stop conditions never weaken below the baseline human-stops defined in
+`guardrails-enforcement.md` section 4. Every stop appears in the Work Item
+Runner Summary under a "Stops" section with its named cause, affected item, and
+unblocking action.

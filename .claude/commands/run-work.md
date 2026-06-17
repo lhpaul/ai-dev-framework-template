@@ -1,12 +1,45 @@
 ---
-description: Batch-orchestrate and supervise multiple developments. Reads current state from the issue tracker and/or dev folders, builds safe parallel batches, and keeps each selected item moving until it is waiting on a human, blocked, or escalated. Usage: /run-work [optional filter, e.g. "only spec stage" or "feature-slug"]
+description: "Primary adaptive workflow entrypoint. Routes to no-target scan, single-item, explicit-list, or epic behavior based on your request. Usage: /run-work [<target> ...] — with no target it proposes the largest safe plan; with one target it advances that item; with multiple targets it treats them as a hard bounded scope; with an epic it does read-only scope resolution first."
 ---
 
 # Claude Code Command: Run Work
 
-Follow the batch orchestration protocol exactly as defined in:
+`/run-work` is the **primary adaptive entrypoint** for workflow orchestration.
+It inspects the request, tracker/repository state, and repository configuration,
+then routes to the appropriate behavior via the routing classifier
+(`scripts/development-workflow/run-work-router.sh`, Protocol 96):
 
-`docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
+| Routing mode     | When it applies                                      | Protocol entered            |
+| ---------------- | ---------------------------------------------------- | --------------------------- |
+| `no_target_scan` | No target supplied                                   | Protocol 90 (portfolio)     |
+| `single_item`    | Exactly one non-epic target                          | Protocol 91 (single item)   |
+| `explicit_list`  | Two or more explicit targets (hard bounded scope)    | Protocol 90 (bounded)       |
+| `epic`           | Epic-like target or `--epic` flag                    | Protocol 95 (epic resolver) |
+| `ambiguous`      | Cannot resolve deterministically — stops for human   | No mutation                 |
+
+Every invocation emits a routing-decision record showing the inferred mode,
+resolved scope, and the inputs that drove the decision.
+
+> **Compatibility/advanced aliases**: `/run-item-work` advances exactly one known
+> item directly (skips routing). `/run-epic` runs the bounded epic resolver with
+> explicit delegation flags. Both are still fully supported.
+
+## Routing Classifier
+
+Run before entering any underlying protocol:
+
+```bash
+./scripts/development-workflow/run-work-router.sh [<target>...] [--json]
+```
+
+## Underlying Protocols
+
+Follow the appropriate protocol based on the classified routing mode:
+
+- `no_target_scan` / `explicit_list` → `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
+- `single_item` → `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
+- `epic` → `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md`
+- Routing specification → `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
 
 ## Tracker Classification
 
@@ -21,6 +54,7 @@ automation; keep operational labels such as `ready-for-human-review`,
 
 Key responsibilities:
 
+- Run the routing classifier to determine mode and emit a routing-decision record
 - Read current state from the issue tracker (if configured) and `docs/specs/developments/`
 - When using an issue tracker, read the current brief per `docs/workflow/development-workflow/integrations/issue-tracker.md`
 - Respect dependencies declared in specs
@@ -28,5 +62,5 @@ Key responsibilities:
 - Flag conflicts to the human rather than choosing silently
 - Use the helper scripts in `scripts/development-workflow/` to inspect state, plan batches, resume partial work, poll automated review, and poll CI
 - In `workflow_hub`, include selected product repository context in implementation handoffs; missing mode or `single_repo` does not require `--repo`
-- Use the Agent tool to dispatch the `item-orchestrator` agent for each selected item when possible
+- Dispatch `/item-orchestrator` for each selected item when possible
 - Report a summary of what was started, what is ready for review, what was serialized, and what is blocked

@@ -4,6 +4,7 @@ This document defines **platform-agnostic** expectations for how agents use one 
 
 Platform-specific setup lives in each platform's own integration doc. See:
 
+- [`integrations/bugbot.md`](bugbot.md)
 - [`integrations/claude-code-action.md`](claude-code-action.md)
 - [`integrations/coderabbit.md`](coderabbit.md)
 - [`integrations/greptile.md`](greptile.md)

@@ -42,7 +42,7 @@ review:
     # Ordered list of GitHub/App/CLI reviewers that can safely evaluate draft
     # PRs. These run before the PR is converted to ready.
     # Supported today by pr-review-loop.sh: greptile, devin, coderabbit,
-    # pr-agent, codex-github, claude-code-action, haystack, copilot.
+    # pr-agent, codex-github, claude-code-action, haystack, copilot, bugbot.
     github:
       - pr-agent
 
@@ -67,6 +67,15 @@ review:
   #                  not supported. See docs/workflow/development-workflow/integrations/copilot.md
   #   COPILOT_BOT_LOGIN  — override the default Copilot bot login
   #                        (default: "copilot-pull-request-reviewer[bot]")
+  #
+  # Bugbot platform options (Cursor Bugbot — requires the Cursor GitHub App installed
+  # on the repository; place "bugbot" in on_draft.github or on_ready.github):
+  #   BUGBOT_BOT_LOGIN        — override the Bugbot bot login
+  #                             (default: "cursor[bot]")
+  #   BUGBOT_CHECK_NAME       — override the check-run name to poll
+  #                             (default: "Cursor Bugbot")
+  #   BUGBOT_TRIGGER_COMMENT  — override the trigger comment posted to start a run
+  #                             (default: "bugbot run")
 
   # Runner-context constraint:
   #   This template defaults to 'codex' for Codex-first workflow runs. 'codex' as
@@ -148,3 +157,84 @@ template:
   # Written automatically by sync-template after a successful sync.
   # Used by the retrospective cross-reference step to identify "already fixed upstream" findings.
   last_synced_version: ""
+
+# guardrails — declares how much authority AI agents have when advancing work through the
+# development workflow. This section is OPTIONAL. When omitted, all values resolve to the
+# documented safe defaults below, preserving today's conservative, human-reviewed behavior
+# (agents do not merge pull requests and do not start backlog work without confirmation).
+#
+# Enforced at runtime by Protocols 90, 91, and 95 via three-layer precedence:
+# repo config (this file) → session overrides → invocation overrides (highest priority).
+#
+# See docs/workflow/development-workflow/guardrails.md for plain-language explanations,
+# mode descriptions, worked examples, stop conditions, and audit requirements.
+# See docs/workflow/development-workflow/guardrails-enforcement.md for the runtime
+# enforcement reference (effective-guardrails resolution, five enforcement gates,
+# named stop conditions, audit-evidence rules).
+#
+# guardrails:
+#   # mode — overall autonomy level for this repository.
+#   # Accepted values: manual | assisted | delegated | autonomous
+#   # Default: manual (agents draft and propose; a human performs every merge)
+#   mode: manual
+#
+#   # backlog_start — controls whether an agent may pick up a backlog item and begin
+#   # spec/plan/implementation work without a human confirming each item.
+#   backlog_start:
+#     # allow_without_confirmation — when false (default), an agent must receive an explicit
+#     # human instruction before starting a new backlog item.
+#     allow_without_confirmation: false   # default: false
+#
+#   # stages — per-stage permissions for spec, plan, and implementation.
+#   # Each stage can be configured independently.
+#   stages:
+#     spec:
+#       # may_open_pr — whether an agent may open a pull request for this stage.
+#       # Default: true (agents always draft PRs)
+#       may_open_pr: true
+#       # may_merge_pr — whether an agent may merge a clean pull request for this stage.
+#       # Default: false (a human must merge unless explicitly set to true)
+#       may_merge_pr: false
+#       # max_merge_risk — the highest risk level at which an agent may merge.
+#       # An agent must stop and defer to a human for any risk above this level.
+#       # Accepted values: low | medium | high
+#       # Default: low
+#       max_merge_risk: low
+#
+#     plan:
+#       may_open_pr: true
+#       may_merge_pr: false
+#       max_merge_risk: low
+#
+#     implementation:
+#       may_open_pr: true
+#       may_merge_pr: false
+#       max_merge_risk: low
+#       # required_evidence — named evidence items that must be present before an agent
+#       # may merge at this stage. Absence of any listed item causes the agent to stop.
+#       # Example values: regression, smoke_test, security_review
+#       required_evidence:
+#         - regression
+#
+#   # stop_conditions — situations in which an agent must stop and defer to a human,
+#   # regardless of mode and regardless of per-stage permissions.
+#   # These conditions are NEVER weaker than today's behavior; they hold in all modes.
+#   stop_conditions:
+#     - unclear_requirements          # requirement or acceptance criterion is ambiguous
+#     - architecture_decision         # choice requires human input on architecture
+#     - failing_ci                    # required CI checks are red
+#     - unresolved_blocking_review    # a blocking review thread is unresolved
+#     - high_risk_change              # classified risk exceeds the configured max_merge_risk
+#     - destructive_action            # action would delete branches, data, or releases
+#     - missing_tracker_context       # work item is missing required tracker metadata
+#     - missing_required_secret_or_permission  # a required credential or GitHub permission is absent
+#
+#   # audit — records that an agent must create after acting under delegated or autonomous mode.
+#   audit:
+#     # pr_disposition_record — a stable comment on the PR summarizing the merge decision,
+#     # the risk classification, and the evidence consulted. Required in delegated/autonomous.
+#     pr_disposition_record: required
+#     # work_item_ledger_record — a comment on the work item (issue/tracker card) recording
+#     # the stage completed, the PR merged, and the agent session that acted.
+#     # Required in delegated/autonomous.
+#     work_item_ledger_record: required

@@ -15,9 +15,33 @@ resolved scope.
 
 ---
 
+## Routing From /run-work
+
+`/run-work <epic-like target>` (or `/run-work --epic <n>`) enters this protocol
+after the routing classifier (`scripts/development-workflow/run-work-router.sh`,
+Protocol 96) determines the routing mode is `epic`. The routing-decision record
+and resolved epic target are available as context.
+
+**Read-only phase before mutation** (BR6, AC4): The scope resolver must complete
+before any item is created, reviewed, merged, or cleaned up. This is the existing
+read-only contract for this protocol and is not changed by routing.
+
+**`single_item` → `epic` upgrade** (AC5): When a single target resolves to an
+epic-like issue (one with child items or native sub-issues), the router upgrades
+from `single_item` to `epic` before routing here. The resolver then handles scope
+resolution as normal.
+
+`/run-epic` invoked directly (without `/run-work`) is a **compatibility/advanced
+alias** that also enters this protocol. Its behavior is unchanged.
+
+See `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
+for the full routing specification.
+
+---
+
 ## Overview
 
-Use this protocol when a human invokes `/run-epic`, `$run-epic`, or asks to run
+Use this protocol when a human invokes `/run-epic`, `$run-epic`, `/run-work <epic-like target>`, or asks to run
 an epic / bounded item list as a delegated workflow batch.
 
 The resolver supports exactly one scope source:
@@ -39,6 +63,20 @@ Optional flags:
 - `--max-risk <low|medium|high>`: maximum risk the runner may merge without
   human input.
 - `--json`: emit machine-readable output for an orchestrator handoff.
+
+**Delegation flags as the invocation-override layer**: `--delegate-review`,
+`--may-merge`, `--may-start-backlog`, and `--max-risk` are the
+**invocation-override** layer (highest priority) of the three-layer guardrails
+precedence defined in
+`docs/workflow/development-workflow/guardrails-enforcement.md` (section 1).
+The repository `guardrails` config block in `.ai-dev-workflow.yaml` is the base
+layer. An invocation override may narrow or widen authority only within what the
+repository config and the effective autonomy mode permit — it cannot grant
+authority the mode forbids. This protocol and Protocols 90/91 share **one
+policy path**: the same run-epic helpers (`run-epic-risk-classifier.sh`,
+`run-epic-delegated-gate.sh`, `run-epic-audit-trail.sh`) and the same
+enforcement gates described in `guardrails-enforcement.md` section 3. There is
+no separate policy model for `/run-epic` vs. `/run-work` routing.
 
 The resolver is read-only even when delegation flags are supplied. It must not
 update tracker status, create branches, open or edit PRs, merge PRs, close
@@ -316,6 +354,40 @@ This step applies only when the invocation policy includes `--delegate-review`.
 Without delegated review authority, any PR that reaches the normal
 `ready-for-human-review` handoff remains waiting for human review.
 
+**Pre-dispatch: create the integration branch once before dispatching parallel agents.**
+If the resolved base branch does not yet exist on the remote, create and push it
+exactly once before dispatching any in-scope item agents:
+
+```bash
+git checkout -b <base-branch> origin/develop  # or the appropriate upstream
+git push -u origin <base-branch>
+```
+
+Do this in the orchestrator context, not inside a dispatched agent. Parallel
+agents must not race to create the same branch from `develop` — this produces
+divergent starting HEADs and stacked-branch contamination across sibling items.
+
+**Current mitigation — pre-branch HEAD guard (short-term)**: Each agent protocol
+(Protocols 01, 02, and 03) now includes a mandatory pre-branch HEAD verification
+step. Before running `git checkout -b`, every agent compares its current HEAD
+SHA against the expected base (`origin/develop` or the integration branch). If
+they differ — indicating that a sibling agent moved the checkout — the agent
+aborts immediately with a clear error rather than silently stacking its branch
+on top of a sibling's commits. When the guard fires, recovery is: (1) reset the
+working tree to the expected base with `git checkout develop && git pull origin
+develop`, then (2) re-run the agent from branch creation.
+
+**Intended long-term fix — worktree isolation**: The durable solution to
+shared-checkout contamination is to dispatch each parallel agent into a
+separate `git worktree` (one worktree per item). With worktree isolation, each
+agent has its own working tree backed by the shared `.git` directory, so no
+agent can disturb another's HEAD or uncommitted changes. Protocol 91 Step 3
+already supports this model via the `BATCH_CONTEXT=true` / worktree path
+contract. Future `/run-epic` parallel dispatch should set `isolation: worktree`
+(or equivalent) so item-orchestrators create a dedicated worktree before
+handing off to each agent, making the pre-branch guard redundant for parallel
+runs while keeping it as a backstop for single-checkout fallback.
+
 For each in-scope item:
 
 1. Advance the item with the existing `/run-item-work` or stage protocol. Do not
@@ -414,7 +486,32 @@ When all gates permit merge:
 2. Verify GitHub reports the PR state as `MERGED`.
 3. Delete or prune the merged branch as appropriate.
 4. Run post-merge cleanup for the correct base branch.
-5. Verify issue state and Project status.
+5. Verify issue state and Project status — **with live re-read and re-apply**:
+
+   a. Determine the expected post-merge tracker status from the merged branch type
+      (see Protocol 91 Step 10 table: `feature/*` / `fix/*` / `refactor/*` /
+      `hotfix/*` → `Merged`; `spec/*` → `Spec Ready`; `implementation-plan/*` →
+      `Plan Ready`).
+
+   b. Re-read the live tracker status from GitHub Projects:
+
+      ```bash
+      gh issue view <issue_number> --json projectItems \
+        --jq '.projectItems[].status.name // "unknown"'
+      ```
+
+   c. If the live status does not match the expected post-merge value, re-apply
+      the tracker update immediately before proceeding to the next item. Do not
+      rely on the agent's earlier claim that the update succeeded — the live
+      read is the authoritative source.
+
+   d. Record the verification result (expected value, live-read value, and
+      whether a re-apply was required) in the PR disposition audit comment for
+      this item. Add a `tracker_status_verified` field with value `true` when
+      the live status matched on first read, or `reapplied` when the re-apply
+      was required. Add `tracker_status_mismatch` with a brief reason when the
+      re-apply also fails.
+
 6. Update the epic ledger.
 7. Rerun scope resolution so newly unblocked items can advance.
 
