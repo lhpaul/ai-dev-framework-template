@@ -4,7 +4,7 @@
 >
 > Fill in this file during project setup. Replace all `[placeholders]` with your project's actual tools, commands, and paths. Delete sections that don't apply.
 
-**Audience**: AI agents running smoke tests (smoke-tester agent, Cursor run-smoke-test command, or equivalent).
+**Audience**: AI agents running smoke tests (smoke-tester agent, Cursor `/smoke-tester` command, or equivalent).
 
 The smoke test _process_ (inputs, output format, pass criteria, fail handling) is defined in the [Smoke Test Protocol](../workflow/development-workflow/protocols/04-smoke-test-protocol.md). This guide covers **how** to execute tests in this specific repo.
 
