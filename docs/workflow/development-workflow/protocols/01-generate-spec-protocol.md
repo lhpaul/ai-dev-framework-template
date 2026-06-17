@@ -256,7 +256,23 @@ If no blocking human decision remains:
 1. Determine the branch slug:
    - **With issue tracker**: `[issue-id]-[feature-slug]` (e.g., `ENG-123-user-auth`)
    - **Without issue tracker**: `[feature-slug]` (e.g., `user-auth`)
-2. Create branch: `git checkout -b spec/[branch-slug]` from `develop`
+2. Create branch from `develop` — but first run the **pre-branch HEAD verification** to prevent stacked-branch contamination in shared-checkout parallel execution:
+
+   ```bash
+   git fetch origin
+   git checkout develop && git pull origin develop
+   EXPECTED_SHA=$(git rev-parse "origin/develop")
+   ACTUAL_SHA=$(git rev-parse HEAD)
+   if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+     echo "ERROR: HEAD ($ACTUAL_SHA) does not match origin/develop ($EXPECTED_SHA)." >&2
+     echo "A sibling agent may have moved this checkout. Abort rather than create a stacked branch." >&2
+     exit 1
+   fi
+   echo "Pre-branch HEAD check passed: HEAD matches origin/develop"
+   git checkout -b spec/[branch-slug]
+   ```
+
+   If the check fails, do not proceed. Report the mismatch to the caller so the working tree can be reset before retrying.
 3. Create the development folder: `docs/specs/developments/[YYYYMMDDHHMMSS]_[feature-slug]/`
 4. Write the spec file: `1_[feature-slug]_specs.md`
 5. **Board membership check (when a tracker issue ID is present)**: If an issue number is available (i.e., the workflow uses a configured issue tracker and an issue ID was provided or created), call `ensure_on_project_board <issue_number> "Writing Spec"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "Writing Spec". On any API failure, the function logs a warning and continues — this step must never block the commit or PR creation. Skip this step entirely when no issue ID is present (no-tracker workflows).
