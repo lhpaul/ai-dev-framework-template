@@ -160,16 +160,40 @@ try:
         with open(sys.argv[1], 'r') as f:
             cfg = yaml.safe_load(f) or {}
     except ImportError:
-        # Minimal YAML-subset reader for flat key: value pairs
+        # Minimal YAML-subset reader: handles only flat top-level key: value
+        # pairs and the nested guardrails block. PyYAML is strongly preferred.
+        sys.stderr.write(
+            "run-work-router: warning: PyYAML not available; "
+            "using minimal YAML parser — nested guardrails config will be read "
+            "with limited support; install pyyaml for full config support\n"
+        )
         cfg = {}
+        current_section = None
         with open(sys.argv[1], 'r') as f:
             for line in f:
-                line = line.rstrip()
-                if ':' in line and not line.lstrip().startswith('#'):
-                    key, _, val = line.partition(':')
-                    key = key.strip()
-                    val = val.strip()
-                    cfg[key] = val
+                stripped = line.rstrip()
+                if not stripped or stripped.lstrip().startswith('#'):
+                    continue
+                indent = len(line) - len(line.lstrip())
+                if indent == 0:
+                    current_section = None
+                    if ':' in stripped:
+                        key, _, val = stripped.partition(':')
+                        key = key.strip()
+                        val = val.strip()
+                        if val:
+                            cfg[key] = val
+                        else:
+                            # Start of a nested block
+                            cfg[key] = {}
+                            current_section = key
+                elif indent > 0 and current_section is not None:
+                    if ':' in stripped:
+                        key, _, val = stripped.lstrip().partition(':')
+                        key = key.strip()
+                        val = val.strip()
+                        if isinstance(cfg.get(current_section), dict):
+                            cfg[current_section][key] = val
 
     guardrails = cfg.get('guardrails') if isinstance(cfg, dict) else None
     if not isinstance(guardrails, dict):
@@ -278,6 +302,9 @@ resolve_token() {
   RESOLVED_KIND="none"
   RESOLVE_FAIL_REASON=""
 
+  # Normalize: strip leading ./ so ./docs/specs/developments/... matches correctly
+  token="${token#./}"
+
   # --- Development folder ---
   if [ -d "$token" ] && [[ "$token" == docs/specs/developments/* ]]; then
     RESOLVED_KIND="dev_folder"
@@ -317,8 +344,15 @@ resolve_token() {
   # --- Branch token: known workflow branch prefix patterns ---
   case "$token" in
     feature/*|fix/*|refactor/*|hotfix/*|spec/*|implementation-plan/*|plan/*)
-      RESOLVED_KIND="branch"
-      return 0
+      # Verify the branch exists locally or on the remote before accepting it.
+      if git show-ref --verify --quiet "refs/remotes/origin/$token" 2>/dev/null || \
+         git show-ref --verify --quiet "refs/heads/$token" 2>/dev/null; then
+        RESOLVED_KIND="branch"
+        return 0
+      fi
+      RESOLVE_FAIL_REASON="branch '$token' matches a workflow prefix pattern but does not exist locally or on origin"
+      RESOLVED_KIND="none"
+      return 1
       ;;
   esac
 
