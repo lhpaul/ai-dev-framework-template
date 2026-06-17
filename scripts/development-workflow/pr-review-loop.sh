@@ -1622,6 +1622,11 @@ run_bugbot_review() {
       check_appeared=1
     fi
 
+    # Signal safety: _interruptible_sleep runs `sleep` as a background job and
+    # blocks on bash's built-in `wait`, which is interruptible by signals.  When
+    # SIGTERM arrives during this wait, the TERM trap fires immediately — killing
+    # the background sleep subprocess (CURRENT_CHILD_PID) and re-raising SIGTERM
+    # — so the process exits within milliseconds regardless of poll_interval size.
     _interruptible_sleep "$poll_interval"
     elapsed=$(( elapsed + poll_interval ))
   done

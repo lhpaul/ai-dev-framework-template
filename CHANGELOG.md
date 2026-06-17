@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Align Cursor workflow surfaces for client rollout** (#989): update the AGENTS.md Workflow Commands table to reflect the new `/graduate-development <slug>` Cursor command, add the explicit skills-mirror decision to the Cursor-facing guidance prose in AGENTS.md and README.md, and correct `docs/testing/README.md` to reference `/smoke-tester` instead of the non-existent `run-smoke-test` command.
 
+### Fixed
+
+- **Document signal-safety of Bugbot polling sleep** (#1008): confirm that the `_interruptible_sleep` call in `run_bugbot_review`'s polling loop is already SIGTERM-safe (sleep runs as a background job; bash's `wait` is interrupted by signals; the TERM trap kills the subprocess immediately). Add an inline comment at the call site explaining this so future readers need not re-investigate.
+- **Add pre-branch HEAD verification guard against parallel-agent stacked-branch contamination** (#1004): Protocols 01, 02, and 03 now require a mandatory pre-branch HEAD check before any `git checkout -b` — the agent compares its current HEAD SHA against the expected base (`origin/develop` or `origin/main`) and aborts with a clear error if they differ, preventing silent stacked-branch creation when sibling agents share a checkout. Protocol 95 Step 8 documents worktree isolation as the intended long-term fix and the pre-branch guard as the current mitigation.
+
 ## [0.32.0] - 2026-06-16
 
 ### Added
