@@ -1992,6 +1992,301 @@ _integration_cleanup
 unset _integ_out _integ_exit INTEG_MOCK_HEAD_JSON
 
 # ---------------------------------------------------------------------------
+# Area 16: run_bugbot_review() — exit-code and key-value output contract (AC-9)
+#
+# Tests cover:
+#   16.0a bot_login_for_platform returns "cursor[bot]" by default for bugbot
+#   16.0b bot_login_for_platform respects BUGBOT_BOT_LOGIN env override
+#   16.1  clean path: check run completes with conclusion=success, no blocking
+#         comments → RESULT=clean, exit 0
+#   16.2  needs_fixes path: check run completes with conclusion=failure, blocking
+#         cursor[bot] review body → RESULT=needs_fixes, exit 1
+#   16.3  escalate (timeout) path: check run in_progress, budget exhausted with
+#         check_appeared=1 → RESULT=escalate, REASON=timeout, exit 2
+#   16.4  escalate (unavailable) path: no check run appears within budget
+#         (check_appeared=0) → RESULT=escalate, REASON=unavailable, exit 2
+#   16.5  escalate (head-sha-unavailable): pulls API returns empty head SHA
+#         → RESULT=escalate, REASON=head-sha-unavailable, exit 2
+#   16.6  run_platform_review routes "bugbot" to run_bugbot_review
+#
+# Each test that exercises run_bugbot_review requires a custom gh mock because
+# the function issues several incompatible gh API call shapes in a single run
+# (pulls API, commits API, check-runs API, PR comments API, reviews API).  The
+# per-test custom mock is written to a temp directory and placed on PATH before
+# calling run_bugbot_review.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 16: run_bugbot_review — clean / needs_fixes / escalate ==="
+
+# Helper overrides injected into every run_bugbot_review subshell.
+_bugbot_overrides='
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  require_gh() { :; }
+  _interruptible_sleep() { :; }
+'
+
+# ---------------------------------------------------------------------------
+# Test 16.0a: bot_login_for_platform returns "cursor[bot]" for bugbot (default)
+# ---------------------------------------------------------------------------
+unset BUGBOT_BOT_LOGIN
+actual="$(bot_login_for_platform "bugbot")"
+run_test "bugbot_bot_login_default" "cursor[bot]" "$actual"
+
+# ---------------------------------------------------------------------------
+# Test 16.0b: bot_login_for_platform respects BUGBOT_BOT_LOGIN env override
+# ---------------------------------------------------------------------------
+export BUGBOT_BOT_LOGIN="my-custom-bugbot[bot]"
+actual="$(bot_login_for_platform "bugbot")"
+run_test "bugbot_bot_login_env_override" "my-custom-bugbot[bot]" "$actual"
+unset BUGBOT_BOT_LOGIN
+
+# ---------------------------------------------------------------------------
+# Test 16.1: clean path — check run conclusion=success, no blocking comments
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_161="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_161/gh" <<'BUGBOT_GH_161'
+#!/usr/bin/env bash
+case "$*" in
+  # pulls API — head SHA resolution
+  *"--jq .head.sha"*)
+    printf 'abc161sha\n'; exit 0 ;;
+  # commit timestamp resolution
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  # trigger comment POST
+  *"--method POST"*)
+    exit 0 ;;
+  # existing inline comments (Phase 1 and Phase 3 success path): no cursor[bot] comments
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  # existing reviews (Phase 1): none
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  # check-runs Phase 2 (trigger guard) and Phase 3 poll: conclusion=success.
+  # Output one page as a raw JSON object (no outer array) to match gh --paginate
+  # format: each page is a top-level object with a check_runs key.
+  *"check-runs"*)
+    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"success","started_at":"2020-01-01T00:00:00Z"}]}\n'
+    exit 0 ;;
+  # headRefOid refresh inside poll loop
+  *"headRefOid"*)
+    printf 'abc161sha\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_161
+chmod +x "$_bugbot_mock_dir_161/gh"
+
+unset BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME BUGBOT_TRIGGER_COMMENT
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_161:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_clean_result" "RESULT=clean" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_clean_blocking_count" "BLOCKING_COUNT=0" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
+run_test "bugbot_clean_exit_code" "0" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_161"
+unset _bugbot_mock_dir_161 actual_output actual_exit
+
+# ---------------------------------------------------------------------------
+# Test 16.2: needs_fixes path — conclusion=failure, blocking cursor[bot] review
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_162="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_162/gh" <<'BUGBOT_GH_162'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc162sha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"--method POST"*)
+    exit 0 ;;
+  # Phase 1 existing comments — none on entry
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  # Phase 1 existing reviews — none on entry; Phase 3 blocking review
+  *"pulls/"*"/reviews"*)
+    printf '[{"user":{"login":"cursor[bot]"},"submitted_at":"2020-01-02T00:00:00Z","state":"CHANGES_REQUESTED","body":"BUGBOT_REVIEW: null pointer dereference at src/main.c:42"}]\n'
+    exit 0 ;;
+  # Output raw page object (no outer array) to match gh --paginate format.
+  *"check-runs"*)
+    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"failure","started_at":"2020-01-01T00:00:00Z"}]}\n'
+    exit 0 ;;
+  *"headRefOid"*)
+    printf 'abc162sha\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_162
+chmod +x "$_bugbot_mock_dir_162/gh"
+
+unset BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME BUGBOT_TRIGGER_COMMENT
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_162:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_needs_fixes_result" "RESULT=needs_fixes" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_needs_fixes_blocking_count_nonzero" "1" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=" | cut -d= -f2)"
+run_test "bugbot_needs_fixes_exit_code" "1" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_162"
+unset _bugbot_mock_dir_162 actual_output actual_exit
+
+# ---------------------------------------------------------------------------
+# Test 16.3: escalate (timeout) — run appeared but never completed
+# poll_interval=1, max_wait=2: loop runs once (sets check_appeared=1 via
+# in_progress status), then budget exhausted → REASON=timeout
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_163="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_163/gh" <<'BUGBOT_GH_163'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc163sha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"--method POST"*)
+    exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  # Return in_progress (raw page object) so check_appeared is set but run never completes.
+  *"check-runs"*)
+    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"in_progress","conclusion":null,"started_at":"2020-01-01T00:00:00Z"}]}\n'
+    exit 0 ;;
+  *"headRefOid"*)
+    printf 'abc163sha\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_163
+chmod +x "$_bugbot_mock_dir_163/gh"
+
+unset BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME BUGBOT_TRIGGER_COMMENT
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_163:$PATH" run_bugbot_review "42" "feature/42-test" "1" "1" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_timeout_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_timeout_reason" "REASON=timeout" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "bugbot_timeout_exit_code" "2" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_163"
+unset _bugbot_mock_dir_163 actual_output actual_exit
+
+# ---------------------------------------------------------------------------
+# Test 16.4: escalate (unavailable) — no check run appeared within budget
+# max_wait=0: poll loop never executes, check_appeared=0 → REASON=unavailable
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_164="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_164/gh" <<'BUGBOT_GH_164'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc164sha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"--method POST"*)
+    exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  # check-runs: no Cursor Bugbot runs → triggers POST (handled above), then
+  # poll loop doesn't run because max_wait=0 → check_appeared stays 0.
+  # Output raw page object (no outer array) to match gh --paginate format.
+  *"check-runs"*)
+    printf '{"check_runs":[]}\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_164
+chmod +x "$_bugbot_mock_dir_164/gh"
+
+unset BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME BUGBOT_TRIGGER_COMMENT
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_164:$PATH" run_bugbot_review "42" "feature/42-test" "1" "0" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_unavailable_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_unavailable_reason" "REASON=unavailable" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "bugbot_unavailable_exit_code" "2" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_164"
+unset _bugbot_mock_dir_164 actual_output actual_exit
+
+# ---------------------------------------------------------------------------
+# Test 16.5: escalate (head-sha-unavailable) — pulls API returns empty SHA
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_165="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_165/gh" <<'BUGBOT_GH_165'
+#!/usr/bin/env bash
+case "$*" in
+  # pulls API returns empty body — jq produces empty string
+  *"--jq .head.sha"*)
+    printf '\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_165
+chmod +x "$_bugbot_mock_dir_165/gh"
+
+unset BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME BUGBOT_TRIGGER_COMMENT
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_165:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_head_sha_unavailable_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_head_sha_unavailable_reason" "REASON=head-sha-unavailable" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "bugbot_head_sha_unavailable_exit_code" "2" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_165"
+unset _bugbot_mock_dir_165 actual_output actual_exit
+
+# ---------------------------------------------------------------------------
+# Test 16.6: run_platform_review routes "bugbot" to run_bugbot_review
+# ---------------------------------------------------------------------------
+_bugbot_dispatch_called=0
+run_bugbot_review() { _bugbot_dispatch_called=1; }
+run_platform_review "bugbot" "999" "feature/test" "30" "120" >/dev/null 2>&1 || true
+run_test "run_platform_review_routes_to_run_bugbot_review" "1" "$_bugbot_dispatch_called"
+unset -f run_bugbot_review
+unset _bugbot_dispatch_called
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
