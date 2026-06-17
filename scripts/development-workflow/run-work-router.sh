@@ -280,8 +280,11 @@ resolve_token() {
         return 0
       fi
     fi
-    # gh unavailable — treat positive integers as unresolvable in live mode
-    # (tests override gh via mock; see test-run-work-router.sh)
+    # gh unavailable — treat positive integers as ambiguous in live mode.
+    # Without gh we cannot distinguish an issue number from a PR number or
+    # confirm the item exists, so we conservatively return "none" to trigger
+    # the ambiguous routing path rather than silently misclassifying.
+    # In tests gh is mocked; see test-run-work-router.sh.
     RESOLVED_KIND="none"
     return 1
   fi
