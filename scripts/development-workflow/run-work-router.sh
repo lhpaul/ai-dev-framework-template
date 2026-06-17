@@ -136,10 +136,14 @@ read_guardrails_config() {
 
   local config_file _cfg_exit
   _cfg_exit=0
-  config_file="$(workflow_config_file 2>/dev/null)" || _cfg_exit=$?
-  if [ "$_cfg_exit" -ne 0 ]; then
-    echo "run-work-router: warning: workflow_config_file lookup failed (exit $_cfg_exit); using guardrails defaults" >&2
-    return 0
+  if [ -n "${AI_DEV_WORKFLOW_CONFIG_FILE:-}" ]; then
+    config_file="${AI_DEV_WORKFLOW_CONFIG_FILE}"
+  else
+    config_file="$(workflow_config_file 2>/dev/null)" || _cfg_exit=$?
+    if [ "$_cfg_exit" -ne 0 ]; then
+      echo "run-work-router: warning: workflow_config_file lookup failed (exit $_cfg_exit); using guardrails defaults" >&2
+      return 0
+    fi
   fi
 
   if [ -z "${config_file:-}" ] || [ ! -f "$config_file" ]; then
