@@ -206,28 +206,28 @@ settings and how to enable or disable it per repository.
 
 ## Reviewer-Loop Status
 
-Bugbot is currently **planned but unsupported** by
-`scripts/development-workflow/pr-review-loop.sh`. When `bugbot` is listed in
-`.ai-dev-workflow.yaml`, the helper script reports it as:
+Bugbot is a **first-class supported platform** in
+`scripts/development-workflow/pr-review-loop.sh`. Declare it under
+`review.on_draft.github` or `review.on_ready.github` in `.ai-dev-workflow.yaml`
+and the loop will automatically trigger Bugbot, poll the "Cursor Bugbot" check
+run on the PR head, classify the verdict, and surface blocking `cursor[bot]`
+findings with severity and location context in the loop summary.
+
+Supported outcome values emitted by the loop:
 
 ```
-RESULT=skipped
-REASON=unsupported-platform
+RESULT=clean          # Bugbot check passed with no blocking findings
+RESULT=needs_fixes    # Bugbot reported blocking findings
+RESULT=timeout        # Check run did not complete within the poll window
+RESULT=unavailable    # Check run was not found or could not be fetched
 ```
 
-This means the automated reviewer loop does not yet poll for Bugbot check results,
-request re-reviews, or surface Bugbot inline comments in the loop summary. Bugbot
-findings still appear on the GitHub PR page and in the Checks tab — the loop
-simply does not integrate with them programmatically.
-
-A future adapter (tracked as a separate work item) will add Bugbot as a first-class
-`pr-review-loop.sh` platform, at which point the `skipped` behavior will be
-replaced by active polling and result propagation. Until then, treat Bugbot
-findings as a complementary signal visible in the GitHub UI but not reflected in
-the loop's aggregate `RESULT=`.
+Timeout and unavailable states are surfaced explicitly and are never treated as a
+clean pass. Bugbot's review threads are included in the standard platform thread
+auditing pass.
 
 See [`integrations/pr-review-platform.md`](pr-review-platform.md) for the full
-contract a platform must satisfy to become a first-class loop platform.
+multi-platform loop contract and aggregation rules.
 
 ---
 
