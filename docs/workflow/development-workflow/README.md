@@ -447,7 +447,7 @@ template:
   last_synced_version: ""
 
 # Optional. Omit to keep today's conservative behavior (mode: manual).
-# MODEL ONLY — enforcement tracked by #980. See guardrails.md.
+# Enforced at runtime by Protocols 90, 91, and 95. See guardrails-enforcement.md.
 guardrails:
   mode: manual
   backlog_start:
@@ -504,7 +504,7 @@ Important implementation notes:
 - `template.is_template` when set to `true` marks this repository as a framework template. Protocol 02 Step 0 (Template-Fit Check) becomes mandatory: before writing any implementation plan, the tech lead must verify that the spec is sufficiently generic for all downstream consumers. Set to `true` in the template repository itself; omit or leave `false` in downstream consumer repositories.
 - `template.repository` is an optional `owner/repo` reference to the upstream template repository. When set, the retrospective protocol (Step 3b) cross-references each finding against that repository's issue tracker to classify findings as already tracked, already fixed, or a new upstream contribution candidate. Leave empty or omit to skip this step entirely. Note: this field is set by downstream consumer repos pointing back to their template origin; the template repo itself leaves this empty.
 - `template.last_synced_version` is written automatically by the sync-template skill after a successful sync (e.g., `v0.22.0`). The retrospective uses this value to identify closed template issues whose fix landed in a version newer than the downstream's last sync, surfacing "just sync" opportunities.
-- `guardrails` is an optional top-level section that declares how much authority AI agents have when advancing work through the development workflow. When the section is absent, all guardrails values resolve to safe defaults that preserve today's conservative, human-reviewed behavior (agents do not merge pull requests and do not start backlog work without confirmation). The default mode is `manual`. See [`guardrails.md`](guardrails.md) for the full reference, worked examples, and migration note. **MODEL ONLY in this pass** — enforcement is tracked by #980.
+- `guardrails` is an optional top-level section that declares how much authority AI agents have when advancing work through the development workflow. When the section is absent, all guardrails values resolve to safe defaults that preserve today's conservative, human-reviewed behavior (agents do not merge pull requests and do not start backlog work without confirmation). The default mode is `manual`. See [`guardrails.md`](guardrails.md) for the full reference, worked examples, and migration note. See [`guardrails-enforcement.md`](guardrails-enforcement.md) for the runtime enforcement reference (three-layer precedence, six enforcement gates, named stop conditions).
 
 Provider-specific setup still lives in the integration guides under `docs/workflow/development-workflow/integrations/`.
 

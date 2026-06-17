@@ -49,3 +49,11 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
    scope, reviewer, CI, risk, and audit evidence; pass `--policy <file>` when
    the resolver policy is captured separately. Merge only when the gate reports
    `merge_allowed`.
+9. **Guardrails layer context**: The `--delegate-review`, `--may-merge`,
+   `--may-start-backlog`, and `--max-risk` flags are the **invocation-override**
+   layer (highest priority) of the three-layer guardrails precedence. The
+   repository `guardrails` config in `.ai-dev-workflow.yaml` is the base layer.
+   An invocation override may narrow or widen authority only within what the mode
+   permits. This protocol shares **one policy path** with Protocols 90 and 91 —
+   the same run-epic helpers and enforcement gates defined in
+   `docs/workflow/development-workflow/guardrails-enforcement.md`.
