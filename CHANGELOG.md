@@ -7,25 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-06-17
+
 ### Added
 
-- **Add regression tests for `run_bugbot_review` in pr-review-loop** (#1009): extend the `test-pr-review-loop.sh` harness (Area 16) with four previously-uncovered code paths in `run_bugbot_review`: the Phase 1 idempotency fast-path (existing blocking `cursor[bot]` findings → `RESULT=needs_fixes REASON=existing_findings` without re-triggering), the trigger-failed escalation (`RESULT=escalate REASON=trigger-failed`), the fetch-failed escalation during Phase 3 polling (`RESULT=escalate REASON=fetch-failed`), and the neutral conclusion clean path (`RESULT=clean BLOCKING_COUNT=0 SUGGESTION_COUNT=0`). The routing test is renumbered 16.10 to maintain ordering. All 219 tests pass.
-- **Add guardrails config model and documentation** (#979): introduce an optional, fully commented `guardrails` section in `.ai-dev-workflow.yaml` and a new `guardrails.md` reference covering the four autonomy modes, per-stage permissions, the risk scale, stop conditions, audit requirements, and safe defaults that preserve current behavior. Documentation/model only; enforcement is tracked by #980.
-- **Make `/run-work` the adaptive workflow entrypoint** (#978): `/run-work` is now the primary entrypoint, routing to Protocol 90 (portfolio/explicit-list), Protocol 91 (single-item), or Protocol 95 (epic) via a new routing classifier script (`run-work-router.sh`). New Protocol 96 documents the five routing modes (`no_target_scan`, `single_item`, `explicit_list`, `epic`, `ambiguous`), the routing-decision record format, edge cases, and the read-only contract. Protocols 90, 91, and 95 each gain a "Routing From /run-work" section. `/run-item-work` and `/run-epic` are now documented as compatibility/advanced aliases. All command wrappers and skill files updated to reflect the new entrypoint model.
-- **Enforce guardrails in delegated /run-work execution** (#980): orchestration now loads the effective guardrails (repository config, then session, then invocation overrides), reports them in the run summary, and enforces them at backlog-start, per-stage PR-open, delegated review, delegated merge (risk + reviewer/CI/label/thread/audit), and completion — naming the exact guardrail on every stop. Reuses the existing `/run-epic` risk-classifier, delegated-gate, and audit-trail helpers as one policy path rather than a second model. Reads the #979 guardrails config; no schema change. A new `guardrails-enforcement.md` is the single enforcement reference for all orchestration protocols.
-- **Document Bugbot setup and framework rollout guidance** (#991): add a Cursor Bugbot integration guide under `docs/workflow/development-workflow/integrations/bugbot.md` covering GitHub/Cursor setup, check behavior, neutral-check and branch-protection implications, a minimal `.cursor/BUGBOT.md` template, and rollout guidance for Cursor-primary teams; cross-reference it from the generic PR review platform guide and the integration guides index.
-- **Align Cursor workflow surfaces for client rollout** (#989): add Cursor `smoke-tester` and `graduate-development` slash commands, align the cross-tool guidance tables, correct the testing README smoke command name, and record the decision not to ship a Cursor-native skills mirror.
-- **Add Cursor Bugbot as a supported automated PR reviewer platform** (#990): `bugbot` is now a recognized value for `review.on_draft.github` / `review.on_ready.github` in `.ai-dev-workflow.yaml`; when declared, `pr-review-loop.sh` triggers Cursor Bugbot, polls the "Cursor Bugbot" check run on the PR head, classifies the verdict (clean / blocking / timeout / unavailable), summarizes blocking `cursor[bot]` findings with severity and location context, and emits the standard per-platform telemetry. Bugbot's threads are included in platform thread auditing. Timeout and unavailable states are surfaced explicitly and are never treated as a clean pass.
+- **Cursor Bugbot reviewer platform** (#990): `bugbot` is now a recognized value for `review.on_draft.github`/`review.on_ready.github` in `.ai-dev-workflow.yaml`. `pr-review-loop.sh` triggers Cursor Bugbot, polls its check run, classifies the verdict (clean/blocking/timeout/unavailable), summarizes blocking `cursor[bot]` findings with severity and location context, and includes Bugbot threads in platform thread auditing.
+- **Guardrails config and enforcement** (#979, #980): an optional `guardrails` section in `.ai-dev-workflow.yaml` defines autonomy modes, per-stage permissions, and risk limits. Orchestration enforces guardrails at backlog-start, PR-open, delegated review, delegated merge, and completion, naming the exact guardrail on every stop. New `guardrails.md` and `guardrails-enforcement.md` document the full policy.
+- **`/run-work` as the adaptive workflow entrypoint** (#978): `/run-work` routes to Protocol 90 (portfolio/explicit-list), Protocol 91 (single-item), or Protocol 95 (epic) via `run-work-router.sh`. New Protocol 96 documents the five routing modes and read-only contract. `/run-item-work` and `/run-epic` are now compatibility/advanced aliases.
+- **Cursor workflow surfaces** (#989, #991): adds `smoke-tester` and `graduate-development` Cursor slash commands, a Cursor Bugbot integration guide (`docs/workflow/development-workflow/integrations/bugbot.md`), and records the decision not to ship a Cursor-native skills mirror.
+- **Regression tests for `run_bugbot_review`** (#1009): four new test paths in `test-pr-review-loop.sh` covering idempotency fast-path, trigger-failed escalation, fetch-failed escalation, and neutral clean. All 219 tests pass.
 
 ### Changed
 
-- **Align Cursor workflow surfaces for client rollout** (#989): update the AGENTS.md Workflow Commands table to reflect the new `/graduate-development <slug>` Cursor command, add the explicit skills-mirror decision to the Cursor-facing guidance prose in AGENTS.md and README.md, and correct `docs/testing/README.md` to reference `/smoke-tester` instead of the non-existent `run-smoke-test` command.
+- **Cursor workflow documentation** (#989): AGENTS.md, README.md, and `docs/testing/README.md` updated to reflect `/graduate-development <slug>` and the corrected smoke-tester command name.
 
 ### Fixed
 
-- **Document signal-safety of Bugbot polling sleep** (#1008): confirm that the `_interruptible_sleep` call in `run_bugbot_review`'s polling loop is already SIGTERM-safe (sleep runs as a background job; bash's `wait` is interrupted by signals; the TERM trap kills the subprocess immediately). Add an inline comment at the call site explaining this so future readers need not re-investigate.
-- **Add pre-branch HEAD verification guard against parallel-agent stacked-branch contamination** (#1004): Protocols 01, 02, and 03 now require a mandatory pre-branch HEAD check before any `git checkout -b` — the agent compares its current HEAD SHA against the expected base (`origin/develop` or `origin/main`) and aborts with a clear error if they differ, preventing silent stacked-branch creation when sibling agents share a checkout. Protocol 95 Step 8 documents worktree isolation as the intended long-term fix and the pre-branch guard as the current mitigation.
-- **Verify tracker status after delegated merge in run-epic** (#1005): Protocol 95 Step 11 now requires runners to re-read the live GitHub Projects status after each delegated merge, re-apply the tracker update if the live value does not match the expected post-merge status, and record the verification result (matched/reapplied/failed) in the PR disposition audit comment — preventing false-positive tracker-update claims from leaving items stuck at stale statuses.
+- **Pre-branch HEAD guard** (#1004): Protocols 01–03 now verify the current HEAD SHA against `origin/develop` or `origin/main` before `git checkout -b`, preventing silent stacked-branch creation when parallel agents share a checkout.
+- **Tracker verification after delegated merge** (#1005): Protocol 95 re-reads live GitHub Projects status after each delegated merge, re-applies if stale, and records the outcome in the audit comment.
+- **Bugbot polling sleep signal-safety** (#1008): inline comment confirms `_interruptible_sleep` in `run_bugbot_review` is SIGTERM-safe.
 
 ## [0.32.0] - 2026-06-16
 
@@ -960,7 +960,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.32.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.33.0...HEAD
+[0.33.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.30.2...v0.31.0
 [0.30.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.30.1...v0.30.2
