@@ -191,6 +191,14 @@ case "$*" in
     printf '.git\n'
     exit 0
     ;;
+  rev-parse\ --show-toplevel)
+    # Simulate non-git directory so resolve_token falls back to $(pwd)
+    exit 1
+    ;;
+  show-ref\ --verify\ --quiet\ *)
+    # Simulate branch existence check: exit 0 (exists) for all test branches
+    exit 0
+    ;;
   *)
     # Other read-only git calls are fine but we don't need to handle them
     exit 0

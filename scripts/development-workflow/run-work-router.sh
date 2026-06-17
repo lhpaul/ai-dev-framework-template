@@ -299,6 +299,9 @@ RESOLVE_FAIL_REASON=""
 
 resolve_token() {
   local token="$1"
+  local REPO_ROOT
+  REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || REPO_ROOT="$(pwd)"
+  [ -n "$REPO_ROOT" ] || REPO_ROOT="$(pwd)"
   RESOLVED_KIND="none"
   RESOLVE_FAIL_REASON=""
 
@@ -306,7 +309,7 @@ resolve_token() {
   token="${token#./}"
 
   # --- Development folder ---
-  if [ -d "$token" ] && [[ "$token" == docs/specs/developments/* ]]; then
+  if [ -d "$REPO_ROOT/$token" ] && [[ "$token" == docs/specs/developments/* ]]; then
     RESOLVED_KIND="dev_folder"
     return 0
   fi
