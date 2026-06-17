@@ -69,9 +69,9 @@ contract document.
 **Steps**:
 
 1. The maintainer reads the guidance on the repository-level Bugbot rules file
-   and any nested per-directory Bugbot rule files.
-2. The maintainer copies the provided minimal repository-level Bugbot rules
-   template into their repository.
+   (`.cursor/BUGBOT.md`) and any nested per-directory Bugbot rule files.
+2. The maintainer copies the provided minimal `.cursor/BUGBOT.md` template into
+   their repository.
 3. The maintainer follows the guidance on keeping Bugbot rules aligned with the
    review contract by referencing it rather than duplicating the entire contract.
 
@@ -80,9 +80,10 @@ is consistent with the review contract, without restating the whole contract.
 
 **Information shown**:
 
-- What the repository-level Bugbot rules file is for and where it lives.
+- What the repository-level Bugbot rules file (`.cursor/BUGBOT.md`) is for and
+  where it lives.
 - How nested Bugbot rule files apply to specific directories.
-- A minimal repository-level Bugbot rules template the maintainer can copy.
+- A minimal `.cursor/BUGBOT.md` template the maintainer can copy.
 - Guidance on referencing the review contract instead of duplicating it.
 
 **Considerations**:
@@ -159,14 +160,15 @@ branch protection decisions.
       trigger a manual review, the automatic review settings, the draft pull
       request behavior, and the Autofix considerations.
 - [ ] The guide explains where Bugbot is declared in the workflow integration
-      manifest so a downstream team knows where to configure it.
+      manifest (`.ai-dev-workflow.yaml`) so a downstream team knows where to
+      configure it.
 - [ ] The guide explicitly states that Bugbot is post-push validation and does
       not replace the pre-PR review gate.
 - [ ] The guide describes the known neutral check behavior and its branch
       protection implications.
 - [ ] The guide includes a minimal, copy-ready repository-level Bugbot rules
-      template (or an equivalent clearly marked guidance section) and explains
-      nested Bugbot rule files.
+      template (a `.cursor/BUGBOT.md` template or an equivalent clearly marked
+      guidance section) and explains nested Bugbot rule files.
 - [ ] The guide explains how to keep Bugbot rules aligned with the review
       contract by referencing it rather than duplicating the entire contract.
 - [ ] The guide includes rollout guidance for client teams that use Cursor as
@@ -193,7 +195,7 @@ branch protection decisions.
 | Downstream team can enable Bugbot and know where to configure it in the workflow integration manifest | AC-3 |
 | Docs explain Bugbot is post-push validation and does not replace the pre-PR review gate | AC-4 |
 | Docs describe known neutral-check behavior and branch protection implications | AC-5 |
-| Docs include a minimal repository-level Bugbot rules template or guidance section | AC-6 |
+| Docs include a minimal `.cursor/BUGBOT.md` template or guidance section | AC-6 |
 | Project Type is Feature | Tracker metadata (no spec artifact required); see Deferral Note |
 
 ---
