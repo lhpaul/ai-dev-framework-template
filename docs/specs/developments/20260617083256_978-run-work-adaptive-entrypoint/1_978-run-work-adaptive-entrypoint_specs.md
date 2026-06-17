@@ -234,31 +234,33 @@ exactly as they do today; nothing that previously worked breaks.
 
 ## Business Rules
 
-- `/run-work` is the primary, recommended entrypoint; `/run-item-work` and
+- BR1: `/run-work` is the primary, recommended entrypoint; `/run-item-work` and
   `/run-epic` remain available as compatibility or advanced aliases and must not
   be removed in this pass.
-- `/run-work` routing is determined by the request input, tracker and repository
-  state, and repository configuration — not by requiring the user to know which
-  underlying protocol applies.
-- With no target, `/run-work` proposes the largest plan that repository
+- BR2: `/run-work` routing is determined by the request input, tracker and
+  repository state, and repository configuration — not by requiring the user to
+  know which underlying protocol applies.
+- BR3: With no target, `/run-work` proposes the largest plan that repository
   configuration deems safe; it does not exceed configuration-granted autonomy.
-- With one target, `/run-work` resolves and advances exactly one item and mutates
-  no unrelated item.
-- With multiple explicit targets, the supplied list is a hard bounded scope;
+- BR4: With one target, `/run-work` resolves and advances exactly one item and
+  mutates no unrelated item.
+- BR5: With multiple explicit targets, the supplied list is a hard bounded scope;
   items outside the list are never mutated and are logged when encountered.
-- With an epic-like target, read-only scope resolution must complete before any
-  mutation.
-- The routing decision (inferred mode, resolved scope, and the inputs that drove
-  it) must be recorded so the human can see what was inferred.
-- The routing logic must be documented in the workflow protocols and expressed in
-  a way that is testable.
-- Starting not-yet-started backlog items without an explicit target is governed
-  by repository configuration; it is not enabled by default for existing
+- BR6: With an epic-like target, read-only scope resolution must complete before
+  any mutation.
+- BR7: The routing decision (inferred mode, resolved scope, and the inputs that
+  drove it) must be recorded so the human can see what was inferred.
+- BR8: The routing logic must be documented in the workflow protocols and
+  expressed in a way that is testable.
+- BR9: Starting not-yet-started backlog items without an explicit target is
+  governed by repository configuration; it is not enabled by default for existing
   repositories.
-- Existing human-stop conditions (unclear requirements, architecture decisions,
-  failed CI, high-risk changes) remain in force regardless of routing mode.
-- The existing Protocol 90 (portfolio), Protocol 91 (single item), and Protocol
-  95 (epic) responsibilities remain authoritative for stage execution; this
+- BR10: Existing human-stop conditions (unclear requirements, architecture
+  decisions, failed CI, high-risk changes) remain in force regardless of routing
+  mode.
+- BR11: The existing Protocol 90 (portfolio), Protocol 91 (single item), and
+  Protocol 95 (epic) responsibilities remain authoritative for stage execution;
+  this
   feature routes into them rather than reimplementing them.
 
 ## Statuses / Enum Values
