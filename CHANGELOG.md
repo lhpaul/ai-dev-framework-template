@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Add guardrails config model and documentation** (#979): introduce an optional, fully commented `guardrails` section in `.ai-dev-workflow.yaml` and a new `guardrails.md` reference covering the four autonomy modes, per-stage permissions, the risk scale, stop conditions, audit requirements, and safe defaults that preserve current behavior. Documentation/model only; enforcement is tracked by #980.
+- **Make `/run-work` the adaptive workflow entrypoint** (#978): `/run-work` is now the primary entrypoint, routing to Protocol 90 (portfolio/explicit-list), Protocol 91 (single-item), or Protocol 95 (epic) via a new routing classifier script (`run-work-router.sh`). New Protocol 96 documents the five routing modes (`no_target_scan`, `single_item`, `explicit_list`, `epic`, `ambiguous`), the routing-decision record format, edge cases, and the read-only contract. Protocols 90, 91, and 95 each gain a "Routing From /run-work" section. `/run-item-work` and `/run-epic` are now documented as compatibility/advanced aliases. All command wrappers and skill files updated to reflect the new entrypoint model.
+- **Enforce guardrails in delegated /run-work execution** (#980): orchestration now loads the effective guardrails (repository config, then session, then invocation overrides), reports them in the run summary, and enforces them at backlog-start, per-stage PR-open, delegated review, delegated merge (risk + reviewer/CI/label/thread/audit), and completion — naming the exact guardrail on every stop. Reuses the existing `/run-epic` risk-classifier, delegated-gate, and audit-trail helpers as one policy path rather than a second model. Reads the #979 guardrails config; no schema change. A new `guardrails-enforcement.md` is the single enforcement reference for all orchestration protocols.
+
 ## [0.32.0] - 2026-06-16
 
 ### Added

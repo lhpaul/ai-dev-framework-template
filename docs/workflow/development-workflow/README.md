@@ -200,9 +200,9 @@ The sections below keep this document usable as a master reference after the nar
 | Review gate (spec / plan / code) | Native review against `REVIEW.md`                                 | `/review-spec`, `/review-implementation-plan`, `/review-code` | Native review against `REVIEW.md`  | `REVIEW.md` plus compatibility wrappers in `docs/workflow/development-workflow/protocols/`                                                                                                                |
 | Smoke test                       | `smoke-tester` agent                                              | `/smoke-tester`                                               | —                                  | `docs/workflow/development-workflow/protocols/04-smoke-test-protocol.md`                                                                                                                                  |
 | Run reviewer loop                | `/run-reviewer-loop` command (or `automated-reviewer-loop` agent) | `/run-reviewer-loop`                                          | `/run-reviewer-loop` alias or `workflow-reviewer-loop` skill     | `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`                                                                                                                     |
-| Advance one item                 | `/run-item-work` command (or `item-orchestrator` agent)           | `/run-item-work`                                              | `/run-item-work` alias or `workflow-item-orchestrator` skill     | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`                                                                                                                            |
-| Resolve epic scope / delegated gate | `/run-epic`                                                    | `/run-epic`                                                   | `/run-epic` alias                                                | `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md`                                                                                                                                    |
-| Orchestrate portfolio            | `/run-work` command (or `orchestrator` agent)                     | `/run-work`                                                   | `/run-work` alias or `workflow-orchestrator` skill               | `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`                                                                                                                      |
+| Advance one item (alias)         | `/run-item-work` command (or `item-orchestrator` agent)           | `/run-item-work`                                              | `/run-item-work` alias or `workflow-item-orchestrator` skill     | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`                                                                                                                            |
+| Resolve epic scope / delegated gate (alias) | `/run-epic`                                           | `/run-epic`                                                   | `/run-epic` alias                                                | `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md`                                                                                                                                    |
+| Orchestrate work (primary)       | `/run-work` command (or `orchestrator` agent)                     | `/run-work`                                                   | `/run-work` alias or `workflow-orchestrator` skill               | `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` (no-target / explicit-list), `91` (single-item), `95` (epic)                                                        |
 | Batch merge                      | `/batch-merge`                                                    | `/batch-merge`                                                | `/batch-merge` alias or `batch-merge` skill                      | `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md`                                                                                                                                 |
 | Graduate integration branch      | `/graduate-development <slug>`                                    | —                                                             | `/graduate-development` alias     | Follow `docs/workflow/development-workflow/protocols/05b-graduate-development-protocol.md`                                                                                                                |
 | Prepare release                  | `/prepare-release`                                                | `/prepare-release`                                            | `/prepare-release` alias          | `docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md`                                                                                                                             |
@@ -218,7 +218,7 @@ Codex skills are stored in `.agents/skills/` for repo-scoped Codex discovery, wi
 ./scripts/development-workflow/install-codex-skills.sh
 ```
 
-These skills are thin wrappers around the same workflow protocols used by the other tools. Command-style aliases such as `/add-backlog-item`, `/run-work`, `/run-item-work`, `/run-epic`, `/run-reviewer-loop`, `/batch-merge`, `/post-merge-cleanup`, `/prepare-release`, `/graduate-development`, `/retrospective`, and `/sync-template` map to the canonical workflow skills or protocols so Codex can be used with names similar to Claude Code commands. `/run-epic` first resolves a bounded scope, recommends missing autonomy policy in-place before mutation, captures invocation-scoped delegation policy, uses read-only PR risk classification and `run-epic-delegated-gate.sh` before delegated merge decisions, and records stable PR disposition and epic ledger audit comments after delegated decisions.
+These skills are thin wrappers around the same workflow protocols used by the other tools. Command-style aliases such as `/add-backlog-item`, `/run-work`, `/run-item-work`, `/run-epic`, `/run-reviewer-loop`, `/batch-merge`, `/post-merge-cleanup`, `/prepare-release`, `/graduate-development`, `/retrospective`, and `/sync-template` map to the canonical workflow skills or protocols so Codex can be used with names similar to Claude Code commands. `/run-work` is the primary adaptive entrypoint: it runs the routing classifier (`run-work-router.sh`, Protocol 96) and routes to no-target scan / explicit-list (Protocol 90), single-item (Protocol 91), or epic (Protocol 95) based on the supplied target. `/run-item-work` and `/run-epic` are compatibility/advanced aliases that bypass routing and invoke their underlying protocols directly. `/run-epic` first resolves a bounded scope, recommends missing autonomy policy in-place before mutation, captures invocation-scoped delegation policy, uses read-only PR risk classification and `run-epic-delegated-gate.sh` before delegated merge decisions, and records stable PR disposition and epic ledger audit comments after delegated decisions.
 
 ### Workflow Capabilities And Fallbacks
 
@@ -445,6 +445,40 @@ template:
   is_template: true
   repository: ""
   last_synced_version: ""
+
+# Optional. Omit to keep today's conservative behavior (mode: manual).
+# Enforced at runtime by Protocols 90, 91, and 95. See guardrails-enforcement.md.
+guardrails:
+  mode: manual
+  backlog_start:
+    allow_without_confirmation: false
+  stages:
+    spec:
+      may_open_pr: true
+      may_merge_pr: false
+      max_merge_risk: low
+    plan:
+      may_open_pr: true
+      may_merge_pr: false
+      max_merge_risk: low
+    implementation:
+      may_open_pr: true
+      may_merge_pr: false
+      max_merge_risk: low
+      required_evidence:
+        - regression
+  stop_conditions:
+    - unclear_requirements
+    - architecture_decision
+    - failing_ci
+    - unresolved_blocking_review
+    - high_risk_change
+    - destructive_action
+    - missing_tracker_context
+    - missing_required_secret_or_permission
+  audit:
+    pr_disposition_record: required
+    work_item_ledger_record: required
 ```
 
 Important implementation notes:
@@ -470,6 +504,7 @@ Important implementation notes:
 - `template.is_template` when set to `true` marks this repository as a framework template. Protocol 02 Step 0 (Template-Fit Check) becomes mandatory: before writing any implementation plan, the tech lead must verify that the spec is sufficiently generic for all downstream consumers. Set to `true` in the template repository itself; omit or leave `false` in downstream consumer repositories.
 - `template.repository` is an optional `owner/repo` reference to the upstream template repository. When set, the retrospective protocol (Step 3b) cross-references each finding against that repository's issue tracker to classify findings as already tracked, already fixed, or a new upstream contribution candidate. Leave empty or omit to skip this step entirely. Note: this field is set by downstream consumer repos pointing back to their template origin; the template repo itself leaves this empty.
 - `template.last_synced_version` is written automatically by the sync-template skill after a successful sync (e.g., `v0.22.0`). The retrospective uses this value to identify closed template issues whose fix landed in a version newer than the downstream's last sync, surfacing "just sync" opportunities.
+- `guardrails` is an optional top-level section that declares how much authority AI agents have when advancing work through the development workflow. When the section is absent, all guardrails values resolve to safe defaults that preserve today's conservative, human-reviewed behavior (agents do not merge pull requests and do not start backlog work without confirmation). The default mode is `manual`. See [`guardrails.md`](guardrails.md) for the full reference, worked examples, and migration note. See [`guardrails-enforcement.md`](guardrails-enforcement.md) for the runtime enforcement reference (three-layer precedence, six enforcement gates, named stop conditions).
 
 Provider-specific setup still lives in the integration guides under `docs/workflow/development-workflow/integrations/`.
 
@@ -549,7 +584,9 @@ Protocol prefixes are stable family identifiers, not a promise of contiguous num
 ### Tooling And Configuration
 
 - `docs/workflow/development-workflow/agent-model-config.md`
-- `.ai-dev-workflow.yaml` - repo-level workflow integration manifest (`mode`, `workflow_hub.product_repos[]`, `product_repo.workflow_hub`, `review.on_draft.runner`, `review.on_draft.github`, `review.on_ready.github`, `template.is_template`, `template.repository`, `template.last_synced_version`, `issue_tracker.provider`, `vcs.provider`, `browser_automation.provider`)
+- `docs/workflow/development-workflow/guardrails.md` — plain-language reference for the guardrails configuration model: autonomy modes, per-stage permissions, risk scale, stop conditions, audit requirements, safe defaults, and worked examples
+- `docs/workflow/development-workflow/guardrails-enforcement.md` — single source of truth for how orchestration resolves effective guardrails (three-layer precedence), the config-field→run-epic-policy mapping table, the six enforcement gates (load+report, backlog-start, PR-open, delegated review, delegated merge, completion), named stop conditions and the stop-message contract, conservative defaults, and audit-evidence rules
+- `.ai-dev-workflow.yaml` - repo-level workflow integration manifest (`mode`, `workflow_hub.product_repos[]`, `product_repo.workflow_hub`, `review.on_draft.runner`, `review.on_draft.github`, `review.on_ready.github`, `template.is_template`, `template.repository`, `template.last_synced_version`, `issue_tracker.provider`, `vcs.provider`, `browser_automation.provider`, `guardrails`)
 - `.ai-dev-workflow.local.example.yaml` - placeholder-only example for gitignored local checkout, secret-reference, review-runner, and tool overrides
 
 Repository helpers:

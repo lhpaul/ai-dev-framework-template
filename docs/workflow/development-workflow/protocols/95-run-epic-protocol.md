@@ -15,9 +15,33 @@ resolved scope.
 
 ---
 
+## Routing From /run-work
+
+`/run-work <epic-like target>` (or `/run-work --epic <n>`) enters this protocol
+after the routing classifier (`scripts/development-workflow/run-work-router.sh`,
+Protocol 96) determines the routing mode is `epic`. The routing-decision record
+and resolved epic target are available as context.
+
+**Read-only phase before mutation** (BR6, AC4): The scope resolver must complete
+before any item is created, reviewed, merged, or cleaned up. This is the existing
+read-only contract for this protocol and is not changed by routing.
+
+**`single_item` → `epic` upgrade** (AC5): When a single target resolves to an
+epic-like issue (one with child items or native sub-issues), the router upgrades
+from `single_item` to `epic` before routing here. The resolver then handles scope
+resolution as normal.
+
+`/run-epic` invoked directly (without `/run-work`) is a **compatibility/advanced
+alias** that also enters this protocol. Its behavior is unchanged.
+
+See `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
+for the full routing specification.
+
+---
+
 ## Overview
 
-Use this protocol when a human invokes `/run-epic`, `$run-epic`, or asks to run
+Use this protocol when a human invokes `/run-epic`, `$run-epic`, `/run-work <epic-like target>`, or asks to run
 an epic / bounded item list as a delegated workflow batch.
 
 The resolver supports exactly one scope source:
@@ -39,6 +63,20 @@ Optional flags:
 - `--max-risk <low|medium|high>`: maximum risk the runner may merge without
   human input.
 - `--json`: emit machine-readable output for an orchestrator handoff.
+
+**Delegation flags as the invocation-override layer**: `--delegate-review`,
+`--may-merge`, `--may-start-backlog`, and `--max-risk` are the
+**invocation-override** layer (highest priority) of the three-layer guardrails
+precedence defined in
+`docs/workflow/development-workflow/guardrails-enforcement.md` (section 1).
+The repository `guardrails` config block in `.ai-dev-workflow.yaml` is the base
+layer. An invocation override may narrow or widen authority only within what the
+repository config and the effective autonomy mode permit — it cannot grant
+authority the mode forbids. This protocol and Protocols 90/91 share **one
+policy path**: the same run-epic helpers (`run-epic-risk-classifier.sh`,
+`run-epic-delegated-gate.sh`, `run-epic-audit-trail.sh`) and the same
+enforcement gates described in `guardrails-enforcement.md` section 3. There is
+no separate policy model for `/run-epic` vs. `/run-work` routing.
 
 The resolver is read-only even when delegation flags are supplied. It must not
 update tracker status, create branches, open or edit PRs, merge PRs, close

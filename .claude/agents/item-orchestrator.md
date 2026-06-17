@@ -18,6 +18,16 @@ when product repository context is missing or ambiguous. Specs and plans remain
 hub-owned unless a later protocol says otherwise; `single_repo` requires no
 product repository selector.
 
+## Guardrails Enforcement
+
+At the start of each item run, check whether the Portfolio Orchestrator already
+resolved guardrails and passed them in the handoff metadata. If so, use those
+resolved values. If not (standalone invocation), resolve from the repo `guardrails`
+config in `.ai-dev-workflow.yaml` and report effective values before any mutation.
+Enforce per-stage PR-open, delegated review, delegated merge, and completion gates
+per `docs/workflow/development-workflow/guardrails-enforcement.md` section 3.
+When no `guardrails` section is found, apply conservative defaults and state them.
+
 That document is the single source of truth for this supporting role. Key responsibilities:
 
 - Stay scoped to one item at a time

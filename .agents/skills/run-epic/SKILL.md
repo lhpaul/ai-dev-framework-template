@@ -1,11 +1,17 @@
 ---
 name: run-epic
-description: Command-style Codex alias for resolving a native GitHub epic or explicit item list into a bounded workflow execution scope, with optional delegated review and merge gates. Use when the user asks for /run-epic, run-epic, or wants a bounded epic execution set.
+description: "Compatibility/advanced alias: resolve a native GitHub epic or explicit item list into a bounded workflow execution scope, with optional delegated review and merge gates. For the recommended starting point, use /run-work <epic-target> instead. Use /run-epic when you need direct control over delegation flags (--delegate-review, --may-merge, --max-risk)."
 ---
 
 # Run Epic
 
 This is the Codex command-style alias for Claude Code `/run-epic`.
+
+> **Compatibility/advanced alias**: `/run-epic` bypasses the `/run-work`
+> routing layer and invokes the bounded epic scope resolver directly with
+> explicit delegation flags. If you are not sure which command to use, start
+> with `/run-work <epic-number>` — it will route to this protocol automatically
+> when the target is epic-like.
 
 1. Read `AGENTS.md` for repository-wide rules.
 2. Read `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md`.
@@ -43,3 +49,11 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
    scope, reviewer, CI, risk, and audit evidence; pass `--policy <file>` when
    the resolver policy is captured separately. Merge only when the gate reports
    `merge_allowed`.
+9. **Guardrails layer context**: The `--delegate-review`, `--may-merge`,
+   `--may-start-backlog`, and `--max-risk` flags are the **invocation-override**
+   layer (highest priority) of the three-layer guardrails precedence. The
+   repository `guardrails` config in `.ai-dev-workflow.yaml` is the base layer.
+   An invocation override may narrow or widen authority only within what the mode
+   permits. This protocol shares **one policy path** with Protocols 90 and 91 —
+   the same run-epic helpers and enforcement gates defined in
+   `docs/workflow/development-workflow/guardrails-enforcement.md`.
