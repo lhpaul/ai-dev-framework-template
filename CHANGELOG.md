@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Document signal-safety of Bugbot polling sleep** (#1008): confirm that the `_interruptible_sleep` call in `run_bugbot_review`'s polling loop is already SIGTERM-safe (sleep runs as a background job; bash's `wait` is interrupted by signals; the TERM trap kills the subprocess immediately). Add an inline comment at the call site explaining this so future readers need not re-investigate.
 - **Add pre-branch HEAD verification guard against parallel-agent stacked-branch contamination** (#1004): Protocols 01, 02, and 03 now require a mandatory pre-branch HEAD check before any `git checkout -b` — the agent compares its current HEAD SHA against the expected base (`origin/develop` or `origin/main`) and aborts with a clear error if they differ, preventing silent stacked-branch creation when sibling agents share a checkout. Protocol 95 Step 8 documents worktree isolation as the intended long-term fix and the pre-branch guard as the current mitigation.
+- **Verify tracker status after delegated merge in run-epic** (#1005): Protocol 95 Step 11 now requires runners to re-read the live GitHub Projects status after each delegated merge, re-apply the tracker update if the live value does not match the expected post-merge status, and record the verification result (matched/reapplied/failed) in the PR disposition audit comment — preventing false-positive tracker-update claims from leaving items stuck at stale statuses.
 
 ## [0.32.0] - 2026-06-16
 

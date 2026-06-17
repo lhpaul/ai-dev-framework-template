@@ -486,7 +486,32 @@ When all gates permit merge:
 2. Verify GitHub reports the PR state as `MERGED`.
 3. Delete or prune the merged branch as appropriate.
 4. Run post-merge cleanup for the correct base branch.
-5. Verify issue state and Project status.
+5. Verify issue state and Project status — **with live re-read and re-apply**:
+
+   a. Determine the expected post-merge tracker status from the merged branch type
+      (see Protocol 91 Step 10 table: `feature/*` / `fix/*` / `refactor/*` /
+      `hotfix/*` → `Merged`; `spec/*` → `Spec Ready`; `implementation-plan/*` →
+      `Plan Ready`).
+
+   b. Re-read the live tracker status from GitHub Projects:
+
+      ```bash
+      gh issue view <issue_number> --json projectItems \
+        --jq '.projectItems[].status.name // "unknown"'
+      ```
+
+   c. If the live status does not match the expected post-merge value, re-apply
+      the tracker update immediately before proceeding to the next item. Do not
+      rely on the agent's earlier claim that the update succeeded — the live
+      read is the authoritative source.
+
+   d. Record the verification result (expected value, live-read value, and
+      whether a re-apply was required) in the PR disposition audit comment for
+      this item. Add a `tracker_status_verified` field with value `true` when
+      the live status matched on first read, or `reapplied` when the re-apply
+      was required. Add `tracker_status_mismatch` with a brief reason when the
+      re-apply also fails.
+
 6. Update the epic ledger.
 7. Rerun scope resolution so newly unblocked items can advance.
 
