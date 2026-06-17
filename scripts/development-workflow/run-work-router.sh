@@ -120,7 +120,7 @@ done
 is_positive_int() {
   case "$1" in
     ''|*[!0-9]*) return 1 ;;
-    0*) return 1 ;;
+    0) return 1 ;;
     *) return 0 ;;
   esac
 }
@@ -165,32 +165,12 @@ try:
             cfg = yaml.safe_load(f) or {}
     except ImportError:
         sys.stderr.write(
-            "run-work-router: warning: PyYAML not available; "
-            "using minimal YAML parser — install pyyaml for full config support\n"
+            "run-work-router: error: PyYAML is required to parse guardrails config.\n"
+            "Install it with: pip install pyyaml  (or pip3 install pyyaml)\n"
+            "Applying conservative guardrails defaults (mode=manual, backlog_start=false).\n"
         )
-        cfg = {}
-        path = []  # stack of (indent, dict) for open nested blocks
-        with open(sys.argv[1], 'r') as f:
-            for line in f:
-                stripped = line.rstrip()
-                if not stripped or stripped.lstrip().startswith('#'):
-                    continue
-                if ':' not in stripped.lstrip():
-                    continue
-                indent = len(line) - len(line.lstrip())
-                key, _, val = stripped.lstrip().partition(':')
-                key = key.strip()
-                val = val.strip()
-                # Close any blocks that are deeper than or equal to current indent
-                while path and path[-1][0] >= indent:
-                    path.pop()
-                container = path[-1][1] if path else cfg
-                if val:
-                    container[key] = val
-                else:
-                    new_block = {}
-                    container[key] = new_block
-                    path.append((indent, new_block))
+        print(json.dumps({"section": "absent", "mode": "manual", "backlog_start": False}))
+        sys.exit(0)
 
     guardrails = cfg.get('guardrails') if isinstance(cfg, dict) else None
     if not isinstance(guardrails, dict):
