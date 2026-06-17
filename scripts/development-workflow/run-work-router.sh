@@ -160,40 +160,33 @@ try:
         with open(sys.argv[1], 'r') as f:
             cfg = yaml.safe_load(f) or {}
     except ImportError:
-        # Minimal YAML-subset reader: handles only flat top-level key: value
-        # pairs and the nested guardrails block. PyYAML is strongly preferred.
         sys.stderr.write(
             "run-work-router: warning: PyYAML not available; "
-            "using minimal YAML parser — nested guardrails config will be read "
-            "with limited support; install pyyaml for full config support\n"
+            "using minimal YAML parser — install pyyaml for full config support\n"
         )
         cfg = {}
-        current_section = None
+        path = []  # stack of (indent, dict) for open nested blocks
         with open(sys.argv[1], 'r') as f:
             for line in f:
                 stripped = line.rstrip()
                 if not stripped or stripped.lstrip().startswith('#'):
                     continue
+                if ':' not in stripped.lstrip():
+                    continue
                 indent = len(line) - len(line.lstrip())
-                if indent == 0:
-                    current_section = None
-                    if ':' in stripped:
-                        key, _, val = stripped.partition(':')
-                        key = key.strip()
-                        val = val.strip()
-                        if val:
-                            cfg[key] = val
-                        else:
-                            # Start of a nested block
-                            cfg[key] = {}
-                            current_section = key
-                elif indent > 0 and current_section is not None:
-                    if ':' in stripped:
-                        key, _, val = stripped.lstrip().partition(':')
-                        key = key.strip()
-                        val = val.strip()
-                        if isinstance(cfg.get(current_section), dict):
-                            cfg[current_section][key] = val
+                key, _, val = stripped.lstrip().partition(':')
+                key = key.strip()
+                val = val.strip()
+                # Close any blocks that are deeper than or equal to current indent
+                while path and path[-1][0] >= indent:
+                    path.pop()
+                container = path[-1][1] if path else cfg
+                if val:
+                    container[key] = val
+                else:
+                    new_block = {}
+                    container[key] = new_block
+                    path.append((indent, new_block))
 
     guardrails = cfg.get('guardrails') if isinstance(cfg, dict) else None
     if not isinstance(guardrails, dict):
