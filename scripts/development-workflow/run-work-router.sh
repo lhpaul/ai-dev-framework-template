@@ -277,8 +277,7 @@ RESOLVE_FAIL_REASON=""
 resolve_token() {
   local token="$1"
   local REPO_ROOT
-  REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || REPO_ROOT="$(pwd)"
-  [ -n "$REPO_ROOT" ] || REPO_ROOT="$(pwd)"
+  REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
   RESOLVED_KIND="none"
   RESOLVE_FAIL_REASON=""
 
@@ -286,7 +285,9 @@ resolve_token() {
   token="${token#./}"
 
   # --- Development folder ---
-  if [ -d "$REPO_ROOT/$token" ] && [[ "$token" == docs/specs/developments/* ]]; then
+  # Only check when we have a confirmed git repo root; never use CWD as a proxy
+  # for the repo root since the script may be invoked from a subdirectory.
+  if [ -n "$REPO_ROOT" ] && [ -d "$REPO_ROOT/$token" ] && [[ "$token" == docs/specs/developments/* ]]; then
     RESOLVED_KIND="dev_folder"
     return 0
   fi

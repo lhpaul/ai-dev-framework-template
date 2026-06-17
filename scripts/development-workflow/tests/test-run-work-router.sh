@@ -192,8 +192,9 @@ case "$*" in
     exit 0
     ;;
   rev-parse\ --show-toplevel)
-    # Simulate non-git directory so resolve_token falls back to $(pwd)
-    exit 1
+    # Simulate git root = CWD (resolve_token uses repo root for dev folder checks)
+    printf '%s\n' "$(pwd)"
+    exit 0
     ;;
   show-ref\ --verify\ --quiet\ *)
     # Simulate branch existence check: exit 0 (exists) for all test branches
