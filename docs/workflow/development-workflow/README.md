@@ -445,6 +445,40 @@ template:
   is_template: true
   repository: ""
   last_synced_version: ""
+
+# Optional. Omit to keep today's conservative behavior (mode: manual).
+# MODEL ONLY — enforcement tracked by #980. See guardrails.md.
+guardrails:
+  mode: manual
+  backlog_start:
+    allow_without_confirmation: false
+  stages:
+    spec:
+      may_open_pr: true
+      may_merge_pr: false
+      max_merge_risk: low
+    plan:
+      may_open_pr: true
+      may_merge_pr: false
+      max_merge_risk: low
+    implementation:
+      may_open_pr: true
+      may_merge_pr: false
+      max_merge_risk: low
+      required_evidence:
+        - regression
+  stop_conditions:
+    - unclear_requirements
+    - architecture_decision
+    - failing_ci
+    - unresolved_blocking_review
+    - high_risk_change
+    - destructive_action
+    - missing_tracker_context
+    - missing_required_secret_or_permission
+  audit:
+    pr_disposition_record: required
+    work_item_ledger_record: required
 ```
 
 Important implementation notes:
@@ -470,6 +504,7 @@ Important implementation notes:
 - `template.is_template` when set to `true` marks this repository as a framework template. Protocol 02 Step 0 (Template-Fit Check) becomes mandatory: before writing any implementation plan, the tech lead must verify that the spec is sufficiently generic for all downstream consumers. Set to `true` in the template repository itself; omit or leave `false` in downstream consumer repositories.
 - `template.repository` is an optional `owner/repo` reference to the upstream template repository. When set, the retrospective protocol (Step 3b) cross-references each finding against that repository's issue tracker to classify findings as already tracked, already fixed, or a new upstream contribution candidate. Leave empty or omit to skip this step entirely. Note: this field is set by downstream consumer repos pointing back to their template origin; the template repo itself leaves this empty.
 - `template.last_synced_version` is written automatically by the sync-template skill after a successful sync (e.g., `v0.22.0`). The retrospective uses this value to identify closed template issues whose fix landed in a version newer than the downstream's last sync, surfacing "just sync" opportunities.
+- `guardrails` is an optional top-level section that declares how much authority AI agents have when advancing work through the development workflow. When the section is absent, all guardrails values resolve to safe defaults that preserve today's conservative, human-reviewed behavior (agents do not merge pull requests and do not start backlog work without confirmation). The default mode is `manual`. See [`guardrails.md`](guardrails.md) for the full reference, worked examples, and migration note. **MODEL ONLY in this pass** — enforcement is tracked by #980.
 
 Provider-specific setup still lives in the integration guides under `docs/workflow/development-workflow/integrations/`.
 
@@ -549,7 +584,8 @@ Protocol prefixes are stable family identifiers, not a promise of contiguous num
 ### Tooling And Configuration
 
 - `docs/workflow/development-workflow/agent-model-config.md`
-- `.ai-dev-workflow.yaml` - repo-level workflow integration manifest (`mode`, `workflow_hub.product_repos[]`, `product_repo.workflow_hub`, `review.on_draft.runner`, `review.on_draft.github`, `review.on_ready.github`, `template.is_template`, `template.repository`, `template.last_synced_version`, `issue_tracker.provider`, `vcs.provider`, `browser_automation.provider`)
+- `docs/workflow/development-workflow/guardrails.md` — plain-language reference for the guardrails configuration model: autonomy modes, per-stage permissions, risk scale, stop conditions, audit requirements, safe defaults, and worked examples
+- `.ai-dev-workflow.yaml` - repo-level workflow integration manifest (`mode`, `workflow_hub.product_repos[]`, `product_repo.workflow_hub`, `review.on_draft.runner`, `review.on_draft.github`, `review.on_ready.github`, `template.is_template`, `template.repository`, `template.last_synced_version`, `issue_tracker.provider`, `vcs.provider`, `browser_automation.provider`, `guardrails`)
 - `.ai-dev-workflow.local.example.yaml` - placeholder-only example for gitignored local checkout, secret-reference, review-runner, and tool overrides
 
 Repository helpers:

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Add guardrails config model and documentation** (#979): introduce an optional, fully commented `guardrails` section in `.ai-dev-workflow.yaml` and a new `guardrails.md` reference covering the four autonomy modes, per-stage permissions, the risk scale, stop conditions, audit requirements, and safe defaults that preserve current behavior. Documentation/model only; enforcement is tracked by #980.
+
 ## [0.32.0] - 2026-06-16
 
 ### Added
