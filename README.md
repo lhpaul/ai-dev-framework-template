@@ -262,12 +262,17 @@ Example commands:
 /run-item-work Start and advance work for [feature or issue name]. Resolve the request to one workflow item, then keep progressing that item through creator, reviewer, PR, automated review, and CI until it is waiting on a human, blocked, or escalated.
 ```
 
+> **Note**: `/run-work` is the primary adaptive entrypoint. It runs the routing
+> classifier and routes to portfolio scan, single-item, or epic protocols based
+> on your target. `/run-item-work` and `/run-epic` are compatibility/advanced
+> aliases that bypass routing for direct access.
+
 ### Codex
 
 - Install the bundled skills with `./scripts/development-workflow/install-codex-skills.sh`
-- Start with `workflow-orchestrator` as the default portfolio-wide entrypoint for the workflow
-- Run `workflow-orchestrator` on an `economy` tier by default; only escalate when the stage-specific skill recommends it
-- Use `workflow-item-orchestrator` when you want to resume or advance one specific development, branch, or PR
+- Start with `/run-work` (or `$run-work` / `$workflow-orchestrator`) as the primary adaptive entrypoint; it routes to portfolio scan, single-item, or epic based on the supplied target
+- Run `/run-work` on an `economy` tier by default; only escalate when the stage-specific skill recommends it
+- Use `/run-item-work` (or `$workflow-item-orchestrator`) when you want to resume or advance one specific development, branch, or PR directly without routing
 - Use the other skills in `.codex/skills/` when you want to run a specific stage directly
 - The skills are thin wrappers around the same protocol docs used by the other tools
 - Each skill can also ship `agents/openai.yaml` metadata for cleaner labels and starter prompts in Codex-compatible UIs

@@ -51,6 +51,89 @@ If the request is explicitly about a single development, branch, or PR, skip thi
 
 ---
 
+## Routing Entrypoint
+
+This protocol is entered from `/run-work` (or its Codex/Cursor equivalents) when
+the routing classifier (`scripts/development-workflow/run-work-router.sh`,
+Protocol 96) determines the routing mode is `no_target_scan` or `explicit_list`.
+
+- **`no_target_scan`**: No target was supplied; the orchestrator scans the
+  portfolio, builds safe parallel batches, and proposes the largest safe plan.
+- **`explicit_list`**: Two or more explicit targets were supplied as a hard
+  bounded scope; the orchestrator runs that exact bounded set.
+
+When the routing mode is `single_item`, the classifier routes to
+`91-orchestrate-work-protocol.md` instead. When the routing mode is `epic`,
+the classifier routes to `95-run-epic-protocol.md` instead.
+
+See `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
+for the full routing specification.
+
+---
+
+## Step 0: Load Effective Guardrails
+
+Before any tracker mutation, branch creation, PR operation, or Work Item Runner
+dispatch, the Portfolio Orchestrator resolves and reports the **effective
+guardrails** for this portfolio run.
+
+See `docs/workflow/development-workflow/guardrails-enforcement.md` for the
+complete resolution rules, the config-field → run-epic-policy mapping table,
+the named stop conditions, and the audit-evidence rules. This section summarizes
+the in-protocol obligations only.
+
+### Resolution
+
+Resolve the effective guardrails by layering three sources (lowest to highest
+priority):
+
+1. Repository configuration — the `guardrails` block in `.ai-dev-workflow.yaml`.
+2. Session overrides — values set earlier in the same conversation.
+3. Invocation overrides — flags supplied with the current invocation.
+
+When no `guardrails` section is present, apply the conservative defaults: mode
+`manual`, no delegated merge, backlog starts confirmation-gated. See section 7
+of `guardrails-enforcement.md`.
+
+If the `guardrails` block is present but unreadable or internally contradictory,
+stop immediately with the `guardrails_config_unreadable` stop condition before
+any mutation. See section 6 of `guardrails-enforcement.md`.
+
+### Report in the Portfolio Run Summary
+
+Before Step 1 (Gather Portfolio State), state the following in the run summary:
+
+- Effective autonomy mode.
+- Per-stage open/merge permissions (`may_open_pr`, `may_merge_pr`).
+- Per-stage maximum merge risk (`max_merge_risk`).
+- Backlog-start policy (`backlog_start.allow_without_confirmation`).
+- Configured stop conditions.
+- Audit requirements.
+- Which values were changed by an invocation or session override (if any).
+
+### Pass Effective Guardrails to Dispatched Work Item Runners
+
+When dispatching a Work Item Runner (Step 3), include the portfolio-resolved
+effective guardrails in the handoff metadata. Dispatched Work Item Runners
+inherit the portfolio-resolved guardrails rather than re-resolving them
+independently. Invocation and session overrides resolved at the portfolio level
+flow down to the per-item gates without re-prompting.
+
+### Backlog-Start Gate
+
+Before proposing or starting any not-yet-started Backlog item (in Step 2 and
+Step 2.5), apply the backlog-start gate:
+
+- If `backlog_start.allow_without_confirmation` is `true` in the effective
+  guardrails (or the effective mode is `autonomous`): the orchestrator may
+  propose and start eligible Backlog items in the same run after presenting the
+  batch to the human.
+- Otherwise: the orchestrator must stop before starting any not-yet-started
+  Backlog item and ask the human to confirm, naming the items proposed to start.
+  In-flight items (any status other than Backlog) are not subject to this gate.
+
+---
+
 ## Explicit Item List Scope Guard
 
 **Hard-refuse rule**: When the Portfolio Orchestrator is dispatched with an explicit item list (e.g., `/run-work 143 148 145` or a handoff metadata field `ITEM_LIST=143,148,145`), it **must not** take any artifact-mutating action on items outside that list. This rule applies to **all** of the following artifact mutations:
@@ -1495,6 +1578,10 @@ Approval required before tracker status changes or branch/PR work starts for the
 
 - [Item F]: blocked by [Item G]
 - [Item H]: reviewer loop escalated after max cycles
+
+### Guardrails Stops
+
+- [Item I]: STOP — guardrail `<stop_condition_name>` halted this run — [human action required to unblock]
 
 <!-- DO NOT add a retrospective offer here — see Step 6 timing rule above -->
 ```
