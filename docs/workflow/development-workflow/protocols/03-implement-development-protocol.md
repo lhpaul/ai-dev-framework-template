@@ -494,7 +494,7 @@ Determine the branch slug:
 git checkout develop && git pull origin develop
 # If integration-branch:<slug> label is present, use develop-<slug> instead:
 # git checkout develop-<slug> && git pull origin develop-<slug>
-git checkout -b feature/[branch-slug]   # or fix/[branch-slug], refactor/[branch-slug]
+# (do NOT run git checkout -b here — the branch is created below after the HEAD guard)
 ```
 
 The PR opened at the end of this path must target `develop-<slug>` when the label is present. If the integration branch does not exist yet, the orchestrator should have created it before dispatching this protocol — do not create it here; instead, stop and inform the Work Item Runner.
@@ -503,8 +503,10 @@ The PR opened at the end of this path must target `develop-<slug>` when the labe
 
 ```bash
 BASE_BRANCH="develop"  # or develop-<slug> when an integration-branch label is present
-EXPECTED_SHA=$(git rev-parse "origin/${BASE_BRANCH}")
-ACTUAL_SHA=$(git rev-parse HEAD)
+EXPECTED_SHA=$(git rev-parse "origin/${BASE_BRANCH}") \
+  || { echo "ERROR: git rev-parse origin/${BASE_BRANCH} failed — verify the remote ref exists." >&2; exit 1; }
+ACTUAL_SHA=$(git rev-parse HEAD) \
+  || { echo "ERROR: git rev-parse HEAD failed — check repository state." >&2; exit 1; }
 if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
   echo "ERROR: HEAD ($ACTUAL_SHA) does not match origin/${BASE_BRANCH} ($EXPECTED_SHA)." >&2
   echo "A sibling agent may have moved this checkout. Abort rather than create a stacked branch." >&2
@@ -856,8 +858,10 @@ git pull origin develop
 
 ```bash
 BASE_BRANCH="develop"
-EXPECTED_SHA=$(git rev-parse "origin/${BASE_BRANCH}")
-ACTUAL_SHA=$(git rev-parse HEAD)
+EXPECTED_SHA=$(git rev-parse "origin/${BASE_BRANCH}") \
+  || { echo "ERROR: git rev-parse origin/${BASE_BRANCH} failed — verify the remote ref exists." >&2; exit 1; }
+ACTUAL_SHA=$(git rev-parse HEAD) \
+  || { echo "ERROR: git rev-parse HEAD failed — check repository state." >&2; exit 1; }
 if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
   echo "ERROR: HEAD ($ACTUAL_SHA) does not match origin/${BASE_BRANCH} ($EXPECTED_SHA)." >&2
   echo "A sibling agent may have moved this checkout. Abort rather than create a stacked branch." >&2
@@ -1106,8 +1110,10 @@ git checkout develop && git pull origin develop
 
 ```bash
 BASE_BRANCH="develop"  # or develop-<slug> when an integration-branch label is present
-EXPECTED_SHA=$(git rev-parse "origin/${BASE_BRANCH}")
-ACTUAL_SHA=$(git rev-parse HEAD)
+EXPECTED_SHA=$(git rev-parse "origin/${BASE_BRANCH}") \
+  || { echo "ERROR: git rev-parse origin/${BASE_BRANCH} failed — verify the remote ref exists." >&2; exit 1; }
+ACTUAL_SHA=$(git rev-parse HEAD) \
+  || { echo "ERROR: git rev-parse HEAD failed — check repository state." >&2; exit 1; }
 if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
   echo "ERROR: HEAD ($ACTUAL_SHA) does not match origin/${BASE_BRANCH} ($EXPECTED_SHA)." >&2
   echo "A sibling agent may have moved this checkout. Abort rather than create a stacked branch." >&2
@@ -1359,8 +1365,10 @@ git pull origin main
 **Pre-branch HEAD verification (mandatory — run before `git checkout -b`)**: Before creating the hotfix branch, verify that HEAD matches `origin/main` to prevent accidental stacking on a non-main commit:
 
 ```bash
-EXPECTED_SHA=$(git rev-parse "origin/main")
-ACTUAL_SHA=$(git rev-parse HEAD)
+EXPECTED_SHA=$(git rev-parse "origin/main") \
+  || { echo "ERROR: git rev-parse origin/main failed — verify the remote ref exists." >&2; exit 1; }
+ACTUAL_SHA=$(git rev-parse HEAD) \
+  || { echo "ERROR: git rev-parse HEAD failed — check repository state." >&2; exit 1; }
 if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
   echo "ERROR: HEAD ($ACTUAL_SHA) does not match origin/main ($EXPECTED_SHA)." >&2
   echo "A sibling agent may have moved this checkout. Abort rather than create a stacked branch." >&2

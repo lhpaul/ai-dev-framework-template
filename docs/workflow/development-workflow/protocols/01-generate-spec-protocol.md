@@ -261,8 +261,10 @@ If no blocking human decision remains:
    ```bash
    git fetch origin
    git checkout develop && git pull origin develop
-   EXPECTED_SHA=$(git rev-parse "origin/develop")
-   ACTUAL_SHA=$(git rev-parse HEAD)
+   EXPECTED_SHA=$(git rev-parse "origin/develop") \
+     || { echo "ERROR: git rev-parse origin/develop failed — verify the remote ref exists." >&2; exit 1; }
+   ACTUAL_SHA=$(git rev-parse HEAD) \
+     || { echo "ERROR: git rev-parse HEAD failed — check repository state." >&2; exit 1; }
    if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
      echo "ERROR: HEAD ($ACTUAL_SHA) does not match origin/develop ($EXPECTED_SHA)." >&2
      echo "A sibling agent may have moved this checkout. Abort rather than create a stacked branch." >&2
