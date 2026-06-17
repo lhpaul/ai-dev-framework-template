@@ -42,7 +42,7 @@ review:
     # Ordered list of GitHub/App/CLI reviewers that can safely evaluate draft
     # PRs. These run before the PR is converted to ready.
     # Supported today by pr-review-loop.sh: greptile, devin, coderabbit,
-    # pr-agent, codex-github, claude-code-action, haystack, copilot.
+    # pr-agent, codex-github, claude-code-action, haystack, copilot, bugbot.
     github:
       - pr-agent
 
@@ -67,6 +67,15 @@ review:
   #                  not supported. See docs/workflow/development-workflow/integrations/copilot.md
   #   COPILOT_BOT_LOGIN  — override the default Copilot bot login
   #                        (default: "copilot-pull-request-reviewer[bot]")
+  #
+  # Bugbot platform options (Cursor Bugbot — requires the Cursor GitHub App installed
+  # on the repository; place "bugbot" in on_draft.github or on_ready.github):
+  #   BUGBOT_BOT_LOGIN        — override the Bugbot bot login
+  #                             (default: "cursor[bot]")
+  #   BUGBOT_CHECK_NAME       — override the check-run name to poll
+  #                             (default: "Cursor Bugbot")
+  #   BUGBOT_TRIGGER_COMMENT  — override the trigger comment posted to start a run
+  #                             (default: "bugbot run")
 
   # Runner-context constraint:
   #   This template defaults to 'codex' for Codex-first workflow runs. 'codex' as
