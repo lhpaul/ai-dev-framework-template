@@ -239,10 +239,11 @@ Use the item-orchestrator agent to start and advance work for [feature or issue 
 
 ### Cursor
 
-- Rules in `.cursor/rules/` provide automatic context
+- Rules in `.cursor/rules/` provide automatic context (files in `.cursor/rules/` use `.mdc` extension)
 - Commands in `.cursor/commands/` are invoked with `/command-name`
-- Workflow agents in `.cursor/agents/` (e.g. `/developer`, `/orchestrator`, `/item-orchestrator`) run stage-specific protocols; see `docs/workflow/development-workflow/agent-model-config.md` for model config
+- Workflow agents (subagents) in `.cursor/agents/` are invoked with `/agent-name` (e.g. `/developer`, `/orchestrator`, `/item-orchestrator`); see `docs/workflow/development-workflow/agent-model-config.md` for model config
 - MCP servers can be configured in `.cursor/.mcp.json`
+- No `.cursor/skills/` mirror is shipped: Cursor discovers the existing agent, command, and shared `.agents/skills/` surfaces directly, and review tooling treats an absent Cursor skills tree as intentional rather than a missing mirror
 
 Example commands:
 
