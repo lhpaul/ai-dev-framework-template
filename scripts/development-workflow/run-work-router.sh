@@ -218,13 +218,25 @@ is_epic_issue() {
   sub_count="$(gh issue view "$issue_num" --json subIssues \
     --jq '.subIssues | length' 2>/dev/null)" || return 1
 
+  # Validate that sub_count is a non-empty non-negative integer before using it
+  # in arithmetic. jq may produce empty output or non-numeric values on unexpected
+  # API response shapes; treat those as "not epic" (conservative/fail-safe).
+  case "${sub_count:-}" in
+    ''|*[!0-9]*) sub_count="0" ;;
+  esac
+
   # Also check if the issue has the "Epic" type label (common convention).
   local issue_type
   issue_type="$(gh issue view "$issue_num" --json 'labels' \
     --jq '[.labels[].name] | map(ascii_downcase) | map(select(. == "epic")) | length' \
     2>/dev/null)" || issue_type="0"
 
-  if [ "${sub_count:-0}" -gt 0 ] || [ "${issue_type:-0}" -gt 0 ]; then
+  # Validate issue_type is a non-negative integer.
+  case "${issue_type:-}" in
+    ''|*[!0-9]*) issue_type="0" ;;
+  esac
+
+  if [ "$sub_count" -gt 0 ] || [ "$issue_type" -gt 0 ]; then
     return 0
   fi
   return 1
