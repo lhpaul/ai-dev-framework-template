@@ -154,12 +154,14 @@ template:
 # documented safe defaults below, preserving today's conservative, human-reviewed behavior
 # (agents do not merge pull requests and do not start backlog work without confirmation).
 #
-# MODEL ONLY in this pass — enforcement of these settings inside delegated /run-work
-# execution is tracked by #980. Setting values here documents intent and makes the contract
-# readable but does not yet change runtime agent behavior.
+# Enforced at runtime by Protocols 90, 91, and 95 via three-layer precedence:
+# repo config (this file) → session overrides → invocation overrides (highest priority).
 #
 # See docs/workflow/development-workflow/guardrails.md for plain-language explanations,
 # mode descriptions, worked examples, stop conditions, and audit requirements.
+# See docs/workflow/development-workflow/guardrails-enforcement.md for the runtime
+# enforcement reference (effective-guardrails resolution, five enforcement gates,
+# named stop conditions, audit-evidence rules).
 #
 # guardrails:
 #   # mode — overall autonomy level for this repository.

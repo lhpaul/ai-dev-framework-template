@@ -28,6 +28,20 @@ automation; keep operational labels such as `ready-for-human-review`,
 `needs-fixes`, `ready-for-regression`, `reviewer-failed`, and
 `integration-branch:<slug>`.
 
+## Guardrails Enforcement
+
+Before any artifact-mutating action, resolve the effective guardrails using
+three-layer precedence (repo config → session overrides → invocation overrides)
+and report them in the run summary. Enforce the six gates: load+report at run
+start, backlog-start gate, per-stage PR-open gate, delegated review gate,
+delegated merge gate, and completion gate. The single policy path reuses the
+existing run-epic helpers (`run-epic-risk-classifier.sh`,
+`run-epic-delegated-gate.sh`, `run-epic-audit-trail.sh`). See
+`docs/workflow/development-workflow/guardrails-enforcement.md` for the complete
+enforcement reference. When no `guardrails` section is found, state "conservative
+defaults in effect" and list each default (mode=`manual`, no delegated merge,
+backlog starts confirmation-gated, `max_merge_risk: low`, no audit requirements).
+
 That document is the single source of truth for this supporting role. Key responsibilities:
 
 - Read current state from the issue tracker (if configured) and/or `docs/specs/developments/`
