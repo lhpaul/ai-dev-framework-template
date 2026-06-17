@@ -1575,15 +1575,15 @@ run_bugbot_review() {
           ;;
 
         neutral|cancelled|skipped)
-          # Non-blocking informational outcome — clean with suggestion_count=1.
+          # Non-blocking informational outcome — clean, no real findings.
           print_kv RESULT clean
           print_kv PLATFORM "$platform"
           print_kv PR_NUMBER "$pr_number"
           print_kv BRANCH "$branch_name"
           print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-          print_kv COMMENT_COUNT 1
+          print_kv COMMENT_COUNT 0
           print_kv BLOCKING_COUNT 0
-          print_kv SUGGESTION_COUNT 1
+          print_kv SUGGESTION_COUNT 0
           return 0
           ;;
 
