@@ -19,7 +19,7 @@ acting within the repository's declared limits.
 > enforced at runtime by orchestration (Protocols 90, 91, and 95). See
 > `docs/workflow/development-workflow/guardrails-enforcement.md` for the
 > enforcement reference: effective-guardrails resolution, config-field→policy
-> mapping, five enforcement gates, named stop conditions, and audit-evidence rules.
+> mapping, six enforcement gates, named stop conditions, and audit-evidence rules.
 
 ---
 

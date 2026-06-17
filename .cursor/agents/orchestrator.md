@@ -31,7 +31,7 @@ automation; keep operational labels such as `ready-for-human-review`,
 
 Before any artifact-mutating action, resolve the effective guardrails using
 three-layer precedence (repo config → session overrides → invocation overrides)
-and report them in the run summary. Enforce the five gates: load+report at run
+and report them in the run summary. Enforce the six gates: load+report at run
 start, backlog-start gate, per-stage PR-open gate, delegated review gate,
 delegated merge gate, and completion gate. The single policy path reuses the
 existing run-epic helpers (`run-epic-risk-classifier.sh`,

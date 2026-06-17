@@ -85,9 +85,9 @@ even when `mode: delegated`.
 
 ---
 
-## 3. Five Named Enforcement Gates
+## 3. Six Named Enforcement Gates
 
-Orchestration enforces guardrails at five decision points. These gates attach
+Orchestration enforces guardrails at six decision points. These gates attach
 to **existing** decision points in the protocols; they do not introduce new
 control-flow paths.
 
