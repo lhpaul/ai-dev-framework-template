@@ -290,14 +290,14 @@ resolve_token() {
     # Try as a PR first; if that fails, try as an issue
     if have_cmd gh; then
       local pr_state
-      pr_state="$(gh pr view "$pr_num" --json state --jq '.state' 2>/dev/null)" || true
+      pr_state="$(gh pr view "$pr_num" --json state --jq '.state' 2>/dev/null)" || true # workflow-shell-guard: allow SH001 - type probe; failure expected when target is not a PR, result checked by caller
       if [ -n "$pr_state" ]; then
         RESOLVED_KIND="pr"
         return 0
       fi
       # Try as issue
       local issue_state
-      issue_state="$(gh issue view "$pr_num" --json state --jq '.state' 2>/dev/null)" || true
+      issue_state="$(gh issue view "$pr_num" --json state --jq '.state' 2>/dev/null)" || true # workflow-shell-guard: allow SH001 - type probe; failure expected when target is not an issue, result checked by caller
       if [ -n "$issue_state" ]; then
         RESOLVED_KIND="issue"
         return 0
