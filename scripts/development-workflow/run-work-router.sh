@@ -130,20 +130,27 @@ is_positive_int() {
 # ---------------------------------------------------------------------------
 
 read_guardrails_config() {
-  local config_file
-  config_file="$(workflow_config_file 2>/dev/null)" || true
-
   GUARDRAILS_SECTION="absent"
   GUARDRAILS_MODE="manual"
   GUARDRAILS_BACKLOG_START="false"
+
+  local config_file _cfg_exit
+  _cfg_exit=0
+  config_file="$(workflow_config_file 2>/dev/null)" || _cfg_exit=$?
+  if [ "$_cfg_exit" -ne 0 ]; then
+    echo "run-work-router: warning: workflow_config_file lookup failed (exit $_cfg_exit); using guardrails defaults" >&2
+    return 0
+  fi
 
   if [ -z "${config_file:-}" ] || [ ! -f "$config_file" ]; then
     return 0
   fi
 
-  # Use python3 to safely parse YAML (avoid jq YAML limitations)
-  local py_result
-  py_result="$(python3 - "$config_file" <<'PYEOF' 2>/dev/null || true
+  # Use python3 to safely parse YAML (avoid jq YAML limitations).
+  # Capture exit code explicitly — do not use || true to suppress failures.
+  local py_result _py_exit
+  _py_exit=0
+  py_result="$(python3 - "$config_file" <<'PYEOF'
 import sys, json
 
 try:
@@ -183,15 +190,26 @@ try:
 
     print(json.dumps({"section": "present", "mode": mode, "backlog_start": allow}))
 except Exception as e:
+    sys.stderr.write("run-work-router: warning: YAML parse error: {}\n".format(e))
     print(json.dumps({"section": "absent", "mode": "manual", "backlog_start": False}))
 PYEOF
-)"
+  )" || _py_exit=$?
+
+  if [ "$_py_exit" -ne 0 ]; then
+    echo "run-work-router: warning: guardrails config parsing failed (exit $_py_exit); using defaults" >&2
+    return 0
+  fi
 
   if [ -n "$py_result" ]; then
-    local section mode backlog
-    section="$(printf '%s\n' "$py_result" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["section"])')" || section="absent"
-    mode="$(printf '%s\n' "$py_result" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["mode"])')" || mode="manual"
-    backlog="$(printf '%s\n' "$py_result" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(str(d["backlog_start"]).lower())')" || backlog="false"
+    local section mode backlog _sec_exit _mod_exit _bl_exit
+    _sec_exit=0; _mod_exit=0; _bl_exit=0
+    section="$(printf '%s\n' "$py_result" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["section"])')" || _sec_exit=$?
+    mode="$(printf '%s\n' "$py_result" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["mode"])')" || _mod_exit=$?
+    backlog="$(printf '%s\n' "$py_result" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(str(d["backlog_start"]).lower())')" || _bl_exit=$?
+    if [ "$_sec_exit" -ne 0 ] || [ "$_mod_exit" -ne 0 ] || [ "$_bl_exit" -ne 0 ]; then
+      echo "run-work-router: warning: guardrails field extraction failed; using defaults" >&2
+      return 0
+    fi
     GUARDRAILS_SECTION="$section"
     GUARDRAILS_MODE="$mode"
     GUARDRAILS_BACKLOG_START="$backlog"
@@ -250,10 +268,15 @@ is_epic_issue() {
 # ---------------------------------------------------------------------------
 
 RESOLVED_KIND=""
+# Set by resolve_token when it returns 1 to provide a specific failure reason.
+# Caller should use this to populate STOP_REASON when the generic message is
+# insufficient (e.g., gh CLI missing vs. item not found).
+RESOLVE_FAIL_REASON=""
 
 resolve_token() {
   local token="$1"
   RESOLVED_KIND="none"
+  RESOLVE_FAIL_REASON=""
 
   # --- Development folder ---
   if [ -d "$token" ] && [[ "$token" == docs/specs/developments/* ]]; then
@@ -279,14 +302,16 @@ resolve_token() {
         RESOLVED_KIND="issue"
         return 0
       fi
+      # gh available but token is neither an open PR nor an open issue.
+      RESOLVED_KIND="none"
+      return 1
+    else
+      # gh is unavailable — cannot resolve a numeric token without it.
+      # Emit a clear, actionable reason so the ambiguous stop-reason is useful.
+      RESOLVE_FAIL_REASON="gh CLI is required to resolve numeric target '$token'; install gh and run 'gh auth login'"
+      RESOLVED_KIND="none"
+      return 1
     fi
-    # gh unavailable — treat positive integers as ambiguous in live mode.
-    # Without gh we cannot distinguish an issue number from a PR number or
-    # confirm the item exists, so we conservatively return "none" to trigger
-    # the ambiguous routing path rather than silently misclassifying.
-    # In tests gh is mocked; see test-run-work-router.sh.
-    RESOLVED_KIND="none"
-    return 1
   fi
 
   # --- Branch token: known workflow branch prefix patterns ---
@@ -393,7 +418,11 @@ elif [ "${#deduped_tokens[@]}" -eq 1 ]; then
     # Unresolvable token → ambiguous
     MODE="$MODE_AMBIGUOUS"
     MODE_LABEL="$LABEL_AMBIGUOUS"
-    STOP_REASON="Token '$token' could not be resolved to a known issue, branch, PR, or development folder"
+    if [ -n "${RESOLVE_FAIL_REASON:-}" ]; then
+      STOP_REASON="$RESOLVE_FAIL_REASON"
+    else
+      STOP_REASON="Token '$token' could not be resolved to a known issue, branch, PR, or development folder"
+    fi
   elif [ "$RESOLVED_KIND" = "issue" ]; then
     # Check if it's an epic-like issue
     issue_num="${token#\#}"
@@ -443,7 +472,11 @@ else
   if [ "$all_resolved" -eq 0 ]; then
     MODE="$MODE_AMBIGUOUS"
     MODE_LABEL="$LABEL_AMBIGUOUS"
-    STOP_REASON="Token '$first_unresolvable' in the list could not be resolved to a known issue, branch, PR, or development folder"
+    if [ -n "${RESOLVE_FAIL_REASON:-}" ]; then
+      STOP_REASON="$RESOLVE_FAIL_REASON"
+    else
+      STOP_REASON="Token '$first_unresolvable' in the list could not be resolved to a known issue, branch, PR, or development folder"
+    fi
   else
     MODE="$MODE_LIST"
     MODE_LABEL="$LABEL_LIST"
