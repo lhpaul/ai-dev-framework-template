@@ -1215,6 +1215,9 @@ run_bugbot_review() {
     print_kv PR_NUMBER "$pr_number"
     print_kv BRANCH "$branch_name"
     print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
     return 2
   fi
 
@@ -1238,7 +1241,7 @@ run_bugbot_review() {
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
           .[]
-          | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null)
+          | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .in_reply_to_id == null)
           | { path, line: (.line // .original_line // 0), body: (.body // "") }
           | @json
         ' 2>/dev/null
@@ -1248,7 +1251,7 @@ run_bugbot_review() {
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
           .[]
           | select(
-              .user.login == $bot and
+              (.user.login == $bot or .user.login == ($bot + "[bot]")) and
               .submitted_at > $since and
               (
                 .state == "CHANGES_REQUESTED" or
@@ -1318,7 +1321,7 @@ run_bugbot_review() {
   local _bb_run_count
   _bb_run_count="$(
     gh api "repos/$repo/commits/$head_sha/check-runs" --paginate 2>/dev/null \
-      | jq -s --arg name "$check_name" '
+      | jq -se --arg name "$check_name" '
           [ .[].check_runs[]
             | select(
                 ((.app.slug // "") | test("cursor"; "i")) or
@@ -1338,7 +1341,17 @@ run_bugbot_review() {
     local _bb_trigger_rc=$?
     set -e
     if [ "$_bb_trigger_rc" -ne 0 ]; then
-      echo "WARN: run_bugbot_review: trigger comment post failed for PR #$pr_number — continuing to poll" >&2
+      echo "WARN: run_bugbot_review: trigger comment post failed for PR #$pr_number" >&2
+      print_kv RESULT escalate
+      print_kv REASON trigger-failed
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 2
     fi
   fi
 
@@ -1357,9 +1370,11 @@ run_bugbot_review() {
     unset _sha_rc
 
     set +e
-    read -r status_val conclusion < <(
+    local _fetch_rc=0
+    local _fetch_output
+    _fetch_output="$(
       gh api "repos/$repo/commits/$_current_sha/check-runs" --paginate 2>/dev/null \
-        | jq -s -r --arg name "$check_name" '
+        | jq -se -r --arg name "$check_name" '
             [ .[].check_runs[]
               | select(
                   ((.app.slug // "") | test("cursor"; "i")) or
@@ -1369,8 +1384,23 @@ run_bugbot_review() {
             | sort_by(.started_at) | last
             | ((.status // "") + " " + (.conclusion // ""))
           ' 2>/dev/null
-    )
+    )"
+    _fetch_rc=$?
     set -e
+    if [ "$_fetch_rc" -ne 0 ] || [ -z "$_fetch_output" ]; then
+      echo "WARN: run_bugbot_review: check-run fetch/parse failed for PR #$pr_number (SHA=$_current_sha) — returning unavailable" >&2
+      print_kv RESULT escalate
+      print_kv REASON fetch-failed
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 2
+    fi
+    read -r status_val conclusion <<< "$_fetch_output"
     status_val="${status_val:-}"
     conclusion="${conclusion:-}"
 
@@ -1387,7 +1417,7 @@ run_bugbot_review() {
             gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
               | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
                   .[]
-                  | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null)
+                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .in_reply_to_id == null)
                   | { path, line: (.line // .original_line // 0), body: (.body // "") }
                   | @json
                 ' 2>/dev/null
@@ -1449,7 +1479,7 @@ run_bugbot_review() {
             gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
               | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
                   .[]
-                  | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null)
+                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .in_reply_to_id == null)
                   | { path, line: (.line // .original_line // 0), body: (.body // "") }
                   | @json
                 ' 2>/dev/null
@@ -1459,7 +1489,7 @@ run_bugbot_review() {
               | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
                   .[]
                   | select(
-                      .user.login == $bot and
+                      (.user.login == $bot or .user.login == ($bot + "[bot]")) and
                       .submitted_at > $since and
                       (
                         .state == "CHANGES_REQUESTED" or
@@ -1565,6 +1595,9 @@ run_bugbot_review() {
           print_kv PR_NUMBER "$pr_number"
           print_kv BRANCH "$branch_name"
           print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          print_kv COMMENT_COUNT 0
+          print_kv BLOCKING_COUNT 0
+          print_kv SUGGESTION_COUNT 0
           return 2
           ;;
 
@@ -1576,6 +1609,9 @@ run_bugbot_review() {
           print_kv PR_NUMBER "$pr_number"
           print_kv BRANCH "$branch_name"
           print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          print_kv COMMENT_COUNT 0
+          print_kv BLOCKING_COUNT 0
+          print_kv SUGGESTION_COUNT 0
           return 2
           ;;
       esac
@@ -1600,6 +1636,9 @@ run_bugbot_review() {
     print_kv PR_NUMBER "$pr_number"
     print_kv BRANCH "$branch_name"
     print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
     return 2
   fi
 
@@ -1609,6 +1648,9 @@ run_bugbot_review() {
   print_kv PR_NUMBER "$pr_number"
   print_kv BRANCH "$branch_name"
   print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+  print_kv COMMENT_COUNT 0
+  print_kv BLOCKING_COUNT 0
+  print_kv SUGGESTION_COUNT 0
   return 2
 }
 
