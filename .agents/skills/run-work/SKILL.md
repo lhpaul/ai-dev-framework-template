@@ -15,7 +15,7 @@ This is the Codex command-style alias for Claude Code `/run-work`.
    `--repo`.
 5. **Guardrails enforcement**: Before any artifact-mutating action, resolve the
    effective guardrails (three-layer precedence: repo config → session overrides →
-   invocation overrides) and report them. The routed protocol enforces the five
+   invocation overrides) and report them. The routed protocol enforces the six
    gates defined in `docs/workflow/development-workflow/guardrails-enforcement.md`.
    When no `guardrails` section is found in `.ai-dev-workflow.yaml`, conservative
    defaults apply automatically.
