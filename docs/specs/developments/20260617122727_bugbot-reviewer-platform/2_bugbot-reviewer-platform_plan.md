@@ -68,7 +68,7 @@ build-time dependency.
 | `bot_login_for_platform` cases | inspection of `bot_login_for_platform()` `case` block | 8 platform entries; `bugbot` absent — must be added so `cursor[bot]` threads are audited |
 | Check-run polling precedent | `grep -n "commits/$head_sha/check-runs" scripts/development-workflow/pr-review-loop.sh` | `run_devin_review()` already polls `repos/$repo/commits/$head_sha/check-runs` and filters by `.app.slug` / `.name | test(...)` — reuse this pattern for the "Cursor Bugbot" check run |
 | HARNESS_MODE test file | inspection of `scripts/development-workflow/tests/test-pr-review-loop.sh` | Present (1999 lines); mocks `gh`/`git`, sources the script with `HARNESS_MODE=1`, calls platform functions directly — used for AC-9 unit tests |
-| `Supported today` comment | `grep -n "Supported today" .ai-dev-workflow.yaml` | Line 44: lists `greptile, devin, coderabbit, pr-agent, codex-github, ...`; `bugbot` absent — must be added |
+| `Supported today` comment | `grep -n "Supported today" .ai-dev-workflow.yaml` | The `# Supported today by pr-review-loop.sh:` comment lists `greptile, devin, coderabbit, pr-agent, codex-github, ...`; `bugbot` absent — must be added |
 | Setup-doc scope boundary | Spec "Non-Goals" + "Out of Scope (MVP)" | Downstream Bugbot setup documentation (`.cursor/BUGBOT.md`, integration guide, rollout defaults) is explicitly deferred to a **separate epic child** — this plan must NOT create a `bugbot.md` integration guide |
 | `pr-review-loop.sh` line count | `wc -l scripts/development-workflow/pr-review-loop.sh` | 5174 lines |
 
@@ -147,8 +147,8 @@ build-time dependency.
 ### Configuration Layer
 
 - [ ] **`.ai-dev-workflow.yaml` — update `Supported today` comment** (AC-1): The
-  comment on the `github:` reviewer keys (line ~44) lists the currently
-  supported platforms. Add `bugbot` to that list. Optionally add a short
+  `# Supported today by pr-review-loop.sh:` comment under the `review.on_draft.github`
+  reviewer keys lists the currently supported platforms. Add `bugbot` to that list. Optionally add a short
   comment block documenting the `BUGBOT_BOT_LOGIN`, `BUGBOT_CHECK_NAME`, and
   `BUGBOT_TRIGGER_COMMENT` override variables, analogous to the existing
   `codex-github` / `copilot` option blocks. **Do not** add a new integration
@@ -409,11 +409,12 @@ MOCK_GH_OUTPUT='[{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},
 
 > Later steps may depend on earlier ones.
 
-1. **Read `scripts/development-workflow/pr-review-loop.sh` in full** — note the
-   exact line numbers of (a) the end of `run_copilot_review()` and the start of
-   `run_haystack_review()` (insertion point for the new function), (b) the
-   `run_platform_review()` `case` block, and (c) the `bot_login_for_platform()`
-   `case` block. Study `run_devin_review()` (check-run polling) and
+1. **Read `scripts/development-workflow/pr-review-loop.sh` in full** — locate the
+   insertion points by semantic anchor: (a) the boundary between the end of the
+   `run_copilot_review()` function and the start of the `run_haystack_review()`
+   function (insertion point for the new function), (b) the `case "$platform" in`
+   block inside `run_platform_review()`, and (c) the `case "$1" in` block inside
+   `bot_login_for_platform()`. Study `run_devin_review()` (check-run polling) and
    `run_greptile_review()` (comment/review blocking summary) as the two patterns
    to combine.
 
