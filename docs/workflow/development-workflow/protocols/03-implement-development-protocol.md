@@ -494,10 +494,29 @@ Determine the branch slug:
 git checkout develop && git pull origin develop
 # If integration-branch:<slug> label is present, use develop-<slug> instead:
 # git checkout develop-<slug> && git pull origin develop-<slug>
-git checkout -b feature/[branch-slug]   # or fix/[branch-slug], refactor/[branch-slug]
+# (do NOT run git checkout -b here — the branch is created below after the HEAD guard)
 ```
 
 The PR opened at the end of this path must target `develop-<slug>` when the label is present. If the integration branch does not exist yet, the orchestrator should have created it before dispatching this protocol — do not create it here; instead, stop and inform the Work Item Runner.
+
+**Pre-branch HEAD verification (mandatory — run before `git checkout -b`)**: Before creating any branch, verify that the current HEAD matches the expected base. This guard prevents stacked-branch contamination when sibling agents share the same checkout (e.g., in parallel epic dispatch without worktree isolation):
+
+```bash
+BASE_BRANCH="develop"  # or develop-<slug> when an integration-branch label is present
+EXPECTED_SHA=$(git rev-parse "origin/${BASE_BRANCH}") \
+  || { echo "ERROR: git rev-parse origin/${BASE_BRANCH} failed — verify the remote ref exists." >&2; exit 1; }
+ACTUAL_SHA=$(git rev-parse HEAD) \
+  || { echo "ERROR: git rev-parse HEAD failed — check repository state." >&2; exit 1; }
+if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+  echo "ERROR: HEAD ($ACTUAL_SHA) does not match origin/${BASE_BRANCH} ($EXPECTED_SHA)." >&2
+  echo "A sibling agent may have moved this checkout. Abort rather than create a stacked branch." >&2
+  exit 1
+fi
+echo "Pre-branch HEAD check passed: HEAD matches origin/${BASE_BRANCH}"
+git checkout -b feature/[branch-slug]   # or fix/[branch-slug], refactor/[branch-slug]
+```
+
+If the check fails, do not proceed. Report the mismatch to the caller so the working tree can be reset to the correct base before retrying.
 
 **Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout develop` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, confirm your working directory is inside the worktree path, not the main repo root (run `pwd` and compare). See the "Critical: Worktree Git Discipline" block in Protocol 91 Step 3 for the full pre-operation checklist.
 
@@ -833,8 +852,26 @@ Do not proceed to the Refactor Steps until this checklist is complete and all se
 git fetch origin
 git checkout develop
 git pull origin develop
+```
+
+**Pre-branch HEAD verification (mandatory — run before `git checkout -b`)**: Before creating the branch, verify that HEAD matches the expected base to prevent stacked-branch contamination in shared-checkout parallel execution:
+
+```bash
+BASE_BRANCH="develop"
+EXPECTED_SHA=$(git rev-parse "origin/${BASE_BRANCH}") \
+  || { echo "ERROR: git rev-parse origin/${BASE_BRANCH} failed — verify the remote ref exists." >&2; exit 1; }
+ACTUAL_SHA=$(git rev-parse HEAD) \
+  || { echo "ERROR: git rev-parse HEAD failed — check repository state." >&2; exit 1; }
+if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+  echo "ERROR: HEAD ($ACTUAL_SHA) does not match origin/${BASE_BRANCH} ($EXPECTED_SHA)." >&2
+  echo "A sibling agent may have moved this checkout. Abort rather than create a stacked branch." >&2
+  exit 1
+fi
+echo "Pre-branch HEAD check passed: HEAD matches origin/${BASE_BRANCH}"
 git checkout -b refactor/[branch-slug]
 ```
+
+If the check fails, do not proceed. Report the mismatch to the caller so the working tree can be reset before retrying.
 
 **Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout develop` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, confirm your working directory is inside the worktree path, not the main repo root (run `pwd` and compare). See the "Critical: Worktree Git Discipline" block in Protocol 91 Step 3 for the full pre-operation checklist.
 
@@ -1067,8 +1104,26 @@ Branch from `develop` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without)
 git checkout develop && git pull origin develop
 # If integration-branch:<slug> label is present, use develop-<slug> instead:
 # git checkout develop-<slug> && git pull origin develop-<slug>
+```
+
+**Pre-branch HEAD verification (mandatory — run before `git checkout -b`)**: Before creating the branch, verify that HEAD matches the expected base to prevent stacked-branch contamination in shared-checkout parallel execution:
+
+```bash
+BASE_BRANCH="develop"  # or develop-<slug> when an integration-branch label is present
+EXPECTED_SHA=$(git rev-parse "origin/${BASE_BRANCH}") \
+  || { echo "ERROR: git rev-parse origin/${BASE_BRANCH} failed — verify the remote ref exists." >&2; exit 1; }
+ACTUAL_SHA=$(git rev-parse HEAD) \
+  || { echo "ERROR: git rev-parse HEAD failed — check repository state." >&2; exit 1; }
+if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+  echo "ERROR: HEAD ($ACTUAL_SHA) does not match origin/${BASE_BRANCH} ($EXPECTED_SHA)." >&2
+  echo "A sibling agent may have moved this checkout. Abort rather than create a stacked branch." >&2
+  exit 1
+fi
+echo "Pre-branch HEAD check passed: HEAD matches origin/${BASE_BRANCH}"
 git checkout -b fix/[branch-slug]
 ```
+
+If the check fails, do not proceed. Report the mismatch to the caller so the working tree can be reset before retrying.
 
 The PR opened at the end of this path must target `develop-<slug>` when the label is present. If the integration branch does not exist yet, the orchestrator should have created it before dispatching this protocol — do not create it here; instead, stop and inform the Work Item Runner.
 
@@ -1305,8 +1360,25 @@ Branch from `main` (slug: `[issue-id]-[slug]` with tracker, `[slug]` without):
 git fetch origin
 git checkout main
 git pull origin main
+```
+
+**Pre-branch HEAD verification (mandatory — run before `git checkout -b`)**: Before creating the hotfix branch, verify that HEAD matches `origin/main` to prevent accidental stacking on a non-main commit:
+
+```bash
+EXPECTED_SHA=$(git rev-parse "origin/main") \
+  || { echo "ERROR: git rev-parse origin/main failed — verify the remote ref exists." >&2; exit 1; }
+ACTUAL_SHA=$(git rev-parse HEAD) \
+  || { echo "ERROR: git rev-parse HEAD failed — check repository state." >&2; exit 1; }
+if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+  echo "ERROR: HEAD ($ACTUAL_SHA) does not match origin/main ($EXPECTED_SHA)." >&2
+  echo "A sibling agent may have moved this checkout. Abort rather than create a stacked branch." >&2
+  exit 1
+fi
+echo "Pre-branch HEAD check passed: HEAD matches origin/main"
 git checkout -b hotfix/[branch-slug]
 ```
+
+If the check fails, do not proceed. Report the mismatch to the caller so the working tree can be reset before retrying.
 
 **Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout main` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, confirm your working directory is inside the worktree path, not the main repo root (run `pwd` and compare). See the "Critical: Worktree Git Discipline" block in Protocol 91 Step 3 for the full pre-operation checklist.
 

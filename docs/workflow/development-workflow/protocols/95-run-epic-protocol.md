@@ -367,6 +367,27 @@ Do this in the orchestrator context, not inside a dispatched agent. Parallel
 agents must not race to create the same branch from `develop` — this produces
 divergent starting HEADs and stacked-branch contamination across sibling items.
 
+**Current mitigation — pre-branch HEAD guard (short-term)**: Each agent protocol
+(Protocols 01, 02, and 03) now includes a mandatory pre-branch HEAD verification
+step. Before running `git checkout -b`, every agent compares its current HEAD
+SHA against the expected base (`origin/develop` or the integration branch). If
+they differ — indicating that a sibling agent moved the checkout — the agent
+aborts immediately with a clear error rather than silently stacking its branch
+on top of a sibling's commits. When the guard fires, recovery is: (1) reset the
+working tree to the expected base with `git checkout develop && git pull origin
+develop`, then (2) re-run the agent from branch creation.
+
+**Intended long-term fix — worktree isolation**: The durable solution to
+shared-checkout contamination is to dispatch each parallel agent into a
+separate `git worktree` (one worktree per item). With worktree isolation, each
+agent has its own working tree backed by the shared `.git` directory, so no
+agent can disturb another's HEAD or uncommitted changes. Protocol 91 Step 3
+already supports this model via the `BATCH_CONTEXT=true` / worktree path
+contract. Future `/run-epic` parallel dispatch should set `isolation: worktree`
+(or equivalent) so item-orchestrators create a dedicated worktree before
+handing off to each agent, making the pre-branch guard redundant for parallel
+runs while keeping it as a backstop for single-checkout fallback.
+
 For each in-scope item:
 
 1. Advance the item with the existing `/run-item-work` or stage protocol. Do not
