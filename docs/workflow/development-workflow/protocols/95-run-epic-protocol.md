@@ -373,7 +373,9 @@ step. Before running `git checkout -b`, every agent compares its current HEAD
 SHA against the expected base (`origin/develop` or the integration branch). If
 they differ — indicating that a sibling agent moved the checkout — the agent
 aborts immediately with a clear error rather than silently stacking its branch
-on top of a sibling's commits.
+on top of a sibling's commits. When the guard fires, recovery is: (1) reset the
+working tree to the expected base with `git checkout develop && git pull origin
+develop`, then (2) re-run the agent from branch creation.
 
 **Intended long-term fix — worktree isolation**: The durable solution to
 shared-checkout contamination is to dispatch each parallel agent into a
