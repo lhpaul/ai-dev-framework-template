@@ -2007,7 +2007,15 @@ unset _integ_out _integ_exit INTEG_MOCK_HEAD_JSON
 #         (check_appeared=0) → RESULT=escalate, REASON=unavailable, exit 2
 #   16.5  escalate (head-sha-unavailable): pulls API returns empty head SHA
 #         → RESULT=escalate, REASON=head-sha-unavailable, exit 2
-#   16.6  run_platform_review routes "bugbot" to run_bugbot_review
+#   16.6  idempotency fast-path: existing blocking cursor[bot] finding on HEAD
+#         → RESULT=needs_fixes REASON=existing_findings, exit 1 (no trigger POST)
+#   16.7  trigger-failed path: trigger comment POST fails
+#         → RESULT=escalate REASON=trigger-failed, exit 2
+#   16.8  fetch-failed path: check-run API call fails during Phase 3 poll
+#         → RESULT=escalate REASON=fetch-failed, exit 2
+#   16.9  neutral conclusion path: check run concludes neutral
+#         → RESULT=clean BLOCKING_COUNT=0 SUGGESTION_COUNT=0, exit 0
+#   16.10 run_platform_review routes "bugbot" to run_bugbot_review
 #
 # Each test that exercises run_bugbot_review requires a custom gh mock because
 # the function issues several incompatible gh API call shapes in a single run
@@ -2277,7 +2285,230 @@ rm -rf "$_bugbot_mock_dir_165"
 unset _bugbot_mock_dir_165 actual_output actual_exit
 
 # ---------------------------------------------------------------------------
-# Test 16.6: run_platform_review routes "bugbot" to run_bugbot_review
+# Test 16.6: idempotency fast-path — existing blocking cursor[bot] finding on HEAD
+#
+# When blocking cursor[bot] inline or review comments already exist for the
+# current HEAD, run_bugbot_review must return needs_fixes with
+# REASON=existing_findings immediately (Phase 1), without posting a trigger
+# comment.  The mock returns an existing CHANGES_REQUESTED review from
+# cursor[bot]; the check-runs and trigger POST endpoints must NOT be reached
+# (they return non-zero to confirm they were not invoked).
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_166="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_166/gh" <<'BUGBOT_GH_166'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc166sha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  # Phase 1 inline comments — none
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  # Phase 1 reviews — one blocking CHANGES_REQUESTED from cursor[bot]
+  *"pulls/"*"/reviews"*)
+    printf '[{"user":{"login":"cursor[bot]"},"submitted_at":"2020-01-02T00:00:00Z","state":"CHANGES_REQUESTED","body":"BUGBOT_REVIEW: null pointer at src/lib.c:10"}]\n'
+    exit 0 ;;
+  # check-runs and trigger POST must NOT be reached (function returns early)
+  *"check-runs"*)
+    printf 'ERROR: check-runs reached unexpectedly\n' >&2; exit 1 ;;
+  *"--method POST"*)
+    printf 'ERROR: trigger POST reached unexpectedly\n' >&2; exit 1 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_166
+chmod +x "$_bugbot_mock_dir_166/gh"
+
+unset BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME BUGBOT_TRIGGER_COMMENT
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_166:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_existing_findings_result" "RESULT=needs_fixes" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_existing_findings_reason" "REASON=existing_findings" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "bugbot_existing_findings_exit_code" "1" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_166"
+unset _bugbot_mock_dir_166 actual_output actual_exit
+
+# ---------------------------------------------------------------------------
+# Test 16.7: trigger-failed path — trigger comment POST fails
+#
+# When no check run exists for the head SHA (Phase 2 count=0), the function
+# posts a trigger comment.  If that POST fails, the function must escalate
+# with REASON=trigger-failed.  The mock returns an empty check-runs page so
+# the trigger POST branch is reached, then returns non-zero for the POST.
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_167="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_167/gh" <<'BUGBOT_GH_167'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc167sha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  # Phase 2: no Bugbot run → trigger POST will be attempted
+  *"check-runs"*)
+    printf '{"check_runs":[]}\n'; exit 0 ;;
+  # Trigger comment POST fails
+  *"--method POST"*)
+    exit 1 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_167
+chmod +x "$_bugbot_mock_dir_167/gh"
+
+unset BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME BUGBOT_TRIGGER_COMMENT
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_167:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_trigger_failed_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_trigger_failed_reason" "REASON=trigger-failed" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "bugbot_trigger_failed_exit_code" "2" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_167"
+unset _bugbot_mock_dir_167 actual_output actual_exit
+
+# ---------------------------------------------------------------------------
+# Test 16.8: fetch-failed path — check-run API call fails during Phase 3 poll
+#
+# After a successful trigger, the poll loop calls the check-runs API each
+# iteration.  When that call fails, the function must escalate immediately
+# with REASON=fetch-failed rather than continuing to loop or returning clean.
+#
+# The mock differentiates Phase 2 (first check-runs call; returns empty so
+# the trigger fires) from Phase 3 poll (second check-runs call; returns
+# non-zero exit) using a call counter written to a tmp file.
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_168="$(mktemp -d)"
+_bugbot_cr_counter_168="/tmp/bugbot-test-168-cr-count.$$"
+rm -f "$_bugbot_cr_counter_168"
+cat > "$_bugbot_mock_dir_168/gh" <<BUGBOT_GH_168
+#!/usr/bin/env bash
+_counter_file="${_bugbot_cr_counter_168}"
+case "\$*" in
+  *"--jq .head.sha"*)
+    printf 'abc168sha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"check-runs"*)
+    _n="\$(cat "\$_counter_file" 2>/dev/null || printf '0')"
+    _n=\$(( _n + 1 ))
+    printf '%s\n' "\$_n" > "\$_counter_file"
+    if [ "\$_n" -eq 1 ]; then
+      # Phase 2: return empty page so trigger POST is attempted
+      printf '{"check_runs":[]}\n'; exit 0
+    else
+      # Phase 3 poll: fail to trigger fetch-failed branch
+      exit 1
+    fi ;;
+  *"--method POST"*)
+    exit 0 ;;
+  *"headRefOid"*)
+    printf 'abc168sha\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_168
+chmod +x "$_bugbot_mock_dir_168/gh"
+
+unset BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME BUGBOT_TRIGGER_COMMENT
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_168:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_fetch_failed_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_fetch_failed_reason" "REASON=fetch-failed" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "bugbot_fetch_failed_exit_code" "2" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_168"
+rm -f "$_bugbot_cr_counter_168"
+unset _bugbot_mock_dir_168 _bugbot_cr_counter_168 actual_output actual_exit
+
+# ---------------------------------------------------------------------------
+# Test 16.9: neutral conclusion path — check run concludes neutral
+#
+# A neutral conclusion (e.g. skipped analysis) is informational and must be
+# treated as clean with zero blocking findings and zero suggestions, matching
+# the neutral|cancelled|skipped branch in run_bugbot_review.
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_169="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_169/gh" <<'BUGBOT_GH_169'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc169sha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"--method POST"*)
+    exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  # check-runs: completed with conclusion=neutral
+  *"check-runs"*)
+    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"neutral","started_at":"2020-01-01T00:00:00Z"}]}\n'
+    exit 0 ;;
+  *"headRefOid"*)
+    printf 'abc169sha\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_169
+chmod +x "$_bugbot_mock_dir_169/gh"
+
+unset BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME BUGBOT_TRIGGER_COMMENT
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_169:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_neutral_result" "RESULT=clean" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_neutral_blocking_count" "BLOCKING_COUNT=0" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
+run_test "bugbot_neutral_suggestion_count" "SUGGESTION_COUNT=0" \
+  "$(printf '%s\n' "$actual_output" | grep "^SUGGESTION_COUNT=")"
+run_test "bugbot_neutral_exit_code" "0" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_169"
+unset _bugbot_mock_dir_169 actual_output actual_exit
+
+# ---------------------------------------------------------------------------
+# Test 16.10: run_platform_review routes "bugbot" to run_bugbot_review
 # ---------------------------------------------------------------------------
 _bugbot_dispatch_called=0
 run_bugbot_review() { _bugbot_dispatch_called=1; }
