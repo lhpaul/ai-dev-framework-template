@@ -605,6 +605,7 @@ Repository helpers:
 - `docs/workflow/development-workflow/integrations/issue-tracker.md`
 - `docs/workflow/development-workflow/integrations/linear.md`
 - `docs/workflow/development-workflow/integrations/pr-review-platform.md`
+- `docs/workflow/development-workflow/integrations/bugbot.md`
 - `docs/workflow/development-workflow/integrations/greptile.md`
 - `docs/workflow/development-workflow/integrations/devin.md`
 - `docs/workflow/development-workflow/integrations/coderabbit.md`

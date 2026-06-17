@@ -1148,6 +1148,512 @@ run_copilot_review() {
   return 2
 }
 
+run_bugbot_review() {
+  # Triggers Cursor Bugbot for the given PR, polls the "Cursor Bugbot" check run
+  # on the PR head SHA until the run completes or the budget is exhausted, then
+  # classifies the conclusion and summarises any blocking cursor[bot] findings.
+  #
+  # Exit code mapping:
+  #   0 → RESULT=clean      (conclusion=success with no blocking comments, or
+  #                           neutral/cancelled/skipped informational)
+  #   1 → RESULT=needs_fixes (conclusion=failure/action_required, or existing
+  #                           blocking cursor[bot] findings on current head)
+  #   2 → RESULT=escalate   (timeout, unavailable, or head-sha-unavailable)
+  #
+  # Env var overrides:
+  #   BUGBOT_BOT_LOGIN        — override bot login (default: "cursor[bot]")
+  #   BUGBOT_CHECK_NAME       — override check-run name (default: "Cursor Bugbot")
+  #   BUGBOT_TRIGGER_COMMENT  — override trigger comment (default: "bugbot run")
+  local pr_number="$1"
+  local branch_name="$2"
+  local poll_interval="$3"
+  local max_wait="$4"
+  local platform="bugbot"
+  local bot_login="${BUGBOT_BOT_LOGIN:-cursor[bot]}"
+  local check_name="${BUGBOT_CHECK_NAME:-Cursor Bugbot}"
+  local trigger_comment="${BUGBOT_TRIGGER_COMMENT:-bugbot run}"
+  local repo
+  local owner repo_name
+  local head_sha=""
+  local since_iso=""
+  local existing_comments=""
+  local existing_reviews=""
+  local existing_blocking_file=""
+  local existing_blocking_count=0
+  local existing_suggestion_count=0
+  local comment_json=""
+  local review_json=""
+  local body=""
+  local blocking_lines_file=""
+  local elapsed=0
+  local conclusion=""
+  local status_val=""
+  local blocking_count=0
+  local suggestion_count=0
+  local comment_count=0
+  local index=1
+  local blocking_json=""
+  local check_appeared=0
+
+  trap 'rm -f "${existing_blocking_file:-}" "${blocking_lines_file:-}"' RETURN
+
+  require_gh
+  cd_workflow_repo_root
+  repo="$(repo_slug)"
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  # Resolve head SHA. A missing SHA means we cannot scope findings to the
+  # current commit — escalate rather than risk matching stale results.
+  set +e
+  head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha' 2>/dev/null)"
+  set -e
+  if [ -z "$head_sha" ]; then
+    print_kv RESULT escalate
+    print_kv REASON head-sha-unavailable
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 2
+  fi
+
+  # Resolve the commit timestamp to scope findings to this HEAD.
+  set +e
+  since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty' 2>/dev/null)"
+  set -e
+  if [ -z "$since_iso" ]; then
+    since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
+  fi
+  # Cap to now to handle clock-skew / rebase that produces a future committer.date.
+  _bb_now_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  [ "$since_iso" \> "$_bb_now_iso" ] && since_iso="$_bb_now_iso"
+  unset _bb_now_iso
+
+  # --- Phase 1: Check for existing blocking cursor[bot] findings on current HEAD ---
+  # If blocking findings already exist (e.g. from a previous trigger in the same
+  # review cycle) return needs_fixes immediately without re-triggering.
+  set +e
+  existing_comments="$(
+    gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+          .[]
+          | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .in_reply_to_id == null)
+          | { path, line: (.line // .original_line // 0), body: (.body // "") }
+          | @json
+        ' 2>/dev/null
+  )"
+  existing_reviews="$(
+    gh api "repos/$repo/pulls/$pr_number/reviews" --paginate 2>/dev/null \
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+          .[]
+          | select(
+              (.user.login == $bot or .user.login == ($bot + "[bot]")) and
+              .submitted_at > $since and
+              (
+                .state == "CHANGES_REQUESTED" or
+                .state == "COMMENTED"
+              )
+            )
+          | { path: "", line: 0, body: (.body // "review without body"), state: .state }
+          | @json
+        ' 2>/dev/null
+  )"
+  set -e
+
+  existing_blocking_file="$(mktemp)"
+
+  while IFS= read -r comment_json; do
+    [ -z "${comment_json:-}" ] && continue
+    body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
+    [ -z "$body" ] && continue
+    # Bugbot informational notes are counted as suggestions, not blockers (AC-4).
+    if is_soft_suggestion "$body"; then
+      existing_suggestion_count=$((existing_suggestion_count + 1))
+      continue
+    fi
+    existing_blocking_count=$((existing_blocking_count + 1))
+    printf '%s\n' "$comment_json" >> "$existing_blocking_file"
+  done <<< "$existing_comments"
+
+  while IFS= read -r review_json; do
+    [ -z "${review_json:-}" ] && continue
+    body="$(printf '%s\n' "$review_json" | jq -r '.body')"
+    [ -z "$body" ] && continue
+    if is_soft_suggestion "$body"; then
+      existing_suggestion_count=$((existing_suggestion_count + 1))
+      continue
+    fi
+    existing_blocking_count=$((existing_blocking_count + 1))
+    printf '%s\n' "$review_json" >> "$existing_blocking_file"
+  done <<< "$existing_reviews"
+
+  if [ "$existing_blocking_count" -gt 0 ]; then
+    print_kv RESULT needs_fixes
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv REASON existing_findings
+    print_kv COMMENT_COUNT "$((existing_blocking_count + existing_suggestion_count))"
+    print_kv BLOCKING_COUNT "$existing_blocking_count"
+    print_kv SUGGESTION_COUNT "$existing_suggestion_count"
+    while IFS= read -r blocking_json; do
+      [ -z "${blocking_json:-}" ] && continue
+      print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
+      print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
+      print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+      index=$((index + 1))
+    done < "$existing_blocking_file"
+    rm -f "$existing_blocking_file"
+    return 1
+  fi
+
+  rm -f "$existing_blocking_file"
+
+  # --- Phase 2: Trigger — post trigger comment when no in-progress/recent run ---
+  # Check for a queued/in-progress/recently-completed Cursor Bugbot check run on
+  # the current head. If none exists, post the trigger comment (idempotent).
+  set +e
+  local _bb_run_count
+  _bb_run_count="$(
+    gh api "repos/$repo/commits/$head_sha/check-runs" --paginate 2>/dev/null \
+      | jq -se --arg name "$check_name" '
+          [ .[].check_runs[]
+            | select(
+                ((.app.slug // "") | test("cursor"; "i")) or
+                (.name == $name)
+              )
+          ] | length
+        ' 2>/dev/null
+  )"
+  set -e
+  _bb_run_count="${_bb_run_count:-0}"
+
+  if [ "$_bb_run_count" -eq 0 ]; then
+    # No Cursor Bugbot check run for this head — post the trigger comment.
+    set +e
+    gh api "repos/$repo/issues/$pr_number/comments" --method POST \
+      --raw-field body="$trigger_comment" > /dev/null 2>&1
+    local _bb_trigger_rc=$?
+    set -e
+    if [ "$_bb_trigger_rc" -ne 0 ]; then
+      echo "WARN: run_bugbot_review: trigger comment post failed for PR #$pr_number" >&2
+      print_kv RESULT escalate
+      print_kv REASON trigger-failed
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 2
+    fi
+  fi
+
+  # --- Phase 3: Poll the "Cursor Bugbot" check run on the current head SHA ---
+  while [ "$elapsed" -lt "$max_wait" ]; do
+    # Re-resolve head SHA each iteration so a mid-review push retargets the filter.
+    set +e
+    local _current_sha
+    _current_sha="$(gh pr view "$pr_number" --repo "$owner/$repo_name" --json headRefOid --jq '.headRefOid' 2>/dev/null)"
+    local _sha_rc=$?
+    set -e
+    if [ "$_sha_rc" -ne 0 ] || [ -z "$_current_sha" ]; then
+      echo "WARN: run_bugbot_review: could not refresh HEAD SHA for PR $pr_number — falling back to $head_sha" >&2
+      _current_sha="$head_sha"
+    fi
+    unset _sha_rc
+
+    set +e
+    local _fetch_rc=0
+    local _fetch_output
+    _fetch_output="$(
+      gh api "repos/$repo/commits/$_current_sha/check-runs" --paginate 2>/dev/null \
+        | jq -se -r --arg name "$check_name" '
+            [ .[].check_runs[]
+              | select(
+                  ((.app.slug // "") | test("cursor"; "i")) or
+                  (.name == $name)
+                )
+            ]
+            | sort_by(.started_at) | last
+            | ((.status // "") + " " + (.conclusion // ""))
+          ' 2>/dev/null
+    )"
+    _fetch_rc=$?
+    set -e
+    if [ "$_fetch_rc" -ne 0 ] || [ -z "$_fetch_output" ]; then
+      echo "WARN: run_bugbot_review: check-run fetch/parse failed for PR #$pr_number (SHA=$_current_sha) — returning unavailable" >&2
+      print_kv RESULT escalate
+      print_kv REASON fetch-failed
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 2
+    fi
+    read -r status_val conclusion <<< "$_fetch_output"
+    status_val="${status_val:-}"
+    conclusion="${conclusion:-}"
+
+    if [ "$status_val" = "completed" ]; then
+      check_appeared=1
+      case "$conclusion" in
+        success)
+          # No blocking findings per the check run. Read cursor[bot] inline
+          # comments to confirm and collect any suggestions.
+          blocking_lines_file="$(mktemp)"
+          set +e
+          local _clean_comments
+          _clean_comments="$(
+            gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
+              | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+                  .[]
+                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .in_reply_to_id == null)
+                  | { path, line: (.line // .original_line // 0), body: (.body // "") }
+                  | @json
+                ' 2>/dev/null
+          )"
+          set -e
+          while IFS= read -r comment_json; do
+            [ -z "${comment_json:-}" ] && continue
+            body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
+            [ -z "$body" ] && continue
+            comment_count=$((comment_count + 1))
+            if is_soft_suggestion "$body"; then
+              suggestion_count=$((suggestion_count + 1))
+            else
+              blocking_count=$((blocking_count + 1))
+              printf '%s\n' "$comment_json" >> "$blocking_lines_file"
+            fi
+          done <<< "${_clean_comments:-}"
+
+          if [ "$blocking_count" -gt 0 ]; then
+            # Check run said success but cursor[bot] posted blocking comments.
+            print_kv RESULT needs_fixes
+            print_kv PLATFORM "$platform"
+            print_kv PR_NUMBER "$pr_number"
+            print_kv BRANCH "$branch_name"
+            print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+            print_kv REASON blocking_comments
+            print_kv COMMENT_COUNT "$comment_count"
+            print_kv BLOCKING_COUNT "$blocking_count"
+            print_kv SUGGESTION_COUNT "$suggestion_count"
+            while IFS= read -r blocking_json; do
+              [ -z "${blocking_json:-}" ] && continue
+              print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
+              print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
+              print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+              index=$((index + 1))
+            done < "$blocking_lines_file"
+            rm -f "$blocking_lines_file"
+            return 1
+          fi
+
+          rm -f "$blocking_lines_file"
+          print_kv RESULT clean
+          print_kv PLATFORM "$platform"
+          print_kv PR_NUMBER "$pr_number"
+          print_kv BRANCH "$branch_name"
+          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          print_kv COMMENT_COUNT "$comment_count"
+          print_kv BLOCKING_COUNT 0
+          print_kv SUGGESTION_COUNT "$suggestion_count"
+          return 0
+          ;;
+
+        failure|action_required)
+          # Blocking findings. Read cursor[bot] reviews/comments for the summary.
+          blocking_lines_file="$(mktemp)"
+          set +e
+          local _blocking_comments _blocking_reviews
+          _blocking_comments="$(
+            gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
+              | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+                  .[]
+                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .in_reply_to_id == null)
+                  | { path, line: (.line // .original_line // 0), body: (.body // "") }
+                  | @json
+                ' 2>/dev/null
+          )"
+          _blocking_reviews="$(
+            gh api "repos/$repo/pulls/$pr_number/reviews" --paginate 2>/dev/null \
+              | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+                  .[]
+                  | select(
+                      (.user.login == $bot or .user.login == ($bot + "[bot]")) and
+                      .submitted_at > $since and
+                      (
+                        .state == "CHANGES_REQUESTED" or
+                        .state == "COMMENTED"
+                      )
+                    )
+                  | { path: "", line: 0, body: (.body // "review without body"), state: .state }
+                  | @json
+                ' 2>/dev/null
+          )"
+          set -e
+
+          local inline_count=0
+          while IFS= read -r comment_json; do
+            [ -z "${comment_json:-}" ] && continue
+            body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
+            [ -z "$body" ] && continue
+            comment_count=$((comment_count + 1))
+            if is_soft_suggestion "$body"; then
+              suggestion_count=$((suggestion_count + 1))
+            else
+              blocking_count=$((blocking_count + 1))
+              inline_count=$((inline_count + 1))
+              printf '%s\n' "$comment_json" >> "$blocking_lines_file"
+            fi
+          done <<< "${_blocking_comments:-}"
+
+          while IFS= read -r review_json; do
+            [ -z "${review_json:-}" ] && continue
+            body="$(printf '%s\n' "$review_json" | jq -r '.body')"
+            local _rv_state
+            _rv_state="$(printf '%s\n' "$review_json" | jq -r '.state // ""')"
+            [ -z "$body" ] && continue
+            if is_soft_suggestion "$body"; then
+              suggestion_count=$((suggestion_count + 1))
+              comment_count=$((comment_count + 1))
+              continue
+            fi
+            # For COMMENTED reviews, treat as blocking when there are inline
+            # blocking comments (umbrella review) or when the body carries
+            # Bugbot finding markers (BUGBOT_REVIEW / BUGBOT_BUG_ID / LOCATIONS).
+            if [ "$_rv_state" = "COMMENTED" ]; then
+              if [ "$inline_count" -gt 0 ]; then
+                : # umbrella COMMENTED for inline findings — blocking
+              elif printf '%s\n' "$body" | grep -q "BUGBOT_REVIEW\|BUGBOT_BUG_ID\|LOCATIONS"; then
+                : # body carries Bugbot finding markers — blocking
+              else
+                suggestion_count=$((suggestion_count + 1))
+                comment_count=$((comment_count + 1))
+                continue
+              fi
+            fi
+            comment_count=$((comment_count + 1))
+            blocking_count=$((blocking_count + 1))
+            printf '%s\n' "$review_json" >> "$blocking_lines_file"
+          done <<< "${_blocking_reviews:-}"
+
+          # Ensure BLOCKING_COUNT >= 1 when the check run verdict is blocking,
+          # even when cursor[bot] embeds all findings in the review body.
+          if [ "$blocking_count" -eq 0 ]; then
+            blocking_count=1
+            comment_count=$((comment_count + 1))
+          fi
+
+          print_kv RESULT needs_fixes
+          print_kv PLATFORM "$platform"
+          print_kv PR_NUMBER "$pr_number"
+          print_kv BRANCH "$branch_name"
+          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          print_kv REASON blocking_findings
+          print_kv COMMENT_COUNT "$comment_count"
+          print_kv BLOCKING_COUNT "$blocking_count"
+          print_kv SUGGESTION_COUNT "$suggestion_count"
+          while IFS= read -r blocking_json; do
+            [ -z "${blocking_json:-}" ] && continue
+            print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
+            print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
+            print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+            index=$((index + 1))
+          done < "$blocking_lines_file"
+          rm -f "$blocking_lines_file"
+          return 1
+          ;;
+
+        neutral|cancelled|skipped)
+          # Non-blocking informational outcome — clean, no real findings.
+          print_kv RESULT clean
+          print_kv PLATFORM "$platform"
+          print_kv PR_NUMBER "$pr_number"
+          print_kv BRANCH "$branch_name"
+          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          print_kv COMMENT_COUNT 0
+          print_kv BLOCKING_COUNT 0
+          print_kv SUGGESTION_COUNT 0
+          return 0
+          ;;
+
+        timed_out)
+          # Bugbot's own internal timeout.
+          print_kv RESULT escalate
+          print_kv REASON timeout
+          print_kv PLATFORM "$platform"
+          print_kv PR_NUMBER "$pr_number"
+          print_kv BRANCH "$branch_name"
+          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          print_kv COMMENT_COUNT 0
+          print_kv BLOCKING_COUNT 0
+          print_kv SUGGESTION_COUNT 0
+          return 2
+          ;;
+
+        *)
+          # Unknown conclusion — escalate conservatively.
+          print_kv RESULT escalate
+          print_kv REASON "unknown-conclusion-${conclusion}"
+          print_kv PLATFORM "$platform"
+          print_kv PR_NUMBER "$pr_number"
+          print_kv BRANCH "$branch_name"
+          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          print_kv COMMENT_COUNT 0
+          print_kv BLOCKING_COUNT 0
+          print_kv SUGGESTION_COUNT 0
+          return 2
+          ;;
+      esac
+    fi
+
+    # Track whether any Cursor Bugbot run has appeared (for unavailable detection).
+    if [ "$check_appeared" -eq 0 ] && [ -n "$status_val" ]; then
+      check_appeared=1
+    fi
+
+    _interruptible_sleep "$poll_interval"
+    elapsed=$(( elapsed + poll_interval ))
+  done
+
+  # Poll budget exhausted.  Distinguish timeout (run appeared) from unavailable
+  # (no Cursor Bugbot check run ever appeared — Cursor app likely not installed).
+  # Either way, never report as clean (AC-5).
+  if [ "$check_appeared" -eq 0 ]; then
+    print_kv RESULT escalate
+    print_kv REASON unavailable
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 2
+  fi
+
+  print_kv RESULT escalate
+  print_kv REASON timeout
+  print_kv PLATFORM "$platform"
+  print_kv PR_NUMBER "$pr_number"
+  print_kv BRANCH "$branch_name"
+  print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+  print_kv COMMENT_COUNT 0
+  print_kv BLOCKING_COUNT 0
+  print_kv SUGGESTION_COUNT 0
+  return 2
+}
+
 run_haystack_review() {
   # Runs haystack-reviewer.sh for the given PR and maps its exit codes to the
   # standard pr-review-loop key-value output contract.
@@ -3354,6 +3860,7 @@ bot_login_for_platform() {
     claude-code-action)  printf '%s\n' "${CLAUDE_CODE_ACTION_BOT_LOGIN:-claude[bot]}" ;;
     copilot)             printf '%s\n' "${COPILOT_BOT_LOGIN:-copilot-pull-request-reviewer[bot]}" ;;
     haystack)            printf '\n' ;;
+    bugbot)              printf '%s\n' "${BUGBOT_BOT_LOGIN:-cursor[bot]}" ;;
     *)                   printf '\n' ;;
   esac
 }
@@ -3508,6 +4015,9 @@ run_platform_review() {
       ;;
     haystack)
       run_haystack_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      ;;
+    bugbot)
+      run_bugbot_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
       ;;
     *)
       print_kv RESULT skipped
