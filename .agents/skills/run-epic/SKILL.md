@@ -1,11 +1,17 @@
 ---
 name: run-epic
-description: Command-style Codex alias for resolving a native GitHub epic or explicit item list into a bounded workflow execution scope, with optional delegated review and merge gates. Use when the user asks for /run-epic, run-epic, or wants a bounded epic execution set.
+description: "Compatibility/advanced alias: resolve a native GitHub epic or explicit item list into a bounded workflow execution scope, with optional delegated review and merge gates. For the recommended starting point, use /run-work <epic-target> instead. Use /run-epic when you need direct control over delegation flags (--delegate-review, --may-merge, --max-risk)."
 ---
 
 # Run Epic
 
 This is the Codex command-style alias for Claude Code `/run-epic`.
+
+> **Compatibility/advanced alias**: `/run-epic` bypasses the `/run-work`
+> routing layer and invokes the bounded epic scope resolver directly with
+> explicit delegation flags. If you are not sure which command to use, start
+> with `/run-work <epic-number>` — it will route to this protocol automatically
+> when the target is epic-like.
 
 1. Read `AGENTS.md` for repository-wide rules.
 2. Read `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md`.

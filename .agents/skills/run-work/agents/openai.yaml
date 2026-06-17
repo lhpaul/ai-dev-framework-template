@@ -1,7 +1,7 @@
 interface:
   display_name: "Run work"
-  short_description: "Inspect workflow state and propose or advance safe batches."
-  default_prompt: "Use $run-work to inspect workflow state, advance deterministic in-flight work, and propose the largest safe Backlog start batch. In workflow_hub mode, include selected product repository context in implementation handoffs; single_repo does not require --repo."
+  short_description: "Primary adaptive workflow entrypoint. Routes to portfolio scan, single-item, explicit-list, or epic based on the target."
+  default_prompt: "Use $run-work to inspect workflow state, route to the correct protocol via the routing classifier, and advance deterministic in-flight work. With no target it proposes the largest safe batch; with one target it advances that item; with multiple targets it treats them as a hard bounded scope; with an epic it does read-only scope resolution first. In workflow_hub mode, include selected product repository context in implementation handoffs; single_repo does not require --repo."
 
 policy:
   allow_implicit_invocation: false
