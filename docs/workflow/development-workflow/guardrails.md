@@ -15,9 +15,11 @@ plan, implementation, review, merge). Guardrails do not change the workflow's
 structure — they change who acts at each decision point: a human, or an agent
 acting within the repository's declared limits.
 
-> **This is model and documentation only in this pass.** The `guardrails` section
-> in `.ai-dev-workflow.yaml` is readable now but not yet enforced at runtime.
-> Wiring guardrails into delegated `/run-work` execution is tracked by issue #980.
+> The `guardrails` section in `.ai-dev-workflow.yaml` is declared here and
+> enforced at runtime by orchestration (Protocols 90, 91, and 95). See
+> `docs/workflow/development-workflow/guardrails-enforcement.md` for the
+> enforcement reference: effective-guardrails resolution, config-field→policy
+> mapping, five enforcement gates, named stop conditions, and audit-evidence rules.
 
 ---
 
