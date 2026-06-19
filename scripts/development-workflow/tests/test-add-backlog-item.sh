@@ -34,7 +34,7 @@ cleanup() {
   # backup was successfully created; do not suppress errors — a restore failure
   # means the workspace is clobbered and the test runner must know.
   if [ -n "$_config_backup" ] && [ -f "$_config_backup" ]; then
-    cp -- "$_config_backup" "$_config_file"
+    cp "$_config_backup" "$_config_file"
   fi
   rm -rf "$TMP_ROOT"
 }
@@ -215,7 +215,7 @@ if [ ! -f "$_config_file" ]; then
   exit "$( [ "$FAIL_COUNT" -ne 0 ] && echo 1 || echo 0 )"
 fi
 
-cp -- "$_config_file" "$_config_backup"
+cp "$_config_file" "$_config_backup"
 
 # Write a minimal linear config for the duration of these tests.
 cat > "$_config_file" <<'LINEAR_CONFIG'
@@ -229,7 +229,7 @@ _linear_stdout="$(get_stdout)"
 _linear_stderr="$(get_stderr)"
 
 # Restore the real config immediately (cleanup() also does this on any exit).
-cp -- "$_config_backup" "$_config_file"
+cp "$_config_backup" "$_config_file"
 
 # The create_item action emits TRACKER_ACTION_REQUIRED=create_item title='<title>'
 # to stdout and exits 0. Multi-word titles are single-quoted so parsers can
