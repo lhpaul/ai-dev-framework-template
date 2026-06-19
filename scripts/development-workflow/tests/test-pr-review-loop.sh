@@ -2013,6 +2013,10 @@ unset _integ_out _integ_exit INTEG_MOCK_HEAD_JSON
 #         → RESULT=escalate REASON=trigger-failed, exit 2
 #   16.8  fetch-failed path: check-run API call fails during Phase 3 poll
 #         → RESULT=escalate REASON=fetch-failed, exit 2
+#   16.8b fetch-failed path: check-run API call fails during Phase 2 trigger guard
+#         → RESULT=escalate REASON=fetch-failed, exit 2
+#   16.8c fetch-failed path: check-run JSON parse fails during Phase 2 trigger guard
+#         → RESULT=escalate REASON=fetch-failed, exit 2
 #   16.9  neutral conclusion path: check run concludes neutral
 #         → RESULT=clean BLOCKING_COUNT=0 SUGGESTION_COUNT=0, exit 0
 #   16.10 run_platform_review routes "bugbot" to run_bugbot_review
@@ -2453,6 +2457,98 @@ run_test "bugbot_fetch_failed_exit_code" "2" "$actual_exit"
 rm -rf "$_bugbot_mock_dir_168"
 rm -f "$_bugbot_cr_counter_168"
 unset _bugbot_mock_dir_168 _bugbot_cr_counter_168 actual_output actual_exit
+
+# ---------------------------------------------------------------------------
+# Test 16.8b: fetch-failed path — Phase 2 check-run API call fails before trigger
+#
+# A failed check-run read must not be treated as "zero check runs" and must not
+# trigger a Bugbot comment. It escalates as fetch-failed immediately.
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_168b="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_168b/gh" <<'BUGBOT_GH_168B'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc168bsha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"check-runs"*)
+    exit 1 ;;
+  *"--method POST"*)
+    printf 'ERROR: trigger POST reached unexpectedly\n' >&2; exit 1 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_168B
+chmod +x "$_bugbot_mock_dir_168b/gh"
+
+unset BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME BUGBOT_TRIGGER_COMMENT
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_168b:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_phase2_fetch_failed_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_phase2_fetch_failed_reason" "REASON=fetch-failed" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "bugbot_phase2_fetch_failed_exit_code" "2" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_168b"
+unset _bugbot_mock_dir_168b actual_output actual_exit
+
+# ---------------------------------------------------------------------------
+# Test 16.8c: fetch-failed path — Phase 2 check-run JSON parse fails
+#
+# Malformed check-run JSON must also escalate as fetch-failed instead of being
+# coerced to an empty run list.
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_168c="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_168c/gh" <<'BUGBOT_GH_168C'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc168csha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"check-runs"*)
+    printf '{not-json\n'; exit 0 ;;
+  *"--method POST"*)
+    printf 'ERROR: trigger POST reached unexpectedly\n' >&2; exit 1 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_168C
+chmod +x "$_bugbot_mock_dir_168c/gh"
+
+unset BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME BUGBOT_TRIGGER_COMMENT
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_168c:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_phase2_parse_failed_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_phase2_parse_failed_reason" "REASON=fetch-failed" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "bugbot_phase2_parse_failed_exit_code" "2" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_168c"
+unset _bugbot_mock_dir_168c actual_output actual_exit
 
 # ---------------------------------------------------------------------------
 # Test 16.9: neutral conclusion path — check run concludes neutral
