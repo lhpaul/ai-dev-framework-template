@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.1] - 2026-06-19
+
 ### Fixed
 
 - **Downstream template-sync corrections**: `run_bugbot_review` now fails closed on Bugbot fetch/parse errors before trigger and while collecting comments/reviews, and workflow shell tests use portable `cp` syntax.
@@ -964,7 +966,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.33.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.33.1...HEAD
+[0.33.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.33.0...v0.33.1
 [0.33.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.30.2...v0.31.0
