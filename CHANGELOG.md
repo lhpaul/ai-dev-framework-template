@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Downstream template-sync corrections**: `run_bugbot_review` now fails closed on Bugbot fetch/parse errors before trigger and while collecting comments/reviews, and workflow shell tests use portable `cp` syntax.
+
 ## [0.33.0] - 2026-06-17
 
 ### Added

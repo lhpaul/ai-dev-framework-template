@@ -1237,6 +1237,8 @@ run_bugbot_review() {
   # If blocking findings already exist (e.g. from a previous trigger in the same
   # review cycle) return needs_fixes immediately without re-triggering.
   set +e
+  local _existing_comments_rc=0
+  local _existing_reviews_rc=0
   existing_comments="$(
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
@@ -1246,6 +1248,7 @@ run_bugbot_review() {
           | @json
         ' 2>/dev/null
   )"
+  _existing_comments_rc=$?
   existing_reviews="$(
     gh api "repos/$repo/pulls/$pr_number/reviews" --paginate 2>/dev/null \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
@@ -1262,7 +1265,21 @@ run_bugbot_review() {
           | @json
         ' 2>/dev/null
   )"
+  _existing_reviews_rc=$?
   set -e
+  if [ "$_existing_comments_rc" -ne 0 ] || [ "$_existing_reviews_rc" -ne 0 ]; then
+    echo "WARN: run_bugbot_review: existing finding fetch/parse failed for PR #$pr_number — returning unavailable" >&2
+    print_kv RESULT escalate
+    print_kv REASON fetch-failed
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 2
+  fi
 
   existing_blocking_file="$(mktemp)"
 
@@ -1319,6 +1336,7 @@ run_bugbot_review() {
   # the current head. If none exists, post the trigger comment (idempotent).
   set +e
   local _bb_run_count
+  local _bb_run_count_rc=0
   _bb_run_count="$(
     gh api "repos/$repo/commits/$head_sha/check-runs" --paginate 2>/dev/null \
       | jq -se --arg name "$check_name" '
@@ -1330,7 +1348,21 @@ run_bugbot_review() {
           ] | length
         ' 2>/dev/null
   )"
+  _bb_run_count_rc=$?
   set -e
+  if [ "$_bb_run_count_rc" -ne 0 ] || [ -z "$_bb_run_count" ]; then
+    echo "WARN: run_bugbot_review: check-run fetch/parse failed for PR #$pr_number (SHA=$head_sha) — returning unavailable" >&2
+    print_kv RESULT escalate
+    print_kv REASON fetch-failed
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 2
+  fi
   _bb_run_count="${_bb_run_count:-0}"
 
   if [ "$_bb_run_count" -eq 0 ]; then
@@ -1413,6 +1445,7 @@ run_bugbot_review() {
           blocking_lines_file="$(mktemp)"
           set +e
           local _clean_comments
+          local _clean_comments_rc=0
           _clean_comments="$(
             gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
               | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
@@ -1422,7 +1455,22 @@ run_bugbot_review() {
                   | @json
                 ' 2>/dev/null
           )"
+          _clean_comments_rc=$?
           set -e
+          if [ "$_clean_comments_rc" -ne 0 ]; then
+            echo "WARN: run_bugbot_review: success-path comment fetch/parse failed for PR #$pr_number — returning unavailable" >&2
+            print_kv RESULT escalate
+            print_kv REASON fetch-failed
+            print_kv PLATFORM "$platform"
+            print_kv PR_NUMBER "$pr_number"
+            print_kv BRANCH "$branch_name"
+            print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+            print_kv COMMENT_COUNT 0
+            print_kv BLOCKING_COUNT 0
+            print_kv SUGGESTION_COUNT 0
+            rm -f "$blocking_lines_file"
+            return 2
+          fi
           while IFS= read -r comment_json; do
             [ -z "${comment_json:-}" ] && continue
             body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
@@ -1475,6 +1523,8 @@ run_bugbot_review() {
           blocking_lines_file="$(mktemp)"
           set +e
           local _blocking_comments _blocking_reviews
+          local _blocking_comments_rc=0
+          local _blocking_reviews_rc=0
           _blocking_comments="$(
             gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
               | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
@@ -1484,6 +1534,7 @@ run_bugbot_review() {
                   | @json
                 ' 2>/dev/null
           )"
+          _blocking_comments_rc=$?
           _blocking_reviews="$(
             gh api "repos/$repo/pulls/$pr_number/reviews" --paginate 2>/dev/null \
               | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
@@ -1500,7 +1551,22 @@ run_bugbot_review() {
                   | @json
                 ' 2>/dev/null
           )"
+          _blocking_reviews_rc=$?
           set -e
+          if [ "$_blocking_comments_rc" -ne 0 ] || [ "$_blocking_reviews_rc" -ne 0 ]; then
+            echo "WARN: run_bugbot_review: blocking finding fetch/parse failed for PR #$pr_number — returning unavailable" >&2
+            print_kv RESULT escalate
+            print_kv REASON fetch-failed
+            print_kv PLATFORM "$platform"
+            print_kv PR_NUMBER "$pr_number"
+            print_kv BRANCH "$branch_name"
+            print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+            print_kv COMMENT_COUNT 0
+            print_kv BLOCKING_COUNT 0
+            print_kv SUGGESTION_COUNT 0
+            rm -f "$blocking_lines_file"
+            return 2
+          fi
 
           local inline_count=0
           while IFS= read -r comment_json; do

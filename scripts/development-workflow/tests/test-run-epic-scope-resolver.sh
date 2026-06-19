@@ -25,7 +25,7 @@ _harness_exit() {
   local status=$?
   # Restore .ai-dev-workflow.yaml if it was swapped out during provider tests.
   if [ -n "$_config_backup" ] && [ -f "$_config_backup" ]; then
-    cp -- "$_config_backup" "$_config_file"
+    cp "$_config_backup" "$_config_file"
   fi
   rm -rf "$TMP_ROOT"
   case "$status" in
@@ -300,7 +300,7 @@ echo "=== Provider normalization and deferred-read signals (#966) ==="
 # Temporarily swap .ai-dev-workflow.yaml to test non-default providers.
 # _harness_exit() restores the real config on any exit.
 _config_backup="$TMP_ROOT/ai-dev-workflow.yaml.bak"
-cp -- "$_config_file" "$_config_backup"
+cp "$_config_file" "$_config_backup"
 
 # --- github_projects provider ---
 # The real config already has github_projects; run text-mode and verify PROVIDER=.
@@ -328,7 +328,7 @@ LINEAR_CONFIG
 linear_text_output="$("$RESOLVER" --items 101 2>/dev/null)"
 
 # Restore immediately; _harness_exit is the safety net.
-cp -- "$_config_backup" "$_config_file"
+cp "$_config_backup" "$_config_file"
 
 case "$linear_text_output" in
   *"PROVIDER=linear"*) linear_provider_result="emitted" ;;
