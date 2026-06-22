@@ -82,11 +82,17 @@ existing readiness labels; record satisfaction transitions in audit comments.
 
 ### #1023 — Enforce human checkpoints in delegated and batch merge gates
 
-**Goal**: Block delegated review/merge and batch merge when item-applicable
-`pending` checkpoints remain (current or earlier stage per spec BR-4).
+**Goal**: Block delegated review and delegated merge (and batch merge) when
+item-applicable `pending` checkpoints remain (current or earlier stage per spec
+BR-4).
 
 **Files to change**:
 
+| File | Change |
+| --- | --- |
+| `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md` | Step 8 delegated-review loop: stop before reviewer dispatch when checkpoints block |
+| `docs/workflow/development-workflow/guardrails-enforcement.md` | Gate 4 (delegated review): add checkpoint block alongside existing stop checks |
+| `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | Step 7 / delegated-review entry: honor checkpoint block before internal review dispatch |
 | File | Change |
 | --- | --- |
 | `scripts/development-workflow/run-epic-delegated-gate.sh` | Consume `checkpoints[]`; set `mergePermitted=false` and a blocking `decision` (e.g. `human_required`) when checkpoints block |
