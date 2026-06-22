@@ -210,7 +210,7 @@ is_bugbot_clean_review() {
   local non_empty_count=0
 
   case "$body" in
-    *BUGBOT_BUG_ID*|*"BUGBOT_REVIEW"*|*"LOCATIONS START"*|*"DESCRIPTION START"*|*"Triggered by project rule"*|*"**High Severity"*|*"**Medium Severity"*|*"**Low Severity"*)
+    *BUGBOT_BUG_ID*|*BUGBOT_REVIEW*|*"LOCATIONS START"*|*"DESCRIPTION START"*|*"Triggered by project rule"*|*'**High Severity**'*|*'**Medium Severity**'*|*'**Low Severity**'*)
       return 1
       ;;
   esac

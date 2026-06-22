@@ -1299,7 +1299,13 @@ run_bugbot_review() {
   while IFS= read -r review_json; do
     [ -z "${review_json:-}" ] && continue
     body="$(printf '%s\n' "$review_json" | jq -r '.body')"
+    _rv_state="$(printf '%s\n' "$review_json" | jq -r '.state // ""')"
     [ -z "$body" ] && continue
+    if [ "$_rv_state" = "CHANGES_REQUESTED" ]; then
+      existing_blocking_count=$((existing_blocking_count + 1))
+      printf '%s\n' "$review_json" >> "$existing_blocking_file"
+      continue
+    fi
     if is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
       existing_suggestion_count=$((existing_suggestion_count + 1))
       continue
@@ -1589,7 +1595,9 @@ run_bugbot_review() {
             local _rv_state
             _rv_state="$(printf '%s\n' "$review_json" | jq -r '.state // ""')"
             [ -z "$body" ] && continue
-            if is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
+            if [ "$_rv_state" = "CHANGES_REQUESTED" ]; then
+              : # requested changes are always blocking regardless of body text
+            elif is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
               suggestion_count=$((suggestion_count + 1))
               comment_count=$((comment_count + 1))
               continue
