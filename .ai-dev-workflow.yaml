@@ -91,18 +91,13 @@ review:
   #   expected behaviour — not a misconfiguration.
   #
   # Local override: developers who need a different top-level review runner can
-  # override this list locally with .ai-dev-workflow.local.yaml (preferred) or
-  # the legacy .tmp/template-config.json path. Both files are gitignored. Example
-  # for Claude Code:
-  #   { "overrides": { "review": { "on_draft": { "runner": ["claude"] } } } }
+  # override this list locally with .ai-dev-workflow.local.yaml (gitignored).
   # Example for Cursor in .ai-dev-workflow.local.yaml:
   #   review:
   #     on_draft:
   #       runner:
   #         - cursor
-  # Legacy local overrides using `overrides.review.internal_reviewers` remain
-  # accepted during the schema_version 2 transition release.
-  # The overrides key takes precedence over this file for the local environment.
+  # The local file takes precedence over this file for the local environment.
   # See docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
   # Step 7a for the full multi-reviewer gate procedure.
 

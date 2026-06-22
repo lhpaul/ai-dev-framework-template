@@ -905,8 +905,8 @@ gh pr view <pr_number> --json isDraft --jq '.isDraft'
 
 If the result is `true` (PR is a draft), inspect the resolved
 `review.on_draft.runner` list from `.ai-dev-workflow.yaml` (after any
-`.ai-dev-workflow.local.yaml` or `.tmp/template-config.json` override) and the
-`review.on_draft.github` / `review.on_ready.github` lists.
+`.ai-dev-workflow.local.yaml` override) and the `review.on_draft.github` /
+`review.on_ready.github` lists.
 
 If `coderabbit` is **only** listed under `review.on_ready.github`, keep the PR as
 a draft during Step 7a. This is intentional: `.coderabbit.yaml` has
@@ -1030,52 +1030,19 @@ review:
   internal_reviewers_unavailable_policy: warn
 ```
 
-If a legacy `.tmp/template-config.json` file exists in the repository root, also
-read its `overrides.review.on_draft.runner` list. During the schema_version 2
-transition release, also accept the legacy
-`overrides.review.internal_reviewers` list as an alias. The legacy
-`.tmp/template-config.json` override takes precedence over
-`.ai-dev-workflow.local.yaml` for compatibility; otherwise the local YAML file
-takes precedence over `.ai-dev-workflow.yaml`. This allows developers without
-access to all configured review tools to run a subset, such as only `cursor`,
-without changing the shared config.
-
-Example legacy `.tmp/template-config.json` override format:
-
-```json
-{
-  "overrides": {
-    "review": {
-      "on_draft": {
-        "runner": ["claude"]
-      }
-    }
-  }
-}
-```
-
-Legacy override form accepted during the transition release:
-
-```json
-{
-  "overrides": {
-    "review": {
-      "internal_reviewers": ["claude"]
-    }
-  }
-}
-```
+The local YAML file takes precedence over `.ai-dev-workflow.yaml`. This allows
+developers without access to all configured review tools to run a subset, such
+as only `cursor`, without changing the shared config.
 
 Supported runner reviewer values: `claude`, `cursor`, `codex`, `coderabbit`.
 
-If neither file defines `review.on_draft.runner` (or the legacy alias), fall
-back to running the stage-appropriate reviewer once (default behavior:
-`claude`).
+If neither config file defines `review.on_draft.runner`, fall back to running
+the stage-appropriate reviewer once (default behavior: `claude`).
 
-When a local file supplies an override, log the following before running the
-availability check, substituting the actual source path:
+When the local file supplies an override, log the following before running the
+availability check:
 
-> `INFO: Using review.on_draft.runner override from <source-path>: [<override-list>]. Original list: [<yaml-list>].`
+> `INFO: Using review.on_draft.runner override from .ai-dev-workflow.local.yaml: [<override-list>]. Original list: [<yaml-list>].`
 
 No warning comment is posted for reviewers intentionally removed by the override list (`override-excluded`). If any reviewer still present in the override list is unreachable at runtime, post the standard warning comment for those unreachable reviewers (the runtime-availability check still applies to the override list).
 
@@ -1101,9 +1068,9 @@ Note: the `auto_review.drafts: false` restriction is **not** treated as an unrea
 
 After classifying each reviewer, apply the configured policy. Read
 `internal_reviewers_unavailable_policy` from `.ai-dev-workflow.yaml` (or its
-local override in `.ai-dev-workflow.local.yaml` or `.tmp/template-config.json`).
-This policy key is retained for compatibility even though the reviewer list
-moved to `review.on_draft.runner`. If the key is absent, the default is `warn`.
+local override in `.ai-dev-workflow.local.yaml`). This policy key is retained
+for compatibility even though the reviewer list moved to
+`review.on_draft.runner`. If the key is absent, the default is `warn`.
 
 To override the policy locally without changing shared config, prefer
 `.ai-dev-workflow.local.yaml`:
@@ -1114,21 +1081,6 @@ review:
     runner:
       - cursor
   internal_reviewers_unavailable_policy: warn
-```
-
-The legacy `.tmp/template-config.json` shape remains accepted:
-
-```json
-{
-  "overrides": {
-    "review": {
-      "on_draft": {
-        "runner": ["claude"]
-      },
-      "internal_reviewers_unavailable_policy": "warn"
-    }
-  }
-}
 ```
 
 Allowed values: `warn` (default), `fail-if-any-unavailable`.
@@ -1157,11 +1109,11 @@ Post via `gh pr comment`. This comment doubles as the BR-7 mandatory Step 7a sum
 
 **Case A — Zero reviewers reachable (any policy):**
 
-> `Step 7a BLOCKED: no internal reviewer is reachable from the current runner. Effective reviewer set: none. Reachable: []. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. To unblock: run Step 7a from a runner that supports all configured reviewers, or temporarily override 'review.on_draft.runner' via .ai-dev-workflow.local.yaml or .tmp/template-config.json.`
+> `Step 7a BLOCKED: no internal reviewer is reachable from the current runner. Effective reviewer set: none. Reachable: []. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. To unblock: run Step 7a from a runner that supports all configured reviewers, or temporarily override 'review.on_draft.runner' via .ai-dev-workflow.local.yaml.`
 
 **Case B — `fail-if-any-unavailable` policy triggered (one or more reviewers unreachable, but at least one was reachable):**
 
-> `Step 7a BLOCKED: policy 'fail-if-any-unavailable' triggered — one or more internal reviewers are unreachable. No reviewers were dispatched. Effective reviewer set: none (policy block). Reachable: [<reachable-list>]. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. To unblock: run Step 7a from a runner where all configured reviewers are reachable, or set internal_reviewers_unavailable_policy to 'warn' temporarily, or override 'review.on_draft.runner' via .ai-dev-workflow.local.yaml or .tmp/template-config.json.`
+> `Step 7a BLOCKED: policy 'fail-if-any-unavailable' triggered — one or more internal reviewers are unreachable. No reviewers were dispatched. Effective reviewer set: none (policy block). Reachable: [<reachable-list>]. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. To unblock: run Step 7a from a runner where all configured reviewers are reachable, or set internal_reviewers_unavailable_policy to 'warn' temporarily, or override 'review.on_draft.runner' via .ai-dev-workflow.local.yaml.`
 
 ### Reviewer dispatch map
 

@@ -44,3 +44,9 @@ tools:
     command: haystack
   browser:
     provider: playwright_cli
+
+# Optional sync-template source. Use either local_path or git_url.
+template:
+  source:
+    local_path: ../ai-dev-framework-template
+    # git_url: https://github.com/example/ai-dev-framework-template

@@ -24,7 +24,7 @@ Before running this smoke test:
 | ----------------------------------- | ------------------------------------------------------------------------------ |
 | Protocol file                       | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` |
 | Config file                         | `.ai-dev-workflow.yaml`                                                        |
-| Local override file                 | `.tmp/template-config.json` (gitignored)                                       |
+| Local override file                 | `.ai-dev-workflow.local.yaml` (gitignored)                                     |
 | Internal reviewers (default config) | `[claude, codex]`                                                              |
 | Default policy                      | `warn`                                                                         |
 
@@ -126,13 +126,13 @@ Verify the protocol instructs the runner to proceed with the existing Step 7a lo
 
 Trace the path for:
 
-- `.tmp/template-config.json` present with `overrides.review.internal_reviewers: [claude]`
+- `.ai-dev-workflow.local.yaml` present with `review.on_draft.runner: [claude]`
 - Original `.ai-dev-workflow.yaml` list: `[claude, codex]`
 
 Verify the protocol instructs the runner to:
 
 1. Use the override list `[claude]` for Step 7a
-2. Log: `INFO: Using internal_reviewers override from .tmp/template-config.json: [claude]. Original list: [claude, codex].`
+2. Log: `INFO: Using review.on_draft.runner override from .ai-dev-workflow.local.yaml: [claude]. Original list: [claude, codex].`
 3. Not post a warning comment to the PR (the developer knowingly excluded `codex`)
 4. Run availability check only against the override list
 
@@ -189,7 +189,7 @@ Each checkbox maps to an acceptance criterion from the spec.
 - [ ] AC-5: The Step 7a summary comment is mandated to list effective reviewer set, skipped reviewers (with reason), and final verdict.
 - [ ] AC-6: When ALL listed reviewers are unreachable, the protocol instructs the gate to hard-fail, post a blocking/summary comment, keep the PR in draft, and escalate the item to human.
 - [ ] AC-7: The `warn` policy (default) allows the gate to proceed with a reduced reviewer set as long as at least one reviewer is reachable and returns `APPROVED`.
-- [ ] AC-8: A local `.tmp/template-config.json` override suppresses the unavailability warning for excluded reviewers and triggers an INFO log that the override was applied.
+- [ ] AC-8: A local `.ai-dev-workflow.local.yaml` override suppresses the unavailability warning for excluded reviewers and triggers an INFO log that the override was applied.
 - [ ] AC-9: Protocol 91 Step 7a wording includes the runtime-availability check, skip/warn/fail logic, and summary comment requirement.
 
 ---
