@@ -74,8 +74,10 @@ known or recommended. No artifact-mutating work has started for the item.
 4. The human accepts, customizes, or rejects checkpoint recommendations before
    mutation begins.
 
-**Postconditions**: Every in-scope item has zero or more declared checkpoints
-with a deterministic satisfaction state of `pending`. The epic ledger can record
+**Postconditions**: Every in-scope item has zero or more declared checkpoints.
+Recommended checkpoints start as `pending` until policy selection completes; the
+human may waive any checkpoint up front (recording `waived` with rationale) or
+leave them `pending` for later satisfaction. The epic ledger can record
 original, recommended, selected, and effective checkpoint policy.
 
 **Information shown**:
