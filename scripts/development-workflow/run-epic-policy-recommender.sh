@@ -260,8 +260,7 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
             satisfaction_state: "pending"
           }]
         else . end
-      | if ($stage == "implementation" or ($text | test("auth|security|secret|permission|credential|sensitive")))
-          and ($text | test("auth|security|secret|permission|credential|sensitive")) then
+      | if ($stage == "implementation") and ($text | test("auth|security|secret|permission|credential|sensitive")) then
           . + [{
             item_number: $num,
             stage: "implementation",
@@ -275,13 +274,32 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
   def recommended_checkpoints:
     [.items[]? | recommend_checkpoints_for_item(.)[]]
     | unique_by(checkpoint_key(.));
+  def checkpoint_matches($a; $b):
+    ($a.item_number == $b.item_number) and ($a.stage == $b.stage) and ($a.domain == $b.domain);
   def selected_checkpoints($recommended):
     if $checkpointsOverride == null then $recommended
-    else [$checkpointsOverride[] | normalize_checkpoint(.)]
+    else
+      ($checkpointsOverride | map(normalize_checkpoint(.))) as $override |
+      (
+        $recommended
+        | map(
+            . as $rec
+            | ($override | map(select(checkpoint_matches($rec; .))) | first) // $rec
+          )
+      ) as $merged
+      | $merged + (
+          $override
+          | map(
+              . as $ov
+              | if ($recommended | any(checkpoint_matches(.; $ov))) then empty else $ov end
+            )
+        )
     end;
   def effective_checkpoints($selected): $selected;
   def checkpoint_field_source: if $checkpointsOverride == null then "recommended" else "explicit" end;
   def has_recommended_checkpoints: (recommended_checkpoints | length) > 0;
+  def has_pending_checkpoints($checkpoints):
+    ($checkpoints | map(select(.satisfaction_state == "pending")) | length) > 0;
   def has_backlog: [.items[]? | select((.status // "") == "Backlog")] | length > 0;
   def has_dependency_blocker: [.items[]? | select((.dependencies.state // "") == "blocked")] | length > 0;
   def has_ambiguous: ((.groups.ambiguous // []) | length) > 0 or (.baseAmbiguous // false) == true;
@@ -383,11 +401,11 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
     requiresConfirmation: ((
       [$mayStartBacklogOverride, $delegateReviewOverride, $mayMergeOverride, $maxRiskOverride, $baseOverride]
       | any(. == "")
-    ) or has_ambiguous or (has_recommended_checkpoints and ($checkpointsOverride == null))),
+    ) or has_ambiguous or has_pending_checkpoints($effCheckpoints)),
     confirmationReason: (
       if has_ambiguous then "scope or base is ambiguous; confirm before mutation"
-      elif has_recommended_checkpoints and ($checkpointsOverride == null) then
-        "human checkpoints were recommended; confirm, customize, or waive before mutation"
+      elif has_pending_checkpoints($effCheckpoints) then
+        "pending human checkpoints remain; confirm, customize, or waive before mutation"
       elif ([$mayStartBacklogOverride, $delegateReviewOverride, $mayMergeOverride, $maxRiskOverride, $baseOverride] | any(. == "")) then
         "one or more autonomy policy values were inferred from resolved scope"
       else "all autonomy policy values were explicit"

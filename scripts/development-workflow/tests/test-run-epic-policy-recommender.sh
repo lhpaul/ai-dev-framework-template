@@ -286,6 +286,12 @@ invalid_waived_file="$TMP_ROOT/invalid-waived.json"
 printf '%s\n' '[{"item_number": 200, "stage": "plan", "domain": "technical", "satisfaction_state": "waived"}]' > "$invalid_waived_file"
 run_fails_contains "rejects_waived_without_rationale" "waived checkpoints require waiver_rationale" "$HELPER" --scope "$schema_fixture" --original-command x --checkpoints-file "$invalid_waived_file" --json
 
+empty_checkpoints_file="$TMP_ROOT/empty-checkpoints.json"
+printf '%s\n' '[]' > "$empty_checkpoints_file"
+empty_override_output="$("$HELPER" --scope "$schema_fixture" --original-command "\$run-epic --items 200" --checkpoints-file "$empty_checkpoints_file" --json)"
+run_test "empty_checkpoint_override_keeps_recommended" "1" "$(printf '%s\n' "$empty_override_output" | jq -r '.effectivePolicy.checkpoints | length')"
+run_test "empty_checkpoint_override_still_requires_confirmation" "true" "$(printf '%s\n' "$empty_override_output" | jq -r '.requiresConfirmation')"
+
 checkpoint_text_output="$("$HELPER" --scope "$schema_fixture" --original-command "\$run-epic --items 200")"
 run_test "text_output_lists_checkpoints" "yes" "$(grep -q 'Human checkpoints' <<< "$checkpoint_text_output" && echo yes || echo no)"
 
