@@ -90,14 +90,12 @@ BR-4).
 
 | File | Change |
 | --- | --- |
-| `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md` | Step 8 delegated-review loop: stop before reviewer dispatch when checkpoints block |
-| `docs/workflow/development-workflow/guardrails-enforcement.md` | Gate 4 (delegated review): add checkpoint block alongside existing stop checks |
-| `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | Step 7 / delegated-review entry: honor checkpoint block before internal review dispatch |
-| File | Change |
-| --- | --- |
 | `scripts/development-workflow/run-epic-delegated-gate.sh` | Consume `checkpoints[]`; set `mergePermitted=false` and a blocking `decision` (e.g. `human_required`) when checkpoints block |
 | `scripts/development-workflow/tests/test-run-epic-delegated-gate.sh` | Fixtures: same-item earlier-stage pending blocks implementation PR; other-item ignored; satisfied/waived permits |
 | `scripts/development-workflow/batch-merge.sh` (or gate helper it calls) | Honor checkpoint block before merge |
+| `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md` | Step 8 delegated-review loop: stop before reviewer dispatch when checkpoints block |
+| `docs/workflow/development-workflow/guardrails-enforcement.md` | Gate 4 (delegated review): add checkpoint block alongside existing stop checks |
+| `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | Step 7 / delegated-review entry: honor checkpoint block before internal review dispatch |
 | `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md` | Document checkpoint gate in batch merge prerequisites |
 | `scripts/development-workflow/run-epic-risk-classifier.sh` | Optional: classify `pending` checkpoint as hard blocker (align with #919 `blocked` semantics) |
 
