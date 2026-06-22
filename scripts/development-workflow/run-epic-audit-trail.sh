@@ -80,6 +80,24 @@ table_cell_filter='
     | gsub("\\t"; " ");
 '
 
+checkpoint_stage_filter='
+  def stage_rank($stage):
+    if $stage == "spec" then 1
+    elif $stage == "plan" then 2
+    elif $stage == "implementation" then 3
+    else 0 end;
+  def stage_from_branch($branch):
+    if ($branch | test("^spec/")) then "spec"
+    elif ($branch | test("^implementation-plan/")) then "plan"
+    elif ($branch | test("^(feature|fix|refactor|hotfix|backport/hotfix)/")) then "implementation"
+    else "implementation" end;
+  def checkpoint_applies($cp; $item; $prStage):
+    (($cp.item_number | tonumber) == ($item | tonumber))
+    and ($cp.satisfaction_state // "pending") == "pending"
+    and (stage_rank($cp.stage) > 0)
+    and (stage_rank($cp.stage) <= stage_rank($prStage));
+'
+
 render_pr_disposition() {
   local json="$1"
   local missing
@@ -148,19 +166,43 @@ render_pr_disposition() {
     if [ "$(printf '%s\n' "$json" | jq 'if (.checkpoint_policy // .checkpointPolicy // null) == null then 0 else 1 end')" -eq 0 ]; then
       printf 'Not recorded.\n'
     else
-      printf '%s\n' "$json" | jq -r '
+      printf '%s\n' "$json" | jq -r "$checkpoint_stage_filter"'
         (.checkpoint_policy // .checkpointPolicy // {}) as $cp |
         (.item.number) as $itemNum |
+        (.pr.branch // "") as $branch |
+        ((.pr.stage // "") as $stage |
+          if ($branch | length) > 0 then stage_from_branch($branch)
+          elif ($stage | length) > 0 then $stage
+          else null end) as $prStage |
         "- Field source: " + (($cp.field_source // $cp.fieldSource // "unknown") | tostring),
-        "- Pending applicable checkpoints: " + (([($cp.effective // $cp.effectivePolicy // [])[] | select(.satisfaction_state == "pending" and ((.item_number | tonumber) == ($itemNum | tonumber)))] | length) | tostring)
+        "- Pending applicable checkpoints: " + (
+          [($cp.effective // $cp.effectivePolicy // [])[]
+            | select(
+                if $prStage == null then
+                  (.satisfaction_state == "pending" and ((.item_number | tonumber) == ($itemNum | tonumber)))
+                else
+                  checkpoint_applies(.; ($itemNum | tostring); $prStage)
+                end
+              )] | length | tostring
+        )
       '
       printf '\n| Item | Stage | Domain | State | Reason | Required action |\n'
       printf '| --- | --- | --- | --- | --- | --- |\n'
-      printf '%s\n' "$json" | jq -r "$table_cell_filter"'
+      printf '%s\n' "$json" | jq -r "$table_cell_filter $checkpoint_stage_filter"'
         (.checkpoint_policy // .checkpointPolicy // {}) as $cp |
         (.item.number) as $itemNum |
+        (.pr.branch // "") as $branch |
+        ((.pr.stage // "") as $stage |
+          if ($branch | length) > 0 then stage_from_branch($branch)
+          elif ($stage | length) > 0 then $stage
+          else null end) as $prStage |
         ($cp.effective // $cp.effectivePolicy // [])[]
-        | select((.item_number | tonumber) == ($itemNum | tonumber)) |
+        | select((.item_number | tonumber) == ($itemNum | tonumber))
+        | select(
+            if $prStage == null then true
+            else checkpoint_applies(.; ($itemNum | tostring); $prStage) or (.satisfaction_state // "pending") != "pending"
+            end
+          ) |
         "| #" + (.item_number | tostring) +
         " | " + ((.stage // "") | cell) +
         " | " + ((.domain // "") | cell) +

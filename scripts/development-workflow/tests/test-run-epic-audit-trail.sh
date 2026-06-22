@@ -125,7 +125,7 @@ cat > "$pr_fixture" <<'JSON'
 {
   "scope_source": "epic #916",
   "item": {"number": 920, "title": "Add autonomous epic audit trail"},
-  "pr": {"number": 10, "head_sha": "abc123"},
+  "pr": {"number": 10, "head_sha": "abc123", "branch": "implementation-plan/audit-trail"},
   "reviewer": {"result": "clean", "blocking_count": 0, "advisory_count": 2},
   "advisories": [
     {"source": "haystack|triage", "category": "docs\nsync", "decision": "accepted", "rationale": "stale after rg verification with Authorization: dummy Bearer dummy.value"},
@@ -272,6 +272,14 @@ run_test "renders_invocation_policy" "yes" "$(grep -q '### Invocation Policy' <<
 run_test "renders_policy_table" "yes" "$(grep -q '| mayStartBacklog | true | true | true |' <<< "$pr_output" && grep -q '| maxRisk | medium | medium | medium |' <<< "$pr_output" && echo yes || echo no)"
 run_test "renders_checkpoint_policy" "yes" "$(grep -q '### Checkpoint Policy' <<< "$pr_output" && grep -q 'approve data model' <<< "$pr_output" && echo yes || echo no)"
 run_test "pending_checkpoint_count_excludes_satisfied" "0" "$(printf '%s\n' "$pr_output" | grep 'Pending applicable checkpoints:' | sed 's/.*: //')"
+
+stage_scoped_fixture="$TMP_ROOT/stage-scoped-checkpoints.json"
+jq '.checkpoint_policy.effective = [
+  {"item_number": 920, "stage": "plan", "domain": "technical", "reason": "plan pending", "required_human_action": "approve plan", "satisfaction_state": "pending"},
+  {"item_number": 920, "stage": "implementation", "domain": "technical", "reason": "impl pending", "required_human_action": "approve impl", "satisfaction_state": "pending"}
+] | .pr.branch = "implementation-plan/audit-trail"' "$pr_fixture" > "$stage_scoped_fixture"
+stage_scoped_output="$("$HELPER" render-pr-disposition --input "$stage_scoped_fixture")"
+run_test "pending_count_scoped_to_pr_stage" "1" "$(printf '%s\n' "$stage_scoped_output" | grep 'Pending applicable checkpoints:' | sed 's/.*: //')"
 run_test "escapes_pr_table_pipes" "yes" "$(grep -Fq 'haystack\\|triage' <<< "$pr_output" && grep -Fq 'none \\| expected' <<< "$pr_output" && echo yes || echo no)"
 run_test "normalizes_pr_table_newlines_tabs" "yes" "$(grep -Fq 'docs<br>sync' <<< "$pr_output" && grep -Fq 'documented<br>rationale with' <<< "$pr_output" && echo yes || echo no)"
 run_test "redacts_sensitive_values" "yes" "$(! grep -Eq 'ghp_FAKE_PLACEHOLDER|Authorization: dummy|Bearer dummy\\.value|/tmp/fake-placeholder' <<< "$pr_output" && grep -Fq 'Authorization: [REDACTED]' <<< "$pr_output" && grep -Fq 'Bearer [REDACTED]' <<< "$pr_output" && echo yes || echo no)"
