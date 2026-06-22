@@ -51,7 +51,6 @@ review:
     # Ordered list of GitHub/App/CLI reviewers that run only after draft gates
     # are clean and the PR has been converted with `gh pr ready`.
     github:
-      - haystack
       - bugbot
   #
   # Configurable codex-github options (set via env vars or script flags to codex-github-reviewer.sh):
