@@ -1081,7 +1081,7 @@ No warning comment is posted for reviewers intentionally removed by the override
 
 ### Runtime-availability check
 
-Before dispatching any reviewer, classify each entry in the resolved list as `reachable` or `unreachable`. For `claude`, `cursor`, and `codex`, the check is deterministic and requires no external network call — runner identity is a sufficient proxy for reviewer reachability (see [codex-reviewer-runtime-fallback spec](../../../specs/developments/20260417203329_codex-reviewer-runtime-fallback/1_codex-reviewer-runtime-fallback_specs.md) — BR-1 and BR-8). For `coderabbit`, reachability is determined at runtime via an App installation check (see below).
+Before dispatching any reviewer, classify each entry in the resolved list as `reachable` or `unreachable`. For `claude`, `cursor`, and `codex`, the check is deterministic and requires no external network call — runner identity is a sufficient proxy for reviewer reachability because the gate only dispatches reviewers the current runner can invoke without a cross-runner CLI handoff. For `coderabbit`, reachability is determined at runtime via an App installation check (see below).
 
 #### Reachability classification table
 
