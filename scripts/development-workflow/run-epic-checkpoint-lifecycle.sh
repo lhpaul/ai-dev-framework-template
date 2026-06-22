@@ -147,19 +147,25 @@ detect_satisfaction_json() {
     def review_satisfies($cp):
       (latest_human_review) as $latest |
       ($latest != null) and (($latest.state // "") == "APPROVED");
+    def human_comments: ($comments // []) | map(select(bot_login(.author) | not));
+    def waiver_rationale_valid($body; $item; $stage; $domain):
+      (parse_waiver_rationale($body; "'"$WAIVED_MARKER_PREFIX"'"; ($item|tostring); $stage; $domain) | gsub("\\s"; "") | length) > 0;
     stage_from_branch($branch) as $prStage |
-    map(
+    ( . as $all |
+      ($all | [.[] | select((.item_number | tonumber) == ($item | tonumber) and .stage == $prStage and (.satisfaction_state // "pending") == "pending")]) as $pendingAtStage |
+      $all | map(
       . as $cp |
       if ($cp.item_number | tonumber) != ($item | tonumber) then .
       elif ($cp.satisfaction_state // "pending") != "pending" then .
       elif (stage_rank($cp.stage) > stage_rank($prStage)) then .
       else
-        ($comments // []) as $commentList |
+        human_comments as $commentList |
         (
           ($commentList
             | map(select(
                 marker_match(.body; "'"$WAIVED_MARKER_PREFIX"'"; ($cp.item_number|tostring); $cp.stage; $cp.domain)
               ))
+            | map(select(waiver_rationale_valid(.body; ($cp.item_number|tostring); $cp.stage; $cp.domain)))
             | first) as $waivedComment
           | if $waivedComment then
               .satisfaction_state = "waived"
@@ -186,7 +192,7 @@ detect_satisfaction_json() {
                   | first
                   | .createdAt // ""
                 )
-            elif ($cp.stage == $prStage) and review_satisfies($cp) then
+            elif ($cp.stage == $prStage) and (($pendingAtStage | length) == 1) and (checkpoint_key($cp) == checkpoint_key($pendingAtStage[0])) and review_satisfies($cp) then
               .satisfaction_state = "satisfied"
               | .satisfied_by = (latest_human_review | .author.login // "pr_review_approved")
               | .satisfied_at = (latest_human_review | .submittedAt // "")
@@ -194,7 +200,7 @@ detect_satisfaction_json() {
             end
         )
       end
-    )
+    ))
   '
 }
 
@@ -257,7 +263,7 @@ find_marker_comment_id() {
     error_exit "failed to read comments for issue/PR #$target"
   fi
   printf '%s\n' "$comments" |
-    jq -r --arg marker "$marker" '[.[][]? | select((.body // "") | contains($marker))][0].id // empty'
+    jq -r --arg marker "$marker" '[.[][]? | select((.body // "") | contains($marker))] | last | .id // empty'
 }
 
 apply_checkpoint_comment() {

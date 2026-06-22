@@ -63,6 +63,14 @@ JSON
       cat <<'JSON'
 [[{"user":{"login":"human-reviewer"},"body":"<!-- run-epic:checkpoint-satisfied:1022:plan:technical -->","created_at":"2026-06-22T12:00:00Z"}]]
 JSON
+    elif [ "${MOCK_COMMENT_MODE:-empty}" = "bot-satisfied" ]; then
+      cat <<'JSON'
+[[{"user":{"login":"cursor[bot]"},"body":"<!-- run-epic:checkpoint-satisfied:1022:plan:technical -->","created_at":"2026-06-22T12:00:00Z"}]]
+JSON
+    elif [ "${MOCK_COMMENT_MODE:-empty}" = "waived-no-rationale" ]; then
+      cat <<'JSON'
+[[{"user":{"login":"human-reviewer"},"body":"<!-- run-epic:checkpoint-waived:1022:plan:technical -->","created_at":"2026-06-22T12:00:00Z"}]]
+JSON
     elif [ "${MOCK_COMMENT_MODE:-empty}" = "existing-marker" ]; then
       cat <<'JSON'
 [[{"id":999,"user":{"login":"bot"},"body":"<!-- run-epic:checkpoint-status -->\nold"}]]
@@ -162,6 +170,19 @@ run_test "detect_satisfaction_via_comment" "satisfied" "$(jq -r '.[0].satisfacti
 run_test "stale_approval_does_not_satisfy" "pending" "$(MOCK_REVIEW_STALE_APPROVED=1 "$HELPER" detect-satisfaction --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$checkpoints_file" --pr 42 | jq -r '.[0].satisfaction_state')"
 
 run_test "latest_approval_satisfies" "satisfied" "$(MOCK_REVIEW_APPROVED=1 "$HELPER" detect-satisfaction --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$checkpoints_file" --pr 42 | jq -r '.[0].satisfaction_state')"
+
+run_test "bot_satisfaction_marker_ignored" "pending" "$(MOCK_COMMENT_MODE=bot-satisfied "$HELPER" detect-satisfaction --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$checkpoints_file" --pr 42 | jq -r '.[0].satisfaction_state')"
+
+run_test "waived_without_rationale_ignored" "pending" "$(MOCK_COMMENT_MODE=waived-no-rationale "$HELPER" detect-satisfaction --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$checkpoints_file" --pr 42 | jq -r '.[0].satisfaction_state')"
+
+multi_domain_file="$TMP_ROOT/multi-domain-checkpoints.json"
+cat > "$multi_domain_file" <<'JSON'
+[
+  {"item_number": 1022, "stage": "plan", "domain": "technical", "required_human_action": "a", "satisfaction_state": "pending"},
+  {"item_number": 1022, "stage": "plan", "domain": "product", "required_human_action": "b", "satisfaction_state": "pending"}
+]
+JSON
+run_test "single_approval_does_not_satisfy_multi_domain" "2" "$(MOCK_REVIEW_APPROVED=1 "$HELPER" detect-satisfaction --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$multi_domain_file" --pr 42 | jq '[.[] | select(.satisfaction_state == "pending")] | length')"
 
 no_block_after="$("$HELPER" evaluate-blocking --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$satisfied_file")"
 run_test "satisfied_checkpoint_not_blocking" "0" "$(printf '%s\n' "$no_block_after" | jq 'length')"

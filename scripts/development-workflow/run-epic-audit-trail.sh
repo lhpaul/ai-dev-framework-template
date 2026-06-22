@@ -150,14 +150,17 @@ render_pr_disposition() {
     else
       printf '%s\n' "$json" | jq -r '
         (.checkpoint_policy // .checkpointPolicy // {}) as $cp |
+        (.item.number) as $itemNum |
         "- Field source: " + (($cp.field_source // $cp.fieldSource // "unknown") | tostring),
-        "- Pending applicable checkpoints: " + (([($cp.effective // $cp.effectivePolicy // [])[] | select(.satisfaction_state == "pending")] | length) | tostring)
+        "- Pending applicable checkpoints: " + (([($cp.effective // $cp.effectivePolicy // [])[] | select(.satisfaction_state == "pending" and ((.item_number | tonumber) == ($itemNum | tonumber)))] | length) | tostring)
       '
       printf '\n| Item | Stage | Domain | State | Reason | Required action |\n'
       printf '| --- | --- | --- | --- | --- | --- |\n'
       printf '%s\n' "$json" | jq -r "$table_cell_filter"'
         (.checkpoint_policy // .checkpointPolicy // {}) as $cp |
-        ($cp.effective // $cp.effectivePolicy // [])[]? |
+        (.item.number) as $itemNum |
+        ($cp.effective // $cp.effectivePolicy // [])[]
+        | select((.item_number | tonumber) == ($itemNum | tonumber)) |
         "| #" + (.item_number | tostring) +
         " | " + ((.stage // "") | cell) +
         " | " + ((.domain // "") | cell) +
