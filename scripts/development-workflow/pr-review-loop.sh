@@ -4798,7 +4798,7 @@ if [ "${#platforms[@]}" -eq 0 ]; then
     while IFS= read -r line; do
       line="$(trim "$line")"
       [ -n "$line" ] && platforms+=("$line")
-    done < <(workflow_config_review_platforms "$config_file")
+    done < <(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$config_file")
   fi
 fi
 
@@ -4812,7 +4812,7 @@ if [ "${#phase_after_clean_platforms[@]}" -eq 0 ]; then
     while IFS= read -r line; do
       line="$(trim "$line")"
       [ -n "$line" ] && phase_after_clean_platforms+=("$line")
-    done < <(workflow_config_review_phase_after_clean_platforms "$config_file")
+    done < <(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_phase_after_clean_platforms "$config_file")
   fi
 fi
 

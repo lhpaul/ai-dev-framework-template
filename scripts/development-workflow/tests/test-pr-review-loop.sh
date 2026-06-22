@@ -325,6 +325,23 @@ local_override_parsed="$(
 )"
 run_test "local_review_override_applied" $'runner=cursor\ndraft=pr-agent\nready=bugbot\nall=pr-agent,bugbot' "$local_override_parsed"
 
+_TEMP_CONFIG="$(mktemp)"
+cat > "$_TEMP_CONFIG" <<'YAML'
+schema_version: 2
+
+review:
+  on_draft:
+    runner: [codex]
+    github: [pr-agent]
+  on_ready:
+    github: [haystack]
+YAML
+temp_override_parsed="$(
+  workflow_repo_root() { printf '%s\n' "$_LOCAL_OVERRIDE_DIR"; }
+  WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$_TEMP_CONFIG" | paste -sd ',' -
+)"
+run_test "local_review_override_applies_to_temp_config_when_forced" "pr-agent,bugbot" "$temp_override_parsed"
+
 cat > "$_LOCAL_OVERRIDE_DIR/.ai-dev-workflow.local.yaml" <<'YAML'
 review:
   on_ready:
@@ -336,7 +353,8 @@ local_empty_ready_parsed="$(
 )"
 run_test "local_review_override_empty_ready_github_applied" "" "$local_empty_ready_parsed"
 rm -rf "$_LOCAL_OVERRIDE_DIR"
-unset _LOCAL_OVERRIDE_DIR local_override_parsed local_empty_ready_parsed
+rm -f "$_TEMP_CONFIG"
+unset _LOCAL_OVERRIDE_DIR _TEMP_CONFIG local_override_parsed local_empty_ready_parsed temp_override_parsed
 
 cat > "$_CONFIG_DIR/.ai-dev-workflow-duplicates.yaml" <<'YAML'
 schema_version: 2

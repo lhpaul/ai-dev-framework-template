@@ -24,7 +24,7 @@ workflow_local_config_file() {
 
 workflow_is_default_config_file() {
   local config_file="$1"
-  [ "$config_file" = "$(workflow_config_file)" ]
+  [ "$config_file" = "$(workflow_config_file)" ] || [ "${WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES:-}" = "1" ]
 }
 
 workflow_config_resolver_script() {
