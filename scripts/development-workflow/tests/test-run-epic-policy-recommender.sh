@@ -219,6 +219,92 @@ run_test "text_output_names_effective_policy" "yes" "$(grep -q 'Effective policy
 PATH="$MOCK_BIN:$PATH" "$HELPER" --scope "$backlog_fixture" --original-command "\$run-epic issues 949" --json >/dev/null
 run_test "does_not_call_gh_or_git" "0" "$(wc -l < "$CALL_LOG" | tr -d ' ')"
 
+schema_fixture="$(write_fixture schema '{
+  "scopeSource": "items",
+  "epicNumber": null,
+  "itemInput": "200",
+  "baseBranch": "develop",
+  "baseAmbiguous": false,
+  "baseReason": "no integration branch label",
+  "policy": {"delegateReview": false, "mayMerge": false, "mayStartBacklog": false, "maxRisk": "low"},
+  "groups": {
+    "eligible": [{"number": 200, "title": "Add users table database migration", "status": "Backlog", "type": "Feature", "labels": ["database"], "dependencies": {"state": "none"}}],
+    "blocked": [],
+    "already_merged": [],
+    "in_review": [],
+    "ambiguous": []
+  },
+  "items": [
+    {"number": 200, "title": "Add users table database migration", "status": "Backlog", "type": "Feature", "labels": ["database"], "dependencies": {"state": "none"}}
+  ]
+}')"
+schema_output="$(recommend_json "$schema_fixture" "\$run-epic --items 200")"
+run_test "schema_scope_recommends_plan_checkpoint" "plan:technical" "$(printf '%s\n' "$schema_output" | jq -r '.recommendedPolicy.checkpoints[0] | .stage + ":" + .domain')"
+run_test "schema_checkpoint_pending" "pending" "$(printf '%s\n' "$schema_output" | jq -r '.recommendedPolicy.checkpoints[0].satisfaction_state')"
+run_test "schema_checkpoint_requires_confirmation" "true" "$(printf '%s\n' "$schema_output" | jq -r '.requiresConfirmation')"
+run_test "schema_copy_paste_includes_checkpoint_file" "yes" "$(printf '%s\n' "$schema_output" | jq -r '.copyPasteCommand' | grep -Fq -- '--checkpoints-file checkpoint-policy.json' && echo yes || echo no)"
+
+sensitive_fixture="$(write_fixture sensitive '{
+  "scopeSource": "items",
+  "epicNumber": null,
+  "itemInput": "300",
+  "baseBranch": "develop",
+  "baseAmbiguous": false,
+  "baseReason": "no integration branch label",
+  "policy": {"delegateReview": false, "mayMerge": false, "mayStartBacklog": false, "maxRisk": "low"},
+  "groups": {
+    "eligible": [],
+    "blocked": [],
+    "already_merged": [],
+    "in_review": [{"number": 300, "title": "Harden auth permission checks", "status": "Development in Review", "type": "Feature", "labels": []}],
+    "ambiguous": []
+  },
+  "items": [
+    {"number": 300, "title": "Harden auth permission checks", "status": "Development in Review", "type": "Feature", "labels": [], "group": "in_review"}
+  ]
+}')"
+sensitive_output="$(recommend_json "$sensitive_fixture" "\$run-epic --items 300")"
+run_test "sensitive_scope_recommends_implementation_checkpoint" "implementation:technical" "$(printf '%s\n' "$sensitive_output" | jq -r '.recommendedPolicy.checkpoints[0] | .stage + ":" + .domain')"
+
+run_test "docs_scope_has_no_checkpoints" "0" "$(printf '%s\n' "$docs_output" | jq -r '.recommendedPolicy.checkpoints | length')"
+
+waived_file="$TMP_ROOT/waived-checkpoints.json"
+printf '%s\n' '[{
+  "item_number": 200,
+  "stage": "plan",
+  "domain": "technical",
+  "reason": "issue signals database schema, migration, or persistent data-model changes",
+  "required_human_action": "review and approve proposed data model in the plan before implementation proceeds",
+  "satisfaction_state": "waived",
+  "waiver_rationale": "schema change is additive only and pre-approved in epic brief"
+}]' > "$waived_file"
+waived_output="$("$HELPER" --scope "$schema_fixture" --original-command "\$run-epic --items 200" --checkpoints-file "$waived_file" --json)"
+run_test "explicit_checkpoint_override_source" "explicit" "$(printf '%s\n' "$waived_output" | jq -r '.fieldSources.checkpoints')"
+run_test "waived_checkpoint_preserved" "waived" "$(printf '%s\n' "$waived_output" | jq -r '.effectivePolicy.checkpoints[0].satisfaction_state')"
+run_test "checkpoint_policy_audit_fields_present" "yes" "$(printf '%s\n' "$waived_output" | jq -e '.checkpointPolicy.recommended and .checkpointPolicy.selected and .checkpointPolicy.effective' >/dev/null && echo yes || echo no)"
+
+invalid_waived_file="$TMP_ROOT/invalid-waived.json"
+printf '%s\n' '[{"item_number": 200, "stage": "plan", "domain": "technical", "satisfaction_state": "waived"}]' > "$invalid_waived_file"
+run_fails_contains "rejects_waived_without_rationale" "waived checkpoints require waiver_rationale" "$HELPER" --scope "$schema_fixture" --original-command x --checkpoints-file "$invalid_waived_file" --json
+
+empty_checkpoints_file="$TMP_ROOT/empty-checkpoints.json"
+printf '%s\n' '[]' > "$empty_checkpoints_file"
+empty_override_output="$("$HELPER" --scope "$schema_fixture" --original-command "\$run-epic --items 200" --checkpoints-file "$empty_checkpoints_file" --json)"
+run_test "empty_checkpoint_override_keeps_recommended" "1" "$(printf '%s\n' "$empty_override_output" | jq -r '.effectivePolicy.checkpoints | length')"
+run_test "empty_checkpoint_override_still_requires_confirmation" "true" "$(printf '%s\n' "$empty_override_output" | jq -r '.requiresConfirmation')"
+
+checkpoint_text_output="$("$HELPER" --scope "$schema_fixture" --original-command "\$run-epic --items 200")"
+run_test "text_output_lists_checkpoints" "yes" "$(grep -q 'Human checkpoints' <<< "$checkpoint_text_output" && echo yes || echo no)"
+
+blocked_schema_fixture="$(write_fixture blocked-schema "$(jq '
+  .groups.eligible = []
+  | .groups.blocked = [.items[0] | .group = "blocked" | .dependencies.state = "blocked"]
+  | .items[0].group = "blocked"
+  | .items[0].dependencies.state = "blocked"
+' "$schema_fixture")")"
+blocked_schema_output="$(recommend_json "$blocked_schema_fixture" "\$run-epic --items 200")"
+run_test "blocked_item_skips_checkpoint_recommendation" "0" "$(printf '%s\n' "$blocked_schema_output" | jq -r '.recommendedPolicy.checkpoints | length')"
+
 echo ""
 echo "=== Summary ==="
 echo "Passed: $PASS_COUNT"
