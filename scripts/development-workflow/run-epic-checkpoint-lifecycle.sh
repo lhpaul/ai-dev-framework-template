@@ -223,7 +223,8 @@ render_pr_checkpoint_comment() {
       "- PR: #" + (.pr.number | tostring),
       "- Branch: `" + (.pr.branch | tostring) + "`",
       "- PR workflow stage: " + (.pr.stage | tostring),
-      "- Label required: " + ((.label_required // false) | tostring)
+      "- Label required: " + ((.label_required // false) | tostring),
+      "- Label present: " + ((.label_present // false) | tostring)
     '
     printf '\n### Checkpoints\n\n'
     if [ "$(printf '%s\n' "$json" | jq '(.checkpoints // []) | length')" -eq 0 ]; then
@@ -396,12 +397,38 @@ case "$command" in
       label_required="true"
     fi
     item_checkpoints_json="$(printf '%s\n' "$updated_checkpoints" | jq -c --arg item "$item_number" '[.[] | select((.item_number | tonumber) == ($item | tonumber))]')"
+    if [ "$label_required" = "true" ]; then
+      if ! gh pr edit "$pr_number" --add-label "human-checkpoint-required" >/dev/null 2>&1; then
+        error_exit "failed to apply human-checkpoint-required label on PR #$pr_number"
+      fi
+      printf 'LABEL_APPLIED=human-checkpoint-required\n'
+    else
+      if ! has_label="$(gh pr view "$pr_number" --json labels --jq '[.labels[].name | select(. == "human-checkpoint-required")] | length' 2>/dev/null)"; then
+        error_exit "failed to read labels for PR #$pr_number"
+      fi
+      if [ "$has_label" -gt 0 ]; then
+        if ! gh pr edit "$pr_number" --remove-label "human-checkpoint-required" >/dev/null 2>&1; then
+          error_exit "failed to remove human-checkpoint-required label on PR #$pr_number"
+        fi
+        printf 'LABEL_REMOVED=human-checkpoint-required\n'
+      else
+        printf 'LABEL_ABSENT=human-checkpoint-required\n'
+      fi
+    fi
+    if ! has_label_after="$(gh pr view "$pr_number" --json labels --jq '[.labels[].name | select(. == "human-checkpoint-required")] | length' 2>/dev/null)"; then
+      error_exit "failed to read labels for PR #$pr_number after label sync"
+    fi
+    label_present="false"
+    if [ "$has_label_after" -gt 0 ]; then
+      label_present="true"
+    fi
     comment_payload="$(jq -n \
       --argjson item "$(jq -n --argjson n "$item_number" '{number: ($n|tonumber)}')" \
       --argjson pr "$(jq -n --argjson n "$pr_number" --arg branch "$branch_name" --arg stage "$pr_stage" '{number: ($n|tonumber), branch: $branch, stage: $stage}')" \
       --argjson checkpoints "$item_checkpoints_json" \
       --argjson blocking "$blocking_json" \
       --argjson label_required "$label_required" \
+      --argjson label_present "$label_present" \
       --arg satisfied_marker "${SATISFIED_MARKER_PREFIX}${item_number}:<stage>:<domain> -->" \
       --arg waiver_marker "${WAIVED_MARKER_PREFIX}${item_number}:<stage>:<domain> --> <rationale>" \
       '{
@@ -410,6 +437,7 @@ case "$command" in
         checkpoints: $checkpoints,
         blocking: $blocking,
         label_required: $label_required,
+        label_present: $label_present,
         satisfaction_signals: {
           comment_marker: $satisfied_marker,
           waiver_marker: $waiver_marker
@@ -417,24 +445,6 @@ case "$command" in
       }')"
     comment_body="$(render_pr_checkpoint_comment "$comment_payload")"
     apply_checkpoint_comment "$pr_number" "$comment_body"
-    if ! has_label="$(gh pr view "$pr_number" --json labels --jq '[.labels[].name | select(. == "human-checkpoint-required")] | length' 2>/dev/null)"; then
-      error_exit "failed to read labels for PR #$pr_number"
-    fi
-    if [ "$label_required" = "true" ]; then
-      if [ "$has_label" -eq 0 ]; then
-        gh pr edit "$pr_number" --add-label "human-checkpoint-required"
-        printf 'LABEL_APPLIED=human-checkpoint-required\n'
-      else
-        printf 'LABEL_PRESENT=human-checkpoint-required\n'
-      fi
-    else
-      if [ "$has_label" -gt 0 ]; then
-        gh pr edit "$pr_number" --remove-label "human-checkpoint-required"
-        printf 'LABEL_REMOVED=human-checkpoint-required\n'
-      else
-        printf 'LABEL_ABSENT=human-checkpoint-required\n'
-      fi
-    fi
     printf 'BLOCKING_COUNT=%s\n' "$(printf '%s\n' "$blocking_json" | jq 'length')"
     ;;
 esac
