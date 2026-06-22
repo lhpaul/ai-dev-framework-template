@@ -89,7 +89,7 @@ existing readiness labels; record satisfaction transitions in audit comments.
 
 | File | Change |
 | --- | --- |
-| `scripts/development-workflow/run-epic-delegated-gate.sh` | Consume `checkpoints[]`; emit `merge_allowed=false` when blocking checkpoints exist |
+| `scripts/development-workflow/run-epic-delegated-gate.sh` | Consume `checkpoints[]`; set `mergePermitted=false` and a blocking `decision` (e.g. `human_required`) when checkpoints block |
 | `scripts/development-workflow/tests/test-run-epic-delegated-gate.sh` | Fixtures: same-item earlier-stage pending blocks implementation PR; other-item ignored; satisfied/waived permits |
 | `scripts/development-workflow/batch-merge.sh` (or gate helper it calls) | Honor checkpoint block before merge |
 | `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md` | Document checkpoint gate in batch merge prerequisites |
