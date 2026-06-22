@@ -169,6 +169,11 @@ run_test "evaluate_blocking_same_item_only" "1022" "$(printf '%s\n' "$blocking_o
 impl_blocking="$("$HELPER" evaluate-blocking --item 1022 --branch feature/human-checkpoints --checkpoints-file "$checkpoints_file")"
 run_test "earlier_plan_checkpoint_blocks_implementation_pr" "1" "$(printf '%s\n' "$impl_blocking" | jq 'length')"
 
+satisfied_plan_file="$TMP_ROOT/satisfied-plan-checkpoint.json"
+printf '%s\n' '[{"item_number":1022,"stage":"plan","domain":"technical","reason":"schema","required_human_action":"approve","satisfaction_state":"satisfied","satisfied_by":"human"}]' > "$satisfied_plan_file"
+impl_blocking_after_plan="$("$HELPER" evaluate-blocking --item 1022 --branch feature/human-checkpoints --checkpoints-file "$satisfied_plan_file")"
+run_test "satisfied_earlier_stage_not_reblocked" "0" "$(printf '%s\n' "$impl_blocking_after_plan" | jq 'length')"
+
 satisfied_file="$TMP_ROOT/satisfied-checkpoints.json"
 MOCK_COMMENT_MODE=satisfied "$HELPER" detect-satisfaction --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$checkpoints_file" --pr 42 --write-checkpoints-file "$satisfied_file" >/dev/null
 run_test "detect_satisfaction_via_comment" "satisfied" "$(jq -r '.[0].satisfaction_state' "$satisfied_file")"

@@ -172,6 +172,7 @@ detect_satisfaction_json() {
       . as $cp |
       if ($cp.item_number | tonumber) != ($item | tonumber) then .
       elif (stage_rank($cp.stage) > stage_rank($prStage)) then .
+      elif (stage_rank($cp.stage) < stage_rank($prStage)) and (($cp.satisfaction_state // "pending") != "pending") then .
       else
         ($cp | del(.satisfaction_state, .satisfied_by, .satisfied_at, .waiver_rationale) | .satisfaction_state = "pending") as $base |
         $base |
