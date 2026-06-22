@@ -272,7 +272,7 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
         else . end
     );
   def recommended_checkpoints:
-    [.items[]? | recommend_checkpoints_for_item(.)[]]
+    [.items[]? | select((.group // "eligible") == "eligible") | recommend_checkpoints_for_item(.)[]]
     | unique_by(checkpoint_key(.));
   def checkpoint_matches($a; $b):
     ($a.item_number == $b.item_number) and ($a.stage == $b.stage) and ($a.domain == $b.domain);

@@ -295,6 +295,15 @@ run_test "empty_checkpoint_override_still_requires_confirmation" "true" "$(print
 checkpoint_text_output="$("$HELPER" --scope "$schema_fixture" --original-command "\$run-epic --items 200")"
 run_test "text_output_lists_checkpoints" "yes" "$(grep -q 'Human checkpoints' <<< "$checkpoint_text_output" && echo yes || echo no)"
 
+blocked_schema_fixture="$(write_fixture blocked-schema "$(jq '
+  .groups.eligible = []
+  | .groups.blocked = [.items[0] | .group = "blocked" | .dependencies.state = "blocked"]
+  | .items[0].group = "blocked"
+  | .items[0].dependencies.state = "blocked"
+' "$schema_fixture")")"
+blocked_schema_output="$(recommend_json "$blocked_schema_fixture" "\$run-epic --items 200")"
+run_test "blocked_item_skips_checkpoint_recommendation" "0" "$(printf '%s\n' "$blocked_schema_output" | jq -r '.recommendedPolicy.checkpoints | length')"
+
 echo ""
 echo "=== Summary ==="
 echo "Passed: $PASS_COUNT"
