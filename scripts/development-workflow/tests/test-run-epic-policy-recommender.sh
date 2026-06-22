@@ -242,6 +242,7 @@ schema_output="$(recommend_json "$schema_fixture" "\$run-epic --items 200")"
 run_test "schema_scope_recommends_plan_checkpoint" "plan:technical" "$(printf '%s\n' "$schema_output" | jq -r '.recommendedPolicy.checkpoints[0] | .stage + ":" + .domain')"
 run_test "schema_checkpoint_pending" "pending" "$(printf '%s\n' "$schema_output" | jq -r '.recommendedPolicy.checkpoints[0].satisfaction_state')"
 run_test "schema_checkpoint_requires_confirmation" "true" "$(printf '%s\n' "$schema_output" | jq -r '.requiresConfirmation')"
+run_test "schema_copy_paste_includes_checkpoint_file" "yes" "$(printf '%s\n' "$schema_output" | jq -r '.copyPasteCommand' | grep -Fq -- '--checkpoints-file checkpoint-policy.json' && echo yes || echo no)"
 
 sensitive_fixture="$(write_fixture sensitive '{
   "scopeSource": "items",
@@ -259,7 +260,7 @@ sensitive_fixture="$(write_fixture sensitive '{
     "ambiguous": []
   },
   "items": [
-    {"number": 300, "title": "Harden auth permission checks", "status": "Development in Review", "type": "Feature", "labels": []}
+    {"number": 300, "title": "Harden auth permission checks", "status": "Development in Review", "type": "Feature", "labels": [], "group": "in_review"}
   ]
 }')"
 sensitive_output="$(recommend_json "$sensitive_fixture" "\$run-epic --items 300")"

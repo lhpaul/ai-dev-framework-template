@@ -271,8 +271,10 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
           }]
         else . end
     );
+  def item_eligible_for_checkpoints($item):
+    (($item.group // "eligible") | IN("eligible", "in_review"));
   def recommended_checkpoints:
-    [.items[]? | select((.group // "eligible") == "eligible") | recommend_checkpoints_for_item(.)[]]
+    [.items[]? | select(item_eligible_for_checkpoints(.)) | recommend_checkpoints_for_item(.)[]]
     | unique_by(checkpoint_key(.));
   def checkpoint_matches($a; $b):
     ($a.item_number == $b.item_number) and ($a.stage == $b.stage) and ($a.domain == $b.domain);
@@ -450,8 +452,26 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
       (if value_bool($mayMergeOverride; $recMerge) then " --may-merge" else "" end) +
       " --may-start-backlog " + (value_bool($mayStartBacklogOverride; $recStart) | tostring) +
       " --max-risk " + (value_string($maxRiskOverride; $recRisk) | tostring) +
-      (if value_string($baseOverride; $recBase) == null then "" else " --base " + (value_string($baseOverride; $recBase) | tostring) end)
+      (if value_string($baseOverride; $recBase) == null then "" else " --base " + (value_string($baseOverride; $recBase) | tostring) end) +
+      (if ($effCheckpoints | length) > 0 then
+        " --checkpoints-file checkpoint-policy.json"
+      else "" end)
     ),
+    copyPasteCheckpointCommand: (
+      if ($effCheckpoints | length) == 0 then null
+      else
+        "./scripts/development-workflow/run-epic-policy-recommender.sh --scope <resolver-json> --original-command \""
+        + $originalCommand + "\""
+        + (if value_bool($delegateReviewOverride; $recReview) then " --delegate-review" else "" end)
+        + (if value_bool($mayMergeOverride; $recMerge) then " --may-merge" else "" end)
+        + " --may-start-backlog " + (value_bool($mayStartBacklogOverride; $recStart) | tostring)
+        + " --max-risk " + (value_string($maxRiskOverride; $recRisk) | tostring)
+        + (if value_string($baseOverride; $recBase) == null then "" else " --base " + (value_string($baseOverride; $recBase) | tostring) end)
+        + " --checkpoints-file checkpoint-policy.json"
+      end
+    ),
+    checkpointPolicyExport: $effCheckpoints,
+    checkpointPolicyFile: (if ($effCheckpoints | length) > 0 then "checkpoint-policy.json" else null end),
     readOnlyGuarantee: "No tracker updates, branch creation, PR edits, labels, comments, merges, issue closure, or branch deletion were performed."
   }
 ')"
@@ -490,4 +510,8 @@ if [ "$checkpoint_count" -gt 0 ]; then
   '
 fi
 printf 'Copy-paste equivalent: %s\n' "$(printf '%s\n' "$recommendation_json" | jq -r '.copyPasteCommand')"
+if printf '%s\n' "$recommendation_json" | jq -e '.checkpointPolicyFile != null' >/dev/null; then
+  printf 'Checkpoint policy file: %s (save checkpointPolicyExport JSON before re-run)\n' "$(printf '%s\n' "$recommendation_json" | jq -r '.checkpointPolicyFile')"
+  printf 'Recommender copy-paste: %s\n' "$(printf '%s\n' "$recommendation_json" | jq -r '.copyPasteCheckpointCommand')"
+fi
 printf 'Read-only: %s\n' "$(printf '%s\n' "$recommendation_json" | jq -r '.readOnlyGuarantee')"
