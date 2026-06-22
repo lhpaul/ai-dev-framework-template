@@ -38,7 +38,7 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
    readiness-label, or repository merge-protocol checks.
 7. After delegated review, fix, merge, block, or escalation decisions, use
    `./scripts/development-workflow/run-epic-audit-trail.sh` to create or update
-   stable PR disposition and epic ledger comments:
+   stable PR disposition and epic ledger comments, including checkpoint state:
    - `render-pr-disposition --input <file>`
    - `apply-pr-disposition --input <file> --pr <pr-number>`
    - `render-epic-ledger --input <file>`
