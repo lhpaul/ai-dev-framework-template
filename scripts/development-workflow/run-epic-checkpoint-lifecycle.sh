@@ -113,11 +113,13 @@ detect_satisfaction_json() {
 
   if [ -n "$pr" ] && is_positive_int "$pr"; then
     require_gh
-    reviews_json="$(gh pr view "$pr" --json reviews --jq '.reviews // []' 2>/dev/null || printf '[]\n')"
+    if ! reviews_json="$(gh pr view "$pr" --json reviews --jq '.reviews // []' 2>/dev/null)"; then
+      error_exit "failed to read reviews for PR #$pr"
+    fi
     local repo
     repo="$(repo_slug)"
     if ! comments_json="$(gh api --paginate --slurp "repos/${repo}/issues/${pr}/comments?per_page=100" 2>/dev/null | jq -c '[.[].[]? | {author: (.user.login // ""), body: (.body // ""), createdAt: (.created_at // "")}]' 2>/dev/null)"; then
-      comments_json='[]'
+      error_exit "failed to read comments for PR #$pr"
     fi
   fi
 
@@ -378,7 +380,9 @@ case "$command" in
     if [ "$(printf '%s\n' "$blocking_json" | jq 'length')" -gt 0 ]; then
       label_required="true"
     fi
-    has_label="$(gh pr view "$pr_number" --json labels --jq '[.labels[].name | select(. == "human-checkpoint-required")] | length' 2>/dev/null || printf '0\n')"
+    if ! has_label="$(gh pr view "$pr_number" --json labels --jq '[.labels[].name | select(. == "human-checkpoint-required")] | length' 2>/dev/null)"; then
+      error_exit "failed to read labels for PR #$pr_number"
+    fi
     if [ "$label_required" = "true" ]; then
       if [ "$has_label" -eq 0 ]; then
         gh pr edit "$pr_number" --add-label "human-checkpoint-required"

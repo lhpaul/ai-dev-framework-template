@@ -151,7 +151,7 @@ render_pr_disposition() {
       printf '%s\n' "$json" | jq -r '
         (.checkpoint_policy // .checkpointPolicy // {}) as $cp |
         "- Field source: " + (($cp.field_source // $cp.fieldSource // "unknown") | tostring),
-        "- Pending applicable checkpoints: " + (([$cp.effective // $cp.effectivePolicy // [] | .[] | select(.satisfaction_state == "pending")] | length) | tostring)
+        "- Pending applicable checkpoints: " + (([($cp.effective // $cp.effectivePolicy // [])[] | select(.satisfaction_state == "pending")] | length) | tostring)
       '
       printf '\n| Item | Stage | Domain | State | Reason | Required action |\n'
       printf '| --- | --- | --- | --- | --- | --- |\n'
