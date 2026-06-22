@@ -174,6 +174,7 @@ The following stop conditions are always in force:
 | `unresolved_blocking_review`          | A blocking review thread (from a reviewer or automated tool) is unresolved.            |
 | `high_risk_change`                    | The classified PR risk exceeds the stage's configured `max_merge_risk`.                |
 | `destructive_action`                  | The action would delete branches, data, releases, or other non-recoverable artifacts.  |
+| `human_checkpoint_required`           | A declared stage-scoped human checkpoint is still pending for the PR's work item.      |
 | `missing_tracker_context`             | The work item is missing required tracker metadata (status, type, or linked spec).     |
 | `missing_required_secret_or_permission` | A required credential or GitHub permission is absent.                                |
 

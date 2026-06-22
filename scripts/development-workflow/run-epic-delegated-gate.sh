@@ -139,7 +139,7 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     checkpoint_list
     | map(select(checkpoint_applies(.; $item; $prStage)));
   def checkpoint_reason($cp):
-    "human checkpoint pending for issue #" + (($cp.item_number // item_number) | tostring) +
+    "human_checkpoint_required: issue #" + (($cp.item_number // item_number) | tostring) +
     " " + (($cp.stage // "unknown") | tostring) + "/" + (($cp.domain // "unknown") | tostring) +
     ": " + (($cp.required_human_action // $cp.reason // "human confirmation required") | tostring);
   def risk_merge_permitted:
@@ -181,7 +181,7 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
    then $reasons + ($pendingCheckpoints | map(checkpoint_reason(.)))
    else $reasons end) as $reasons |
   (if has_label("human-checkpoint-required") and (($pendingCheckpoints | length) == 0)
-   then add_reason($reasons; "human-checkpoint-required label is present; record satisfied or waived checkpoint evidence and remove the label before delegated merge")
+   then add_reason($reasons; "human_checkpoint_required: human-checkpoint-required label is present; record satisfied or waived checkpoint evidence and remove the label before delegated merge")
    else $reasons end) as $reasons |
   (if ((.statusChecks // []) | length) == 0
    then add_reason($reasons; "required CI state is missing")
@@ -212,7 +212,7 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     decision: (
       if $count == 0 then "merge_allowed"
       elif ($reasons | any(test("reviewer blocking|CI checks|unresolved blocking|advisories"))) then "fix_required"
-      elif ($reasons | any(test("authority|risk gate|needs-setup|not in the resolved|Backlog|human checkpoint|human-checkpoint"))) then "human_required"
+      elif ($reasons | any(test("authority|risk gate|needs-setup|not in the resolved|Backlog|human_checkpoint_required|human-checkpoint"))) then "human_required"
       else "blocked"
       end
     ),
@@ -221,7 +221,7 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     nextAction: (
       if $count == 0 then "record merge evidence and use the repository merge protocol"
       elif ($reasons | any(test("reviewer blocking|CI checks|unresolved blocking|advisories"))) then "remove readiness labels, fix, rerun validation, reviewer loop, CI loop, and this gate"
-      elif ($reasons | any(test("human checkpoint|human-checkpoint"))) then "stop for the named human checkpoint action, record satisfied or waived evidence, sync labels, and rerun this gate"
+      elif ($reasons | any(test("human_checkpoint_required|human-checkpoint"))) then "stop for the named human checkpoint action, record satisfied or waived evidence, sync labels, and rerun this gate"
       elif ($reasons | any(test("authority|risk gate|needs-setup|not in the resolved|Backlog"))) then "stop for human authority or setup before mutating"
       else "block until required state is available"
       end
