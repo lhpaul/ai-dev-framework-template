@@ -259,6 +259,22 @@ run_test "risk_gate_accepts_classifier_shape" "merge_allowed" "$(decision_for "$
 missing_risk_fixture="$(write_fixture missing-risk 'del(.risk)')"
 run_test "missing_risk_gate_requires_human" "human_required" "$(decision_for "$missing_risk_fixture")"
 
+pending_checkpoint_fixture="$(write_fixture pending-checkpoint '.item.number = 1023 | .pr.headRefName = "feature/1023-human-checkpoint-gates" | .policy.checkpoints = [{"item_number":1023,"stage":"implementation","domain":"technical","reason":"sensitive merge gate behavior","required_human_action":"approve delegated gate checkpoint handling","satisfaction_state":"pending"}]')"
+run_test "pending_checkpoint_requires_human" "human_required" "$(decision_for "$pending_checkpoint_fixture")"
+run_test "pending_checkpoint_reason_names_action" "true" "$(reason_match_for "$pending_checkpoint_fixture" "approve delegated gate checkpoint handling")"
+
+satisfied_checkpoint_fixture="$(write_fixture satisfied-checkpoint '.item.number = 1023 | .pr.headRefName = "feature/1023-human-checkpoint-gates" | .policy.checkpoints = [{"item_number":1023,"stage":"implementation","domain":"technical","reason":"sensitive merge gate behavior","required_human_action":"approve delegated gate checkpoint handling","satisfaction_state":"satisfied","satisfied_by":"lhpaul"}]')"
+run_test "satisfied_checkpoint_allows_merge" "merge_allowed" "$(decision_for "$satisfied_checkpoint_fixture")"
+
+other_item_checkpoint_fixture="$(write_fixture other-item-checkpoint '.item.number = 1023 | .pr.headRefName = "feature/1023-human-checkpoint-gates" | .policy.checkpoints = [{"item_number":9999,"stage":"implementation","domain":"technical","reason":"other item","required_human_action":"ignore","satisfaction_state":"pending"}]')"
+run_test "other_item_checkpoint_does_not_block" "merge_allowed" "$(decision_for "$other_item_checkpoint_fixture")"
+
+future_stage_checkpoint_fixture="$(write_fixture future-stage-checkpoint '.item.number = 1023 | .pr.headRefName = "implementation-plan/1023-human-checkpoint-gates" | .policy.checkpoints = [{"item_number":1023,"stage":"implementation","domain":"technical","reason":"future implementation review","required_human_action":"approve implementation","satisfaction_state":"pending"}]')"
+run_test "future_stage_checkpoint_does_not_block" "merge_allowed" "$(decision_for "$future_stage_checkpoint_fixture")"
+
+stale_checkpoint_label_fixture="$(write_fixture stale-checkpoint-label '.pr.labels += ["human-checkpoint-required"]')"
+run_test "stale_checkpoint_label_requires_human" "human_required" "$(decision_for "$stale_checkpoint_label_fixture")"
+
 audit_fixture="$(write_fixture audit-missing '.pr.auditDispositionPresent = false')"
 run_test "audit_required_before_merge" "blocked" "$(decision_for "$audit_fixture")"
 

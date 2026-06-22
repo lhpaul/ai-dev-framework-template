@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Human checkpoint merge gates** (#1023): delegated `/run-epic` merge gates and
+  batch merge discovery now block unsatisfied `human-checkpoint-required` PRs
+  until checkpoint satisfaction or waiver evidence is recorded and labels are synced.
 - **Human checkpoint PR lifecycle** (#1022): adds `human-checkpoint-required` readiness
   signal (protocol 92), Step 8a/8c checkpoint label sync in protocol 91,
   `run-epic-checkpoint-lifecycle.sh` for satisfaction detection and label/comment
