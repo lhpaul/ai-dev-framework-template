@@ -837,9 +837,7 @@ def build_parser() -> argparse.ArgumentParser:
     auth.add_argument("--json", action="store_true", help="print JSON instead of shell KEY=value")
     auth.set_defaults(func=cmd_auth)
 
-    overrides = subcommands.add_parser(
-        "review-overrides", help="print local review override compatibility values"
-    )
+    overrides = subcommands.add_parser("review-overrides", help="print local review override values")
     overrides.add_argument("--repo-root")
     overrides.add_argument("--json", action="store_true", help="print JSON instead of shell KEY=value")
     overrides.set_defaults(func=cmd_review_overrides)
