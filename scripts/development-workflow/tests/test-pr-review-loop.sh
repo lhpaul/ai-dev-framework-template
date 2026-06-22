@@ -374,6 +374,37 @@ case "$duplicate_warning" in
 esac
 run_test "duplicate_lifecycle_reviewer_warning" "yes" "$duplicate_detected"
 
+_DUP_OVERRIDE_DIR="$(mktemp -d)"
+cat > "$_DUP_OVERRIDE_DIR/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_draft:
+    github: [bugbot]
+  on_ready:
+    github: [bugbot]
+YAML
+_DUP_TEMP_CONFIG="$(mktemp)"
+cat > "$_DUP_TEMP_CONFIG" <<'YAML'
+schema_version: 2
+
+review:
+  on_draft:
+    github: [pr-agent]
+  on_ready:
+    github: [haystack]
+YAML
+duplicate_override_warning="$(
+  workflow_repo_root() { printf '%s\n' "$_DUP_OVERRIDE_DIR"; }
+  WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 emit_review_lifecycle_duplicate_warnings "$_DUP_TEMP_CONFIG" 2>&1 || true
+)"
+case "$duplicate_override_warning" in
+  *'reviewer "bugbot" in more than one bucket'*) duplicate_override_detected=yes ;;
+  *) duplicate_override_detected=no ;;
+esac
+run_test "duplicate_lifecycle_warning_uses_local_override_for_temp_config" "yes" "$duplicate_override_detected"
+rm -rf "$_DUP_OVERRIDE_DIR"
+rm -f "$_DUP_TEMP_CONFIG"
+unset _DUP_OVERRIDE_DIR _DUP_TEMP_CONFIG duplicate_override_warning duplicate_override_detected
+
 declare -a phase_after_clean_platforms=()
 append_phase_after_clean_platforms "coderabbit, pr-agent"
 if is_phase_after_clean_platform "coderabbit" && is_phase_after_clean_platform "pr-agent"; then
