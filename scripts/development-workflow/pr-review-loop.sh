@@ -4792,13 +4792,13 @@ if [ "${#platforms[@]}" -eq 0 ]; then
   config_file="${_PR_CONFIG_TMPFILE:-$(workflow_config_file)}"
   if [ -f "$config_file" ]; then
     if [ "$review_lifecycle_duplicate_warnings_emitted" -eq 0 ]; then
-      emit_review_lifecycle_duplicate_warnings "$config_file"
+      WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 emit_review_lifecycle_duplicate_warnings "$config_file"
       review_lifecycle_duplicate_warnings_emitted=1
     fi
     while IFS= read -r line; do
       line="$(trim "$line")"
       [ -n "$line" ] && platforms+=("$line")
-    done < <(workflow_config_review_platforms "$config_file")
+    done < <(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$config_file")
   fi
 fi
 
@@ -4806,13 +4806,13 @@ if [ "${#phase_after_clean_platforms[@]}" -eq 0 ]; then
   config_file="${config_file:-$(workflow_config_file)}"
   if [ -f "$config_file" ]; then
     if [ "$review_lifecycle_duplicate_warnings_emitted" -eq 0 ]; then
-      emit_review_lifecycle_duplicate_warnings "$config_file"
+      WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 emit_review_lifecycle_duplicate_warnings "$config_file"
       review_lifecycle_duplicate_warnings_emitted=1
     fi
     while IFS= read -r line; do
       line="$(trim "$line")"
       [ -n "$line" ] && phase_after_clean_platforms+=("$line")
-    done < <(workflow_config_review_phase_after_clean_platforms "$config_file")
+    done < <(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_phase_after_clean_platforms "$config_file")
   fi
 fi
 

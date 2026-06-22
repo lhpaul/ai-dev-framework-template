@@ -31,12 +31,19 @@ product_repos:
 # - copy this file to `.ai-dev-workflow.local.yaml`
 # - set `review.on_draft.runner` to `cursor` while running `/run-work` from
 #   Cursor so Step 7a dispatches the Cursor review agents instead of Codex
+# - override GitHub/App reviewer lists to match the tools available on this
+#   machine, for example PR Agent during draft and Cursor Bugbot after ready
 # - keep `internal_reviewers_unavailable_policy: warn` unless you explicitly
 #   want unavailable local reviewers to hard-fail the gate
 review:
   on_draft:
     runner:
       - cursor
+    github:
+      - pr-agent
+  on_ready:
+    github:
+      - bugbot
   internal_reviewers_unavailable_policy: warn
 
 tools:

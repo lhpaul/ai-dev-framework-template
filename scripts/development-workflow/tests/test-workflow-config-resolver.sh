@@ -355,14 +355,38 @@ cat > "$review_dir/.ai-dev-workflow.local.yaml" <<'YAML'
 review:
   on_draft:
     runner: [codex]
+    github: [pr-agent]
+  on_ready:
+    github: [bugbot]
   internal_reviewers_unavailable_policy: warn
 YAML
 review_output="$(workflow_review_override_context "$review_dir")"
 run_contains "local_review_override_runner_value" "REVIEW_ON_DRAFT_RUNNER=codex" "$review_output"
 run_contains "local_review_override_runner_source" "REVIEW_ON_DRAFT_RUNNER_SOURCE=.ai-dev-workflow.local.yaml" "$review_output"
+run_contains "local_review_override_draft_github_value" "REVIEW_ON_DRAFT_GITHUB=pr-agent" "$review_output"
+run_contains "local_review_override_draft_github_source" "REVIEW_ON_DRAFT_GITHUB_SOURCE=.ai-dev-workflow.local.yaml" "$review_output"
+run_contains "local_review_override_ready_github_value" "REVIEW_ON_READY_GITHUB=bugbot" "$review_output"
+run_contains "local_review_override_ready_github_source" "REVIEW_ON_READY_GITHUB_SOURCE=.ai-dev-workflow.local.yaml" "$review_output"
 run_contains "local_review_override_policy_value" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY=warn" "$review_output"
 run_contains "local_review_override_policy_source" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY_SOURCE=.ai-dev-workflow.local.yaml" "$review_output"
-run_contains "local_review_override_combined_source" "LOCAL_OVERRIDE_SOURCE=runner:.ai-dev-workflow.local.yaml,policy:.ai-dev-workflow.local.yaml" "$review_output"
+run_contains "local_review_override_combined_source" "LOCAL_OVERRIDE_SOURCE=runner:.ai-dev-workflow.local.yaml,draft-github:.ai-dev-workflow.local.yaml,ready-github:.ai-dev-workflow.local.yaml,policy:.ai-dev-workflow.local.yaml" "$review_output"
+
+empty_review_dir="$(fixture_dir empty-review-overrides)"
+cat > "$empty_review_dir/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_draft:
+    runner: []
+    github: []
+  on_ready:
+    github: []
+YAML
+empty_review_output="$(workflow_review_override_context "$empty_review_dir")"
+run_contains "empty_local_review_override_runner_value" "REVIEW_ON_DRAFT_RUNNER=" "$empty_review_output"
+run_contains "empty_local_review_override_runner_source" "REVIEW_ON_DRAFT_RUNNER_SOURCE=.ai-dev-workflow.local.yaml" "$empty_review_output"
+run_contains "empty_local_review_override_draft_github_value" "REVIEW_ON_DRAFT_GITHUB=" "$empty_review_output"
+run_contains "empty_local_review_override_draft_github_source" "REVIEW_ON_DRAFT_GITHUB_SOURCE=.ai-dev-workflow.local.yaml" "$empty_review_output"
+run_contains "empty_local_review_override_ready_github_value" "REVIEW_ON_READY_GITHUB=" "$empty_review_output"
+run_contains "empty_local_review_override_ready_github_source" "REVIEW_ON_READY_GITHUB_SOURCE=.ai-dev-workflow.local.yaml" "$empty_review_output"
 
 local_review_dir="$(fixture_dir local-review-overrides)"
 cat > "$local_review_dir/.ai-dev-workflow.local.yaml" <<'YAML'
@@ -406,6 +430,10 @@ JSON
 stale_review_output="$(workflow_review_override_context "$stale_review_dir")"
 run_contains "stale_review_override_runner_empty" "REVIEW_ON_DRAFT_RUNNER=" "$stale_review_output"
 run_contains "stale_review_override_runner_source_empty" "REVIEW_ON_DRAFT_RUNNER_SOURCE=" "$stale_review_output"
+run_contains "stale_review_override_draft_github_empty" "REVIEW_ON_DRAFT_GITHUB=" "$stale_review_output"
+run_contains "stale_review_override_draft_github_source_empty" "REVIEW_ON_DRAFT_GITHUB_SOURCE=" "$stale_review_output"
+run_contains "stale_review_override_ready_github_empty" "REVIEW_ON_READY_GITHUB=" "$stale_review_output"
+run_contains "stale_review_override_ready_github_source_empty" "REVIEW_ON_READY_GITHUB_SOURCE=" "$stale_review_output"
 run_contains "stale_review_override_policy_empty" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY=" "$stale_review_output"
 run_contains "stale_review_override_policy_source_empty" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY_SOURCE=" "$stale_review_output"
 run_contains "stale_review_override_source_empty" "LOCAL_OVERRIDE_SOURCE=" "$stale_review_output"

@@ -402,9 +402,11 @@ Opening a PR is not a terminal condition. A workflow run should continue until t
 
 Repository-specific workflow integrations are declared in `.ai-dev-workflow.yaml` at the repo root.
 Machine-local overrides belong in `.ai-dev-workflow.local.yaml`, which is
-gitignored. Start from `.ai-dev-workflow.local.example.yaml` when a workflow hub
-needs checkout roots, product-repo local paths, secret references, or local tool
-overrides.
+gitignored. Local review overrides replace the matching shared reviewer list
+for this checkout, including `review.on_draft.runner`,
+`review.on_draft.github`, and `review.on_ready.github`. Start from
+`.ai-dev-workflow.local.example.yaml` when a workflow hub needs checkout roots,
+product-repo local paths, secret references, or local tool overrides.
 
 The file is versioned and intentionally declarative. It is the right place to record which workflow providers this repository uses for:
 
@@ -520,8 +522,9 @@ The expected sequence is:
 4. Mark the PR ready for human review only after both loops are clean.
 
 GitHub review platforms are declared in `.ai-dev-workflow.yaml` under
-`review.on_draft.github` and `review.on_ready.github`. The repository helpers
-that support this loop are:
+`review.on_draft.github` and `review.on_ready.github`, with matching
+`.ai-dev-workflow.local.yaml` lists taking precedence for local tool/subscription
+differences. The repository helpers that support this loop are:
 
 - `scripts/development-workflow/pr-review-loop.sh`
 - `scripts/development-workflow/pr-ci-loop.sh`

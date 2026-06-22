@@ -677,15 +677,15 @@ def resolve_context(args: argparse.Namespace) -> dict[str, str]:
     return context
 
 
-def list_from_path(data: dict[str, Any], path: list[str]) -> list[str]:
+def list_override_from_path(data: dict[str, Any], path: list[str]) -> tuple[list[str], bool]:
     value: Any = data
     for key in path:
-        if not isinstance(value, dict):
-            return []
+        if not isinstance(value, dict) or key not in value:
+            return [], False
         value = value.get(key)
     if isinstance(value, list):
-        return [str(item) for item in value]
-    return []
+        return [str(item) for item in value], True
+    return [], False
 
 
 def scalar_from_path(data: dict[str, Any], path: list[str]) -> str:
@@ -701,9 +701,21 @@ def resolve_review_overrides(args: argparse.Namespace) -> dict[str, str]:
     repo_root = repo_root_from_args(args.repo_root)
     _, local, _, _ = load_configs(repo_root)
 
-    local_runner = list_from_path(local, ["review", "on_draft", "runner"])
+    local_runner, has_local_runner = list_override_from_path(local, ["review", "on_draft", "runner"])
     runner = local_runner
-    runner_source = ".ai-dev-workflow.local.yaml" if local_runner else ""
+    runner_source = ".ai-dev-workflow.local.yaml" if has_local_runner else ""
+
+    local_draft_github, has_local_draft_github = list_override_from_path(
+        local, ["review", "on_draft", "github"]
+    )
+    draft_github = local_draft_github
+    draft_github_source = ".ai-dev-workflow.local.yaml" if has_local_draft_github else ""
+
+    local_ready_github, has_local_ready_github = list_override_from_path(
+        local, ["review", "on_ready", "github"]
+    )
+    ready_github = local_ready_github
+    ready_github_source = ".ai-dev-workflow.local.yaml" if has_local_ready_github else ""
 
     local_policy = scalar_from_path(local, ["review", "internal_reviewers_unavailable_policy"])
     policy = local_policy
@@ -712,12 +724,20 @@ def resolve_review_overrides(args: argparse.Namespace) -> dict[str, str]:
     sources = []
     if runner_source:
         sources.append(f"runner:{runner_source}")
+    if draft_github_source:
+        sources.append(f"draft-github:{draft_github_source}")
+    if ready_github_source:
+        sources.append(f"ready-github:{ready_github_source}")
     if policy_source:
         sources.append(f"policy:{policy_source}")
 
     return {
         "REVIEW_ON_DRAFT_RUNNER": ",".join(runner),
         "REVIEW_ON_DRAFT_RUNNER_SOURCE": runner_source,
+        "REVIEW_ON_DRAFT_GITHUB": ",".join(draft_github),
+        "REVIEW_ON_DRAFT_GITHUB_SOURCE": draft_github_source,
+        "REVIEW_ON_READY_GITHUB": ",".join(ready_github),
+        "REVIEW_ON_READY_GITHUB_SOURCE": ready_github_source,
         "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY": policy,
         "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY_SOURCE": policy_source,
         "LOCAL_OVERRIDE_SOURCE": ",".join(sources),

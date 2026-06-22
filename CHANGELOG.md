@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Cursor pilot configuration**: adds Cursor as a Step 7a runner reviewer value,
-  enables Cursor Bugbot in the ready-phase reviewer loop for this repository,
+  supports overriding ready-phase review to Cursor Bugbot from local config,
   exposes `bugbot` in reviewer-loop usage help, and ships project-level Bugbot
   rules plus a local Cursor-runner override example for testing the workflow
   from Cursor.

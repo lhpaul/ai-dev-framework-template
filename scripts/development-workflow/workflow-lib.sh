@@ -18,6 +18,15 @@ workflow_config_file() {
   printf '%s/.ai-dev-workflow.yaml\n' "$(workflow_repo_root)"
 }
 
+workflow_local_config_file() {
+  printf '%s/.ai-dev-workflow.local.yaml\n' "$(workflow_repo_root)"
+}
+
+workflow_is_default_config_file() {
+  local config_file="$1"
+  [ "$config_file" = "$(workflow_config_file)" ] || [ "${WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES:-}" = "1" ]
+}
+
 workflow_config_resolver_script() {
   printf '%s/workflow-config-resolver.py\n' "$(workflow_script_dir)"
 }
@@ -345,10 +354,83 @@ workflow_config_review_legacy_list() {
   ' "$config_file"
 }
 
+workflow_config_review_nested_list_declared() {
+  local config_file="$1"
+  local phase="$2"
+  local key="$3"
+
+  [ -f "$config_file" ] || return 1
+
+  awk -v phase="$phase" -v key="$key" '
+    BEGIN { found = 0 }
+
+    /^review:[[:space:]]*(#.*)?$/ {
+      in_review = 1
+      in_phase = 0
+      in_list = 0
+      next
+    }
+
+    in_review && /^[^[:space:]#].*:[[:space:]]*/ {
+      in_review = 0
+      in_phase = 0
+      in_list = 0
+    }
+
+    in_review && $0 ~ ("^[[:space:]][[:space:]]" phase ":[[:space:]]*(#.*)?$") {
+      in_phase = 1
+      in_list = 0
+      next
+    }
+
+    in_phase && /^[[:space:]][[:space:]][A-Za-z0-9_-]+:[[:space:]]*/ && $0 !~ ("^[[:space:]][[:space:]]" phase ":[[:space:]]*") {
+      in_phase = 0
+      in_list = 0
+    }
+
+    in_phase && $0 ~ ("^[[:space:]][[:space:]][[:space:]][[:space:]]" key ":[[:space:]]*\\[") {
+      found = 1
+      exit
+    }
+
+    in_phase && $0 ~ ("^[[:space:]][[:space:]][[:space:]][[:space:]]" key ":[[:space:]]*(#.*)?$") {
+      in_list = 1
+      next
+    }
+
+    in_list && /^[[:space:]][[:space:]][[:space:]][[:space:]][A-Za-z0-9_-]+:[[:space:]]*/ {
+      in_list = 0
+    }
+
+    in_list && /^[[:space:]][[:space:]][[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ {
+      found = 1
+      exit
+    }
+
+    END { exit found ? 0 : 1 }
+  ' "$config_file"
+}
+
+workflow_config_review_local_list_if_declared() {
+  local config_file="$1"
+  local phase="$2"
+  local key="$3"
+  local local_file
+
+  workflow_is_default_config_file "$config_file" || return 1
+  local_file="$(workflow_local_config_file)"
+  workflow_config_review_nested_list_declared "$local_file" "$phase" "$key" || return 1
+  workflow_config_review_nested_list "$local_file" "$phase" "$key"
+}
+
 workflow_config_review_on_draft_runner() {
   local config_file="${1:-$(workflow_config_file)}"
 
   [ -f "$config_file" ] || return 0
+
+  if workflow_config_review_local_list_if_declared "$config_file" on_draft runner; then
+    return 0
+  fi
 
   if workflow_config_review_nested_list "$config_file" on_draft runner | grep -q .; then
     workflow_config_review_nested_list "$config_file" on_draft runner
@@ -361,6 +443,10 @@ workflow_config_review_on_draft_github() {
   local config_file="${1:-$(workflow_config_file)}"
 
   [ -f "$config_file" ] || return 0
+
+  if workflow_config_review_local_list_if_declared "$config_file" on_draft github; then
+    return 0
+  fi
 
   if workflow_config_review_nested_list "$config_file" on_draft github | grep -q .; then
     workflow_config_review_nested_list "$config_file" on_draft github
@@ -385,6 +471,10 @@ workflow_config_review_on_ready_github() {
   local config_file="${1:-$(workflow_config_file)}"
 
   [ -f "$config_file" ] || return 0
+
+  if workflow_config_review_local_list_if_declared "$config_file" on_ready github; then
+    return 0
+  fi
 
   if workflow_config_review_nested_list "$config_file" on_ready github | grep -q .; then
     workflow_config_review_nested_list "$config_file" on_ready github
