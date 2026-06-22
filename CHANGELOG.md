@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Human checkpoint lifecycle documentation** (#1024): adds an end-to-end
+  smoke-test runbook for checkpoint recommendation, readiness labels,
+  satisfaction detection, delegated gate blocking, batch merge handling, audit
+  evidence, and command-surface guidance.
 - **Human checkpoint merge gates** (#1023): delegated `/run-epic` merge gates and
   batch merge discovery now block unsatisfied `human-checkpoint-required` PRs
   until checkpoint satisfaction or waiver evidence is recorded and labels are synced.

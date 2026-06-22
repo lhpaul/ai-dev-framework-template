@@ -26,12 +26,11 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
    `./scripts/development-workflow/run-epic-policy-recommender.sh --scope <resolver-json> --original-command "<requested command>"`
    with any supplied policy flags, including `--no-delegate-review` or
    `--no-may-merge` for explicit negative selections. Present the recommended
-   policy, risk
-   rationale, base branch, scoped items, and copy-paste equivalent command
-   before mutation. Continue in the same run when the human accepts the
-   recommendation or supplies custom values. Exact fully specified invocations
-   may skip the prompt but still record original, recommended, selected, and
-   effective policy in later audit evidence.
+   policy, checkpoint policy, risk rationale, base branch, scoped items, and
+   copy-paste equivalent command before mutation. Continue in the same run when
+   the human accepts the recommendation or supplies custom values. Exact fully
+   specified invocations may skip the prompt but still record original,
+   recommended, selected, and effective policy in later audit evidence.
 6. When a later delegated run reaches a candidate PR merge decision, run
    `./scripts/development-workflow/run-epic-risk-classifier.sh --pr <pr-number>`
    with the invocation's `--max-risk` before merge. The classifier is also
