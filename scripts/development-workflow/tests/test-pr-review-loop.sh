@@ -2144,6 +2144,26 @@ run_test "bugbot_bot_login_env_override" "my-custom-bugbot[bot]" "$actual"
 unset BUGBOT_BOT_LOGIN
 
 # ---------------------------------------------------------------------------
+# Test 16.0c-d: Bugbot clean summary detection must not hide finding markers
+# ---------------------------------------------------------------------------
+bugbot_clean_body="Cursor Bugbot found no new issues in this pull request."
+if is_bugbot_clean_review "$bugbot_clean_body"; then
+  actual="clean"
+else
+  actual="blocking"
+fi
+run_test "bugbot_clean_phrase_is_non_blocking" "clean" "$actual"
+
+bugbot_mixed_body=$'Cursor Bugbot found no issues in this pull request.\n\n**High Severity**\n\n<!-- BUGBOT_BUG_ID: abc123 -->'
+if is_bugbot_clean_review "$bugbot_mixed_body"; then
+  actual="clean"
+else
+  actual="blocking"
+fi
+run_test "bugbot_finding_markers_override_clean_phrase" "blocking" "$actual"
+unset bugbot_clean_body bugbot_mixed_body actual
+
+# ---------------------------------------------------------------------------
 # Test 16.1: clean path — check run conclusion=success, no blocking comments
 # ---------------------------------------------------------------------------
 _bugbot_mock_dir_161="$(mktemp -d)"
