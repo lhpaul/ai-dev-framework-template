@@ -206,6 +206,11 @@ is_soft_suggestion() {
 is_bugbot_clean_review() {
   local body="$1"
   case "$body" in
+    *BUGBOT_BUG_ID*|*"potential issue"*|*"blocking finding"*|*"**High Severity"*|*"**Medium Severity"*|*"**Low Severity"*)
+      return 1
+      ;;
+  esac
+  case "$body" in
     *"found no new issues"*|*"found no issues"*|*"found no potential issues"*)
       return 0
       ;;
