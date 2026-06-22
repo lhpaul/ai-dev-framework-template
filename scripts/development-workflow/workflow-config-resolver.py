@@ -677,16 +677,6 @@ def resolve_context(args: argparse.Namespace) -> dict[str, str]:
     return context
 
 
-def load_legacy_template_config(repo_root: Path) -> dict[str, Any]:
-    path = repo_root / ".tmp" / "template-config.json"
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ConfigError(f"{path}: could not parse legacy override JSON: {exc}") from exc
-
-
 def list_from_path(data: dict[str, Any], path: list[str]) -> list[str]:
     value: Any = data
     for key in path:
@@ -710,29 +700,14 @@ def scalar_from_path(data: dict[str, Any], path: list[str]) -> str:
 def resolve_review_overrides(args: argparse.Namespace) -> dict[str, str]:
     repo_root = repo_root_from_args(args.repo_root)
     _, local, _, _ = load_configs(repo_root)
-    legacy = load_legacy_template_config(repo_root)
 
-    legacy_runner = list_from_path(legacy, ["overrides", "review", "on_draft", "runner"])
-    if not legacy_runner:
-        legacy_runner = list_from_path(legacy, ["overrides", "review", "internal_reviewers"])
     local_runner = list_from_path(local, ["review", "on_draft", "runner"])
-    runner = legacy_runner or local_runner
-    runner_source = (
-        ".tmp/template-config.json"
-        if legacy_runner
-        else (".ai-dev-workflow.local.yaml" if local_runner else "")
-    )
+    runner = local_runner
+    runner_source = ".ai-dev-workflow.local.yaml" if local_runner else ""
 
-    legacy_policy = scalar_from_path(
-        legacy, ["overrides", "review", "internal_reviewers_unavailable_policy"]
-    )
     local_policy = scalar_from_path(local, ["review", "internal_reviewers_unavailable_policy"])
-    policy = legacy_policy or local_policy
-    policy_source = (
-        ".tmp/template-config.json"
-        if legacy_policy
-        else (".ai-dev-workflow.local.yaml" if local_policy else "")
-    )
+    policy = local_policy
+    policy_source = ".ai-dev-workflow.local.yaml" if local_policy else ""
 
     sources = []
     if runner_source:
@@ -862,9 +837,7 @@ def build_parser() -> argparse.ArgumentParser:
     auth.add_argument("--json", action="store_true", help="print JSON instead of shell KEY=value")
     auth.set_defaults(func=cmd_auth)
 
-    overrides = subcommands.add_parser(
-        "review-overrides", help="print local review override compatibility values"
-    )
+    overrides = subcommands.add_parser("review-overrides", help="print local review override values")
     overrides.add_argument("--repo-root")
     overrides.add_argument("--json", action="store_true", help="print JSON instead of shell KEY=value")
     overrides.set_defaults(func=cmd_review_overrides)

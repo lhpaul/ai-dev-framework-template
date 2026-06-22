@@ -25,7 +25,6 @@ Before running this smoke test:
 | Shared config | `.ai-dev-workflow.yaml` |
 | Local config example | `.ai-dev-workflow.local.example.yaml` |
 | Local config ignore path | `.ai-dev-workflow.local.yaml` |
-| Legacy local override | `.tmp/template-config.json` |
 | Workflow library | `scripts/development-workflow/workflow-lib.sh` |
 | Validation command | `scripts/development-workflow/validate-workflow-config.sh` |
 | Resolver tests | `scripts/development-workflow/tests/test-workflow-config-resolver.sh` |
@@ -87,7 +86,7 @@ putting local paths or secrets in version control.
    - local path override
    - derived local path
    - missing local path
-   - legacy `.tmp/template-config.json` compatibility
+   - review overrides from `.ai-dev-workflow.local.yaml`
 
 **Expected result**: The test harness passes and covers each mode and required
 local path behavior.
@@ -120,18 +119,18 @@ without parsing nested YAML themselves.
 **Expected result**: Each failure names the missing or ambiguous value and the
 config file the user should edit.
 
-### Step 6: Verify Legacy Override Compatibility
+### Step 6: Verify Local Review Overrides
 
 **Maps to**: AC10
 
-1. Create a temporary fixture with `.tmp/template-config.json` using the
-   existing review override shape.
-2. Create a temporary `.ai-dev-workflow.local.yaml` with a conflicting local
-   review override.
+1. Create a temporary fixture with shared `.ai-dev-workflow.yaml` review
+   settings.
+2. Create a temporary `.ai-dev-workflow.local.yaml` with local review override
+   settings.
 3. Run the helper or validation path that resolves effective review overrides.
 
-**Expected result**: The documented compatibility precedence is followed, and
-existing `.tmp/template-config.json` behavior is preserved.
+**Expected result**: The resolver uses `.ai-dev-workflow.local.yaml` for local
+review overrides and reports that file as the override source.
 
 ### Step 7: Run Existing Workflow Regressions
 
@@ -184,8 +183,8 @@ passes after the config changes.
       clear error.
 - [ ] AC9: Validation fails clearly for missing, duplicated, or ambiguous
       product repository configuration.
-- [ ] AC10: Existing `.tmp/template-config.json` behavior is preserved or has
-      documented migration coverage.
+- [ ] AC10: Local review overrides resolve from `.ai-dev-workflow.local.yaml`
+      and report that file as the override source.
 - [ ] AC11: Tests cover `single_repo`, valid and invalid `workflow_hub`,
       `product_repo`, local path overrides, and missing local path cases.
 
@@ -203,7 +202,7 @@ No committed seed data is required. Tests should create temporary fixture files.
 | --- | --- | --- |
 | Resolver tests pass locally but fail in CI | The implementation relies on an undeclared parser dependency | Use stdlib-only parsing or declare and install the dependency in CI. |
 | `.ai-dev-workflow.local.yaml` appears in `git status` | The gitignore entry is missing or misspelled | Add the exact path to `.gitignore`. |
-| Existing review-loop override tests fail | `.tmp/template-config.json` precedence changed | Restore documented compatibility precedence or update migration docs and tests. |
+| Existing review-loop override tests fail | The resolver is not reading `.ai-dev-workflow.local.yaml` review overrides | Update the resolver to use the local YAML review keys and adjust tests. |
 | Validation error is generic | Failure path does not include field/file context | Update the resolver to name the missing field and relevant config file. |
 
 ---

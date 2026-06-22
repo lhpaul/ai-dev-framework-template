@@ -378,16 +378,15 @@ against safe test repositories only.
 
 ### Compatibility And Precedence
 
-Existing `.tmp/template-config.json` review overrides remain supported for the
-legacy keys they already handled. New local workflow configuration should use
-`.ai-dev-workflow.local.yaml`.
+Local workflow configuration belongs in `.ai-dev-workflow.local.yaml`. Runtime
+review overrides, checkout paths, and local secret references must use that
+local YAML file rather than ad hoc local config files.
 
 Effective precedence is:
 
-1. `.tmp/template-config.json` for legacy review override keys.
-2. `.ai-dev-workflow.local.yaml` for new local config keys.
-3. `.ai-dev-workflow.yaml` shared config.
-4. Built-in defaults, including missing `mode` resolving as `single_repo`.
+1. `.ai-dev-workflow.local.yaml` for local config keys.
+2. `.ai-dev-workflow.yaml` shared config.
+3. Built-in defaults, including missing `mode` resolving as `single_repo`.
 
 ### Validation And Shell Helpers
 

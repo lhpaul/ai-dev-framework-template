@@ -34,6 +34,7 @@ review:
     # Ordered list of in-runner internal reviewers for draft PRs (Step 7a).
     # Supported values:
     #   claude        — dispatches the stage-appropriate reviewer agent.
+    #   cursor        — dispatches the stage-appropriate Cursor reviewer agent.
     #   codex         — dispatches the stage-appropriate Codex review skill.
     #   coderabbit    — triggers CodeRabbit on the draft PR when reachable.
     runner:
@@ -51,6 +52,7 @@ review:
     # are clean and the PR has been converted with `gh pr ready`.
     github:
       - haystack
+      - bugbot
   #
   # Configurable codex-github options (set via env vars or script flags to codex-github-reviewer.sh):
   #   CODEX_GITHUB_TRIGGER_PHRASE  — trigger phrase sent to the bot (default: "@codex review")
@@ -89,12 +91,13 @@ review:
   #   expected behaviour — not a misconfiguration.
   #
   # Local override: developers who need a different top-level review runner can
-  # override this list locally by creating .tmp/template-config.json in the
-  # repository root (this path is gitignored). Example for Claude Code:
-  #   { "overrides": { "review": { "on_draft": { "runner": ["claude"] } } } }
-  # Legacy local overrides using `overrides.review.internal_reviewers` remain
-  # accepted during the schema_version 2 transition release.
-  # The overrides key takes precedence over this file for the local environment.
+  # override this list locally with .ai-dev-workflow.local.yaml (gitignored).
+  # Example for Cursor in .ai-dev-workflow.local.yaml:
+  #   review:
+  #     on_draft:
+  #       runner:
+  #         - cursor
+  # The local file takes precedence over this file for the local environment.
   # See docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
   # Step 7a for the full multi-reviewer gate procedure.
 

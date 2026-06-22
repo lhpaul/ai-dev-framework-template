@@ -905,7 +905,7 @@ gh pr view <pr_number> --json isDraft --jq '.isDraft'
 
 If the result is `true` (PR is a draft), inspect the resolved
 `review.on_draft.runner` list from `.ai-dev-workflow.yaml` (after any
-`.tmp/template-config.json` override) and the `review.on_draft.github` /
+`.ai-dev-workflow.local.yaml` override) and the `review.on_draft.github` /
 `review.on_ready.github` lists.
 
 If `coderabbit` is **only** listed under `review.on_ready.github`, keep the PR as
@@ -1018,65 +1018,47 @@ The agent reads `browser_automation.provider` from `.ai-dev-workflow.yaml`. For 
 
 ### Determining which reviewers to run
 
-Read the `review.on_draft.runner` list from `.ai-dev-workflow.yaml`. If a
-`.tmp/template-config.json` file exists in the repository root (this path is
-gitignored and used for local developer overrides), read its
-`overrides.review.on_draft.runner` list. During the schema_version 2 transition
-release, also accept the legacy `overrides.review.internal_reviewers` list as an
-alias. The override value takes precedence over `.ai-dev-workflow.yaml` for the
-local environment, allowing developers without access to all configured review
-tools to run a subset (e.g., only `claude`) without changing the shared config.
+Read the `review.on_draft.runner` list from `.ai-dev-workflow.yaml`. For local
+developer overrides, prefer `.ai-dev-workflow.local.yaml` (gitignored) with the
+same nested review shape:
 
-Example `.tmp/template-config.json` override format:
-
-```json
-{
-  "overrides": {
-    "review": {
-      "on_draft": {
-        "runner": ["claude"]
-      }
-    }
-  }
-}
+```yaml
+review:
+  on_draft:
+    runner:
+      - cursor
+  internal_reviewers_unavailable_policy: warn
 ```
 
-Legacy override form accepted during the transition release:
+The local YAML file takes precedence over `.ai-dev-workflow.yaml`. This allows
+developers without access to all configured review tools to run a subset, such
+as only `cursor`, without changing the shared config.
 
-```json
-{
-  "overrides": {
-    "review": {
-      "internal_reviewers": ["claude"]
-    }
-  }
-}
-```
+Supported runner reviewer values: `claude`, `cursor`, `codex`, `coderabbit`.
 
-Supported runner reviewer values: `claude`, `codex`, `coderabbit`.
+If neither config file defines `review.on_draft.runner`, fall back to running
+the stage-appropriate reviewer once (default behavior: `claude`).
 
-If neither file defines `review.on_draft.runner` (or the legacy alias), fall
-back to running the stage-appropriate reviewer once (default behavior:
-`claude`).
+When the local file supplies an override, log the following before running the
+availability check:
 
-When `.tmp/template-config.json` supplies an override, log the following before running the availability check:
-
-> `INFO: Using review.on_draft.runner override from .tmp/template-config.json: [<override-list>]. Original list: [<yaml-list>].`
+> `INFO: Using review.on_draft.runner override from .ai-dev-workflow.local.yaml: [<override-list>]. Original list: [<yaml-list>].`
 
 No warning comment is posted for reviewers intentionally removed by the override list (`override-excluded`). If any reviewer still present in the override list is unreachable at runtime, post the standard warning comment for those unreachable reviewers (the runtime-availability check still applies to the override list).
 
 ### Runtime-availability check
 
-Before dispatching any reviewer, classify each entry in the resolved list as `reachable` or `unreachable`. For `claude` and `codex`, the check is deterministic and requires no external network call — runner identity is a sufficient proxy for reviewer reachability (see [codex-reviewer-runtime-fallback spec](../../../specs/developments/20260417203329_codex-reviewer-runtime-fallback/1_codex-reviewer-runtime-fallback_specs.md) — BR-1 and BR-8). For `coderabbit`, reachability is determined at runtime via an App installation check (see below).
+Before dispatching any reviewer, classify each entry in the resolved list as `reachable` or `unreachable`. For `claude`, `cursor`, and `codex`, the check is deterministic and requires no external network call — runner identity is a sufficient proxy for reviewer reachability because the gate only dispatches reviewers the current runner can invoke without a cross-runner CLI handoff. For `coderabbit`, reachability is determined at runtime via an App installation check (see below).
 
 #### Reachability classification table
 
-| Runner context                                    | `claude` reachable? | `codex` reachable? | `coderabbit` reachable?           |
-| ------------------------------------------------- | ------------------- | ------------------ | --------------------------------- |
-| Claude Code (direct human session)                | Yes                 | No                 | Determined at runtime (App check) |
-| Claude Code subagent (dispatched by orchestrator) | Yes                 | No                 | Determined at runtime (App check) |
-| Codex runner / Codex skill                        | Yes                 | Yes                | Determined at runtime (App check) |
-| Direct human (shell / CI with `gh`)               | Yes                 | Yes                | Determined at runtime (App check) |
+| Runner context                                    | `claude` reachable? | `cursor` reachable? | `codex` reachable? | `coderabbit` reachable?           |
+| ------------------------------------------------- | ------------------- | ------------------- | ------------------ | --------------------------------- |
+| Claude Code (direct human session)                | Yes                 | No                  | No                 | Determined at runtime (App check) |
+| Claude Code subagent (dispatched by orchestrator) | Yes                 | No                  | No                 | Determined at runtime (App check) |
+| Cursor direct session or subagent                 | No                  | Yes                 | No                 | Determined at runtime (App check) |
+| Codex runner / Codex skill                        | Yes                 | No                  | Yes                | Determined at runtime (App check) |
+| Direct human (shell / CI with `gh`)               | Yes                 | Yes                 | Yes                | Determined at runtime (App check) |
 
 To determine `coderabbit` reachability, the runner checks whether `coderabbitai[bot]` has any prior activity on the repository (App installation signal — via `gh api repos/{owner}/{repo}/installation` or by checking the PR for a prior CodeRabbit comment), **and** confirms that `.coderabbit.yaml` does not disable auto-review (`reviews.auto_review.enabled: true` required). If either check fails, classify `coderabbit` as `unreachable`.
 
@@ -1086,23 +1068,19 @@ Note: the `auto_review.drafts: false` restriction is **not** treated as an unrea
 
 After classifying each reviewer, apply the configured policy. Read
 `internal_reviewers_unavailable_policy` from `.ai-dev-workflow.yaml` (or its
-local override in `.tmp/template-config.json`). This policy key is retained for
-compatibility even though the reviewer list moved to `review.on_draft.runner`.
-If the key is absent, the default is `warn`.
+local override in `.ai-dev-workflow.local.yaml`). This policy key is retained
+for compatibility even though the reviewer list moved to
+`review.on_draft.runner`. If the key is absent, the default is `warn`.
 
-To override the policy locally without changing shared config, use `.tmp/template-config.json`:
+To override the policy locally without changing shared config, prefer
+`.ai-dev-workflow.local.yaml`:
 
-```json
-{
-  "overrides": {
-    "review": {
-      "on_draft": {
-        "runner": ["claude"]
-      },
-      "internal_reviewers_unavailable_policy": "warn"
-    }
-  }
-}
+```yaml
+review:
+  on_draft:
+    runner:
+      - cursor
+  internal_reviewers_unavailable_policy: warn
 ```
 
 Allowed values: `warn` (default), `fail-if-any-unavailable`.
@@ -1131,11 +1109,11 @@ Post via `gh pr comment`. This comment doubles as the BR-7 mandatory Step 7a sum
 
 **Case A — Zero reviewers reachable (any policy):**
 
-> `Step 7a BLOCKED: no internal reviewer is reachable from the current runner. Effective reviewer set: none. Reachable: []. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. To unblock: run Step 7a from a runner that supports all configured reviewers, or temporarily override 'review.on_draft.runner' via .tmp/template-config.json.`
+> `Step 7a BLOCKED: no internal reviewer is reachable from the current runner. Effective reviewer set: none. Reachable: []. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. To unblock: run Step 7a from a runner that supports all configured reviewers, or temporarily override 'review.on_draft.runner' via .ai-dev-workflow.local.yaml.`
 
 **Case B — `fail-if-any-unavailable` policy triggered (one or more reviewers unreachable, but at least one was reachable):**
 
-> `Step 7a BLOCKED: policy 'fail-if-any-unavailable' triggered — one or more internal reviewers are unreachable. No reviewers were dispatched. Effective reviewer set: none (policy block). Reachable: [<reachable-list>]. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. To unblock: run Step 7a from a runner where all configured reviewers are reachable, or set internal_reviewers_unavailable_policy to 'warn' temporarily, or override 'review.on_draft.runner' via .tmp/template-config.json.`
+> `Step 7a BLOCKED: policy 'fail-if-any-unavailable' triggered — one or more internal reviewers are unreachable. No reviewers were dispatched. Effective reviewer set: none (policy block). Reachable: [<reachable-list>]. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. To unblock: run Step 7a from a runner where all configured reviewers are reachable, or set internal_reviewers_unavailable_policy to 'warn' temporarily, or override 'review.on_draft.runner' via .ai-dev-workflow.local.yaml.`
 
 ### Reviewer dispatch map
 
@@ -1146,6 +1124,9 @@ For each reviewer in the resolved list, dispatch the stage-appropriate agent:
 | `claude`     | `spec/*`                                          | `spec-reviewer` or `01-review-spec-protocol.md`                                                                        |
 | `claude`     | `implementation-plan/*`                           | `implementation-plan-reviewer` or `02-review-implementation-plan-protocol.md`                                          |
 | `claude`     | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `code-reviewer` or `03-review-implementation-protocol.md`                                                              |
+| `cursor`     | `spec/*`                                          | Cursor `spec-reviewer` agent or `01-review-spec-protocol.md`                                                          |
+| `cursor`     | `implementation-plan/*`                           | Cursor `implementation-plan-reviewer` agent or `02-review-implementation-plan-protocol.md`                             |
+| `cursor`     | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | Cursor `code-reviewer` agent or `03-review-implementation-protocol.md`                                                 |
 | `codex`      | `spec/*`                                          | `workflow-spec-reviewer` Codex skill against `REVIEW.md`                                                               |
 | `codex`      | `implementation-plan/*`                           | `workflow-plan-reviewer` Codex skill against `REVIEW.md`                                                               |
 | `codex`      | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `workflow-code-reviewer` Codex skill against `REVIEW.md`                                                               |
