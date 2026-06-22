@@ -389,6 +389,27 @@ local_review_output="$(workflow_review_override_context "$local_review_dir")"
 run_contains "local_review_override_runner" "REVIEW_ON_DRAFT_RUNNER=claude,with-comma,codex" "$local_review_output"
 run_contains "local_review_override_source" "LOCAL_OVERRIDE_SOURCE=runner:.ai-dev-workflow.local.yaml,policy:.ai-dev-workflow.local.yaml" "$local_review_output"
 
+stale_review_dir="$(fixture_dir stale-review-overrides)"
+mkdir -p "$stale_review_dir/.tmp"
+cat > "$stale_review_dir/.tmp/template-config.json" <<'JSON'
+{
+  "overrides": {
+    "review": {
+      "on_draft": {
+        "runner": ["claude"]
+      },
+      "internal_reviewers_unavailable_policy": "fail-if-any-unavailable"
+    }
+  }
+}
+JSON
+stale_review_output="$(workflow_review_override_context "$stale_review_dir")"
+run_contains "stale_review_override_runner_empty" "REVIEW_ON_DRAFT_RUNNER=" "$stale_review_output"
+run_contains "stale_review_override_runner_source_empty" "REVIEW_ON_DRAFT_RUNNER_SOURCE=" "$stale_review_output"
+run_contains "stale_review_override_policy_empty" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY=" "$stale_review_output"
+run_contains "stale_review_override_policy_source_empty" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY_SOURCE=" "$stale_review_output"
+run_contains "stale_review_override_source_empty" "LOCAL_OVERRIDE_SOURCE=" "$stale_review_output"
+
 malformed_dir="$(fixture_dir malformed)"
 cat > "$malformed_dir/.ai-dev-workflow.yaml" <<'YAML'
  schema_version: 2
