@@ -90,11 +90,15 @@ original, recommended, selected, and effective checkpoint policy.
 **Actions available**:
 
 - Accept the recommended checkpoints.
-- Add, remove, or edit checkpoints before work starts.
+- Add or edit checkpoints before work starts.
+- Waive a recommended default checkpoint with documented `waiver_rationale`
+  (recorded as `waived`, not removed).
 - Proceed without checkpoints when none are recommended and none are required.
 
 **Considerations**:
 
+- Removing a defaulted high-leverage checkpoint without recording `waived` and
+  `waiver_rationale` is not permitted.
 - Checkpoint classification is read-only until the human confirms policy.
 - Absence of a checkpoint does not remove baseline stop conditions from
   guardrails.
@@ -239,6 +243,7 @@ Each checkpoint is a structured record with these fields:
 
 | Field | Type | Description |
 | --- | --- | --- |
+| `item_number` | positive integer | Tracker issue number of the work item this checkpoint belongs to. |
 | `stage` | `spec` \| `plan` \| `implementation` | Workflow stage the checkpoint applies to. |
 | `domain` | `product` \| `technical` \| `both` | Whether product judgment, technical judgment, or both are required. |
 | `reason` | string | Human-readable explanation of why the checkpoint exists. |
@@ -249,7 +254,9 @@ Each checkpoint is a structured record with these fields:
 | `waiver_rationale` | string (optional) | Required when `satisfaction_state` is `waived`. |
 
 An item may have zero or more checkpoints. An epic run carries the union of
-per-item checkpoints in its effective policy.
+per-item checkpoints in its effective policy. Gates and labels must scope
+checkpoint evaluation to the PR's linked work item (`item_number`) in addition
+to stage applicability.
 
 ### Checkpoint selection before mutation
 
@@ -276,7 +283,7 @@ per-item checkpoints in its effective policy.
 | Label / signal | Meaning |
 | --- | --- |
 | `ready-for-human-review` | Automation is clean: CI green, internal review gate satisfied, automated reviewers clean or skipped. Does **not** mean delegated review or merge may proceed when a **stage-applicable** checkpoint is `pending`. |
-| `human-checkpoint-required` | A declared checkpoint whose `stage` matches the PR's current workflow stage is `pending`. Human feedback or approval named in `required_human_action` is still required. Checkpoints for future stages do not block the current PR. |
+| `human-checkpoint-required` | A declared checkpoint whose `item_number` matches the PR's linked work item and whose `stage` matches the PR's current workflow stage is `pending`. Human feedback or approval named in `required_human_action` is still required. Checkpoints for other items or future stages do not block the current PR. |
 | `needs-fixes` | Automation or reviewer feedback requires code/doc fixes. Independent of checkpoint satisfaction except that fixes may be how a human responds. |
 | `needs-setup` | Infrastructure setup is required. May coexist with `ready-for-human-review` and `human-checkpoint-required`. Does not satisfy a checkpoint. |
 
@@ -289,9 +296,10 @@ per-item checkpoints in its effective policy.
   `human-checkpoint-required` simultaneously when a stage-applicable checkpoint
   is `pending`.
 - **BR-4**: Delegated review, delegated merge, and batch merge must treat
-  `pending` checkpoints whose `stage` matches the PR's current workflow stage
-  as blocking even when `ready-for-human-review` is present. Future-stage
-  checkpoints declared up front do not block earlier-stage PRs.
+  `pending` checkpoints whose `item_number` matches the PR's linked work item
+  and whose `stage` matches the PR's current workflow stage as blocking even
+  when `ready-for-human-review` is present. Checkpoints for other items or
+  future stages do not block the current PR.
 - **BR-5**: Removing `human-checkpoint-required` requires
   `satisfaction_state` of `satisfied` or `waived` with audit evidence.
 - **BR-6**: `needs-fixes` removal does not imply checkpoint satisfaction.
@@ -310,8 +318,9 @@ per-item checkpoints in its effective policy.
   epic runs.
 - Mapping placement (for follow-up implementation):
   - Recommender output → `checkpoints[]` on effective policy.
-  - Delegated gate → block when any stage-applicable checkpoint (matching the
-    PR's current workflow stage) is `pending`.
+  - Delegated gate → block when any item- and stage-applicable checkpoint
+    (matching the PR's linked work item and current workflow stage) is
+    `pending`.
   - Audit trail → record original, recommended, selected, effective checkpoints
     and per-PR satisfaction transitions.
 
@@ -370,9 +379,9 @@ per-item checkpoints in its effective policy.
 
 ## Acceptance Criteria
 
-- [ ] AC1: The spec defines checkpoint fields (`stage`, `domain`, `reason`,
-      `required_human_action`, `satisfaction_state`) and optional satisfaction
-      metadata.
+- [ ] AC1: The spec defines checkpoint fields (`item_number`, `stage`, `domain`,
+      `reason`, `required_human_action`, `satisfaction_state`) and optional
+      satisfaction metadata.
 - [ ] AC2: The spec defines pre-mutation checkpoint selection from complexity,
       ambiguity, and high-leverage signals including schema/migration defaults at
       plan stage.
