@@ -172,6 +172,40 @@ cat > "$pr_fixture" <<'JSON'
   "protocol_deviations": [
     {"action": "accepted advisory", "impact": "none | expected", "mitigation": "documented\nrationale\twith ghp_FAKE_PLACEHOLDER /tmp/fake-placeholder/local"}
   ],
+  "checkpoint_policy": {
+    "field_source": "recommended",
+    "recommended": [
+      {
+        "item_number": 920,
+        "stage": "plan",
+        "domain": "technical",
+        "reason": "schema signals",
+        "required_human_action": "approve data model",
+        "satisfaction_state": "pending"
+      }
+    ],
+    "selected": [
+      {
+        "item_number": 920,
+        "stage": "plan",
+        "domain": "technical",
+        "reason": "schema signals",
+        "required_human_action": "approve data model",
+        "satisfaction_state": "pending"
+      }
+    ],
+    "effective": [
+      {
+        "item_number": 920,
+        "stage": "plan",
+        "domain": "technical",
+        "reason": "schema signals",
+        "required_human_action": "approve data model",
+        "satisfaction_state": "satisfied",
+        "satisfied_by": "human-reviewer"
+      }
+    ]
+  },
   "notes": "token ghp_FAKE_PLACEHOLDER /tmp/fake-placeholder/local"
 }
 JSON
@@ -190,7 +224,7 @@ cat > "$ledger_fixture" <<'JSON'
     }
   },
   "items": [
-    {"issue_number": 920, "title": "Add autonomous | epic audit trail", "pr_number": 10, "tracker_status": "In Development", "risk_level": "medium", "review_result": "clean", "decision": "merge_approved", "merge_cleanup": "verified", "notes": "ready\nBearer token.value"},
+    {"issue_number": 920, "title": "Add autonomous | epic audit trail", "pr_number": 10, "tracker_status": "In Development", "risk_level": "medium", "review_result": "clean", "decision": "merge_approved", "merge_cleanup": "verified", "notes": "ready\nBearer token.value", "checkpoints": [{"item_number": 920, "stage": "plan", "domain": "technical", "satisfaction_state": "satisfied"}]},
     {"issue_number": 918, "title": "Add delegated review and merge loop", "tracker_status": "Backlog", "risk_level": "-", "review_result": "-", "decision": "blocked", "merge_cleanup": "-", "notes": "depends on #920", "stop_gate": "blocked dependency"}
   ]
 }
@@ -236,6 +270,7 @@ run_test "renders_advisory_decision" "yes" "$(grep -q 'accepted' <<< "$pr_output
 run_test "renders_protocol_deviation" "yes" "$(grep -q 'documented<br>rationale' <<< "$pr_output" && echo yes || echo no)"
 run_test "renders_invocation_policy" "yes" "$(grep -q '### Invocation Policy' <<< "$pr_output" && grep -q 'accepted recommended policy' <<< "$pr_output" && echo yes || echo no)"
 run_test "renders_policy_table" "yes" "$(grep -q '| mayStartBacklog | true | true | true |' <<< "$pr_output" && grep -q '| maxRisk | medium | medium | medium |' <<< "$pr_output" && echo yes || echo no)"
+run_test "renders_checkpoint_policy" "yes" "$(grep -q '### Checkpoint Policy' <<< "$pr_output" && grep -q 'approve data model' <<< "$pr_output" && echo yes || echo no)"
 run_test "escapes_pr_table_pipes" "yes" "$(grep -Fq 'haystack\\|triage' <<< "$pr_output" && grep -Fq 'none \\| expected' <<< "$pr_output" && echo yes || echo no)"
 run_test "normalizes_pr_table_newlines_tabs" "yes" "$(grep -Fq 'docs<br>sync' <<< "$pr_output" && grep -Fq 'documented<br>rationale with' <<< "$pr_output" && echo yes || echo no)"
 run_test "redacts_sensitive_values" "yes" "$(! grep -Eq 'ghp_FAKE_PLACEHOLDER|Authorization: dummy|Bearer dummy\\.value|/tmp/fake-placeholder' <<< "$pr_output" && grep -Fq 'Authorization: [REDACTED]' <<< "$pr_output" && grep -Fq 'Bearer [REDACTED]' <<< "$pr_output" && echo yes || echo no)"
@@ -250,6 +285,7 @@ run_test "escapes_ledger_table_pipes" "yes" "$(grep -Fq 'Add autonomous \\| epic
 run_test "normalizes_ledger_newlines" "yes" "$(grep -Fq 'ready<br>Bearer [REDACTED]' <<< "$ledger_output" && echo yes || echo no)"
 run_test "ledger_notes_include_effective_policy" "yes" "$(grep -Fq 'Effective policy: mayStartBacklog=true, delegateReview=true, mayMerge=true, maxRisk=medium, base=develop-delegated-epic-orchestration' <<< "$ledger_output" && echo yes || echo no)"
 run_test "ledger_notes_include_stop_gate" "yes" "$(grep -Fq 'Stop gate: blocked dependency' <<< "$ledger_output" && echo yes || echo no)"
+run_test "ledger_notes_include_checkpoints" "yes" "$(grep -Fq 'Checkpoints: #920 plan/technical=satisfied' <<< "$ledger_output" && echo yes || echo no)"
 
 explicit_output="$("$HELPER" render-epic-ledger --input "$explicit_fixture")"
 run_test "explicit_items_skip_epic_ledger" "yes" "$(grep -q 'Not applicable' <<< "$explicit_output" && echo yes || echo no)"

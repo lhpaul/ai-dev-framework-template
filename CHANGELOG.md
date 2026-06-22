@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Human checkpoint PR lifecycle** (#1022): adds `human-checkpoint-required` readiness
+  signal (protocol 92), Step 8a/8c checkpoint label sync in protocol 91,
+  `run-epic-checkpoint-lifecycle.sh` for satisfaction detection and label/comment
+  persistence, and checkpoint policy fields in `run-epic-audit-trail.sh`.
 - **Run-epic checkpoint policy recommendations** (#1021): `run-epic-policy-recommender.sh`
   now emits per-item human checkpoint recommendations from read-only scope metadata,
   supports explicit selection/waiver via `--checkpoints-file`, and records

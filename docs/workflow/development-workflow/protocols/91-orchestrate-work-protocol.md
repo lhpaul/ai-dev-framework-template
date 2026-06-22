@@ -1788,6 +1788,49 @@ Before running the readiness checklist below, perform a best-effort scan of the 
 
 5. After the scan: proceed to the readiness checklist below. The presence of `needs-setup` is a valid co-label with `ready-for-human-review` and does **not** block this checklist or prevent `ready-for-human-review` from being applied (BR-3). The checklist script does not check for or remove `needs-setup` — it is a deliberate signal, not a stale label.
 
+### Human Checkpoint Label Sync (pre-readiness)
+
+When the run carries an effective checkpoint policy (`checkpoints[]` on the epic
+invocation policy or a `checkpoint-policy.json` file saved at policy selection
+time), synchronize the `human-checkpoint-required` label and stable PR comment
+**after** CI and automated review are clean and **before** applying
+`ready-for-human-review`. This runs on every pass through Step 8a — including
+after fixer pushes — so label state always reflects current checkpoint
+satisfaction.
+
+**Timing**: Run after the infrastructure dependency scan above and before Check
+4 (`ready-for-human-review` application) in the readiness checklist.
+
+**Procedure**:
+
+1. Resolve the linked work item number (`ITEM_NUMBER`) and branch name
+   (`BRANCH`) for the PR.
+2. Locate the effective checkpoint policy JSON array (from epic handoff metadata,
+   `checkpoint-policy.json` in the run working directory, or
+   `invocation_policy.effective_policy.checkpoints`).
+3. Detect satisfaction from human signals and sync labels:
+
+   ```bash
+   ./scripts/development-workflow/run-epic-checkpoint-lifecycle.sh sync-pr-labels \
+     --pr "$PR_NUMBER" \
+     --item "$ITEM_NUMBER" \
+     --branch "$BRANCH" \
+     --checkpoints-file checkpoint-policy.json \
+     --write-checkpoints-file checkpoint-policy.json
+   ```
+
+4. When `BLOCKING_COUNT` is greater than zero, apply `ready-for-human-review`
+   **and** keep `human-checkpoint-required` (both labels may coexist per
+   protocol 92 BR-11/BR-3). Record checkpoint reason and required human action
+   in the `<!-- run-epic:checkpoint-status -->` comment posted by the script.
+5. When all applicable checkpoints are `satisfied` or `waived`, the script
+   removes `human-checkpoint-required` automatically.
+6. During fix cycles (Step 9): when applying `needs-fixes`, do **not** remove
+   `human-checkpoint-required` while checkpoints remain `pending`.
+
+**Skip condition**: When no checkpoint policy is in scope for this run (no
+`checkpoints[]` and no `checkpoint-policy.json`), skip this subsection.
+
 Run this checklist for **every PR**:
 
 ```bash
@@ -2120,6 +2163,8 @@ Verify all of the following. If any check fails, **do not report ready** — tre
 | `ready-for-regression` label                    | Present in `labels[].name` for `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, `backport/hotfix/*`; absent/ignored for `spec/*`, `implementation-plan/*`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | No `needs-fixes` label                          | `needs-fixes` absent from `labels[].name`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `needs-setup` label (if present)                | **Valid co-label** — `needs-setup` may be present alongside `ready-for-human-review` when the diff contains infrastructure dependency signals. Its presence does **not** constitute a verification failure and does not block this check. Do not remove it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `human-checkpoint-required` label (when checkpoints in scope) | When the run carries checkpoint policy for this item: present if and only if applicable checkpoints remain `pending`; absent when all applicable checkpoints are `satisfied` or `waived`. Valid co-label with `ready-for-human-review`. When no checkpoint policy is in scope, ignore this check. |
+| Checkpoint status comment (when checkpoints in scope) | At least one PR comment containing `<!-- run-epic:checkpoint-status -->` whose blocking section matches the current label state. Skip when no checkpoint policy is in scope. |
 | All automated-reviewer `reviewThreads` resolved | GraphQL query above returns empty output — `isResolved: true` (or first comment body contains `✅ Addressed`) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | Automated reviewer loop summary                 | At least one comment whose body contains `"Automated Reviewer Loop Summary"`, `"Reviewer Loop Summary"`, or `"No blocking PR feedback"` (skip this check only when Step 7 was `skipped` because no review platforms are configured), and the latest summary's `Result:` line is `clean` or `skipped`. **This is a hard requirement. Agents applying fixes MUST NOT remove or skip this check — the presence of the comment plus a clean/skipped result is the only reliable signal that Step 7 ran to completion successfully. A PR that has `ready-for-human-review` but lacks this comment or has `RESULT=escalate`, `pending_timeout`, `timeout`, `needs_fixes`, or any other non-clean terminal result is in an incomplete state and must re-run Step 7 or escalate.** (Note: the Step 7a summary comment posted by the internal review gate is a distinct comment from a distinct step — it does not satisfy this check. This check targets the external automated reviewer loop summary from Step 7 only.) |
 | CI checks                                       | All required status checks have `state: SUCCESS` or `conclusion: success` in `statusCheckRollup` (no check in `PENDING`, `FAILURE`, or `ERROR` state)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
