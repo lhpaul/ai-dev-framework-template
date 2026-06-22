@@ -52,7 +52,6 @@ review:
     # are clean and the PR has been converted with `gh pr ready`.
     github:
       - haystack
-      - bugbot
   #
   # Configurable codex-github options (set via env vars or script flags to codex-github-reviewer.sh):
   #   CODEX_GITHUB_TRIGGER_PHRASE  — trigger phrase sent to the bot (default: "@codex review")
