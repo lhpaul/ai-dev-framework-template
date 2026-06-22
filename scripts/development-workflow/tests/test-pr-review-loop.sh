@@ -2161,7 +2161,15 @@ else
   actual="blocking"
 fi
 run_test "bugbot_finding_markers_override_clean_phrase" "blocking" "$actual"
-unset bugbot_clean_body bugbot_mixed_body actual
+
+bugbot_multiline_body=$'Cursor Bugbot found no issues in this pull request.\n\nThis review still describes a blocking workflow problem.'
+if is_bugbot_clean_review "$bugbot_multiline_body"; then
+  actual="clean"
+else
+  actual="blocking"
+fi
+run_test "bugbot_clean_phrase_in_multiline_body_is_blocking" "blocking" "$actual"
+unset bugbot_clean_body bugbot_mixed_body bugbot_multiline_body actual
 
 # ---------------------------------------------------------------------------
 # Test 16.1: clean path — check run conclusion=success, no blocking comments

@@ -205,8 +205,12 @@ is_soft_suggestion() {
 
 is_bugbot_clean_review() {
   local body="$1"
+  local line
+  local normalized_line
+  local non_empty_count=0
+
   case "$body" in
-    *BUGBOT_BUG_ID*|*"BUGBOT_REVIEW"*|*"LOCATIONS START"*|*"**High Severity"*|*"**Medium Severity"*|*"**Low Severity"*)
+    *BUGBOT_BUG_ID*|*"BUGBOT_REVIEW"*|*"LOCATIONS START"*|*"DESCRIPTION START"*|*"Triggered by project rule"*|*"**High Severity"*|*"**Medium Severity"*|*"**Low Severity"*)
       return 1
       ;;
   esac
@@ -215,6 +219,16 @@ is_bugbot_clean_review() {
       return 1
       ;;
   esac
+  while IFS= read -r line; do
+    normalized_line="${line%$'\r'}"
+    normalized_line="${normalized_line#"${normalized_line%%[![:space:]]*}"}"
+    normalized_line="${normalized_line%"${normalized_line##*[![:space:]]}"}"
+    [ -z "$normalized_line" ] && continue
+    non_empty_count=$((non_empty_count + 1))
+    if [ "$non_empty_count" -gt 1 ]; then
+      return 1
+    fi
+  done <<< "$body"
   case "$body" in
     *"found no new issues"*|*"found no potential issues"*|*"found no issues"*)
       return 0
