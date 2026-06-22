@@ -131,10 +131,9 @@ This item (#1020) is **complete** after:
 1. Spec PR merged (PR #1029).
 2. Plan PR merged (this document).
 
-No `feature/*` implementation PR is required for #1020. Tracker should move to
-**Plan Ready** after plan merge, then **Done** or remain open until epic
-completion — per tracker conventions, mark **Plan Ready** and let the epic
-runner advance #1021 next.
+No `feature/*` implementation PR is required for #1020. After plan merge, the Work
+Item Runner sets tracker status to **Done** (plan-only workflow item; no
+implementation stage). The epic runner then advances #1021.
 
 ---
 
