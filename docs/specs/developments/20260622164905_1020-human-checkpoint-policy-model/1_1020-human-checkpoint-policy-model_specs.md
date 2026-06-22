@@ -273,20 +273,23 @@ per-item checkpoints in its effective policy.
 
 | Label / signal | Meaning |
 | --- | --- |
-| `ready-for-human-review` | Automation is clean: CI green, internal review gate satisfied, automated reviewers clean or skipped. Does **not** mean delegated review or merge may proceed when a checkpoint is pending. |
-| `human-checkpoint-required` | A declared checkpoint for the PR's stage is `pending`. Human feedback or approval named in `required_human_action` is still required. |
+| `ready-for-human-review` | Automation is clean: CI green, internal review gate satisfied, automated reviewers clean or skipped. Does **not** mean delegated review or merge may proceed when a **stage-applicable** checkpoint is `pending`. |
+| `human-checkpoint-required` | A declared checkpoint whose `stage` matches the PR's current workflow stage is `pending`. Human feedback or approval named in `required_human_action` is still required. Checkpoints for future stages do not block the current PR. |
 | `needs-fixes` | Automation or reviewer feedback requires code/doc fixes. Independent of checkpoint satisfaction except that fixes may be how a human responds. |
 | `needs-setup` | Infrastructure setup is required. May coexist with `ready-for-human-review` and `human-checkpoint-required`. Does not satisfy a checkpoint. |
 
 **Invariants**:
 
 - **BR-1**: `ready-for-human-review` means automation-clean only.
-- **BR-2**: `human-checkpoint-required` means human checkpoint still open.
+- **BR-2**: `human-checkpoint-required` means a stage-applicable checkpoint is
+  still open (`pending`) for the PR's current workflow stage.
 - **BR-3**: A PR may carry both `ready-for-human-review` and
-  `human-checkpoint-required` simultaneously.
+  `human-checkpoint-required` simultaneously when a stage-applicable checkpoint
+  is `pending`.
 - **BR-4**: Delegated review, delegated merge, and batch merge must treat
-  `pending` checkpoints as blocking even when `ready-for-human-review` is
-  present.
+  `pending` checkpoints whose `stage` matches the PR's current workflow stage
+  as blocking even when `ready-for-human-review` is present. Future-stage
+  checkpoints declared up front do not block earlier-stage PRs.
 - **BR-5**: Removing `human-checkpoint-required` requires
   `satisfaction_state` of `satisfied` or `waived` with audit evidence.
 - **BR-6**: `needs-fixes` removal does not imply checkpoint satisfaction.
@@ -305,7 +308,8 @@ per-item checkpoints in its effective policy.
   epic runs.
 - Mapping placement (for follow-up implementation):
   - Recommender output → `checkpoints[]` on effective policy.
-  - Delegated gate → block when any applicable checkpoint is `pending`.
+  - Delegated gate → block when any stage-applicable checkpoint (matching the
+    PR's current workflow stage) is `pending`.
   - Audit trail → record original, recommended, selected, effective checkpoints
     and per-PR satisfaction transitions.
 
