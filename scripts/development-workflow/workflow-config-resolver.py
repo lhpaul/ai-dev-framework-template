@@ -697,26 +697,6 @@ def scalar_from_path(data: dict[str, Any], path: list[str]) -> str:
     return str(value) if value not in {None, ""} else ""
 
 
-def load_legacy_review_override_flags(repo_root: Path) -> dict[str, bool]:
-    path = repo_root / ".tmp" / "template-config.json"
-    if not path.exists():
-        return {"runner": False, "policy": False}
-    try:
-        legacy = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ConfigError(
-            f"{path}: could not inspect legacy review override file; migrate review "
-            "overrides to .ai-dev-workflow.local.yaml"
-        ) from exc
-
-    runner = bool(list_from_path(legacy, ["overrides", "review", "on_draft", "runner"]))
-    runner = runner or bool(list_from_path(legacy, ["overrides", "review", "internal_reviewers"]))
-    policy = bool(
-        scalar_from_path(legacy, ["overrides", "review", "internal_reviewers_unavailable_policy"])
-    )
-    return {"runner": runner, "policy": policy}
-
-
 def resolve_review_overrides(args: argparse.Namespace) -> dict[str, str]:
     repo_root = repo_root_from_args(args.repo_root)
     _, local, _, _ = load_configs(repo_root)
@@ -728,19 +708,6 @@ def resolve_review_overrides(args: argparse.Namespace) -> dict[str, str]:
     local_policy = scalar_from_path(local, ["review", "internal_reviewers_unavailable_policy"])
     policy = local_policy
     policy_source = ".ai-dev-workflow.local.yaml" if local_policy else ""
-
-    legacy_flags = load_legacy_review_override_flags(repo_root)
-    missing_migrations = []
-    if legacy_flags["runner"] and not local_runner:
-        missing_migrations.append("review.on_draft.runner")
-    if legacy_flags["policy"] and not local_policy:
-        missing_migrations.append("review.internal_reviewers_unavailable_policy")
-    if missing_migrations:
-        fields = ", ".join(missing_migrations)
-        raise ConfigError(
-            ".tmp/template-config.json contains legacy review overrides that are no "
-            f"longer applied: {fields}. Move these values to .ai-dev-workflow.local.yaml."
-        )
 
     sources = []
     if runner_source:

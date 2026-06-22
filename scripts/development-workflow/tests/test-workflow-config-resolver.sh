@@ -351,19 +351,6 @@ run_fails_contains \
   python3 "$RESOLVER" resolve --repo-root "$bad_product_repo_dir"
 
 review_dir="$(fixture_dir review-overrides)"
-mkdir -p "$review_dir/.tmp"
-cat > "$review_dir/.tmp/template-config.json" <<'JSON'
-{
-  "overrides": {
-    "review": {
-      "on_draft": {
-        "runner": ["claude"]
-      },
-      "internal_reviewers_unavailable_policy": "fail-if-any-unavailable"
-    }
-  }
-}
-JSON
 cat > "$review_dir/.ai-dev-workflow.local.yaml" <<'YAML'
 review:
   on_draft:
@@ -371,11 +358,11 @@ review:
   internal_reviewers_unavailable_policy: warn
 YAML
 review_output="$(workflow_review_override_context "$review_dir")"
-run_contains "local_review_override_ignores_tmp_runner" "REVIEW_ON_DRAFT_RUNNER=codex" "$review_output"
+run_contains "local_review_override_runner_value" "REVIEW_ON_DRAFT_RUNNER=codex" "$review_output"
 run_contains "local_review_override_runner_source" "REVIEW_ON_DRAFT_RUNNER_SOURCE=.ai-dev-workflow.local.yaml" "$review_output"
-run_contains "local_review_override_ignores_tmp_policy" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY=warn" "$review_output"
+run_contains "local_review_override_policy_value" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY=warn" "$review_output"
 run_contains "local_review_override_policy_source" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY_SOURCE=.ai-dev-workflow.local.yaml" "$review_output"
-run_contains "local_review_override_no_tmp_source" "LOCAL_OVERRIDE_SOURCE=runner:.ai-dev-workflow.local.yaml,policy:.ai-dev-workflow.local.yaml" "$review_output"
+run_contains "local_review_override_combined_source" "LOCAL_OVERRIDE_SOURCE=runner:.ai-dev-workflow.local.yaml,policy:.ai-dev-workflow.local.yaml" "$review_output"
 
 local_review_dir="$(fixture_dir local-review-overrides)"
 cat > "$local_review_dir/.ai-dev-workflow.local.yaml" <<'YAML'
@@ -401,43 +388,6 @@ run_test "inline_list_parser_respects_quotes" "2:claude,with-comma:codex" "$inli
 local_review_output="$(workflow_review_override_context "$local_review_dir")"
 run_contains "local_review_override_runner" "REVIEW_ON_DRAFT_RUNNER=claude,with-comma,codex" "$local_review_output"
 run_contains "local_review_override_source" "LOCAL_OVERRIDE_SOURCE=runner:.ai-dev-workflow.local.yaml,policy:.ai-dev-workflow.local.yaml" "$local_review_output"
-
-mixed_review_dir="$(fixture_dir mixed-review-overrides)"
-mkdir -p "$mixed_review_dir/.tmp"
-cat > "$mixed_review_dir/.tmp/template-config.json" <<'JSON'
-{
-  "overrides": {
-    "review": {
-      "internal_reviewers_unavailable_policy": "fail-if-any-unavailable"
-    }
-  }
-}
-JSON
-cat > "$mixed_review_dir/.ai-dev-workflow.local.yaml" <<'YAML'
-review:
-  on_draft:
-    runner: [codex]
-YAML
-run_fails_contains \
-  "mixed_review_override_requires_policy_migration" \
-  ".tmp/template-config.json contains legacy review overrides that are no longer applied: review.internal_reviewers_unavailable_policy" \
-  python3 "$RESOLVER" review-overrides --repo-root "$mixed_review_dir"
-
-legacy_review_dir="$(fixture_dir legacy-review-overrides)"
-mkdir -p "$legacy_review_dir/.tmp"
-cat > "$legacy_review_dir/.tmp/template-config.json" <<'JSON'
-{
-  "overrides": {
-    "review": {
-      "internal_reviewers": ["claude"]
-    }
-  }
-}
-JSON
-run_fails_contains \
-  "legacy_review_override_requires_runner_migration" \
-  ".tmp/template-config.json contains legacy review overrides that are no longer applied: review.on_draft.runner" \
-  python3 "$RESOLVER" review-overrides --repo-root "$legacy_review_dir"
 
 malformed_dir="$(fixture_dir malformed)"
 cat > "$malformed_dir/.ai-dev-workflow.yaml" <<'YAML'

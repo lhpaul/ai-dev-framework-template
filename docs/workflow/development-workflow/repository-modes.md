@@ -379,10 +379,8 @@ against safe test repositories only.
 ### Compatibility And Precedence
 
 Local workflow configuration belongs in `.ai-dev-workflow.local.yaml`. Runtime
-review overrides, checkout paths, and local secret references must not be
-applied from `.tmp/template-config.json`. Review override resolvers may inspect
-the legacy file only to fail closed with migration guidance instead of silently
-dropping unmigrated local overrides.
+review overrides, checkout paths, and local secret references must use that
+local YAML file rather than ad hoc local config files.
 
 Effective precedence is:
 
