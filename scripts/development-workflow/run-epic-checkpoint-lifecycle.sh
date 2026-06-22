@@ -151,9 +151,7 @@ detect_satisfaction_json() {
     def waiver_rationale_valid($body; $item; $stage; $domain):
       (parse_waiver_rationale($body; "'"$WAIVED_MARKER_PREFIX"'"; ($item|tostring); $stage; $domain) | gsub("\\s"; "") | length) > 0;
     stage_from_branch($branch) as $prStage |
-    ( . as $all |
-      ($all | [.[] | select((.item_number | tonumber) == ($item | tonumber) and .stage == $prStage and (.satisfaction_state // "pending") == "pending")]) as $pendingAtStage |
-      $all | map(
+    map(
       . as $cp |
       if ($cp.item_number | tonumber) != ($item | tonumber) then .
       elif ($cp.satisfaction_state // "pending") != "pending" then .
@@ -192,7 +190,7 @@ detect_satisfaction_json() {
                   | first
                   | .createdAt // ""
                 )
-            elif ($cp.stage == $prStage) and (($pendingAtStage | length) == 1) and (checkpoint_key($cp) == checkpoint_key($pendingAtStage[0])) and review_satisfies($cp) then
+            elif ($cp.stage == $prStage) and review_satisfies($cp) then
               .satisfaction_state = "satisfied"
               | .satisfied_by = (latest_human_review | .author.login // "pr_review_approved")
               | .satisfied_at = (latest_human_review | .submittedAt // "")
@@ -200,7 +198,7 @@ detect_satisfaction_json() {
             end
         )
       end
-    ))
+    )
   '
 }
 

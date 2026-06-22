@@ -131,7 +131,8 @@ checkpoint transitions to `satisfied` or `waived` with audit evidence. Removing
 - Explicit waiver comment:
   `<!-- run-epic:checkpoint-waived:<item>:<stage>:<domain> --> <rationale>`
 - Human PR review approval (`APPROVED`) on a PR whose workflow stage matches
-  the checkpoint's `stage`.
+  the checkpoint's `stage` satisfies **all** pending checkpoints at that stage
+  for the linked item in one action.
 
 The `human-checkpoint-required` GitHub label must exist in the repository's label
 settings before Step 8a can apply it. Suggested color: `#d93f0b` (orange-red).
