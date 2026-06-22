@@ -190,6 +190,7 @@ run_test "renders_blocking_section" "yes" "$(grep -q 'approve data model' <<< "$
 sync_output="$("$HELPER" sync-pr-labels --pr 42 --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$checkpoints_file")"
 run_test "sync_applies_label_when_blocking" "LABEL_APPLIED=human-checkpoint-required" "$(grep '^LABEL_APPLIED=' <<< "$sync_output" || true)"
 run_test "sync_reports_blocking_count" "BLOCKING_COUNT=1" "$(grep '^BLOCKING_COUNT=' <<< "$sync_output" || true)"
+run_test "sync_comment_scoped_to_item" "yes" "$(grep -Fq 'POST repos/lhpaul/ai-dev-framework-template/issues/42/comments' "$CALL_LOG" && ! grep -Fq '#9999' "$CALL_LOG" && echo yes || echo no)"
 
 sync_remove_output="$(MOCK_HAS_CHECKPOINT_LABEL=1 MOCK_COMMENT_MODE=satisfied "$HELPER" sync-pr-labels --pr 42 --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$checkpoints_file")"
 run_test "sync_removes_label_when_satisfied" "LABEL_REMOVED=human-checkpoint-required" "$(grep '^LABEL_REMOVED=' <<< "$sync_remove_output" || true)"

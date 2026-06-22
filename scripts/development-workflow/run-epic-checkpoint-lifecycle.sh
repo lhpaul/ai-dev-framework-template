@@ -383,25 +383,11 @@ case "$command" in
     if ! has_label="$(gh pr view "$pr_number" --json labels --jq '[.labels[].name | select(. == "human-checkpoint-required")] | length' 2>/dev/null)"; then
       error_exit "failed to read labels for PR #$pr_number"
     fi
-    if [ "$label_required" = "true" ]; then
-      if [ "$has_label" -eq 0 ]; then
-        gh pr edit "$pr_number" --add-label "human-checkpoint-required"
-        printf 'LABEL_APPLIED=human-checkpoint-required\n'
-      else
-        printf 'LABEL_PRESENT=human-checkpoint-required\n'
-      fi
-    else
-      if [ "$has_label" -gt 0 ]; then
-        gh pr edit "$pr_number" --remove-label "human-checkpoint-required"
-        printf 'LABEL_REMOVED=human-checkpoint-required\n'
-      else
-        printf 'LABEL_ABSENT=human-checkpoint-required\n'
-      fi
-    fi
+    item_checkpoints_json="$(printf '%s\n' "$updated_checkpoints" | jq -c --arg item "$item_number" '[.[] | select((.item_number | tonumber) == ($item | tonumber))]')"
     comment_payload="$(jq -n \
       --argjson item "$(jq -n --argjson n "$item_number" '{number: ($n|tonumber)}')" \
       --argjson pr "$(jq -n --argjson n "$pr_number" --arg branch "$branch_name" --arg stage "$pr_stage" '{number: ($n|tonumber), branch: $branch, stage: $stage}')" \
-      --argjson checkpoints "$updated_checkpoints" \
+      --argjson checkpoints "$item_checkpoints_json" \
       --argjson blocking "$blocking_json" \
       --argjson label_required "$label_required" \
       --arg satisfied_marker "${SATISFIED_MARKER_PREFIX}${item_number}:<stage>:<domain> -->" \
@@ -419,6 +405,21 @@ case "$command" in
       }')"
     comment_body="$(render_pr_checkpoint_comment "$comment_payload")"
     apply_checkpoint_comment "$pr_number" "$comment_body"
+    if [ "$label_required" = "true" ]; then
+      if [ "$has_label" -eq 0 ]; then
+        gh pr edit "$pr_number" --add-label "human-checkpoint-required"
+        printf 'LABEL_APPLIED=human-checkpoint-required\n'
+      else
+        printf 'LABEL_PRESENT=human-checkpoint-required\n'
+      fi
+    else
+      if [ "$has_label" -gt 0 ]; then
+        gh pr edit "$pr_number" --remove-label "human-checkpoint-required"
+        printf 'LABEL_REMOVED=human-checkpoint-required\n'
+      else
+        printf 'LABEL_ABSENT=human-checkpoint-required\n'
+      fi
+    fi
     printf 'BLOCKING_COUNT=%s\n' "$(printf '%s\n' "$blocking_json" | jq 'length')"
     ;;
 esac
