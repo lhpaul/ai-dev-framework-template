@@ -468,9 +468,10 @@ Execute **Step 7a: Internal Review Gate**, **Step 7: Automated Reviewer Loop**, 
 
 For each PR: run Step 7a first. Step 7a runs **all** configured runner
 reviewers sequentially (per the `review.on_draft.runner` list in
-`.ai-dev-workflow.yaml`, with `.tmp/template-config.json` local overrides taking
-precedence). All runner reviewers must APPROVE before proceeding. Then run the
-draft GitHub reviewer gate (`pr-review-loop.sh --draft-github-only`) for
+`.ai-dev-workflow.yaml`, with `.ai-dev-workflow.local.yaml` or legacy
+`.tmp/template-config.json` local overrides taking precedence). All runner
+reviewers must APPROVE before proceeding. Then run the draft GitHub reviewer
+gate (`pr-review-loop.sh --draft-github-only`) for
 `review.on_draft.github`. Once Step 7a and the draft GitHub gate are clean, run
 `gh pr ready <pr_number>` to convert the draft PR to non-draft, then run Step 7
 to completion for `review.on_ready.github`, then Step 7b (regression label,

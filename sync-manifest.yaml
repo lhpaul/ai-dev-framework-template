@@ -145,6 +145,9 @@ categories:
       glob: "**/*"
       mode_scope: shared
       note: placeholder e2e/regression test project (Playwright); customize with project-specific tests
+    - path: .cursor/BUGBOT.md
+      mode_scope: hub_only
+      note: project-specific Cursor Bugbot review rules; customize when enabling Bugbot
 
   project_specific:
     - path: AGENTS.md

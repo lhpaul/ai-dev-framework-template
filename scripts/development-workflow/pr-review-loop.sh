@@ -172,7 +172,7 @@ _interruptible_sleep() {
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--repo owner/repo|product-name] [--product-repo name] [--repo-root path] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github,claude-code-action,copilot,haystack] [--ready-phase haystack] [--phase-after-clean haystack] [--draft-github-only] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--repo owner/repo|product-name] [--product-repo name] [--repo-root path] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github,claude-code-action,copilot,haystack,bugbot] [--ready-phase haystack] [--phase-after-clean haystack] [--draft-github-only] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
        ./scripts/development-workflow/pr-review-loop.sh unlock <pr-number>
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
