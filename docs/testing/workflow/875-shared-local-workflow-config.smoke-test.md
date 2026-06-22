@@ -25,7 +25,7 @@ Before running this smoke test:
 | Shared config | `.ai-dev-workflow.yaml` |
 | Local config example | `.ai-dev-workflow.local.example.yaml` |
 | Local config ignore path | `.ai-dev-workflow.local.yaml` |
-| Ignored stale override path | `.tmp/template-config.json` |
+| Legacy override migration guard | `.tmp/template-config.json` |
 | Workflow library | `scripts/development-workflow/workflow-lib.sh` |
 | Validation command | `scripts/development-workflow/validate-workflow-config.sh` |
 | Resolver tests | `scripts/development-workflow/tests/test-workflow-config-resolver.sh` |
@@ -87,7 +87,9 @@ putting local paths or secrets in version control.
    - local path override
    - derived local path
    - missing local path
-   - `.tmp/template-config.json` ignored for review overrides
+   - `.tmp/template-config.json` not applied for review overrides
+   - unmigrated `.tmp/template-config.json` review keys fail with migration
+     guidance
 
 **Expected result**: The test harness passes and covers each mode and required
 local path behavior.
@@ -120,7 +122,7 @@ without parsing nested YAML themselves.
 **Expected result**: Each failure names the missing or ambiguous value and the
 config file the user should edit.
 
-### Step 6: Verify Stale Override File Is Ignored
+### Step 6: Verify Legacy Override Migration Guard
 
 **Maps to**: AC10
 
@@ -130,8 +132,10 @@ config file the user should edit.
    review override.
 3. Run the helper or validation path that resolves effective review overrides.
 
-**Expected result**: The resolver uses `.ai-dev-workflow.local.yaml` and ignores
-the stale `.tmp/template-config.json` review override.
+**Expected result**: The resolver uses `.ai-dev-workflow.local.yaml` when the
+equivalent local keys are present. If a legacy `.tmp/template-config.json` key
+would otherwise be dropped, the resolver fails with migration guidance instead
+of silently applying defaults.
 
 ### Step 7: Run Existing Workflow Regressions
 
@@ -184,8 +188,9 @@ passes after the config changes.
       clear error.
 - [ ] AC9: Validation fails clearly for missing, duplicated, or ambiguous
       product repository configuration.
-- [ ] AC10: `.tmp/template-config.json` review overrides are ignored, and
-      `.ai-dev-workflow.local.yaml` is the documented migration target.
+- [ ] AC10: `.tmp/template-config.json` review overrides are not applied, and
+      unmigrated keys fail with `.ai-dev-workflow.local.yaml` migration
+      guidance.
 - [ ] AC11: Tests cover `single_repo`, valid and invalid `workflow_hub`,
       `product_repo`, local path overrides, and missing local path cases.
 
@@ -203,7 +208,7 @@ No committed seed data is required. Tests should create temporary fixture files.
 | --- | --- | --- |
 | Resolver tests pass locally but fail in CI | The implementation relies on an undeclared parser dependency | Use stdlib-only parsing or declare and install the dependency in CI. |
 | `.ai-dev-workflow.local.yaml` appears in `git status` | The gitignore entry is missing or misspelled | Add the exact path to `.gitignore`. |
-| Existing review-loop override tests fail | The resolver still reads stale `.tmp/template-config.json` review overrides | Update the resolver to use `.ai-dev-workflow.local.yaml` only and adjust tests. |
+| Existing review-loop override tests fail | The resolver still applies stale `.tmp/template-config.json` review overrides or silently drops unmigrated keys | Update the resolver to use `.ai-dev-workflow.local.yaml` only and fail closed for unmigrated legacy keys. |
 | Validation error is generic | Failure path does not include field/file context | Update the resolver to name the missing field and relevant config file. |
 
 ---

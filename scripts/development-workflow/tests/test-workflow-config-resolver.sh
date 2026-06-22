@@ -418,11 +418,26 @@ review:
   on_draft:
     runner: [codex]
 YAML
-mixed_review_output="$(workflow_review_override_context "$mixed_review_dir")"
-run_contains "mixed_review_override_runner_source" "REVIEW_ON_DRAFT_RUNNER_SOURCE=.ai-dev-workflow.local.yaml" "$mixed_review_output"
-run_contains "mixed_review_override_ignores_tmp_policy_empty" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY=" "$mixed_review_output"
-run_contains "mixed_review_override_ignores_tmp_policy_source_empty" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY_SOURCE=" "$mixed_review_output"
-run_contains "mixed_review_override_runner_only_source" "LOCAL_OVERRIDE_SOURCE=runner:.ai-dev-workflow.local.yaml" "$mixed_review_output"
+run_fails_contains \
+  "mixed_review_override_requires_policy_migration" \
+  ".tmp/template-config.json contains legacy review overrides that are no longer applied: review.internal_reviewers_unavailable_policy" \
+  python3 "$RESOLVER" review-overrides --repo-root "$mixed_review_dir"
+
+legacy_review_dir="$(fixture_dir legacy-review-overrides)"
+mkdir -p "$legacy_review_dir/.tmp"
+cat > "$legacy_review_dir/.tmp/template-config.json" <<'JSON'
+{
+  "overrides": {
+    "review": {
+      "internal_reviewers": ["claude"]
+    }
+  }
+}
+JSON
+run_fails_contains \
+  "legacy_review_override_requires_runner_migration" \
+  ".tmp/template-config.json contains legacy review overrides that are no longer applied: review.on_draft.runner" \
+  python3 "$RESOLVER" review-overrides --repo-root "$legacy_review_dir"
 
 malformed_dir="$(fixture_dir malformed)"
 cat > "$malformed_dir/.ai-dev-workflow.yaml" <<'YAML'

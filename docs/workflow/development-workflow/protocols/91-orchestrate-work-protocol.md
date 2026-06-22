@@ -1034,6 +1034,11 @@ The local YAML file takes precedence over `.ai-dev-workflow.yaml`. This allows
 developers without access to all configured review tools to run a subset, such
 as only `cursor`, without changing the shared config.
 
+Do not apply review overrides from `.tmp/template-config.json`. If that legacy
+file contains review override keys that are not present in
+`.ai-dev-workflow.local.yaml`, stop and tell the user to migrate those keys to
+`.ai-dev-workflow.local.yaml` instead of silently falling back to defaults.
+
 Supported runner reviewer values: `claude`, `cursor`, `codex`, `coderabbit`.
 
 If neither config file defines `review.on_draft.runner`, fall back to running

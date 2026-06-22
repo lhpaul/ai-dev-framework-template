@@ -16,7 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from Cursor.
 - **Local workflow config cleanup**: review-runner overrides and sync-template
   source guidance now use `.ai-dev-workflow.local.yaml` instead of the legacy
-  `.tmp/template-config.json` path.
+  `.tmp/template-config.json` path, with a fail-closed migration guard for
+  unmigrated legacy review override keys.
 
 ## [0.33.1] - 2026-06-19
 
