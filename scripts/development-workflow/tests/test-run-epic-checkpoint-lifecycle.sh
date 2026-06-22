@@ -195,6 +195,15 @@ cat > "$multi_domain_file" <<'JSON'
 JSON
 run_test "single_approval_satisfies_all_at_stage" "0" "$(MOCK_REVIEW_APPROVED=1 "$HELPER" detect-satisfaction --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$multi_domain_file" --pr 42 | jq '[.[] | select(.satisfaction_state == "pending")] | length')"
 
+satisfied_plan_file="$TMP_ROOT/satisfied-plan-checkpoints.json"
+cat > "$satisfied_plan_file" <<'JSON'
+[
+  {"item_number": 1022, "stage": "plan", "domain": "technical", "required_human_action": "a", "satisfaction_state": "satisfied", "satisfied_by": "human"},
+  {"item_number": 1022, "stage": "implementation", "domain": "technical", "required_human_action": "b", "satisfaction_state": "pending"}
+]
+JSON
+run_test "preserves_satisfied_checkpoint_on_later_stage_pr" "satisfied" "$( "$HELPER" detect-satisfaction --item 1022 --branch feature/human-checkpoints --checkpoints-file "$satisfied_plan_file" --pr 42 | jq -r '.[0].satisfaction_state')"
+
 no_block_after="$("$HELPER" evaluate-blocking --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$satisfied_file")"
 run_test "satisfied_checkpoint_not_blocking" "0" "$(printf '%s\n' "$no_block_after" | jq 'length')"
 
