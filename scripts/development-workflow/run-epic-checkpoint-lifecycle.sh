@@ -61,10 +61,17 @@ is_positive_int() {
 
 load_checkpoints_json() {
   local file="$1"
+  local json
   if [ ! -f "$file" ]; then
     error_exit "checkpoints file not found: $file"
   fi
-  jq -c '.' "$file" 2>/dev/null || error_exit "checkpoints file is not valid JSON: $file"
+  if ! json="$(jq -c '.' "$file" 2>/dev/null)"; then
+    error_exit "checkpoints file is not valid JSON: $file"
+  fi
+  if ! printf '%s\n' "$json" | jq -e 'type == "array"' >/dev/null; then
+    error_exit "checkpoints file must contain a JSON array"
+  fi
+  printf '%s\n' "$json"
 }
 
 checkpoint_jq_filter='
@@ -107,14 +114,18 @@ detect_satisfaction_json() {
   local checkpoints_json="$3"
   local pr="${4:-}"
 
-  local reviews_json comments_json
+  local reviews_json comments_json head_sha
   reviews_json='[]'
   comments_json='[]'
+  head_sha=""
 
   if [ -n "$pr" ] && is_positive_int "$pr"; then
     require_gh
     if ! reviews_json="$(gh pr view "$pr" --json reviews --jq '.reviews // []' 2>/dev/null)"; then
       error_exit "failed to read reviews for PR #$pr"
+    fi
+    if ! head_sha="$(gh pr view "$pr" --json headRefOid --jq '.headRefOid // ""' 2>/dev/null)"; then
+      error_exit "failed to read head SHA for PR #$pr"
     fi
     local repo
     repo="$(repo_slug)"
@@ -126,6 +137,7 @@ detect_satisfaction_json() {
   printf '%s\n' "$checkpoints_json" | jq -c \
     --arg item "$item" \
     --arg branch "$branch" \
+    --arg head_sha "$head_sha" \
     --argjson reviews "$reviews_json" \
     --argjson comments "$comments_json" \
     "$checkpoint_jq_filter"'
@@ -142,6 +154,11 @@ detect_satisfaction_json() {
     def latest_human_review:
       ($reviews // [])
       | map(select(bot_login(.author.login) | not))
+      | map(select(
+          ($head_sha | length) == 0
+          or ((.commit.oid // "") == $head_sha)
+          or ((.commit // {}).oid? // "" | length) == 0
+        ))
       | sort_by(.submittedAt // "")
       | last // null;
     def review_satisfies($cp):
@@ -154,9 +171,10 @@ detect_satisfaction_json() {
     map(
       . as $cp |
       if ($cp.item_number | tonumber) != ($item | tonumber) then .
-      elif ($cp.satisfaction_state // "pending") != "pending" then .
       elif (stage_rank($cp.stage) > stage_rank($prStage)) then .
       else
+        ($cp | del(.satisfaction_state, .satisfied_by, .satisfied_at, .waiver_rationale) | .satisfaction_state = "pending") as $base |
+        $base |
         human_comments as $commentList |
         (
           ($commentList
@@ -164,7 +182,7 @@ detect_satisfaction_json() {
                 marker_match(.body; "'"$WAIVED_MARKER_PREFIX"'"; ($cp.item_number|tostring); $cp.stage; $cp.domain)
               ))
             | map(select(waiver_rationale_valid(.body; ($cp.item_number|tostring); $cp.stage; $cp.domain)))
-            | first) as $waivedComment
+            | last) as $waivedComment
           | if $waivedComment then
               .satisfaction_state = "waived"
               | .satisfied_by = ($waivedComment.author // "")
@@ -177,19 +195,12 @@ detect_satisfaction_json() {
                   ))
                 | length) > 0
             then
-              .satisfaction_state = "satisfied"
-              | .satisfied_by = (
-                  $commentList
-                  | map(select(marker_match(.body; "'"$SATISFIED_MARKER_PREFIX"'"; ($cp.item_number|tostring); $cp.stage; $cp.domain)))
-                  | first
-                  | .author // ""
-                )
-              | .satisfied_at = (
-                  $commentList
-                  | map(select(marker_match(.body; "'"$SATISFIED_MARKER_PREFIX"'"; ($cp.item_number|tostring); $cp.stage; $cp.domain)))
-                  | first
-                  | .createdAt // ""
-                )
+              ($commentList
+                | map(select(marker_match(.body; "'"$SATISFIED_MARKER_PREFIX"'"; ($cp.item_number|tostring); $cp.stage; $cp.domain)))
+                | last) as $satisfiedComment
+              | .satisfaction_state = "satisfied"
+              | .satisfied_by = ($satisfiedComment.author // "")
+              | .satisfied_at = ($satisfiedComment.createdAt // "")
             elif ($cp.stage == $prStage) and review_satisfies($cp) then
               .satisfaction_state = "satisfied"
               | .satisfied_by = (latest_human_review | .author.login // "pr_review_approved")
@@ -384,9 +395,6 @@ case "$command" in
     if [ "$(printf '%s\n' "$blocking_json" | jq 'length')" -gt 0 ]; then
       label_required="true"
     fi
-    if ! has_label="$(gh pr view "$pr_number" --json labels --jq '[.labels[].name | select(. == "human-checkpoint-required")] | length' 2>/dev/null)"; then
-      error_exit "failed to read labels for PR #$pr_number"
-    fi
     item_checkpoints_json="$(printf '%s\n' "$updated_checkpoints" | jq -c --arg item "$item_number" '[.[] | select((.item_number | tonumber) == ($item | tonumber))]')"
     comment_payload="$(jq -n \
       --argjson item "$(jq -n --argjson n "$item_number" '{number: ($n|tonumber)}')" \
@@ -409,6 +417,9 @@ case "$command" in
       }')"
     comment_body="$(render_pr_checkpoint_comment "$comment_payload")"
     apply_checkpoint_comment "$pr_number" "$comment_body"
+    if ! has_label="$(gh pr view "$pr_number" --json labels --jq '[.labels[].name | select(. == "human-checkpoint-required")] | length' 2>/dev/null)"; then
+      error_exit "failed to read labels for PR #$pr_number"
+    fi
     if [ "$label_required" = "true" ]; then
       if [ "$has_label" -eq 0 ]; then
         gh pr edit "$pr_number" --add-label "human-checkpoint-required"

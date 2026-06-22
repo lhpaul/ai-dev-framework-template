@@ -39,18 +39,24 @@ case "$*" in
       printf '0\n'
     fi
     ;;
-  pr\ view\ 42\ --json\ reviews\ --jq\ *)
+  pr\ view\ 42\ --json\ headRefOid*)
+    printf 'abc123\n'
+    ;;
+  pr\ view\ 42\ --json\ reviews*)
     if [ "${MOCK_REVIEW_APPROVED:-0}" = "1" ]; then
       cat <<'JSON'
-[{"state":"APPROVED","author":{"login":"human-reviewer"},"submittedAt":"2026-06-22T12:00:00Z"}]
+[{"state":"APPROVED","author":{"login":"human-reviewer"},"submittedAt":"2026-06-22T12:00:00Z","commit":{"oid":"abc123"}}]
 JSON
     elif [ "${MOCK_REVIEW_STALE_APPROVED:-0}" = "1" ]; then
       cat <<'JSON'
-[{"state":"APPROVED","author":{"login":"human-reviewer"},"submittedAt":"2026-06-22T11:00:00Z"},{"state":"CHANGES_REQUESTED","author":{"login":"human-reviewer"},"submittedAt":"2026-06-22T12:00:00Z"}]
+[{"state":"APPROVED","author":{"login":"human-reviewer"},"submittedAt":"2026-06-22T11:00:00Z","commit":{"oid":"oldsha"}},{"state":"CHANGES_REQUESTED","author":{"login":"human-reviewer"},"submittedAt":"2026-06-22T12:00:00Z","commit":{"oid":"abc123"}}]
 JSON
     else
       printf '[]\n'
     fi
+    ;;
+  pr\ view\ 42\ --json\ headRefOid\ --jq\ .headRefOid)
+    printf 'abc123\n'
     ;;
   pr\ edit\ 42\ --add-label\ human-checkpoint-required)
     printf 'added\n'
