@@ -305,9 +305,15 @@ render_epic_ledger() {
         ]
         | map(select((. | tostring | length) > 0))
         | join("\n");
+      def item_checkpoints($item; $rootPolicy):
+        if (($item.checkpoints // $item.effective_checkpoints // null) != null) then
+          ($item.checkpoints // $item.effective_checkpoints // [])
+        else
+          ($rootPolicy.checkpoints // [] | map(select((.item_number | tonumber) == ($item.issue_number | tonumber))))
+        end;
       .items[] |
       (.effective_policy // .effectivePolicy // $rootEffectivePolicy) as $effectivePolicy |
-      (.checkpoints // .effective_checkpoints // $rootEffectivePolicy.checkpoints // []) as $itemCheckpoints |
+      item_checkpoints(.; $rootEffectivePolicy) as $itemCheckpoints |
       (.stop_gate // .stopGate // .final_stop_gate // .finalStopGate // "") as $stopGate |
       "| #" + (.issue_number | tostring) + " " + ((.title // "") | cell) +
       " | " + (if .pr_number then "#" + (.pr_number | tostring) else "-" end) +

@@ -302,6 +302,32 @@ run_fails_contains "comment_patch_failure_errors" "patch failed" env MOCK_COMMEN
 
 ledger_create_output="$("$HELPER" apply-epic-ledger --input "$ledger_fixture" --epic 900)"
 run_test "creates_epic_ledger_when_missing" "CREATED_COMMENT=1" "$ledger_create_output"
+
+ledger_root_checkpoint_fixture="$TMP_ROOT/ledger-root-checkpoints.json"
+cat > "$ledger_root_checkpoint_fixture" <<'JSON'
+{
+  "epic": {"number": 916, "title": "Delegated epic orchestration"},
+  "invocation_policy": {
+    "effective_policy": {
+      "mayStartBacklog": true,
+      "delegateReview": true,
+      "mayMerge": true,
+      "maxRisk": "medium",
+      "base": "develop-delegated-epic-orchestration",
+      "checkpoints": [
+        {"item_number": 920, "stage": "plan", "domain": "technical", "satisfaction_state": "pending"},
+        {"item_number": 918, "stage": "plan", "domain": "technical", "satisfaction_state": "pending"}
+      ]
+    }
+  },
+  "items": [
+    {"issue_number": 920, "title": "Item A", "tracker_status": "In Development", "decision": "merge_approved"},
+    {"issue_number": 918, "title": "Item B", "tracker_status": "Backlog", "decision": "blocked"}
+  ]
+}
+JSON
+root_checkpoint_ledger_output="$("$HELPER" render-epic-ledger --input "$ledger_root_checkpoint_fixture")"
+run_test "ledger_root_checkpoints_scoped_by_item" "yes" "$(grep -Fq 'Checkpoints: #920 plan/technical=pending' <<< "$root_checkpoint_ledger_output" && ! grep '#918' <<< "$(grep 'Item A' <<< "$root_checkpoint_ledger_output")" && echo yes || echo no)"
 ledger_update_output="$(MOCK_COMMENT_MODE=existing "$HELPER" apply-epic-ledger --input "$ledger_fixture" --epic 900)"
 run_test "updates_existing_epic_ledger_comment" "UPDATED_COMMENT_ID=456" "$ledger_update_output"
 

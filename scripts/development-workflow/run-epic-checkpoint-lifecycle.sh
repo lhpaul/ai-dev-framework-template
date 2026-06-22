@@ -137,10 +137,14 @@ detect_satisfaction_json() {
       ($body // "")
       | capture($prefix + ($item|tostring) + ":" + $stage + ":" + $domain + " -->\\s*(?<rationale>.*)$"; "s")
       | (.rationale // "") | gsub("\\s+$"; "");
-    def review_satisfies($cp):
+    def latest_human_review:
       ($reviews // [])
-      | map(select((.state // "") == "APPROVED" and (bot_login(.author.login) | not)))
-      | length > 0;
+      | map(select(bot_login(.author.login) | not))
+      | sort_by(.submittedAt // "")
+      | last // null;
+    def review_satisfies($cp):
+      (latest_human_review) as $latest |
+      ($latest != null) and (($latest.state // "") == "APPROVED");
     stage_from_branch($branch) as $prStage |
     map(
       . as $cp |
@@ -182,18 +186,8 @@ detect_satisfaction_json() {
                 )
             elif ($cp.stage == $prStage) and review_satisfies($cp) then
               .satisfaction_state = "satisfied"
-              | .satisfied_by = (
-                  ($reviews // [])
-                  | map(select((.state // "") == "APPROVED" and (bot_login(.author.login) | not)))
-                  | first
-                  | .author.login // "pr_review_approved"
-                )
-              | .satisfied_at = (
-                  ($reviews // [])
-                  | map(select((.state // "") == "APPROVED" and (bot_login(.author.login) | not)))
-                  | first
-                  | .submittedAt // ""
-                )
+              | .satisfied_by = (latest_human_review | .author.login // "pr_review_approved")
+              | .satisfied_at = (latest_human_review | .submittedAt // "")
             else .
             end
         )

@@ -44,6 +44,10 @@ case "$*" in
       cat <<'JSON'
 [{"state":"APPROVED","author":{"login":"human-reviewer"},"submittedAt":"2026-06-22T12:00:00Z"}]
 JSON
+    elif [ "${MOCK_REVIEW_STALE_APPROVED:-0}" = "1" ]; then
+      cat <<'JSON'
+[{"state":"APPROVED","author":{"login":"human-reviewer"},"submittedAt":"2026-06-22T11:00:00Z"},{"state":"CHANGES_REQUESTED","author":{"login":"human-reviewer"},"submittedAt":"2026-06-22T12:00:00Z"}]
+JSON
     else
       printf '[]\n'
     fi
@@ -154,6 +158,10 @@ run_test "earlier_plan_checkpoint_blocks_implementation_pr" "1" "$(printf '%s\n'
 satisfied_file="$TMP_ROOT/satisfied-checkpoints.json"
 MOCK_COMMENT_MODE=satisfied "$HELPER" detect-satisfaction --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$checkpoints_file" --pr 42 --write-checkpoints-file "$satisfied_file" >/dev/null
 run_test "detect_satisfaction_via_comment" "satisfied" "$(jq -r '.[0].satisfaction_state' "$satisfied_file")"
+
+run_test "stale_approval_does_not_satisfy" "pending" "$(MOCK_REVIEW_STALE_APPROVED=1 "$HELPER" detect-satisfaction --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$checkpoints_file" --pr 42 | jq -r '.[0].satisfaction_state')"
+
+run_test "latest_approval_satisfies" "satisfied" "$(MOCK_REVIEW_APPROVED=1 "$HELPER" detect-satisfaction --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$checkpoints_file" --pr 42 | jq -r '.[0].satisfaction_state')"
 
 no_block_after="$("$HELPER" evaluate-blocking --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$satisfied_file")"
 run_test "satisfied_checkpoint_not_blocking" "0" "$(printf '%s\n' "$no_block_after" | jq 'length')"
