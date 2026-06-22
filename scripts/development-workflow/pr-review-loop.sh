@@ -1288,7 +1288,7 @@ run_bugbot_review() {
     body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
     [ -z "$body" ] && continue
     # Bugbot informational notes are counted as suggestions, not blockers (AC-4).
-    if is_soft_suggestion "$body"; then
+    if is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
       existing_suggestion_count=$((existing_suggestion_count + 1))
       continue
     fi
@@ -1300,7 +1300,7 @@ run_bugbot_review() {
     [ -z "${review_json:-}" ] && continue
     body="$(printf '%s\n' "$review_json" | jq -r '.body')"
     [ -z "$body" ] && continue
-    if is_soft_suggestion "$body"; then
+    if is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
       existing_suggestion_count=$((existing_suggestion_count + 1))
       continue
     fi
@@ -1476,7 +1476,7 @@ run_bugbot_review() {
             body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
             [ -z "$body" ] && continue
             comment_count=$((comment_count + 1))
-            if is_soft_suggestion "$body"; then
+            if is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
               suggestion_count=$((suggestion_count + 1))
             else
               blocking_count=$((blocking_count + 1))
@@ -1574,7 +1574,7 @@ run_bugbot_review() {
             body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
             [ -z "$body" ] && continue
             comment_count=$((comment_count + 1))
-            if is_soft_suggestion "$body"; then
+            if is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
               suggestion_count=$((suggestion_count + 1))
             else
               blocking_count=$((blocking_count + 1))
@@ -1589,7 +1589,7 @@ run_bugbot_review() {
             local _rv_state
             _rv_state="$(printf '%s\n' "$review_json" | jq -r '.state // ""')"
             [ -z "$body" ] && continue
-            if is_soft_suggestion "$body"; then
+            if is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
               suggestion_count=$((suggestion_count + 1))
               comment_count=$((comment_count + 1))
               continue
