@@ -86,7 +86,7 @@ When autonomy policy is missing or ambiguous, derive a recommended policy from
 the resolver output before any mutating stage begins:
 
 ```bash
-./scripts/development-workflow/run-epic-policy-recommender.sh --scope <resolver-json> --original-command "<requested command>" [--base <branch>] [--delegate-review|--no-delegate-review] [--may-merge|--no-may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--json]
+./scripts/development-workflow/run-epic-policy-recommender.sh --scope <resolver-json> --original-command "<requested command>" [--base <branch>] [--delegate-review|--no-delegate-review] [--may-merge|--no-may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--checkpoints-file <json-array>] [--json]
 ```
 
 The recommender is also read-only. It must not update tracker status, create
@@ -95,6 +95,37 @@ comments. It produces recommended, selected, and effective policy values plus a
 copy-paste equivalent command for audit evidence. Use `--no-delegate-review` or
 `--no-may-merge` when the selected policy explicitly disables a recommended
 positive default.
+
+### Human-checkpoint recommendations
+
+Before mutation, the recommender classifies per-item human checkpoints from
+read-only scope metadata (title, type, labels, tracker status). High-leverage
+signals default to checkpoints:
+
+- **Plan + technical**: database schema, migration, or persistent data-model
+  wording.
+- **Spec + product**: unresolved product or acceptance-criteria ambiguity when
+  the item is still in Backlog or spec stage.
+- **Plan or implementation + both**: ambiguous product/technical tradeoffs.
+- **Implementation + technical**: security, auth, permission, or other
+  sensitive-change wording.
+
+The JSON output includes `recommendedPolicy.checkpoints`,
+`selectedPolicy.checkpoints`, `effectivePolicy.checkpoints`, and
+`checkpointPolicy` (`recommended`, `selected`, `effective`) for audit evidence.
+Each checkpoint record carries `item_number`, `stage`, `domain`, `reason`,
+`required_human_action`, and `satisfaction_state` (`pending` by default).
+
+Humans may accept recommendations as-is, customize them, or waive defaults with
+documented rationale before mutation begins. Pass an explicit selected checkpoint
+array with `--checkpoints-file <json-array>`; waived entries must include
+`waiver_rationale`. When recommendations exist and no `--checkpoints-file` is
+supplied, confirmation is required before mutation — silent auto-waiver is not
+permitted.
+
+Enforcement of checkpoints at PR readiness labels and delegated merge gates is
+implemented in follow-up items #1022 and #1023; this step only recommends and
+records policy.
 
 When a later delegated run reaches a candidate PR merge decision, classify that
 PR with:
@@ -286,14 +317,18 @@ Recommended defaults should favor the most automatic safe configuration:
 - `--max-risk medium` for workflow scripts, orchestration behavior, merge or
   cleanup automation, or shared workflow tooling when later
   `why_safe_to_merge` evidence can be produced.
+- Human-checkpoint recommendations per eligible item when metadata signals
+  schema/migration, product ambiguity, tradeoff ambiguity, or sensitive
+  implementation work (see **Human-checkpoint recommendations** above).
 - Never recommend `high` by default. High-risk work requires explicit human
   selection.
 
 Present a preflight summary before mutation: scoped issues, grouped states,
-base branch, recommended policy, risk rationale, and the copy-paste equivalent
-command. If confirmation is required, ask in-place and continue in the same run
-when the human accepts. Do not ask repeatedly for the same policy choice within
-the same invocation once selected/effective policy has been recorded.
+base branch, recommended policy, recommended checkpoints (if any), risk
+rationale, and the copy-paste equivalent command. If confirmation is required,
+ask in-place and continue in the same run when the human accepts. Do not ask
+repeatedly for the same policy choice within the same invocation once
+selected/effective policy has been recorded.
 
 Exact invocations with all effective policy values already supplied may skip the
 confirmation prompt, but they still record the original command, recommended

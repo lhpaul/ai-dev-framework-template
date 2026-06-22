@@ -66,6 +66,14 @@ model — there is **one** policy path, not two.
 | `audit.pr_disposition_record` | PR disposition audit required | `run-epic-audit-trail.sh apply-pr-disposition` (stable marker `<!-- run-epic:pr-disposition -->`) |
 | `audit.work_item_ledger_record` | Item-level ledger required | `run-epic-audit-trail.sh apply-epic-ledger` (stable marker `<!-- run-epic:epic-ledger -->`) when a parent/epic exists; otherwise "not applicable" |
 | `stop_conditions[]` | Named human-stops | Stop-and-name behavior (see section 4); these add to but never weaken the baseline stops |
+| Epic checkpoint policy (`checkpoints[]` on effective policy) | Stage-scoped, item-specific human stops declared before mutation | `run-epic-policy-recommender.sh` output (`recommendedPolicy.checkpoints`, `selectedPolicy.checkpoints`, `effectivePolicy.checkpoints`, `checkpointPolicy`); consumed by delegated gate (#1023) and audit trail (#1022); **not** a `.ai-dev-workflow.yaml` schema field |
+
+Epic human checkpoints extend the same run-epic policy object — they are not
+separate guardrails config fields. The recommender proposes them from read-only
+item metadata; the human selects or waives them before mutation. Audit evidence
+records original, recommended, selected, and effective checkpoint policy via
+`checkpointPolicy` on the recommender JSON output and later PR/epic ledger
+comments.
 
 ### Per-Stage Authority Resolution
 
