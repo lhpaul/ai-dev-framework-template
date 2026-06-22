@@ -171,7 +171,9 @@ or explicit human declaration).
 
 **Postconditions**: Schema- or migration-touching work cannot flow into
 implementation under delegated merge without an explicit plan-stage human
-checkpoint unless the human waived it up front.
+checkpoint unless the human waived it up front. An implementation-stage PR for
+the same item remains blocked by a `pending` plan-stage checkpoint even when
+that PR's automation gates are clean.
 
 **Information shown**:
 
@@ -291,11 +293,12 @@ PRs for the same item.
 **Invariants**:
 
 - **BR-1**: `ready-for-human-review` means automation-clean only.
-- **BR-2**: `human-checkpoint-required` means a stage-applicable checkpoint is
-  still open (`pending`) for the PR's current workflow stage.
+- **BR-2**: `human-checkpoint-required` means a checkpoint on the PR's linked
+  work item is still open (`pending`) at the PR's current workflow stage **or**
+  at an earlier stage in `spec` → `plan` → `implementation`.
 - **BR-3**: A PR may carry both `ready-for-human-review` and
-  `human-checkpoint-required` simultaneously when a stage-applicable checkpoint
-  is `pending`.
+  `human-checkpoint-required` simultaneously when such a checkpoint is
+  `pending`.
 - **BR-4**: Delegated review, delegated merge, and batch merge must treat
   `pending` checkpoints on the PR's linked work item as blocking when the
   checkpoint's `stage` is the PR's current workflow stage **or an earlier stage**
