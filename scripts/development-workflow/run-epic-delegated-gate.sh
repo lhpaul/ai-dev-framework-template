@@ -109,6 +109,39 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     end;
   def implementation_branch:
     (.pr.headRefName // "") | test("^(feature|fix|refactor|hotfix|backport/hotfix)/");
+  def stage_rank($stage):
+    if $stage == "spec" then 1
+    elif $stage == "plan" then 2
+    elif $stage == "implementation" then 3
+    else 0 end;
+  def stage_from_branch($branch):
+    if ($branch | test("^spec/")) then "spec"
+    elif ($branch | test("^implementation-plan/")) then "plan"
+    elif ($branch | test("^(feature|fix|refactor|hotfix|backport/hotfix)/")) then "implementation"
+    else "implementation" end;
+  def checkpoint_list:
+    if ((.checkpoint_policy.effective // null) | type) == "array" then .checkpoint_policy.effective
+    elif ((.checkpointPolicy.effective // null) | type) == "array" then .checkpointPolicy.effective
+    elif ((policy.effectivePolicy.checkpoints // null) | type) == "array" then policy.effectivePolicy.checkpoints
+    elif ((policy.checkpoints // null) | type) == "array" then policy.checkpoints
+    else [] end;
+  def item_number:
+    (.item.number // .item.issue_number // .item.issueNumber // null);
+  def checkpoint_applies($cp; $item; $prStage):
+    ($item != null)
+    and (($cp.item_number | tonumber) == ($item | tonumber))
+    and (($cp.satisfaction_state // "pending") == "pending")
+    and (stage_rank($cp.stage) > 0)
+    and (stage_rank($cp.stage) <= stage_rank($prStage));
+  def pending_checkpoints:
+    (stage_from_branch(.pr.headRefName // "")) as $prStage |
+    (item_number) as $item |
+    checkpoint_list
+    | map(select(checkpoint_applies(.; $item; $prStage)));
+  def checkpoint_reason($cp):
+    "human_checkpoint_required: issue #" + (($cp.item_number // item_number) | tostring) +
+    " " + (($cp.stage // "unknown") | tostring) + "/" + (($cp.domain // "unknown") | tostring) +
+    ": " + (($cp.required_human_action // $cp.reason // "human confirmation required") | tostring);
   def risk_merge_permitted:
     if (.risk // {}) | has("mergePermitted") then .risk.mergePermitted
     elif (.risk // {}) | has("merge_permitted") then .risk.merge_permitted
@@ -143,6 +176,13 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
   (if has_label("needs-setup")
    then add_reason($reasons; "needs-setup label is present")
    else $reasons end) as $reasons |
+  (pending_checkpoints) as $pendingCheckpoints |
+  (if ($pendingCheckpoints | length) > 0
+   then $reasons + ($pendingCheckpoints | map(checkpoint_reason(.)))
+   else $reasons end) as $reasons |
+  (if has_label("human-checkpoint-required") and (($pendingCheckpoints | length) == 0)
+   then add_reason($reasons; "human_checkpoint_required: human-checkpoint-required label is present; record satisfied or waived checkpoint evidence and remove the label before delegated merge")
+   else $reasons end) as $reasons |
   (if ((.statusChecks // []) | length) == 0
    then add_reason($reasons; "required CI state is missing")
    else $reasons end) as $reasons |
@@ -172,7 +212,7 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     decision: (
       if $count == 0 then "merge_allowed"
       elif ($reasons | any(test("reviewer blocking|CI checks|unresolved blocking|advisories"))) then "fix_required"
-      elif ($reasons | any(test("authority|risk gate|needs-setup|not in the resolved|Backlog"))) then "human_required"
+      elif ($reasons | any(test("authority|risk gate|needs-setup|not in the resolved|Backlog|human_checkpoint_required|human-checkpoint"))) then "human_required"
       else "blocked"
       end
     ),
@@ -181,6 +221,7 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     nextAction: (
       if $count == 0 then "record merge evidence and use the repository merge protocol"
       elif ($reasons | any(test("reviewer blocking|CI checks|unresolved blocking|advisories"))) then "remove readiness labels, fix, rerun validation, reviewer loop, CI loop, and this gate"
+      elif ($reasons | any(test("human_checkpoint_required|human-checkpoint"))) then "stop for the named human checkpoint action, record satisfied or waived evidence, sync labels, and rerun this gate"
       elif ($reasons | any(test("authority|risk gate|needs-setup|not in the resolved|Backlog"))) then "stop for human authority or setup before mutating"
       else "block until required state is available"
       end
