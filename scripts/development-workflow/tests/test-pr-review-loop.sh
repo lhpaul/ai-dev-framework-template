@@ -297,6 +297,47 @@ run_test "mixed_new_legacy_draft_prefers_new" "pr-agent" "$mixed_draft_github"
 run_test "mixed_new_legacy_ready_prefers_new" "haystack" "$mixed_ready_github"
 run_test "mixed_new_legacy_combined_prefers_new" "pr-agent,haystack" "$mixed_all_github"
 
+_LOCAL_OVERRIDE_DIR="$(mktemp -d)"
+cat > "$_LOCAL_OVERRIDE_DIR/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+
+review:
+  on_draft:
+    runner: [codex]
+    github: [pr-agent]
+  on_ready:
+    github: [haystack]
+YAML
+cat > "$_LOCAL_OVERRIDE_DIR/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_draft:
+    runner: [cursor]
+    github: [pr-agent]
+  on_ready:
+    github: [bugbot]
+YAML
+local_override_parsed="$(
+  workflow_repo_root() { printf '%s\n' "$_LOCAL_OVERRIDE_DIR"; }
+  printf 'runner=%s\n' "$(workflow_config_review_on_draft_runner "$(workflow_config_file)" | paste -sd ',' -)"
+  printf 'draft=%s\n' "$(workflow_config_review_on_draft_github "$(workflow_config_file)" | paste -sd ',' -)"
+  printf 'ready=%s\n' "$(workflow_config_review_on_ready_github "$(workflow_config_file)" | paste -sd ',' -)"
+  printf 'all=%s\n' "$(workflow_config_review_platforms "$(workflow_config_file)" | paste -sd ',' -)"
+)"
+run_test "local_review_override_applied" $'runner=cursor\ndraft=pr-agent\nready=bugbot\nall=pr-agent,bugbot' "$local_override_parsed"
+
+cat > "$_LOCAL_OVERRIDE_DIR/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_ready:
+    github: []
+YAML
+local_empty_ready_parsed="$(
+  workflow_repo_root() { printf '%s\n' "$_LOCAL_OVERRIDE_DIR"; }
+  workflow_config_review_on_ready_github "$(workflow_config_file)" | paste -sd ',' -
+)"
+run_test "local_review_override_empty_ready_github_applied" "" "$local_empty_ready_parsed"
+rm -rf "$_LOCAL_OVERRIDE_DIR"
+unset _LOCAL_OVERRIDE_DIR local_override_parsed local_empty_ready_parsed
+
 cat > "$_CONFIG_DIR/.ai-dev-workflow-duplicates.yaml" <<'YAML'
 schema_version: 2
 
