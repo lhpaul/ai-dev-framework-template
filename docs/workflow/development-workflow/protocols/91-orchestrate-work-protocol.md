@@ -376,7 +376,13 @@ gh issue view <issue-number> --json labels --jq '.labels[].name | select(startsw
 If the label is present:
 
 1. **Derive the integration branch name**: `develop-<slug>` (replace `<slug>` with the value after `integration-branch:`).
-2. **Verify the branch exists on the remote** (output `0` = does not exist, `1` = exists):
+2. **Resolve the branch owner**. In `single_repo`, the integration branch is
+   owned by the current repository. In `workflow_hub`, it is the product
+   implementation base and must be checked against the selected product
+   repository, not the hub repository. Hub-owned spec and plan artifacts still
+   target the hub artifact base branch.
+3. **Verify the branch exists on the owning remote** (output `0` = does not
+   exist, `1` = exists):
 
    ```bash
    BRANCH_EXISTS=$(set -o pipefail; git ls-remote origin "refs/heads/develop-<slug>" 2>/dev/null | wc -l | tr -d ' ') || {
@@ -385,18 +391,24 @@ If the label is present:
    }
    ```
 
-3. **If the branch does not exist** (`BRANCH_EXISTS` is `0`), create and push it from `develop`:
+4. **If the branch does not exist** (`BRANCH_EXISTS` is `0`), create and push it
+   from the owning repository's default implementation branch:
 
    ```bash
-   git fetch origin develop
-   git checkout -B develop-<slug> origin/develop
+   git fetch origin <default-implementation-branch>
+   git checkout -B develop-<slug> origin/<default-implementation-branch>
    git push -u origin develop-<slug>
-   git switch develop  # return to develop immediately after creation
+   git switch <default-implementation-branch>
    ```
 
-   Log: `INFO: created integration branch develop-<slug> from origin/develop for sub-item #<issue-number>.`
+   Log: `INFO: created integration branch develop-<slug> from origin/<default-implementation-branch> for sub-item #<issue-number>.`
 
-4. **Record the base branch**: store `BASE_BRANCH=develop-<slug>` and pass it to every stage-agent dispatch for this item. All PRs opened for this sub-item (spec, plan, implementation, fix, refactor) must target `develop-<slug>`.
+5. **Record the implementation base branch**: store `BASE_BRANCH=develop-<slug>`
+   and pass it to stage-agent dispatch metadata. In `single_repo`, spec, plan,
+   implementation, fix, and refactor PRs target `develop-<slug>`. In
+   `workflow_hub`, only product implementation, fix, refactor, review, CI, merge,
+   and cleanup actions use `develop-<slug>` in the selected product repository;
+   hub-owned spec and plan PRs target the hub artifact base branch.
 
 **Single-item exemption**: When the item carries no `integration-branch:*` label, skip this check. The default base branch (`develop`) applies.
 
@@ -494,9 +506,12 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 
    **If `BASE_BRANCH` is present in the handoff metadata** (set by the
    Portfolio Orchestrator when the item carries an `integration-branch:<slug>`
-   label or by run-epic policy), use `origin/<BASE_BRANCH>` as the implementation
-   worktree base except for `hotfix/*`. In `workflow_hub`, this branch must be
-   checked in the selected product repository, not in the hub repository.
+   label or by run-epic policy), use `origin/<BASE_BRANCH>` as the base for
+   product implementation, fix, and refactor worktrees except for `hotfix/*`.
+   In `workflow_hub`, this branch must be checked in the selected product
+   repository, not in the hub repository. Hub-owned `spec/*` and
+   `implementation-plan/*` worktrees ignore the product `BASE_BRANCH` and use
+   `origin/<hub-artifact-base-branch>` instead.
 
    **If `BASE_BRANCH` is absent**, use the default table:
 

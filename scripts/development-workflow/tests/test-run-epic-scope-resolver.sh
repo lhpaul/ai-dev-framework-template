@@ -353,7 +353,7 @@ single_repo_output="$(run_json --items 101)"
 run_test "single_repo_mode_reported" "single_repo" "$(printf '%s\n' "$single_repo_output" | jq -r '.workflowMode')"
 run_test "single_repo_base_applies_to_current_repo" "current_repository_prs" "$(printf '%s\n' "$single_repo_output" | jq -r '.baseBranchAppliesTo')"
 run_test "single_repo_base_note_keeps_repo_validation" "yes" "$(
-  printf '%s\n' "$single_repo_output" | jq -e '.baseBranchValidationNote | test("Validate the resolved base branch")' >/dev/null && echo yes || echo no
+  printf '%s\n' "$single_repo_output" | jq -e '.baseBranchValidationNote | test("current repository remote")' >/dev/null && echo yes || echo no
 )"
 
 # --- linear provider ---

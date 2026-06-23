@@ -312,13 +312,17 @@ execution set.
 Print:
 
 - Scope source and item count.
-- Base branch and inference reason.
+- Base branch, inference reason, workflow mode, base branch ownership target,
+  and base branch validation note.
 - Read-only guarantee.
 - Grouped item list with issue number, title, status, type, and issue state.
 
 When `--json` is supplied, emit valid JSON containing the same fields plus the
-full item metadata. Downstream orchestrators must treat this JSON as the bounded
-scope contract and must not opportunistically mutate items outside it.
+full item metadata. The JSON must include `workflowMode`,
+`baseBranchAppliesTo`, and `baseBranchValidationNote` alongside `baseBranch` so
+downstream orchestrators can validate the base in the repository that owns the
+next mutating artifact. Downstream orchestrators must treat this JSON as the
+bounded scope contract and must not opportunistically mutate items outside it.
 
 The output must also include the invocation policy:
 
