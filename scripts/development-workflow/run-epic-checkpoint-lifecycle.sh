@@ -114,10 +114,11 @@ detect_satisfaction_json() {
   local checkpoints_json="$3"
   local pr="${4:-}"
 
-  local reviews_json comments_json head_sha
+  local reviews_json comments_json head_sha head_created_at
   reviews_json='[]'
   comments_json='[]'
   head_sha=""
+  head_created_at=""
 
   if [ -n "$pr" ] && is_positive_int "$pr"; then
     require_gh
@@ -129,6 +130,9 @@ detect_satisfaction_json() {
     fi
     local repo
     repo="$(repo_slug)"
+    if [ -n "$head_sha" ]; then
+      head_created_at="$(gh api "repos/${repo}/commits/${head_sha}" --jq '.commit.committer.date // empty' 2>/dev/null || true)"
+    fi
     if ! comments_json="$(gh api --paginate --slurp "repos/${repo}/issues/${pr}/comments?per_page=100" 2>/dev/null | jq -c '[.[].[]? | {author: (.user.login // ""), body: (.body // ""), createdAt: (.created_at // "")}]' 2>/dev/null)"; then
       error_exit "failed to read comments for PR #$pr"
     fi
@@ -138,6 +142,7 @@ detect_satisfaction_json() {
     --arg item "$item" \
     --arg branch "$branch" \
     --arg head_sha "$head_sha" \
+    --arg head_created_at "$head_created_at" \
     --argjson reviews "$reviews_json" \
     --argjson comments "$comments_json" \
     "$checkpoint_jq_filter"'
@@ -164,18 +169,24 @@ detect_satisfaction_json() {
       (latest_human_review) as $latest |
       ($latest != null) and (($latest.state // "") == "APPROVED");
     def human_comments: ($comments // []) | map(select(bot_login(.author) | not));
+    def signal_after_head($createdAt):
+      ($head_created_at | length) == 0 or (($createdAt // "") > $head_created_at);
     def waiver_rationale_valid($body; $item; $stage; $domain):
       (parse_waiver_rationale($body; "'"$WAIVED_MARKER_PREFIX"'"; ($item|tostring); $stage; $domain) | gsub("\\s"; "") | length) > 0;
     stage_from_branch($branch) as $prStage |
     map(
       . as $cp |
       if ($cp.item_number | tonumber) != ($item | tonumber) then .
-      elif (($cp.satisfaction_state // "pending") != "pending") then .
+      elif (($cp.satisfaction_state // "pending") != "pending")
+        and (
+          ($head_sha | length) == 0
+          or (($cp.satisfied_head_sha // "") == $head_sha)
+        ) then .
       elif (stage_rank($cp.stage) > stage_rank($prStage)) then .
       else
-        ($cp | del(.satisfaction_state, .satisfied_by, .satisfied_at, .waiver_rationale) | .satisfaction_state = "pending") as $base |
+        ($cp | del(.satisfaction_state, .satisfied_by, .satisfied_at, .satisfied_head_sha, .waiver_rationale) | .satisfaction_state = "pending") as $base |
         $base |
-        human_comments as $commentList |
+        (human_comments | map(select(signal_after_head(.createdAt)))) as $commentList |
         (
           ($commentList
             | map(select(
@@ -187,6 +198,7 @@ detect_satisfaction_json() {
               .satisfaction_state = "waived"
               | .satisfied_by = ($waivedComment.author // "")
               | .satisfied_at = ($waivedComment.createdAt // "")
+              | if ($head_sha | length) > 0 then .satisfied_head_sha = $head_sha else . end
               | .waiver_rationale = (parse_waiver_rationale($waivedComment.body; "'"$WAIVED_MARKER_PREFIX"'"; ($cp.item_number|tostring); $cp.stage; $cp.domain))
             elif
               ($commentList
@@ -201,10 +213,12 @@ detect_satisfaction_json() {
               | .satisfaction_state = "satisfied"
               | .satisfied_by = ($satisfiedComment.author // "")
               | .satisfied_at = ($satisfiedComment.createdAt // "")
+              | if ($head_sha | length) > 0 then .satisfied_head_sha = $head_sha else . end
             elif ($cp.stage == $prStage) and review_satisfies($cp) then
               .satisfaction_state = "satisfied"
               | .satisfied_by = (latest_human_review | .author.login // "pr_review_approved")
               | .satisfied_at = (latest_human_review | .submittedAt // "")
+              | if ($head_sha | length) > 0 then .satisfied_head_sha = $head_sha else . end
             else .
             end
         )

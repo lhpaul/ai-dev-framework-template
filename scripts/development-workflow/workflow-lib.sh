@@ -229,8 +229,8 @@ is_bugbot_clean_review() {
       return 1
     fi
   done <<< "$body"
-  case "$body" in
-    *"found no new issues"*|*"found no potential issues"*|*"found no issues"*)
+  case "$normalized_line" in
+    "Cursor Bugbot found no new issues in this pull request."|"Cursor Bugbot found no potential issues in this pull request."|"Cursor Bugbot found no issues in this pull request.")
       return 0
       ;;
   esac

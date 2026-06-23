@@ -38,6 +38,9 @@ case "$*" in
   pr\ view\ 42\ --json\ headRefOid*)
     printf 'abc123\n'
     ;;
+  api\ repos/lhpaul/ai-dev-framework-template/commits/abc123\ --jq\ .commit.committer.date\ //\ empty)
+    printf '2026-06-22T11:30:00Z\n'
+    ;;
   pr\ view\ 42\ --json\ reviews*)
     if [ "${MOCK_REVIEW_APPROVED:-0}" = "1" ]; then
       cat <<'JSON'
@@ -68,6 +71,10 @@ JSON
     if [ "${MOCK_COMMENT_MODE:-empty}" = "satisfied" ]; then
       cat <<'JSON'
 [[{"user":{"login":"human-reviewer"},"body":"<!-- run-epic:checkpoint-satisfied:1022:plan:technical -->","created_at":"2026-06-22T12:00:00Z"}]]
+JSON
+    elif [ "${MOCK_COMMENT_MODE:-empty}" = "satisfied-before-head" ]; then
+      cat <<'JSON'
+[[{"user":{"login":"human-reviewer"},"body":"<!-- run-epic:checkpoint-satisfied:1022:plan:technical -->","created_at":"2026-06-22T10:00:00Z"}]]
 JSON
     elif [ "${MOCK_COMMENT_MODE:-empty}" = "bot-satisfied" ]; then
       cat <<'JSON'
@@ -177,6 +184,7 @@ run_test "satisfied_earlier_stage_not_reblocked" "0" "$(printf '%s\n' "$impl_blo
 satisfied_file="$TMP_ROOT/satisfied-checkpoints.json"
 MOCK_COMMENT_MODE=satisfied "$HELPER" detect-satisfaction --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$checkpoints_file" --pr 42 --write-checkpoints-file "$satisfied_file" >/dev/null
 run_test "detect_satisfaction_via_comment" "satisfied" "$(jq -r '.[0].satisfaction_state' "$satisfied_file")"
+run_test "comment_before_head_does_not_satisfy" "pending" "$(MOCK_COMMENT_MODE=satisfied-before-head "$HELPER" detect-satisfaction --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$checkpoints_file" --pr 42 | jq -r '.[0].satisfaction_state')"
 
 run_test "stale_approval_does_not_satisfy" "pending" "$(MOCK_REVIEW_STALE_APPROVED=1 "$HELPER" detect-satisfaction --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$checkpoints_file" --pr 42 | jq -r '.[0].satisfaction_state')"
 
@@ -200,11 +208,19 @@ run_test "single_approval_satisfies_all_at_stage" "0" "$(MOCK_REVIEW_APPROVED=1 
 satisfied_plan_file="$TMP_ROOT/satisfied-plan-checkpoints.json"
 cat > "$satisfied_plan_file" <<'JSON'
 [
-  {"item_number": 1022, "stage": "plan", "domain": "technical", "required_human_action": "a", "satisfaction_state": "satisfied", "satisfied_by": "human"},
+  {"item_number": 1022, "stage": "plan", "domain": "technical", "required_human_action": "a", "satisfaction_state": "satisfied", "satisfied_by": "human", "satisfied_head_sha": "abc123"},
   {"item_number": 1022, "stage": "implementation", "domain": "technical", "required_human_action": "b", "satisfaction_state": "pending"}
 ]
 JSON
 run_test "preserves_satisfied_checkpoint_on_later_stage_pr" "satisfied" "$( "$HELPER" detect-satisfaction --item 1022 --branch feature/human-checkpoints --checkpoints-file "$satisfied_plan_file" --pr 42 | jq -r '.[0].satisfaction_state')"
+
+stale_satisfied_plan_file="$TMP_ROOT/stale-satisfied-plan-checkpoints.json"
+cat > "$stale_satisfied_plan_file" <<'JSON'
+[
+  {"item_number": 1022, "stage": "plan", "domain": "technical", "required_human_action": "a", "satisfaction_state": "satisfied", "satisfied_by": "human", "satisfied_head_sha": "oldsha"}
+]
+JSON
+run_test "stale_satisfied_head_reverts_to_pending" "pending" "$( "$HELPER" detect-satisfaction --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$stale_satisfied_plan_file" --pr 42 | jq -r '.[0].satisfaction_state')"
 
 no_block_after="$("$HELPER" evaluate-blocking --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$satisfied_file")"
 run_test "satisfied_checkpoint_not_blocking" "0" "$(printf '%s\n' "$no_block_after" | jq 'length')"

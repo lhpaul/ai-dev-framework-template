@@ -2177,7 +2177,15 @@ else
   actual="blocking"
 fi
 run_test "bugbot_same_line_severity_is_blocking" "blocking" "$actual"
-unset bugbot_clean_body bugbot_mixed_body bugbot_multiline_body bugbot_same_line_severity_body actual
+
+bugbot_same_line_mixed_body="Cursor Bugbot found no issues in this pull request, but the reviewer loop still drops blocking findings."
+if is_bugbot_clean_review "$bugbot_same_line_mixed_body"; then
+  actual="clean"
+else
+  actual="blocking"
+fi
+run_test "bugbot_same_line_mixed_phrase_is_blocking" "blocking" "$actual"
+unset bugbot_clean_body bugbot_mixed_body bugbot_multiline_body bugbot_same_line_severity_body bugbot_same_line_mixed_body actual
 
 # ---------------------------------------------------------------------------
 # Test 16.1: clean path — check run conclusion=success, no blocking comments
