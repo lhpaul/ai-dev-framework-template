@@ -131,7 +131,9 @@ detect_satisfaction_json() {
     local repo
     repo="$(repo_slug)"
     if [ -n "$head_sha" ]; then
-      head_created_at="$(gh api "repos/${repo}/commits/${head_sha}" --jq '.commit.committer.date // empty' 2>/dev/null || true)"
+      if ! head_created_at="$(gh api "repos/${repo}/commits/${head_sha}" --jq '.commit.committer.date // empty' 2>/dev/null)"; then
+        head_created_at=""
+      fi
     fi
     if ! comments_json="$(gh api --paginate --slurp "repos/${repo}/issues/${pr}/comments?per_page=100" 2>/dev/null | jq -c '[.[].[]? | {author: (.user.login // ""), body: (.body // ""), createdAt: (.created_at // "")}]' 2>/dev/null)"; then
       error_exit "failed to read comments for PR #$pr"
