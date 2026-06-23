@@ -262,6 +262,7 @@ run_test "conflicting_labels_ambiguous" "2" "$(printf '%s\n' "$ambiguous_output"
 
 dependency_output="$(run_json --items 104)"
 run_test "satisfied_dependency_not_blocked" "eligible" "$(printf '%s\n' "$dependency_output" | jq -r '.items[0].group')"
+run_test "resolver_items_include_issue_body" "Depends on #103" "$(printf '%s\n' "$dependency_output" | jq -r '.items[0].body')"
 
 blocked_output="$(run_json --items 107)"
 run_test "blocked_dependency_group_detected" "blocked" "$(printf '%s\n' "$blocked_output" | jq -r '.items[0].group')"

@@ -489,6 +489,7 @@ enrich_item() {
   jq -n \
     --argjson number "$issue" \
     --arg title "$title" \
+    --arg body "$body" \
     --arg state "$state" \
     --arg stateReason "$state_reason" \
     --arg labels "$labels" \
@@ -503,6 +504,7 @@ enrich_item() {
     '{
       number: $number,
       title: $title,
+      body: $body,
       issueState: $state,
       issueStateReason: $stateReason,
       labels: (if $labels == "" then [] else ($labels | split(",")) end),

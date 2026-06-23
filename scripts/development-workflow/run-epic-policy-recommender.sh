@@ -201,7 +201,7 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
   def risk_rank($risk): {"low": 1, "medium": 2, "high": 3}[$risk] // 0;
   def max_risk($a; $b): if risk_rank($a) >= risk_rank($b) then $a else $b end;
   def item_text:
-    [.items[]? | ((.title // "") + " " + (.type // "") + " " + ((.labels // []) | join(" ")) + " " + (.integrationBranchLabel // ""))]
+    [.items[]? | ((.title // "") + " " + (.body // "") + " " + (.type // "") + " " + ((.labels // []) | join(" ")) + " " + (.integrationBranchLabel // ""))]
     | join(" ")
     | ascii_downcase;
   def item_signal_text($item):
@@ -260,7 +260,7 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
             satisfaction_state: "pending"
           }]
         else . end
-      | if ($stage == "implementation") and ($text | test("auth|security|secret|permission|credential|sensitive")) then
+      | if $text | test("auth|security|secret|permission|credential|sensitive") then
           . + [{
             item_number: $num,
             stage: "implementation",

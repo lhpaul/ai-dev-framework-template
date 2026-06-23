@@ -266,6 +266,28 @@ sensitive_fixture="$(write_fixture sensitive '{
 sensitive_output="$(recommend_json "$sensitive_fixture" "\$run-epic --items 300")"
 run_test "sensitive_scope_recommends_implementation_checkpoint" "implementation:technical" "$(printf '%s\n' "$sensitive_output" | jq -r '.recommendedPolicy.checkpoints[0] | .stage + ":" + .domain')"
 
+sensitive_backlog_fixture="$(write_fixture sensitive-backlog '{
+  "scopeSource": "items",
+  "epicNumber": null,
+  "itemInput": "301",
+  "baseBranch": "develop",
+  "baseAmbiguous": false,
+  "baseReason": "no integration branch label",
+  "policy": {"delegateReview": false, "mayMerge": false, "mayStartBacklog": false, "maxRisk": "low"},
+  "groups": {
+    "eligible": [{"number": 301, "title": "Add account controls", "body": "Must handle auth permissions before delegated merge.", "status": "Backlog", "type": "Feature", "labels": []}],
+    "blocked": [],
+    "already_merged": [],
+    "in_review": [],
+    "ambiguous": []
+  },
+  "items": [
+    {"number": 301, "title": "Add account controls", "body": "Must handle auth permissions before delegated merge.", "status": "Backlog", "type": "Feature", "labels": []}
+  ]
+}')"
+sensitive_backlog_output="$(recommend_json "$sensitive_backlog_fixture" "\$run-epic --items 301")"
+run_test "sensitive_backlog_recommends_implementation_checkpoint" "implementation:technical" "$(printf '%s\n' "$sensitive_backlog_output" | jq -r '.recommendedPolicy.checkpoints[0] | .stage + ":" + .domain')"
+
 run_test "docs_scope_has_no_checkpoints" "0" "$(printf '%s\n' "$docs_output" | jq -r '.recommendedPolicy.checkpoints | length')"
 
 waived_file="$TMP_ROOT/waived-checkpoints.json"
