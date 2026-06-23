@@ -47,6 +47,10 @@ JSON
       cat <<'JSON'
 [{"state":"APPROVED","author":{"login":"human-reviewer"},"submittedAt":"2026-06-22T11:00:00Z","commit":{"oid":"oldsha"}},{"state":"CHANGES_REQUESTED","author":{"login":"human-reviewer"},"submittedAt":"2026-06-22T12:00:00Z","commit":{"oid":"abc123"}}]
 JSON
+    elif [ "${MOCK_REVIEW_MISSING_SHA_APPROVED:-0}" = "1" ]; then
+      cat <<'JSON'
+[{"state":"APPROVED","author":{"login":"human-reviewer"},"submittedAt":"2026-06-22T11:00:00Z","commit":{}}]
+JSON
     else
       printf '[]\n'
     fi
@@ -175,6 +179,8 @@ MOCK_COMMENT_MODE=satisfied "$HELPER" detect-satisfaction --item 1022 --branch i
 run_test "detect_satisfaction_via_comment" "satisfied" "$(jq -r '.[0].satisfaction_state' "$satisfied_file")"
 
 run_test "stale_approval_does_not_satisfy" "pending" "$(MOCK_REVIEW_STALE_APPROVED=1 "$HELPER" detect-satisfaction --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$checkpoints_file" --pr 42 | jq -r '.[0].satisfaction_state')"
+
+run_test "missing_sha_approval_does_not_satisfy" "pending" "$(MOCK_REVIEW_MISSING_SHA_APPROVED=1 "$HELPER" detect-satisfaction --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$checkpoints_file" --pr 42 | jq -r '.[0].satisfaction_state')"
 
 run_test "latest_approval_satisfies" "satisfied" "$(MOCK_REVIEW_APPROVED=1 "$HELPER" detect-satisfaction --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$checkpoints_file" --pr 42 | jq -r '.[0].satisfaction_state')"
 

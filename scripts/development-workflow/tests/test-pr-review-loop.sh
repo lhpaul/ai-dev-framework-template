@@ -2329,6 +2329,50 @@ rm -rf "$_bugbot_mock_dir_162b"
 unset _bugbot_mock_dir_162b actual_output actual_exit
 
 # ---------------------------------------------------------------------------
+# Test 16.2c: CHANGES_REQUESTED review blocks even with an empty body
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_162c="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_162c/gh" <<'BUGBOT_GH_162C'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc162csha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"user":{"login":"cursor[bot]"},"submitted_at":"2020-01-02T00:00:00Z","state":"CHANGES_REQUESTED","body":""}]\n'
+    exit 0 ;;
+  *"check-runs"*)
+    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"success","started_at":"2020-01-01T00:00:00Z"}]}\n'
+    exit 0 ;;
+  *"headRefOid"*)
+    printf 'abc162csha\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_162C
+chmod +x "$_bugbot_mock_dir_162c/gh"
+
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_162c:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_changes_requested_empty_body_blocks_result" "RESULT=needs_fixes" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_changes_requested_empty_body_blocks_count" "1" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=" | cut -d= -f2)"
+run_test "bugbot_changes_requested_empty_body_blocks_exit_code" "1" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_162c"
+unset _bugbot_mock_dir_162c actual_output actual_exit
+
+# ---------------------------------------------------------------------------
 # Test 16.3: escalate (timeout) — run appeared but never completed
 # poll_interval=1, max_wait=2: loop runs once (sets check_appeared=1 via
 # in_progress status), then budget exhausted → REASON=timeout

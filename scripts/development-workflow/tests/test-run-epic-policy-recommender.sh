@@ -291,6 +291,7 @@ empty_checkpoints_file="$TMP_ROOT/empty-checkpoints.json"
 printf '%s\n' '[]' > "$empty_checkpoints_file"
 empty_override_output="$("$HELPER" --scope "$schema_fixture" --original-command "\$run-epic --items 200" --checkpoints-file "$empty_checkpoints_file" --json)"
 run_test "empty_checkpoint_override_keeps_recommended" "1" "$(printf '%s\n' "$empty_override_output" | jq -r '.effectivePolicy.checkpoints | length')"
+run_test "empty_checkpoint_override_source_remains_recommended" "recommended" "$(printf '%s\n' "$empty_override_output" | jq -r '.fieldSources.checkpoints')"
 run_test "empty_checkpoint_override_still_requires_confirmation" "true" "$(printf '%s\n' "$empty_override_output" | jq -r '.requiresConfirmation')"
 
 checkpoint_text_output="$("$HELPER" --scope "$schema_fixture" --original-command "\$run-epic --items 200")"

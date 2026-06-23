@@ -157,7 +157,6 @@ detect_satisfaction_json() {
       | map(select(
           ($head_sha | length) == 0
           or ((.commit.oid // "") == $head_sha)
-          or ((.commit // {}).oid? // "" | length) == 0
         ))
       | sort_by(.submittedAt // "")
       | last // null;

@@ -298,7 +298,10 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
         )
     end;
   def effective_checkpoints($selected): $selected;
-  def checkpoint_field_source: if $checkpointsOverride == null then "recommended" else "explicit" end;
+  def checkpoint_field_source:
+    if $checkpointsOverride == null then "recommended"
+    elif ($checkpointsOverride | length) == 0 then "recommended"
+    else "explicit" end;
   def has_recommended_checkpoints: (recommended_checkpoints | length) > 0;
   def has_pending_checkpoints($checkpoints):
     ($checkpoints | map(select(.satisfaction_state == "pending")) | length) > 0;
