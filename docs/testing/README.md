@@ -19,6 +19,11 @@ Before running anything:
 1. **Read the smoke test runbook** — provided by the human or located under `docs/testing/` (e.g. `docs/testing/[app]/[feature].smoke-test.md`).
 2. **Read the application source** for the pages under test — selectors, form structure, component patterns.
 
+Workflow-framework smoke tests live under `docs/testing/workflow/`. For
+delegated `/run-epic` human-checkpoint behavior, use
+[`workflow/1024-human-checkpoint-lifecycle.smoke-test.md`](workflow/1024-human-checkpoint-lifecycle.smoke-test.md)
+as the end-to-end lifecycle runbook.
+
 ---
 
 ## 2. Choose Execution Approach

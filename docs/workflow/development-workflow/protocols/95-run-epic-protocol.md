@@ -123,9 +123,23 @@ array with `--checkpoints-file <json-array>`; waived entries must include
 supplied, confirmation is required before mutation — silent auto-waiver is not
 permitted.
 
-Enforcement of checkpoints at PR readiness labels and delegated merge gates is
-implemented in follow-up items #1022 and #1023; this step only recommends and
-records policy.
+The preflight summary must show checkpoint policy alongside autonomy policy so
+the human can accept, customize, or waive checkpoints before mutation. Two common
+examples:
+
+- **Plan-stage database/schema checkpoint**: an item titled "Add tenant billing
+  migrations" should recommend a `plan` / `technical` checkpoint with a required
+  action such as "approve the migration and rollback plan". A later
+  implementation PR remains blocked until that plan-stage checkpoint is
+  `satisfied` or `waived`.
+- **Implementation-stage sensitive-change checkpoint**: an item touching auth,
+  permissions, security-sensitive automation, or merge behavior should recommend
+  an `implementation` / `technical` checkpoint with a required action such as
+  "approve the sensitive implementation before delegated merge".
+
+Checkpoint enforcement now spans PR readiness labels, delegated gates, batch
+merge, and audit comments. The lifecycle validation path is documented in
+[`docs/testing/workflow/1024-human-checkpoint-lifecycle.smoke-test.md`](../../../testing/workflow/1024-human-checkpoint-lifecycle.smoke-test.md).
 
 When a later delegated run reaches a candidate PR merge decision, classify that
 PR with:
