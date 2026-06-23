@@ -410,6 +410,7 @@ Before any mutation-oriented action, resolve and state repository ownership:
 - local path or remote identity when available
 - mutation target for file edits, branch creation, commits, PR creation,
   reviewer-loop execution, CI polling, and cleanup
+- base branch validation target
 
 Missing mode or explicit `single_repo` keeps the current repository as the owner
 and does not require `--repo`. In `workflow_hub`, specs and plans remain
@@ -417,6 +418,14 @@ hub-owned unless a future contract says otherwise. Product implementation work
 must target the selected product repository. If the selected product repository
 is missing or ambiguous, stop before file mutation, branch creation, commit, or
 implementation PR creation.
+
+In `workflow_hub`, do not validate a product execution base such as `develop`
+against the hub repository before product repository selection. Hub-owned spec
+and plan branches use the hub artifact base branch, typically the hub
+repository default branch. Product implementation branches use the selected
+product repository checkout and that product repository's resolved base branch
+(`BASE_BRANCH` from the run-epic scope when present, otherwise the product
+entry's `default_branch`).
 
 ### Spec-Plan ordering gate
 
@@ -483,18 +492,22 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 
 2. Determine the appropriate base branch for the worktree:
 
-   **If `BASE_BRANCH` is present in the handoff metadata** (set by the Portfolio Orchestrator when the item carries an `integration-branch:<slug>` label), use `origin/<BASE_BRANCH>` as the worktree base for all item types except `hotfix/*`. This overrides the default table below.
+   **If `BASE_BRANCH` is present in the handoff metadata** (set by the
+   Portfolio Orchestrator when the item carries an `integration-branch:<slug>`
+   label or by run-epic policy), use `origin/<BASE_BRANCH>` as the implementation
+   worktree base except for `hotfix/*`. In `workflow_hub`, this branch must be
+   checked in the selected product repository, not in the hub repository.
 
    **If `BASE_BRANCH` is absent**, use the default table:
 
 | Item type                     | Base branch      |
 | ----------------------------- | ---------------- |
-| Feature (`feature/`)          | `origin/develop` |
-| Refactor (`refactor/`)        | `origin/develop` |
-| Fast Track fix (`fix/`)       | `origin/develop` |
+| Feature (`feature/`)          | `origin/<product-default-branch>` in `workflow_hub`, otherwise `origin/develop` |
+| Refactor (`refactor/`)        | `origin/<product-default-branch>` in `workflow_hub`, otherwise `origin/develop` |
+| Fast Track fix (`fix/`)       | `origin/<product-default-branch>` in `workflow_hub`, otherwise `origin/develop` |
 | Hotfix (`hotfix/`)            | `origin/main`    |
-| Spec (`spec/`)                | `origin/develop` |
-| Plan (`implementation-plan/`) | `origin/develop` |
+| Spec (`spec/`)                | `origin/<hub-artifact-base-branch>` in `workflow_hub`, otherwise `origin/develop` |
+| Plan (`implementation-plan/`) | `origin/<hub-artifact-base-branch>` in `workflow_hub`, otherwise `origin/develop` |
 
 **Note:** Use `origin/<base>` (remote tracking) rather than local `<base>` to avoid git worktree conflicts if the local base branch is already checked out elsewhere.
 

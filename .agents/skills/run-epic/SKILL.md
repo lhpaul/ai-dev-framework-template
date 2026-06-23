@@ -19,6 +19,9 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
    requested `--epic` or `--items` arguments plus any invocation policy flags:
    `--delegate-review`, `--may-merge`, `--may-start-backlog <true|false>`,
    `--max-risk <low|medium|high>`, and `--base <branch>`.
+   In `workflow_hub` mode, treat the resolver's base as the product
+   implementation base. Do not block because that branch is absent from the hub
+   repository; validate it only after the owning product repository is selected.
 4. Treat resolver output as the bounded scope contract. The resolver itself is
    read-only: do not update tracker status, create branches, open PRs, merge
    PRs, close issues, or delete branches from the resolver phase.

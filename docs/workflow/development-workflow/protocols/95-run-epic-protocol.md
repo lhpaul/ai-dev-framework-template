@@ -53,7 +53,9 @@ The resolver supports exactly one scope source:
 
 Optional flags:
 
-- `--base <branch>`: override base-branch inference.
+- `--base <branch>`: override base-branch inference for the execution base.
+  In `workflow_hub` mode this is the product implementation PR base, not proof
+  that the hub repository itself must have a branch with that name.
 - `--delegate-review`: allow the runner to make the normal human-review gate
   decision for this invocation.
 - `--may-merge`: allow the runner to merge acceptable in-scope PRs through the
@@ -271,6 +273,19 @@ When conflicting integration labels are ambiguous, every item in the result is
 ambiguous. A later mutating workflow must stop until a human supplies `--base`
 or narrows the scope.
 
+### Workflow Hub Base Context
+
+In `workflow_hub` mode, the resolved base branch is attached to the product
+implementation path. Do not validate that branch against the hub repository
+remote before a selected product repository is known. A hub repository may use
+`main` for hub-owned specs, plans, and workflow PRs while its product
+repositories use `develop` for implementation PRs.
+
+Hub-owned spec and plan stages use the hub artifact base branch from the current
+hub repository, typically its default branch. Product implementation, reviewer,
+CI, merge, cleanup, and post-merge branch validation use the selected product
+repository and the resolved execution base.
+
 ---
 
 ## Step 5: Group Items
@@ -404,11 +419,13 @@ Without delegated review authority, any PR that reaches the normal
 `ready-for-human-review` handoff remains waiting for human review.
 
 **Pre-dispatch: create the integration branch once before dispatching parallel agents.**
-If the resolved base branch does not yet exist on the remote, create and push it
-exactly once before dispatching any in-scope item agents:
+If the resolved base branch is an integration branch that does not yet exist on
+the owning remote, create and push it exactly once before dispatching any
+in-scope item agents. In `workflow_hub` mode, "owning remote" means the selected
+product repository for product implementation work, not the hub repository:
 
 ```bash
-git checkout -b <base-branch> origin/develop  # or the appropriate upstream
+git checkout -b <base-branch> origin/<product-default-branch>  # or the appropriate upstream
 git push -u origin <base-branch>
 ```
 

@@ -33,6 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   source guidance now use `.ai-dev-workflow.local.yaml` instead of the legacy
   `.tmp/template-config.json` path.
 
+### Fixed
+
+- **Workflow-hub base branch routing**: `/run-epic` scope resolution and
+  spec/plan orchestration now distinguish hub artifact bases from product
+  implementation bases, so a hub repository can use `main` while product
+  implementation PRs target `develop`.
+
 ## [0.33.1] - 2026-06-19
 
 ### Fixed

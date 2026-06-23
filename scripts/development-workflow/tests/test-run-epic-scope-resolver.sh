@@ -319,6 +319,43 @@ case "$github_text_output" in
 esac
 run_test "github_provider_no_tracker_read_deferred" "not-present" "$github_deferred_result"
 
+echo ""
+echo "=== Repository mode base-routing context ==="
+
+# --- workflow_hub base-routing context ---
+cat > "$_config_file" <<'WORKFLOW_HUB_CONFIG'
+schema_version: 2
+mode: workflow_hub
+issue_tracker:
+  provider: github_projects
+WORKFLOW_HUB_CONFIG
+
+hub_output="$(run_json --items 101,102)"
+run_test "workflow_hub_mode_reported" "workflow_hub" "$(printf '%s\n' "$hub_output" | jq -r '.workflowMode')"
+run_test "workflow_hub_base_applies_to_product" "product_implementation_prs" "$(printf '%s\n' "$hub_output" | jq -r '.baseBranchAppliesTo')"
+run_test "workflow_hub_base_note_blocks_hub_validation" "yes" "$(
+  printf '%s\n' "$hub_output" | jq -e '.baseBranchValidationNote | test("do not validate this base against the hub remote")' >/dev/null && echo yes || echo no
+)"
+
+hub_text_output="$("$RESOLVER" --items 101 --delegate-review --may-start-backlog false --max-risk high)"
+run_test "text_output_includes_workflow_mode" "yes" "$(grep -q 'Workflow mode: workflow_hub' <<< "$hub_text_output" && echo yes || echo no)"
+run_test "text_output_includes_base_context" "yes" "$(grep -q 'Base applies to: product_implementation_prs' <<< "$hub_text_output" && echo yes || echo no)"
+
+# --- single_repo base-routing context ---
+cat > "$_config_file" <<'SINGLE_REPO_CONFIG'
+schema_version: 2
+mode: single_repo
+issue_tracker:
+  provider: github_projects
+SINGLE_REPO_CONFIG
+
+single_repo_output="$(run_json --items 101)"
+run_test "single_repo_mode_reported" "single_repo" "$(printf '%s\n' "$single_repo_output" | jq -r '.workflowMode')"
+run_test "single_repo_base_applies_to_current_repo" "current_repository_prs" "$(printf '%s\n' "$single_repo_output" | jq -r '.baseBranchAppliesTo')"
+run_test "single_repo_base_note_keeps_repo_validation" "yes" "$(
+  printf '%s\n' "$single_repo_output" | jq -e '.baseBranchValidationNote | test("Validate the resolved base branch")' >/dev/null && echo yes || echo no
+)"
+
 # --- linear provider ---
 cat > "$_config_file" <<'LINEAR_CONFIG'
 schema_version: 2

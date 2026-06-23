@@ -19,8 +19,10 @@ Key responsibilities:
 
 - Require exactly one of `--epic` or `--items`.
 - Resolve native GitHub sub-issues for `--epic`; keep `--items` exact.
-- Infer the base branch from `--base`, shared `integration-branch:<slug>`, or
-  `develop`.
+- Infer the execution base branch from `--base`, shared
+  `integration-branch:<slug>`, or the applicable default.
+- In `workflow_hub` mode, treat that base as the product implementation base;
+  do not block because it is absent from the hub repository.
 - Group items as `eligible`, `blocked`, `already_merged`, `in_review`,
   `ambiguous`, or `out_of_scope`.
 - Keep the command read-only: no tracker updates, branches, PRs, merges, issue
