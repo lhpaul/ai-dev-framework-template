@@ -36,9 +36,12 @@ case "$*" in
     fi
     ;;
   pr\ view\ 42\ --json\ headRefOid*)
-    printf 'abc123\n'
+    printf '%s\n' "${MOCK_HEAD_SHA:-abc123}"
     ;;
-  api\ repos/lhpaul/ai-dev-framework-template/commits/abc123\ --jq\ .commit.committer.date\ //\ empty)
+  api\ repos/lhpaul/ai-dev-framework-template/commits/*\ --jq\ .commit.committer.date\ //\ empty)
+    if [ "${MOCK_HEAD_DATE_FAIL:-0}" = "1" ]; then
+      exit 1
+    fi
     printf '2026-06-22T11:30:00Z\n'
     ;;
   pr\ view\ 42\ --json\ reviews*)
@@ -185,6 +188,7 @@ satisfied_file="$TMP_ROOT/satisfied-checkpoints.json"
 MOCK_COMMENT_MODE=satisfied "$HELPER" detect-satisfaction --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$checkpoints_file" --pr 42 --write-checkpoints-file "$satisfied_file" >/dev/null
 run_test "detect_satisfaction_via_comment" "satisfied" "$(jq -r '.[0].satisfaction_state' "$satisfied_file")"
 run_test "comment_before_head_does_not_satisfy" "pending" "$(MOCK_COMMENT_MODE=satisfied-before-head "$HELPER" detect-satisfaction --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$checkpoints_file" --pr 42 | jq -r '.[0].satisfaction_state')"
+run_test "missing_head_date_does_not_satisfy_comment" "pending" "$(MOCK_HEAD_DATE_FAIL=1 MOCK_COMMENT_MODE=satisfied "$HELPER" detect-satisfaction --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$checkpoints_file" --pr 42 | jq -r '.[0].satisfaction_state')"
 
 run_test "stale_approval_does_not_satisfy" "pending" "$(MOCK_REVIEW_STALE_APPROVED=1 "$HELPER" detect-satisfaction --item 1022 --branch implementation-plan/human-checkpoints --checkpoints-file "$checkpoints_file" --pr 42 | jq -r '.[0].satisfaction_state')"
 
@@ -213,6 +217,7 @@ cat > "$satisfied_plan_file" <<'JSON'
 ]
 JSON
 run_test "preserves_satisfied_checkpoint_on_later_stage_pr" "satisfied" "$( "$HELPER" detect-satisfaction --item 1022 --branch feature/human-checkpoints --checkpoints-file "$satisfied_plan_file" --pr 42 | jq -r '.[0].satisfaction_state')"
+run_test "preserves_earlier_stage_on_different_head" "satisfied" "$(MOCK_HEAD_SHA=def456 "$HELPER" detect-satisfaction --item 1022 --branch feature/human-checkpoints --checkpoints-file "$satisfied_plan_file" --pr 42 | jq -r '.[0].satisfaction_state')"
 
 stale_satisfied_plan_file="$TMP_ROOT/stale-satisfied-plan-checkpoints.json"
 cat > "$stale_satisfied_plan_file" <<'JSON'

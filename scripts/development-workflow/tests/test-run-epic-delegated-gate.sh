@@ -263,6 +263,12 @@ pending_checkpoint_fixture="$(write_fixture pending-checkpoint '.item.number = 1
 run_test "pending_checkpoint_requires_human" "human_required" "$(decision_for "$pending_checkpoint_fixture")"
 run_test "pending_checkpoint_reason_names_action" "true" "$(reason_match_for "$pending_checkpoint_fixture" "approve delegated gate checkpoint handling")"
 
+snake_case_checkpoint_fixture="$(write_fixture snake-case-checkpoint '.item.number = 1023 | .pr.headRefName = "feature/1023-human-checkpoint-gates" | .policy.effective_policy.checkpoints = [{"item_number":1023,"stage":"implementation","domain":"technical","reason":"snake case policy","required_human_action":"approve snake case checkpoint","satisfaction_state":"pending"}]')"
+run_test "snake_case_policy_checkpoint_requires_human" "human_required" "$(decision_for "$snake_case_checkpoint_fixture")"
+
+invocation_policy_checkpoint_fixture="$(write_fixture invocation-policy-checkpoint '.item.number = 1023 | .pr.headRefName = "feature/1023-human-checkpoint-gates" | .invocation_policy.effective_policy.checkpoints = [{"item_number":1023,"stage":"implementation","domain":"technical","reason":"invocation policy","required_human_action":"approve invocation checkpoint","satisfaction_state":"pending"}]')"
+run_test "invocation_policy_checkpoint_requires_human" "human_required" "$(decision_for "$invocation_policy_checkpoint_fixture")"
+
 satisfied_checkpoint_fixture="$(write_fixture satisfied-checkpoint '.item.number = 1023 | .pr.headRefName = "feature/1023-human-checkpoint-gates" | .policy.checkpoints = [{"item_number":1023,"stage":"implementation","domain":"technical","reason":"sensitive merge gate behavior","required_human_action":"approve delegated gate checkpoint handling","satisfaction_state":"satisfied","satisfied_by":"lhpaul"}]')"
 run_test "satisfied_checkpoint_allows_merge" "merge_allowed" "$(decision_for "$satisfied_checkpoint_fixture")"
 

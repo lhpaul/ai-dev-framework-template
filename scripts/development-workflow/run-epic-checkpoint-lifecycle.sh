@@ -172,7 +172,9 @@ detect_satisfaction_json() {
       ($latest != null) and (($latest.state // "") == "APPROVED");
     def human_comments: ($comments // []) | map(select(bot_login(.author) | not));
     def signal_after_head($createdAt):
-      ($head_created_at | length) == 0 or (($createdAt // "") > $head_created_at);
+      if ($head_sha | length) == 0 then true
+      elif ($head_created_at | length) == 0 then false
+      else (($createdAt // "") > $head_created_at) end;
     def waiver_rationale_valid($body; $item; $stage; $domain):
       (parse_waiver_rationale($body; "'"$WAIVED_MARKER_PREFIX"'"; ($item|tostring); $stage; $domain) | gsub("\\s"; "") | length) > 0;
     stage_from_branch($branch) as $prStage |
@@ -181,7 +183,8 @@ detect_satisfaction_json() {
       if ($cp.item_number | tonumber) != ($item | tonumber) then .
       elif (($cp.satisfaction_state // "pending") != "pending")
         and (
-          ($head_sha | length) == 0
+          stage_rank($cp.stage) < stage_rank($prStage)
+          or ($head_sha | length) == 0
           or (($cp.satisfied_head_sha // "") == $head_sha)
         ) then .
       elif (stage_rank($cp.stage) > stage_rank($prStage)) then .

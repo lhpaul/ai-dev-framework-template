@@ -122,8 +122,11 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
   def checkpoint_list:
     if ((.checkpoint_policy.effective // null) | type) == "array" then .checkpoint_policy.effective
     elif ((.checkpointPolicy.effective // null) | type) == "array" then .checkpointPolicy.effective
-    elif ((policy.effectivePolicy.checkpoints // null) | type) == "array" then policy.effectivePolicy.checkpoints
-    elif ((policy.checkpoints // null) | type) == "array" then policy.checkpoints
+    elif ((try .policy.effectivePolicy.checkpoints catch null) | type) == "array" then .policy.effectivePolicy.checkpoints
+    elif ((try .policy.effective_policy.checkpoints catch null) | type) == "array" then .policy.effective_policy.checkpoints
+    elif ((try .invocation_policy.effective_policy.checkpoints catch null) | type) == "array" then .invocation_policy.effective_policy.checkpoints
+    elif ((try .invocationPolicy.effectivePolicy.checkpoints catch null) | type) == "array" then .invocationPolicy.effectivePolicy.checkpoints
+    elif ((try .policy.checkpoints catch null) | type) == "array" then .policy.checkpoints
     else [] end;
   def item_number:
     (.item.number // .item.issue_number // .item.issueNumber // null);
