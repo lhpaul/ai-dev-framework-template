@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Human checkpoint lifecycle documentation** (#1024): adds an end-to-end
+  smoke-test runbook for checkpoint recommendation, readiness labels,
+  satisfaction detection, delegated gate blocking, batch merge handling, audit
+  evidence, and command-surface guidance.
+- **Human checkpoint merge gates** (#1023): delegated `/run-epic` merge gates and
+  batch merge discovery now block unsatisfied `human-checkpoint-required` PRs
+  until checkpoint satisfaction or waiver evidence is recorded and labels are synced.
+- **Human checkpoint PR lifecycle** (#1022): adds `human-checkpoint-required` readiness
+  signal (protocol 92), Step 8a/8c checkpoint label sync in protocol 91,
+  `run-epic-checkpoint-lifecycle.sh` for satisfaction detection and label/comment
+  persistence, and checkpoint policy fields in `run-epic-audit-trail.sh`.
+- **Run-epic checkpoint policy recommendations** (#1021): `run-epic-policy-recommender.sh`
+  now emits per-item human checkpoint recommendations from read-only scope metadata,
+  supports explicit selection/waiver via `--checkpoints-file`, and records
+  recommended/selected/effective checkpoint policy for audit evidence.
 - **Cursor pilot configuration**: adds Cursor as a Step 7a runner reviewer value,
   supports overriding ready-phase review to Cursor Bugbot from local config,
   exposes `bugbot` in reviewer-loop usage help, and ships project-level Bugbot

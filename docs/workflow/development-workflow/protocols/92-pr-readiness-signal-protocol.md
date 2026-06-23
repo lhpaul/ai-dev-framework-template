@@ -14,6 +14,7 @@ This is a **repo-wide definition**. All agents apply these labels consistently.
 | `needs-fixes`            | The PR still needs fixes before it is ready for human review. This may be due to human-requested changes, failing CI, or blocking automated PR feedback.                                                                                                                                                                 |
 | `ready-for-regression`   | Automated code reviews are clean (or skipped). E2e/regression tests should now run. Applied by the orchestrator (Step 7b) on implementation PRs (`feature/*`, `fix/*`, `hotfix/*`, `refactor/*`, `backport/hotfix/*`), and by the prepare-release flow (protocol `05`) on **production** release PRs (`release/*` → `main`) only. |
 | `needs-setup`            | PR introduces one or more infrastructure dependencies (env vars, secrets, DNS records, service account tokens, etc.) that require human setup steps before the feature can be safely enabled. Co-exists with `ready-for-human-review`; the human removes this label after completing (or intentionally deferring) setup. |
+| `human-checkpoint-required` | The PR's linked work item has at least one `pending` human checkpoint that applies to this PR: same `item_number` and either matching the PR's current workflow stage or an earlier stage not yet `satisfied`/`waived`. Human feedback or approval named in `required_human_action` is still required. Co-exists with `ready-for-human-review` when automation is clean but a checkpoint remains open. Does **not** satisfy when only `needs-setup` is removed. |
 
 ---
 
@@ -85,6 +86,56 @@ Apply this label when the agent's infrastructure dependency scan (Protocol 91 St
 - **BR-3**: `needs-setup` does not prevent `ready-for-human-review` from being applied, does not block CI from passing, and does not block automated review tools from completing. It co-exists with `ready-for-human-review`.
 - **BR-7**: When the human removes `needs-setup` (Use Case 3 — setup acknowledged), the `## Pre-merge Setup` section remains in the PR body as a historical record. When the agent rescans and finds no infrastructure dependencies (Use Case 4 — dependency removed from diff), the agent removes both the label and the section.
 - **BR-10**: `needs-setup` is distinct from `needs-fixes`. They have different semantics, different lifecycles, and may co-exist. `needs-fixes` signals reviewer-requested code changes; `needs-setup` signals out-of-band human configuration steps.
+
+---
+
+## Conditions for `human-checkpoint-required`
+
+Apply this label when the PR's linked work item has at least one checkpoint in
+`pending` state that applies to this PR's workflow stage or an earlier stage in
+the ordered sequence `spec` → `plan` → `implementation` (see
+`1020-human-checkpoint-policy-model` spec BR-2 and BR-4).
+
+**Who applies it**: The Work Item Runner (Protocol 91 Step 8a) via
+`run-epic-checkpoint-lifecycle.sh sync-pr-labels` after CI and automated review
+are clean and before or alongside applying `ready-for-human-review`.
+
+**Who removes it**: The script removes the label when every applicable
+checkpoint transitions to `satisfied` or `waived` with audit evidence. Removing
+`needs-fixes` or `needs-setup` does **not** remove this label.
+
+**Valid label combinations**:
+
+| Combination                                                         | Meaning                                                                                                                                                       |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ready-for-human-review` only                                       | Automation clean and no open checkpoints apply to this PR                                                                                                       |
+| `ready-for-human-review` + `human-checkpoint-required`              | Automation clean but explicit human checkpoint feedback is still required before delegated review/merge may proceed                                           |
+| `ready-for-human-review` + `needs-setup` + `human-checkpoint-required` | Automation clean, setup steps may still be required, and a checkpoint remains open                                                                         |
+| `needs-fixes` + `human-checkpoint-required`                         | Transitional — automation/reviewer fixes needed; checkpoint state persists independently                                                                    |
+
+**Invariants**:
+
+- **BR-11**: `ready-for-human-review` means automation-clean only; it does not
+  imply checkpoint satisfaction.
+- **BR-12**: `human-checkpoint-required` persists through ordinary fix cycles
+  while the checkpoint remains `pending`.
+- **BR-13**: Removing `human-checkpoint-required` requires `satisfaction_state`
+  of `satisfied` or `waived` with audit evidence recorded in the stable
+  `<!-- run-epic:checkpoint-status -->` PR comment.
+- **BR-14**: `needs-fixes` removal does not imply checkpoint satisfaction.
+
+**Satisfaction signals** (detected on reruns):
+
+- Explicit PR comment:
+  `<!-- run-epic:checkpoint-satisfied:<item>:<stage>:<domain> -->`
+- Explicit waiver comment:
+  `<!-- run-epic:checkpoint-waived:<item>:<stage>:<domain> --> <rationale>`
+- Human PR review approval (`APPROVED`) on a PR whose workflow stage matches
+  the checkpoint's `stage` satisfies **all** pending checkpoints at that stage
+  for the linked item in one action.
+
+The `human-checkpoint-required` GitHub label must exist in the repository's label
+settings before Step 8a can apply it. Suggested color: `#d93f0b` (orange-red).
 
 ---
 

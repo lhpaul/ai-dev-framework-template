@@ -26,13 +26,13 @@ Key responsibilities:
 - Keep the command read-only: no tracker updates, branches, PRs, merges, issue
   closure, or cleanup.
 - When autonomy policy is missing or ambiguous, run the read-only policy
-  recommender, present the recommended config in-place, and continue the same
-  run when the human accepts or customizes it.
+  recommender, present the recommended config and checkpoint policy in-place,
+  and continue the same run when the human accepts or customizes it.
 - Before any later delegated merge decision, run the PR risk classifier and
   respect its `--max-risk` gate.
 - After delegated review, fix, merge, block, or escalation decisions, update
   stable PR disposition and epic ledger audit comments, including original,
-  recommended, selected, and effective policy.
+  recommended, selected, and effective policy plus checkpoint state.
 - Before merge, run the delegated gate with current scope, policy, reviewer,
   CI, risk, and audit evidence. Merge only when it reports `merge_allowed`.
 

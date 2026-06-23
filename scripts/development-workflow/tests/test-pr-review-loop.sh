@@ -2144,6 +2144,50 @@ run_test "bugbot_bot_login_env_override" "my-custom-bugbot[bot]" "$actual"
 unset BUGBOT_BOT_LOGIN
 
 # ---------------------------------------------------------------------------
+# Test 16.0c-d: Bugbot clean summary detection must not hide finding markers
+# ---------------------------------------------------------------------------
+bugbot_clean_body="Cursor Bugbot found no new issues in this pull request."
+if is_bugbot_clean_review "$bugbot_clean_body"; then
+  actual="clean"
+else
+  actual="blocking"
+fi
+run_test "bugbot_clean_phrase_is_non_blocking" "clean" "$actual"
+
+bugbot_mixed_body=$'Cursor Bugbot found no issues in this pull request.\n\n**High Severity**\n\n<!-- BUGBOT_BUG_ID: abc123 -->'
+if is_bugbot_clean_review "$bugbot_mixed_body"; then
+  actual="clean"
+else
+  actual="blocking"
+fi
+run_test "bugbot_finding_markers_override_clean_phrase" "blocking" "$actual"
+
+bugbot_multiline_body=$'Cursor Bugbot found no issues in this pull request.\n\nThis review still describes a blocking workflow problem.'
+if is_bugbot_clean_review "$bugbot_multiline_body"; then
+  actual="clean"
+else
+  actual="blocking"
+fi
+run_test "bugbot_clean_phrase_in_multiline_body_is_blocking" "blocking" "$actual"
+
+bugbot_same_line_severity_body="Cursor Bugbot found no issues in this pull request. **High Severity**: still broken"
+if is_bugbot_clean_review "$bugbot_same_line_severity_body"; then
+  actual="clean"
+else
+  actual="blocking"
+fi
+run_test "bugbot_same_line_severity_is_blocking" "blocking" "$actual"
+
+bugbot_same_line_mixed_body="Cursor Bugbot found no issues in this pull request, but the reviewer loop still drops blocking findings."
+if is_bugbot_clean_review "$bugbot_same_line_mixed_body"; then
+  actual="clean"
+else
+  actual="blocking"
+fi
+run_test "bugbot_same_line_mixed_phrase_is_blocking" "blocking" "$actual"
+unset bugbot_clean_body bugbot_mixed_body bugbot_multiline_body bugbot_same_line_severity_body bugbot_same_line_mixed_body actual
+
+# ---------------------------------------------------------------------------
 # Test 16.1: clean path — check run conclusion=success, no blocking comments
 # ---------------------------------------------------------------------------
 _bugbot_mock_dir_161="$(mktemp -d)"
@@ -2247,6 +2291,94 @@ run_test "bugbot_needs_fixes_blocking_count_nonzero" "1" \
 run_test "bugbot_needs_fixes_exit_code" "1" "$actual_exit"
 rm -rf "$_bugbot_mock_dir_162"
 unset _bugbot_mock_dir_162 actual_output actual_exit
+
+# ---------------------------------------------------------------------------
+# Test 16.2b: CHANGES_REQUESTED review blocks even with clean body text
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_162b="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_162b/gh" <<'BUGBOT_GH_162B'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc162bsha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"user":{"login":"cursor[bot]"},"submitted_at":"2020-01-02T00:00:00Z","state":"CHANGES_REQUESTED","body":"Cursor Bugbot found no issues in this pull request."}]\n'
+    exit 0 ;;
+  *"check-runs"*)
+    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"success","started_at":"2020-01-01T00:00:00Z"}]}\n'
+    exit 0 ;;
+  *"headRefOid"*)
+    printf 'abc162bsha\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_162B
+chmod +x "$_bugbot_mock_dir_162b/gh"
+
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_162b:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_changes_requested_clean_body_blocks_result" "RESULT=needs_fixes" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_changes_requested_clean_body_blocks_count" "1" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=" | cut -d= -f2)"
+run_test "bugbot_changes_requested_clean_body_blocks_exit_code" "1" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_162b"
+unset _bugbot_mock_dir_162b actual_output actual_exit
+
+# ---------------------------------------------------------------------------
+# Test 16.2c: CHANGES_REQUESTED review blocks even with an empty body
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_162c="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_162c/gh" <<'BUGBOT_GH_162C'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc162csha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"user":{"login":"cursor[bot]"},"submitted_at":"2020-01-02T00:00:00Z","state":"CHANGES_REQUESTED","body":""}]\n'
+    exit 0 ;;
+  *"check-runs"*)
+    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"success","started_at":"2020-01-01T00:00:00Z"}]}\n'
+    exit 0 ;;
+  *"headRefOid"*)
+    printf 'abc162csha\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_162C
+chmod +x "$_bugbot_mock_dir_162c/gh"
+
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_162c:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_changes_requested_empty_body_blocks_result" "RESULT=needs_fixes" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_changes_requested_empty_body_blocks_count" "1" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=" | cut -d= -f2)"
+run_test "bugbot_changes_requested_empty_body_blocks_exit_code" "1" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_162c"
+unset _bugbot_mock_dir_162c actual_output actual_exit
 
 # ---------------------------------------------------------------------------
 # Test 16.3: escalate (timeout) — run appeared but never completed
