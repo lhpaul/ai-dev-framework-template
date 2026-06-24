@@ -144,10 +144,15 @@ workflow_mode_context="$(workflow_repository_mode)"
 workflow_mode="$(workflow_context_value WORKFLOW_MODE "$workflow_mode_context")"
 base_branch_applies_to="current_repository_prs"
 base_branch_validation_note="In single_repo mode, validate the resolved base branch against the current repository remote."
-if [ "$workflow_mode" = "workflow_hub" ]; then
-  base_branch_applies_to="product_implementation_prs"
-  base_branch_validation_note="In workflow_hub mode, do not validate this base against the hub remote before selecting the product repository; specs and plans stay hub-owned and use the hub artifact base."
-fi
+case "$workflow_mode" in
+  workflow_hub)
+    base_branch_applies_to="product_implementation_prs"
+    base_branch_validation_note="In workflow_hub mode, do not validate this base against the hub remote before selecting the product repository; specs and plans stay hub-owned and use the hub artifact base."
+    ;;
+  product_repo)
+    base_branch_validation_note="In product_repo mode, validate the resolved implementation base against the current product repository remote; specs and plans remain hub-owned."
+    ;;
+esac
 
 tmp_dir="$(mktemp -d)"
 items_file="$tmp_dir/items.jsonl"

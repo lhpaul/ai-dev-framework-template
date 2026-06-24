@@ -356,6 +356,21 @@ run_test "single_repo_base_note_keeps_repo_validation" "yes" "$(
   printf '%s\n' "$single_repo_output" | jq -e '.baseBranchValidationNote | test("current repository remote")' >/dev/null && echo yes || echo no
 )"
 
+# --- product_repo base-routing context ---
+cat > "$_config_file" <<'PRODUCT_REPO_CONFIG'
+schema_version: 2
+mode: product_repo
+issue_tracker:
+  provider: github_projects
+PRODUCT_REPO_CONFIG
+
+product_repo_output="$(run_json --items 101)"
+run_test "product_repo_mode_reported" "product_repo" "$(printf '%s\n' "$product_repo_output" | jq -r '.workflowMode')"
+run_test "product_repo_base_applies_to_current_repo" "current_repository_prs" "$(printf '%s\n' "$product_repo_output" | jq -r '.baseBranchAppliesTo')"
+run_test "product_repo_base_note_uses_product_repo" "yes" "$(
+  printf '%s\n' "$product_repo_output" | jq -e '.baseBranchValidationNote | test("current product repository remote")' >/dev/null && echo yes || echo no
+)"
+
 # --- linear provider ---
 cat > "$_config_file" <<'LINEAR_CONFIG'
 schema_version: 2
