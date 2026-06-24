@@ -385,8 +385,10 @@ If the label is present:
    exist, `1` = exists):
 
    ```bash
-   BRANCH_EXISTS=$(set -o pipefail; git ls-remote origin "refs/heads/develop-<slug>" 2>/dev/null | wc -l | tr -d ' ') || {
-     echo "WARNING: failed to verify whether develop-<slug> exists on origin; skipping auto-create for this item."
+   OWNING_REPO_ROOT="<current-or-selected-product-repository-root>"
+   OWNING_REMOTE="origin"
+   BRANCH_EXISTS=$(set -o pipefail; git -C "$OWNING_REPO_ROOT" ls-remote "$OWNING_REMOTE" "refs/heads/develop-<slug>" 2>/dev/null | wc -l | tr -d ' ') || {
+     echo "WARNING: failed to verify whether develop-<slug> exists on the owning remote; skipping auto-create for this item."
      continue  # or return 1 / exit 1 depending on surrounding loop/function context
    }
    ```
@@ -395,10 +397,13 @@ If the label is present:
    from the owning repository's default implementation branch:
 
    ```bash
-   git fetch origin <default-implementation-branch>
-   git checkout -B develop-<slug> origin/<default-implementation-branch>
-   git push -u origin develop-<slug>
-   git switch <default-implementation-branch>
+   OWNING_REPO_ROOT="<current-or-selected-product-repository-root>"
+   OWNING_REMOTE="origin"
+   DEFAULT_IMPLEMENTATION_BRANCH="<default-implementation-branch>"
+   git -C "$OWNING_REPO_ROOT" fetch "$OWNING_REMOTE" "$DEFAULT_IMPLEMENTATION_BRANCH"
+   git -C "$OWNING_REPO_ROOT" checkout -B develop-<slug> "$OWNING_REMOTE/$DEFAULT_IMPLEMENTATION_BRANCH"
+   git -C "$OWNING_REPO_ROOT" push -u "$OWNING_REMOTE" develop-<slug>
+   git -C "$OWNING_REPO_ROOT" switch "$DEFAULT_IMPLEMENTATION_BRANCH"
    ```
 
    Log: `INFO: created integration branch develop-<slug> from origin/<default-implementation-branch> for sub-item #<issue-number>.`
@@ -449,11 +454,13 @@ This gate applies whenever the spec and plan are written in the same agent run (
 
 1. Write the plan content locally on the plan branch (the plan may be written proactively, but it must not be pushed or a PR opened yet).
 2. Open the spec PR and advance it to `ready-for-human-review` following the full PR readiness chain (Step 7a, Step 7, Step 8).
-3. Stop and report to the orchestrator with the following structured message:
+3. Resolve `EXPECTED_SPEC_BASE`: in `workflow_hub`, use the hub artifact base
+   branch; otherwise use `BASE_BRANCH` when present, falling back to `develop`.
+4. Stop and report to the orchestrator with the following structured message:
 
-   > Spec PR #N is `ready-for-human-review`. Plan is written and staged locally on branch `implementation-plan/<slug>`, but the plan PR will not be opened until the spec PR is confirmed merged to `develop` (or `develop-<slug>` when the integration-branch context applies). On the next dispatch (after spec merge is confirmed), push the plan branch and open the plan PR.
+   > Spec PR #N is `ready-for-human-review`. Plan is written and staged locally on branch `implementation-plan/<slug>`, but the plan PR will not be opened until the spec PR is confirmed merged to `<expected-spec-base>`. On the next dispatch (after spec merge is confirmed), push the plan branch and open the plan PR.
 
-4. On the next dispatch (after spec merge is confirmed via `gh pr view <spec_pr> --json state` returning `MERGED`), push the plan branch and open the plan PR. The plan content was written in the prior run; do not regenerate it.
+5. On the next dispatch (after spec merge is confirmed via `gh pr view <spec_pr> --json state` returning `MERGED`), push the plan branch and open the plan PR. The plan content was written in the prior run; do not regenerate it.
 
 **Verification before opening a plan PR:**
 
@@ -461,10 +468,11 @@ Before calling `gh pr create` for any `implementation-plan/*` branch, confirm th
 
 ```bash
 # Check whether the spec PR is merged into the expected base branch.
-# EXPECTED_BASE is "develop" by default, or "develop-<slug>" when integration-branch:<slug> is present.
+# EXPECTED_SPEC_BASE is the hub artifact base in workflow_hub mode; otherwise it
+# is "develop" by default, or "develop-<slug>" when integration-branch:<slug> is present.
 # Substitute <spec_pr_number> and <expected-base> with actual values before running:
 gh pr view <spec_pr_number> --json state,baseRefName \
-  --jq 'select(.state=="MERGED" and .baseRefName=="<expected-base>") | "OK"'
+  --jq 'select(.state=="MERGED" and .baseRefName=="<expected-spec-base>") | "OK"'
 # Expected output: OK
 # If no output: the spec PR is not merged into the expected base branch — do not open the plan PR
 ```
@@ -473,7 +481,11 @@ If the spec PR is still `OPEN`, apply the ordering gate above and stop. If the s
 
 **Exception — Refactor items (no spec):** Items following the Refactor path (`02-generate-implementation-plan-protocol.md` without a preceding spec step) are exempt from this gate. There is no spec PR to wait for.
 
-(When the item carries an `integration-branch:<slug>` label, "spec PR merged to the integration branch" means merged to `develop-<slug>`, not to `develop`. The ordering gate applies identically; only the target branch changes. Use `develop-<slug>` as `<expected-base>` in the verification command above.)
+(When the item carries an `integration-branch:<slug>` label in `single_repo`,
+"spec PR merged to the integration branch" means merged to `develop-<slug>`, not
+to `develop`. In `workflow_hub`, hub-owned spec and plan PRs use the hub
+artifact base instead, even when product implementation work uses
+`develop-<slug>`.)
 
 ### Dependency check
 
