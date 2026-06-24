@@ -164,6 +164,9 @@ run_fails_contains "rejects_whitespace_fixture" "input file is not valid JSON" "
 no_ci_fixture="$(write_fixture no-ci '.statusChecks = [] | .ciPolicy = "none"')"
 run_test "ci_policy_none_allows_empty_checks" "merge_allowed" "$(decision_for "$no_ci_fixture")"
 
+no_ci_failed_fixture="$(write_fixture no-ci-failed '.statusChecks = [{"name": "guard", "status": "COMPLETED", "conclusion": "FAILURE"}] | .ciPolicy = "none"')"
+run_test "ci_policy_none_skips_failed_checks" "merge_allowed" "$(decision_for "$no_ci_failed_fixture")"
+
 hub_ci_dir="$TMP_ROOT/hub-ci-policy-none"
 mkdir -p "$hub_ci_dir"
 cat > "$hub_ci_dir/.ai-dev-workflow.yaml" <<'YAML'
