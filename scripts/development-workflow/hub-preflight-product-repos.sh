@@ -161,9 +161,11 @@ while IFS= read -r selected_repo; do
   printf '  CI_POLICY=%s\n' "$ci_policy"
 
   if [ -z "$github_repo" ]; then
-    printf '  STATUS=skipped\n'
+    printf '  STATUS=failed\n'
     printf '  REASON=missing_github_repo_slug\n'
-    skipped_count=$((skipped_count + 1))
+    printf '  GUIDANCE=configure github_repo or a GitHub-form git_url for this product repository\n'
+    failed_count=$((failed_count + 1))
+    exit_code=1
     continue
   fi
 

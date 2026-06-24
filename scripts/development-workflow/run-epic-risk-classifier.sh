@@ -183,6 +183,11 @@ collect_check_blockers() {
   local checks_json check_count
   local encoded decoded status conclusion name
 
+  if [ "$(printf '%s\n' "$state_json" | jq -r '.ciPolicy // .ci_policy // "required"')" = "none" ]; then
+    printf '%s\n' "$blockers"
+    return 0
+  fi
+
   if ! checks_json="$(printf '%s\n' "$state_json" | jq -c '
     [.status_checks[]?, .required_checks[]?, .checks[]?]
     | to_entries

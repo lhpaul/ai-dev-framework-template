@@ -210,6 +210,28 @@ api_error_output="$(env PATH="$api_error_stub:$PATH" "$PREFLIGHT" --repo api-err
 run_contains "ci_none_tolerates_workflow_query_failure" "CI_PREFLIGHT=ok" "$api_error_output"
 run_contains "ci_none_workflow_query_failure_note" "workflow_query_failed_ci_policy_none" "$api_error_output"
 
+bad_slug_hub="$TMP_ROOT/bad-slug-hub"
+mkdir -p "$bad_slug_hub"
+git -C "$bad_slug_hub" init -q -b main
+cat > "$bad_slug_hub/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: bad-slug-app
+      git_url: https://gitlab.com/example/bad-slug-app
+      default_branch: main
+YAML
+cat > "$bad_slug_hub/.ai-dev-workflow.local.yaml" <<'YAML'
+product_repos:
+  - name: bad-slug-app
+    local_path: ../bad-slug-app
+YAML
+bad_slug_output="$(env PATH="$stub_bin:$PATH" "$PREFLIGHT" --repo bad-slug-app --repo-root "$bad_slug_hub" 2>&1)" || true
+run_contains "missing_github_slug_fails" "STATUS=failed" "$bad_slug_output"
+run_contains "missing_github_slug_reason" "missing_github_repo_slug" "$bad_slug_output"
+
 echo ""
 echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"

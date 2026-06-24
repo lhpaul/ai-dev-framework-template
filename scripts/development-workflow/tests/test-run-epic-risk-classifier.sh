@@ -163,6 +163,19 @@ low_fixture="$(write_fixture low '{
 low_output="$(classify_fixture "$low_fixture" low)"
 run_test "classifies_low_docs_and_tests" "low" "$(printf '%s\n' "$low_output" | jq -r '.risk')"
 run_test "low_merge_permitted" "true" "$(printf '%s\n' "$low_output" | jq -r '.merge_permitted')"
+
+no_ci_fixture="$(write_fixture no-ci '{
+  "pr_number": 1,
+  "merge_state": "CLEAN",
+  "labels": ["ready-for-human-review"],
+  "status_checks": [],
+  "ci_policy": "none",
+  "changed_files": ["docs/readme.md"],
+  "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 0}
+}')"
+no_ci_output="$(classify_fixture "$no_ci_fixture" medium)"
+run_test "ci_policy_none_allows_missing_checks" "true" "$(printf '%s\n' "$no_ci_output" | jq -r '.merge_permitted')"
+
 run_test "json_output_has_reasons" "yes" "$(printf '%s\n' "$low_output" | jq -e '.reasons | length > 0' >/dev/null && echo yes || echo no)"
 run_test "json_output_shape_stable" "yes" "$(
   printf '%s\n' "$low_output" |
