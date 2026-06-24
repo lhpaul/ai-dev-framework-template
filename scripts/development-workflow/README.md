@@ -280,6 +280,28 @@ What it does:
   `--bootstrap-local-path` is set and the operator confirms the prompt, or when
   `--yes` is also supplied
 
+#### `hub-preflight-product-repos.sh`
+
+Bootstrap workflow readiness labels and validate CI policy on product GitHub
+repositories before delegated orchestration.
+
+Usage:
+
+```bash
+./scripts/development-workflow/hub-preflight-product-repos.sh --repo mobile-app
+./scripts/development-workflow/hub-preflight-product-repos.sh --all
+./scripts/development-workflow/hub-preflight-product-repos.sh --all --labels-only
+```
+
+What it does:
+
+- Creates missing operational labels (`ready-for-human-review`, `needs-fixes`,
+  `ready-for-regression`, `human-checkpoint-required`) on each configured product
+  GitHub repository
+- Probes GitHub Actions workflow count when `ci_policy` is `required` (default)
+- Passes when `ci_policy: none` is declared for repositories without CI workflows
+- Requires `gh` authentication for remote inspection
+
 #### `hub-list-prs.sh`
 
 Lists open pull requests for selected product repositories without modifying

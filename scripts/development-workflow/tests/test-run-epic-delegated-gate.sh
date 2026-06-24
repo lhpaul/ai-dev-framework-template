@@ -161,6 +161,9 @@ run_fails_contains "rejects_empty_fixture" "input file is empty" "$GATE" --input
 run_fails_contains "rejects_malformed_fixture" "input file is not valid JSON" "$GATE" --input "$malformed_file"
 run_fails_contains "rejects_whitespace_fixture" "input file is not valid JSON" "$GATE" --input "$whitespace_file"
 
+no_ci_fixture="$(write_fixture no-ci '.statusChecks = [] | .ciPolicy = "none"')"
+run_test "ci_policy_none_allows_empty_checks" "merge_allowed" "$(decision_for "$no_ci_fixture")"
+
 clean_fixture="$(write_fixture clean)"
 run_test "merge_allowed_when_all_gates_clean" "merge_allowed" "$(decision_for "$clean_fixture")"
 run_test "merge_permitted_true" "true" "$("$GATE" --input "$clean_fixture" --json | jq -r '.mergePermitted')"

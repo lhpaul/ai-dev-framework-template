@@ -265,6 +265,7 @@ workflow_hub:
     - name: mobile-app
       github_repo: example/mobile-app
       default_branch: main
+      ci_policy: required
       role: mobile
       scope: customer-facing app
       tracker:
@@ -275,8 +276,9 @@ workflow_hub:
 ```
 
 Each product entry needs a stable `name` and either `github_repo` or `git_url`.
-Optional shared fields may include `default_branch`, `role`, `scope`, `tracker`
-hints, and non-secret app identifiers. Shared product entries must not contain
+Optional shared fields may include `default_branch`, `ci_policy` (`required` or
+explicit `none` for repositories without GitHub Actions checks), `role`, `scope`,
+`tracker` hints, and non-secret app identifiers. Shared product entries must not contain
 local checkout paths, private key paths, secret values, or machine-specific tool
 settings.
 

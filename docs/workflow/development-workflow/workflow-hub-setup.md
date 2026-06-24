@@ -38,6 +38,7 @@ workflow_hub:
     - name: faind-mobile-app
       github_repo: example/faind-mobile-app
       default_branch: main
+      ci_policy: required
       github_app:
         app_id: "12345"
         installation_id: "999999"
@@ -100,6 +101,18 @@ Prepare clean product checkouts with fast-forward-only behavior:
 scripts/development-workflow/hub-sync-product-repos.sh --all
 scripts/development-workflow/hub-sync-product-repos.sh --repo faind-mobile-app
 ```
+
+Bootstrap workflow readiness labels and validate CI policy on GitHub product
+repositories before delegated `/run-epic` or portfolio dispatch:
+
+```bash
+scripts/development-workflow/hub-preflight-product-repos.sh --all
+scripts/development-workflow/hub-preflight-product-repos.sh --repo faind-mobile-app
+```
+
+Product repositories with no GitHub Actions workflows must declare
+`ci_policy: none` on the hub `workflow_hub.product_repos[]` entry, or preflight
+fails with guidance before orchestration reaches delegated merge gates.
 
 Run the non-secret workflow-hub smoke fixture:
 

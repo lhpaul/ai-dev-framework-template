@@ -837,6 +837,19 @@ their own selection rules; pass context through to `workflow-next-action.sh`,
 
 ## Step 3.3: Pre-Dispatch Environment Validation (Parallel Batches Only)
 
+When `WORKFLOW_MODE` is `workflow_hub`, run product-repository preflight before
+dispatching Work Item Runners for implementation work in configured product
+repositories:
+
+```bash
+./scripts/development-workflow/hub-preflight-product-repos.sh --all --repo-root <hub-root>
+```
+
+This bootstraps workflow readiness labels on each product GitHub repository and
+validates `ci_policy` (`required` vs explicit `none`) so delegated merge gates do
+not fail only after implementation PRs are otherwise clean. Fix preflight failures
+before dispatch or record an explicit `ci_policy: none` exception in hub config.
+
 Before building the worktree per-item pre-flight (Step 3.5), run three portfolio-wide environment checks. Check 1 and Check 2 must both pass (or be explicitly acknowledged by the human) before any Work Item Runner is dispatched. Check 3 is non-blocking — surface its findings alongside the others but do not hold dispatch waiting on stale local branch cleanup.
 
 ### Check 1: Stale orphaned worktrees

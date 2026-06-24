@@ -20,6 +20,7 @@ from typing import Any
 
 
 VALID_MODES = {"single_repo", "workflow_hub", "product_repo"}
+VALID_CI_POLICIES = {"required", "none"}
 LOCAL_ONLY_KEYS = {
     "local_path",
     "checkout_path",
@@ -296,6 +297,19 @@ def mode_from_shared(shared: dict[str, Any], shared_path: Path) -> str:
     return raw_mode
 
 
+def normalize_ci_policy(raw: Any, shared_path: Path, field_path: str) -> str:
+    if raw is None or raw == "":
+        return "required"
+    if not isinstance(raw, str):
+        raise ConfigError(f"{shared_path}: {field_path} must be a string")
+    value = raw.strip()
+    if value not in VALID_CI_POLICIES:
+        raise ConfigError(
+            f"{shared_path}: {field_path} must be one of {', '.join(sorted(VALID_CI_POLICIES))}"
+        )
+    return value
+
+
 def product_repos(shared: dict[str, Any], shared_path: Path) -> list[dict[str, Any]]:
     workflow_hub = as_mapping(shared.get("workflow_hub"), shared_path, "workflow_hub")
     repos = as_list(workflow_hub.get("product_repos"), shared_path, "workflow_hub.product_repos")
@@ -325,6 +339,11 @@ def product_repos(shared: dict[str, Any], shared_path: Path) -> list[dict[str, A
             )
         repo = dict(raw)
         repo["default_branch"] = repo.get("default_branch") or "main"
+        repo["ci_policy"] = normalize_ci_policy(
+            repo.get("ci_policy"),
+            shared_path,
+            f"workflow_hub.product_repos[{index}].ci_policy",
+        )
         normalized.append(repo)
     return normalized
 
@@ -644,12 +663,16 @@ def resolve_context(args: argparse.Namespace) -> dict[str, str]:
         local_value, local_source = resolve_local_path(
             repo_root, local, local_path, str(repo["name"]), bool(args.require_local)
         )
+        github_repo = str(repo.get("github_repo") or "")
+        if not github_repo and repo.get("git_url"):
+            github_repo = github_repo_from_url(str(repo.get("git_url")))
         context.update(
             {
                 "TARGET_REPO_NAME": str(repo.get("name") or ""),
-                "TARGET_GITHUB_REPO": str(repo.get("github_repo") or ""),
+                "TARGET_GITHUB_REPO": github_repo,
                 "TARGET_GIT_URL": str(repo.get("git_url") or ""),
                 "TARGET_DEFAULT_BRANCH": str(repo.get("default_branch") or "main"),
+                "TARGET_CI_POLICY": str(repo.get("ci_policy") or "required"),
                 "TARGET_LOCAL_PATH": local_value,
                 "TARGET_LOCAL_PATH_SOURCE": local_source,
                 "TARGET_TRACKER_HINTS": flatten_tracker_hints(repo),

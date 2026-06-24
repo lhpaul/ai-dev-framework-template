@@ -32,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Local workflow config cleanup**: review-runner overrides and sync-template
   source guidance now use `.ai-dev-workflow.local.yaml` instead of the legacy
   `.tmp/template-config.json` path.
+- **Workflow hub product-repo preflight** (#1038, #1040): `hub-preflight-product-repos.sh`
+  bootstraps workflow readiness labels on configured product GitHub repositories
+  and validates `ci_policy` (`required` vs explicit `none`) before delegated
+  orchestration. Hub `workflow_hub.product_repos[]` accepts optional `ci_policy`;
+  delegated merge gates honor `ciPolicy: none` when CI checks are absent.
 
 ### Fixed
 

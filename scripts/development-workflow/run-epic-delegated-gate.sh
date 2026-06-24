@@ -186,7 +186,9 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
   (if has_label("human-checkpoint-required") and (($pendingCheckpoints | length) == 0)
    then add_reason($reasons; "human_checkpoint_required: human-checkpoint-required label is present; record satisfied or waived checkpoint evidence and remove the label before delegated merge")
    else $reasons end) as $reasons |
-  (if ((.statusChecks // []) | length) == 0
+  (if ((.ciPolicy // .ci_policy // "required") == "none")
+   then $reasons
+   elif ((.statusChecks // []) | length) == 0
    then add_reason($reasons; "required CI state is missing")
    else $reasons end) as $reasons |
   (if ((.statusChecks // []) | map(select(success_check | not)) | length) > 0
