@@ -264,7 +264,14 @@ case "$1" in
           exit 0
           ;;
         *" --json number "*)
-          [ -n "${GH_PR_LIST_NUMBER:-}" ] && printf '%s\n' "$GH_PR_LIST_NUMBER"
+          if [ -n "${GH_PR_LIST_NUMBER:-}" ]; then
+            printf '%s\n' "$GH_PR_LIST_NUMBER"
+            exit 0
+          fi
+          if [ -n "${GH_PR_LIST_HEAD:-}" ] && [[ " $* " == *" --head ${GH_PR_LIST_HEAD} "* ]]; then
+            printf '%s\n' "${GH_PR_LIST_HEAD_NUMBER:-42}"
+            exit 0
+          fi
           exit 0
           ;;
       esac
@@ -439,6 +446,25 @@ run_contains \
   "post_merge_cleanup_deletes_integration_branch" \
   "Deleted branch spec/integration-cleanup" \
   "$cleanup_output"
+
+already_deleted_output="$(
+  GH_PR_LIST_BASE=develop-workflow-hub-mode \
+  GH_PR_LIST_HEAD=spec/already-deleted \
+  GH_PR_LIST_HEAD_NUMBER=99 \
+  WORKFLOW_TARGET_GITHUB_REPO=example/workflow-hub \
+  PATH="$stub_bin:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/post-merge-cleanup.sh" \
+    --repo-root "$cleanup_repo" \
+    spec/already-deleted
+)"
+run_contains \
+  "post_merge_cleanup_continues_when_local_branch_missing" \
+  "already gone; verified merged PR #99" \
+  "$already_deleted_output"
+run_contains \
+  "post_merge_cleanup_skips_delete_when_local_branch_missing" \
+  "Skipping local branch delete" \
+  "$already_deleted_output"
 
 echo ""
 echo "Passed: $PASS_COUNT"

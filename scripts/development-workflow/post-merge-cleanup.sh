@@ -182,12 +182,39 @@ print_kv TRACKER_REPO_ROOT "$HUB_REPO_ROOT"
 
 cd "$CLEANUP_REPO_ROOT" || exit 1
 
+LOCAL_BRANCH_MISSING=0
+VERIFIED_MERGED_PR=""
 if ! git show-ref --quiet "refs/heads/$TO_DELETE"; then
-  echo "Local branch '$TO_DELETE' does not exist." >&2
-  exit 2
+  merged_pr_lookup_repo="$TARGET_GITHUB_REPO"
+  if [ -z "$merged_pr_lookup_repo" ]; then
+    if ! merged_pr_lookup_repo="$(repo_slug)"; then
+      echo "Local branch '$TO_DELETE' does not exist and merged PR lookup repo could not be resolved." >&2
+      exit 2
+    fi
+  fi
+  if ! VERIFIED_MERGED_PR="$(gh pr list \
+    --repo "$merged_pr_lookup_repo" \
+    --state merged \
+    --head "$TO_DELETE" \
+    --limit 1 \
+    --json number \
+    --jq '.[0].number // empty')"; then
+    echo "Local branch '$TO_DELETE' does not exist and merged PR lookup failed (gh command failed)." >&2
+    exit 2
+  fi
+  if [ -z "$VERIFIED_MERGED_PR" ]; then
+    echo "Local branch '$TO_DELETE' does not exist and no merged PR was found for that branch head." >&2
+    exit 2
+  fi
+  LOCAL_BRANCH_MISSING=1
+  echo "Local branch '$TO_DELETE' is already gone; verified merged PR #${VERIFIED_MERGED_PR} — continuing with fetch, base update, and tracker cleanup."
 fi
 
-echo "Post-merge cleanup: will switch to $DEVELOP_BRANCH in $CLEANUP_REPO_ROOT, update it, and delete local branch '$TO_DELETE'."
+if [ "$LOCAL_BRANCH_MISSING" -eq 1 ]; then
+  echo "Post-merge cleanup: will switch to $DEVELOP_BRANCH in $CLEANUP_REPO_ROOT (local branch '$TO_DELETE' already removed)."
+else
+  echo "Post-merge cleanup: will switch to $DEVELOP_BRANCH in $CLEANUP_REPO_ROOT, update it, and delete local branch '$TO_DELETE'."
+fi
 echo ""
 
 echo "Fetching origin..."
@@ -201,6 +228,9 @@ echo "Pulling $DEVELOP_BRANCH..."
 # --ff-only: fail cleanly if develop diverged (e.g. local commits) instead of creating a merge
 git pull --ff-only
 
+if [ "$LOCAL_BRANCH_MISSING" -eq 1 ]; then
+  echo "Skipping local branch delete for '$TO_DELETE' (already absent)."
+else
 echo "Deleting local branch '$TO_DELETE'..."
 # Check whether a worktree is still using this branch; if so, remove it first.
 # git branch -D fails with "error: cannot delete branch 'X' used by worktree" in that case.
@@ -246,6 +276,7 @@ if [ -n "$WORKTREE_PATH" ]; then
 fi
 # -D: branch is already merged on remote (squash/rebase merges don't leave tip in develop)
 git branch -D "$TO_DELETE"
+fi
 
 # --- Update tracker status and close associated GitHub issue (if any) ---
 
@@ -337,6 +368,11 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
       }
       if [ -n "$MERGED_PR" ]; then
         CLOSE_COMMENT="Closed by PR #${MERGED_PR}."
+      elif [ -n "$VERIFIED_MERGED_PR" ]; then
+        MERGED_PR="$VERIFIED_MERGED_PR"
+        CLOSE_COMMENT="Closed by PR #${MERGED_PR}."
+      fi
+      if [ -n "$MERGED_PR" ]; then
         echo "Closing issue #$ISSUE_NUMBER..."
         if gh issue close "$ISSUE_NUMBER" --comment "$CLOSE_COMMENT"; then
           echo "Reasserting issue #$ISSUE_NUMBER tracker status as Merged after close..."
@@ -366,4 +402,8 @@ else
 fi
 
 echo ""
-echo "Done. You are on $DEVELOP_BRANCH and '$TO_DELETE' has been removed locally."
+if [ "$LOCAL_BRANCH_MISSING" -eq 1 ]; then
+  echo "Done. You are on $DEVELOP_BRANCH; local branch '$TO_DELETE' was already removed."
+else
+  echo "Done. You are on $DEVELOP_BRANCH and '$TO_DELETE' has been removed locally."
+fi
