@@ -182,9 +182,14 @@ while IFS= read -r selected_repo; do
     workflow_count="$(hub_probe_ci_workflows "$github_repo")"
     printf '  CI_WORKFLOW_COUNT=%s\n' "$workflow_count"
     if [ "$workflow_count" = "-1" ]; then
-      printf '  CI_PREFLIGHT=failed\n'
-      printf '  CI_PREFLIGHT_REASON=workflow_query_failed\n'
-      repo_failed=1
+      if [ "$ci_policy" = "none" ]; then
+        printf '  CI_PREFLIGHT=ok\n'
+        printf '  CI_PREFLIGHT_NOTE=workflow_query_failed_ci_policy_none\n'
+      else
+        printf '  CI_PREFLIGHT=failed\n'
+        printf '  CI_PREFLIGHT_REASON=workflow_query_failed\n'
+        repo_failed=1
+      fi
     elif [ "$workflow_count" -eq 0 ] && [ "$ci_policy" = "required" ]; then
       printf '  CI_PREFLIGHT=failed\n'
       printf '  CI_PREFLIGHT_REASON=no_github_actions_workflows\n'

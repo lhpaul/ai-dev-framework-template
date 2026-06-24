@@ -150,6 +150,66 @@ run_not_contains() {
 }
 run_not_contains "labels_only_no_ci_probe" "CI_WORKFLOW_COUNT" "$labels_only"
 
+error_hub="$TMP_ROOT/error-hub"
+mkdir -p "$error_hub"
+git -C "$error_hub" init -q -b main
+cat > "$error_hub/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: api-error-app
+      github_repo: example/api-error-app
+      default_branch: main
+      ci_policy: none
+YAML
+cat > "$error_hub/.ai-dev-workflow.local.yaml" <<'YAML'
+product_repos:
+  - name: api-error-app
+    local_path: ../api-error-app
+YAML
+cat > "$stub_bin/gh-api-error" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+repo=""
+for ((i=1; i<=$#; i++)); do
+  if [ "${!i}" = "--repo" ]; then
+    j=$((i + 1))
+    repo="${!j}"
+  fi
+done
+if [ "$1" = "auth" ] && [ "${2:-}" = "status" ]; then
+  exit 0
+fi
+if [ "$1" = "label" ] && [ "${2:-}" = "list" ]; then
+  printf '[]\n'
+  exit 0
+fi
+if [ "$1" = "label" ] && [ "${2:-}" = "create" ]; then
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "${2:-}" in
+    repos/example/api-error-app/actions/workflows)
+      exit 1
+      ;;
+    *)
+      printf '0\n'
+      ;;
+  esac
+  exit 0
+fi
+exit 1
+STUB
+chmod +x "$stub_bin/gh-api-error"
+api_error_stub="$TMP_ROOT/api-error-bin"
+mkdir -p "$api_error_stub"
+cp "$stub_bin/gh-api-error" "$api_error_stub/gh"
+api_error_output="$(env PATH="$api_error_stub:$PATH" "$PREFLIGHT" --repo api-error-app --repo-root "$error_hub")"
+run_contains "ci_none_tolerates_workflow_query_failure" "CI_PREFLIGHT=ok" "$api_error_output"
+run_contains "ci_none_workflow_query_failure_note" "workflow_query_failed_ci_policy_none" "$api_error_output"
+
 echo ""
 echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"
