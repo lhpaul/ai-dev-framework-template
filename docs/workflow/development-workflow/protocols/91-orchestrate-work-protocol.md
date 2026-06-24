@@ -376,27 +376,44 @@ gh issue view <issue-number> --json labels --jq '.labels[].name | select(startsw
 If the label is present:
 
 1. **Derive the integration branch name**: `develop-<slug>` (replace `<slug>` with the value after `integration-branch:`).
-2. **Verify the branch exists on the remote** (output `0` = does not exist, `1` = exists):
+2. **Resolve the branch owner**. In `single_repo`, the integration branch is
+   owned by the current repository. In `workflow_hub`, it is the product
+   implementation base and must be checked against the selected product
+   repository, not the hub repository. Hub-owned spec and plan artifacts still
+   target the hub artifact base branch.
+3. **Verify the branch exists on the owning remote** (output `0` = does not
+   exist, `1` = exists):
 
    ```bash
-   BRANCH_EXISTS=$(set -o pipefail; git ls-remote origin "refs/heads/develop-<slug>" 2>/dev/null | wc -l | tr -d ' ') || {
-     echo "WARNING: failed to verify whether develop-<slug> exists on origin; skipping auto-create for this item."
+   OWNING_REPO_ROOT="<current-or-selected-product-repository-root>"
+   OWNING_REMOTE="origin"
+   BRANCH_EXISTS=$(set -o pipefail; git -C "$OWNING_REPO_ROOT" ls-remote "$OWNING_REMOTE" "refs/heads/develop-<slug>" 2>/dev/null | wc -l | tr -d ' ') || {
+     echo "WARNING: failed to verify whether develop-<slug> exists on the owning remote; skipping auto-create for this item."
      continue  # or return 1 / exit 1 depending on surrounding loop/function context
    }
    ```
 
-3. **If the branch does not exist** (`BRANCH_EXISTS` is `0`), create and push it from `develop`:
+4. **If the branch does not exist** (`BRANCH_EXISTS` is `0`), create and push it
+   from the owning repository's default implementation branch:
 
    ```bash
-   git fetch origin develop
-   git checkout -B develop-<slug> origin/develop
-   git push -u origin develop-<slug>
-   git switch develop  # return to develop immediately after creation
+   OWNING_REPO_ROOT="<current-or-selected-product-repository-root>"
+   OWNING_REMOTE="origin"
+   DEFAULT_IMPLEMENTATION_BRANCH="<default-implementation-branch>"
+   git -C "$OWNING_REPO_ROOT" fetch "$OWNING_REMOTE" "$DEFAULT_IMPLEMENTATION_BRANCH"
+   git -C "$OWNING_REPO_ROOT" checkout -B develop-<slug> "$OWNING_REMOTE/$DEFAULT_IMPLEMENTATION_BRANCH"
+   git -C "$OWNING_REPO_ROOT" push -u "$OWNING_REMOTE" develop-<slug>
+   git -C "$OWNING_REPO_ROOT" switch "$DEFAULT_IMPLEMENTATION_BRANCH"
    ```
 
-   Log: `INFO: created integration branch develop-<slug> from origin/develop for sub-item #<issue-number>.`
+   Log: `INFO: created integration branch develop-<slug> from origin/<default-implementation-branch> for sub-item #<issue-number>.`
 
-4. **Record the base branch**: store `BASE_BRANCH=develop-<slug>` and pass it to every stage-agent dispatch for this item. All PRs opened for this sub-item (spec, plan, implementation, fix, refactor) must target `develop-<slug>`.
+5. **Record the implementation base branch**: store `BASE_BRANCH=develop-<slug>`
+   and pass it to stage-agent dispatch metadata. In `single_repo`, spec, plan,
+   implementation, fix, and refactor PRs target `develop-<slug>`. In
+   `workflow_hub`, only product implementation, fix, refactor, review, CI, merge,
+   and cleanup actions use `develop-<slug>` in the selected product repository;
+   hub-owned spec and plan PRs target the hub artifact base branch.
 
 **Single-item exemption**: When the item carries no `integration-branch:*` label, skip this check. The default base branch (`develop`) applies.
 
@@ -410,6 +427,7 @@ Before any mutation-oriented action, resolve and state repository ownership:
 - local path or remote identity when available
 - mutation target for file edits, branch creation, commits, PR creation,
   reviewer-loop execution, CI polling, and cleanup
+- base branch validation target
 
 Missing mode or explicit `single_repo` keeps the current repository as the owner
 and does not require `--repo`. In `workflow_hub`, specs and plans remain
@@ -417,6 +435,14 @@ hub-owned unless a future contract says otherwise. Product implementation work
 must target the selected product repository. If the selected product repository
 is missing or ambiguous, stop before file mutation, branch creation, commit, or
 implementation PR creation.
+
+In `workflow_hub`, do not validate a product execution base such as `develop`
+against the hub repository before product repository selection. Hub-owned spec
+and plan branches use the hub artifact base branch, typically the hub
+repository default branch. Product implementation branches use the selected
+product repository checkout and that product repository's resolved base branch
+(`BASE_BRANCH` from the run-epic scope when present, otherwise the product
+entry's `default_branch`).
 
 ### Spec-Plan ordering gate
 
@@ -428,11 +454,13 @@ This gate applies whenever the spec and plan are written in the same agent run (
 
 1. Write the plan content locally on the plan branch (the plan may be written proactively, but it must not be pushed or a PR opened yet).
 2. Open the spec PR and advance it to `ready-for-human-review` following the full PR readiness chain (Step 7a, Step 7, Step 8).
-3. Stop and report to the orchestrator with the following structured message:
+3. Resolve `EXPECTED_SPEC_BASE`: in `workflow_hub`, use the hub artifact base
+   branch; otherwise use `BASE_BRANCH` when present, falling back to `develop`.
+4. Stop and report to the orchestrator with the following structured message:
 
-   > Spec PR #N is `ready-for-human-review`. Plan is written and staged locally on branch `implementation-plan/<slug>`, but the plan PR will not be opened until the spec PR is confirmed merged to `develop` (or `develop-<slug>` when the integration-branch context applies). On the next dispatch (after spec merge is confirmed), push the plan branch and open the plan PR.
+   > Spec PR #N is `ready-for-human-review`. Plan is written and staged locally on branch `implementation-plan/<slug>`, but the plan PR will not be opened until the spec PR is confirmed merged to `<expected-spec-base>`. On the next dispatch (after spec merge is confirmed), push the plan branch and open the plan PR.
 
-4. On the next dispatch (after spec merge is confirmed via `gh pr view <spec_pr> --json state` returning `MERGED`), push the plan branch and open the plan PR. The plan content was written in the prior run; do not regenerate it.
+5. On the next dispatch (after spec merge is confirmed via `gh pr view <spec_pr> --json state` returning `MERGED`), push the plan branch and open the plan PR. The plan content was written in the prior run; do not regenerate it.
 
 **Verification before opening a plan PR:**
 
@@ -440,10 +468,11 @@ Before calling `gh pr create` for any `implementation-plan/*` branch, confirm th
 
 ```bash
 # Check whether the spec PR is merged into the expected base branch.
-# EXPECTED_BASE is "develop" by default, or "develop-<slug>" when integration-branch:<slug> is present.
+# EXPECTED_SPEC_BASE is the hub artifact base in workflow_hub mode; otherwise it
+# is "develop" by default, or "develop-<slug>" when integration-branch:<slug> is present.
 # Substitute <spec_pr_number> and <expected-base> with actual values before running:
 gh pr view <spec_pr_number> --json state,baseRefName \
-  --jq 'select(.state=="MERGED" and .baseRefName=="<expected-base>") | "OK"'
+  --jq 'select(.state=="MERGED" and .baseRefName=="<expected-spec-base>") | "OK"'
 # Expected output: OK
 # If no output: the spec PR is not merged into the expected base branch — do not open the plan PR
 ```
@@ -452,7 +481,11 @@ If the spec PR is still `OPEN`, apply the ordering gate above and stop. If the s
 
 **Exception — Refactor items (no spec):** Items following the Refactor path (`02-generate-implementation-plan-protocol.md` without a preceding spec step) are exempt from this gate. There is no spec PR to wait for.
 
-(When the item carries an `integration-branch:<slug>` label, "spec PR merged to the integration branch" means merged to `develop-<slug>`, not to `develop`. The ordering gate applies identically; only the target branch changes. Use `develop-<slug>` as `<expected-base>` in the verification command above.)
+(When the item carries an `integration-branch:<slug>` label in `single_repo`,
+"spec PR merged to the integration branch" means merged to `develop-<slug>`, not
+to `develop`. In `workflow_hub`, hub-owned spec and plan PRs use the hub
+artifact base instead, even when product implementation work uses
+`develop-<slug>`.)
 
 ### Dependency check
 
@@ -483,18 +516,25 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 
 2. Determine the appropriate base branch for the worktree:
 
-   **If `BASE_BRANCH` is present in the handoff metadata** (set by the Portfolio Orchestrator when the item carries an `integration-branch:<slug>` label), use `origin/<BASE_BRANCH>` as the worktree base for all item types except `hotfix/*`. This overrides the default table below.
+   **If `BASE_BRANCH` is present in the handoff metadata** (set by the
+   Portfolio Orchestrator when the item carries an `integration-branch:<slug>`
+   label or by run-epic policy), use `origin/<BASE_BRANCH>` as the base for
+   product implementation, fix, and refactor worktrees except for `hotfix/*`.
+   In `workflow_hub`, this branch must be checked in the selected product
+   repository, not in the hub repository. Hub-owned `spec/*` and
+   `implementation-plan/*` worktrees ignore the product `BASE_BRANCH` and use
+   `origin/<hub-artifact-base-branch>` instead.
 
    **If `BASE_BRANCH` is absent**, use the default table:
 
 | Item type                     | Base branch      |
 | ----------------------------- | ---------------- |
-| Feature (`feature/`)          | `origin/develop` |
-| Refactor (`refactor/`)        | `origin/develop` |
-| Fast Track fix (`fix/`)       | `origin/develop` |
+| Feature (`feature/`)          | `origin/<product-default-branch>` in `workflow_hub`, otherwise `origin/develop` |
+| Refactor (`refactor/`)        | `origin/<product-default-branch>` in `workflow_hub`, otherwise `origin/develop` |
+| Fast Track fix (`fix/`)       | `origin/<product-default-branch>` in `workflow_hub`, otherwise `origin/develop` |
 | Hotfix (`hotfix/`)            | `origin/main`    |
-| Spec (`spec/`)                | `origin/develop` |
-| Plan (`implementation-plan/`) | `origin/develop` |
+| Spec (`spec/`)                | `origin/<hub-artifact-base-branch>` in `workflow_hub`, otherwise `origin/develop` |
+| Plan (`implementation-plan/`) | `origin/<hub-artifact-base-branch>` in `workflow_hub`, otherwise `origin/develop` |
 
 **Note:** Use `origin/<base>` (remote tracking) rather than local `<base>` to avoid git worktree conflicts if the local base branch is already checked out elsewhere.
 

@@ -140,6 +140,19 @@ require_gh
 repo="$(repo_slug)"
 owner="${repo%%/*}"
 repo_name="${repo#*/}"
+workflow_mode_context="$(workflow_repository_mode)"
+workflow_mode="$(workflow_context_value WORKFLOW_MODE "$workflow_mode_context")"
+base_branch_applies_to="current_repository_prs"
+base_branch_validation_note="In single_repo mode, validate the resolved base branch against the current repository remote."
+case "$workflow_mode" in
+  workflow_hub)
+    base_branch_applies_to="product_implementation_prs"
+    base_branch_validation_note="In workflow_hub mode, do not validate this base against the hub remote before selecting the product repository; specs and plans stay hub-owned and use the hub artifact base."
+    ;;
+  product_repo)
+    base_branch_validation_note="In product_repo mode, validate the resolved implementation base against the current product repository remote; specs and plans remain hub-owned."
+    ;;
+esac
 
 tmp_dir="$(mktemp -d)"
 items_file="$tmp_dir/items.jsonl"
@@ -572,6 +585,9 @@ summary_json="$(jq -n \
   --arg itemInput "$items_arg" \
   --arg baseBranch "$base_branch" \
   --arg baseReason "$base_reason" \
+  --arg workflowMode "$workflow_mode" \
+  --arg baseBranchAppliesTo "$base_branch_applies_to" \
+  --arg baseBranchValidationNote "$base_branch_validation_note" \
   --argjson delegateReview "$delegate_review" \
   --argjson mayMerge "$may_merge" \
   --arg mayStartBacklog "$may_start_backlog" \
@@ -585,6 +601,9 @@ summary_json="$(jq -n \
     baseBranch: (if $baseBranch == "" then null else $baseBranch end),
     baseAmbiguous: ($baseBranch == ""),
     baseReason: $baseReason,
+    workflowMode: $workflowMode,
+    baseBranchAppliesTo: $baseBranchAppliesTo,
+    baseBranchValidationNote: $baseBranchValidationNote,
     policy: {
       delegateReview: ($delegateReview == 1),
       mayMerge: ($mayMerge == 1),
@@ -623,6 +642,9 @@ if [ "$(printf '%s\n' "$summary_json" | jq -r '.emptyEpicScope')" = "true" ]; th
   printf 'Native sub-issues: none resolved for epic #%s\n' "$epic_number"
 fi
 printf 'Base branch: %s (%s)\n' "${base_branch:-ambiguous}" "$base_reason"
+printf 'Workflow mode: %s\n' "$workflow_mode"
+printf 'Base applies to: %s\n' "$base_branch_applies_to"
+printf 'Base validation note: %s\n' "$base_branch_validation_note"
 printf 'Delegated review: %s\n' "$(printf '%s\n' "$summary_json" | jq -r '.policy.delegateReview')"
 printf 'May merge: %s\n' "$(printf '%s\n' "$summary_json" | jq -r '.policy.mayMerge')"
 printf 'May start Backlog: %s\n' "$(printf '%s\n' "$summary_json" | jq -r '.policy.mayStartBacklog')"

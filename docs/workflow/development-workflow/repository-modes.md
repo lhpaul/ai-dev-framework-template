@@ -61,6 +61,20 @@ protocols, hub docs, or hub-owned orchestration scripts opens its code PR in the
 hub. A product implementation opens its code PR in the target product
 repository.
 
+## Base Branch Ownership
+
+Base branch checks must run against the repository that owns the next mutating
+artifact:
+
+- Hub-owned spec and plan PRs validate against the hub repository's artifact
+  base branch, typically the hub default branch.
+- Product implementation PRs validate against the selected product repository's
+  implementation base branch, usually the product entry's `default_branch` or a
+  run-scoped integration branch such as `develop-<slug>`.
+- A `/run-epic --base <branch>` override in `workflow_hub` mode describes the
+  product implementation base. It must not be used as a precondition that the
+  hub repository itself has a branch with the same name.
+
 ## Orchestration Ownership
 
 Workflow orchestration scripts keep planning and tracker state in the hub while
