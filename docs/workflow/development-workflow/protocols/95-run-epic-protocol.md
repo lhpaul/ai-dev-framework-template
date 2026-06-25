@@ -17,19 +17,13 @@ resolved scope.
 
 ## Routing From /run-work
 
-`/run-work <epic-like target>` (or `/run-work --epic <n>`) enters this protocol
-after the routing classifier (`scripts/development-workflow/run-work-router.sh`,
-Protocol 96) determines the routing mode is `epic`. The routing-decision record
-and resolved epic target are available as context.
+`/run-work` does **not** enter this protocol for epic targets. Protocol 96 returns
+`redirect_epic` with `REDIRECT_COMMAND` (e.g. `/run-epic --epic <n>`) and performs
+no mutation. Re-invoke `/run-epic` directly.
 
 **Read-only phase before mutation** (BR6, AC4): The scope resolver must complete
 before any item is created, reviewed, merged, or cleaned up. This is the existing
 read-only contract for this protocol and is not changed by routing.
-
-**Epic entry via `/run-work`**: When an operator mis-invokes `/run-work` with an
-epic-like target, Protocol 96 returns `redirect_epic` with guidance to `/run-epic`
-(no mutation under `/run-work`). Direct `/run-epic` invocations enter this protocol
-normally.
 
 `/run-epic` invoked directly (without `/run-work`) is a **compatibility/advanced
 alias** that also enters this protocol. Its behavior is unchanged.
@@ -41,7 +35,7 @@ for the full routing specification.
 
 ## Overview
 
-Use this protocol when a human invokes `/run-epic`, `$run-epic`, `/run-work <epic-like target>`, or asks to run
+Use this protocol when a human invokes `/run-epic`, `$run-epic`, or asks to run
 an epic / bounded item list as a delegated workflow batch.
 
 The resolver supports exactly one scope source:

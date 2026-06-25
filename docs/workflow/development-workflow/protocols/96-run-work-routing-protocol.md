@@ -6,8 +6,9 @@
 This protocol is the canonical specification for how `/run-work` classifies an
 invocation into a routing mode, emits a routing-decision record, and hands off
 to the appropriate underlying protocol. It is read-only: it defines a
-deterministic classifier, not an execution protocol. Mutation begins only after
-handoff to Protocol 90, 91, or 95.
+deterministic classifier, not an execution protocol. Mutation under `/run-work`
+begins only after handoff to Protocol 90 (`no_target_scan` or `explicit_list`).
+Redirect modes perform no mutation.
 
 ---
 
