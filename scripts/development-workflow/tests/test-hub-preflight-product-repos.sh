@@ -232,6 +232,29 @@ bad_slug_output="$(env PATH="$stub_bin:$PATH" "$PREFLIGHT" --repo bad-slug-app -
 run_contains "missing_github_slug_fails" "STATUS=failed" "$bad_slug_output"
 run_contains "missing_github_slug_reason" "missing_github_repo_slug" "$bad_slug_output"
 
+invalid_count_stub="$TMP_ROOT/invalid-count-bin"
+mkdir -p "$invalid_count_stub"
+cat > "$invalid_count_stub/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+repo=""
+for ((i=1; i<=$#; i++)); do
+  if [ "${!i}" = "--repo" ]; then
+    j=$((i + 1))
+    repo="${!j}"
+  fi
+done
+if [ "$1" = "auth" ] && [ "${2:-}" = "status" ]; then exit 0; fi
+if [ "$1" = "label" ] && [ "${2:-}" = "list" ]; then printf '[]\n'; exit 0; fi
+if [ "$1" = "label" ] && [ "${2:-}" = "create" ]; then exit 0; fi
+if [ "$1" = "api" ] && [ "${2:-}" = "repos/example/mobile-app/actions/workflows" ]; then printf '\n'; exit 0; fi
+exit 1
+STUB
+chmod +x "$invalid_count_stub/gh"
+invalid_count_output="$(env PATH="$invalid_count_stub:$PATH" "$PREFLIGHT" --repo mobile-app --repo-root "$hub_dir" 2>&1)" || true
+run_contains "invalid_workflow_count_fails_required" "CI_PREFLIGHT=failed" "$invalid_count_output"
+run_contains "invalid_workflow_count_reason" "workflow_query_invalid" "$invalid_count_output"
+
 echo ""
 echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"
