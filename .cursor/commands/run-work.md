@@ -1,32 +1,34 @@
 ---
-description: Batch-orchestrate and supervise multiple developments. Reads current state from the issue tracker and/or dev folders, builds safe parallel batches, and keeps each selected item moving until it is waiting on a human, blocked, or escalated. Usage: /run-work [optional filter, e.g. "only spec stage" or "feature-slug"]
+description: "Portfolio parallel orchestration only: no-target scan or explicit multi-item batches (Protocol 90). Single targets redirect to /run-item; epics redirect to /run-epic. Usage: /run-work [<target> ...] — omit targets for portfolio scan; supply two or more for a hard bounded batch."
 ---
 
 # Cursor Command: Run Work
 
-Follow the batch orchestration protocol exactly as defined in:
+`/run-work` is **portfolio parallel orchestration only**. It does not advance a
+single item or epic directly.
+
+| Invocation | Routing mode | Action |
+| ---------- | ------------ | ------ |
+| No target | `no_target_scan` | Protocol 90 — propose largest safe parallel batch |
+| Two or more targets | `explicit_list` | Protocol 90 — bounded portfolio batch |
+| One non-epic target | `redirect_item` | **Stop** — re-invoke `/run-item <target>` |
+| Epic-like / `--epic` | `redirect_epic` | **Stop** — re-invoke `/run-epic --epic <n>` |
+
+Run the classifier first (read-only):
+
+```bash
+./scripts/development-workflow/run-work-router.sh [<target>...] [--json]
+```
+
+When `REDIRECT_COMMAND` is present, emit redirect guidance and perform **no**
+mutation under `/run-work`.
+
+For single-item work use `/run-item`. For bounded epic work use `/run-epic`.
+
+Follow Protocol 90 when mode is `no_target_scan` or `explicit_list`:
 
 `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
 
-## Tracker Classification
+Routing specification: `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
 
-When `issue_tracker.provider: github_projects` is configured, the GitHub
-Projects **Type** field is the source of truth for work-item classification:
-`Feature`, `Bug`, `Refactor`, or `Workflow`. Use `Workflow` for
-AI-development-framework/process/tooling items. Do not use legacy repository
-classification labels (`workflow`, `bug`, `enhancement`, or `type:*`) for new
-automation; keep operational labels such as `ready-for-human-review`,
-`needs-fixes`, `ready-for-regression`, `reviewer-failed`, and
-`integration-branch:<slug>`.
-
-Key responsibilities:
-
-- Read current state from the issue tracker (if configured) and `docs/specs/developments/`
-- When using an issue tracker, read the current brief per `docs/workflow/development-workflow/integrations/issue-tracker.md`
-- Respect dependencies declared in specs
-- Prioritize: due within 2 weeks → priority level → creation date
-- Flag conflicts to the human rather than choosing silently
-- Use the helper scripts in `scripts/development-workflow/` to inspect state, plan batches, resume partial work, poll automated review, and poll CI
-- In `workflow_hub`, include selected product repository context in implementation handoffs; missing mode or `single_repo` does not require `--repo`
-- Dispatch `/item-orchestrator` for each selected item when possible
-- Report a summary of what was started, what is ready for review, what was serialized, and what is blocked
+In `workflow_hub`, include selected product repository context in implementation handoffs; preserve selected product repository context when dispatching item work.
