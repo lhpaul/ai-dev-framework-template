@@ -96,6 +96,25 @@ The Work Item Runner:
 3. Executes creator, review-gate, PR, CI, and automated-review work as one continuous control loop
 4. Stops only when the item is truly waiting on a human, blocked, or escalated
 
+### Bounded prelude (read-only gate)
+
+When invoked through **`/run-item`** or the `/run-item-work` compatibility alias
+with bounded scope flags, run the shared bounded prelude **before** any artifact
+mutation in Step 1 or later:
+
+```bash
+./scripts/development-workflow/run-bounded-prelude.sh \
+  --original-command "<invocation>" \
+  <scope flags> \
+  [--delegate-review ...] \
+  --json
+```
+
+See [`bounded-run-prelude.md`](../bounded-run-prelude.md). If
+`policyRecommendation.requiresConfirmation` is true, or guardrails cannot be
+read (`guardrails_config_unreadable`), stop before mutation per
+`guardrails-enforcement.md`.
+
 ### Persistent orchestration contract
 
 A single Work Item Runner run should keep advancing the selected item until it reaches one of these **terminal conditions**:
