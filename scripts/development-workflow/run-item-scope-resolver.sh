@@ -99,13 +99,13 @@ is_epic_issue() {
   if ! have_cmd gh; then
     return 1
   fi
-  local sub_count issue_type
-  sub_count="$(gh issue view "$num" --json subIssues --jq '.subIssues | length' 2>/dev/null)" || return 1
+  local sub_count=0 issue_type=0
+  sub_count="$(gh issue view "$num" --json subIssues --jq '.subIssues | length' 2>/dev/null)" || sub_count=0
   case "${sub_count:-}" in
     ''|*[!0-9]*) sub_count="0" ;;
   esac
   issue_type="$(gh issue view "$num" --json labels \
-    --jq '[.labels[].name] | map(ascii_downcase) | map(select(. == "epic")) | length' 2>/dev/null)" || issue_type="0"
+    --jq '[.labels[].name] | map(ascii_downcase) | map(select(. == "epic")) | length' 2>/dev/null)" || issue_type=0
   case "${issue_type:-}" in
     ''|*[!0-9]*) issue_type="0" ;;
   esac
