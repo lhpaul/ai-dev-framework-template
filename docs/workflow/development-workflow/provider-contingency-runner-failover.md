@@ -69,9 +69,10 @@ gh pr view <pr_number> --json isDraft,labels,comments,statusCheckRollup
 
 Interpret signals (full table in [`agent-model-config.md`](agent-model-config.md#detection-checklist)):
 
-- **Non-draft + `ready-for-regression` + no reviewer loop summary** → Step 7 incomplete; run `/run-reviewer-loop`.
+- **`ready-for-human-review` + no reviewer loop summary** → likely incomplete Step 7; run `/run-item-work --pr <n>` or `/run-reviewer-loop` (**exception:** Step 7 `skipped` when no review platforms are configured — no summary is posted by design).
+- **`ready-for-regression` only + no reviewer loop summary** → not automatically incomplete; Step 7 can exit `skipped` (no platforms), then Step 7b applies the label with no summary. Use `workflow-next-action.sh` before rerunning `/run-reviewer-loop`.
 - **`needs-fixes` present** → address blocking findings or rerun fixer path before readiness labels.
-- **CI failing or pending** → complete Step 8 (`pr-ci-loop.sh`) after Step 7 is clean.
+- **CI failing or pending** → complete Step 8 (`pr-ci-loop.sh`) after Step 7 is clean or legitimately skipped.
 
 Then re-invoke:
 
