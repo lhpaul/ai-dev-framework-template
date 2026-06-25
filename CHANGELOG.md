@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Parallel implementation policy for `/run-work` batches** (#1052): `workflow-batch-lanes.sh`
+  assigns stage lanes with default implementation serialization (`max_concurrent: 1`);
+  `workflow-batch-plan.sh` emits `LOCAL_RUNTIME=none|exclusive` for implementation items;
+  Protocol 90 Step 3 and `guardrails.md` document optional `guardrails.parallelism` caps.
+- **Portfolio-only `/run-work` router** (#1051): `run-work-router.sh` and Protocol 96
+  now support only `no_target_scan` and `explicit_list` under `/run-work`; single
+  and epic targets emit `redirect_item` / `redirect_epic` with `REDIRECT_COMMAND`
+  to `/run-item` and `/run-epic`.
+- **`/run-item` command surfaces** (#1050): adds Cursor, Claude Code, and Codex
+  (`run-item` skill) as the canonical single-item bounded command; marks
+  `/run-item-work` as a deprecated compatibility alias and aligns `item-orchestrator`
+  with the shared bounded prelude + Protocol 91 contract.
+- **Shared bounded run prelude** (#1049): `run-bounded-prelude.sh` unifies scope
+  resolution, repository guardrails snapshot, and policy/checkpoint recommendation
+  for `/run-item` and `/run-epic`; adds `run-item-scope-resolver.sh` and extends
+  `run-epic-policy-recommender.sh` for `scopeSource=item`.
 - **Human checkpoint lifecycle documentation** (#1024): adds an end-to-end
   smoke-test runbook for checkpoint recommendation, readiness labels,
   satisfaction detection, delegated gate blocking, batch merge handling, audit

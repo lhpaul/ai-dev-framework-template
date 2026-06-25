@@ -182,11 +182,14 @@ if ! printf '%s\n' "$scope_json" | jq -e '
   error_exit "scope JSON must include object fields groups and policy plus array field items"
 fi
 
-config_file="$(workflow_config_file)"
-if ! reviewers="$(workflow_config_review_on_draft_runner "$config_file")"; then
-  error_exit "failed to read review.on_draft.runner from workflow config: $config_file"
+config_file=""
+reviewer_count=0
+if config_file="$(workflow_effective_config_file 2>/dev/null)"; then
+  if ! reviewers="$(workflow_config_review_on_draft_runner "$config_file")"; then
+    error_exit "failed to read review.on_draft.runner from workflow config: $config_file"
+  fi
+  reviewer_count="$(printf '%s\n' "$reviewers" | sed '/^$/d' | wc -l | tr -d ' ')"
 fi
-reviewer_count="$(printf '%s\n' "$reviewers" | sed '/^$/d' | wc -l | tr -d ' ')"
 
 recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
   --arg originalCommand "$original_command" \
@@ -332,12 +335,16 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
   def value_string($override; $recommended):
     if $override == "" then $recommended else $override end;
   def command_prefix:
-    if ($originalCommand | test("^/run-epic(\\s|$)")) then "/run-epic" else "$run-epic" end;
+    if ($originalCommand | test("^/run-item(\\s|$)")) then "/run-item"
+    elif ($originalCommand | test("^/run-epic(\\s|$)")) then "/run-epic"
+    else "$run-epic" end;
   def canonical_scope_command:
     if (.scopeSource // "") == "epic" and (.epicNumber // null) != null then
-      command_prefix + " issues " + (.epicNumber | tostring)
+      command_prefix + " --epic " + (.epicNumber | tostring)
     elif (.scopeSource // "") == "items" and ((.itemInput // "") | tostring | length) > 0 then
       command_prefix + " --items " + ((.itemInput // "") | tostring)
+    elif (.scopeSource // "") == "item" and ((.itemInput // "") | tostring | length) > 0 then
+      "/run-item " + ((.itemInput // "") | tostring)
     else
       $originalCommand
     end;

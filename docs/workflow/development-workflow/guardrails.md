@@ -129,6 +129,40 @@ guardrails:
 
 ---
 
+## Portfolio parallelism (optional)
+
+The `parallelism` block under `guardrails` configures stage-lane caps for
+`/run-work` portfolio batches (Protocol 90 Step 3). It does not change per-stage
+protocol contracts — only how many items per lane may dispatch concurrently.
+
+| Field | Type | Default | Meaning |
+| ----- | ---- | ------- | ------- |
+| `max_concurrent_by_stage.spec` | integer | `0` (unlimited) | Max concurrent spec-lane items in one batch proposal. |
+| `max_concurrent_by_stage.plan` | integer | `0` (unlimited) | Max concurrent plan-lane items. |
+| `max_concurrent_by_stage.review` | integer | `0` (unlimited) | Max concurrent review-lane items. |
+| `max_concurrent_by_stage.implementation` | integer | `1` | Max concurrent implementation items (conservative default). |
+
+`0` means no cap for that lane. Higher implementation concurrency requires explicit
+configuration; `workflow-batch-plan.sh` may still emit `LOCAL_RUNTIME=exclusive` to
+hold items that would contend for local dev servers, databases, or ports even when
+the lane cap allows more than one implementation item.
+
+```yaml
+guardrails:
+  mode: delegated
+  parallelism:
+    max_concurrent_by_stage:
+      spec: 0
+      plan: 0
+      review: 0
+      implementation: 2
+```
+
+Resolved lane assignments and hold reasons are emitted by
+`scripts/development-workflow/workflow-batch-lanes.sh`.
+
+---
+
 ## Required Evidence
 
 The `required_evidence` field on each stage lists named evidence items that must

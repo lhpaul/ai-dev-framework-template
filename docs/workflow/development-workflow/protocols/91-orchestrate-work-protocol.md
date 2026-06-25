@@ -16,20 +16,15 @@ This protocol may be entered in either of two ways:
 
 ## Routing From /run-work
 
-`/run-work <single-non-epic-target>` enters this protocol after the routing
-classifier (`scripts/development-workflow/run-work-router.sh`, Protocol 96)
-determines the routing mode is `single_item`.
+`/run-work` with a **single** non-epic target is **not** portfolio scope. The
+routing classifier (`run-work-router.sh`, Protocol 96) returns `redirect_item`
+with `REDIRECT_COMMAND=/run-item <target>` and performs no mutation. Re-invoke
+`/run-item` instead of continuing in Protocol 91 under `/run-work`.
 
-**`single_item` → `epic` upgrade** (AC5): When a single target resolves to an
-epic-like issue (one with child items or native sub-issues), the router upgrades
-from `single_item` to `epic` and routes to `95-run-epic-protocol.md` instead.
+Epic-like single targets return `redirect_epic` with guidance to `/run-epic`.
 
-**Existing scope guard applies** (AC2): The hard-bounded scope guard in Step 1
-already prevents out-of-scope mutations for item-specific invocations. No
-additional scope narrowing is needed for the `single_item` routing case.
-
-`/run-item-work` invoked directly (without `/run-work`) is a **compatibility/
-advanced alias** that also enters this protocol. Its behavior is unchanged.
+`/run-item-work` invoked directly (without `/run-work`) is a **deprecated
+compatibility alias** for `/run-item` with identical behavior.
 
 See `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
 for the full routing specification.
@@ -95,6 +90,32 @@ The Work Item Runner:
 2. Determines the next deterministic action for that item
 3. Executes creator, review-gate, PR, CI, and automated-review work as one continuous control loop
 4. Stops only when the item is truly waiting on a human, blocked, or escalated
+
+### Bounded prelude (read-only gate)
+
+When invoked through **`/run-item`** or the `/run-item-work` compatibility alias
+with bounded scope flags, run the shared bounded prelude **before** any artifact
+mutation in Step 1 or later:
+
+```bash
+./scripts/development-workflow/run-bounded-prelude.sh \
+  --original-command "<invocation>" \
+  <scope flags> \
+  [--delegate-review ...] \
+  --json
+```
+
+See [`bounded-run-prelude.md`](../bounded-run-prelude.md). If
+`policyRecommendation.requiresConfirmation` is true, or guardrails cannot be
+read (`guardrails_config_unreadable`), stop before mutation per
+`guardrails-enforcement.md`.
+
+**Portfolio batch dispatch (`BATCH_CONTEXT=true`)**: When the Portfolio
+Orchestrator dispatches this protocol from Protocol 90, the bounded prelude is
+**not** re-run per item — batch approval in Protocol 90 Step 2 covers tracker
+mutation and human confirmation before dispatch. Operators who need per-item
+policy confirmation must invoke **`/run-item`** directly (which runs the prelude)
+rather than relying on portfolio batch dispatch alone.
 
 ### Persistent orchestration contract
 

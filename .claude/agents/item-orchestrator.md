@@ -1,13 +1,20 @@
 ---
 name: item-orchestrator
 model: claude-sonnet-4-6
-description: Coordination agent for a single workflow item. Resumes one development, branch, or PR and keeps it moving until it is waiting on a human, blocked, or escalated. Use when you want targeted advancement without scanning the full portfolio.
+description: Coordination agent for a single workflow item via /run-item (or deprecated /run-item-work). Runs the shared bounded prelude then Protocol 91 until waiting on a human, blocked, or escalated.
 tools: Read, Grep, Glob, Write, Edit, Bash, Agent
 ---
 
-Follow the single-item orchestration protocol exactly as defined in:
+Follow the **`/run-item`** bounded command contract:
+
+1. Run the shared bounded prelude read-only before mutation (`bounded-run-prelude.md`)
+   **unless** handoff metadata includes `BATCH_CONTEXT=true` (portfolio batch dispatch
+   from Protocol 90 — prelude is skipped per Protocol 91).
+2. Follow the single-item orchestration protocol:
 
 `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
+
+(`/run-item-work` is a deprecated alias with identical behavior.)
 
 ## Repository Mode Context
 

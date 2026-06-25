@@ -62,9 +62,9 @@ Protocol 96) determines the routing mode is `no_target_scan` or `explicit_list`.
 - **`explicit_list`**: Two or more explicit targets were supplied as a hard
   bounded scope; the orchestrator runs that exact bounded set.
 
-When the routing mode is `single_item`, the classifier routes to
-`91-orchestrate-work-protocol.md` instead. When the routing mode is `epic`,
-the classifier routes to `95-run-epic-protocol.md` instead.
+When the routing mode is `redirect_item` or `redirect_epic`, `/run-work` performs
+**no mutation**. The classifier emits `REDIRECT_COMMAND` pointing to `/run-item`
+or `/run-epic`. Use those bounded commands instead.
 
 See `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
 for the full routing specification.
@@ -602,6 +602,48 @@ See [`linear.md`](../integrations/linear.md) for the full reference table.
 ## Step 3: Build Parallel Batches
 
 Group dispatch-eligible items and approved start-batch items into explicit batches. If Backlog items have only been proposed and not yet approved, do not continue to tracker mutation or dispatch for those items.
+
+### Stage-aware batch lanes (default implementation serialization)
+
+Before tool-fix ordering and file-level conflict checks, assign each candidate item
+to a **stage lane** and apply `max_concurrent_by_stage` caps:
+
+| Lane            | Typical `NEXT_ACTION` values                                      | Default max concurrent |
+| --------------- | ----------------------------------------------------------------- | ---------------------- |
+| `spec`          | `run-spec-review-and-open-pr`                                     | unlimited (`0`)        |
+| `plan`          | `write-plan`, `run-plan-review-and-open-pr`                         | unlimited (`0`)        |
+| `review`        | PR readiness / review actions (`resolve-pr-readiness`, etc.)      | unlimited (`0`)        |
+| `implementation`| `implement`, `resolve-development-pr`                             | **1**                  |
+
+**Helper**: run `workflow-batch-lanes.sh` on `workflow-batch-plan.sh` output (or use
+`--scan`) to emit `STAGE_LANE`, `DISPATCH=proposed|held`, `HOLD_REASON`, and
+`HELD_SUMMARY` lines per item. The script header reports resolved lane caps
+(`MAX_CONCURRENT_*`).
+
+**Configuration** (optional): declare overrides under `guardrails.parallelism` in
+`.ai-dev-workflow.yaml` (documented in `guardrails.md`). Example:
+
+```yaml
+guardrails:
+  parallelism:
+    max_concurrent_by_stage:
+      spec: 0
+      plan: 0
+      review: 0
+      implementation: 2
+```
+
+A value of `0` means unlimited for that lane.
+
+**`LOCAL_RUNTIME` signal**: `workflow-batch-plan.sh` emits `LOCAL_RUNTIME=none|exclusive`
+for implementation items based on plan-document heuristics (local dev server, port,
+database migration signals). When any proposed implementation item is `exclusive`,
+hold additional proposed implementation items with reason `local runtime exclusivity`.
+Git worktree isolation does **not** imply port/DB isolation — document this in batch
+proposals when implementation items are held.
+
+**Batch proposal output** must list held items with lane-cap, runtime exclusivity,
+file-overlap, or tool-fix reasons so operators see why work was deferred.
 
 **Safe to batch together**:
 

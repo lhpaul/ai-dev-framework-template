@@ -33,6 +33,32 @@ parallel_safe_for_action() {
   esac
 }
 
+# classify_local_runtime <development-folder-path>
+#
+# Heuristic classifier for implementation items that likely require an
+# exclusive local dev server, database, or port-bound resource. Scans the
+# implementation plan (when present) for runtime-contention signals.
+#
+# Prints: none | exclusive
+classify_local_runtime() {
+  local dev_path="$1"
+  local plan_file
+  plan_file="$(find "$dev_path" -maxdepth 1 -name '2_*_implementation-plan.md' | head -1)"
+  if [ -z "$plan_file" ]; then
+    printf 'none\n'
+    return 0
+  fi
+
+  if grep -qiE \
+    '(local[[:space:]]+dev[[:space:]]+server|dev[[:space:]]+server|localhost|127\.0\.0\.1|port[[:space:]]*[0-9]{2,5}|database[[:space:]]+migration|schema[[:space:]]+migration|exclusive[[:space:]]+runtime|shared[[:space:]]+database|docker[[:space:]]+compose|supabase[[:space:]]+local)' \
+    "$plan_file"; then
+    printf 'exclusive\n'
+    return 0
+  fi
+
+  printf 'none\n'
+}
+
 # Canonical tool file list for tool-fix classification.
 # Each entry is checked with a delimiter-aware regex to reject superstrings.
 CANONICAL_EXACT_PATHS=(
@@ -499,11 +525,13 @@ for development_path in "${development_paths[@]}"; do
     esac
   done <<< "$next_action_output"
 
-  # Extract file set for implementation-stage items only (BR-1).
+  # Extract file set and local-runtime class for implementation-stage items only (BR-1).
   file_set=""
+  local_runtime=""
   case "$next_action" in
     implement|resolve-development-pr)
       file_set="$(extract_file_set "$development_path")"
+      local_runtime="$(classify_local_runtime "$development_path")"
       ;;
   esac
 
@@ -537,5 +565,6 @@ for development_path in "${development_paths[@]}"; do
   print_kv TOOL_FIX "$tool_fix"
   [ "$tool_fix" = "yes" ] && print_kv TOOL_FIX_FILES "$tool_fix_files"
   [ -n "$file_set" ] && print_kv FILE_SET "$file_set"
+  [ -n "$local_runtime" ] && print_kv LOCAL_RUNTIME "$local_runtime"
   echo
 done

@@ -1,22 +1,14 @@
 ---
-description: "Compatibility/advanced alias: advance exactly one known workflow item without routing. Use when you already know the target development folder, branch, PR, or issue and want to bypass /run-work routing. For the recommended starting point, use /run-work instead. Usage: /run-item-work <target>"
+description: "Deprecated compatibility alias for /run-item. Identical behavior — use /run-item instead. Usage: /run-item-work <target>"
 ---
 
-# Claude Code Command: Run Item Work
+# Claude Code Command: Run Item Work (deprecated)
 
-> **Compatibility/advanced alias**: `/run-item-work` bypasses the `/run-work`
-> routing layer and advances exactly one known item directly. If you are not
-> sure which command to use, start with `/run-work` — it will route to this
-> protocol automatically when the target resolves to a single non-epic item.
+> **Deprecated**: `/run-item-work` is a compatibility alias for **`/run-item`**.
+> New invocations should use `/run-item <target>`.
 
-Follow the single-item orchestration protocol exactly as defined in:
+Follow the same protocol and prelude as `/run-item`:
 
-`docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
-
-Key responsibilities:
-
-- Resolve the request to exactly one workflow item
-- Use the helper scripts in `scripts/development-workflow/` to classify the next deterministic action
-- In `workflow_hub`, state selected product repository, artifact owner, and mutation target before implementation mutation; stop when context is missing or ambiguous
-- Continue through creator, reviewer, PR, automated review, and CI work until the item reaches a real terminal condition
-- If the request is portfolio-wide or requires batch selection, use `/run-work` instead
+- `.claude/commands/run-item.md`
+- `docs/workflow/development-workflow/bounded-run-prelude.md`
+- `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
