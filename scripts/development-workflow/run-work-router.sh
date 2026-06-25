@@ -501,6 +501,31 @@ else
       STOP_REASON="Token '$first_unresolvable' in the list could not be resolved to a known issue, branch, PR, or development folder"
     fi
   else
+    # Epic-like issues are not portfolio explicit-list targets; redirect or stop.
+    epic_in_list=0
+    epic_issue_num=""
+    for t in "${resolved_list[@]}"; do
+      set +e
+      resolve_token "$t"
+      set -e
+      if [ "$RESOLVED_KIND" = "issue" ]; then
+        num="${t#\#}"
+        set +e
+        is_epic_issue "$num"
+        epic_check=$?
+        set -e
+        if [ "$epic_check" -eq 0 ]; then
+          epic_in_list=1
+          epic_issue_num="$num"
+        fi
+      fi
+    done
+
+    if [ "$epic_in_list" -eq 1 ]; then
+      MODE="$MODE_AMBIGUOUS"
+      MODE_LABEL="$LABEL_AMBIGUOUS"
+      STOP_REASON="Epic-like issue #${epic_issue_num} cannot be advanced via /run-work explicit_list; use /run-epic --epic ${epic_issue_num}"
+    else
     MODE="$MODE_LIST"
     MODE_LABEL="$LABEL_LIST"
     # Build comma-separated resolved scope
@@ -513,6 +538,7 @@ else
       fi
     done
     RESOLVED_SCOPE="$scope_str"
+    fi
   fi
 fi
 
