@@ -157,7 +157,7 @@ resolve_token_kind() {
 
 issue_from_development_path() {
   local path="$1"
-  local slug branch_ref issue
+  local slug issue
   slug="$(basename "$path" | sed 's/^[0-9]\{14\}_//')"
   if [[ "$slug" =~ ^([0-9]+)- ]]; then
     printf '%s\n' "${BASH_REMATCH[1]}"
