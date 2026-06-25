@@ -1148,6 +1148,183 @@ run_copilot_review() {
   return 2
 }
 
+bugbot_return_disabled() {
+  local pr_number="$1"
+  local branch_name="$2"
+
+  echo "INFO: Bugbot is disabled for this repository. Enable Bugbot for this repository in the Cursor dashboard, then rerun the reviewer loop." >&2
+  print_kv RESULT escalate
+  print_kv REASON bugbot-disabled
+  print_kv PLATFORM bugbot
+  print_kv PR_NUMBER "$pr_number"
+  print_kv BRANCH "$branch_name"
+  print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+  print_kv COMMENT_COUNT 0
+  print_kv BLOCKING_COUNT 0
+  print_kv SUGGESTION_COUNT 0
+  return 2
+}
+
+bugbot_check_disabled_issue_comments() {
+  local repo="$1"
+  local pr_number="$2"
+  local bot_login="$3"
+  local since_iso="$4"
+
+  set +e
+  local output
+  output="$(
+    gh api "repos/$repo/issues/$pr_number/comments" --paginate 2>/dev/null \
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+          .[]
+          | select(
+              (.user.login == $bot or .user.login == ($bot + "[bot]")) and
+              .created_at > $since
+            )
+          | .body // ""
+        ' 2>/dev/null
+  )"
+  local _comments_rc=$?
+  set -e
+  if [ "$_comments_rc" -ne 0 ]; then
+    return 1
+  fi
+  printf '%s\n' "$output"
+  return 0
+}
+
+bugbot_cursor_check_run_count() {
+  local repo="$1"
+  local head_sha="$2"
+  local check_name="$3"
+  local count
+
+  set +e
+  count="$(
+    gh api "repos/$repo/commits/$head_sha/check-runs" --paginate 2>/dev/null \
+      | jq -se --arg name "$check_name" '
+          [ .[].check_runs[]
+            | select(
+                ((.app.slug // "") | test("cursor"; "i")) or
+                (.name == $name)
+              )
+          ] | length
+        ' 2>/dev/null
+  )"
+  set -e
+  if [ -z "${count:-}" ]; then
+    return 1
+  fi
+  printf '%s\n' "$count"
+  return 0
+}
+
+# Returns: 0 when disabled issue comments should be evaluated for this head,
+# 1 when a completed successful Cursor check run makes them stale,
+# 2 when the check-run lookup could not be fetched.
+bugbot_disabled_preflight_applies_for_head() {
+  local repo="$1"
+  local head_sha="$2"
+  local check_name="$3"
+  local fetch_output=""
+  local status=""
+  local conclusion=""
+  local _fetch_rc=0
+
+  set +e
+  fetch_output="$(
+    gh api "repos/$repo/commits/$head_sha/check-runs" --paginate 2>/dev/null \
+      | jq -se -r --arg name "$check_name" '
+          [ .[].check_runs[]
+            | select(
+                ((.app.slug // "") | test("cursor"; "i")) or
+                (.name == $name)
+              )
+          ]
+          | sort_by(.started_at) | last
+          | ((.status // "") + " " + (.conclusion // ""))
+        ' 2>/dev/null
+  )"
+  _fetch_rc=$?
+  set -e
+  if [ "$_fetch_rc" -ne 0 ]; then
+    return 2
+  fi
+  if [ -z "$fetch_output" ]; then
+    return 0
+  fi
+  read -r status conclusion <<< "$fetch_output"
+  status="${status:-}"
+  conclusion="${conclusion:-}"
+  if [ "$status" = "completed" ] && [ "$conclusion" = "success" ]; then
+    return 1
+  fi
+  return 0
+}
+
+bugbot_escalate_if_disabled_without_check_run() {
+  local repo="$1"
+  local pr_number="$2"
+  local branch_name="$3"
+  local bot_login="$4"
+  local since_iso="$5"
+  local head_sha="$6"
+  local check_name="$7"
+  local body
+  local disabled_bodies
+  local _comments_rc=0
+  local _preflight_rc=0
+
+  set +e
+  bugbot_disabled_preflight_applies_for_head "$repo" "$head_sha" "$check_name"
+  _preflight_rc=$?
+  set -e
+  if [ "$_preflight_rc" -eq 2 ]; then
+    echo "WARN: run_bugbot_review: check-run count fetch failed during disabled preflight for PR #$pr_number" >&2
+    print_kv RESULT escalate
+    print_kv REASON fetch-failed
+    print_kv PLATFORM bugbot
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 2
+  fi
+  if [ "$_preflight_rc" -eq 1 ]; then
+    return 0
+  fi
+
+  set +e
+  disabled_bodies="$(bugbot_check_disabled_issue_comments "$repo" "$pr_number" "$bot_login" "$since_iso")"
+  _comments_rc=$?
+  set -e
+  if [ "$_comments_rc" -ne 0 ]; then
+    echo "WARN: run_bugbot_review: disabled-preflight issue-comment fetch failed for PR #$pr_number" >&2
+    print_kv RESULT escalate
+    print_kv REASON fetch-failed
+    print_kv PLATFORM bugbot
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 2
+  fi
+
+  while IFS= read -r body; do
+    [ -z "$body" ] && continue
+    if is_bugbot_disabled_message "$body"; then
+      bugbot_return_disabled "$pr_number" "$branch_name"
+      return 2
+    fi
+  done <<< "$disabled_bodies"
+
+  return 0
+}
+
 run_bugbot_review() {
   # Triggers Cursor Bugbot for the given PR, polls the "Cursor Bugbot" check run
   # on the PR head SHA until the run completes or the budget is exhausted, then
@@ -1287,6 +1464,33 @@ run_bugbot_review() {
     [ -z "${comment_json:-}" ] && continue
     body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
     [ -z "$body" ] && continue
+    if is_bugbot_disabled_message "$body"; then
+      set +e
+      bugbot_disabled_preflight_applies_for_head "$repo" "$head_sha" "$check_name"
+      local _bb_disabled_rc=$?
+      set -e
+      if [ "$_bb_disabled_rc" -eq 2 ]; then
+        rm -f "$existing_blocking_file"
+        echo "WARN: run_bugbot_review: check-run count fetch failed during disabled preflight for PR #$pr_number" >&2
+        print_kv RESULT escalate
+        print_kv REASON fetch-failed
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv COMMENT_COUNT 0
+        print_kv BLOCKING_COUNT 0
+        print_kv SUGGESTION_COUNT 0
+        return 2
+      fi
+      if [ "$_bb_disabled_rc" -eq 0 ]; then
+        rm -f "$existing_blocking_file"
+        bugbot_return_disabled "$pr_number" "$branch_name"
+        return 2
+      fi
+      existing_suggestion_count=$((existing_suggestion_count + 1))
+      continue
+    fi
     # Bugbot informational notes are counted as suggestions, not blockers (AC-4).
     if is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
       existing_suggestion_count=$((existing_suggestion_count + 1))
@@ -1306,6 +1510,33 @@ run_bugbot_review() {
       continue
     fi
     [ -z "$body" ] && continue
+    if is_bugbot_disabled_message "$body"; then
+      set +e
+      bugbot_disabled_preflight_applies_for_head "$repo" "$head_sha" "$check_name"
+      local _bb_disabled_review_rc=$?
+      set -e
+      if [ "$_bb_disabled_review_rc" -eq 2 ]; then
+        rm -f "$existing_blocking_file"
+        echo "WARN: run_bugbot_review: check-run count fetch failed during disabled preflight for PR #$pr_number" >&2
+        print_kv RESULT escalate
+        print_kv REASON fetch-failed
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv COMMENT_COUNT 0
+        print_kv BLOCKING_COUNT 0
+        print_kv SUGGESTION_COUNT 0
+        return 2
+      fi
+      if [ "$_bb_disabled_review_rc" -eq 0 ]; then
+        rm -f "$existing_blocking_file"
+        bugbot_return_disabled "$pr_number" "$branch_name"
+        return 2
+      fi
+      existing_suggestion_count=$((existing_suggestion_count + 1))
+      continue
+    fi
     if is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
       existing_suggestion_count=$((existing_suggestion_count + 1))
       continue
@@ -1372,6 +1603,14 @@ run_bugbot_review() {
   _bb_run_count="${_bb_run_count:-0}"
 
   if [ "$_bb_run_count" -eq 0 ]; then
+    set +e
+    bugbot_escalate_if_disabled_without_check_run \
+      "$repo" "$pr_number" "$branch_name" "$bot_login" "$since_iso" "$head_sha" "$check_name"
+    local _bb_disabled_rc=$?
+    set -e
+    if [ "$_bb_disabled_rc" -eq 2 ]; then
+      return 2
+    fi
     # No Cursor Bugbot check run for this head — post the trigger comment.
     set +e
     gh api "repos/$repo/issues/$pr_number/comments" --method POST \
@@ -1441,6 +1680,17 @@ run_bugbot_review() {
     read -r status_val conclusion <<< "$_fetch_output"
     status_val="${status_val:-}"
     conclusion="${conclusion:-}"
+
+    if [ "$status_val" != "completed" ]; then
+      set +e
+      bugbot_escalate_if_disabled_without_check_run \
+        "$repo" "$pr_number" "$branch_name" "$bot_login" "$since_iso" "$_current_sha" "$check_name"
+      local _bb_disabled_poll_rc=$?
+      set -e
+      if [ "$_bb_disabled_poll_rc" -eq 2 ]; then
+        return 2
+      fi
+    fi
 
     if [ "$status_val" = "completed" ]; then
       check_appeared=1
@@ -1747,7 +1997,7 @@ run_haystack_review() {
   #   2 → RESULT=escalate; REASON forwarded from companion script:
   #         REASON=timeout         — per-call OS timeout exhausted budget
   #         REASON=pending_timeout — analysis stayed pending past timeout budget
-  #   3 → RESULT=skipped / REASON=unavailable → propagated as RESULT=skipped
+  #   3 → RESULT=skipped; REASON forwarded (unavailable, unauthorized, forbidden, …)
   local pr_number="$1"
   local branch_name="$2"
   # poll_interval and max_wait passed for interface consistency; haystack-reviewer.sh
@@ -1766,12 +2016,45 @@ run_haystack_review() {
   require_gh
   cd_workflow_repo_root
 
-  reviewer_script="$(workflow_repo_root)/scripts/development-workflow/haystack-reviewer.sh"
-
   local owner repo_name repo
   repo="$(repo_slug)"
   owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
   repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  set +e
+  local is_draft
+  local _draft_rc=0
+  is_draft="$(gh pr view "$pr_number" --repo "$owner/$repo_name" --json isDraft --jq '.isDraft' 2>/dev/null)"
+  _draft_rc=$?
+  set -e
+  if [ "$_draft_rc" -ne 0 ] || [ -z "$is_draft" ]; then
+    echo "WARN: could not determine draft state for PR #$pr_number before Haystack review" >&2
+    print_kv RESULT escalate
+    print_kv REASON draft-state-unavailable
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 2
+  fi
+  if [ "$is_draft" = "true" ]; then
+    echo "INFO: PR #$pr_number is draft — Haystack does not review draft PRs; mark ready with gh pr ready $pr_number before rerunning" >&2
+    print_kv RESULT skipped
+    print_kv REASON pr-is-draft
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 0
+  fi
+
+  reviewer_script="$(workflow_repo_root)/scripts/development-workflow/haystack-reviewer.sh"
 
   # Haystack-reviewer.sh manages its own poll-retry loop internally; honor the
   # caller-provided max_wait budget as the overall timeout.
@@ -1849,9 +2132,12 @@ run_haystack_review() {
       return 2
       ;;
     *)
-      # Exit 3 (UNAVAILABLE) and any unexpected exit code → skipped.
+      # Exit 3 (UNAVAILABLE/auth errors) and any unexpected exit code → skipped.
+      local haystack_reason
+      haystack_reason="$(printf '%s\n' "$script_output" | grep '^REASON=' | cut -d= -f2 | head -n 1)"
+      haystack_reason="${haystack_reason:-unavailable}"
       print_kv RESULT skipped
-      print_kv REASON unavailable
+      print_kv REASON "$haystack_reason"
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
@@ -4193,7 +4479,7 @@ reviewer_failed_label_required_for_result() {
       ;;
     skipped)
       case "$reason" in
-        unavailable|timeout|thread-check-failed|pending_timeout)
+        unavailable|timeout|thread-check-failed|pending_timeout|forbidden|unauthorized)
           return 0
           ;;
       esac

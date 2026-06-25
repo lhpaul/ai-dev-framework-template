@@ -387,6 +387,17 @@ is_bugbot_clean_review() {
   return 1
 }
 
+is_bugbot_disabled_message() {
+  local body="$1"
+
+  case "$body" in
+    *"Bugbot is disabled"*|*"Bugbot has not been enabled"*|*"Bugbot isn't enabled"*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 open_pr_number_for_branch() {
   require_gh
   gh pr list --head "$1" --state open --limit 100 --json number --jq '.[0].number // empty'
