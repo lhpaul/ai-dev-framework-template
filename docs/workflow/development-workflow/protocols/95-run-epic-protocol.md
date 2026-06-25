@@ -147,8 +147,12 @@ When a later delegated run reaches a candidate PR merge decision, classify that
 PR with:
 
 ```bash
-./scripts/development-workflow/run-epic-risk-classifier.sh --pr <pr-number> --max-risk <low|medium|high>
+./scripts/development-workflow/run-epic-risk-classifier.sh --pr <pr-number> --max-risk <low|medium|high> [--repo-root <path>] [--product-repo <name>]
 ```
+
+In `workflow_hub` mode, pass `--repo-root` and `--product-repo` (or rely on
+`github_repo` / `productRepo.name` in `--input` evidence) so hub `ci_policy` is
+applied when the evidence omits `ciPolicy` / `ci_policy`.
 
 The risk classifier is also read-only. It must not run reviewer loops, poll CI,
 update tracker status, change labels, create comments, merge PRs, close issues,

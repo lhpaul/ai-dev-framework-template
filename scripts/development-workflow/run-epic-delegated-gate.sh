@@ -111,48 +111,8 @@ if [ -n "$policy_file" ]; then
   fi
 fi
 
-merge_ci_policy_from_context() {
-  local json="$1"
-  local root="${2:-}"
-  local repo_name="${3:-}"
-
-  if [ -z "$root" ]; then
-    printf '%s\n' "$json"
-    return 0
-  fi
-
-  if [ -z "$repo_name" ]; then
-    repo_name="$(printf '%s\n' "$json" | jq -r '
-      .productRepo.name //
-      .productRepoName //
-      .repository.productRepoName //
-      .repository.product_repo //
-      ""
-    ' 2>/dev/null)"
-  fi
-
-  local context
-  if ! context="$(workflow_repository_context "$repo_name" "$root" 2>/dev/null)"; then
-    printf '%s\n' "$json"
-    return 0
-  fi
-
-  local ci_policy
-  ci_policy="$(workflow_context_value TARGET_CI_POLICY "$context")"
-  if [ -z "$ci_policy" ]; then
-    printf '%s\n' "$json"
-    return 0
-  fi
-
-  printf '%s\n' "$json" | jq --arg ci_policy "$ci_policy" '
-    if ((.ciPolicy // .ci_policy // "") | length) > 0 then .
-    else . + {ciPolicy: $ci_policy}
-    end
-  ' 2>/dev/null || printf '%s\n' "$json"
-}
-
 effective_root="${repo_root:-$(workflow_repo_root)}"
-state_json="$(merge_ci_policy_from_context "$state_json" "$effective_root" "$product_repo")"
+state_json="$(workflow_merge_ci_policy_into_json "$state_json" "$effective_root" "$product_repo")"
 
 decision_json="$(printf '%s\n' "$state_json" | jq '
   def policy: if (.policy | type) == "object" then .policy else {} end;
