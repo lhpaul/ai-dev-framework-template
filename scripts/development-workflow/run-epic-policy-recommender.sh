@@ -183,13 +183,12 @@ if ! printf '%s\n' "$scope_json" | jq -e '
 fi
 
 config_file=""
-if ! config_file="$(workflow_effective_config_file 2>/dev/null)"; then
-  error_exit "workflow config file not found"
+reviewer_count=0
+if config_file="$(workflow_effective_config_file 2>/dev/null)"; then
+  if reviewers="$(workflow_config_review_on_draft_runner "$config_file")"; then
+    reviewer_count="$(printf '%s\n' "$reviewers" | sed '/^$/d' | wc -l | tr -d ' ')"
+  fi
 fi
-if ! reviewers="$(workflow_config_review_on_draft_runner "$config_file")"; then
-  error_exit "failed to read review.on_draft.runner from workflow config: $config_file"
-fi
-reviewer_count="$(printf '%s\n' "$reviewers" | sed '/^$/d' | wc -l | tr -d ' ')"
 
 recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
   --arg originalCommand "$original_command" \
