@@ -111,6 +111,12 @@ export WORKFLOW_SKIP_FETCH=1
 runtime_plan_out="$(cd "$fixture_repo" && "$BATCH_PLAN" "$runtime_dev" 2>/dev/null | awk '/^LOCAL_RUNTIME=/{print; exit}')"
 run_test "local_runtime_exclusive_from_plan" "LOCAL_RUNTIME=exclusive" "$runtime_plan_out"
 
+skip_file="$TMP_ROOT/skip.batch"
+: > "$skip_file"
+write_batch_block "$skip_file" "skip-item" "skip"
+skip_output="$("$LANES" --repo-root "$fixture_repo" < "$skip_file")"
+run_test "skip_action_not_proposed" "skip" "$(printf '%s\n' "$skip_output" | awk '/SLUG=skip-item/{f=1} f&&/^DISPATCH=/{sub(/^DISPATCH=/,""); print; exit}')"
+
 echo ""
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
 [ "$FAIL_COUNT" -eq 0 ]

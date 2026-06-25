@@ -24,6 +24,7 @@ EOF
 
 stage_lane_for_next_action() {
   case "$1" in
+    skip|unknown|resolve-repository-selection) printf 'none\n' ;;
     run-spec-review-and-open-pr) printf 'spec\n' ;;
     write-plan|run-plan-review-and-open-pr) printf 'plan\n' ;;
     run-code-review-and-open-pr|resolve-pr-readiness|resume-fix-loop|wait-human-review) printf 'review\n' ;;
@@ -32,10 +33,23 @@ stage_lane_for_next_action() {
   esac
 }
 
+parallelism_config_file() {
+  local repo_root="$1"
+  if [ -n "${AI_DEV_WORKFLOW_CONFIG_FILE:-}" ] && [ -f "${AI_DEV_WORKFLOW_CONFIG_FILE}" ]; then
+    printf '%s\n' "${AI_DEV_WORKFLOW_CONFIG_FILE}"
+    return 0
+  fi
+  if [ -f "$repo_root/.ai-dev-workflow.yaml" ]; then
+    printf '%s/.ai-dev-workflow.yaml\n' "$repo_root"
+    return 0
+  fi
+  return 1
+}
+
 read_parallelism_caps() {
-  local config_file repo_root="$1"
-  config_file="$(workflow_config_file "$repo_root")"
-  if [ ! -f "$config_file" ]; then
+  local repo_root="$1"
+  local config_file=""
+  if ! config_file="$(parallelism_config_file "$repo_root")"; then
     printf '{"spec":0,"plan":0,"review":0,"implementation":1}\n'
     return 0
   fi
@@ -189,7 +203,11 @@ while [ "$idx" -lt "$block_idx" ]; do
   dispatch="proposed"
   hold_reason=""
 
-  case "$stage_lane" in
+  if [ "$stage_lane" = "none" ]; then
+    dispatch="skip"
+    hold_reason="not dispatch-eligible (${next_action})"
+  else
+    case "$stage_lane" in
     spec)
       if [ "$max_spec" -gt 0 ] && [ "$lane_count_spec" -ge "$max_spec" ]; then
         dispatch="held"
@@ -222,7 +240,8 @@ while [ "$idx" -lt "$block_idx" ]; do
         lane_count_implementation=$((lane_count_implementation + 1))
       fi
       ;;
-  esac
+    esac
+  fi
 
   hold_field="${hold_reason:--}"
   printf '%s\t%s\t%s\t%s\t%s\n' "$idx" "$stage_lane" "$dispatch" "$hold_field" "$local_runtime" >> "$TMP_META"
@@ -293,9 +312,11 @@ while [ "$idx" -lt "$block_idx" ]; do
   cat "$TMP_BLOCKS.$idx"
   print_kv STAGE_LANE "$stage_lane"
   print_kv DISPATCH "$dispatch"
-  if [ "$dispatch" = "held" ]; then
+  if [ "$dispatch" = "held" ] || [ "$dispatch" = "skip" ]; then
     print_kv HOLD_REASON "$hold_reason"
-    print_kv HELD_SUMMARY "held — ${item_id}: ${hold_reason}"
+    if [ "$dispatch" = "held" ]; then
+      print_kv HELD_SUMMARY "held — ${item_id}: ${hold_reason}"
+    fi
   fi
   echo
   idx=$((idx + 1))
