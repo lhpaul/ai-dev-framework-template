@@ -1137,6 +1137,8 @@ run_platform_review "haystack" "999" "feature/test" "30" "120" >/dev/null 2>&1 |
 run_test "run_platform_review_routes_to_run_haystack_review" "1" "$_haystack_dispatch_called"
 unset -f run_haystack_review
 unset _haystack_dispatch_called
+HARNESS_MODE=1 source "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
+workflow_repo_root() { printf '%s\n' "${HARNESS_REPO_ROOT:-$REPO_ROOT}"; }
 
 # test: legacy ensure_pr_ready_for_after_clean wrapper converts draft PRs before ready-phase reviewers
 _call_log="$(mktemp)"
@@ -1184,6 +1186,59 @@ ready_status=$?
 set -e
 run_test "after_clean_ready_fails_closed_on_ready_error" "2" "$ready_status"
 unset MOCK_GH_OUTPUT MOCK_GH_EXIT MOCK_GH_READY_EXIT ready_status
+
+# test: run_haystack_review skips draft PRs before invoking haystack-reviewer.sh
+_haystack_draft_overrides='
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  require_gh() { :; }
+'
+export MOCK_GH_OUTPUT="true"
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_haystack_draft_overrides"
+  _ec=0
+  run_haystack_review "42" "feature/test" "1" "30" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "haystack_skips_draft_pr_result" "RESULT=skipped" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "haystack_skips_draft_pr_reason" "REASON=pr-is-draft" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "haystack_skips_draft_pr_exit_code" "0" "$actual_exit"
+unset MOCK_GH_OUTPUT _haystack_draft_overrides actual_output actual_exit
+
+# test: run_haystack_review forwards Haystack auth errors from companion script
+_haystack_auth_overrides='
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  require_gh() { :; }
+'
+export MOCK_GH_OUTPUT="false"
+_haystack_reviewer_stub="$(mktemp -d)"
+mkdir -p "$_haystack_reviewer_stub/scripts/development-workflow"
+cat > "$_haystack_reviewer_stub/scripts/development-workflow/haystack-reviewer.sh" <<'HAYSTACK_STUB'
+#!/usr/bin/env bash
+printf 'RESULT=skipped\nREASON=forbidden\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\nCOMMENT_COUNT=0\n'
+exit 3
+HAYSTACK_STUB
+chmod +x "$_haystack_reviewer_stub/scripts/development-workflow/haystack-reviewer.sh"
+workflow_repo_root() { printf "%s\n" "$_haystack_reviewer_stub"; }
+actual_output="$(
+  eval "$_haystack_auth_overrides"
+  _ec=0
+  run_haystack_review "42" "feature/test" "1" "30" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "haystack_forwards_auth_reason" "REASON=forbidden" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "haystack_forwards_auth_exit_code" "0" "$actual_exit"
+rm -rf "$_haystack_reviewer_stub"
+unset MOCK_GH_OUTPUT _haystack_auth_overrides actual_output actual_exit
+workflow_repo_root() { printf '%s\n' "${HARNESS_REPO_ROOT:-$REPO_ROOT}"; }
 
 # ---------------------------------------------------------------------------
 # Area 10: per-platform result tokens in summary comment (#755)
@@ -2187,6 +2242,20 @@ fi
 run_test "bugbot_same_line_mixed_phrase_is_blocking" "blocking" "$actual"
 unset bugbot_clean_body bugbot_mixed_body bugbot_multiline_body bugbot_same_line_severity_body bugbot_same_line_mixed_body actual
 
+if is_bugbot_disabled_message "Bugbot is disabled for this repository."; then
+  actual="disabled"
+else
+  actual="active"
+fi
+run_test "bugbot_disabled_message_detected" "disabled" "$actual"
+
+if is_bugbot_disabled_message "Cursor Bugbot found no issues in this pull request."; then
+  actual="disabled"
+else
+  actual="active"
+fi
+run_test "bugbot_clean_phrase_not_disabled" "active" "$actual"
+
 # ---------------------------------------------------------------------------
 # Test 16.1: clean path — check run conclusion=success, no blocking comments
 # ---------------------------------------------------------------------------
@@ -2834,6 +2903,52 @@ run_platform_review "bugbot" "999" "feature/test" "30" "120" >/dev/null 2>&1 || 
 run_test "run_platform_review_routes_to_run_bugbot_review" "1" "$_bugbot_dispatch_called"
 unset -f run_bugbot_review
 unset _bugbot_dispatch_called
+HARNESS_MODE=1 source "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
+workflow_repo_root() { printf '%s\n' "${HARNESS_REPO_ROOT:-$REPO_ROOT}"; }
+
+# ---------------------------------------------------------------------------
+# Test 16.11: disabled Bugbot preflight — escalate with bugbot-disabled
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_1611="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_1611/gh" <<'BUGBOT_GH_1611'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc1611sha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"user":{"login":"cursor[bot]"},"body":"Bugbot is disabled for this repository."}]\n'
+    exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"check-runs"*)
+    printf '{"check_runs":[]}\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_1611
+chmod +x "$_bugbot_mock_dir_1611/gh"
+
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  PATH="$_bugbot_mock_dir_1611:$PATH"
+  _ec=0
+  run_bugbot_review "42" "feature/42-test" "1" "30" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_disabled_preflight_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_disabled_preflight_reason" "REASON=bugbot-disabled" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "bugbot_disabled_preflight_exit_code" "2" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_1611"
+unset _bugbot_mock_dir_1611 actual_output actual_exit
 
 # ---------------------------------------------------------------------------
 # Summary

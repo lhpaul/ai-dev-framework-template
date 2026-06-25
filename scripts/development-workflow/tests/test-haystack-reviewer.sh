@@ -1033,6 +1033,38 @@ run_test "policy_no_timeout_hung_status_exit_code" "0" "$ec"
 unset TEST_HAYSTACK_PR_STATUS_CHECK TEST_REVIEWER_PATH MOCK_HAYSTACK_SLEEPS
 
 # ---------------------------------------------------------------------------
+# Area 11: triage HTTP 401/403 auth errors fail fast (#1035)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 11: triage HTTP 401/403 auth errors ==="
+
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"status":"error","message":"HTTP 403"}'
+MOCK_HAYSTACK_EXITS='0'
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+calls=$(_call_count)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "http_403_result" "RESULT=skipped" "$(echo "$output" | grep '^RESULT=')"
+run_test "http_403_reason" "REASON=forbidden" "$(echo "$output" | grep '^REASON=')"
+run_test "http_403_exit_code" "3" "$ec"
+run_test "http_403_single_call" "1" "$calls"
+
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"status":"error","message":"HTTP 401"}'
+MOCK_HAYSTACK_EXITS='0'
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+calls=$(_call_count)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "http_401_result" "RESULT=skipped" "$(echo "$output" | grep '^RESULT=')"
+run_test "http_401_reason" "REASON=unauthorized" "$(echo "$output" | grep '^REASON=')"
+run_test "http_401_exit_code" "3" "$ec"
+run_test "http_401_single_call" "1" "$calls"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

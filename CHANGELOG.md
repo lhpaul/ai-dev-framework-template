@@ -37,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and validates `ci_policy` (`required` vs explicit `none`) before delegated
   orchestration. Hub `workflow_hub.product_repos[]` accepts optional `ci_policy`;
   delegated merge gates honor `ciPolicy: none` when CI checks are absent.
+- **Reviewer-loop preflight guards** (#1028, #1035, #1037): Bugbot activation is
+  detected from `cursor[bot]` comments before polling; Haystack triage HTTP 401/403
+  errors fail fast with `REASON=unauthorized`/`forbidden` instead of
+  `pending_timeout`; draft PRs skip Haystack with `REASON=pr-is-draft` and guidance
+  to mark ready before rerunning.
 
 ### Fixed
 

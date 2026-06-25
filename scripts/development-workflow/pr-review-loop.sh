@@ -1148,6 +1148,38 @@ run_copilot_review() {
   return 2
 }
 
+bugbot_return_disabled() {
+  local pr_number="$1"
+  local branch_name="$2"
+
+  echo "INFO: Bugbot is disabled for this repository. Enable Bugbot for this repository in the Cursor dashboard, then rerun the reviewer loop." >&2
+  print_kv RESULT escalate
+  print_kv REASON bugbot-disabled
+  print_kv PLATFORM bugbot
+  print_kv PR_NUMBER "$pr_number"
+  print_kv BRANCH "$branch_name"
+  print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+  print_kv COMMENT_COUNT 0
+  print_kv BLOCKING_COUNT 0
+  print_kv SUGGESTION_COUNT 0
+  return 2
+}
+
+bugbot_check_disabled_issue_comments() {
+  local repo="$1"
+  local pr_number="$2"
+  local bot_login="$3"
+
+  set +e
+  gh api "repos/$repo/issues/$pr_number/comments" --paginate 2>/dev/null \
+    | jq -r --arg bot "$bot_login" '
+        .[]
+        | select(.user.login == $bot or .user.login == ($bot + "[bot]"))
+        | .body // ""
+      ' 2>/dev/null
+  set -e
+}
+
 run_bugbot_review() {
   # Triggers Cursor Bugbot for the given PR, polls the "Cursor Bugbot" check run
   # on the PR head SHA until the run completes or the budget is exhausted, then
@@ -1233,6 +1265,14 @@ run_bugbot_review() {
   [ "$since_iso" \> "$_bb_now_iso" ] && since_iso="$_bb_now_iso"
   unset _bb_now_iso
 
+  while IFS= read -r body; do
+    [ -z "$body" ] && continue
+    if is_bugbot_disabled_message "$body"; then
+      bugbot_return_disabled "$pr_number" "$branch_name"
+      return 2
+    fi
+  done <<< "$(bugbot_check_disabled_issue_comments "$repo" "$pr_number" "$bot_login")"
+
   # --- Phase 1: Check for existing blocking cursor[bot] findings on current HEAD ---
   # If blocking findings already exist (e.g. from a previous trigger in the same
   # review cycle) return needs_fixes immediately without re-triggering.
@@ -1287,6 +1327,11 @@ run_bugbot_review() {
     [ -z "${comment_json:-}" ] && continue
     body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
     [ -z "$body" ] && continue
+    if is_bugbot_disabled_message "$body"; then
+      rm -f "$existing_blocking_file"
+      bugbot_return_disabled "$pr_number" "$branch_name"
+      return 2
+    fi
     # Bugbot informational notes are counted as suggestions, not blockers (AC-4).
     if is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
       existing_suggestion_count=$((existing_suggestion_count + 1))
@@ -1306,6 +1351,11 @@ run_bugbot_review() {
       continue
     fi
     [ -z "$body" ] && continue
+    if is_bugbot_disabled_message "$body"; then
+      rm -f "$existing_blocking_file"
+      bugbot_return_disabled "$pr_number" "$branch_name"
+      return 2
+    fi
     if is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
       existing_suggestion_count=$((existing_suggestion_count + 1))
       continue
@@ -1697,6 +1747,14 @@ run_bugbot_review() {
       check_appeared=1
     fi
 
+    while IFS= read -r body; do
+      [ -z "$body" ] && continue
+      if is_bugbot_disabled_message "$body"; then
+        bugbot_return_disabled "$pr_number" "$branch_name"
+        return 2
+      fi
+    done <<< "$(bugbot_check_disabled_issue_comments "$repo" "$pr_number" "$bot_login")"
+
     # Signal safety: _interruptible_sleep runs `sleep` as a background job and
     # blocks on bash's built-in `wait`, which is interruptible by signals.  When
     # SIGTERM arrives during this wait, the TERM trap fires immediately — killing
@@ -1747,7 +1805,7 @@ run_haystack_review() {
   #   2 → RESULT=escalate; REASON forwarded from companion script:
   #         REASON=timeout         — per-call OS timeout exhausted budget
   #         REASON=pending_timeout — analysis stayed pending past timeout budget
-  #   3 → RESULT=skipped / REASON=unavailable → propagated as RESULT=skipped
+  #   3 → RESULT=skipped; REASON forwarded (unavailable, unauthorized, forbidden, …)
   local pr_number="$1"
   local branch_name="$2"
   # poll_interval and max_wait passed for interface consistency; haystack-reviewer.sh
@@ -1766,12 +1824,30 @@ run_haystack_review() {
   require_gh
   cd_workflow_repo_root
 
-  reviewer_script="$(workflow_repo_root)/scripts/development-workflow/haystack-reviewer.sh"
-
   local owner repo_name repo
   repo="$(repo_slug)"
   owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
   repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  set +e
+  local is_draft
+  is_draft="$(gh pr view "$pr_number" --repo "$owner/$repo_name" --json isDraft --jq '.isDraft' 2>/dev/null)"
+  set -e
+  if [ "$is_draft" = "true" ]; then
+    echo "INFO: PR #$pr_number is draft — Haystack does not review draft PRs; mark ready with gh pr ready $pr_number before rerunning" >&2
+    print_kv RESULT skipped
+    print_kv REASON pr-is-draft
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 0
+  fi
+
+  reviewer_script="$(workflow_repo_root)/scripts/development-workflow/haystack-reviewer.sh"
 
   # Haystack-reviewer.sh manages its own poll-retry loop internally; honor the
   # caller-provided max_wait budget as the overall timeout.
@@ -1849,9 +1925,12 @@ run_haystack_review() {
       return 2
       ;;
     *)
-      # Exit 3 (UNAVAILABLE) and any unexpected exit code → skipped.
+      # Exit 3 (UNAVAILABLE/auth errors) and any unexpected exit code → skipped.
+      local haystack_reason
+      haystack_reason="$(printf '%s\n' "$script_output" | grep '^REASON=' | cut -d= -f2 | head -n 1)"
+      haystack_reason="${haystack_reason:-unavailable}"
       print_kv RESULT skipped
-      print_kv REASON unavailable
+      print_kv REASON "$haystack_reason"
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
@@ -4193,7 +4272,7 @@ reviewer_failed_label_required_for_result() {
       ;;
     skipped)
       case "$reason" in
-        unavailable|timeout|thread-check-failed|pending_timeout)
+        unavailable|timeout|thread-check-failed|pending_timeout|forbidden|unauthorized|pr-is-draft)
           return 0
           ;;
       esac
