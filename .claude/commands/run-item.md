@@ -23,6 +23,9 @@ through Protocol 91 until a real terminal condition.
   --json
 ```
 
+When `policyRecommendation.requiresConfirmation` is true, accept or customize
+policy and checkpoints before continuing.
+
 ## Single-item control loop
 
 Follow Protocol 91:
