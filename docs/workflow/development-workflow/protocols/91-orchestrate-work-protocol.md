@@ -18,7 +18,11 @@ This protocol may be entered in either of two ways:
 
 `/run-work <single-non-epic-target>` enters this protocol after the routing
 classifier (`scripts/development-workflow/run-work-router.sh`, Protocol 96)
-determines the routing mode is `single_item`.
+determines the routing mode is `single_item`. **Before Step 1 mutation**, follow
+the same **bounded prelude** contract as `/run-item` (`bounded-run-prelude.md` /
+`run-bounded-prelude.sh`). Command surfaces route `single_item` to `/run-item`;
+portfolio handoffs must run the prelude explicitly when entering Protocol 91
+directly.
 
 **`single_item` → `epic` upgrade** (AC5): When a single target resolves to an
 epic-like issue (one with child items or native sub-issues), the router upgrades

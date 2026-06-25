@@ -15,8 +15,9 @@ advances exactly one non-epic item through Protocol 91.
 2. Run the read-only bounded prelude:
    `./scripts/development-workflow/run-bounded-prelude.sh --original-command "<invocation>" <scope flags> --json`
    See `docs/workflow/development-workflow/bounded-run-prelude.md`.
-3. When `requiresConfirmation` is true, present policy/checkpoint recommendations
-   and continue only after human acceptance or customization.
+3. When `policyRecommendation.requiresConfirmation` is true in the prelude JSON,
+   present policy/checkpoint recommendations and continue only after human
+   acceptance or customization.
 4. Read `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
    and follow it exactly (or delegate to `workflow-item-orchestrator` when your
    runner supports skill handoff).
