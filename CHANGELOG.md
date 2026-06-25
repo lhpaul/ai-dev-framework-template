@@ -42,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   errors fail fast with `REASON=unauthorized`/`forbidden` instead of
   `pending_timeout`; draft PRs skip Haystack with `REASON=pr-is-draft` and guidance
   to mark ready before rerunning.
+- **Model cost resilience documentation** (#1044, #1045, #1046): pins explicit
+  Cursor subagent models in `.cursor/agents/*.md` and documents tier defaults in
+  `agent-model-config.md`; adds a provider quota/timeout/runner failover runbook
+  and an experimental opt-in LLM router integration pattern for tier-aligned
+  fallback chains.
 
 ### Fixed
 
