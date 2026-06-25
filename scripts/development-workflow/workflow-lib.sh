@@ -391,7 +391,7 @@ is_bugbot_disabled_message() {
   local body="$1"
 
   case "$body" in
-    *"Bugbot is disabled"*|*"bugbot is disabled"*|*"disabled for this repository"*|*"Bugbot has not been enabled"*|*"Bugbot isn't enabled"*)
+    *"Bugbot is disabled"*|*"Bugbot has not been enabled"*|*"Bugbot isn't enabled"*)
       return 0
       ;;
   esac

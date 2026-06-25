@@ -1184,6 +1184,61 @@ bugbot_check_disabled_issue_comments() {
   set -e
 }
 
+bugbot_cursor_check_run_count() {
+  local repo="$1"
+  local head_sha="$2"
+  local check_name="$3"
+  local count
+
+  set +e
+  count="$(
+    gh api "repos/$repo/commits/$head_sha/check-runs" --paginate 2>/dev/null \
+      | jq -se --arg name "$check_name" '
+          [ .[].check_runs[]
+            | select(
+                ((.app.slug // "") | test("cursor"; "i")) or
+                (.name == $name)
+              )
+          ] | length
+        ' 2>/dev/null
+  )"
+  set -e
+  if [ -z "${count:-}" ]; then
+    return 1
+  fi
+  printf '%s\n' "$count"
+  return 0
+}
+
+bugbot_escalate_if_disabled_without_check_run() {
+  local repo="$1"
+  local pr_number="$2"
+  local branch_name="$3"
+  local bot_login="$4"
+  local since_iso="$5"
+  local head_sha="$6"
+  local check_name="$7"
+  local run_count
+  local body
+
+  set +e
+  run_count="$(bugbot_cursor_check_run_count "$repo" "$head_sha" "$check_name")"
+  set -e
+  if [ -n "${run_count:-}" ] && [ "$run_count" -gt 0 ]; then
+    return 0
+  fi
+
+  while IFS= read -r body; do
+    [ -z "$body" ] && continue
+    if is_bugbot_disabled_message "$body"; then
+      bugbot_return_disabled "$pr_number" "$branch_name"
+      return 2
+    fi
+  done <<< "$(bugbot_check_disabled_issue_comments "$repo" "$pr_number" "$bot_login" "$since_iso")"
+
+  return 0
+}
+
 run_bugbot_review() {
   # Triggers Cursor Bugbot for the given PR, polls the "Cursor Bugbot" check run
   # on the PR head SHA until the run completes or the budget is exhausted, then
@@ -1269,14 +1324,6 @@ run_bugbot_review() {
   [ "$since_iso" \> "$_bb_now_iso" ] && since_iso="$_bb_now_iso"
   unset _bb_now_iso
 
-  while IFS= read -r body; do
-    [ -z "$body" ] && continue
-    if is_bugbot_disabled_message "$body"; then
-      bugbot_return_disabled "$pr_number" "$branch_name"
-      return 2
-    fi
-  done <<< "$(bugbot_check_disabled_issue_comments "$repo" "$pr_number" "$bot_login" "$since_iso")"
-
   # --- Phase 1: Check for existing blocking cursor[bot] findings on current HEAD ---
   # If blocking findings already exist (e.g. from a previous trigger in the same
   # review cycle) return needs_fixes immediately without re-triggering.
@@ -1332,9 +1379,16 @@ run_bugbot_review() {
     body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
     [ -z "$body" ] && continue
     if is_bugbot_disabled_message "$body"; then
-      rm -f "$existing_blocking_file"
-      bugbot_return_disabled "$pr_number" "$branch_name"
-      return 2
+      set +e
+      _bb_disabled_run_count="$(bugbot_cursor_check_run_count "$repo" "$head_sha" "$check_name")"
+      set -e
+      if [ -z "${_bb_disabled_run_count:-}" ] || [ "$_bb_disabled_run_count" -eq 0 ]; then
+        rm -f "$existing_blocking_file"
+        bugbot_return_disabled "$pr_number" "$branch_name"
+        return 2
+      fi
+      existing_suggestion_count=$((existing_suggestion_count + 1))
+      continue
     fi
     # Bugbot informational notes are counted as suggestions, not blockers (AC-4).
     if is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
@@ -1356,9 +1410,16 @@ run_bugbot_review() {
     fi
     [ -z "$body" ] && continue
     if is_bugbot_disabled_message "$body"; then
-      rm -f "$existing_blocking_file"
-      bugbot_return_disabled "$pr_number" "$branch_name"
-      return 2
+      set +e
+      _bb_disabled_run_count="$(bugbot_cursor_check_run_count "$repo" "$head_sha" "$check_name")"
+      set -e
+      if [ -z "${_bb_disabled_run_count:-}" ] || [ "$_bb_disabled_run_count" -eq 0 ]; then
+        rm -f "$existing_blocking_file"
+        bugbot_return_disabled "$pr_number" "$branch_name"
+        return 2
+      fi
+      existing_suggestion_count=$((existing_suggestion_count + 1))
+      continue
     fi
     if is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
       existing_suggestion_count=$((existing_suggestion_count + 1))
@@ -1426,6 +1487,14 @@ run_bugbot_review() {
   _bb_run_count="${_bb_run_count:-0}"
 
   if [ "$_bb_run_count" -eq 0 ]; then
+    set +e
+    bugbot_escalate_if_disabled_without_check_run \
+      "$repo" "$pr_number" "$branch_name" "$bot_login" "$since_iso" "$head_sha" "$check_name"
+    local _bb_disabled_rc=$?
+    set -e
+    if [ "$_bb_disabled_rc" -eq 2 ]; then
+      return 2
+    fi
     # No Cursor Bugbot check run for this head — post the trigger comment.
     set +e
     gh api "repos/$repo/issues/$pr_number/comments" --method POST \
@@ -1495,6 +1564,17 @@ run_bugbot_review() {
     read -r status_val conclusion <<< "$_fetch_output"
     status_val="${status_val:-}"
     conclusion="${conclusion:-}"
+
+    if [ "$status_val" != "completed" ]; then
+      set +e
+      bugbot_escalate_if_disabled_without_check_run \
+        "$repo" "$pr_number" "$branch_name" "$bot_login" "$since_iso" "$_current_sha" "$check_name"
+      local _bb_disabled_poll_rc=$?
+      set -e
+      if [ "$_bb_disabled_poll_rc" -eq 2 ]; then
+        return 2
+      fi
+    fi
 
     if [ "$status_val" = "completed" ]; then
       check_appeared=1
@@ -1750,14 +1830,6 @@ run_bugbot_review() {
     if [ "$check_appeared" -eq 0 ] && [ -n "$status_val" ]; then
       check_appeared=1
     fi
-
-    while IFS= read -r body; do
-      [ -z "$body" ] && continue
-      if is_bugbot_disabled_message "$body"; then
-        bugbot_return_disabled "$pr_number" "$branch_name"
-        return 2
-      fi
-    done <<< "$(bugbot_check_disabled_issue_comments "$repo" "$pr_number" "$bot_login" "$since_iso")"
 
     # Signal safety: _interruptible_sleep runs `sleep` as a background job and
     # blocks on bash's built-in `wait`, which is interruptible by signals.  When

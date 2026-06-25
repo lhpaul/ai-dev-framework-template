@@ -2256,6 +2256,13 @@ else
 fi
 run_test "bugbot_clean_phrase_not_disabled" "active" "$actual"
 
+if is_bugbot_disabled_message "This repository setting is disabled for this repository in general."; then
+  actual="disabled"
+else
+  actual="active"
+fi
+run_test "bugbot_generic_disabled_phrase_not_matched" "active" "$actual"
+
 # ---------------------------------------------------------------------------
 # Test 16.1: clean path — check run conclusion=success, no blocking comments
 # ---------------------------------------------------------------------------
