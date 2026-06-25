@@ -1219,6 +1219,29 @@ bugbot_cursor_check_run_count() {
   return 0
 }
 
+# Returns: 0 when no Cursor check run exists on head (disabled signal may apply),
+# 1 when at least one check run exists (ignore disabled comments),
+# 2 when the check-run count could not be fetched.
+bugbot_disabled_preflight_applies_for_head() {
+  local repo="$1"
+  local head_sha="$2"
+  local check_name="$3"
+  local run_count
+  local _run_count_rc=0
+
+  set +e
+  run_count="$(bugbot_cursor_check_run_count "$repo" "$head_sha" "$check_name")"
+  _run_count_rc=$?
+  set -e
+  if [ "$_run_count_rc" -ne 0 ]; then
+    return 2
+  fi
+  if [ "$run_count" -gt 0 ]; then
+    return 1
+  fi
+  return 0
+}
+
 bugbot_escalate_if_disabled_without_check_run() {
   local repo="$1"
   local pr_number="$2"
@@ -1227,15 +1250,29 @@ bugbot_escalate_if_disabled_without_check_run() {
   local since_iso="$5"
   local head_sha="$6"
   local check_name="$7"
-  local run_count
   local body
   local disabled_bodies
   local _comments_rc=0
+  local _preflight_rc=0
 
   set +e
-  run_count="$(bugbot_cursor_check_run_count "$repo" "$head_sha" "$check_name")"
+  bugbot_disabled_preflight_applies_for_head "$repo" "$head_sha" "$check_name"
+  _preflight_rc=$?
   set -e
-  if [ -n "${run_count:-}" ] && [ "$run_count" -gt 0 ]; then
+  if [ "$_preflight_rc" -eq 2 ]; then
+    echo "WARN: run_bugbot_review: check-run count fetch failed during disabled preflight for PR #$pr_number" >&2
+    print_kv RESULT escalate
+    print_kv REASON fetch-failed
+    print_kv PLATFORM bugbot
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 2
+  fi
+  if [ "$_preflight_rc" -eq 1 ]; then
     return 0
   fi
 
@@ -1409,9 +1446,24 @@ run_bugbot_review() {
     [ -z "$body" ] && continue
     if is_bugbot_disabled_message "$body"; then
       set +e
-      _bb_disabled_run_count="$(bugbot_cursor_check_run_count "$repo" "$head_sha" "$check_name")"
+      bugbot_disabled_preflight_applies_for_head "$repo" "$head_sha" "$check_name"
+      local _bb_disabled_rc=$?
       set -e
-      if [ -z "${_bb_disabled_run_count:-}" ] || [ "$_bb_disabled_run_count" -eq 0 ]; then
+      if [ "$_bb_disabled_rc" -eq 2 ]; then
+        rm -f "$existing_blocking_file"
+        echo "WARN: run_bugbot_review: check-run count fetch failed during disabled preflight for PR #$pr_number" >&2
+        print_kv RESULT escalate
+        print_kv REASON fetch-failed
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv COMMENT_COUNT 0
+        print_kv BLOCKING_COUNT 0
+        print_kv SUGGESTION_COUNT 0
+        return 2
+      fi
+      if [ "$_bb_disabled_rc" -eq 0 ]; then
         rm -f "$existing_blocking_file"
         bugbot_return_disabled "$pr_number" "$branch_name"
         return 2
@@ -1440,9 +1492,24 @@ run_bugbot_review() {
     [ -z "$body" ] && continue
     if is_bugbot_disabled_message "$body"; then
       set +e
-      _bb_disabled_run_count="$(bugbot_cursor_check_run_count "$repo" "$head_sha" "$check_name")"
+      bugbot_disabled_preflight_applies_for_head "$repo" "$head_sha" "$check_name"
+      local _bb_disabled_review_rc=$?
       set -e
-      if [ -z "${_bb_disabled_run_count:-}" ] || [ "$_bb_disabled_run_count" -eq 0 ]; then
+      if [ "$_bb_disabled_review_rc" -eq 2 ]; then
+        rm -f "$existing_blocking_file"
+        echo "WARN: run_bugbot_review: check-run count fetch failed during disabled preflight for PR #$pr_number" >&2
+        print_kv RESULT escalate
+        print_kv REASON fetch-failed
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv COMMENT_COUNT 0
+        print_kv BLOCKING_COUNT 0
+        print_kv SUGGESTION_COUNT 0
+        return 2
+      fi
+      if [ "$_bb_disabled_review_rc" -eq 0 ]; then
         rm -f "$existing_blocking_file"
         bugbot_return_disabled "$pr_number" "$branch_name"
         return 2
