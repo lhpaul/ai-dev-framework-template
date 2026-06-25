@@ -52,7 +52,7 @@ Typical timeout thresholds for long agents are documented in [`agent-model-confi
 2. Pull latest on the item branch or integration branch as appropriate.
 3. Run the [Resume checklist](#resume-checklist).
 4. Re-invoke the workflow entrypoint your alternate runner supports (`/run-item-work`, `/run-reviewer-loop`, Codex skills, or Claude Code agents) using the **same PR number**.
-5. Do **not** manually apply readiness labels; let Step 7 / Step 8 / Step 8c apply them after verification.
+5. Do **not** manually apply readiness labels; let the item-orchestrator apply them in protocol 91 Steps 7b and 8a after Step 7 (reviewer loop), Step 8 (CI), and Step 8c verification succeed.
 
 Tool-specific agent files (`.cursor/agents/`, `.claude/agents/`, `.codex/skills/`) share the same protocols — only the invocation surface changes.
 
