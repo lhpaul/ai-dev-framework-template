@@ -175,6 +175,28 @@ Use this when:
 - The batch orchestrator needs a deterministic first-pass list of development-folder candidates
 - You want to separate portfolio-level batch planning from single-item orchestration
 
+### `workflow-batch-lanes.sh`
+
+Assigns stage lanes and `proposed` vs `held` dispatch status for portfolio batch
+proposals. Consumes `workflow-batch-plan.sh` output (or `--scan`).
+
+Usage:
+
+```bash
+./scripts/development-workflow/workflow-batch-plan.sh | ./scripts/development-workflow/workflow-batch-lanes.sh
+./scripts/development-workflow/workflow-batch-lanes.sh --scan
+```
+
+What it does:
+
+- Applies `max_concurrent_by_stage` caps (default: unlimited spec/plan/review, implementation `1`)
+- Emits `STAGE_LANE`, `DISPATCH`, `HOLD_REASON`, and `HELD_SUMMARY` per item
+- Honors `LOCAL_RUNTIME=exclusive` holds when multiple implementation items would contend
+
+Use this when:
+
+- Protocol 90 Step 3 needs deterministic lane assignments before dispatch
+
 ### Workflow hub product repository commands
 
 These commands run only when `.ai-dev-workflow.yaml` resolves to
