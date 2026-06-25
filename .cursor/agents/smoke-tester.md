@@ -1,6 +1,6 @@
 ---
 name: smoke-tester
-model: inherit
+model: claude-sonnet-4-6
 description: Smoke test stage. Use when a code review has been approved and the implementation needs manual smoke testing before merge. Executes the smoke test runbook using browser automation.
 ---
 

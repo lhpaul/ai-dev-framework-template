@@ -889,6 +889,7 @@ When work already exists, resume rather than restart.
 - If a workflow branch already exists, use `workflow-next-action.sh --branch <branch>`
 - If a PR already exists, use `workflow-next-action.sh --pr <number>`
 - If labels indicate `needs-fixes`, enter the fix loop instead of reopening the stage from scratch
+- If a run aborts mid-turn due to model quota, stream timeout, or runner unavailability, follow [`provider-contingency-runner-failover.md`](../provider-contingency-runner-failover.md) before manually changing PR labels or restarting from scratch
 
 The Work Item Runner owns the full control loop for this item until it reaches a terminal condition.
 
