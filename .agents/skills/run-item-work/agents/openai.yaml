@@ -1,7 +1,7 @@
 interface:
-  display_name: "Run item work"
-  short_description: "Compatibility/advanced alias: advance one workflow item without /run-work routing."
-  default_prompt: "Use $run-item-work to resume a specific workflow item, branch, or PR directly without /run-work routing. Prefer $run-work when you are not sure which item to target. In workflow_hub mode, state selected product repository and mutation target before implementation mutation."
+  display_name: "Run item work (deprecated)"
+  short_description: "Deprecated alias for $run-item — identical behavior; prefer $run-item."
+  default_prompt: "Deprecated: use $run-item instead. $run-item-work advances one workflow item with the same bounded prelude and Protocol 91 behavior as $run-item."
 
 policy:
   allow_implicit_invocation: false

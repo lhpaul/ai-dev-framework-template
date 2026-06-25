@@ -15,21 +15,21 @@ then routes to the appropriate behavior via the routing classifier
 | Routing mode     | When it applies                                      | Protocol entered            |
 | ---------------- | ---------------------------------------------------- | --------------------------- |
 | `no_target_scan` | No target supplied                                   | Protocol 90 (portfolio)     |
-| `single_item`    | Exactly one non-epic target                          | Protocol 91 (single item)   |
+| `single_item`    | Exactly one non-epic target                          | `/run-item` (prelude + Protocol 91) |
 | `explicit_list`  | Two or more explicit targets (hard bounded scope)    | Protocol 90 (bounded)       |
 | `epic`           | Epic-like target or `--epic` flag                    | Protocol 95 (epic resolver) |
 | `ambiguous`      | Cannot resolve deterministically — stops for human   | No mutation                 |
 
-> **Compatibility/advanced aliases**: `/run-item-work` advances exactly one known
-> item directly (skips routing). `/run-epic` runs the bounded epic resolver with
-> explicit delegation flags. Both are still fully supported.
+> **Bounded commands**: `/run-item` is the canonical single-item command (shared
+> prelude + Protocol 91). `/run-epic` runs bounded epic scope with explicit
+> delegation flags. `/run-item-work` is a deprecated alias for `/run-item`.
 
 1. Read `AGENTS.md` for repository-wide rules.
 2. Run `./scripts/development-workflow/run-work-router.sh [<target>...] [--json]`
    to classify the routing mode and emit a routing-decision record.
 3. Route to the appropriate protocol based on the classified mode:
    - `no_target_scan` / `explicit_list` → read `.codex/skills/workflow-orchestrator/SKILL.md` and follow it.
-   - `single_item` → read `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` and follow it.
+   - `single_item` → read `.claude/commands/run-item.md` or `.agents/skills/run-item/SKILL.md`.
    - `epic` → read `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md` and follow it.
    - `ambiguous` → stop and report the ambiguity to the human. No mutation.
 4. For `workflow_hub` implementation work, preserve selected product repository

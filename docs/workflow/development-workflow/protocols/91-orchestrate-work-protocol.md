@@ -18,7 +18,11 @@ This protocol may be entered in either of two ways:
 
 `/run-work <single-non-epic-target>` enters this protocol after the routing
 classifier (`scripts/development-workflow/run-work-router.sh`, Protocol 96)
-determines the routing mode is `single_item`.
+determines the routing mode is `single_item`. **Before Step 1 mutation**, follow
+the same **bounded prelude** contract as `/run-item` (`bounded-run-prelude.md` /
+`run-bounded-prelude.sh`). Command surfaces route `single_item` to `/run-item`;
+portfolio handoffs must run the prelude explicitly when entering Protocol 91
+directly.
 
 **`single_item` → `epic` upgrade** (AC5): When a single target resolves to an
 epic-like issue (one with child items or native sub-issues), the router upgrades
@@ -28,8 +32,8 @@ from `single_item` to `epic` and routes to `95-run-epic-protocol.md` instead.
 already prevents out-of-scope mutations for item-specific invocations. No
 additional scope narrowing is needed for the `single_item` routing case.
 
-`/run-item-work` invoked directly (without `/run-work`) is a **compatibility/
-advanced alias** that also enters this protocol. Its behavior is unchanged.
+`/run-item-work` invoked directly (without `/run-work`) is a **deprecated
+compatibility alias** for `/run-item` with identical behavior.
 
 See `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
 for the full routing specification.

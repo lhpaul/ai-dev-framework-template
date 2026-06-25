@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`/run-item` command surfaces** (#1050): adds Cursor, Claude Code, and Codex
+  (`run-item` skill) as the canonical single-item bounded command; marks
+  `/run-item-work` as a deprecated compatibility alias and aligns `item-orchestrator`
+  with the shared bounded prelude + Protocol 91 contract.
 - **Shared bounded run prelude** (#1049): `run-bounded-prelude.sh` unifies scope
   resolution, repository guardrails snapshot, and policy/checkpoint recommendation
   for `/run-item` and `/run-epic`; adds `run-item-scope-resolver.sh` and extends

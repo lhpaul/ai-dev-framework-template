@@ -165,7 +165,7 @@ After the routing-decision record is emitted, execution hands off to:
 | Routing mode     | Handoff target                                                                                                         |
 | ---------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `no_target_scan` | **Protocol 90** (`90-batch-orchestrate-work-protocol.md`) — portfolio orchestration with the existing largest-safe-batch proposal and human-approval gate |
-| `single_item`    | **Protocol 91** (`91-orchestrate-work-protocol.md`) — single-item control loop for the resolved target |
+| `single_item`    | **`/run-item`** bounded prelude, then **Protocol 91** (`91-orchestrate-work-protocol.md`) for the resolved target |
 | `explicit_list`  | **Protocol 90** — portfolio orchestration with the explicit item list as a hard bounded scope (existing Explicit Item List Scope Guard applies) |
 | `epic`           | **Protocol 95** (`95-run-epic-protocol.md`) — bounded epic scope resolver with read-only phase before any mutation |
 | `ambiguous`      | **No handoff** — record stop reason, perform no mutation, stop for a human decision |
