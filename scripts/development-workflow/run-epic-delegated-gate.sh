@@ -9,17 +9,23 @@ source "$SCRIPT_DIR/workflow-lib.sh"
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/development-workflow/run-epic-delegated-gate.sh --input <file> [--policy <file>] [--json]
+  ./scripts/development-workflow/run-epic-delegated-gate.sh --input <file> [--policy <file>] [--repo-root <path>] [--product-repo <name>] [--json]
 
 Evaluates whether a delegated /run-epic candidate PR may proceed to the
 repository merge protocol. The gate is read-only: it does not run reviewers,
 poll CI, edit labels, update trackers, create comments, merge PRs, close
 issues, or delete branches.
+
+When --repo-root and --product-repo are supplied (or productRepo.name is present
+in the evidence file), workflow_hub product repository ci_policy is loaded from
+the resolver and applied when the evidence file omits ciPolicy/ci_policy.
 EOF
 }
 
 input_file=""
 policy_file=""
+repo_root=""
+product_repo=""
 json_output=0
 
 error_exit() {
@@ -64,6 +70,16 @@ while [ "$#" -gt 0 ]; do
       policy_file="$2"
       shift 2
       ;;
+    --repo-root)
+      require_value "$@"
+      repo_root="$2"
+      shift 2
+      ;;
+    --product-repo)
+      require_value "$@"
+      product_repo="$2"
+      shift 2
+      ;;
     --json)
       json_output=1
       shift
@@ -95,9 +111,17 @@ if [ -n "$policy_file" ]; then
   fi
 fi
 
+effective_root="${repo_root:-$(workflow_repo_root)}"
+state_json="$(workflow_merge_ci_policy_into_json "$state_json" "$effective_root" "$product_repo")"
+
 decision_json="$(printf '%s\n' "$state_json" | jq '
   def policy: if (.policy | type) == "object" then .policy else {} end;
+  def ci_policy: (.ciPolicy // .ci_policy // "required");
   def labels: (.pr.labels // []);
+  def risk_blockers: (.risk.blockers // []);
+  def risk_ci_only_blockers:
+    (risk_blockers | length) > 0 and
+    (risk_blockers | all(test("required CI|CI state|CI is not|CI check"; "i")));
   def has_label($name): labels | index($name) != null;
   def success_check:
     if (. | has("state")) and ((. | has("status")) | not) then
@@ -186,10 +210,14 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
   (if has_label("human-checkpoint-required") and (($pendingCheckpoints | length) == 0)
    then add_reason($reasons; "human_checkpoint_required: human-checkpoint-required label is present; record satisfied or waived checkpoint evidence and remove the label before delegated merge")
    else $reasons end) as $reasons |
-  (if ((.statusChecks // []) | length) == 0
+  (if (ci_policy == "none")
+   then $reasons
+   elif ((.statusChecks // []) | length) == 0
    then add_reason($reasons; "required CI state is missing")
    else $reasons end) as $reasons |
-  (if ((.statusChecks // []) | map(select(success_check | not)) | length) > 0
+  (if (ci_policy == "none")
+   then $reasons
+   elif ((.statusChecks // []) | map(select(success_check | not)) | length) > 0
    then add_reason($reasons; "one or more required CI checks are not successful")
    else $reasons end) as $reasons |
   (if (.pr.mergeStateStatus // "") != "CLEAN"
@@ -204,7 +232,9 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
   (if ((.reviewer.acceptedAdvisoriesWithoutRationale // 0) | tonumber) > 0
    then add_reason($reasons; "accepted advisories require rationale")
    else $reasons end) as $reasons |
-  (if risk_merge_permitted != true
+  (if (ci_policy == "none") and (risk_merge_permitted != true) and risk_ci_only_blockers
+   then $reasons
+   elif risk_merge_permitted != true
    then add_reason($reasons; "risk gate does not permit merge")
    else $reasons end) as $reasons |
   (if (.pr.auditDispositionPresent // false) != true

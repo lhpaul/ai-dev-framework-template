@@ -162,6 +162,7 @@ run_contains "workflow_hub_context_name" "TARGET_REPO_NAME=mobile-app" "$hub_out
 run_contains "workflow_hub_context_github_repo" "TARGET_GITHUB_REPO=example/mobile-app" "$hub_output"
 run_contains "workflow_hub_context_default_branch" "TARGET_DEFAULT_BRANCH=main" "$hub_output"
 run_contains "workflow_hub_context_tracker_hints" "TARGET_TRACKER_HINTS=component:mobile" "$hub_output"
+run_contains "workflow_hub_context_ci_policy" "TARGET_CI_POLICY=required" "$hub_output"
 run_contains "workflow_hub_local_path_override" "TARGET_LOCAL_PATH=$TMP_ROOT/local/mobile-app" "$hub_output"
 run_contains "workflow_hub_local_path_source" "TARGET_LOCAL_PATH_SOURCE=local_override" "$hub_output"
 
@@ -213,6 +214,36 @@ run_fails_contains \
   "workflow_hub_unknown_repo" \
   "no workflow_hub.product_repos entry named 'unknown-app'" \
   python3 "$RESOLVER" resolve --repo-root "$hub_dir" --repo unknown-app
+
+ci_policy_dir="$(fixture_dir ci-policy-hub)"
+cat > "$ci_policy_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      ci_policy: none
+YAML
+none_ci_output="$(workflow_repository_context mobile-app "$ci_policy_dir")"
+run_contains "workflow_hub_ci_policy_none" "TARGET_CI_POLICY=none" "$none_ci_output"
+
+bad_ci_dir="$(fixture_dir bad-ci-policy)"
+cat > "$bad_ci_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      ci_policy: maybe
+YAML
+run_fails_contains \
+  "workflow_hub_invalid_ci_policy" \
+  "workflow_hub.product_repos[1].ci_policy must be one of" \
+  python3 "$RESOLVER" resolve --repo-root "$bad_ci_dir" --repo mobile-app
 
 no_local_dir="$(fixture_dir no-local)"
 cat > "$no_local_dir/.ai-dev-workflow.yaml" <<'YAML'
@@ -336,6 +367,19 @@ product_repo_output="$(workflow_repository_context "" "$product_repo_dir")"
 run_contains "product_repo_context_mode" "WORKFLOW_MODE=product_repo" "$product_repo_output"
 run_contains "product_repo_context_hub" "WORKFLOW_HUB_GITHUB_REPO=example/workflow-hub" "$product_repo_output"
 run_contains "product_repo_context_branch" "TARGET_DEFAULT_BRANCH=release" "$product_repo_output"
+
+product_ci_none_dir="$(fixture_dir product-ci-none)"
+cat > "$product_ci_none_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: product_repo
+
+product_repo:
+  ci_policy: none
+  workflow_hub:
+    github_repo: example/workflow-hub
+YAML
+product_ci_none_output="$(workflow_repository_context "" "$product_ci_none_dir")"
+run_contains "product_repo_ci_policy_none" "TARGET_CI_POLICY=none" "$product_ci_none_output"
 
 bad_product_repo_dir="$(fixture_dir bad-product-repo)"
 cat > "$bad_product_repo_dir/.ai-dev-workflow.yaml" <<'YAML'

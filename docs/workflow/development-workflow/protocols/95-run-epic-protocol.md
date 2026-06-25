@@ -147,8 +147,12 @@ When a later delegated run reaches a candidate PR merge decision, classify that
 PR with:
 
 ```bash
-./scripts/development-workflow/run-epic-risk-classifier.sh --pr <pr-number> --max-risk <low|medium|high>
+./scripts/development-workflow/run-epic-risk-classifier.sh --pr <pr-number> --max-risk <low|medium|high> [--repo-root <path>] [--product-repo <name>]
 ```
+
+In `workflow_hub` mode, pass `--repo-root` and `--product-repo` (or rely on
+`github_repo` / `productRepo.name` in `--input` evidence) so hub `ci_policy` is
+applied when the evidence omits `ciPolicy` / `ci_policy`.
 
 The risk classifier is also read-only. It must not run reviewer loops, poll CI,
 update tracker status, change labels, create comments, merge PRs, close issues,
@@ -171,7 +175,7 @@ Before an authorized merge decision, run the delegated gate with the current
 candidate PR, resolver policy, reviewer, CI, risk, scope, and audit evidence:
 
 ```bash
-./scripts/development-workflow/run-epic-delegated-gate.sh --input <file> [--policy <file>]
+./scripts/development-workflow/run-epic-delegated-gate.sh --input <file> [--policy <file>] [--repo-root <path>] [--product-repo <name>]
 ```
 
 The gate is read-only. It explains whether the runner may proceed to merge,
@@ -180,6 +184,9 @@ missing state. It does not replace `/run-item-work`, reviewer-loop, CI-loop,
 risk classification, audit comments, merge, cleanup, or tracker updates.
 The gate consumes an assembled evidence file; live PR reads happen in the risk
 classifier, audit helper, reviewer loop, CI loop, and normal GitHub checks.
+In `workflow_hub` mode, pass `--repo-root` and `--product-repo` (or include
+`productRepo.name` in the evidence file) so hub `ci_policy` is applied when
+the evidence omits `ciPolicy` / `ci_policy`.
 
 ---
 
