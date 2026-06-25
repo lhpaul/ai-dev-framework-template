@@ -44,6 +44,20 @@ error_exit() {
   exit 1
 }
 
+emit_guardrails_unreadable_stop() {
+  local detail="${1:-}"
+  if [ "$json_output" -eq 1 ]; then
+    jq -nc --arg detail "$detail" \
+      '{stopCondition: "guardrails_config_unreadable", readOnlyGuarantee: "No tracker updates, branch creation, PR edits, labels, comments, merges, issue closure, or branch deletion were performed.", detail: $detail}'
+    exit 1
+  fi
+  printf 'STOP: guardrails_config_unreadable\n'
+  if [ -n "$detail" ]; then
+    printf '%s\n' "$detail" >&2
+  fi
+  exit 1
+}
+
 require_value() {
   local option="$1"
   if [ "$#" -lt 2 ] || [ -z "${2:-}" ] || [ "${2#--}" != "$2" ]; then
@@ -89,7 +103,7 @@ PYEOF
   )" || _py_exit=$?
 
   if [ "$_py_exit" -eq 2 ]; then
-    error_exit "failed to read guardrails from workflow config $config_file"
+    emit_guardrails_unreadable_stop "failed to read guardrails from workflow config $config_file"
   fi
   if [ "$_py_exit" -ne 0 ]; then
     py_result='{"section":"absent","mode":"manual","backlog_start":false}'

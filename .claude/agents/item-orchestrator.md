@@ -7,7 +7,9 @@ tools: Read, Grep, Glob, Write, Edit, Bash, Agent
 
 Follow the **`/run-item`** bounded command contract:
 
-1. Run the shared bounded prelude read-only before mutation (`bounded-run-prelude.md`).
+1. Run the shared bounded prelude read-only before mutation (`bounded-run-prelude.md`)
+   **unless** handoff metadata includes `BATCH_CONTEXT=true` (portfolio batch dispatch
+   from Protocol 90 — prelude is skipped per Protocol 91).
 2. Follow the single-item orchestration protocol:
 
 `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`

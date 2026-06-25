@@ -26,8 +26,7 @@ single-item or epic invocations — the router emits `redirect_item` or
    `redirectCommand` in the routing record.
 4. For `no_target_scan` / `explicit_list`, follow Protocol 90 via `workflow-orchestrator`.
 5. For single-item advancement use `$run-item`; for epic bounded runs use `$run-epic`.
+6. In `workflow_hub`, preserve selected product repository context in implementation
+   handoffs when dispatching portfolio batches.
 
 Routing specification: `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
-
-4. In `workflow_hub`, preserve selected product repository context in implementation
-   handoffs when dispatching portfolio batches.
