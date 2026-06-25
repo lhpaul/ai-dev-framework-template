@@ -1219,24 +1219,44 @@ bugbot_cursor_check_run_count() {
   return 0
 }
 
-# Returns: 0 when no Cursor check run exists on head (disabled signal may apply),
-# 1 when at least one check run exists (ignore disabled comments),
-# 2 when the check-run count could not be fetched.
+# Returns: 0 when disabled issue comments should be evaluated for this head,
+# 1 when a completed successful Cursor check run makes them stale,
+# 2 when the check-run lookup could not be fetched.
 bugbot_disabled_preflight_applies_for_head() {
   local repo="$1"
   local head_sha="$2"
   local check_name="$3"
-  local run_count
-  local _run_count_rc=0
+  local fetch_output=""
+  local status=""
+  local conclusion=""
+  local _fetch_rc=0
 
   set +e
-  run_count="$(bugbot_cursor_check_run_count "$repo" "$head_sha" "$check_name")"
-  _run_count_rc=$?
+  fetch_output="$(
+    gh api "repos/$repo/commits/$head_sha/check-runs" --paginate 2>/dev/null \
+      | jq -se -r --arg name "$check_name" '
+          [ .[].check_runs[]
+            | select(
+                ((.app.slug // "") | test("cursor"; "i")) or
+                (.name == $name)
+              )
+          ]
+          | sort_by(.started_at) | last
+          | ((.status // "") + " " + (.conclusion // ""))
+        ' 2>/dev/null
+  )"
+  _fetch_rc=$?
   set -e
-  if [ "$_run_count_rc" -ne 0 ]; then
+  if [ "$_fetch_rc" -ne 0 ]; then
     return 2
   fi
-  if [ "$run_count" -gt 0 ]; then
+  if [ -z "$fetch_output" ]; then
+    return 0
+  fi
+  read -r status conclusion <<< "$fetch_output"
+  status="${status:-}"
+  conclusion="${conclusion:-}"
+  if [ "$status" = "completed" ] && [ "$conclusion" = "success" ]; then
     return 1
   fi
   return 0
