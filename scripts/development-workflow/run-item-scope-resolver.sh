@@ -129,12 +129,12 @@ resolve_token_kind() {
 
   pr_num="${token#\#}"
   if is_positive_int "$pr_num" && have_cmd gh; then
-    pr_state="$(gh pr view "$pr_num" --json state --jq '.state' 2>/dev/null)" || true
+    pr_state="$(gh pr view "$pr_num" --json state --jq '.state' 2>/dev/null)" || true # workflow-shell-guard: allow SH001 - type probe; failure expected when target is not a PR
     if [ -n "$pr_state" ]; then
       printf 'pr'
       return 0
     fi
-    issue_state="$(gh issue view "$pr_num" --json state --jq '.state' 2>/dev/null)" || true
+    issue_state="$(gh issue view "$pr_num" --json state --jq '.state' 2>/dev/null)" || true # workflow-shell-guard: allow SH001 - type probe; failure expected when target is not an issue
     if [ -n "$issue_state" ]; then
       printf 'issue'
       return 0
@@ -170,7 +170,7 @@ issue_from_development_path() {
       printf '%s\n' "$issue"
       return 0
     fi
-  done < <(git show-ref 2>/dev/null | sed -n 's|.*refs/remotes/origin/||p' | grep -F "$slug" || true)
+  done < <(git show-ref 2>/dev/null | sed -n 's|.*refs/remotes/origin/||p' | grep -F "$slug")
   return 1
 }
 
