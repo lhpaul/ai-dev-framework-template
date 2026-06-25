@@ -183,10 +183,8 @@ if ! printf '%s\n' "$scope_json" | jq -e '
 fi
 
 config_file=""
-if [ -n "${AI_DEV_WORKFLOW_CONFIG_FILE:-}" ]; then
-  config_file="${AI_DEV_WORKFLOW_CONFIG_FILE}"
-else
-  config_file="$(workflow_config_file)"
+if ! config_file="$(workflow_effective_config_file 2>/dev/null)"; then
+  error_exit "workflow config file not found"
 fi
 if ! reviewers="$(workflow_config_review_on_draft_runner "$config_file")"; then
   error_exit "failed to read review.on_draft.runner from workflow config: $config_file"

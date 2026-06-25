@@ -83,11 +83,11 @@ issue_from_branch() {
     printf '%s\n' "${BASH_REMATCH[3]}"
     return 0
   fi
-  if [[ "$b" =~ ^(spec|implementation-plan)/([0-9]+)($|-) ]]; then
+  if [[ "$b" =~ ^(spec|implementation-plan|plan)/([0-9]+)($|-) ]]; then
     printf '%s\n' "${BASH_REMATCH[2]}"
     return 0
   fi
-  if [[ "$b" =~ ^(spec|implementation-plan)/([a-zA-Z]{2,6}-([0-9]+))($|-) ]]; then
+  if [[ "$b" =~ ^(spec|implementation-plan|plan)/([a-zA-Z]{2,6}-([0-9]+))($|-) ]]; then
     printf '%s\n' "${BASH_REMATCH[3]}"
     return 0
   fi

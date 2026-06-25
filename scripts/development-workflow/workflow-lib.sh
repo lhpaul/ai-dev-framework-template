@@ -18,6 +18,23 @@ workflow_config_file() {
   printf '%s/.ai-dev-workflow.yaml\n' "$(workflow_repo_root)"
 }
 
+# workflow_effective_config_file
+# Honors AI_DEV_WORKFLOW_CONFIG_FILE when it points to an existing file;
+# otherwise falls back to the repository default .ai-dev-workflow.yaml when present.
+workflow_effective_config_file() {
+  local default
+  if [ -n "${AI_DEV_WORKFLOW_CONFIG_FILE:-}" ] && [ -f "${AI_DEV_WORKFLOW_CONFIG_FILE}" ]; then
+    printf '%s\n' "${AI_DEV_WORKFLOW_CONFIG_FILE}"
+    return 0
+  fi
+  default="$(workflow_config_file)"
+  if [ -f "$default" ]; then
+    printf '%s\n' "$default"
+    return 0
+  fi
+  return 1
+}
+
 workflow_local_config_file() {
   printf '%s/.ai-dev-workflow.local.yaml\n' "$(workflow_repo_root)"
 }

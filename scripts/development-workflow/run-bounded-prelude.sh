@@ -55,17 +55,12 @@ require_value() {
 
 read_guardrails_json() {
   local config_file py_result _py_exit
-  _py_exit=0
-  if [ -n "${AI_DEV_WORKFLOW_CONFIG_FILE:-}" ]; then
-    config_file="${AI_DEV_WORKFLOW_CONFIG_FILE}"
-  else
-    config_file="$(workflow_config_file 2>/dev/null)" || _py_exit=$?
-    if [ "$_py_exit" -ne 0 ] || [ -z "${config_file:-}" ] || [ ! -f "$config_file" ]; then
-      printf '%s\n' '{"section":"absent","mode":"manual","backlog_start":false}'
-      return 0
-    fi
+  if ! config_file="$(workflow_effective_config_file 2>/dev/null)"; then
+    printf '%s\n' '{"section":"absent","mode":"manual","backlog_start":false}'
+    return 0
   fi
 
+  _py_exit=0
   py_result="$(python3 - "$config_file" <<'PYEOF'
 import sys, json
 try:
@@ -87,10 +82,18 @@ try:
     if not isinstance(allow, bool):
         allow = str(allow).lower() == 'true'
     print(json.dumps({"section": "present", "mode": mode, "backlog_start": allow}))
-except Exception:
-    print(json.dumps({"section": "absent", "mode": "manual", "backlog_start": False}))
+except Exception as exc:
+    print(f"failed to parse guardrails from {sys.argv[1]}: {exc}", file=sys.stderr)
+    sys.exit(2)
 PYEOF
-  )" || py_result='{"section":"absent","mode":"manual","backlog_start":false}'
+  )" || _py_exit=$?
+
+  if [ "$_py_exit" -eq 2 ]; then
+    error_exit "failed to read guardrails from workflow config $config_file"
+  fi
+  if [ "$_py_exit" -ne 0 ]; then
+    py_result='{"section":"absent","mode":"manual","backlog_start":false}'
+  fi
 
   printf '%s\n' "$py_result"
 }
@@ -229,8 +232,8 @@ if [ "$item_selector_count" -gt 1 ]; then
 fi
 
 if [ -z "${AI_DEV_WORKFLOW_CONFIG_FILE:-}" ]; then
-  _resolved_config="$(workflow_config_file 2>/dev/null)" || _resolved_config=""
-  if [ -n "$_resolved_config" ] && [ -f "$_resolved_config" ]; then
+  _resolved_config="$(workflow_effective_config_file 2>/dev/null)" || _resolved_config=""
+  if [ -n "$_resolved_config" ]; then
     export AI_DEV_WORKFLOW_CONFIG_FILE="$_resolved_config"
   fi
 fi
