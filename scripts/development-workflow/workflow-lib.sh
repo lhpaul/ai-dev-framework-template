@@ -187,6 +187,7 @@ workflow_merge_ci_policy_into_json() {
   local json="$1"
   local root="${2:-}"
   local repo_name="${3:-}"
+  local trust_repo_name=0
 
   if [ -z "$root" ]; then
     printf '%s\n' "$json"
@@ -198,7 +199,9 @@ workflow_merge_ci_policy_into_json() {
     return 0
   fi
 
-  if [ -z "$repo_name" ]; then
+  if [ -n "$repo_name" ]; then
+    trust_repo_name=1
+  else
     repo_name="$(printf '%s\n' "$json" | jq -r '
       .productRepo.name //
       .productRepoName //
@@ -206,6 +209,9 @@ workflow_merge_ci_policy_into_json() {
       .repository.product_repo //
       ""
     ' 2>/dev/null)"
+    if [ -n "$repo_name" ]; then
+      trust_repo_name=1
+    fi
   fi
 
   local github_slug resolve_root="$root" context ci_policy mode
@@ -237,7 +243,7 @@ workflow_merge_ci_policy_into_json() {
 
   local resolved_github
   resolved_github="$(workflow_github_repo_from_context "$context")"
-  if [ -n "$github_slug" ] && [ -n "$resolved_github" ] && [ "$github_slug" != "$resolved_github" ]; then
+  if [ "$trust_repo_name" != 1 ] && [ -n "$github_slug" ] && [ -n "$resolved_github" ] && [ "$github_slug" != "$resolved_github" ]; then
     printf '%s\n' "$json"
     return 0
   fi
