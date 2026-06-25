@@ -189,6 +189,9 @@ run_test "hub_ci_policy_skips_unknown_github_slug" "blocked" "$("$GATE" --input 
 missing_ci_hub_fixture="$(write_fixture missing-ci-hub '.statusChecks = [] | .productRepo = {name: "mobile-app"}')"
 run_test "hub_ci_policy_none_from_resolver" "merge_allowed" "$("$GATE" --input "$missing_ci_hub_fixture" --repo-root "$hub_ci_dir" --product-repo mobile-app --json | jq -r '.decision')"
 
+stale_slug_hub_fixture="$(write_fixture stale-slug-hub '.statusChecks = [] | .productRepo = {name: "mobile-app"} | .github_repo = "example/stale-slug"')"
+run_test "hub_ci_policy_uses_product_repo_name_over_stale_slug" "merge_allowed" "$("$GATE" --input "$stale_slug_hub_fixture" --repo-root "$hub_ci_dir" --product-repo mobile-app --json | jq -r '.decision')"
+
 clean_fixture="$(write_fixture clean)"
 run_test "merge_allowed_when_all_gates_clean" "merge_allowed" "$(decision_for "$clean_fixture")"
 run_test "merge_permitted_true" "true" "$("$GATE" --input "$clean_fixture" --json | jq -r '.mergePermitted')"
