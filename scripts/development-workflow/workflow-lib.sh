@@ -222,7 +222,12 @@ workflow_merge_ci_policy_into_json() {
       fi
     fi
   elif [ -z "$repo_name" ] && [ -n "$github_slug" ]; then
-    repo_name="$(workflow_product_repo_name_for_github_slug "$root" "$github_slug" 2>/dev/null || true)"
+    repo_name="$(workflow_product_repo_name_for_github_slug "$resolve_root" "$github_slug" 2>/dev/null || true)"
+  fi
+
+  if [ -n "$github_slug" ] && [ -z "$repo_name" ]; then
+    printf '%s\n' "$json"
+    return 0
   fi
 
   if ! context="$(workflow_repository_context "$repo_name" "$resolve_root" 2>/dev/null)"; then
@@ -230,8 +235,15 @@ workflow_merge_ci_policy_into_json() {
     return 0
   fi
 
+  local resolved_github
+  resolved_github="$(workflow_github_repo_from_context "$context")"
+  if [ -n "$github_slug" ] && [ -n "$resolved_github" ] && [ "$github_slug" != "$resolved_github" ]; then
+    printf '%s\n' "$json"
+    return 0
+  fi
+
   if [ -z "$github_slug" ]; then
-    github_slug="$(workflow_github_repo_from_context "$context")"
+    github_slug="$resolved_github"
   fi
 
   ci_policy="$(workflow_context_value TARGET_CI_POLICY "$context")"

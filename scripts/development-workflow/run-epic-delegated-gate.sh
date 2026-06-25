@@ -118,6 +118,10 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
   def policy: if (.policy | type) == "object" then .policy else {} end;
   def ci_policy: (.ciPolicy // .ci_policy // "required");
   def labels: (.pr.labels // []);
+  def risk_blockers: (.risk.blockers // []);
+  def risk_ci_only_blockers:
+    (risk_blockers | length) > 0 and
+    (risk_blockers | all(test("required CI|CI state|CI is not|CI check"; "i")));
   def has_label($name): labels | index($name) != null;
   def success_check:
     if (. | has("state")) and ((. | has("status")) | not) then
@@ -228,7 +232,9 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
   (if ((.reviewer.acceptedAdvisoriesWithoutRationale // 0) | tonumber) > 0
    then add_reason($reasons; "accepted advisories require rationale")
    else $reasons end) as $reasons |
-  (if risk_merge_permitted != true
+  (if (ci_policy == "none") and (risk_merge_permitted != true) and risk_ci_only_blockers
+   then $reasons
+   elif risk_merge_permitted != true
    then add_reason($reasons; "risk gate does not permit merge")
    else $reasons end) as $reasons |
   (if (.pr.auditDispositionPresent // false) != true
