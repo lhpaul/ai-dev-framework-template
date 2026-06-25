@@ -1169,12 +1169,16 @@ bugbot_check_disabled_issue_comments() {
   local repo="$1"
   local pr_number="$2"
   local bot_login="$3"
+  local since_iso="$4"
 
   set +e
   gh api "repos/$repo/issues/$pr_number/comments" --paginate 2>/dev/null \
-    | jq -r --arg bot "$bot_login" '
+    | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
         .[]
-        | select(.user.login == $bot or .user.login == ($bot + "[bot]"))
+        | select(
+            (.user.login == $bot or .user.login == ($bot + "[bot]")) and
+            .created_at > $since
+          )
         | .body // ""
       ' 2>/dev/null
   set -e
@@ -1271,7 +1275,7 @@ run_bugbot_review() {
       bugbot_return_disabled "$pr_number" "$branch_name"
       return 2
     fi
-  done <<< "$(bugbot_check_disabled_issue_comments "$repo" "$pr_number" "$bot_login")"
+  done <<< "$(bugbot_check_disabled_issue_comments "$repo" "$pr_number" "$bot_login" "$since_iso")"
 
   # --- Phase 1: Check for existing blocking cursor[bot] findings on current HEAD ---
   # If blocking findings already exist (e.g. from a previous trigger in the same
@@ -1753,7 +1757,7 @@ run_bugbot_review() {
         bugbot_return_disabled "$pr_number" "$branch_name"
         return 2
       fi
-    done <<< "$(bugbot_check_disabled_issue_comments "$repo" "$pr_number" "$bot_login")"
+    done <<< "$(bugbot_check_disabled_issue_comments "$repo" "$pr_number" "$bot_login" "$since_iso")"
 
     # Signal safety: _interruptible_sleep runs `sleep` as a background job and
     # blocks on bash's built-in `wait`, which is interruptible by signals.  When

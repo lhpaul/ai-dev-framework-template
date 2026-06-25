@@ -2918,7 +2918,7 @@ case "$*" in
   *"--jq .commit.committer.date"*)
     printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
   *"issues/"*"/comments"*)
-    printf '[{"user":{"login":"cursor[bot]"},"body":"Bugbot is disabled for this repository."}]\n'
+    printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:00:00Z","body":"Bugbot is disabled for this repository."}]\n'
     exit 0 ;;
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
@@ -2949,6 +2949,47 @@ run_test "bugbot_disabled_preflight_reason" "REASON=bugbot-disabled" \
 run_test "bugbot_disabled_preflight_exit_code" "2" "$actual_exit"
 rm -rf "$_bugbot_mock_dir_1611"
 unset _bugbot_mock_dir_1611 actual_output actual_exit
+
+# Test 16.12: stale disabled issue comment before HEAD is ignored
+_bugbot_mock_dir_1612="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_1612/gh" <<'BUGBOT_GH_1612'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc1612sha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-02T00:00:00Z\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-01T00:00:00Z","body":"Bugbot is disabled for this repository."}]\n'
+    exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"check-runs"*)
+    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"success","started_at":"2020-01-02T00:00:00Z"}]}\n'
+    exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_1612
+chmod +x "$_bugbot_mock_dir_1612/gh"
+
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  PATH="$_bugbot_mock_dir_1612:$PATH"
+  _ec=0
+  run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_stale_disabled_comment_result" "RESULT=clean" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_stale_disabled_comment_exit_code" "0" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_1612"
+unset _bugbot_mock_dir_1612 actual_output actual_exit
 
 # ---------------------------------------------------------------------------
 # Summary
