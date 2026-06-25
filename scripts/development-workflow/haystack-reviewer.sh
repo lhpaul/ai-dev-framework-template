@@ -205,9 +205,11 @@ haystack_triage_auth_error_reason() {
   local triage_output="$1"
   local status message
 
-  status="$(printf '%s\n' "$triage_output" | jq -r '.status // empty' 2>/dev/null || true)"
+  status="$(printf '%s\n' "$triage_output" | jq -r '.status // empty' 2>/dev/null)"
+  status="${status:-}"
   [ "$status" != "error" ] && return 1
-  message="$(printf '%s\n' "$triage_output" | jq -r '.message // empty' 2>/dev/null || true)"
+  message="$(printf '%s\n' "$triage_output" | jq -r '.message // empty' 2>/dev/null)"
+  message="${message:-}"
   case "$message" in
     HTTP\ 401)
       printf 'unauthorized'
@@ -409,9 +411,11 @@ while true; do
       # Non-empty, non-"none" status value (e.g. "pending", "error",
       # "Rating synthesis not available", or any future transient state).
       # Authorization/API errors (HTTP 401/403) are permanent — fail fast.
-      _auth_reason="$(haystack_triage_auth_error_reason "$TRIAGE_OUTPUT" || true)"
-      if [ -n "${_auth_reason:-}" ]; then
-        echo "INFO: haystack triage returned status=error with message=$(printf '%s\n' "$TRIAGE_OUTPUT" | jq -r '.message // empty' 2>/dev/null || true) — treating as ${_auth_reason} (not retrying)" >&2
+      _auth_reason=""
+      if _auth_reason="$(haystack_triage_auth_error_reason "$TRIAGE_OUTPUT")"; then
+        _error_msg="$(printf '%s\n' "$TRIAGE_OUTPUT" | jq -r '.message // empty' 2>/dev/null)"
+        _error_msg="${_error_msg:-unknown}"
+        echo "INFO: haystack triage returned status=error with message=${_error_msg} — treating as ${_auth_reason} (not retrying)" >&2
         rm -f "$TRIAGE_STDERR"
         printf 'RESULT=skipped\n'
         printf 'REASON=%s\n' "$_auth_reason"
