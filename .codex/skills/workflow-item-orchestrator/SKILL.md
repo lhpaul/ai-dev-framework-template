@@ -8,7 +8,9 @@ description: Advance a single workflow item until it reaches a real terminal con
 Recommended model tier: `balanced`
 
 1. Read `AGENTS.md` for repository-wide rules, branch overrides, and terminal-condition expectations.
-2. Run the read-only bounded prelude before mutation (same contract as `$run-item`):
+2. Run the read-only bounded prelude before mutation unless handoff metadata
+   already includes a completed prelude JSON from `$run-item` / `/run-item` in the
+   same session (skip duplicate `run-bounded-prelude.sh` when prelude is present):
    `./scripts/development-workflow/run-bounded-prelude.sh --original-command "<invocation>" <scope flags> --json`
    See `docs/workflow/development-workflow/bounded-run-prelude.md`. When
    `policyRecommendation.requiresConfirmation` is true, stop for human acceptance

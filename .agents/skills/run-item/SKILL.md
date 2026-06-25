@@ -19,8 +19,9 @@ advances exactly one non-epic item through Protocol 91.
    present policy/checkpoint recommendations and continue only after human
    acceptance or customization.
 4. Read `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
-   and follow it exactly (or delegate to `workflow-item-orchestrator` when your
-   runner supports skill handoff).
+   and follow it exactly. Do **not** delegate to `workflow-item-orchestrator` in the
+   same run after Step 2 — that skill also runs the prelude and would duplicate
+   scope/policy work.
 5. Before implementation mutation in `workflow_hub`, state selected product
    repository, artifact owner, and mutation target; stop when context is missing
    or ambiguous.
