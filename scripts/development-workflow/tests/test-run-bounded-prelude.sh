@@ -58,5 +58,27 @@ run_test "item_policy_delegate" "true" "$(printf '%s\n' "$policy_out" | jq -r '.
 
 run_test "prelude_help" "0" "$( "$PRELUDE" --help >/dev/null; echo 0)"
 
+run_fails() {
+  local name="$1" expected="$2"
+  shift 2
+  set +e
+  local out status
+  out="$("$@" 2>&1)"
+  status=$?
+  set -e
+  if [ "$status" -ne 0 ] && grep -Fq -- "$expected" <<<"$out"; then
+    pass=$((pass + 1))
+    printf 'ok %s\n' "$name"
+  else
+    fail=$((fail + 1))
+    printf 'FAIL %s status=%s\n%s\n' "$name" "$status" "$out"
+  fi
+}
+
+run_fails "reject_epic_and_issue" "not --epic with item flags" \
+  "$PRELUDE" --original-command "/run-item 1" --epic 1047 --issue 1049
+run_fails "reject_multiple_item_flags" "exactly one item target flag" \
+  "$PRELUDE" --original-command "/run-item 1" --issue 1049 --branch feature/1049-x
+
 printf '\nResults: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

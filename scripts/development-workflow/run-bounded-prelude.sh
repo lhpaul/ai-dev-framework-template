@@ -22,7 +22,9 @@ EOF
 
 original_command=""
 json_output=0
-scope_mode=""
+scope_epic_set=0
+scope_items_set=0
+item_selector_count=0
 epic_number=""
 items_arg=""
 item_target=""
@@ -103,43 +105,43 @@ while [ "$#" -gt 0 ]; do
     --epic)
       require_value "$@"
       epic_number="$2"
-      scope_mode="epic"
+      scope_epic_set=1
       shift 2
       ;;
     --items)
       require_value "$@"
       items_arg="$2"
-      scope_mode="items"
+      scope_items_set=1
       shift 2
       ;;
     --target)
       require_value "$@"
       item_target="$2"
-      scope_mode="item"
+      item_selector_count=$((item_selector_count + 1))
       shift 2
       ;;
     --issue)
       require_value "$@"
       item_issue="$2"
-      scope_mode="item"
+      item_selector_count=$((item_selector_count + 1))
       shift 2
       ;;
     --branch)
       require_value "$@"
       item_branch="$2"
-      scope_mode="item"
+      item_selector_count=$((item_selector_count + 1))
       shift 2
       ;;
     --pr)
       require_value "$@"
       item_pr="$2"
-      scope_mode="item"
+      item_selector_count=$((item_selector_count + 1))
       shift 2
       ;;
     --development)
       require_value "$@"
       item_development="$2"
-      scope_mode="item"
+      item_selector_count=$((item_selector_count + 1))
       shift 2
       ;;
     --base)
@@ -203,7 +205,44 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -n "$original_command" ] || error_exit "--original-command is required"
-[ -n "$scope_mode" ] || error_exit "exactly one scope selector is required (--epic, --items, or item target flags)"
+
+if [ "$scope_epic_set" -eq 1 ] && [ "$scope_items_set" -eq 1 ]; then
+  error_exit "pass exactly one of --epic or --items, not both"
+fi
+if [ "$scope_epic_set" -eq 1 ] && [ "$item_selector_count" -gt 0 ]; then
+  error_exit "pass exactly one scope selector group (--epic, --items, or one item target flag), not --epic with item flags"
+fi
+if [ "$scope_items_set" -eq 1 ] && [ "$item_selector_count" -gt 0 ]; then
+  error_exit "pass exactly one scope selector group (--epic, --items, or one item target flag), not --items with item flags"
+fi
+
+scope_group_count=0
+[ "$scope_epic_set" -eq 1 ] && scope_group_count=$((scope_group_count + 1))
+[ "$scope_items_set" -eq 1 ] && scope_group_count=$((scope_group_count + 1))
+[ "$item_selector_count" -gt 0 ] && scope_group_count=$((scope_group_count + 1))
+
+if [ "$scope_group_count" -ne 1 ]; then
+  error_exit "pass exactly one scope selector group (--epic, --items, or one item target flag)"
+fi
+if [ "$item_selector_count" -gt 1 ]; then
+  error_exit "pass exactly one item target flag (--target, --issue, --branch, --pr, or --development)"
+fi
+
+if [ -z "${AI_DEV_WORKFLOW_CONFIG_FILE:-}" ]; then
+  _resolved_config="$(workflow_config_file 2>/dev/null)" || _resolved_config=""
+  if [ -n "$_resolved_config" ] && [ -f "$_resolved_config" ]; then
+    export AI_DEV_WORKFLOW_CONFIG_FILE="$_resolved_config"
+  fi
+fi
+
+scope_mode=""
+if [ "$scope_epic_set" -eq 1 ]; then
+  scope_mode="epic"
+elif [ "$scope_items_set" -eq 1 ]; then
+  scope_mode="items"
+else
+  scope_mode="item"
+fi
 
 tmp_dir="$(mktemp -d)"
 scope_file="$tmp_dir/scope.json"
