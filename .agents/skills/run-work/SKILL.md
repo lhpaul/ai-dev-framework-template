@@ -1,43 +1,28 @@
 ---
 name: run-work
-description: "Primary adaptive workflow entrypoint. Routes to no-target scan, single-item, explicit-list, or epic behavior based on your request. Use when the user asks for /run-work, run-work, or wants to batch-orchestrate workflow items. Usage: /run-work [<target> ...] — with no target it proposes the largest safe plan; with one target it advances that item; with multiple targets it treats them as a hard bounded scope; with an epic it does read-only scope resolution first."
+description: "Portfolio parallel orchestration only: no-target scan or explicit multi-item batches via Protocol 90. Single targets redirect to $run-item; epics redirect to $run-epic. Use $run-item or $run-epic for bounded single-item or epic work."
 ---
 
 # Run Work
 
 This is the Codex command-style alias for Claude Code `/run-work`.
 
-`/run-work` is the **primary adaptive entrypoint** for workflow orchestration.
-It inspects the request, tracker/repository state, and repository configuration,
-then routes to the appropriate behavior via the routing classifier
-(`scripts/development-workflow/run-work-router.sh`, Protocol 96):
+`/run-work` is **portfolio parallel orchestration only**. It does not mutate for
+single-item or epic invocations — the router emits `redirect_item` or
+`redirect_epic` with a `REDIRECT_COMMAND` instead.
 
-| Routing mode     | When it applies                                      | Protocol entered            |
-| ---------------- | ---------------------------------------------------- | --------------------------- |
-| `no_target_scan` | No target supplied                                   | Protocol 90 (portfolio)     |
-| `single_item`    | Exactly one non-epic target                          | `/run-item` (prelude + Protocol 91) |
-| `explicit_list`  | Two or more explicit targets (hard bounded scope)    | Protocol 90 (bounded)       |
-| `epic`           | Epic-like target or `--epic` flag                    | Protocol 95 (epic resolver) |
-| `ambiguous`      | Cannot resolve deterministically — stops for human   | No mutation                 |
-
-> **Bounded commands**: `/run-item` is the canonical single-item command (shared
-> prelude + Protocol 91). `/run-epic` runs bounded epic scope with explicit
-> delegation flags. `/run-item-work` is a deprecated alias for `/run-item`.
+| Routing mode | Action |
+| ------------ | ------ |
+| `no_target_scan` | Read `.codex/skills/workflow-orchestrator/SKILL.md` / Protocol 90 |
+| `explicit_list` | Protocol 90 with hard bounded scope |
+| `redirect_item` | Stop; tell the user to run `$run-item` with the resolved target |
+| `redirect_epic` | Stop; tell the user to run `$run-epic --epic <n>` |
+| `ambiguous` | Stop; report `stopReason` |
 
 1. Read `AGENTS.md` for repository-wide rules.
-2. Run `./scripts/development-workflow/run-work-router.sh [<target>...] [--json]`
-   to classify the routing mode and emit a routing-decision record.
-3. Route to the appropriate protocol based on the classified mode:
-   - `no_target_scan` / `explicit_list` → read `.codex/skills/workflow-orchestrator/SKILL.md` and follow it.
-   - `single_item` → read `.claude/commands/run-item.md` or `.agents/skills/run-item/SKILL.md`.
-   - `epic` → read `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md` and follow it.
-   - `ambiguous` → stop and report the ambiguity to the human. No mutation.
-4. For `workflow_hub` implementation work, preserve selected product repository
-   context in item handoffs; missing mode or `single_repo` does not require
-   `--repo`.
-5. **Guardrails enforcement**: Before any artifact-mutating action, resolve the
-   effective guardrails (three-layer precedence: repo config → session overrides →
-   invocation overrides) and report them. The routed protocol enforces the six
-   gates defined in `docs/workflow/development-workflow/guardrails-enforcement.md`.
-   When no `guardrails` section is found in `.ai-dev-workflow.yaml`, conservative
-   defaults apply automatically.
+2. Run `./scripts/development-workflow/run-work-router.sh [<target>...] [--json]`.
+3. When `redirectCommand` is set, **do not mutate** — surface the redirect and stop.
+4. For `no_target_scan` / `explicit_list`, follow Protocol 90 via `workflow-orchestrator`.
+5. For single-item advancement use `$run-item`; for epic bounded runs use `$run-epic`.
+
+Routing specification: `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`

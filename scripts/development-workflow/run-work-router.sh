@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # run-work-router.sh — Deterministic routing classifier for /run-work.
 #
-# Classifies a /run-work invocation into one of five routing modes:
-#   no_target_scan | single_item | explicit_list | epic | ambiguous
+# Classifies a /run-work invocation into one routing mode:
+#   no_target_scan | explicit_list | redirect_item | redirect_epic | ambiguous
 #
 # The script is READ-ONLY: it must not update tracker status, create branches,
 # open/edit/merge PRs, close issues, delete branches, or post comments.
@@ -30,15 +30,15 @@ source "$SCRIPT_DIR/workflow-lib.sh"
 # ---------------------------------------------------------------------------
 
 MODE_NO_TARGET="no_target_scan"
-MODE_SINGLE="single_item"
+MODE_REDIRECT_ITEM="redirect_item"
 MODE_LIST="explicit_list"
-MODE_EPIC="epic"
+MODE_REDIRECT_EPIC="redirect_epic"
 MODE_AMBIGUOUS="ambiguous"
 
 LABEL_NO_TARGET="No-target scan"
-LABEL_SINGLE="Single item"
+LABEL_REDIRECT_ITEM="Redirect (item)"
 LABEL_LIST="Explicit list"
-LABEL_EPIC="Epic"
+LABEL_REDIRECT_EPIC="Redirect (epic)"
 LABEL_AMBIGUOUS="Ambiguous"
 
 # ---------------------------------------------------------------------------
@@ -52,11 +52,11 @@ Usage:
   ./scripts/development-workflow/run-work-router.sh --epic <n> [--json]
 
 Classifies a /run-work invocation into one routing mode:
-  no_target_scan  No target supplied; scanner proposes the largest safe plan.
-  single_item     Exactly one non-epic item resolved.
-  explicit_list   Two or more explicit targets (hard bounded scope).
-  epic            Target is epic-like or --epic flag used.
-  ambiguous       Cannot deterministically resolve; no mutation allowed.
+  no_target_scan   No target supplied; portfolio scan (Protocol 90).
+  explicit_list    Two or more explicit targets (hard bounded portfolio batch).
+  redirect_item    Single non-epic target; redirect to /run-item (no mutation).
+  redirect_epic    Epic-like target; redirect to /run-epic (no mutation).
+  ambiguous        Cannot deterministically resolve; no mutation allowed.
 
 Flags:
   --epic <n>   Treat <n> as an explicit epic target (skips is_epic_issue check).
@@ -393,6 +393,17 @@ HELD_BACK="(none)"
 OUT_OF_SCOPE="(none)"
 STOP_REASON=""
 RAW_TARGET="(none)"
+REDIRECT_COMMAND=""
+
+build_redirect_command_item() {
+  local scope="$1"
+  printf '/run-item %s' "$scope"
+}
+
+build_redirect_command_epic() {
+  local scope="$1"
+  printf '/run-epic --epic %s' "$scope"
+}
 
 # Build RAW_TARGET string
 if [ -n "$epic_flag" ]; then
@@ -408,9 +419,10 @@ if [ -n "$epic_flag" ]; then
     MODE_LABEL="$LABEL_AMBIGUOUS"
     STOP_REASON="--epic value '$epic_flag' is not a valid issue number"
   else
-    MODE="$MODE_EPIC"
-    MODE_LABEL="$LABEL_EPIC"
+    MODE="$MODE_REDIRECT_EPIC"
+    MODE_LABEL="$LABEL_REDIRECT_EPIC"
     RESOLVED_SCOPE="$epic_flag"
+    REDIRECT_COMMAND="$(build_redirect_command_epic "$epic_flag")"
   fi
 
 # --------------- Case 2: no tokens supplied (no-target scan) ---------------
@@ -447,20 +459,22 @@ elif [ "${#deduped_tokens[@]}" -eq 1 ]; then
     set -e
 
     if [ "$epic_check" -eq 0 ]; then
-      # single_item → epic upgrade
-      MODE="$MODE_EPIC"
-      MODE_LABEL="$LABEL_EPIC"
+      MODE="$MODE_REDIRECT_EPIC"
+      MODE_LABEL="$LABEL_REDIRECT_EPIC"
       RESOLVED_SCOPE="$issue_num"
+      REDIRECT_COMMAND="$(build_redirect_command_epic "$issue_num")"
     else
-      MODE="$MODE_SINGLE"
-      MODE_LABEL="$LABEL_SINGLE"
+      MODE="$MODE_REDIRECT_ITEM"
+      MODE_LABEL="$LABEL_REDIRECT_ITEM"
       RESOLVED_SCOPE="$token"
+      REDIRECT_COMMAND="$(build_redirect_command_item "$token")"
     fi
   else
-    # branch, pr, dev_folder → single_item
-    MODE="$MODE_SINGLE"
-    MODE_LABEL="$LABEL_SINGLE"
+    # branch, pr, dev_folder → redirect_item
+    MODE="$MODE_REDIRECT_ITEM"
+    MODE_LABEL="$LABEL_REDIRECT_ITEM"
     RESOLVED_SCOPE="$token"
+    REDIRECT_COMMAND="$(build_redirect_command_item "$token")"
   fi
 
 # --------------- Case 4: two or more tokens --------------------------------
@@ -521,6 +535,9 @@ echo "OUT_OF_SCOPE=$OUT_OF_SCOPE"
 if [ -n "$STOP_REASON" ]; then
   echo "STOP_REASON=$STOP_REASON"
 fi
+if [ -n "${REDIRECT_COMMAND:-}" ]; then
+  echo "REDIRECT_COMMAND=$REDIRECT_COMMAND"
+fi
 echo "GUARDRAILS_SECTION=$GUARDRAILS_SECTION"
 echo "GUARDRAILS_MODE=$GUARDRAILS_MODE"
 echo "GUARDRAILS_BACKLOG_START=$GUARDRAILS_BACKLOG_START"
@@ -555,6 +572,12 @@ print(json.dumps(tokens))
     backlog_bool="true"
   fi
 
+  redirect_json="null"
+  if [ -n "${REDIRECT_COMMAND:-}" ]; then
+    redirect_json="$(printf '%s\n' "$REDIRECT_COMMAND" | \
+      python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().rstrip("\n")))')"
+  fi
+
   # Build the full JSON record using python3 with --arg style injection to
   # avoid shell-expansion quoting issues inside the heredoc.
   python3 - \
@@ -563,6 +586,7 @@ print(json.dumps(tokens))
     "$raw_target_json" \
     "$scope_json" \
     "$stop_reason_json" \
+    "$redirect_json" \
     "$GUARDRAILS_SECTION" \
     "$GUARDRAILS_MODE" \
     "$backlog_bool" \
@@ -570,7 +594,7 @@ print(json.dumps(tokens))
 import json, sys
 args = sys.argv[1:]
 mode, mode_label, raw_target_json_str, scope_json_str, stop_reason_json_str, \
-    guardrails_section, guardrails_mode, backlog_bool_str = args
+    redirect_json_str, guardrails_section, guardrails_mode, backlog_bool_str = args
 
 record = {
     "mode": mode,
@@ -580,6 +604,7 @@ record = {
     "heldBack": [],
     "outOfScope": [],
     "stopReason": json.loads(stop_reason_json_str),
+    "redirectCommand": json.loads(redirect_json_str),
     "guardrails": {
         "section": guardrails_section,
         "mode": guardrails_mode,

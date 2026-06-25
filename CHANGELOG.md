@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Portfolio-only `/run-work` router** (#1051): `run-work-router.sh` and Protocol 96
+  now support only `no_target_scan` and `explicit_list` under `/run-work`; single
+  and epic targets emit `redirect_item` / `redirect_epic` with `REDIRECT_COMMAND`
+  to `/run-item` and `/run-epic`.
 - **`/run-item` command surfaces** (#1050): adds Cursor, Claude Code, and Codex
   (`run-item` skill) as the canonical single-item bounded command; marks
   `/run-item-work` as a deprecated compatibility alias and aligns `item-orchestrator`

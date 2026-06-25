@@ -26,10 +26,10 @@ and resolved epic target are available as context.
 before any item is created, reviewed, merged, or cleaned up. This is the existing
 read-only contract for this protocol and is not changed by routing.
 
-**`single_item` → `epic` upgrade** (AC5): When a single target resolves to an
-epic-like issue (one with child items or native sub-issues), the router upgrades
-from `single_item` to `epic` before routing here. The resolver then handles scope
-resolution as normal.
+**Epic entry via `/run-work`**: When an operator mis-invokes `/run-work` with an
+epic-like target, Protocol 96 returns `redirect_epic` with guidance to `/run-epic`
+(no mutation under `/run-work`). Direct `/run-epic` invocations enter this protocol
+normally.
 
 `/run-epic` invoked directly (without `/run-work`) is a **compatibility/advanced
 alias** that also enters this protocol. Its behavior is unchanged.

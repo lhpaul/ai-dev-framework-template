@@ -62,9 +62,9 @@ Protocol 96) determines the routing mode is `no_target_scan` or `explicit_list`.
 - **`explicit_list`**: Two or more explicit targets were supplied as a hard
   bounded scope; the orchestrator runs that exact bounded set.
 
-When the routing mode is `single_item`, the classifier routes to
-`91-orchestrate-work-protocol.md` instead. When the routing mode is `epic`,
-the classifier routes to `95-run-epic-protocol.md` instead.
+When the routing mode is `redirect_item` or `redirect_epic`, `/run-work` performs
+**no mutation**. The classifier emits `REDIRECT_COMMAND` pointing to `/run-item`
+or `/run-epic`. Use those bounded commands instead.
 
 See `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
 for the full routing specification.
