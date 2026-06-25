@@ -30,3 +30,5 @@ Follow Protocol 90 when mode is `no_target_scan` or `explicit_list`:
 `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
 
 Routing specification: `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
+
+In `workflow_hub`, include selected product repository context in implementation handoffs; preserve selected product repository context when dispatching item work.

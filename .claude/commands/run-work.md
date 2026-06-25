@@ -27,3 +27,5 @@ enter Protocol 90.
 Bounded single-item work: `/run-item`. Bounded epic work: `/run-epic`.
 
 Portfolio protocol: `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
+
+In `workflow_hub`, include selected product repository context in implementation handoffs; preserve selected product repository context when dispatching item work.

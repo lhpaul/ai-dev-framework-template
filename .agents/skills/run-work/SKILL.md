@@ -28,3 +28,6 @@ single-item or epic invocations — the router emits `redirect_item` or
 5. For single-item advancement use `$run-item`; for epic bounded runs use `$run-epic`.
 
 Routing specification: `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
+
+4. In `workflow_hub`, preserve selected product repository context in implementation
+   handoffs when dispatching portfolio batches.
