@@ -4459,7 +4459,7 @@ reviewer_failed_label_required_for_result() {
       ;;
     skipped)
       case "$reason" in
-        unavailable|timeout|thread-check-failed|pending_timeout|forbidden|unauthorized|pr-is-draft)
+        unavailable|timeout|thread-check-failed|pending_timeout|forbidden|unauthorized)
           return 0
           ;;
       esac
