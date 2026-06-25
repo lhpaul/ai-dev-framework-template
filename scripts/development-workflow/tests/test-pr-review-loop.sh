@@ -1210,6 +1210,28 @@ run_test "haystack_skips_draft_pr_reason" "REASON=pr-is-draft" \
 run_test "haystack_skips_draft_pr_exit_code" "0" "$actual_exit"
 unset MOCK_GH_OUTPUT _haystack_draft_overrides actual_output actual_exit
 
+# test: run_haystack_review escalates when draft state cannot be determined
+_haystack_draft_overrides='
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  require_gh() { :; }
+'
+export MOCK_GH_OUTPUT=""
+export MOCK_GH_EXIT=1
+actual_output="$(
+  eval "$_haystack_draft_overrides"
+  _ec=0
+  run_haystack_review "42" "feature/test" "1" "30" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "haystack_draft_state_unavailable_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "haystack_draft_state_unavailable_reason" "REASON=draft-state-unavailable" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "haystack_draft_state_unavailable_exit_code" "2" "$actual_exit"
+unset MOCK_GH_OUTPUT MOCK_GH_EXIT _haystack_draft_overrides actual_output actual_exit
+
 # test: run_haystack_review forwards Haystack auth errors from companion script
 _haystack_auth_overrides='
   cd_workflow_repo_root() { :; }

@@ -1172,16 +1172,25 @@ bugbot_check_disabled_issue_comments() {
   local since_iso="$4"
 
   set +e
-  gh api "repos/$repo/issues/$pr_number/comments" --paginate 2>/dev/null \
-    | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
-        .[]
-        | select(
-            (.user.login == $bot or .user.login == ($bot + "[bot]")) and
-            .created_at > $since
-          )
-        | .body // ""
-      ' 2>/dev/null
+  local output
+  output="$(
+    gh api "repos/$repo/issues/$pr_number/comments" --paginate 2>/dev/null \
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+          .[]
+          | select(
+              (.user.login == $bot or .user.login == ($bot + "[bot]")) and
+              .created_at > $since
+            )
+          | .body // ""
+        ' 2>/dev/null
+  )"
+  local _comments_rc=$?
   set -e
+  if [ "$_comments_rc" -ne 0 ]; then
+    return 1
+  fi
+  printf '%s\n' "$output"
+  return 0
 }
 
 bugbot_cursor_check_run_count() {
@@ -1220,6 +1229,8 @@ bugbot_escalate_if_disabled_without_check_run() {
   local check_name="$7"
   local run_count
   local body
+  local disabled_bodies
+  local _comments_rc=0
 
   set +e
   run_count="$(bugbot_cursor_check_run_count "$repo" "$head_sha" "$check_name")"
@@ -1228,13 +1239,31 @@ bugbot_escalate_if_disabled_without_check_run() {
     return 0
   fi
 
+  set +e
+  disabled_bodies="$(bugbot_check_disabled_issue_comments "$repo" "$pr_number" "$bot_login" "$since_iso")"
+  _comments_rc=$?
+  set -e
+  if [ "$_comments_rc" -ne 0 ]; then
+    echo "WARN: run_bugbot_review: disabled-preflight issue-comment fetch failed for PR #$pr_number" >&2
+    print_kv RESULT escalate
+    print_kv REASON fetch-failed
+    print_kv PLATFORM bugbot
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 2
+  fi
+
   while IFS= read -r body; do
     [ -z "$body" ] && continue
     if is_bugbot_disabled_message "$body"; then
       bugbot_return_disabled "$pr_number" "$branch_name"
       return 2
     fi
-  done <<< "$(bugbot_check_disabled_issue_comments "$repo" "$pr_number" "$bot_login" "$since_iso")"
+  done <<< "$disabled_bodies"
 
   return 0
 }
@@ -1907,8 +1936,23 @@ run_haystack_review() {
 
   set +e
   local is_draft
+  local _draft_rc=0
   is_draft="$(gh pr view "$pr_number" --repo "$owner/$repo_name" --json isDraft --jq '.isDraft' 2>/dev/null)"
+  _draft_rc=$?
   set -e
+  if [ "$_draft_rc" -ne 0 ] || [ -z "$is_draft" ]; then
+    echo "WARN: could not determine draft state for PR #$pr_number before Haystack review" >&2
+    print_kv RESULT escalate
+    print_kv REASON draft-state-unavailable
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 2
+  fi
   if [ "$is_draft" = "true" ]; then
     echo "INFO: PR #$pr_number is draft — Haystack does not review draft PRs; mark ready with gh pr ready $pr_number before rerunning" >&2
     print_kv RESULT skipped
