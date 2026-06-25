@@ -21,7 +21,9 @@ single-item or epic invocations — the router emits `redirect_item` or
 
 1. Read `AGENTS.md` for repository-wide rules.
 2. Run `./scripts/development-workflow/run-work-router.sh [<target>...] [--json]`.
-3. When `redirectCommand` is set, **do not mutate** — surface the redirect and stop.
+3. Stop with **no mutation** when mode is `redirect_item` or `redirect_epic`, or when
+   stdout includes `REDIRECT_COMMAND=` (key=value output). With `--json`, also check
+   `redirectCommand` in the routing record.
 4. For `no_target_scan` / `explicit_list`, follow Protocol 90 via `workflow-orchestrator`.
 5. For single-item advancement use `$run-item`; for epic bounded runs use `$run-epic`.
 
