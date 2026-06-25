@@ -185,9 +185,10 @@ fi
 config_file=""
 reviewer_count=0
 if config_file="$(workflow_effective_config_file 2>/dev/null)"; then
-  if reviewers="$(workflow_config_review_on_draft_runner "$config_file")"; then
-    reviewer_count="$(printf '%s\n' "$reviewers" | sed '/^$/d' | wc -l | tr -d ' ')"
+  if ! reviewers="$(workflow_config_review_on_draft_runner "$config_file")"; then
+    error_exit "failed to read review.on_draft.runner from workflow config: $config_file"
   fi
+  reviewer_count="$(printf '%s\n' "$reviewers" | sed '/^$/d' | wc -l | tr -d ' ')"
 fi
 
 recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \

@@ -10,27 +10,13 @@ through Protocol 91 until a real terminal condition.
 
 `/run-item-work` is a deprecated compatibility alias with identical behavior.
 
-## Bounded prelude (read-only, before mutation)
+## Bounded prelude and Protocol 91
 
-`docs/workflow/development-workflow/bounded-run-prelude.md`
-
-```bash
-./scripts/development-workflow/run-bounded-prelude.sh \
-  --original-command "<invocation>" \
-  --target <token> | --issue <n> | --branch <name> | --pr <n> | --development <path> \
-  [--base <branch>] [--delegate-review] [--may-merge] \
-  [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] \
-  --json
-```
-
-When `policyRecommendation.requiresConfirmation` is true, accept or customize
-policy and checkpoints before continuing.
-
-## Single-item control loop
-
-Follow Protocol 91:
-
-`docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
+Run the shared bounded prelude and single-item loop per
+`docs/workflow/development-workflow/bounded-run-prelude.md` and Protocol 91
+(`docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`).
+The prelude command flags mirror this command's scope flags (`--target`, `--issue`,
+`--branch`, `--pr`, `--development`, policy overrides, `--json`).
 
 - Resolve exactly one non-epic workflow item
 - Use `scripts/development-workflow/` helpers for next-action classification

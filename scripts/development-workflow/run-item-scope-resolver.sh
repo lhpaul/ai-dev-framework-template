@@ -97,7 +97,8 @@ issue_from_branch() {
 is_epic_issue() {
   local num="$1"
   if ! have_cmd gh; then
-    return 1
+    echo "run-item-scope-resolver: gh CLI is required to verify non-epic scope for issue #$num" >&2
+    return 2
   fi
   local sub_count=0 issue_type=0
   sub_count="$(gh issue view "$num" --json subIssues --jq '.subIssues | length' 2>/dev/null)" || sub_count=0
@@ -306,8 +307,14 @@ elif [ -n "$development_path" ]; then
   resolved_issue="$(issue_from_development_path "$development_path")" || error_exit "could not resolve issue from $development_path"
 fi
 
-if is_epic_issue "$resolved_issue"; then
+set +e
+is_epic_issue "$resolved_issue"
+epic_check=$?
+set -e
+if [ "$epic_check" -eq 0 ]; then
   error_exit "issue #$resolved_issue is epic-like; use /run-epic or run-epic-scope-resolver instead"
+elif [ "$epic_check" -eq 2 ]; then
+  error_exit "cannot verify epic scope for issue #$resolved_issue without gh CLI"
 fi
 
 resolver_args=(
