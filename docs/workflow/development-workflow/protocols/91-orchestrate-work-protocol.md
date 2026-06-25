@@ -28,8 +28,8 @@ from `single_item` to `epic` and routes to `95-run-epic-protocol.md` instead.
 already prevents out-of-scope mutations for item-specific invocations. No
 additional scope narrowing is needed for the `single_item` routing case.
 
-`/run-item-work` invoked directly (without `/run-work`) is a **compatibility/
-advanced alias** that also enters this protocol. Its behavior is unchanged.
+`/run-item-work` invoked directly (without `/run-work`) is a **deprecated
+compatibility alias** for `/run-item` with identical behavior.
 
 See `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
 for the full routing specification.

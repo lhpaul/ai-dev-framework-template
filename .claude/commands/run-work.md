@@ -20,9 +20,11 @@ then routes to the appropriate behavior via the routing classifier
 Every invocation emits a routing-decision record showing the inferred mode,
 resolved scope, and the inputs that drove the decision.
 
-> **Compatibility/advanced aliases**: `/run-item-work` advances exactly one known
-> item directly (skips routing). `/run-epic` runs the bounded epic resolver with
-> explicit delegation flags. Both are still fully supported.
+> **Bounded commands**: `/run-item` is the canonical single-item command (shared
+> prelude + Protocol 91). `/run-epic` runs bounded epic scope with explicit
+> delegation flags. `/run-item-work` is a deprecated alias for `/run-item`.
+> `/run-work` routes portfolio, explicit-list, single-item, and epic targets via
+> Protocol 96 (portfolio-only narrowing is tracked in #1051).
 
 ## Routing Classifier
 

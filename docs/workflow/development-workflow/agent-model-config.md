@@ -178,7 +178,7 @@ A PR that has readiness labels but **no reviewer loop summary comment** is the c
 
 # Then re-invoke the item-orchestrator (or automated-reviewer-loop agent) for the PR
 # Example (Claude Code):
-#   /run-item-work --pr <pr_number>
+#   /run-item --pr <pr_number>   (or deprecated /run-item-work)
 ```
 
 The item-orchestrator uses the Step 8c independent verification gate to detect any missing labels or comments and automatically re-enters the correct resume point (Step 7a, Step 7, or Step 8).
