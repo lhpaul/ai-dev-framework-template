@@ -12,7 +12,7 @@ then routes to the appropriate behavior via the routing classifier
 | Routing mode     | When it applies                                      | Protocol entered            |
 | ---------------- | ---------------------------------------------------- | --------------------------- |
 | `no_target_scan` | No target supplied                                   | Protocol 90 (portfolio)     |
-| `single_item`    | Exactly one non-epic target                          | Protocol 91 (single item)   |
+| `single_item`    | Exactly one non-epic target                          | `/run-item` (prelude + Protocol 91) |
 | `explicit_list`  | Two or more explicit targets (hard bounded scope)    | Protocol 90 (bounded)       |
 | `epic`           | Epic-like target or `--epic` flag                    | Protocol 95 (epic resolver) |
 | `ambiguous`      | Cannot resolve deterministically — stops for human   | No mutation                 |
@@ -39,7 +39,7 @@ Run before entering any underlying protocol:
 Follow the appropriate protocol based on the classified routing mode:
 
 - `no_target_scan` / `explicit_list` → `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
-- `single_item` → `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
+- `single_item` → `.claude/commands/run-item.md` (bounded prelude + Protocol 91)
 - `epic` → `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md`
 - Routing specification → `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
 
