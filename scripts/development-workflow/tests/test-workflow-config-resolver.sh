@@ -368,6 +368,19 @@ run_contains "product_repo_context_mode" "WORKFLOW_MODE=product_repo" "$product_
 run_contains "product_repo_context_hub" "WORKFLOW_HUB_GITHUB_REPO=example/workflow-hub" "$product_repo_output"
 run_contains "product_repo_context_branch" "TARGET_DEFAULT_BRANCH=release" "$product_repo_output"
 
+product_ci_none_dir="$(fixture_dir product-ci-none)"
+cat > "$product_ci_none_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: product_repo
+
+product_repo:
+  ci_policy: none
+  workflow_hub:
+    github_repo: example/workflow-hub
+YAML
+product_ci_none_output="$(workflow_repository_context "" "$product_ci_none_dir")"
+run_contains "product_repo_ci_policy_none" "TARGET_CI_POLICY=none" "$product_ci_none_output"
+
 bad_product_repo_dir="$(fixture_dir bad-product-repo)"
 cat > "$bad_product_repo_dir/.ai-dev-workflow.yaml" <<'YAML'
 schema_version: 2

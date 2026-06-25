@@ -687,6 +687,11 @@ def resolve_context(args: argparse.Namespace) -> dict[str, str]:
             "TARGET_REPO_NAME": repo_root.name,
             "TARGET_GITHUB_REPO": parse_remote_slug(repo_root),
             "TARGET_DEFAULT_BRANCH": str(product_repo.get("default_branch") or "main"),
+            "TARGET_CI_POLICY": normalize_ci_policy(
+                product_repo.get("ci_policy"),
+                shared_path,
+                "product_repo.ci_policy",
+            ),
             "TARGET_LOCAL_PATH": str(repo_root),
             "TARGET_LOCAL_PATH_SOURCE": "current_repo",
             "WORKFLOW_HUB_GITHUB_REPO": str(hub.get("github_repo") or ""),

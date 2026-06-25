@@ -202,6 +202,62 @@ hub_slug_fixture="$(write_fixture hub-slug '{
 hub_slug_output="$("$CLASSIFIER" --input "$hub_slug_fixture" --repo-root "$hub_ci_dir" --max-risk medium --json)"
 run_test "hub_ci_policy_from_github_slug" "true" "$(printf '%s\n' "$hub_slug_output" | jq -r '.merge_permitted')"
 
+product_ci_dir="$TMP_ROOT/product-ci-none"
+mkdir -p "$product_ci_dir"
+git -C "$product_ci_dir" init -q -b main
+cat > "$product_ci_dir/.git/config" <<'GITCONFIG'
+[remote "origin"]
+	url = https://github.com/example/mobile-app
+	fetch = +refs/heads/*:refs/remotes/origin/*
+GITCONFIG
+cat > "$product_ci_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: product_repo
+
+product_repo:
+  ci_policy: none
+  workflow_hub:
+    github_repo: example/workflow-hub
+YAML
+product_slug_fixture="$(write_fixture product-slug '{
+  "pr_number": 1,
+  "merge_state": "CLEAN",
+  "labels": ["ready-for-human-review"],
+  "status_checks": [],
+  "changed_files": ["docs/readme.md"],
+  "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 0}
+}')"
+product_slug_output="$("$CLASSIFIER" --input "$product_slug_fixture" --repo-root "$product_ci_dir" --max-risk medium --json)"
+run_test "product_repo_ci_policy_none_from_resolver" "true" "$(printf '%s\n' "$product_slug_output" | jq -r '.merge_permitted')"
+
+hub_via_env_fixture="$(write_fixture hub-via-env '{
+  "pr_number": 1,
+  "merge_state": "CLEAN",
+  "labels": ["ready-for-human-review"],
+  "status_checks": [],
+  "github_repo": "example/mobile-app",
+  "changed_files": ["docs/readme.md"],
+  "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 0}
+}')"
+product_hub_lookup_dir="$TMP_ROOT/product-hub-lookup"
+mkdir -p "$product_hub_lookup_dir"
+git -C "$product_hub_lookup_dir" init -q -b main
+cat > "$product_hub_lookup_dir/.git/config" <<'GITCONFIG'
+[remote "origin"]
+	url = https://github.com/example/mobile-app
+	fetch = +refs/heads/*:refs/remotes/origin/*
+GITCONFIG
+cat > "$product_hub_lookup_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: product_repo
+
+product_repo:
+  workflow_hub:
+    github_repo: example/workflow-hub
+YAML
+hub_via_env_output="$(env WORKFLOW_HUB_REPO_ROOT="$hub_ci_dir" "$CLASSIFIER" --input "$hub_via_env_fixture" --repo-root "$product_hub_lookup_dir" --max-risk medium --json)"
+run_test "hub_ci_policy_from_workflow_hub_repo_root_env" "true" "$(printf '%s\n' "$hub_via_env_output" | jq -r '.merge_permitted')"
+
 run_test "json_output_has_reasons" "yes" "$(printf '%s\n' "$low_output" | jq -e '.reasons | length > 0' >/dev/null && echo yes || echo no)"
 run_test "json_output_shape_stable" "yes" "$(
   printf '%s\n' "$low_output" |

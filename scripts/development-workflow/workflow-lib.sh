@@ -139,12 +139,61 @@ workflow_product_repo_name_for_github_slug() {
   return 1
 }
 
+workflow_hub_root_for_ci_policy() {
+  local root="$1"
+  local github_slug="${2:-}"
+  local mode context candidate parent repo_name
+
+  if [ -z "$root" ]; then
+    return 1
+  fi
+
+  if [ -n "${WORKFLOW_HUB_REPO_ROOT:-}" ] && [ -f "${WORKFLOW_HUB_REPO_ROOT}/.ai-dev-workflow.yaml" ]; then
+    mode="$(python3 "$(workflow_config_resolver_script)" mode --repo-root "$WORKFLOW_HUB_REPO_ROOT" --json 2>/dev/null | jq -r '.WORKFLOW_MODE // ""')"
+    if [ "$mode" = "workflow_hub" ]; then
+      printf '%s\n' "$WORKFLOW_HUB_REPO_ROOT"
+      return 0
+    fi
+  fi
+
+  mode="$(python3 "$(workflow_config_resolver_script)" mode --repo-root "$root" --json 2>/dev/null | jq -r '.WORKFLOW_MODE // ""')"
+  if [ "$mode" != "product_repo" ]; then
+    return 1
+  fi
+
+  if [ -z "$github_slug" ]; then
+    context="$(workflow_repository_context "" "$root" 2>/dev/null)" || return 1
+    github_slug="$(workflow_github_repo_from_context "$context")"
+  fi
+  [ -n "$github_slug" ] || return 1
+
+  parent="$(dirname "$root")"
+  for candidate in "$parent"/*; do
+    [ -e "$candidate/.ai-dev-workflow.yaml" ] || continue
+    mode="$(python3 "$(workflow_config_resolver_script)" mode --repo-root "$candidate" --json 2>/dev/null | jq -r '.WORKFLOW_MODE // ""')"
+    if [ "$mode" = "workflow_hub" ]; then
+      repo_name="$(workflow_product_repo_name_for_github_slug "$candidate" "$github_slug" 2>/dev/null || true)"
+      if [ -n "$repo_name" ]; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    fi
+  done
+
+  return 1
+}
+
 workflow_merge_ci_policy_into_json() {
   local json="$1"
   local root="${2:-}"
   local repo_name="${3:-}"
 
   if [ -z "$root" ]; then
+    printf '%s\n' "$json"
+    return 0
+  fi
+
+  if [ -n "$(printf '%s\n' "$json" | jq -r '.ciPolicy // .ci_policy // ""' 2>/dev/null)" ]; then
     printf '%s\n' "$json"
     return 0
   fi
@@ -159,21 +208,32 @@ workflow_merge_ci_policy_into_json() {
     ' 2>/dev/null)"
   fi
 
-  if [ -z "$repo_name" ]; then
-    local github_slug
-    github_slug="$(printf '%s\n' "$json" | jq -r '.github_repo // ""')"
-    if [ -n "$github_slug" ]; then
-      repo_name="$(workflow_product_repo_name_for_github_slug "$root" "$github_slug" 2>/dev/null || true)"
+  local github_slug resolve_root="$root" context ci_policy mode
+  github_slug="$(printf '%s\n' "$json" | jq -r '.github_repo // ""' 2>/dev/null)"
+
+  mode="$(python3 "$(workflow_config_resolver_script)" mode --repo-root "$root" --json 2>/dev/null | jq -r '.WORKFLOW_MODE // ""')"
+  if [ "$mode" = "product_repo" ]; then
+    local hub_root
+    hub_root="$(workflow_hub_root_for_ci_policy "$root" "$github_slug" 2>/dev/null || true)"
+    if [ -n "$hub_root" ]; then
+      resolve_root="$hub_root"
+      if [ -z "$repo_name" ] && [ -n "$github_slug" ]; then
+        repo_name="$(workflow_product_repo_name_for_github_slug "$hub_root" "$github_slug" 2>/dev/null || true)"
+      fi
     fi
+  elif [ -z "$repo_name" ] && [ -n "$github_slug" ]; then
+    repo_name="$(workflow_product_repo_name_for_github_slug "$root" "$github_slug" 2>/dev/null || true)"
   fi
 
-  local context
-  if ! context="$(workflow_repository_context "$repo_name" "$root" 2>/dev/null)"; then
+  if ! context="$(workflow_repository_context "$repo_name" "$resolve_root" 2>/dev/null)"; then
     printf '%s\n' "$json"
     return 0
   fi
 
-  local ci_policy
+  if [ -z "$github_slug" ]; then
+    github_slug="$(workflow_github_repo_from_context "$context")"
+  fi
+
   ci_policy="$(workflow_context_value TARGET_CI_POLICY "$context")"
   if [ -z "$ci_policy" ]; then
     printf '%s\n' "$json"
