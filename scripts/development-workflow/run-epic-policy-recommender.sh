@@ -332,12 +332,16 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
   def value_string($override; $recommended):
     if $override == "" then $recommended else $override end;
   def command_prefix:
-    if ($originalCommand | test("^/run-epic(\\s|$)")) then "/run-epic" else "$run-epic" end;
+    if ($originalCommand | test("^/run-item(\\s|$)")) then "/run-item"
+    elif ($originalCommand | test("^/run-epic(\\s|$)")) then "/run-epic"
+    else "$run-epic" end;
   def canonical_scope_command:
     if (.scopeSource // "") == "epic" and (.epicNumber // null) != null then
       command_prefix + " issues " + (.epicNumber | tostring)
     elif (.scopeSource // "") == "items" and ((.itemInput // "") | tostring | length) > 0 then
       command_prefix + " --items " + ((.itemInput // "") | tostring)
+    elif (.scopeSource // "") == "item" and ((.itemInput // "") | tostring | length) > 0 then
+      "/run-item " + ((.itemInput // "") | tostring)
     else
       $originalCommand
     end;

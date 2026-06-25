@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Shared bounded run prelude** (#1049): `run-bounded-prelude.sh` unifies scope
+  resolution, repository guardrails snapshot, and policy/checkpoint recommendation
+  for `/run-item` and `/run-epic`; adds `run-item-scope-resolver.sh` and extends
+  `run-epic-policy-recommender.sh` for `scopeSource=item`.
 - **Human checkpoint lifecycle documentation** (#1024): adds an end-to-end
   smoke-test runbook for checkpoint recommendation, readiness labels,
   satisfaction detection, delegated gate blocking, batch merge handling, audit

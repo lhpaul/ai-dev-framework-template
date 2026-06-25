@@ -85,7 +85,10 @@ update tracker status, create branches, open or edit PRs, merge PRs, close
 issues, or delete branches.
 
 When autonomy policy is missing or ambiguous, derive a recommended policy from
-the resolver output before any mutating stage begins:
+the resolver output before any mutating stage begins. For a single combined
+read-only step (scope + repository guardrails snapshot + policy recommendation),
+use [`bounded-run-prelude.md`](../bounded-run-prelude.md) and
+`run-bounded-prelude.sh` — the same path `/run-item` uses before Protocol 91.
 
 ```bash
 ./scripts/development-workflow/run-epic-policy-recommender.sh --scope <resolver-json> --original-command "<requested command>" [--base <branch>] [--delegate-review|--no-delegate-review] [--may-merge|--no-may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--checkpoints-file <json-array>] [--json]

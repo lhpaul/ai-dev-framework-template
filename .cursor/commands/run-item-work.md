@@ -13,6 +13,10 @@ Follow the single-item orchestration protocol exactly as defined in:
 
 `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
 
+Before mutation, run the shared bounded prelude (scope + guardrails + policy/checkpoints):
+
+`docs/workflow/development-workflow/bounded-run-prelude.md` — `run-bounded-prelude.sh`
+
 Key responsibilities:
 
 - Resolve the request to exactly one workflow item
