@@ -340,7 +340,7 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
     else "$run-epic" end;
   def canonical_scope_command:
     if (.scopeSource // "") == "epic" and (.epicNumber // null) != null then
-      command_prefix + " issues " + (.epicNumber | tostring)
+      command_prefix + " --epic " + (.epicNumber | tostring)
     elif (.scopeSource // "") == "items" and ((.itemInput // "") | tostring | length) > 0 then
       command_prefix + " --items " + ((.itemInput // "") | tostring)
     elif (.scopeSource // "") == "item" and ((.itemInput // "") | tostring | length) > 0 then

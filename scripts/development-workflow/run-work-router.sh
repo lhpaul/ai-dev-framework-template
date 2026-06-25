@@ -232,20 +232,14 @@ is_epic_issue() {
     return 1
   fi
 
-  # Try to list sub-issues. An exit-0 with at least one entry signals epic-like.
-  local sub_count
+  # Try sub-issues first; if that API field is unavailable, still check the epic label.
+  local sub_count issue_type
   sub_count="$(gh issue view "$issue_num" --json subIssues \
-    --jq '.subIssues | length' 2>/dev/null)" || return 1
-
-  # Validate that sub_count is a non-empty non-negative integer before using it
-  # in arithmetic. jq may produce empty output or non-numeric values on unexpected
-  # API response shapes; treat those as "not epic" (conservative/fail-safe).
+    --jq '.subIssues | length' 2>/dev/null)" || sub_count=""
   case "${sub_count:-}" in
     ''|*[!0-9]*) sub_count="0" ;;
   esac
 
-  # Also check if the issue has the "Epic" type label (common convention).
-  local issue_type
   issue_type="$(gh issue view "$issue_num" --json 'labels' \
     --jq '[.labels[].name] | map(ascii_downcase) | map(select(. == "epic")) | length' \
     2>/dev/null)" || issue_type="0"

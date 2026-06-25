@@ -110,6 +110,13 @@ See [`bounded-run-prelude.md`](../bounded-run-prelude.md). If
 read (`guardrails_config_unreadable`), stop before mutation per
 `guardrails-enforcement.md`.
 
+**Portfolio batch dispatch (`BATCH_CONTEXT=true`)**: When the Portfolio
+Orchestrator dispatches this protocol from Protocol 90, the bounded prelude is
+**not** re-run per item — batch approval in Protocol 90 Step 2 covers tracker
+mutation and human confirmation before dispatch. Operators who need per-item
+policy confirmation must invoke **`/run-item`** directly (which runs the prelude)
+rather than relying on portfolio batch dispatch alone.
+
 ### Persistent orchestration contract
 
 A single Work Item Runner run should keep advancing the selected item until it reaches one of these **terminal conditions**:

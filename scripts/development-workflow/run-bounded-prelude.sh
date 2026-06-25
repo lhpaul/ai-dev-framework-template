@@ -73,8 +73,7 @@ try:
         sys.exit(0)
     mode = guardrails.get('mode', 'manual')
     if mode not in ('manual', 'assisted', 'delegated', 'autonomous'):
-        print(f"invalid guardrails.mode: {mode}", file=sys.stderr)
-        sys.exit(2)
+        mode = 'manual'
     backlog_start_cfg = guardrails.get('backlog_start', {})
     if isinstance(backlog_start_cfg, dict):
         allow = backlog_start_cfg.get('allow_without_confirmation', False)
