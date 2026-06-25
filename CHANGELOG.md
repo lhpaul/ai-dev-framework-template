@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Parallel implementation policy for `/run-work` batches** (#1052): `workflow-batch-lanes.sh`
+  assigns stage lanes with default implementation serialization (`max_concurrent: 1`);
+  `workflow-batch-plan.sh` emits `LOCAL_RUNTIME=none|exclusive` for implementation items;
+  Protocol 90 Step 3 and `guardrails.md` document optional `guardrails.parallelism` caps.
 - **Portfolio-only `/run-work` router** (#1051): `run-work-router.sh` and Protocol 96
   now support only `no_target_scan` and `explicit_list` under `/run-work`; single
   and epic targets emit `redirect_item` / `redirect_epic` with `REDIRECT_COMMAND`
