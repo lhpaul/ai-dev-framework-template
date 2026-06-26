@@ -13,6 +13,12 @@
 # Uses `git branch -D` (force delete) because squash/rebase merges (e.g. GitHub
 # default) do not have the branch tip in develop's history, so -d would fail.
 #
+# Issue close: if an issue number is embedded in the branch name it is closed
+# directly. When the branch slug contains no issue number (e.g. epic-slug
+# branches like feature/model-cost-resilience), the merged PR body/title is
+# parsed for GitHub closing keywords (Closes #N, Fixes #N, Resolves #N, etc.)
+# and each referenced issue is closed and its tracker status updated to Merged.
+#
 
 set -euo pipefail
 
@@ -398,7 +404,61 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
     update_tracker_status_best_effort "$ISSUE_NUMBER" "Plan Ready"
   fi
 else
-  echo "No issue number detected in branch name '$TO_DELETE', skipping issue close and tracker update."
+  # No issue number in branch name — for implementation branches, fall back to
+  # parsing the merged PR body/title for GitHub closing keywords
+  # (Closes #NNN, Fixes #NNN, Resolves #NNN, etc.) so that epic-slug branches
+  # like feature/model-cost-resilience still close their linked issues.
+  if [ "$branch_owner_kind" = "implementation" ]; then
+    pr_closes_repo="$TARGET_GITHUB_REPO"
+    if [ -z "$pr_closes_repo" ]; then
+      if ! pr_closes_repo="$(repo_slug 2>/dev/null)"; then
+        echo "No issue number in branch name '$TO_DELETE' and could not resolve GitHub repository; skipping issue close and tracker update." >&2
+        pr_closes_repo=""
+      fi
+    fi
+    if [ -n "$pr_closes_repo" ]; then
+      CLOSING_PR="${VERIFIED_MERGED_PR:-}"
+      if [ -z "$CLOSING_PR" ]; then
+        CLOSING_PR="$(gh pr list --repo "$pr_closes_repo" --state merged --head "$TO_DELETE" --limit 1 --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+      fi
+      if [ -n "$CLOSING_PR" ]; then
+        PR_BODY="$(gh pr view "$CLOSING_PR" --repo "$pr_closes_repo" --json body,title --jq '.title + "\n" + .body' 2>/dev/null || true)"
+        # GitHub closing keywords (case-insensitive): close/closes/closed, fix/fixes/fixed,
+        # resolve/resolves/resolved — optionally followed by "issue" — then #NNN.
+        CLOSES_ISSUES="$(printf '%s' "$PR_BODY" | grep -ioE '(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?#[0-9]+' | grep -oE '[0-9]+$' | sort -un || true)"
+        if [ -n "$CLOSES_ISSUES" ]; then
+          echo "Found closing keyword refs in PR #${CLOSING_PR}: issues $(printf '%s' "$CLOSES_ISSUES" | tr '\n' ' ')"
+          cd "$HUB_REPO_ROOT"
+          while IFS= read -r closes_issue_num; do
+            [ -z "$closes_issue_num" ] && continue
+            echo "Processing issue #${closes_issue_num} from PR #${CLOSING_PR} closing keywords..."
+            update_tracker_status_best_effort "$closes_issue_num" "Merged"
+            if ! CLOSES_ISSUE_STATE="$(gh issue view "$closes_issue_num" --json state --jq '.state' 2>/dev/null)"; then
+              echo "Warning: could not query issue #${closes_issue_num}; skipping close." >&2
+              continue
+            fi
+            if [ "$CLOSES_ISSUE_STATE" = "OPEN" ]; then
+              echo "Closing issue #${closes_issue_num}..."
+              if gh issue close "$closes_issue_num" --comment "Closed by PR #${CLOSING_PR}."; then
+                echo "Reasserting issue #${closes_issue_num} tracker status as Merged after close..."
+                update_tracker_status_best_effort "$closes_issue_num" "Merged" "" "allow-backward"
+              else
+                echo "Warning: could not close issue #${closes_issue_num}; continuing cleanup." >&2
+              fi
+            else
+              echo "Issue #${closes_issue_num} is already ${CLOSES_ISSUE_STATE}, skipping close."
+            fi
+          done <<< "$CLOSES_ISSUES"
+        else
+          echo "No issue number in branch name '$TO_DELETE' or PR #${CLOSING_PR} body; skipping issue close and tracker update."
+        fi
+      else
+        echo "No issue number in branch name '$TO_DELETE' and no merged PR found; skipping issue close and tracker update."
+      fi
+    fi
+  else
+    echo "No issue number detected in branch name '$TO_DELETE', skipping issue close and tracker update."
+  fi
 fi
 
 echo ""

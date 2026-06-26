@@ -66,6 +66,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Post-merge cleanup closes issues from PR body when branch slug lacks issue number** (#1059):
+  `post-merge-cleanup.sh` now parses the merged PR body and title for GitHub
+  closing keywords (`Closes #N`, `Fixes #N`, `Resolves #N`, etc.) when the
+  branch name contains no embedded issue number (e.g. `feature/model-cost-resilience`).
+  Each referenced issue is closed and its tracker status updated to Merged,
+  preventing silent skip of issue closeout on epic-slug branches.
 - **Post-merge cleanup missing local branch** (#1039): `post-merge-cleanup.sh`
   continues fetch, base checkout, and tracker closeout when the local branch is
   already deleted but a merged PR exists for that branch head (common after
