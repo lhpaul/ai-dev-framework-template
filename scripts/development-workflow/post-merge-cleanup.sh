@@ -412,8 +412,8 @@ else
     pr_closes_repo="$TARGET_GITHUB_REPO"
     if [ -z "$pr_closes_repo" ]; then
       if ! pr_closes_repo="$(repo_slug 2>/dev/null)"; then
-        echo "No issue number in branch name '$TO_DELETE' and could not resolve GitHub repository; skipping issue close and tracker update." >&2
-        pr_closes_repo=""
+        echo "ERROR: could not resolve GitHub repository for PR-body issue closeout." >&2
+        exit 1
       fi
     fi
     if [ -n "$pr_closes_repo" ]; then
