@@ -225,8 +225,10 @@ echo "Checking out $DEVELOP_BRANCH..."
 git checkout "$DEVELOP_BRANCH"
 
 echo "Pulling $DEVELOP_BRANCH..."
-# --ff-only: fail cleanly if develop diverged (e.g. local commits) instead of creating a merge
-git pull --ff-only
+# Use explicit 'origin <branch>' so this works even when the local branch has no upstream
+# tracking set (e.g. integration branches created/pushed without --set-upstream).
+# --ff-only: fail cleanly if the branch diverged (e.g. local commits) instead of creating a merge.
+git pull --ff-only origin "$DEVELOP_BRANCH"
 
 if [ "$LOCAL_BRANCH_MISSING" -eq 1 ]; then
   echo "Skipping local branch delete for '$TO_DELETE' (already absent)."
