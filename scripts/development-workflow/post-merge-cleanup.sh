@@ -425,7 +425,7 @@ else
         fi
       fi
       if [ -n "$CLOSING_PR" ]; then
-        if ! PR_BODY="$(gh pr view "$CLOSING_PR" --repo "$pr_closes_repo" --json body,title --jq '.title + "\n" + .body' 2>/dev/null)"; then
+        if ! PR_BODY="$(gh pr view "$CLOSING_PR" --repo "$pr_closes_repo" --json body,title --jq '(.title // "") + "\n" + (.body // "")' 2>/dev/null)"; then
           echo "ERROR: could not fetch PR #${CLOSING_PR} body from '$pr_closes_repo' (gh command failed)." >&2
           exit 1
         fi
@@ -441,8 +441,8 @@ else
             [ -z "$closes_issue_num" ] && continue
             echo "Processing issue #${closes_issue_num} from PR #${CLOSING_PR} closing keywords..."
             if ! CLOSES_ISSUE_STATE="$(gh issue view "$closes_issue_num" --json state --jq '.state' 2>/dev/null)"; then
-              echo "ERROR: could not query issue #${closes_issue_num} (gh command failed)." >&2
-              exit 1
+              echo "Warning: could not query issue #${closes_issue_num}; skipping close and tracker update for this ref." >&2
+              continue
             fi
             update_tracker_status_best_effort "$closes_issue_num" "Merged"
             if [ "$CLOSES_ISSUE_STATE" = "OPEN" ]; then
