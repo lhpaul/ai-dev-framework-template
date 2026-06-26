@@ -237,10 +237,28 @@ When `issue_tracker.provider` is `linear`, the orchestrator is the only actor
 with Linear access. Apply the following discovery flow instead of the GitHub
 Projects pagination approach above:
 
+0. **Resolve the project filter** — before querying, check whether
+   `issue_tracker.custom_fields.project` is set in `.ai-dev-workflow.yaml`. If
+   it is set, record the project ID and use it to scope all discovery queries to
+   that project only (step 1 below). If it is absent, emit a visible warning and
+   fall back to the unscoped team query:
+
+   > **WARNING**: `issue_tracker.custom_fields.project` is not set in
+   > `.ai-dev-workflow.yaml`. Linear item discovery will query all open items
+   > visible to the API token, which may include items from other codebases or
+   > projects. To restrict discovery to the correct project, set
+   > `issue_tracker.custom_fields.project` to the Linear project ID for this
+   > repository. See `docs/workflow/development-workflow/integrations/linear.md`
+   > for setup instructions.
+
 1. **Query Linear via MCP** — call the Linear MCP `issues` or `team.issues`
-   query for all open items in the configured team. For each item, collect:
-   status (workflow stage label), type (Feature, Bug, Refactor), priority,
-   parent epic (if applicable), and dependency relationships.
+   query for open items. **When a project ID was resolved in step 0**, pass it
+   as a project-scoped filter (e.g., `project: { id: { eq: "<project-id>" } }`)
+   so only items belonging to the configured project are returned. When no
+   project ID is available (fallback mode), query all open items in the
+   configured team. For each item, collect: status (workflow stage label), type
+   (Feature, Bug, Refactor), priority, parent epic (if applicable), and
+   dependency relationships.
 
 2. **Format item context** — for each item, record the status as a structured
    context value (`ITEM_STATUS=<status>`) that the batch-planning step can

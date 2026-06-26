@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Linear orchestrator project scoping** (#972): Portfolio Orchestrator (`/run-work`) now
+  reads `issue_tracker.custom_fields.project` from `.ai-dev-workflow.yaml` and filters
+  Linear item-discovery queries to only items belonging to the configured project. If the
+  field is absent, a visible warning is emitted and the orchestrator falls back to the
+  previous unscoped team query. Prevents cross-codebase items from appearing as candidates
+  in repositories with multi-project Linear workspaces. Updated Protocol 90 Step 1a and
+  `integrations/linear.md` to document the new scoping behavior.
+
 ### Added
 
 - **Parallel implementation policy for `/run-work` batches** (#1052): `workflow-batch-lanes.sh`
