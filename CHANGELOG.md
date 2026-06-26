@@ -74,6 +74,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   previous unscoped team query. Prevents cross-codebase items from appearing as candidates
   in repositories with multi-project Linear workspaces. Updated Protocol 90 Step 1a and
   `integrations/linear.md` to document the new scoping behavior.
+- **Linear priority drift detection** (#974): orchestrators applying Linear
+  MCP status updates now compare the post-write priority against the
+  dispatch-time value and emit `PRIORITY_DRIFT_WARNING` when drift is detected;
+  adds optional post-write re-read with `TRACKER_WRITE_UNCONFIRMED` and
+  one-retry logic when the status update is not reflected in the API read-back.
+  Updated `linear.md` and Protocol 90 deferred-action collection loop.
 - **Post-merge cleanup missing local branch** (#1039): `post-merge-cleanup.sh`
   continues fetch, base checkout, and tracker closeout when the local branch is
   already deleted but a merged PR exists for that branch head (common after

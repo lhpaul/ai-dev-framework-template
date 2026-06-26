@@ -598,12 +598,24 @@ for each line in Work Item Runner output:
     "TRACKER_ACTION_REQUIRED=set_status issue=<id> target_status=<status>":
       status = strip_single_quotes(<status>)   # values with spaces are single-quoted
       call Linear MCP updateIssue(id, status=status)
+      # Priority drift detection: read back the issue and compare priority
+      # against the dispatch-time value recorded in Step 1a.
+      # Emit PRIORITY_DRIFT_WARNING if the values differ.
+      # See linear.md "Priority Drift Detection" for the full protocol.
     "TRACKER_ACTION_REQUIRED=create_item title=<title>":
       title = strip_single_quotes(<title>)     # values with spaces are single-quoted
       call Linear MCP createIssue(title=title, teamId=<team>)
     "TRACKER_UPDATE_REQUIRED: set issue #<N> status to \"<status>\"":
       call Linear MCP updateIssue(id=<N>, status=<status>)
+      # Priority drift detection applies here too — see linear.md.
 ```
+
+After each `updateIssue` call, perform a post-write re-read to confirm the
+status write was reflected. If the returned status does not match the target,
+retry once and emit `TRACKER_WRITE_UNCONFIRMED` if the mismatch persists.
+See [`linear.md`](../integrations/linear.md) "Priority Drift Detection" for
+the `PRIORITY_DRIFT_WARNING` and `TRACKER_WRITE_UNCONFIRMED` formats and
+retry rules.
 
 A deferred action that cannot be applied must be logged explicitly:
 
