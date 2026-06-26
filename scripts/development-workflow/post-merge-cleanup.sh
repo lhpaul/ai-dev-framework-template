@@ -437,11 +437,13 @@ else
         if [ -n "$CLOSES_ISSUES" ]; then
           echo "Found closing keyword refs in PR #${CLOSING_PR}: issues $(printf '%s' "$CLOSES_ISSUES" | tr '\n' ' ')"
           cd "$HUB_REPO_ROOT"
+          CLOSES_ISSUE_VIEW_FAILURES=0
           while IFS= read -r closes_issue_num; do
             [ -z "$closes_issue_num" ] && continue
             echo "Processing issue #${closes_issue_num} from PR #${CLOSING_PR} closing keywords..."
             if ! CLOSES_ISSUE_STATE="$(gh issue view "$closes_issue_num" --json state --jq '.state' 2>/dev/null)"; then
               echo "Warning: could not query issue #${closes_issue_num}; skipping close and tracker update for this ref." >&2
+              CLOSES_ISSUE_VIEW_FAILURES=$((CLOSES_ISSUE_VIEW_FAILURES + 1))
               continue
             fi
             update_tracker_status_best_effort "$closes_issue_num" "Merged"
@@ -457,6 +459,10 @@ else
               echo "Issue #${closes_issue_num} is already ${CLOSES_ISSUE_STATE}, skipping close."
             fi
           done <<< "$CLOSES_ISSUES"
+          if [ "$CLOSES_ISSUE_VIEW_FAILURES" -gt 0 ]; then
+            echo "ERROR: could not query ${CLOSES_ISSUE_VIEW_FAILURES} issue(s) from PR #${CLOSING_PR} closing refs (gh command failed)." >&2
+            exit 1
+          fi
         else
           echo "No issue number in branch name '$TO_DELETE' or PR #${CLOSING_PR} body; skipping issue close and tracker update."
         fi
