@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Spec review checklist: URL-parameterized state completeness check** (#973): adds an explicit check item to the Spec Review Checklist in `REVIEW.md` requiring that any URL-serialized state (query parameters, path parameters, hash fragments) introduced by a spec must define all parameter key names and allowed values; adds a corresponding `blocking` finding type to catch specs that leave the serialization contract underspecified, preventing this class of gap from reaching the external reviewer loop.
+
 ### Added
 
 - **Parallel implementation policy for `/run-work` batches** (#1052): `workflow-batch-lanes.sh`
