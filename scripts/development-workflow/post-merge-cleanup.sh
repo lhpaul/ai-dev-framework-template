@@ -419,10 +419,10 @@ else
     if [ -n "$pr_closes_repo" ]; then
       CLOSING_PR="${VERIFIED_MERGED_PR:-}"
       if [ -z "$CLOSING_PR" ]; then
-        CLOSING_PR="$(gh pr list --repo "$pr_closes_repo" --state merged --head "$TO_DELETE" --limit 1 --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+        CLOSING_PR="$(gh pr list --repo "$pr_closes_repo" --state merged --head "$TO_DELETE" --limit 1 --json number --jq '.[0].number // empty' 2>/dev/null || true)" # workflow-shell-guard: allow SH001 - best-effort lookup when no merged PR was pre-verified
       fi
       if [ -n "$CLOSING_PR" ]; then
-        PR_BODY="$(gh pr view "$CLOSING_PR" --repo "$pr_closes_repo" --json body,title --jq '.title + "\n" + .body' 2>/dev/null || true)"
+        PR_BODY="$(gh pr view "$CLOSING_PR" --repo "$pr_closes_repo" --json body,title --jq '.title + "\n" + .body' 2>/dev/null || true)" # workflow-shell-guard: allow SH001 - best-effort fetch; empty body skips closing-keyword parse below
         # GitHub closing keywords (case-insensitive): close/closes/closed, fix/fixes/fixed,
         # resolve/resolves/resolved — optionally followed by "issue" — then #NNN.
         CLOSES_ISSUES="$(printf '%s' "$PR_BODY" | grep -ioE '(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?#[0-9]+' | grep -oE '[0-9]+$' | sort -un || true)"
