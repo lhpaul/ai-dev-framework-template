@@ -143,6 +143,49 @@ The `TRACKER_UPDATE_REQUIRED:` format (used in protocol 91 Step 8b) is a
 complementary signal emitted by the agent-level summary when a tracker update
 could not be performed inline. Both formats must be collected and applied.
 
+### Priority Drift Detection
+
+The Linear API can return a stale or drifted priority value when an item is
+read back shortly after a write (e.g., a status update applied during
+post-merge cleanup). The priority returned in the API response may reflect
+a transient race condition between the write and the Linear webhook rather
+than an intentional change.
+
+**Detection rule**: After every `updateIssue` MCP call, read back the issue's
+current priority from the API response (or issue a follow-up `issue(id:)` query
+if the mutation response does not include the priority field). Compare the
+returned value against the priority recorded at pre-resolve time (Phase 1).
+If the values differ, emit the following warning to the run summary before
+continuing:
+
+```
+PRIORITY_DRIFT_WARNING: issue=<id> dispatch_priority=<value> current_priority=<value>
+  — priority changed between dispatch and post-update read.
+  Possible causes: concurrent edit, transient API artifact, or webhook race.
+  No workflow action taken. Human should verify the priority in Linear.
+```
+
+Do **not** silently accept the drifted value. Do **not** automatically restore
+the original priority — a concurrent human edit is a valid reason for the
+change. The warning surfaces the discrepancy for human review.
+
+**Post-write re-read (optional but recommended)**: After applying any
+`set_status` mutation, issue a follow-up `issue(id:)` query to confirm the
+write was reflected. If the returned status does not match the target status,
+emit:
+
+```
+TRACKER_WRITE_UNCONFIRMED: issue=<id> target_status=<expected> actual_status=<returned>
+  — status not reflected in API read-back after write.
+  May be a transient API artifact. Retry the update once; escalate if the
+  mismatch persists after retry.
+```
+
+Retry the `updateIssue` call once if `TRACKER_WRITE_UNCONFIRMED` fires. If the
+re-read still does not reflect the target status after one retry, log
+`TRACKER_SYNC_SKIPPED` (using the existing format) with `reason=write_unconfirmed_after_retry`
+and continue — do not block the workflow.
+
 ---
 
 ## Branch Naming with Linear

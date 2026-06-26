@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Linear priority drift detection** (#974): orchestrators applying Linear
+  MCP status updates now compare the post-write priority against the
+  dispatch-time value and emit `PRIORITY_DRIFT_WARNING` when drift is detected;
+  adds optional post-write re-read with `TRACKER_WRITE_UNCONFIRMED` and
+  one-retry logic when the status update is not reflected in the API read-back.
+  Updated `linear.md` and Protocol 90 deferred-action collection loop.
+
 ### Added
 
 - **Parallel implementation policy for `/run-work` batches** (#1052): `workflow-batch-lanes.sh`
