@@ -67,6 +67,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Spec review checklist: URL-parameterized state completeness check** (#973): adds an explicit check item to the Spec Review Checklist in `REVIEW.md` requiring that any URL-serialized state (query parameters, path parameters, hash fragments) introduced by a spec must define all parameter key names and allowed values; adds a corresponding `blocking` finding type to catch specs that leave the serialization contract underspecified, preventing this class of gap from reaching the external reviewer loop.
+- **Linear orchestrator project scoping** (#972): Portfolio Orchestrator (`/run-work`) now
+  reads `issue_tracker.custom_fields.project` from `.ai-dev-workflow.yaml` and filters
+  Linear item-discovery queries to only items belonging to the configured project. If the
+  field is absent, a visible warning is emitted and the orchestrator falls back to the
+  previous unscoped team query. Prevents cross-codebase items from appearing as candidates
+  in repositories with multi-project Linear workspaces. Updated Protocol 90 Step 1a and
+  `integrations/linear.md` to document the new scoping behavior.
 - **Post-merge cleanup missing local branch** (#1039): `post-merge-cleanup.sh`
   continues fetch, base checkout, and tracker closeout when the local branch is
   already deleted but a merged PR exists for that branch head (common after

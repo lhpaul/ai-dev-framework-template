@@ -73,10 +73,11 @@ Workflow status (Spec Ready, Plan Ready, In Development) is **not** stored in th
 
 When the **Portfolio Orchestrator** has Linear access, it should:
 
-1. Query work items by status to find items eligible for advancement
-2. Check the `Depends on` field (or linked work item relationships) for dependencies
-3. Sort eligible items: due within 2 weeks → priority → creation date
-4. Update work item status as stages complete (e.g., set to "In Development" when the feature branch is created)
+1. Read `issue_tracker.custom_fields.project` from `.ai-dev-workflow.yaml` and, if present, scope all item-discovery queries to that project. If absent, emit a warning and fall back to the unscoped team query (see Protocol 90 Step 1a).
+2. Query work items by status to find items eligible for advancement
+3. Check the `Depends on` field (or linked work item relationships) for dependencies
+4. Sort eligible items: due within 2 weeks → priority → creation date
+5. Update work item status as stages complete (e.g., set to "In Development" when the feature branch is created)
 
 ---
 
@@ -166,13 +167,13 @@ The `[slug]` is a short kebab-case description derived from the work item title 
 
 The `issue_tracker.custom_fields` flat map in `.ai-dev-workflow.yaml` holds provider-specific fields that extend the standard `issue_tracker` configuration. For the Linear provider, the following keys are recognised by workflow scripts:
 
-| Key                    | Format                   | Effect                                                                                                                                                                                                            |
-| ---------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `project`              | Linear project ID string | When set, issue creation associates the new issue with the specified Linear project. The project ID is found in the Linear project URL (`https://linear.app/<team>/projects/<project-id>`) or via the Linear API. |
-| `release_field`        | Custom field key/name    | Optional future write target for recording the shipped release on a Linear issue. Shell helpers warn that MCP/API access is required.                                                                             |
-| `release_label_prefix` | Label prefix string      | Label fallback for release stamping. Defaults to `release/`, producing labels like `release/v1.2.0`. Shell helpers warn that MCP/API access is required to apply it.                                               |
+| Key                    | Format                   | Effect                                                                                                                                                                                                                                                                        |
+| ---------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `project`              | Linear project ID string | When set, (1) scopes Portfolio Orchestrator item discovery to this project only — items from other projects are excluded from the candidate list; and (2) associates new issues with this project on creation. The project ID is found in the Linear project URL (`https://linear.app/<team>/projects/<project-id>`) or via the Linear API. |
+| `release_field`        | Custom field key/name    | Optional future write target for recording the shipped release on a Linear issue. Shell helpers warn that MCP/API access is required.                                                                                                                                         |
+| `release_label_prefix` | Label prefix string      | Label fallback for release stamping. Defaults to `release/`, producing labels like `release/v1.2.0`. Shell helpers warn that MCP/API access is required to apply it.                                                                                                          |
 
-When `project` is absent from `custom_fields` (or `custom_fields` itself is absent), issue creation proceeds without a project association — this is the current default behaviour and is fully backward-compatible.
+When `project` is absent from `custom_fields` (or `custom_fields` itself is absent), the Portfolio Orchestrator queries all open items visible to the API token — which may include items from other codebases or projects — and emits a visible warning. Issue creation proceeds without a project association. This fallback is fully backward-compatible but is not recommended for multi-project Linear workspaces.
 
 To set a project association, add the following to `.ai-dev-workflow.yaml` under `issue_tracker`:
 
