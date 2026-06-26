@@ -80,6 +80,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   adds optional post-write re-read with `TRACKER_WRITE_UNCONFIRMED` and
   one-retry logic when the status update is not reflected in the API read-back.
   Updated `linear.md` and Protocol 90 deferred-action collection loop.
+- **Post-merge cleanup pull without upstream tracking** (#1058): `post-merge-cleanup.sh`
+  now uses `git pull --ff-only origin "$DEVELOP_BRANCH"` instead of bare `git pull` so
+  integration branches created without `--set-upstream` no longer cause "no tracking
+  information" errors during cleanup.
 - **Post-merge cleanup missing local branch** (#1039): `post-merge-cleanup.sh`
   continues fetch, base checkout, and tracker closeout when the local branch is
   already deleted but a merged PR exists for that branch head (common after
