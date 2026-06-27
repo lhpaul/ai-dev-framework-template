@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Epic-only `/run-epic`** (#1078): removed `--items` from the user-facing
+  surface of `/run-epic`. Protocol 95, `run-epic-scope-resolver.sh` usage text,
+  `.agents/skills/run-epic/SKILL.md`, and `.cursor/commands/run-epic.md` now
+  document `--epic <issue-number>` as the only operator entry point. The
+  `--items` flag is retained internally in the scope resolver for scripts
+  (e.g., the Linear orchestration smoke test) but emits a deprecation warning
+  when used. Operators who need explicit item lists should use `/run-items`.
+
 ### Added
 
 - **Parallel implementation policy for `/run-work` batches** (#1052): `workflow-batch-lanes.sh`

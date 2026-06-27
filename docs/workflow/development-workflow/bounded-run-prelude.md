@@ -19,7 +19,7 @@ Related:
 | ------ | ------- |
 | `run-bounded-prelude.sh` | **Primary entry** — scope + guardrails + policy recommender JSON |
 | `run-item-scope-resolver.sh` | Resolve one non-epic target to recommender-compatible scope (`scopeSource=item`) |
-| `run-epic-scope-resolver.sh` | Epic or explicit item list scope (`scopeSource=epic` or `items`) |
+| `run-epic-scope-resolver.sh` | Epic scope (`scopeSource=epic`); `--items` is an internal-only flag |
 | `run-epic-policy-recommender.sh` | Policy, checkpoints, and copy-paste command (shared) |
 
 ---

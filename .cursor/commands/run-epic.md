@@ -1,5 +1,5 @@
 ---
-description: "Compatibility/advanced alias: resolve a native GitHub epic or explicit item list into a bounded workflow execution scope, with optional delegated review and merge gates. For the recommended starting point, use /run-work <epic-target> instead. Usage: /run-epic --epic <issue-number> | --items <issue-number>[,<issue-number>...] [--base <branch>] [--delegate-review] [--may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--json]"
+description: "Compatibility/advanced alias: resolve a native GitHub epic into a bounded workflow execution scope, with optional delegated review and merge gates. For the recommended starting point, use /run-work <epic-target> instead. For explicit item lists, use /run-items. Usage: /run-epic --epic <issue-number> [--base <branch>] [--delegate-review] [--may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--json]"
 ---
 
 # Cursor Command: Run Epic
@@ -17,8 +17,8 @@ Follow the resolver protocol exactly as defined in:
 
 Key responsibilities:
 
-- Require exactly one of `--epic` or `--items`.
-- Resolve native GitHub sub-issues for `--epic`; keep `--items` exact.
+- Require `--epic <issue-number>`. For explicit item lists, use `/run-items`.
+- Resolve native GitHub sub-issues for the epic.
 - Infer the execution base branch from `--base`, shared
   `integration-branch:<slug>`, or the applicable default.
 - In `workflow_hub` mode, treat that base as the product implementation base;
