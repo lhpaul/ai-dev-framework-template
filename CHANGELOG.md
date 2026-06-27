@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Guardrails repo defaults and always-confirm bounded prelude** (#1079):
+  `.ai-dev-workflow.yaml` now ships an uncommented `guardrails` block with
+  `mode: delegated` and all stages `may_merge_pr: false`, implementing the
+  two-step lifecycle (execute commands stop at `ready-for-human-review`; merge
+  via `/batch-merge`). The bounded prelude always sets `requiresConfirmation: true`
+  so every mutating orchestration command shows the resolved policy before mutation.
+  `guardrails.md` documents the two-step lifecycle and always-confirm contract.
 - **Parallel implementation policy for `/run-work` batches** (#1052): `workflow-batch-lanes.sh`
   assigns stage lanes with default implementation serialization (`max_concurrent: 1`);
   `workflow-batch-plan.sh` emits `LOCAL_RUNTIME=none|exclusive` for implementation items;

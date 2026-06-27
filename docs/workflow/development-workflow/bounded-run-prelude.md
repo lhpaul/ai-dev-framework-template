@@ -59,9 +59,13 @@ The JSON output includes:
 1. **Read-only** — no tracker updates, branches, PRs, merges, or issue closure.
 2. **One policy path** — single-item runs use the same recommender and checkpoint
    schema as `/run-epic` (no parallel autonomy system).
-3. **Human confirmation** — when `requiresConfirmation` is true, accept or
-   customize policy/checkpoints before mutation (waive checkpoints in PR body
-   or via `--checkpoints-file` on re-run).
+3. **Always-confirm** — `requiresConfirmation` is always `true`. The orchestrator
+   must present the resolved policy to the human before any mutation. When all
+   autonomy flags were provided explicitly in the invocation command, those
+   explicit flags serve as the human's confirmation and the orchestrator may
+   proceed immediately after printing the policy summary. When any flag was
+   inferred or scope is ambiguous, the orchestrator must stop and wait for
+   explicit human acceptance or re-invocation with corrected flags.
 4. **Epic-like items** — `run-item-scope-resolver.sh` rejects epic issues; use
    `--epic` instead.
 

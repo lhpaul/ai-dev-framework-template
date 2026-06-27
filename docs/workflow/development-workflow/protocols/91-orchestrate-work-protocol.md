@@ -105,10 +105,17 @@ mutation in Step 1 or later:
   --json
 ```
 
-See [`bounded-run-prelude.md`](../bounded-run-prelude.md). If
-`policyRecommendation.requiresConfirmation` is true, or guardrails cannot be
-read (`guardrails_config_unreadable`), stop before mutation per
-`guardrails-enforcement.md`.
+See [`bounded-run-prelude.md`](../bounded-run-prelude.md).
+
+**Always-confirm**: `policyRecommendation.requiresConfirmation` is always `true`.
+The orchestrator must print the resolved policy summary before any mutation.
+- When all autonomy flags (`--delegate-review`, `--may-merge`, `--may-start-backlog`,
+  `--max-risk`) were provided explicitly in the invocation, those explicit flags
+  serve as the human's confirmation — proceed immediately after printing the summary.
+- When any flag was inferred from scope or scope is ambiguous, stop before mutation
+  and ask the human to confirm or re-invoke with corrected flags.
+- When guardrails cannot be read (`guardrails_config_unreadable`), stop before
+  mutation per `guardrails-enforcement.md`.
 
 **Portfolio batch dispatch (`BATCH_CONTEXT=true`)**: When the Portfolio
 Orchestrator dispatches this protocol from Protocol 90, the bounded prelude is
