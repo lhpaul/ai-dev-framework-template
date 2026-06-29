@@ -415,7 +415,7 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
       if has_ambiguous then "scope or base is ambiguous; confirm before mutation"
       elif has_pending_checkpoints($effCheckpoints) then
         "pending human checkpoints remain; confirm, customize, or waive before mutation"
-      elif ([$mayStartBacklogOverride, $delegateReviewOverride, $mayMergeOverride, $maxRiskOverride, $baseOverride] | any(. == "")) then
+      elif ([$mayStartBacklogOverride, $delegateReviewOverride, $mayMergeOverride, $maxRiskOverride] | any(. == "")) then
         "one or more autonomy policy values were inferred from resolved scope"
       else "policy values are explicit; review resolved policy and confirm before mutation"
       end

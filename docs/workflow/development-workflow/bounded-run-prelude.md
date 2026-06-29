@@ -64,8 +64,9 @@ The JSON output includes:
    autonomy flags were provided explicitly in the invocation command, those
    explicit flags serve as the human's confirmation and the orchestrator may
    proceed immediately after printing the policy summary. When any flag was
-   inferred or scope is ambiguous, the orchestrator must stop and wait for
-   explicit human acceptance or re-invocation with corrected flags.
+   inferred, scope is ambiguous, or pending checkpoints remain, the orchestrator
+   must stop and wait for explicit human acceptance or re-invocation with
+   corrected flags.
 4. **Epic-like items** — `run-item-scope-resolver.sh` rejects epic issues; use
    `--epic` instead.
 

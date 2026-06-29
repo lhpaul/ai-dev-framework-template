@@ -112,8 +112,9 @@ The orchestrator must print the resolved policy summary before any mutation.
 - When all autonomy flags (`--delegate-review`, `--may-merge`, `--may-start-backlog`,
   `--max-risk`) were provided explicitly in the invocation, those explicit flags
   serve as the human's confirmation — proceed immediately after printing the summary.
-- When any flag was inferred from scope or scope is ambiguous, stop before mutation
-  and ask the human to confirm or re-invoke with corrected flags.
+- When any flag was inferred from scope, scope is ambiguous, or pending checkpoints
+  remain, stop before mutation and ask the human to confirm or re-invoke with
+  corrected flags.
 - When guardrails cannot be read (`guardrails_config_unreadable`), stop before
   mutation per `guardrails-enforcement.md`.
 
