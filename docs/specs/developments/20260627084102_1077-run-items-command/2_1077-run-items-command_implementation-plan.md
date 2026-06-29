@@ -204,6 +204,13 @@ After:
 | Two or more targets | `explicit_list` | **Stop** — re-invoke `/run-items <list>` |
 ```
 
+Also revise the existing `no_target_scan` instruction so Cursor agents treat
+`/run-work` as scan-only: portfolio scan, proposal output, and no Protocol 90
+dispatch, tracker mutation, branch creation, PR operation, or stage-agent
+handoff. The Cursor command must reserve all mutation for the redirected
+bounded commands (`/run-item`, `/run-items`, or `/run-epic`) after the router
+has selected a target.
+
 **`.agents/skills/run-work/SKILL.md`**: Change the routing table row:
 
 Before:
@@ -215,8 +222,10 @@ After:
 | `explicit_list` | Stop; tell the user to run `$run-items` with the resolved list |
 ```
 
-Also update the numbered step 4 to note that `explicit_list` redirects to
-`$run-items` instead of `workflow-orchestrator`.
+Also update the numbered steps so `no_target_scan` is documented as scan-only
+(portfolio discovery and batch proposals only; no Protocol 90 dispatch or
+artifact mutation) and `explicit_list` redirects to `$run-items` instead of
+`workflow-orchestrator`.
 
 ### Step 8: Update `.claude/commands/run-epic.md`
 
