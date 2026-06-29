@@ -321,9 +321,22 @@ After:
 | `explicit_list`  | **No handoff** — emit `REDIRECT_COMMAND=/run-items <list>` (no mutation under `/run-work`); operator re-invokes `/run-items` for the bounded multi-item execute |
 ```
 
-Also update any routing decision table rows or narrative sections that describe
-`explicit_list` as directly entering Protocol 90 to clarify the redirect
-behavior.
+**Routing-Decision Record Format section**: The conditional `REDIRECT_COMMAND`
+field is currently documented as applying only when `mode is redirect_item or
+redirect_epic`. Update that description to also include `explicit_list`:
+
+Before:
+```
+REDIRECT_COMMAND=<recommended /run-item or /run-epic command when mode is redirect_item or redirect_epic>
+```
+After:
+```
+REDIRECT_COMMAND=<recommended command when mode is redirect_item, redirect_epic, or explicit_list>
+```
+
+Also update any routing decision table rows, Routing Modes table entries, and
+narrative sections that describe `explicit_list` as directly entering Protocol
+90 to clarify the redirect behavior.
 
 ### Step 13: Update `CHANGELOG.md`
 
@@ -331,18 +344,21 @@ Add under `[Unreleased]`:
 
 ```markdown
 ### Added
-- `/run-items` command surfaces (`.claude/commands/run-items.md`,
-  `.cursor/commands/run-items.md`, `.agents/skills/run-items/`) for advancing
+- **`/run-items` multi-item bounded execute command** (#1077): adds
+  `.claude/commands/run-items.md`, `.cursor/commands/run-items.md`, and
+  `.agents/skills/run-items/` as the canonical command surfaces for advancing
   an explicit list of two or more non-epic workflow items with the shared bounded
   prelude and Protocol 90 `explicit_list` mode.
 
 ### Changed
-- `/run-work` with two or more targets now redirects to `/run-items` instead of
-  entering Protocol 90 directly; `run-work-router.sh` emits
-  `REDIRECT_COMMAND=/run-items <list>` for `explicit_list` outcomes.
-- `/run-epic --items <list>` is deprecated and redirects to `/run-items <list>`;
-  `run-epic-scope-resolver.sh` now exits cleanly with `REDIRECT_COMMAND` output
-  instead of continuing to resolve explicit item lists.
+- **`/run-work` explicit-list redirect** (#1077): `/run-work` with two or more
+  targets now redirects to `/run-items` instead of entering Protocol 90 directly;
+  `run-work-router.sh` emits `REDIRECT_COMMAND=/run-items <list>` for
+  `explicit_list` outcomes.
+- **`/run-epic --items` deprecation** (#1077): `--items` is deprecated and
+  redirects to `/run-items <list>`; `run-epic-scope-resolver.sh` now exits
+  cleanly with `REDIRECT_COMMAND` output instead of continuing to resolve
+  explicit item lists.
 ```
 
 ---
