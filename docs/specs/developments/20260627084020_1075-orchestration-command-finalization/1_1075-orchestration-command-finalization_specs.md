@@ -139,8 +139,8 @@ run them
 2. If two or more tokens resolve, the router records a redirect to `/run-items`
    with the resolved list and performs no mutation.
 3. If exactly one non-epic token resolves, the router redirects to `/run-item`.
-4. If exactly one epic-like token (or `--epic`) resolves, the router redirects to
-   `/run-epic`.
+4. If exactly one token resolving to an epic work item (Protocol 95 scope), or
+   an explicit `--epic` flag, resolves, the router redirects to `/run-epic`.
 5. The operator re-invokes the recommended execute command.
 
 **Postconditions**: No mutation occurs under `/run-work`; the operator receives a
@@ -193,8 +193,8 @@ is not merged. Prelude policy and checkpoint state are recorded for audit.
 **Considerations**:
 
 - Merging is a separate step performed later by `/batch-merge`.
-- An epic-like target redirects to `/run-epic` rather than being treated as one
-  item.
+- An epic target (a work item in Protocol 95's scope) redirects to `/run-epic`
+  rather than being treated as one item.
 
 ### Use Case 4: Advance an explicit list with `/run-items`
 
@@ -339,7 +339,12 @@ execution (the two-step lifecycle).
 - BR2: `/run-work` with two or more resolvable tokens records a redirect to
   `/run-items` and does not execute.
 - BR3: `/run-work` with exactly one non-epic token redirects to `/run-item`; with
-  exactly one epic-like token (or `--epic`) it redirects to `/run-epic`.
+  exactly one token that resolves to an epic work item — a tracker issue in
+  Protocol 95's scope, typically identifiable by tracker type or native
+  sub-issue structure — or with an explicit `--epic` flag, it redirects to
+  `/run-epic`. (The precise epic-classification criterion is an implementation
+  detail owned by child #1076; the router applies the same definition Protocol 95
+  already uses.)
 - BR4: `/run-items` is the canonical command for explicit multi-item execution; it
   advances only the supplied list via Protocol 90 `explicit_list` mode.
 - BR5: `/run-items` uses base branch `develop` and never creates or targets a
@@ -374,6 +379,11 @@ execution (the two-step lifecycle).
 - BR15: All operator-facing surfaces (README, AGENTS.md, Claude/Cursor/Codex
   commands and skills) teach the three-layer map (discover → execute → land) and
   the corrected command roles consistently.
+- BR16: `/run-work` with one or more supplied tokens that cannot be resolved to a
+  known tracker item — for example, an unrecognized issue number or an
+  ambiguously typed input that matches none of the BR2/BR3 cases — records
+  routing mode `ambiguous`, stops with a message identifying the unresolvable
+  token(s), and performs no mutation.
 
 ---
 
@@ -386,15 +396,15 @@ execution (the two-step lifecycle).
 | `scan`          | Scan             | Read-only portfolio scan proposing 1–3 batch options; no mutation.                           |
 | `redirect_items`| Redirect (items) | Two or more tokens supplied; `/run-work` redirects to `/run-items`.                          |
 | `redirect_item` | Redirect (item)  | One non-epic token supplied; `/run-work` redirects to `/run-item`.                           |
-| `redirect_epic` | Redirect (epic)  | One epic-like token or `--epic` supplied; `/run-work` redirects to `/run-epic`.              |
+| `redirect_epic` | Redirect (epic)  | One epic token (Protocol 95 scope) or `--epic` flag supplied; `/run-work` redirects to `/run-epic`. |
 | `ambiguous`     | Ambiguous        | Cannot resolve deterministically; records stop reason and performs no mutation.              |
 
 **Valid transitions**:
 
 - No-target or scan-intent input resolves to `scan` (read-only proposals only).
 - Two-plus resolvable tokens resolve to `redirect_items`.
-- One non-epic token resolves to `redirect_item`; one epic-like token resolves to
-  `redirect_epic`.
+- One non-epic token resolves to `redirect_item`; one epic token (Protocol 95
+  scope) resolves to `redirect_epic`.
 - Any unresolved input resolves to `ambiguous` and stops.
 
 ### Bounded prelude confirmation states (shared by all mutating commands)
@@ -434,8 +444,8 @@ execution (the two-step lifecycle).
       `redirect_items`, performs no mutation, and the guidance points to
       `/run-items` with the resolved list. (Trace: #1076, #1077)
 - [ ] AC3: Given `/run-work` with exactly one non-epic token, it records
-      `redirect_item` and points to `/run-item`; with one epic-like token or
-      `--epic`, it records `redirect_epic` and points to `/run-epic`. (Trace: #1076, #1078)
+      `redirect_item` and points to `/run-item`; with one epic token (Protocol 95
+      scope) or `--epic`, it records `redirect_epic` and points to `/run-epic`. (Trace: #1076, #1078)
 - [ ] AC4: Given `/run-items <list>`, the command runs the shared bounded prelude,
       advances only the listed items via Protocol 90 `explicit_list` mode against
       base `develop`, and creates no integration branch. (Trace: #1077)
@@ -485,7 +495,7 @@ execution (the two-step lifecycle).
 | Child | Scope | Spec sections |
 | ----- | ----- | ------------- |
 | **#1075** This spec | Authoritative finalization spec | Whole document; AC11 |
-| **#1076** Scan-only `/run-work` | Read-only scan + router redirects | BR1–BR3, Use Cases 1–2, Statuses (`scan`, `redirect_*`), AC1–AC3 |
+| **#1076** Scan-only `/run-work` | Read-only scan + router redirects | BR1–BR3, BR16, Use Cases 1–2, Statuses (`scan`, `redirect_*`, `ambiguous`), AC1–AC3 |
 | **#1077** `/run-items` command | Explicit-list execution to `develop` | BR4–BR5, BR9, Use Cases 4, 6, AC2, AC4, AC6, AC7 |
 | **#1078** Epic-only `/run-epic` | Remove `--items`; native sub-issues only | BR6–BR8, BR9, Use Cases 5, 6, AC3, AC5, AC6, AC7 |
 | **#1079** Guardrails + always-confirm | Uncomment defaults; confirm before mutation | BR10–BR11, Use Cases 3–5 (confirm step), Statuses (prelude states), AC8–AC9 |
@@ -505,4 +515,4 @@ execution (the two-step lifecycle).
 | No integration branch for `/run-items` (base `develop`) | BR5, Use Case 4, AC4 |
 | Router redirects (2+ → `/run-items`; single → `/run-item` / `/run-epic`) | BR2–BR3, Use Case 2, Statuses (`redirect_*`), AC2–AC3 |
 | Acceptance criteria trace to children #1076–#1080 | Implementation Traceability, AC1–AC11 |
-| Supersedes #1072 scope; references Epic #1072 | Header, Relationship to Spec #1048 |
+| Supersedes parts of spec #1048; references Epic #1072 | Header, Relationship to Spec #1048 |
