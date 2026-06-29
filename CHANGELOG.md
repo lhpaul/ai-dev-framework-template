@@ -26,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   via `/batch-merge`). The bounded prelude always sets `requiresConfirmation: true`
   so every mutating orchestration command shows the resolved policy before mutation.
   `guardrails.md` documents the two-step lifecycle and always-confirm contract.
+- **Final orchestration command map — command surfaces sync** (#1080): updates all
+  operator surfaces (AGENTS.md, README.md, skills, Cursor commands, agents) to
+  reflect the finalized command map: `/run-work` = read-only portfolio scan,
+  `/run-items` = bounded multi-item execute (Protocol 90 `explicit_list` mode),
+  `/run-epic` = epic-only (no `--items` mode), `/run-item` = single item. Adds
+  `/run-items` skill in `.agents/skills/` and Cursor command in `.cursor/commands/`;
+  updates `/run-work` and `/run-epic` descriptions across all surfaces; deprecates
+  `/run-epic --items` in favour of `/run-items`; updates Protocol 96 handoff mapping.
+
 - **Parallel implementation policy for `/run-work` batches** (#1052): `workflow-batch-lanes.sh`
   assigns stage lanes with default implementation serialization (`max_concurrent: 1`);
   `workflow-batch-plan.sh` emits `LOCAL_RUNTIME=none|exclusive` for implementation items;
