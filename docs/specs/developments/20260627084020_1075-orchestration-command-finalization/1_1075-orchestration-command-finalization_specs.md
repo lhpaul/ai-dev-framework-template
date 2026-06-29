@@ -298,6 +298,10 @@ happens through the deprecated path.
 
 **Considerations**:
 
+- Deprecated forms that carried an explicit item list (from `/run-epic --items
+  <list>` or `/run-work explicit_list <list>`) redirect to `/run-items` with the
+  same list. The former no-target scan form that could proceed to mutation is not
+  a redirect case; it simply becomes the new scan-only behavior (BR1).
 - The optional later alias `/take-on-items` may be added for `/run-items` in a
   future transition release; it is out of scope here.
 
@@ -354,15 +358,21 @@ execution (the two-step lifecycle).
 - BR7: `/run-epic` uses an integration branch (`develop-<slug>`) only when the
   epic or its items carry an `integration-branch:<slug>` label; otherwise children
   target `develop`.
-- BR8: Deprecated paths (`/run-epic --items`, `/run-work` execution modes) emit a
-  deprecation notice and redirect to `/run-items` without mutating; they remain
-  accepted for one transition release.
+- BR8: Deprecated explicit-list paths (`/run-epic --items <list>` and
+  `/run-work explicit_list <list>` execution mode) emit a deprecation notice and
+  redirect to `/run-items <list>` with the same item list, performing no mutation
+  under the deprecated path; they remain accepted for one transition release. The
+  former no-target scan path that could proceed to mutation is not redirected; it
+  simply adopts the new scan-only behavior (BR1) — operators receive a scan
+  proposal and then choose to invoke `/run-items` themselves.
 - BR9: **Two-step lifecycle** — every execute command (`/run-item`, `/run-items`,
   `/run-epic`) stops at `ready-for-human-review` and never merges. Merging happens
   only through `/batch-merge`.
-- BR10: **Always-confirm** — every mutating command runs the shared bounded
-  prelude and obtains human confirmation of policy and checkpoints before any
-  mutation, regardless of configured autonomy mode.
+- BR10: **Always-confirm** — every mutating **execute** command (`/run-item`,
+  `/run-items`, `/run-epic`) runs the shared bounded prelude and obtains human
+  confirmation of policy and checkpoints before any mutation, regardless of
+  configured autonomy mode. `/batch-merge` (the Land-layer command) has its own
+  merge-plan confirmation per Protocol 94 and is not subject to this prelude.
 - BR11: Sensible default `guardrails` are uncommented in `.ai-dev-workflow.yaml`
   so the always-confirm prelude has concrete defaults to present; uncommenting the
   defaults must not weaken the always-confirm requirement.
@@ -394,7 +404,7 @@ execution (the two-step lifecycle).
 | Code value      | Display label    | Description                                                                                  |
 | --------------- | ---------------- | -------------------------------------------------------------------------------------------- |
 | `scan`          | Scan             | Read-only portfolio scan proposing 1–3 batch options; no mutation.                           |
-| `redirect_items`| Redirect (items) | Two or more tokens supplied; `/run-work` redirects to `/run-items`.                          |
+| `redirect_items`| Redirect (items) | Two or more resolvable tokens supplied; `/run-work` redirects to `/run-items`.               |
 | `redirect_item` | Redirect (item)  | One non-epic token supplied; `/run-work` redirects to `/run-item`.                           |
 | `redirect_epic` | Redirect (epic)  | One epic token (Protocol 95 scope) or `--epic` flag supplied; `/run-work` redirects to `/run-epic`. |
 | `ambiguous`     | Ambiguous        | Cannot resolve deterministically; records stop reason and performs no mutation.              |
@@ -458,9 +468,12 @@ execution (the two-step lifecycle).
 - [ ] AC7: Given any mutating execute command (`/run-item`, `/run-items`,
       `/run-epic`), it stops at `ready-for-human-review` and never merges; merging
       occurs only via `/batch-merge`. (Trace: #1077, #1078)
-- [ ] AC8: Given any mutating command, the shared bounded prelude obtains human
-      confirmation of policy and checkpoints before any mutation, even when
-      configured autonomy would otherwise permit proceeding. (Trace: #1079)
+- [ ] AC8: Given any mutating execute command (`/run-item`, `/run-items`,
+      `/run-epic`), the shared bounded prelude obtains human confirmation of
+      policy and checkpoints before any mutation, even when configured autonomy
+      would otherwise permit proceeding. `/batch-merge` is not subject to this
+      prelude — it runs its own merge-plan confirmation per Protocol 94.
+      (Trace: #1079)
 - [ ] AC9: Given `.ai-dev-workflow.yaml`, sensible default `guardrails` are
       uncommented and the always-confirm prelude presents them; the defaults do
       not weaken the always-confirm requirement. (Trace: #1079)
