@@ -46,7 +46,6 @@ to `develop` before this plan PR is opened. (Confirmed — PR #1083 merged.)
 | File | Change summary |
 | --- | --- |
 | `scripts/development-workflow/run-work-router.sh` | Emit `REDIRECT_COMMAND=/run-items <list>` for `explicit_list` case |
-| `scripts/development-workflow/run-epic-scope-resolver.sh` | When `--items` flag is used, emit `REDIRECT_COMMAND=/run-items <list>` to stdout and exit cleanly (exit 0) without resolving any issues |
 | `scripts/development-workflow/tests/test-run-work-router.sh` | Add assertions that `explicit_list` cases include `REDIRECT_COMMAND` containing `/run-items` and the resolved scope tokens |
 | `.claude/commands/run-work.md` | Update routing table: `explicit_list` row now shows redirect to `/run-items` (no longer enters Protocol 90 directly) |
 | `.cursor/commands/run-work.md` | Same as above |
@@ -79,7 +78,7 @@ description: "Multi-item bounded execute: advance an explicit list of two or mor
 - Note: Epic-like tokens in the list cause the entire invocation to stop; use `/run-epic --epic <n>` for those. One token redirects to `/run-item`. Zero tokens redirect to `/run-work`.
 - Section `## Bounded prelude and Protocol 90`:
   - Step 1 (read-only validation): Run `run-work-router.sh <list> --json` to classify the invocation. Stop with redirect guidance when mode is not `explicit_list` (e.g., `redirect_item` for one token, `redirect_epic` for an epic-like token).
-  - Step 2 (read-only prelude): Run `run-bounded-prelude.sh --original-command "/run-items <list>" --items <list> [policy flags] --json`. When `policyRecommendation.requiresConfirmation` is true, present policy/checkpoint recommendations and wait for human confirmation before any mutation.
+  - Step 2 (read-only prelude): Run `run-bounded-prelude.sh --original-command "/run-items <list>" --items "<comma-separated-list>" [policy flags] --json` (e.g. `--items "978,979"`; the `--items` flag takes a single comma-separated string, not multiple arguments). When `policyRecommendation.requiresConfirmation` is true, present policy/checkpoint recommendations and wait for human confirmation before any mutation.
   - Step 3 (mutation): Enter Protocol 90 `explicit_list` mode per `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`.
   - Terminal state: all in-scope PRs at `ready-for-human-review` (plus any held/blocked/escalated items). Name `/batch-merge` as the explicit landing step. `/run-items` never merges PRs itself.
 
@@ -102,7 +101,7 @@ description: "Multi-item bounded execute command: advance an explicit list of tw
 
 **Body content** (numbered steps mirroring the run-item skill):
 1. Read `AGENTS.md` for repository-wide rules.
-2. Run the read-only bounded prelude: `./scripts/development-workflow/run-bounded-prelude.sh --original-command "<invocation>" --items <list> [policy flags] --json`. See `docs/workflow/development-workflow/bounded-run-prelude.md`.
+2. Run the read-only bounded prelude: `./scripts/development-workflow/run-bounded-prelude.sh --original-command "<invocation>" --items "<comma-separated-list>" [policy flags] --json` (e.g. `--items "978,979"`; `--items` takes a single comma-separated string). See `docs/workflow/development-workflow/bounded-run-prelude.md`.
 3. When `policyRecommendation.requiresConfirmation` is true in the prelude JSON, present policy/checkpoint recommendations and continue only after human acceptance or customization.
 4. Read `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` and follow it for `explicit_list` mode.
 5. Before implementation mutation in `workflow_hub`, state selected product repository, artifact owner, and mutation target; stop when context is missing or ambiguous.
@@ -161,34 +160,7 @@ it is set.
 **JSON output**: The existing JSON section also emits `redirectCommand` from
 `REDIRECT_COMMAND`. No changes needed there.
 
-### Step 6: Update `scripts/development-workflow/run-epic-scope-resolver.sh`
-
-**Current behavior** when `--items` is used: deprecation warning to stderr at
-parse time (line 77), then the script continues resolving using `items_arg`.
-
-**Required behavior** (AC11): When `--items` is detected, emit a redirect notice
-with `REDIRECT_COMMAND=/run-items <list>` to stdout, then exit 0 without
-resolving any issues.
-
-**Specific change**: Add an early-exit block after the validation section (after
-the `valid_max_risk` check, around line 136). Insert immediately before
-`require_gh`:
-
-```bash
-# --items is deprecated. Redirect callers to /run-items.
-if [ -n "$items_arg" ]; then
-  space_list="$(printf '%s' "$items_arg" | tr ',' ' ')"
-  echo "DEPRECATED: --items is deprecated. Use /run-items for explicit item lists."
-  echo "REDIRECT_COMMAND=/run-items ${space_list}"
-  exit 0
-fi
-```
-
-The stderr deprecation warning at parse time (line 77) is retained as an early
-signal. This additional block makes the redirect machine-readable (stdout
-`REDIRECT_COMMAND`) and exits cleanly.
-
-### Step 7: Update `scripts/development-workflow/tests/test-run-work-router.sh`
+### Step 6: Update `scripts/development-workflow/tests/test-run-work-router.sh`
 
 **Location**: After each existing `explicit_list` test group (space list, comma
 list, duplicate-token list).
@@ -207,7 +179,7 @@ run_test_contains "space_list_redirect_contains_979" "979" \
 
 Add equivalent assertions for the comma-list and duplicate-token groups.
 
-### Step 8: Update `/run-work` command and skill files
+### Step 7: Update `/run-work` command and skill files
 
 **`.claude/commands/run-work.md`**: Change the routing table row:
 
@@ -245,7 +217,7 @@ After:
 Also update the numbered step 4 to note that `explicit_list` redirects to
 `$run-items` instead of `workflow-orchestrator`.
 
-### Step 9: Update `.claude/commands/run-epic.md`
+### Step 8: Update `.claude/commands/run-epic.md`
 
 In the "Key responsibilities" list, change:
 
@@ -258,7 +230,7 @@ Before:
 After:
 ```markdown
 - Require `--epic <issue-number>`. For explicit item lists, use `/run-items`.
-- `--items` is deprecated: the resolver emits `REDIRECT_COMMAND=/run-items <list>` and exits without resolving.
+- `--items` is deprecated at the command surface: when a user passes `--items <list>` to `/run-epic`, redirect them to `/run-items <list>` before invoking `run-epic-scope-resolver.sh`. The script itself continues to accept `--items` for internal use by `run-bounded-prelude.sh`.
 - Resolve native GitHub sub-issues for `--epic`.
 ```
 
@@ -266,7 +238,7 @@ Also update the YAML front matter `description` field to remove `--items` from
 the supported flags list (it already says "For explicit item lists, use
 /run-items" in the Cursor version; align the Claude version).
 
-### Step 10: Update `CLAUDE.md`
+### Step 9: Update `CLAUDE.md`
 
 **Workflow Commands table**: Add a `/run-items` row after the `/run-item` row:
 
@@ -287,7 +259,7 @@ After:
 ... command-style aliases such as `/add-backlog-item`, `/run-work`, `/run-item`, `/run-items`, `/run-item-work` (deprecated alias), `/run-epic`, ...
 ```
 
-### Step 11: Update `docs/workflow/development-workflow/README.md`
+### Step 10: Update `docs/workflow/development-workflow/README.md`
 
 **Workflow commands table**: Add a `/run-items` row after the `/run-item` row
 (around line 203):
@@ -308,7 +280,7 @@ After:
 Command-style aliases such as `/add-backlog-item`, `/run-work`, `/run-item`, `/run-items`, `/run-item-work` (deprecated alias), `/run-epic`, ...
 ```
 
-### Step 12: Update `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
+### Step 11: Update `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
 
 **Handoff mapping section**: Update the `explicit_list` row.
 
@@ -338,7 +310,7 @@ Also update any routing decision table rows, Routing Modes table entries, and
 narrative sections that describe `explicit_list` as directly entering Protocol
 90 to clarify the redirect behavior.
 
-### Step 13: Update `CHANGELOG.md`
+### Step 12: Update `CHANGELOG.md`
 
 Add under `[Unreleased]`:
 
@@ -370,15 +342,14 @@ verification:
 
 1. Create four new command/skill files (Steps 1–4) — independent of each other; no dependency on script changes.
 2. Update `run-work-router.sh` (Step 5) — enables the redirect behavior; can be tested immediately.
-3. Update `run-epic-scope-resolver.sh` (Step 6) — enables the deprecation redirect; independent of router.
-4. Update test file (Step 7) — validates the router change from Step 5.
-5. Update `/run-work` command and skill surfaces (Step 8) — documentation aligned with behavior from Step 5.
-6. Update `/run-epic` command surface (Step 9) — reflects resolver change from Step 6.
-7. Update `CLAUDE.md` (Step 10).
-8. Update README (Step 11).
-9. Update Protocol 96 (Step 12).
-10. Update `CHANGELOG.md` (Step 13).
-11. Run router tests: `bash scripts/development-workflow/tests/test-run-work-router.sh`
+3. Update test file (Step 6) — validates the router change from Step 5.
+4. Update `/run-work` command and skill surfaces (Step 7) — documentation aligned with behavior from Step 5.
+5. Update `/run-epic` command surface (Step 8) — command surface handles `--items` deprecation redirect.
+6. Update `CLAUDE.md` (Step 9).
+7. Update README (Step 10).
+8. Update Protocol 96 (Step 11).
+9. Update `CHANGELOG.md` (Step 12).
+10. Run router tests: `bash scripts/development-workflow/tests/test-run-work-router.sh`
 
 ---
 
@@ -389,17 +360,12 @@ verification:
 ```bash
 # Router tests — verify explicit_list cases now emit REDIRECT_COMMAND with /run-items
 bash scripts/development-workflow/tests/test-run-work-router.sh
-
-# Scope resolver — verify --items emits REDIRECT_COMMAND and exits 0
-./scripts/development-workflow/run-epic-scope-resolver.sh --items 978,979 2>/dev/null | grep REDIRECT_COMMAND
-echo "Exit code: $?"
 ```
 
 ### Manual verification checklist
 
 - [ ] `run-work-router.sh 978 979` outputs `MODE=explicit_list` and `REDIRECT_COMMAND=/run-items 978 979`
 - [ ] `run-work-router.sh 978,979` outputs `REDIRECT_COMMAND=/run-items 978 979`
-- [ ] `run-epic-scope-resolver.sh --items 978,979` outputs `REDIRECT_COMMAND=/run-items 978 979` and exits 0 without resolving issues
 - [ ] `.claude/commands/run-items.md` exists and correctly describes the command
 - [ ] `.cursor/commands/run-items.md` exists
 - [ ] `.agents/skills/run-items/SKILL.md` exists
@@ -417,17 +383,17 @@ echo "Exit code: $?"
 | -- | ------------------- |
 | AC1: prelude runs before mutation | Steps 1–4 (command surfaces invoke `run-bounded-prelude.sh --items`) |
 | AC2: only listed items advanced | Steps 1–4 (explicit_list scope boundary documented in commands) |
-| AC3: explicit_list reachable only via `/run-items` | Steps 5, 8, 12 (router emits redirect; `/run-work` stops) |
+| AC3: explicit_list reachable only via `/run-items` | Steps 5, 7, 11 (router emits redirect; `/run-work` surfaces stop) |
 | AC4: PRs target `develop` | Steps 1–4 (documented in command surfaces; spec BR5 enforced by Protocol 90) |
 | AC5: parallel stage / serialized impl | Steps 1–4 (Protocol 90 `explicit_list` handles this; documented in command surfaces) |
 | AC6: per-item Protocol 93 before ready | Steps 1–4 (Protocol 91 per item; documented) |
 | AC7: declare complete only after CI + reviewer loop green | Steps 1–4 (Protocol 90 handles; documented) |
 | AC8: epic-like token stops entire invocation | Steps 1–4 (router guard + command-level guard documented) |
 | AC9: fewer than 2 tokens redirect | Steps 1–4 (sub-two-item guard documented in command surfaces) |
-| AC10: `/run-work` 2+ tokens redirects to `/run-items` | Steps 5, 8, 12 |
-| AC11: `/run-epic --items` deprecated, redirects | Steps 6, 9 |
+| AC10: `/run-work` 2+ tokens redirects to `/run-items` | Steps 5, 7, 11 |
+| AC11: `/run-epic --items` deprecated, redirects | Step 8 (command surface only; `run-epic-scope-resolver.sh --items` unchanged for internal use) |
 | AC12: command surfaces exist | Steps 1–4 |
-| AC13: docs updated | Steps 10, 11 |
+| AC13: docs updated | Steps 9, 10 |
 
 ---
 
@@ -435,9 +401,9 @@ echo "Exit code: $?"
 
 - Implementing new prelude scripts or Protocol 90 behaviors — both already exist
   and are reused as-is.
-- Hard-removing `--items` from `run-epic-scope-resolver.sh` — this plan
-  deprecates and redirects it, consistent with the spec's "redirect, not hard
-  removal" intent.
+- Changing `run-epic-scope-resolver.sh` script behavior for `--items` — the
+  `--items` flag continues to work internally (used by `run-bounded-prelude.sh`).
+  The deprecation is command-surface-only (Step 8).
 - Modifying Protocol 90, 91, 93, or 95 beyond Protocol 96.
 - A new Codex `.codex/skills/run-items/` entry — the `.agents/skills/run-items/`
   path is the canonical location for repo-scoped Codex discovery.
@@ -450,7 +416,6 @@ No browser automation is required. The smoke test is:
 
 1. Run: `bash scripts/development-workflow/tests/test-run-work-router.sh` — all tests pass.
 2. Run: `./scripts/development-workflow/run-work-router.sh 978 979` — output contains `REDIRECT_COMMAND=/run-items 978 979`.
-3. Run: `./scripts/development-workflow/run-epic-scope-resolver.sh --items 978,979 2>/dev/null` — output contains `REDIRECT_COMMAND=/run-items 978 979`; exit code is 0.
-4. Confirm the four new files exist and are non-empty.
-5. Confirm `CLAUDE.md` Workflow Commands table includes the `/run-items` row.
-6. Confirm `docs/workflow/development-workflow/README.md` command table includes the `/run-items` row.
+3. Confirm the four new files exist and are non-empty.
+4. Confirm `CLAUDE.md` Workflow Commands table includes the `/run-items` row.
+5. Confirm `docs/workflow/development-workflow/README.md` command table includes the `/run-items` row.
