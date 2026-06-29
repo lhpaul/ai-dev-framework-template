@@ -284,9 +284,10 @@ human-confirmed `/batch-merge` step.
 - BR9: The terminal state of a `/run-items` execute run is every in-scope PR at
   `ready-for-human-review` (plus any reported held/blocked/escalated items).
   `/run-items` must not merge PRs; merging is the separate `/batch-merge` step.
-- BR10: An epic-like token in the list causes `/run-items` to stop for that token
-  and direct the operator to `/run-epic --epic <n>`; epics are never advanced as
-  `/run-items` list members.
+- BR10: An epic-like token in the list causes the entire `/run-items` invocation
+  to stop; the command directs the operator to `/run-epic --epic <n>` for each
+  epic-like token encountered and does not advance any other listed items. Epics
+  are never advanced as `/run-items` list members.
 - BR11: `/run-items` invoked with fewer than two resolvable tokens does not run a
   batch: one token redirects to `/run-item` (or `/run-epic` when epic-like), and
   zero tokens redirect to `/run-work`.
@@ -386,8 +387,9 @@ human-confirmed `/batch-merge` step.
       after every in-scope ready PR is confirmed to have green CI and a clean
       reviewer loop, and the report names `/batch-merge` as the explicit landing
       step.
-- [ ] AC8: Given `/run-items` with an epic-like token, the command stops for that
-      token and directs the operator to `/run-epic --epic <n>`.
+- [ ] AC8: Given `/run-items` with an epic-like token, the command stops the
+      entire invocation and directs the operator to `/run-epic --epic <n>` for
+      each epic-like token; no other listed items are advanced.
 - [ ] AC9: Given `/run-items` with exactly one token, the command redirects to
       `/run-item` (or `/run-epic` when epic-like); given zero tokens, it redirects
       to `/run-work`. No batch mutation occurs in either case.
