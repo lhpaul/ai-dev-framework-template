@@ -7,20 +7,16 @@ description: "Read-only portfolio scan: discovers what can advance, proposes the
 `/run-work` is the **read-only portfolio scan** entrypoint. It scans the
 portfolio and proposes what can advance, without executing or mutating anything.
 
-| Invocation | Routing mode | Action |
-| ---------- | ------------ | ------ |
-| No target | `no_target_scan` | Scan portfolio — propose largest safe batch (read-only) |
-| One non-epic target | `redirect_item` | **Stop** — re-invoke `/run-item <target>` |
-| Epic-like / `--epic` | `redirect_epic` | **Stop** — re-invoke `/run-epic --epic <n>` |
+| Routing mode | Action |
+| ------------ | ------ |
+| `no_target_scan` | Scan portfolio — propose largest safe batch (read-only) |
+| `ambiguous` | Stop; report `stopReason` |
 
 Run the router first (read-only):
 
 ```bash
 ./scripts/development-workflow/run-work-router.sh [--json]
 ```
-
-When `REDIRECT_COMMAND` is present, emit redirect guidance and perform **no**
-mutation under `/run-work`.
 
 For single-item work use `/run-item`. For bounded multi-item batch execution use
 `/run-items`. For epic-scoped runs use `/run-epic`.
