@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--items` flag is retained internally in the scope resolver for scripts
   (e.g., the Linear orchestration smoke test) but emits a deprecation warning
   when used. Operators who need explicit item lists should use `/run-items`.
+### Fixed
+
+- **ShellCheck CI merge-base failure** (#1076): removed `--depth=1` from the base-ref fetch step in the ShellCheck workflow so that `workflow-shell-guard-lint.py` three-dot diff can find the merge base when `develop` has advanced past the PR branch root.
+- **Protocol 90 scan-only consistency** (#1076): added explicit scan-mode gate notes to the Stale `In Development` correction section and Step 2.5 Pre-Dispatch Tracker Status Update clarifying both are skipped in `/run-work` (scan-only) mode; aligned the Claude command with Cursor and Codex surfaces by adding an explicit Steps 1–3 paragraph for `no_target_scan`; removed the `workflow_hub` dispatch guidance from the Codex SKILL.md to match Claude and Cursor.
 
 ### Added
 
