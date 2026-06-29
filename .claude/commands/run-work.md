@@ -28,6 +28,9 @@ proceed with any mutation.
 For single-item execution: `/run-item`. For multi-item execution: `/run-items`.
 For bounded epic work: `/run-epic`.
 
+When mode is `no_target_scan`, follow Protocol 90 Steps 1–3 (scan + propose)
+only. Do not dispatch items under `/run-work`:
+
 Portfolio scan protocol: `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
 
 Routing specification: `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`

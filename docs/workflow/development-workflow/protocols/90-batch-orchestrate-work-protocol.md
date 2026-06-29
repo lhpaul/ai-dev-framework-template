@@ -449,6 +449,8 @@ Before batching an item, check its `Depends on` field or tracker dependency data
 
 ### Stale `In Development` correction (AC-6, AC-7, AC-8, AC-10)
 
+> **Scan-only mode gate (`/run-work`)**: When the routing entrypoint is `/run-work` (scan-only mode), this section is **skipped entirely** — no tracker mutations occur during the scan-and-propose phase. This correction runs only when executing a full portfolio run via `/run-items` or an equivalent dispatch entrypoint.
+
 After building the initial candidate list from the eligibility table above and after the dependency gate, but **before** Step 2.5 (pre-dispatch tracker updates), scan each candidate item whose tracker status is exactly `In Development`:
 
 1. **Guard — skip if issue number is invalid**: Before running the branch and PR checks, verify that `ISSUE_NUMBER` is a non-empty positive integer. An empty or non-numeric value would cause `git ls-remote` to search for patterns like `refs/heads/feature/-*` or `refs/heads/feature/abc-*`, potentially matching unintended branches. GitHub issue numbers are always positive integers, so a non-integer value indicates a data problem in the candidate list:
@@ -524,6 +526,8 @@ After building the initial candidate list from the eligibility table above and a
 ---
 
 ## Step 2.5: Pre-Dispatch Tracker Status Update
+
+> **Scan-only mode gate (`/run-work`)**: When the routing entrypoint is `/run-work` (scan-only mode), this entire step is **skipped** — no tracker status updates occur during the scan-and-propose phase. Step 2.5 runs only when executing a full portfolio run via `/run-items` or an equivalent dispatch entrypoint.
 
 Before building parallel batches, update the tracker to reflect that eligible items are now actively being worked on. This step runs after Step 2 (eligibility determination) and before Step 3 (batch building).
 

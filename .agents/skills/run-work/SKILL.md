@@ -28,7 +28,5 @@ command. It performs no mutation in any routing mode.
    `/run-items` command for the operator to execute.
 5. For single-item advancement use `$run-item`; for epic bounded runs use `$run-epic`;
    for multi-item execution use `$run-items`.
-6. In `workflow_hub`, preserve selected product repository context when building
-   the portfolio proposal.
 
 Routing specification: `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
