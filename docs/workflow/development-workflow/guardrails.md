@@ -235,6 +235,40 @@ leave informational comments).
 
 ---
 
+## Two-Step Lifecycle and Always-Confirm
+
+The framework ships a **two-step lifecycle** as its default operating model:
+
+1. **Execute** — `/run-item`, `/run-items`, or `/run-epic` advance work to
+   `ready-for-human-review`. These commands stop before merge.
+2. **Land** — `/batch-merge` (or manual merge) lands ready PRs after a human
+   confirms the merge plan.
+
+This separation keeps humans in control of what goes into the integration branch
+while still automating the preparation, review, and CI-readiness steps.
+
+### Always-Confirm Prelude
+
+Every mutating orchestration command (`/run-item`, `/run-items`, `/run-epic`) runs
+the **shared bounded prelude** before any artifact mutation. The prelude always
+sets `requiresConfirmation: true`, which means:
+
+- The resolved policy is always printed before work starts.
+- When all autonomy flags were provided explicitly in the invocation (e.g.,
+  `--delegate-review --may-merge --may-start-backlog true --max-risk high`), those
+  explicit flags serve as the human's confirmation and the orchestrator may
+  proceed immediately after printing the summary.
+- When any flag was inferred or scope is ambiguous, the orchestrator stops and
+  waits for the human to confirm or re-invoke with corrected flags.
+
+**`/run-work` is exempt**: the portfolio scan is read-only (no mutation), so the
+bounded prelude is not required. Only the execute commands run the prelude.
+
+See [`bounded-run-prelude.md`](bounded-run-prelude.md) for the full prelude
+contract and script reference.
+
+---
+
 ## Safe Defaults and Migration Note
 
 **No action is required** for existing repositories. The `guardrails` section in

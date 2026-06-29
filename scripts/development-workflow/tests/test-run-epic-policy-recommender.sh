@@ -169,7 +169,7 @@ explicit_output="$("$HELPER" \
   --max-risk low \
   --base develop \
   --json)"
-run_test "explicit_policy_skips_confirmation" "false" "$(printf '%s\n' "$explicit_output" | jq -r '.requiresConfirmation')"
+run_test "explicit_policy_always_confirms" "true" "$(printf '%s\n' "$explicit_output" | jq -r '.requiresConfirmation')"
 run_test "explicit_backlog_choice_preserved" "false" "$(printf '%s\n' "$explicit_output" | jq -r '.effectivePolicy.mayStartBacklog')"
 run_test "explicit_sources_recorded" "explicit" "$(printf '%s\n' "$explicit_output" | jq -r '.fieldSources.maxRisk')"
 run_test "copy_paste_command_is_canonical" "1" "$(printf '%s\n' "$explicit_output" | jq -r '.copyPasteCommand' | grep -o -- '--max-risk' | wc -l | tr -d ' ')"
