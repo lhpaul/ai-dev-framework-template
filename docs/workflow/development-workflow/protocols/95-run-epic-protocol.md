@@ -1,10 +1,9 @@
 # Protocol: Run Epic
 
 **Agent role**: Epic Runner (`run-epic`)
-**Purpose**: Convert a native GitHub epic or explicit item list into a bounded
-execution set, then run an explicitly authorized delegated review and merge
-loop with pre-merge risk classification, audit evidence, cleanup, and
-rediscovery
+**Purpose**: Convert a native GitHub epic into a bounded execution set, then
+run an explicitly authorized delegated review and merge loop with pre-merge
+risk classification, audit evidence, cleanup, and rediscovery
 
 The first phase is a **read-only resolver protocol**, not an implementation
 protocol. It exists to make scoped multi-item work explicit before an agent
@@ -36,13 +35,13 @@ for the full routing specification.
 ## Overview
 
 Use this protocol when a human invokes `/run-epic`, `$run-epic`, or asks to run
-an epic / bounded item list as a delegated workflow batch.
+a native GitHub epic as a delegated workflow batch. For explicit item lists, use
+`/run-items` instead.
 
-The resolver supports exactly one scope source:
+The resolver accepts one scope source:
 
 ```bash
 ./scripts/development-workflow/run-epic-scope-resolver.sh --epic <issue-number>
-./scripts/development-workflow/run-epic-scope-resolver.sh --items <issue-number>[,<issue-number>...]
 ```
 
 Optional flags:
@@ -189,17 +188,12 @@ the evidence omits `ciPolicy` / `ci_policy`.
 
 ## Step 1: Validate Scope Input
 
-Require exactly one of:
+Require `--epic <issue-number>`. The `--items` flag is not a user-facing option
+for `/run-epic`; operators who need explicit item lists should use `/run-items`
+instead.
 
-- `--epic <issue-number>`
-- `--items <issue-number>[,<issue-number>...]`
-
-Issue numbers must be positive integers. Reject empty values, zero, non-numeric
-tokens, and mixed `--epic` plus `--items` invocations before any repository or
-tracker lookup.
-
-Explicit item lists are exact. Do not expand siblings, parent epics, labels, or
-linked issues from an explicit list. Duplicate item numbers may be collapsed.
+The epic issue number must be a positive integer. Reject empty values, zero, and
+non-numeric tokens before any repository or tracker lookup.
 
 ---
 
@@ -226,10 +220,11 @@ sub-issue enumeration. Apply this flow instead:
    If the Linear item has no children, report an empty scope clearly — do not
    treat the parent item itself as the only scope item.
 
-2. **For `--items`** — the explicit list is a hard scope boundary (BR-7). Do
-   not expand to siblings, parent epics, or label-matched items. Fetch each
-   listed item's metadata via the Linear MCP before passing it to the scope
-   resolver.
+2. **For internal explicit-item paths** — when a script passes `--items`
+   internally, the explicit list is a hard scope boundary (BR-7). Do not expand
+   to siblings, parent epics, or label-matched items. Fetch each listed item's
+   metadata via the Linear MCP before passing it to the scope resolver. Users
+   invoking `/run-epic` directly should use `/run-items` instead.
 
 3. **Pass pre-resolved data** — the scope resolver (`run-epic-scope-resolver.sh`)
    cannot reach Linear itself. Supply item metadata as structured input. The

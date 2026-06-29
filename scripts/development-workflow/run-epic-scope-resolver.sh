@@ -10,11 +10,12 @@ usage() {
   cat <<'EOF'
 Usage:
   ./scripts/development-workflow/run-epic-scope-resolver.sh --epic <issue-number> [--base <branch>] [--delegate-review] [--may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--json]
-  ./scripts/development-workflow/run-epic-scope-resolver.sh --items <issue-number>[,<issue-number>...] [--base <branch>] [--delegate-review] [--may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--json]
 
-Resolves a delegated epic or explicit item list into a read-only execution set.
+Resolves a delegated epic into a read-only execution set.
 The resolver never starts backlog items, updates tracker status, creates
 branches, opens PRs, merges PRs, closes issues, or deletes branches.
+
+For explicit item lists, use /run-items instead of --items.
 EOF
 }
 
@@ -72,6 +73,8 @@ while [ "$#" -gt 0 ]; do
       ;;
     --items)
       require_value "$@"
+      # --items is a deprecated internal flag. Users should use /run-items instead.
+      echo "DEPRECATED: --items is not a user-facing flag for run-epic-scope-resolver.sh. Use /run-items for explicit item lists." >&2
       items_arg="$2"
       shift 2
       ;;
@@ -115,11 +118,11 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -n "$epic_number" ] && [ -n "$items_arg" ]; then
-  echo "ERROR: pass exactly one of --epic or --items, not both." >&2
+  echo "ERROR: pass --epic or --items, not both." >&2
   exit 64
 fi
 if [ -z "$epic_number" ] && [ -z "$items_arg" ]; then
-  echo "ERROR: pass exactly one of --epic or --items." >&2
+  echo "ERROR: --epic <issue-number> is required. For explicit item lists, use /run-items." >&2
   exit 64
 fi
 if [ -n "$epic_number" ] && ! is_positive_int "$epic_number"; then

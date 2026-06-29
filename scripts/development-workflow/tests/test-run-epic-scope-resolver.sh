@@ -224,7 +224,7 @@ run_json() {
 echo ""
 echo "=== Run epic scope resolver ==="
 
-run_fails_contains "requires_scope" "pass exactly one of --epic or --items" "$RESOLVER"
+run_fails_contains "requires_scope" "--epic <issue-number> is required" "$RESOLVER"
 run_fails_contains "rejects_both_scope_inputs" "not both" "$RESOLVER" --epic 900 --items 101
 run_fails_contains "rejects_invalid_items" "not a positive integer" "$RESOLVER" --items "101,nope"
 run_fails_contains "rejects_empty_item_token" "contains an empty item" "$RESOLVER" --items "101,,102"
