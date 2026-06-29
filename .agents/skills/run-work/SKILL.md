@@ -1,6 +1,6 @@
 ---
 name: run-work
-description: "Propose portfolio batches (scan-only). No-target scan produces a batch recommendation with no dispatch. Two or more targets redirect to $run-items. Single targets redirect to $run-item or $run-epic. No mutation in any mode."
+description: "Read-only portfolio scan. No-target scan proposes batches with no dispatch. Two or more targets redirect to $run-items. Single targets redirect to $run-item or $run-epic. No mutation in any mode."
 ---
 
 # Run Work

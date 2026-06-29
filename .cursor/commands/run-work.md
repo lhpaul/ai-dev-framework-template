@@ -1,5 +1,5 @@
 ---
-description: "Propose portfolio batches (scan-only). No-target scan produces a batch recommendation; two or more targets emit /run-items redirect; single target redirects to /run-item; epics redirect to /run-epic. No mutation in any mode. Usage: /run-work [<target> ...]"
+description: "Read-only portfolio scan. No-target scan proposes batches; two or more targets redirect to /run-items; single targets redirect to /run-item; epics redirect to /run-epic. No mutation in any mode. Usage: /run-work [<target> ...]"
 ---
 
 # Cursor Command: Run Work
@@ -14,17 +14,14 @@ command. It does not advance items directly in any invocation mode.
 | One non-epic target | `redirect_item` | **Stop** — re-invoke `/run-item <target>` |
 | Epic-like / `--epic` | `redirect_epic` | **Stop** — re-invoke `/run-epic --epic <n>` |
 
-Run the classifier first (read-only):
+Run the router first (read-only):
 
 ```bash
-./scripts/development-workflow/run-work-router.sh [<target>...] [--json]
+./scripts/development-workflow/run-work-router.sh [--json]
 ```
 
-When `REDIRECT_COMMAND` is present, emit redirect guidance and perform **no**
-mutation under `/run-work`.
-
-For single-item execution use `/run-item`. For multi-item execution use `/run-items`.
-For bounded epic work use `/run-epic`.
+For single-item work use `/run-item`. For bounded multi-item batch execution use
+`/run-items`. For epic-scoped runs use `/run-epic`.
 
 When mode is `no_target_scan`, follow Protocol 90 Steps 1–3 (scan + propose)
 only. Do not dispatch items under `/run-work`:
