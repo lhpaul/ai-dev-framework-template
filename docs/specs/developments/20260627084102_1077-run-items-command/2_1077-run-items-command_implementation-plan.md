@@ -99,14 +99,15 @@ description: "Multi-item bounded execute command: advance an explicit list of tw
 ---
 ```
 
-**Body content** (numbered steps mirroring the run-item skill):
+**Body content** (numbered steps mirroring the run-item skill, with router validation added for the multi-item case):
 1. Read `AGENTS.md` for repository-wide rules.
-2. Run the read-only bounded prelude: `./scripts/development-workflow/run-bounded-prelude.sh --original-command "<invocation>" --items "<comma-separated-list>" [policy flags] --json` (e.g. `--items "978,979"`; `--items` takes a single comma-separated string). See `docs/workflow/development-workflow/bounded-run-prelude.md`.
-3. When `policyRecommendation.requiresConfirmation` is true in the prelude JSON, present policy/checkpoint recommendations and continue only after human acceptance or customization.
-4. Read `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` and follow it for `explicit_list` mode.
-5. Before implementation mutation in `workflow_hub`, state selected product repository, artifact owner, and mutation target; stop when context is missing or ambiguous.
-6. Guardrails enforcement: use portfolio-resolved guardrails when available; otherwise resolve from repo `guardrails` config. Report effective values before mutation.
-7. Epic-like tokens in the list stop the entire invocation; use `$run-epic` / `/run-epic --epic <n>` for those. One token → use `$run-item`. Zero tokens → use `$run-work`.
+2. Run read-only router validation: `./scripts/development-workflow/run-work-router.sh <list> [--json]`. Stop with redirect guidance when mode is not `explicit_list` (e.g., `redirect_item` for one token, stop and redirect to `$run-epic` for an epic-like token).
+3. Run the read-only bounded prelude: `./scripts/development-workflow/run-bounded-prelude.sh --original-command "<invocation>" --items "<comma-separated-list>" [policy flags] --json` (e.g. `--items "978,979"`; `--items` takes a single comma-separated string). See `docs/workflow/development-workflow/bounded-run-prelude.md`.
+4. When `policyRecommendation.requiresConfirmation` is true in the prelude JSON, present policy/checkpoint recommendations and continue only after human acceptance or customization.
+5. Read `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` and follow it for `explicit_list` mode.
+6. Before implementation mutation in `workflow_hub`, state selected product repository, artifact owner, and mutation target; stop when context is missing or ambiguous.
+7. Guardrails enforcement: use portfolio-resolved guardrails when available; otherwise resolve from repo `guardrails` config. Report effective values before mutation.
+8. Epic-like tokens in the list stop the entire invocation; use `$run-epic` / `/run-epic --epic <n>` for those. One token → use `$run-item`. Zero tokens → use `$run-work`.
 
 ### Step 4: Create `.agents/skills/run-items/agents/openai.yaml`
 
