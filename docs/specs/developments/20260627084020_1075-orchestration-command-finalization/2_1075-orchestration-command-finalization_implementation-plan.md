@@ -41,8 +41,9 @@ documentation), so downstream references are always stable before dependents are
 3. Rename constant `MODE_LIST="explicit_list"` → `MODE_REDIRECT_ITEMS="redirect_items"`.
 4. Rename constant `LABEL_LIST="Explicit list"` → `LABEL_REDIRECT_ITEMS="Redirect (items)"`.
 5. Update all references to the old constant names throughout the script.
-6. Update the two-or-more-token routing branch: output `ROUTING_MODE=redirect_items` and
+6. Update the two-or-more-token routing branch: output `MODE=redirect_items` and
    `REDIRECT_COMMAND=/run-items <resolved-list>` instead of triggering Protocol 90 execution.
+   (The router's stable output key is `MODE=`, matching the existing script convention.)
 7. Remove or disable any code path that allowed the script to proceed to Protocol 90 mutation
    for `no_target_scan` or `explicit_list` — the script is read-only; it must stop at redirect.
 8. Update the help/usage comment block at the top of the script to reflect the new mode names
@@ -183,52 +184,29 @@ removal; update if needed.
 
 ---
 
-### Phase 8 — Guardrails defaults: uncomment sensible defaults (BR11, AC9)
+### Phase 8 — Guardrails defaults: verify and complete active block (BR11, AC9)
 
 **File**: `.ai-dev-workflow.yaml`
 
-Uncomment the `guardrails:` block with the conservative defaults already documented in the file's
-comments. The values to uncomment are:
+The `guardrails:` block is **already active** (not commented out). It currently defines:
+
+- `mode: delegated` — agents may merge within per-stage risk limits
+- `backlog_start.allow_without_confirmation: false`
+- All three stages with `may_open_pr: true`, `may_merge_pr: false`, `max_merge_risk: low`
+- Full `stop_conditions` list
+
+BR11/AC9 require concrete defaults so the always-confirm prelude has values to present. The
+existing block already satisfies this. The only addition needed is the `audit` subsection,
+which is currently absent from the file. Append it after `stop_conditions`:
 
 ```yaml
-guardrails:
-  mode: manual
-  backlog_start:
-    allow_without_confirmation: false
-  stages:
-    spec:
-      may_open_pr: true
-      may_merge_pr: false
-      max_merge_risk: low
-    plan:
-      may_open_pr: true
-      may_merge_pr: false
-      max_merge_risk: low
-    implementation:
-      may_open_pr: true
-      may_merge_pr: false
-      max_merge_risk: low
-      required_evidence:
-        - regression
-  stop_conditions:
-    - unclear_requirements
-    - architecture_decision
-    - failing_ci
-    - unresolved_blocking_review
-    - high_risk_change
-    - destructive_action
-    - missing_tracker_context
-    - missing_required_secret_or_permission
   audit:
     pr_disposition_record: required
     work_item_ledger_record: required
 ```
 
-Retain the explanatory comment block above each field for downstream readability. These values
-match the conservative safe defaults already described in the comments; uncommenting makes the
-defaults explicit without changing behavior.
-
----
+Do **not** change `mode`, `backlog_start`, or per-stage values — they already implement the
+two-step lifecycle correctly (all stages `may_merge_pr: false`).
 
 ### Phase 9 — Surface sync: AGENTS.md (BR15, AC10)
 
@@ -294,13 +272,13 @@ runtime code paths are added.
 ### Script spot-checks
 
 4. `./scripts/development-workflow/run-work-router.sh --json` (no args) must emit
-   `ROUTING_MODE=scan` (not `no_target_scan`).
+   `MODE=scan` on stdout (not `no_target_scan`).
 5. `./scripts/development-workflow/run-work-router.sh 1075 1076 --json` must emit
-   `ROUTING_MODE=redirect_items` and `REDIRECT_COMMAND=/run-items 1075 1076`.
+   `MODE=redirect_items` and `REDIRECT_COMMAND=/run-items 1075 1076` on stdout.
 6. `./scripts/development-workflow/run-work-router.sh 1075 --json` must still emit
-   `ROUTING_MODE=redirect_item` (single non-epic token — unchanged behavior).
+   `MODE=redirect_item` on stdout (single non-epic token — unchanged behavior).
 7. `python3 -c "import yaml; yaml.safe_load(open('.ai-dev-workflow.yaml'))"` must succeed
-   after uncommenting the guardrails block.
+   after adding the `audit` subsection to the `guardrails:` block.
 
 ### No smoke-test runbook required
 
