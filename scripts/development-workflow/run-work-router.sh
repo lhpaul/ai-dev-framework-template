@@ -2,7 +2,7 @@
 # run-work-router.sh — Deterministic routing classifier for /run-work.
 #
 # Classifies a /run-work invocation into one routing mode:
-#   no_target_scan | explicit_list | redirect_item | redirect_epic | ambiguous
+#   no_target_scan | redirect_items | redirect_item | redirect_epic | ambiguous
 #
 # The script is READ-ONLY: it must not update tracker status, create branches,
 # open/edit/merge PRs, close issues, delete branches, or post comments.
@@ -31,13 +31,13 @@ source "$SCRIPT_DIR/workflow-lib.sh"
 
 MODE_NO_TARGET="no_target_scan"
 MODE_REDIRECT_ITEM="redirect_item"
-MODE_LIST="explicit_list"
+MODE_REDIRECT_ITEMS="redirect_items"
 MODE_REDIRECT_EPIC="redirect_epic"
 MODE_AMBIGUOUS="ambiguous"
 
 LABEL_NO_TARGET="No-target scan"
 LABEL_REDIRECT_ITEM="Redirect (item)"
-LABEL_LIST="Explicit list"
+LABEL_REDIRECT_ITEMS="Redirect (items)"
 LABEL_REDIRECT_EPIC="Redirect (epic)"
 LABEL_AMBIGUOUS="Ambiguous"
 
@@ -52,8 +52,8 @@ Usage:
   ./scripts/development-workflow/run-work-router.sh --epic <n> [--json]
 
 Classifies a /run-work invocation into one routing mode:
-  no_target_scan   No target supplied; portfolio scan (Protocol 90).
-  explicit_list    Two or more explicit targets (hard bounded portfolio batch).
+  no_target_scan   No target supplied; portfolio scan and batch proposal only (no dispatch).
+  redirect_items   Two or more explicit targets; redirect to /run-items (no mutation).
   redirect_item    Single non-epic target; redirect to /run-item (no mutation).
   redirect_epic    Epic-like target; redirect to /run-epic (no mutation).
   ambiguous        Cannot deterministically resolve; no mutation allowed.
@@ -394,6 +394,14 @@ build_redirect_command_item() {
   printf '/run-item %s' "$scope"
 }
 
+build_redirect_command_items() {
+  # scope is a comma-separated list of resolved targets; convert to space-separated
+  local scope="$1"
+  local targets_space
+  targets_space="$(printf '%s\n' "$scope" | tr ',' ' ')"
+  printf '/run-items %s' "$targets_space"
+}
+
 build_redirect_command_epic() {
   local scope="$1"
   printf '/run-epic --epic %s' "$scope"
@@ -524,10 +532,10 @@ else
     if [ "$epic_in_list" -eq 1 ]; then
       MODE="$MODE_AMBIGUOUS"
       MODE_LABEL="$LABEL_AMBIGUOUS"
-      STOP_REASON="Epic-like issue #${epic_issue_num} cannot be advanced via /run-work explicit_list; use /run-epic --epic ${epic_issue_num}"
+      STOP_REASON="Epic-like issue #${epic_issue_num} cannot be advanced via /run-work; use /run-epic --epic ${epic_issue_num}"
     else
-    MODE="$MODE_LIST"
-    MODE_LABEL="$LABEL_LIST"
+    MODE="$MODE_REDIRECT_ITEMS"
+    MODE_LABEL="$LABEL_REDIRECT_ITEMS"
     # Build comma-separated resolved scope
     scope_str=""
     for t in "${resolved_list[@]}"; do
@@ -538,6 +546,7 @@ else
       fi
     done
     RESOLVED_SCOPE="$scope_str"
+    REDIRECT_COMMAND="$(build_redirect_command_items "$scope_str")"
     fi
   fi
 fi

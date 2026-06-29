@@ -53,18 +53,22 @@ If the request is explicitly about a single development, branch, or PR, skip thi
 
 ## Routing Entrypoint
 
-This protocol is entered from `/run-work` (or its Codex/Cursor equivalents) when
-the routing classifier (`scripts/development-workflow/run-work-router.sh`,
-Protocol 96) determines the routing mode is `no_target_scan` or `explicit_list`.
+This protocol is entered from two paths:
 
-- **`no_target_scan`**: No target was supplied; the orchestrator scans the
-  portfolio, builds safe parallel batches, and proposes the largest safe plan.
-- **`explicit_list`**: Two or more explicit targets were supplied as a hard
-  bounded scope; the orchestrator runs that exact bounded set.
+- **From `/run-work`** (Protocol 96, `no_target_scan` mode): `/run-work` is
+  scan-and-propose only. The orchestrator runs **Steps 1–3 only** (scan,
+  assess, build batch proposal) and stops without dispatching any items. No
+  tracker updates, branch creation, or PR operations occur. The batch proposal
+  is presented to the operator; execution begins only when the operator invokes
+  `/run-items` (or equivalent) with the recommended targets.
+- **From `/run-items`** (Protocol 96, `explicit_list` mode, when implemented):
+  Two or more explicit targets were supplied as a hard bounded scope; the
+  orchestrator runs that exact bounded set through all steps including dispatch
+  (Steps 4–5).
 
-When the routing mode is `redirect_item` or `redirect_epic`, `/run-work` performs
-**no mutation**. The classifier emits `REDIRECT_COMMAND` pointing to `/run-item`
-or `/run-epic`. Use those bounded commands instead.
+When the routing mode is `redirect_item`, `redirect_epic`, or `redirect_items`,
+`/run-work` performs **no mutation**. The classifier emits `REDIRECT_COMMAND`
+pointing to the appropriate bounded command. Use those commands instead.
 
 See `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
 for the full routing specification.

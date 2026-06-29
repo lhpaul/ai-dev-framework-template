@@ -6,22 +6,27 @@
 This protocol is the canonical specification for how `/run-work` classifies an
 invocation into a routing mode, emits a routing-decision record, and hands off
 to the appropriate underlying protocol. It is read-only: it defines a
-deterministic classifier, not an execution protocol. Mutation under `/run-work`
-begins only after handoff to Protocol 90 (`no_target_scan` or `explicit_list`).
-Redirect modes perform no mutation.
+deterministic classifier, not an execution protocol. `/run-work` is now
+**scan-and-propose only** — all routing modes perform no mutation. For batch
+execution, use `/run-items` (multi-item) or the redirect modes' target commands.
 
 ---
 
 ## Purpose
 
-`/run-work` is **portfolio parallel orchestration only** (Protocol 90). A human
-or delegating agent invokes it with **no target** (portfolio scan) or **two or
-more targets** (explicit bounded batch). Single-target and epic-like invocations
-produce **redirect guidance** to `/run-item` or `/run-epic` without mutation.
+`/run-work` is **portfolio scan and batch proposal only** — a read-only command
+that inspects the portfolio and recommends the next safe batch. It performs **no
+mutation** in any routing mode: no branch creation, no tracker updates, no PR
+operations, no item-orchestrator dispatch.
+
+A human or delegating agent invokes it with **no target** (portfolio scan) to
+receive a batch proposal. All invocations with targets produce redirect guidance:
+single targets redirect to `/run-item` or `/run-epic`; two or more targets
+redirect to `/run-items`. The human then executes the recommended command.
 
 This protocol defines:
 
-1. The **routing modes** and their code values (`no_target_scan`, `explicit_list`,
+1. The **routing modes** and their code values (`no_target_scan`, `redirect_items`,
    `redirect_item`, `redirect_epic`, `ambiguous`).
 2. The **deterministic routing decision table** that maps (input + discovered state
    + configuration) → routing mode.
@@ -32,17 +37,18 @@ This protocol defines:
 
 ## Routing Modes (portfolio surface)
 
-| Code value       | Display label     | Description                                                                                                                          |
-| ---------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `no_target_scan` | No-target scan    | No target supplied; Protocol 90 scans and proposes the largest configuration-bounded safe parallel plan.                              |
-| `explicit_list`  | Explicit list     | Two or more explicit targets; hard bounded portfolio batch (Protocol 90).                                                            |
-| `redirect_item`  | Redirect (item)   | Single non-epic target resolved; `/run-work` performs **no mutation** and emits redirect to `/run-item`.                           |
-| `redirect_epic`  | Redirect (epic)   | Epic-like or `--epic` target; `/run-work` performs **no mutation** and emits redirect to `/run-epic`.                                |
-| `ambiguous`      | Ambiguous         | Cannot resolve deterministically; records stop reason and performs no mutation.                                                       |
+| Code value        | Display label      | Description                                                                                                                                            |
+| ----------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `no_target_scan`  | No-target scan     | No target supplied; `/run-work` scans the portfolio and proposes a batch recommendation — **no dispatch, no mutation**. Execute with `/run-items`.      |
+| `redirect_items`  | Redirect (items)   | Two or more explicit targets; `/run-work` performs **no mutation** and emits redirect to `/run-items` with the resolved target list.                    |
+| `redirect_item`   | Redirect (item)    | Single non-epic target resolved; `/run-work` performs **no mutation** and emits redirect to `/run-item`.                                               |
+| `redirect_epic`   | Redirect (epic)    | Epic-like or `--epic` target; `/run-work` performs **no mutation** and emits redirect to `/run-epic`.                                                   |
+| `ambiguous`       | Ambiguous          | Cannot resolve deterministically; records stop reason and performs no mutation.                                                                         |
 
 **Valid transitions**:
 
-- Portfolio inputs resolve to `no_target_scan` or `explicit_list`.
+- No-target invocations resolve to `no_target_scan` (scan and propose only — no dispatch).
+- Two or more explicit targets resolve to `redirect_items` (no execution under `/run-work`).
 - Single non-epic targets resolve to `redirect_item` (not Protocol 91 under `/run-work`).
 - Single epic-like targets and `--epic` resolve to `redirect_epic` (not Protocol 95 under `/run-work`).
 - Any unresolved input → `ambiguous`.
@@ -61,7 +67,7 @@ encodes the same rows. Every row maps to at least one automated test in
 | Exactly one target token that resolves to exactly one issue, workflow branch, open PR, or development folder, and that target is **not** epic-like | `redirect_item` | UC5, BR4, AC5 |
 | Exactly one target token that resolves to exactly one issue which **is** epic-like (has child items / native sub-issues) | `redirect_epic` | UC5, BR4, AC6 |
 | Exactly one target token that is explicitly marked as an epic (e.g., `--epic <n>` flag) | `redirect_epic` | UC5, BR6, AC6 |
-| Two or more explicit target tokens (after duplicate collapse) that each resolve to a concrete target | `explicit_list` | UC3, BR5, AC3 |
+| Two or more explicit target tokens (after duplicate collapse) that each resolve to a concrete target | `redirect_items` | UC3, BR5, AC3 |
 | Any input that cannot be deterministically resolved: unresolvable lookalike token, mixed list with at least one unresolvable token, or a single token matching two different concrete artifacts (conflicting signal) | `ambiguous` | BR2, BR10, AC11 |
 
 **Edge cases** (all must be covered by automated tests):
@@ -75,9 +81,9 @@ encodes the same rows. Every row maps to at least one automated test in
 | Single branch token (`feature/42-foo`, `spec/42-foo`) | `redirect_item` |
 | Single PR token (`#118` or bare `118` resolving to an open PR) | `redirect_item` |
 | Single development-folder token (`docs/specs/developments/2026…_42-foo`) | `redirect_item` |
-| Space-separated list of two or more targets (`42 43`) | `explicit_list` |
-| Comma-separated list of two or more targets (`42,43`) | `explicit_list` |
-| List with duplicate tokens (`42 42 43` → scope `{42, 43}`) | `explicit_list` with deduplication |
+| Space-separated list of two or more targets (`42 43`) | `redirect_items` |
+| Comma-separated list of two or more targets (`42,43`) | `redirect_items` |
+| List with duplicate tokens (`42 42 43` → scope `{42, 43}`) | `redirect_items` with deduplication |
 | Unresolvable lookalike (e.g., `999999` with no matching artifact) | `ambiguous` |
 | Mixed list with one unresolvable token (`42 not-a-target`) | `ambiguous` |
 | Single token matching two different artifacts (branch + issue collision) | `ambiguous` |
@@ -161,24 +167,27 @@ record and is the canonical implementation of the routing decision table above.
 
 ## Handoff Mapping
 
-After the routing-decision record is emitted, execution hands off to:
+After the routing-decision record is emitted, `/run-work` hands off as follows:
 
-| Routing mode     | Handoff target                                                                                                         |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `no_target_scan` | **Protocol 90** (`90-batch-orchestrate-work-protocol.md`) — portfolio orchestration with largest-safe-batch proposal   |
-| `explicit_list`  | **Protocol 90** — portfolio orchestration with explicit item list as hard bounded scope                                |
-| `redirect_item`  | **No handoff** — emit `REDIRECT_COMMAND` (e.g. `/run-item <target>`); operator re-invokes `/run-item`                 |
-| `redirect_epic`  | **No handoff** — emit `REDIRECT_COMMAND` (e.g. `/run-epic --epic <n>`); operator re-invokes `/run-epic`              |
-| `ambiguous`      | **No handoff** — record stop reason, perform no mutation, stop for a human decision                                    |
+| Routing mode      | Handoff target                                                                                                                      |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `no_target_scan`  | **Protocol 90** (Steps 1–3 scan + proposal only) — outputs a batch recommendation; **no dispatch, no mutation** under `/run-work`. Execute the proposal with `/run-items`. |
+| `redirect_items`  | **No handoff** — emit `REDIRECT_COMMAND=/run-items <targets>`; operator re-invokes `/run-items` for batch execution               |
+| `redirect_item`   | **No handoff** — emit `REDIRECT_COMMAND` (e.g. `/run-item <target>`); operator re-invokes `/run-item`                              |
+| `redirect_epic`   | **No handoff** — emit `REDIRECT_COMMAND` (e.g. `/run-epic --epic <n>`); operator re-invokes `/run-epic`                           |
+| `ambiguous`       | **No handoff** — record stop reason, perform no mutation, stop for a human decision                                                 |
 
-The routing layer does not replace Protocols 90, 91, or 95. It determines whether
-`/run-work` enters Protocol 90 or stops with redirect guidance for bounded commands.
+The routing layer does not replace Protocols 90, 91, or 95. `/run-work` is a
+proposal surface only. Execution is delegated to `/run-items`, `/run-item`, or
+`/run-epic` per the redirect guidance.
 
 ---
 
 ## Read-Only Contract
 
-The routing layer is **read-only**. Before the handoff completes,
+`/run-work` is **fully read-only** in all routing modes. Unlike previous
+versions, even `no_target_scan` produces only a proposal — no dispatch and no
+mutation occur under `/run-work`. Before any handoff (or in place of one),
 `run-work-router.sh` must not:
 
 - Update tracker status
