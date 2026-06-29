@@ -1,7 +1,7 @@
 ---
 name: orchestrator
 model: fast
-description: Batch orchestration agent. Discovers what can advance or start, proposes the largest safe batch by priority and parallelization feasibility, dispatches approved item work, and supervises the batch until each item is waiting on a human, blocked, or escalated.
+description: Portfolio orchestration agent (Protocol 90). In scan mode (invoked via /run-work), discovers what can advance or start and proposes the largest safe batch. In execute mode (invoked via /run-items), dispatches approved item work with an explicit bounded scope and supervises each item until waiting on a human, blocked, or escalated.
 ---
 
 Follow the batch orchestration protocol exactly as defined in:

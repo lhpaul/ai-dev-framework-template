@@ -3,21 +3,22 @@
 **Routing layer version**: 1.0
 **Status**: Active
 
-This protocol is the canonical specification for how `/run-work` classifies an
-invocation into a routing mode, emits a routing-decision record, and hands off
-to the appropriate underlying protocol. It is read-only: it defines a
+This protocol is the canonical specification for how `/run-work` and `/run-items`
+classify an invocation into a routing mode, emit a routing-decision record, and
+hand off to the appropriate underlying protocol. It is read-only: it defines a
 deterministic classifier, not an execution protocol. Mutation under `/run-work`
-begins only after handoff to Protocol 90 (`no_target_scan` or `explicit_list`).
-Redirect modes perform no mutation.
+begins only after handoff to Protocol 90 `no_target_scan` mode. Bounded execution
+(`explicit_list`) is initiated by `/run-items`. Redirect modes perform no mutation.
 
 ---
 
 ## Purpose
 
-`/run-work` is **portfolio parallel orchestration only** (Protocol 90). A human
-or delegating agent invokes it with **no target** (portfolio scan) or **two or
-more targets** (explicit bounded batch). Single-target and epic-like invocations
-produce **redirect guidance** to `/run-item` or `/run-epic` without mutation.
+`/run-work` is the **read-only portfolio scan** entrypoint (Protocol 90
+`no_target_scan` mode). A human or delegating agent invokes it with **no target**
+to scan the portfolio and receive a proposal. Single-target and epic-like
+invocations produce **redirect guidance** to `/run-item` or `/run-epic` without
+mutation. For bounded multi-item execution, use `/run-items` instead.
 
 This protocol defines:
 
@@ -163,16 +164,18 @@ record and is the canonical implementation of the routing decision table above.
 
 After the routing-decision record is emitted, execution hands off to:
 
-| Routing mode     | Handoff target                                                                                                         |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `no_target_scan` | **Protocol 90** (`90-batch-orchestrate-work-protocol.md`) — portfolio orchestration with largest-safe-batch proposal   |
-| `explicit_list`  | **Protocol 90** — portfolio orchestration with explicit item list as hard bounded scope                                |
-| `redirect_item`  | **No handoff** — emit `REDIRECT_COMMAND` (e.g. `/run-item <target>`); operator re-invokes `/run-item`                 |
-| `redirect_epic`  | **No handoff** — emit `REDIRECT_COMMAND` (e.g. `/run-epic --epic <n>`); operator re-invokes `/run-epic`              |
-| `ambiguous`      | **No handoff** — record stop reason, perform no mutation, stop for a human decision                                    |
+| Routing mode     | Handoff target                                                                                                                      |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `no_target_scan` | **Protocol 90** (`90-batch-orchestrate-work-protocol.md`) — portfolio scan with largest-safe-batch proposal (invoked by `/run-work`) |
+| `explicit_list`  | **Protocol 90** — portfolio orchestration with explicit item list as hard bounded scope (invoked by `/run-items`)                   |
+| `redirect_item`  | **No handoff** — emit `REDIRECT_COMMAND` (e.g. `/run-item <target>`); operator re-invokes `/run-item`                              |
+| `redirect_epic`  | **No handoff** — emit `REDIRECT_COMMAND` (e.g. `/run-epic --epic <n>`); operator re-invokes `/run-epic`                            |
+| `ambiguous`      | **No handoff** — record stop reason, perform no mutation, stop for a human decision                                                 |
 
 The routing layer does not replace Protocols 90, 91, or 95. It determines whether
-`/run-work` enters Protocol 90 or stops with redirect guidance for bounded commands.
+`/run-work` enters Protocol 90 scan mode or stops with redirect guidance for bounded
+commands. Bounded execution (`explicit_list`) is invoked by `/run-items`, not by
+`/run-work`.
 
 ---
 
