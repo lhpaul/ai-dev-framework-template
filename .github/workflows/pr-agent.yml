@@ -2,7 +2,7 @@ name: PR-Agent
 
 on:
   pull_request:
-    types: [opened, reopened, ready_for_review, synchronize]
+    types: [opened, reopened, ready_for_review]
   issue_comment:
     types: [created]
 
@@ -11,9 +11,11 @@ jobs:
     # For pull_request events: only run for PRs from the same repository (not forks),
     # including bot-authored PRs (Dependabot, Renovate). Fork PRs use read-only GITHUB_TOKEN
     # that cannot post comments, so excluding them prevents spurious auth failures.
-    # For issue_comment events: only run when a human comments on a PR (not an issue),
-    # preventing PR-Agent from triggering itself when it posts its own review comment.
-    if: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event.sender.type != 'Bot' && github.event.issue.pull_request) }}
+    # PR synchronize events no longer auto-run PR-Agent. The reviewer loop and
+    # maintainers trigger an explicit review by posting exactly `/review` on the PR.
+    # Exact command matching prevents PR-Agent from retriggering itself while still
+    # allowing trusted automation identities to request a configured review.
+    if: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.body == '/review') }}
     runs-on: ubuntu-latest
     permissions:
       issues: write

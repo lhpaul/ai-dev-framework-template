@@ -2629,6 +2629,7 @@ run_pr_agent_review() {
   local since_iso=""
   local elapsed=0
   local comment_body=""
+  local trigger_body="/review"
 
   require_gh
   cd_workflow_repo_root
@@ -2688,6 +2689,23 @@ run_pr_agent_review() {
 
   _pr_agent_latest_comment_url() {
     _pr_agent_latest_comment_field "html_url" "${1:-strict_sha}"
+  }
+
+  _pr_agent_trigger_review() {
+    local trigger_response
+
+    if ! trigger_response="$(gh api -X POST "repos/$repo/issues/$pr_number/comments" -f body="$trigger_body" 2>/dev/null)"; then
+      return 1
+    fi
+    if [ -n "$trigger_response" ]; then
+      local trigger_created_at
+      trigger_created_at="$(printf '%s\n' "$trigger_response" | jq -r '.created_at // empty' 2>/dev/null || true)"
+      if [ -n "$trigger_created_at" ]; then
+        print_kv PR_AGENT_TRIGGER_COMMENT_CREATED_AT "$trigger_created_at"
+      fi
+    fi
+    print_kv PR_AGENT_TRIGGER_COMMENT "$trigger_body"
+    return 0
   }
 
   # Extract <strong>LABEL</strong> tokens from the "Recommended focus areas for
@@ -2925,6 +2943,20 @@ _PR_AGENT_LABELS_
       return 2
       ;;
   esac
+
+  if ! _pr_agent_trigger_review; then
+    print_kv RESULT escalate
+    print_kv REASON pr_agent_trigger_failed
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 2
+  fi
 
   # --- Phase 2: Poll until PR-Agent posts its summary comment ---
   while :; do

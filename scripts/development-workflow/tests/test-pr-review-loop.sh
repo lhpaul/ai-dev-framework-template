@@ -3021,6 +3021,108 @@ rm -rf "$_bugbot_mock_dir_1612"
 unset _bugbot_mock_dir_1612 actual_output actual_exit
 
 # ---------------------------------------------------------------------------
+# Area 17: PR-Agent explicit trigger model
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 17: PR-Agent explicit trigger model ==="
+
+_pr_agent_mock_dir_1701="$(mktemp -d)"
+_pr_agent_call_log_1701="$_pr_agent_mock_dir_1701/calls.log"
+cat > "$_pr_agent_mock_dir_1701/gh" <<'PR_AGENT_GH_1701'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$PR_AGENT_CALL_LOG"
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc1701sha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"-X POST"*"issues/42/comments"*)
+    printf '{"created_at":"2020-01-01T00:00:01Z"}\n'; exit 0 ;;
+  *"issues/42/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+PR_AGENT_GH_1701
+chmod +x "$_pr_agent_mock_dir_1701/gh"
+
+actual_output="$(
+  PATH="$_pr_agent_mock_dir_1701:$PATH" PR_AGENT_CALL_LOG="$_pr_agent_call_log_1701" \
+    run_pr_agent_review "42" "feature/42-test" "1" "0" || true
+)"
+run_test "pr_agent_posts_explicit_trigger" "PR_AGENT_TRIGGER_COMMENT=/review" \
+  "$(printf '%s\n' "$actual_output" | grep "^PR_AGENT_TRIGGER_COMMENT=")"
+run_test "pr_agent_no_review_after_trigger_skips" "RESULT=skipped" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "pr_agent_trigger_post_call_made" "1" \
+  "$(grep_count_or_zero "-X POST repos/.*/issues/42/comments" "$_pr_agent_call_log_1701")"
+rm -rf "$_pr_agent_mock_dir_1701"
+unset _pr_agent_mock_dir_1701 _pr_agent_call_log_1701 actual_output
+
+_pr_agent_mock_dir_1702="$(mktemp -d)"
+_pr_agent_call_log_1702="$_pr_agent_mock_dir_1702/calls.log"
+cat > "$_pr_agent_mock_dir_1702/gh" <<'PR_AGENT_GH_1702'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$PR_AGENT_CALL_LOG"
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc1702sha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"issues/42/comments"*)
+    printf '[{"user":{"login":"github-actions[bot]"},"updated_at":"2020-01-01T00:00:02Z","html_url":"https://example.test/comment","body":"PR Reviewer Guide abc1702sha\\nNo major issues detected"}]\n'
+    exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+PR_AGENT_GH_1702
+chmod +x "$_pr_agent_mock_dir_1702/gh"
+
+actual_output="$(
+  PATH="$_pr_agent_mock_dir_1702:$PATH" PR_AGENT_CALL_LOG="$_pr_agent_call_log_1702" \
+    run_pr_agent_review "42" "feature/42-test" "1" "0" || true
+)"
+run_test "pr_agent_reuses_existing_comment" "RESULT=clean" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "pr_agent_existing_comment_no_duplicate_trigger" "0" \
+  "$(grep_count_or_zero "-X POST repos/.*/issues/42/comments" "$_pr_agent_call_log_1702")"
+rm -rf "$_pr_agent_mock_dir_1702"
+unset _pr_agent_mock_dir_1702 _pr_agent_call_log_1702 actual_output
+
+_pr_agent_mock_dir_1703="$(mktemp -d)"
+cat > "$_pr_agent_mock_dir_1703/gh" <<'PR_AGENT_GH_1703'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc1703sha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"-X POST"*"issues/42/comments"*)
+    exit 1 ;;
+  *"issues/42/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+PR_AGENT_GH_1703
+chmod +x "$_pr_agent_mock_dir_1703/gh"
+
+actual_output="$(
+  PATH="$_pr_agent_mock_dir_1703:$PATH" run_pr_agent_review "42" "feature/42-test" "1" "0" || true
+)"
+run_test "pr_agent_trigger_failure_escalates" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "pr_agent_trigger_failure_reason" "REASON=pr_agent_trigger_failed" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+rm -rf "$_pr_agent_mock_dir_1703"
+unset _pr_agent_mock_dir_1703 actual_output
+
+run_test "pr_agent_workflow_no_synchronize_trigger" "0" \
+  "$(grep_count_or_zero "types:.*synchronize" "$REPO_ROOT/.github/workflows/pr-agent.yml")"
+run_test "pr_agent_workflow_exact_review_command" "1" \
+  "$(grep_count_or_zero "github.event.comment.body == '/review'" "$REPO_ROOT/.github/workflows/pr-agent.yml")"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
