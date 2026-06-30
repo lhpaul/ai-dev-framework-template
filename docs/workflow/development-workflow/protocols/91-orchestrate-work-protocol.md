@@ -2053,35 +2053,40 @@ fi
 # unresolved blocking findings.
 #
 # NOTE: Skip this check ONLY when Step 7 was 'skipped' because no review platforms are configured.
-echo "⛔ STOP: Verifying all review threads are resolved via GraphQL before applying ready-for-human-review..."
-CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
-# GraphQL author.login omits the "[bot]" suffix present in REST API logins; strip it.
-CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
-JQ_FILTER="[.data.repository.pullRequest.reviewThreads.nodes[]
-        | select(.isResolved == false)
-        | select((.isOutdated // false) == false)
-        | select(.comments.nodes[0].author.login as \$a | [\"coderabbitai\",\"devin-ai-integration\",\"greptile-apps\",\"$CODEX_BOT_LOGIN\"] | index(\$a) != null)
-        | select((.comments.nodes[0].body // \"\") | test(\"✅ Addressed\") | not)] | length"
-UNRESOLVED_COUNT=$(gh api graphql -f query='
-  query($owner:String!, $repo:String!, $number:Int!) {
-    repository(owner:$owner, name:$repo) {
-      pullRequest(number:$number) {
-        reviewThreads(first: 100) {
-          nodes { isResolved isOutdated comments(first: 1) { nodes { author { login } body } } }
+if [ "${REVIEWER_LOOP_SKIPPED_NO_PLATFORMS:-false}" = "true" ]; then
+  echo "✅ GraphQL reviewThreads check skipped: Step 7 was skipped because no review platforms are configured."
+else
+  echo "⛔ STOP: Verifying all review threads are resolved via GraphQL before applying ready-for-human-review..."
+  CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
+  # GraphQL author.login omits the "[bot]" suffix present in REST API logins; strip it.
+  CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
+  JQ_FILTER="[.data.repository.pullRequest.reviewThreads.nodes[]
+          | select(.isResolved == false)
+          | select((.isOutdated // false) == false)
+          | select(.comments.nodes[0].author.login as \$a | [\"coderabbitai\",\"devin-ai-integration\",\"greptile-apps\",\"$CODEX_BOT_LOGIN\"] | index(\$a) != null)
+          | select((.comments.nodes[0].body // \"\") | test(\"✅ Addressed\") | not)] | length"
+  UNRESOLVED_COUNT=$(gh api graphql -f query='
+    query($owner:String!, $repo:String!, $number:Int!) {
+      repository(owner:$owner, name:$repo) {
+        pullRequest(number:$number) {
+          reviewThreads(first: 100) {
+            nodes { isResolved isOutdated comments(first: 1) { nodes { author { login } body } } }
+          }
         }
       }
     }
   }' -f owner="<owner>" -f repo="<repo>" -F number="$PR_NUMBER" \
-  --jq "$JQ_FILTER")
+    --jq "$JQ_FILTER")
 
-if [ "$UNRESOLVED_COUNT" -gt 0 ]; then
-  echo "ERROR: Cannot proceed to Check 4 — $UNRESOLVED_COUNT unresolved review thread(s) found."
-  echo "You MUST resolve all bot-authored review threads before applying ready-for-human-review."
-  echo "Run the GraphQL query from Step 8c to identify unresolved threads, address them, push fixes,"
-  echo "and re-run this checklist from the beginning."
-  exit 4  # Exit code 4 = "unresolved review threads at pre-Check-4 gate"
+  if [ "$UNRESOLVED_COUNT" -gt 0 ]; then
+    echo "ERROR: Cannot proceed to Check 4 — $UNRESOLVED_COUNT unresolved review thread(s) found."
+    echo "You MUST resolve all bot-authored review threads before applying ready-for-human-review."
+    echo "Run the GraphQL query from Step 8c to identify unresolved threads, address them, push fixes,"
+    echo "and re-run this checklist from the beginning."
+    exit 4  # Exit code 4 = "unresolved review threads at pre-Check-4 gate"
+  fi
+  echo "✅ GraphQL verification: all review threads resolved. Proceeding to Check 4."
 fi
-echo "✅ GraphQL verification: all review threads resolved. Proceeding to Check 4."
 
 # Check 4: ready-for-human-review label NOT yet applied (we are about to apply it)
 HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c "^ready-for-human-review$" || true)
