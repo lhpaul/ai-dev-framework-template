@@ -1,6 +1,6 @@
 ---
 name: design-reviewer
-model: inherit
+model: claude-sonnet-4-6
 description: Design review stage. Use when an implementation PR includes frontend file changes. Launches a browser via the configured browser_automation.provider, renders affected pages or components, captures screenshots, checks for console errors, and runs an axe-core accessibility check. Posts a structured PR comment with the verdict (Approved / Needs Revision / Skipped).
 ---
 

@@ -53,18 +53,22 @@ If the request is explicitly about a single development, branch, or PR, skip thi
 
 ## Routing Entrypoint
 
-This protocol is entered from `/run-work` (or its Codex/Cursor equivalents) when
-the routing classifier (`scripts/development-workflow/run-work-router.sh`,
-Protocol 96) determines the routing mode is `no_target_scan` or `explicit_list`.
+This protocol is entered from two paths:
 
-- **`no_target_scan`**: No target was supplied; the orchestrator scans the
-  portfolio, builds safe parallel batches, and proposes the largest safe plan.
-- **`explicit_list`**: Two or more explicit targets were supplied as a hard
-  bounded scope; the orchestrator runs that exact bounded set.
+- **From `/run-work`** (Protocol 96, `no_target_scan` mode): `/run-work` is
+  scan-and-propose only. The orchestrator runs **Steps 1–3 only** (scan,
+  assess, build batch proposal) and stops without dispatching any items. No
+  tracker updates, branch creation, or PR operations occur. The batch proposal
+  is presented to the operator; execution begins only when the operator invokes
+  `/run-items` (or equivalent) with the recommended targets.
+- **From `/run-items`** (Protocol 96, `explicit_list` mode, when implemented):
+  Two or more explicit targets were supplied as a hard bounded scope; the
+  orchestrator runs that exact bounded set through all steps including dispatch
+  (Steps 4–5).
 
-When the routing mode is `single_item`, the classifier routes to
-`91-orchestrate-work-protocol.md` instead. When the routing mode is `epic`,
-the classifier routes to `95-run-epic-protocol.md` instead.
+When the routing mode is `redirect_item`, `redirect_epic`, or `redirect_items`,
+`/run-work` performs **no mutation**. The classifier emits `REDIRECT_COMMAND`
+pointing to the appropriate bounded command. Use those commands instead.
 
 See `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
 for the full routing specification.
@@ -237,10 +241,28 @@ When `issue_tracker.provider` is `linear`, the orchestrator is the only actor
 with Linear access. Apply the following discovery flow instead of the GitHub
 Projects pagination approach above:
 
+0. **Resolve the project filter** — before querying, check whether
+   `issue_tracker.custom_fields.project` is set in `.ai-dev-workflow.yaml`. If
+   it is set, record the project ID and use it to scope all discovery queries to
+   that project only (step 1 below). If it is absent, emit a visible warning and
+   fall back to the unscoped team query:
+
+   > **WARNING**: `issue_tracker.custom_fields.project` is not set in
+   > `.ai-dev-workflow.yaml`. Linear item discovery will query all open items
+   > visible to the API token, which may include items from other codebases or
+   > projects. To restrict discovery to the correct project, set
+   > `issue_tracker.custom_fields.project` to the Linear project ID for this
+   > repository. See `docs/workflow/development-workflow/integrations/linear.md`
+   > for setup instructions.
+
 1. **Query Linear via MCP** — call the Linear MCP `issues` or `team.issues`
-   query for all open items in the configured team. For each item, collect:
-   status (workflow stage label), type (Feature, Bug, Refactor), priority,
-   parent epic (if applicable), and dependency relationships.
+   query for open items. **When a project ID was resolved in step 0**, pass it
+   as a project-scoped filter (e.g., `project: { id: { eq: "<project-id>" } }`)
+   so only items belonging to the configured project are returned. When no
+   project ID is available (fallback mode), query all open items in the
+   configured team. For each item, collect: status (workflow stage label), type
+   (Feature, Bug, Refactor), priority, parent epic (if applicable), and
+   dependency relationships.
 
 2. **Format item context** — for each item, record the status as a structured
    context value (`ITEM_STATUS=<status>`) that the batch-planning step can
@@ -427,6 +449,8 @@ Before batching an item, check its `Depends on` field or tracker dependency data
 
 ### Stale `In Development` correction (AC-6, AC-7, AC-8, AC-10)
 
+> **Scan-only mode gate (`/run-work`)**: When the routing entrypoint is `/run-work` (scan-only mode), this section is **skipped entirely** — no tracker mutations occur during the scan-and-propose phase. This correction runs only when executing a full portfolio run via `/run-items` or an equivalent dispatch entrypoint.
+
 After building the initial candidate list from the eligibility table above and after the dependency gate, but **before** Step 2.5 (pre-dispatch tracker updates), scan each candidate item whose tracker status is exactly `In Development`:
 
 1. **Guard — skip if issue number is invalid**: Before running the branch and PR checks, verify that `ISSUE_NUMBER` is a non-empty positive integer. An empty or non-numeric value would cause `git ls-remote` to search for patterns like `refs/heads/feature/-*` or `refs/heads/feature/abc-*`, potentially matching unintended branches. GitHub issue numbers are always positive integers, so a non-integer value indicates a data problem in the candidate list:
@@ -502,6 +526,8 @@ After building the initial candidate list from the eligibility table above and a
 ---
 
 ## Step 2.5: Pre-Dispatch Tracker Status Update
+
+> **Scan-only mode gate (`/run-work`)**: When the routing entrypoint is `/run-work` (scan-only mode), this entire step is **skipped** — no tracker status updates occur during the scan-and-propose phase. Step 2.5 runs only when executing a full portfolio run via `/run-items` or an equivalent dispatch entrypoint.
 
 Before building parallel batches, update the tracker to reflect that eligible items are now actively being worked on. This step runs after Step 2 (eligibility determination) and before Step 3 (batch building).
 
@@ -580,12 +606,24 @@ for each line in Work Item Runner output:
     "TRACKER_ACTION_REQUIRED=set_status issue=<id> target_status=<status>":
       status = strip_single_quotes(<status>)   # values with spaces are single-quoted
       call Linear MCP updateIssue(id, status=status)
+      # Priority drift detection: read back the issue and compare priority
+      # against the dispatch-time value recorded in Step 1a.
+      # Emit PRIORITY_DRIFT_WARNING if the values differ.
+      # See linear.md "Priority Drift Detection" for the full protocol.
     "TRACKER_ACTION_REQUIRED=create_item title=<title>":
       title = strip_single_quotes(<title>)     # values with spaces are single-quoted
       call Linear MCP createIssue(title=title, teamId=<team>)
     "TRACKER_UPDATE_REQUIRED: set issue #<N> status to \"<status>\"":
       call Linear MCP updateIssue(id=<N>, status=<status>)
+      # Priority drift detection applies here too — see linear.md.
 ```
+
+After each `updateIssue` call, perform a post-write re-read to confirm the
+status write was reflected. If the returned status does not match the target,
+retry once and emit `TRACKER_WRITE_UNCONFIRMED` if the mismatch persists.
+See [`linear.md`](../integrations/linear.md) "Priority Drift Detection" for
+the `PRIORITY_DRIFT_WARNING` and `TRACKER_WRITE_UNCONFIRMED` formats and
+retry rules.
 
 A deferred action that cannot be applied must be logged explicitly:
 
@@ -602,6 +640,48 @@ See [`linear.md`](../integrations/linear.md) for the full reference table.
 ## Step 3: Build Parallel Batches
 
 Group dispatch-eligible items and approved start-batch items into explicit batches. If Backlog items have only been proposed and not yet approved, do not continue to tracker mutation or dispatch for those items.
+
+### Stage-aware batch lanes (default implementation serialization)
+
+Before tool-fix ordering and file-level conflict checks, assign each candidate item
+to a **stage lane** and apply `max_concurrent_by_stage` caps:
+
+| Lane            | Typical `NEXT_ACTION` values                                      | Default max concurrent |
+| --------------- | ----------------------------------------------------------------- | ---------------------- |
+| `spec`          | `run-spec-review-and-open-pr`                                     | unlimited (`0`)        |
+| `plan`          | `write-plan`, `run-plan-review-and-open-pr`                         | unlimited (`0`)        |
+| `review`        | PR readiness / review actions (`resolve-pr-readiness`, etc.)      | unlimited (`0`)        |
+| `implementation`| `implement`, `resolve-development-pr`                             | **1**                  |
+
+**Helper**: run `workflow-batch-lanes.sh` on `workflow-batch-plan.sh` output (or use
+`--scan`) to emit `STAGE_LANE`, `DISPATCH=proposed|held`, `HOLD_REASON`, and
+`HELD_SUMMARY` lines per item. The script header reports resolved lane caps
+(`MAX_CONCURRENT_*`).
+
+**Configuration** (optional): declare overrides under `guardrails.parallelism` in
+`.ai-dev-workflow.yaml` (documented in `guardrails.md`). Example:
+
+```yaml
+guardrails:
+  parallelism:
+    max_concurrent_by_stage:
+      spec: 0
+      plan: 0
+      review: 0
+      implementation: 2
+```
+
+A value of `0` means unlimited for that lane.
+
+**`LOCAL_RUNTIME` signal**: `workflow-batch-plan.sh` emits `LOCAL_RUNTIME=none|exclusive`
+for implementation items based on plan-document heuristics (local dev server, port,
+database migration signals). When any proposed implementation item is `exclusive`,
+hold additional proposed implementation items with reason `local runtime exclusivity`.
+Git worktree isolation does **not** imply port/DB isolation — document this in batch
+proposals when implementation items are held.
+
+**Batch proposal output** must list held items with lane-cap, runtime exclusivity,
+file-overlap, or tool-fix reasons so operators see why work was deferred.
 
 **Safe to batch together**:
 
@@ -836,6 +916,19 @@ their own selection rules; pass context through to `workflow-next-action.sh`,
 ---
 
 ## Step 3.3: Pre-Dispatch Environment Validation (Parallel Batches Only)
+
+When `WORKFLOW_MODE` is `workflow_hub`, run product-repository preflight before
+dispatching Work Item Runners for implementation work in configured product
+repositories:
+
+```bash
+./scripts/development-workflow/hub-preflight-product-repos.sh --all --repo-root <hub-root>
+```
+
+This bootstraps workflow readiness labels on each product GitHub repository and
+validates `ci_policy` (`required` vs explicit `none`) so delegated merge gates do
+not fail only after implementation PRs are otherwise clean. Fix preflight failures
+before dispatch or record an explicit `ci_policy: none` exception in hub config.
 
 Before building the worktree per-item pre-flight (Step 3.5), run three portfolio-wide environment checks. Check 1 and Check 2 must both pass (or be explicitly acknowledged by the human) before any Work Item Runner is dispatched. Check 3 is non-blocking — surface its findings alongside the others but do not hold dispatch waiting on stale local branch cleanup.
 
@@ -1183,6 +1276,16 @@ After a Work Item Runner returns:
 
 > **Artifact-state rule**: The orchestrator's done-report must be built from independently queried artifact state — **never** from agent self-reports alone. A Work Item Runner that claims a PR is "ready" may have timed out before completing all steps, skipped a required action, or simply reported optimistically. The checks below are mandatory queries against `gh` CLI and the GitHub API; they are not optional confirmations of what the agent said it did.
 
+**Batch-complete gate:** `ready-for-human-review` by itself is not a terminal
+batch-complete signal. Before declaring an explicit-list or portfolio batch
+complete, the orchestrator must verify every in-scope PR has passing required CI
+and either a latest automated reviewer-loop summary whose result is clean or
+skipped, or explicit evidence that Step 7 was skipped because no review
+platforms are configured. Any PR with failing CI, pending reviewer-loop guard,
+a missing summary when review platforms are configured, or a non-clean
+reviewer-loop result remains in progress and must be redispatched or escalated
+instead of included in the done-report.
+
 Before reporting any PR as ready for human review, independently query the actual PR state via `gh pr view`. Run this check for every PR that a Work Item Runner reports as ready:
 
 ```bash
@@ -1217,7 +1320,7 @@ Verify all of the following by querying artifact state directly. If any check fa
 | No `needs-fixes` label                          | Absent from the `labels` array                                                                                                                                                                                                                                                                                                                                                                                            | Remove: `gh pr edit <pr_number> --remove-label "needs-fixes"` (only after CI and reviews are confirmed clean)                                                                                                                                                                                     |
 | CHANGELOG presence                              | `CHANGELOG.md` appears in the `files` array for `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PRs (i.e., `gh pr view <pr_number> --json files --jq '[.files[].path] \| any(. == "CHANGELOG.md")'` returns `true`); not required for `spec/*`, `implementation-plan/*`, or `backport/hotfix/*` (the versioned CHANGELOG entry already exists in `main` and flows to `develop` via the merge)                              | Redispatch agent to add a CHANGELOG entry and push. Do not accept the PR as ready until `CHANGELOG.md` appears in the PR's file set.                                                                                                                                                              |
 | All automated-reviewer `reviewThreads` resolved | GraphQL `reviewThreads.nodes[].isResolved=true` (or `✅ Addressed` in body) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured)                                                                                                                                                                                               | Redispatch agent to address unresolved threads                                                                                                                                                                                                                                                    |
-| Automated reviewer loop summary comment         | At least one PR comment containing "Automated Reviewer Loop Summary", "Reviewer Loop Summary", or "No blocking PR feedback" (skip this check only when Step 7 was `skipped` because no review platforms are configured). **`pr-review-loop.sh` posts this comment automatically on `clean` and `escalate` exits** — a missing comment means the script did not run to completion or the PR used an older workflow version | Redispatch agent to run Step 7 to completion                                                                                                                                                                                                                                                      |
+| Automated reviewer loop summary comment         | At least one latest PR comment containing "Automated Reviewer Loop Summary", "Reviewer Loop Summary", or "No blocking PR feedback" whose result is `clean` or `skipped` (skip this check only when Step 7 was `skipped` because no review platforms are configured). **`pr-review-loop.sh` posts this comment automatically on clean, needs-fixes, and escalate exits** — a missing comment, stale comment, or comment whose latest result is `needs_fixes`, `escalate`, `timeout`, `pending_timeout`, or any other non-clean terminal state means Step 7 is not complete | Redispatch agent to run Step 7 to completion or escalate the non-clean reviewer-loop result                                                                                                                                                                                                        |
 | CI checks                                       | All required status checks are green (`state: SUCCESS` or `conclusion: success`)                                                                                                                                                                                                                                                                                                                                          | Redispatch agent to fix failing checks                                                                                                                                                                                                                                                            |
 
 **`ready-for-regression` direct-apply rule**: This label is the primary enforcement point for the regression CI gate. It applies to **all** implementation PR types: `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, and `backport/hotfix/*`. If the agent applied `ready-for-human-review` but omitted `ready-for-regression` on any of these branch types, the orchestrator:

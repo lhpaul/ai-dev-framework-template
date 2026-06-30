@@ -303,21 +303,30 @@ If no blocking human decision remains:
 1. Determine the branch slug:
    - **With issue tracker**: `[issue-id]-[feature-slug]` (e.g., `ENG-123-user-auth`)
    - **Without issue tracker**: `[feature-slug]` (e.g., `user-auth`)
-2. Create branch from `develop` — but first run the **pre-branch HEAD verification** to prevent stacked-branch contamination in shared-checkout parallel execution:
+2. Resolve the plan artifact base branch, then create the branch from that base.
+   In `workflow_hub` mode, implementation plans are hub-owned and use the hub
+   repository's artifact base branch, typically the hub default branch. Do not
+   use the product implementation base (`--base develop` from `/run-epic`) as
+   proof that the hub repository must have `develop`.
+
+   Then run the **pre-branch HEAD verification** to prevent stacked-branch
+   contamination in shared-checkout parallel execution:
 
    ```bash
+   set -euo pipefail
+   ARTIFACT_BASE_BRANCH="<artifact-base-branch>"
    git fetch origin
-   git checkout develop && git pull origin develop
-   EXPECTED_SHA=$(git rev-parse "origin/develop") \
-     || { echo "ERROR: git rev-parse origin/develop failed — verify the remote ref exists." >&2; exit 1; }
+   git checkout "$ARTIFACT_BASE_BRANCH" && git pull origin "$ARTIFACT_BASE_BRANCH"
+   EXPECTED_SHA=$(git rev-parse "origin/${ARTIFACT_BASE_BRANCH}") \
+     || { echo "ERROR: git rev-parse origin/${ARTIFACT_BASE_BRANCH} failed — verify the remote ref exists." >&2; exit 1; }
    ACTUAL_SHA=$(git rev-parse HEAD) \
      || { echo "ERROR: git rev-parse HEAD failed — check repository state." >&2; exit 1; }
    if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
-     echo "ERROR: HEAD ($ACTUAL_SHA) does not match origin/develop ($EXPECTED_SHA)." >&2
+     echo "ERROR: HEAD ($ACTUAL_SHA) does not match origin/${ARTIFACT_BASE_BRANCH} ($EXPECTED_SHA)." >&2
      echo "A sibling agent may have moved this checkout. Abort rather than create a stacked branch." >&2
      exit 1
    fi
-   echo "Pre-branch HEAD check passed: HEAD matches origin/develop"
+   echo "Pre-branch HEAD check passed: HEAD matches origin/${ARTIFACT_BASE_BRANCH}"
    git checkout -b implementation-plan/[branch-slug]
    ```
 
@@ -408,7 +417,7 @@ If no blocking human decision remains:
 9. **Do NOT update CHANGELOG**: `implementation-plan/*` branches are exempt from CHANGELOG entries. The changelog policy only applies to `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches. Do not create or modify `CHANGELOG.md` in this PR.
 10. Commit: `docs: add implementation plan for [feature-name]`
 11. Push: `git push -u origin implementation-plan/[branch-slug]`
-12. Open a **draft** PR targeting `develop` with:
+12. Open a **draft** PR targeting the plan artifact base branch with:
     - Title: `docs(plan): [feature-name]`
     - Body: summary of the approach, complexity estimate, key risks, link to plan and runbook
     - `Document Quality Gate` log from the pre-PR gate above

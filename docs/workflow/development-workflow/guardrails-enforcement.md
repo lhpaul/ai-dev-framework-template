@@ -66,6 +66,14 @@ model — there is **one** policy path, not two.
 | `audit.pr_disposition_record` | PR disposition audit required | `run-epic-audit-trail.sh apply-pr-disposition` (stable marker `<!-- run-epic:pr-disposition -->`) |
 | `audit.work_item_ledger_record` | Item-level ledger required | `run-epic-audit-trail.sh apply-epic-ledger` (stable marker `<!-- run-epic:epic-ledger -->`) when a parent/epic exists; otherwise "not applicable" |
 | `stop_conditions[]` | Named human-stops | Stop-and-name behavior (see section 4); these add to but never weaken the baseline stops |
+| Epic checkpoint policy (`checkpoints[]` on effective policy) | Stage-scoped, item-specific human stops declared before mutation | `run-epic-policy-recommender.sh` output (`recommendedPolicy.checkpoints`, `selectedPolicy.checkpoints`, `effectivePolicy.checkpoints`, `checkpointPolicy`); consumed by delegated gate (#1023) and audit trail (#1022); **not** a `.ai-dev-workflow.yaml` schema field |
+
+Epic human checkpoints extend the same run-epic policy object — they are not
+separate guardrails config fields. The recommender proposes them from read-only
+item metadata; the human selects or waives them before mutation. Audit evidence
+records original, recommended, selected, and effective checkpoint policy via
+`checkpointPolicy` on the recommender JSON output and later PR/epic ledger
+comments.
 
 ### Per-Stage Authority Resolution
 
@@ -214,6 +222,7 @@ table is required for consistent stop reporting.
 | `unresolved_blocking_review` | A blocking review thread from a configured automated reviewer or a human reviewer remains unresolved. |
 | `high_risk_change` | The PR is classified above the configured `max_merge_risk` for the stage. |
 | `destructive_action` | The next action would delete branches, data, releases, or other non-recoverable artifacts. |
+| `human_checkpoint_required` | A declared stage-scoped human checkpoint for the PR's work item is still pending, or the PR still carries `human-checkpoint-required`. |
 | `missing_tracker_context` | A required tracker field (status, type, assignee, dependency link) is absent or unresolvable. |
 | `missing_required_secret_or_permission` | A required credential, GitHub permission, or access token is absent. |
 | `guardrails_config_unreadable` | The `guardrails` block in `.ai-dev-workflow.yaml` is missing required fields, uses invalid values, or is internally contradictory. |

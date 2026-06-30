@@ -1,7 +1,7 @@
 interface:
   display_name: "Run work"
-  short_description: "Primary adaptive workflow entrypoint. Routes to portfolio scan, single-item, explicit-list, or epic based on the target."
-  default_prompt: "Use $run-work to inspect workflow state, route to the correct protocol via the routing classifier, and advance deterministic in-flight work. With no target it proposes the largest safe batch; with one target it advances that item; with multiple targets it treats them as a hard bounded scope; with an epic it does read-only scope resolution first. In workflow_hub mode, include selected product repository context in implementation handoffs; single_repo does not require --repo."
+  short_description: "Propose portfolio batches (scan-only). No-target scan produces a batch recommendation with no dispatch. Two or more targets redirect to $run-items. Single targets redirect to $run-item or $run-epic."
+  default_prompt: "Use $run-work for portfolio scan and batch proposal only. With no target it runs Protocol 90 Steps 1-3 (scan + propose) and returns a batch recommendation without dispatching any items — the operator then uses $run-items to execute. With two or more work-item targets it emits redirect_items with REDIRECT_COMMAND=/run-items ... for the operator to execute. Single non-epic targets redirect to $run-item; epic-like targets redirect to $run-epic. /run-work performs no mutation in any mode. For one bounded item use $run-item; for an epic use $run-epic; for multi-item execution use $run-items."
 
 policy:
   allow_implicit_invocation: false

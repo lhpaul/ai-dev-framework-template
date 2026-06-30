@@ -85,9 +85,11 @@ review:
 ```
 
 The helper script reads this file automatically when no `--platform` flag is
-passed. If the file is absent, or if both `review.on_draft.github` and
-`review.on_ready.github` are omitted or empty, no reviewer tool runs and the
-result is skipped. Explicit `--platform` flags always override the config file.
+passed. Matching lists in `.ai-dev-workflow.local.yaml` replace the shared
+`review.on_draft.github` and `review.on_ready.github` lists for local
+tool/subscription differences. If the effective config is absent, or if both
+effective lists are omitted or empty, no reviewer tool runs and the result is
+skipped. Explicit `--platform` flags always override the config file.
 
 `review.on_ready.github` is optional. Platforms listed there run only after
 draft GitHub reviewers are clean and the PR has been converted with

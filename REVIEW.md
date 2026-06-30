@@ -71,6 +71,7 @@ Check:
 - Business rules are unambiguous and non-contradictory
 - Scope boundaries and out-of-scope items are explicit
 - Status or enum changes include display labels and transitions
+- If the spec introduces URL-serialized state (query parameters, path parameters, hash fragments), the parameter keys and all allowed values are explicitly defined — a spec that leaves parameter names or value formats unspecified forces implementers to guess the serialization contract
 - The spec stays product-focused and does not over-prescribe technical design
 - Terms align with the project domain and existing business rules
 
@@ -79,6 +80,7 @@ Typical `blocking` issues:
 - Missing or ambiguous acceptance criteria
 - Contradictory business rules
 - Spec drift that would force engineering to guess
+- URL-serialized state introduced without explicit parameter key names and allowed values
 - `CHANGELOG.md` is modified in this PR — `spec/*` branches are exempt from CHANGELOG entries; remove any CHANGELOG modification before merging
 
 Typical `important` issues:

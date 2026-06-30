@@ -44,8 +44,35 @@ If you prefer different names (`small/medium/large`, `fast/standard/pro`, etc.),
 Use the tier names as stable policy and map them to whatever your current runner and provider support.
 
 - In Claude Code, map the tier to the model family or explicit model ID configured in `.claude/agents/*.md`.
-- In Cursor, `fast` is usually a good fit for `economy`, while `inherit` or a pinned high-reasoning model is usually a better fit for `balanced` and `premium`.
+- In Cursor, pin explicit model IDs in `.cursor/agents/*.md` for every long-running or review-loop agent. Use `fast` for `economy` tier agents only.
 - In any runner, prefer keeping the tier intent stable even when provider model names change.
+
+### Cursor model defaults (template)
+
+Pin models in `.cursor/agents/*.md` so subagents do not inherit the parent Composer model during long orchestration or review-fix loops. **`inherit` is acceptable only for ad-hoc, single-turn invocations** where you intentionally want the current Composer model — not for orchestrators, item runners, fixer agents, or reviewer-loop agents.
+
+| Agent | Tier | Cursor `model` (template default) |
+| ----- | ---- | ----------------------------------- |
+| `orchestrator` | `economy` | `fast` |
+| `automated-reviewer-loop` | `economy` | `fast` |
+| `item-orchestrator` | `balanced` | `claude-sonnet-4-6` |
+| `developer` | `balanced` | `claude-sonnet-4-6` |
+| `code-reviewer` | `balanced` | `claude-sonnet-4-6` |
+| `spec-reviewer` | `balanced` | `claude-sonnet-4-6` |
+| `implementation-plan-reviewer` | `balanced` | `claude-sonnet-4-6` |
+| `smoke-tester` | `balanced` | `claude-sonnet-4-6` |
+| `retrospective` | `balanced` | `claude-sonnet-4-6` |
+| `project-setup` | `balanced` | `claude-sonnet-4-6` |
+| `design-reviewer` | `balanced` | `claude-sonnet-4-6` |
+| `product-manager` | `premium` | `claude-opus-4-7` |
+| `tech-lead` | `premium` | `claude-opus-4-7` |
+
+Claude Code equivalents live in `.claude/agents/*.md` (Haiku for economy, Sonnet for balanced, Opus for premium). Update pinned IDs when your provider deprecates a model; keep the tier intent stable.
+
+See also:
+
+- [`provider-contingency-runner-failover.md`](provider-contingency-runner-failover.md) — quota, timeout, and runner-switch recovery
+- [`integrations/llm-router.md`](integrations/llm-router.md) — optional tier-based fallback chains (experimental)
 
 ---
 
@@ -99,9 +126,9 @@ This affects all future invocations until changed back.
 
 **Cursor model field values:**
 
-- `fast`: Uses Cursor's fast model (recommended for economy-tier agents)
-- `inherit`: Uses the current Composer model (recommended for balanced/premium-tier agents)
-- Specific model ID: Uses that exact model (e.g., `claude-opus-4-7`, `gpt-4-turbo`)
+- `fast`: Uses Cursor's fast model (recommended for `economy`-tier agents only)
+- Pinned model ID: Uses that exact model (recommended for `balanced` and `premium` agents, e.g. `claude-sonnet-4-6`, `claude-opus-4-7`)
+- `inherit`: Uses the current Composer model — **discouraged** for orchestrators, item runners, fixer agents, and reviewer-loop agents because it leaks parent-session cost into long runs; reserve for intentional one-off overrides
 
 **Precedence**: When multiple agent locations exist (`.cursor/agents/`, `.claude/agents/`, `.codex/agents/`), Cursor uses `.cursor/agents/` first, then `.claude/agents/`, then `.codex/agents/`.
 
@@ -151,10 +178,12 @@ A PR that has readiness labels but **no reviewer loop summary comment** is the c
 
 # Then re-invoke the item-orchestrator (or automated-reviewer-loop agent) for the PR
 # Example (Claude Code):
-#   /run-item-work --pr <pr_number>
+#   /run-item --pr <pr_number>   (or deprecated /run-item-work)
 ```
 
 The item-orchestrator uses the Step 8c independent verification gate to detect any missing labels or comments and automatically re-enters the correct resume point (Step 7a, Step 7, or Step 8).
+
+For quota exhaustion, stream timeouts, and runner failover (Cursor ↔ Codex ↔ Claude Code), see [`provider-contingency-runner-failover.md`](provider-contingency-runner-failover.md).
 
 ### Warning
 

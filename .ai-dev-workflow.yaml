@@ -34,6 +34,7 @@ review:
     # Ordered list of in-runner internal reviewers for draft PRs (Step 7a).
     # Supported values:
     #   claude        — dispatches the stage-appropriate reviewer agent.
+    #   cursor        — dispatches the stage-appropriate Cursor reviewer agent.
     #   codex         — dispatches the stage-appropriate Codex review skill.
     #   coderabbit    — triggers CodeRabbit on the draft PR when reachable.
     runner:
@@ -89,12 +90,13 @@ review:
   #   expected behaviour — not a misconfiguration.
   #
   # Local override: developers who need a different top-level review runner can
-  # override this list locally by creating .tmp/template-config.json in the
-  # repository root (this path is gitignored). Example for Claude Code:
-  #   { "overrides": { "review": { "on_draft": { "runner": ["claude"] } } } }
-  # Legacy local overrides using `overrides.review.internal_reviewers` remain
-  # accepted during the schema_version 2 transition release.
-  # The overrides key takes precedence over this file for the local environment.
+  # override this list locally with .ai-dev-workflow.local.yaml (gitignored).
+  # Example for Cursor in .ai-dev-workflow.local.yaml:
+  #   review:
+  #     on_draft:
+  #       runner:
+  #         - cursor
+  # The local file takes precedence over this file for the local environment.
   # See docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
   # Step 7a for the full multi-reviewer gate procedure.
 
@@ -172,69 +174,51 @@ template:
 # enforcement reference (effective-guardrails resolution, five enforcement gates,
 # named stop conditions, audit-evidence rules).
 #
-# guardrails:
-#   # mode — overall autonomy level for this repository.
-#   # Accepted values: manual | assisted | delegated | autonomous
-#   # Default: manual (agents draft and propose; a human performs every merge)
-#   mode: manual
-#
-#   # backlog_start — controls whether an agent may pick up a backlog item and begin
-#   # spec/plan/implementation work without a human confirming each item.
-#   backlog_start:
-#     # allow_without_confirmation — when false (default), an agent must receive an explicit
-#     # human instruction before starting a new backlog item.
-#     allow_without_confirmation: false   # default: false
-#
-#   # stages — per-stage permissions for spec, plan, and implementation.
-#   # Each stage can be configured independently.
-#   stages:
-#     spec:
-#       # may_open_pr — whether an agent may open a pull request for this stage.
-#       # Default: true (agents always draft PRs)
-#       may_open_pr: true
-#       # may_merge_pr — whether an agent may merge a clean pull request for this stage.
-#       # Default: false (a human must merge unless explicitly set to true)
-#       may_merge_pr: false
-#       # max_merge_risk — the highest risk level at which an agent may merge.
-#       # An agent must stop and defer to a human for any risk above this level.
-#       # Accepted values: low | medium | high
-#       # Default: low
-#       max_merge_risk: low
-#
-#     plan:
-#       may_open_pr: true
-#       may_merge_pr: false
-#       max_merge_risk: low
-#
-#     implementation:
-#       may_open_pr: true
-#       may_merge_pr: false
-#       max_merge_risk: low
-#       # required_evidence — named evidence items that must be present before an agent
-#       # may merge at this stage. Absence of any listed item causes the agent to stop.
-#       # Example values: regression, smoke_test, security_review
-#       required_evidence:
-#         - regression
-#
-#   # stop_conditions — situations in which an agent must stop and defer to a human,
-#   # regardless of mode and regardless of per-stage permissions.
-#   # These conditions are NEVER weaker than today's behavior; they hold in all modes.
-#   stop_conditions:
-#     - unclear_requirements          # requirement or acceptance criterion is ambiguous
-#     - architecture_decision         # choice requires human input on architecture
-#     - failing_ci                    # required CI checks are red
-#     - unresolved_blocking_review    # a blocking review thread is unresolved
-#     - high_risk_change              # classified risk exceeds the configured max_merge_risk
-#     - destructive_action            # action would delete branches, data, or releases
-#     - missing_tracker_context       # work item is missing required tracker metadata
-#     - missing_required_secret_or_permission  # a required credential or GitHub permission is absent
-#
-#   # audit — records that an agent must create after acting under delegated or autonomous mode.
-#   audit:
-#     # pr_disposition_record — a stable comment on the PR summarizing the merge decision,
-#     # the risk classification, and the evidence consulted. Required in delegated/autonomous.
-#     pr_disposition_record: required
-#     # work_item_ledger_record — a comment on the work item (issue/tracker card) recording
-#     # the stage completed, the PR merged, and the agent session that acted.
-#     # Required in delegated/autonomous.
-#     work_item_ledger_record: required
+# Two-step lifecycle (default for this template):
+# Execute commands (/run-item, /run-epic) stop at ready-for-human-review.
+# Merge is performed separately via /batch-merge (human confirms the merge plan).
+# Bounded prelude always requires confirmation before mutation — see
+# docs/workflow/development-workflow/bounded-run-prelude.md.
+
+guardrails:
+  # mode: delegated — agents may merge within per-stage permissions and risk limits.
+  # All stages default to may_merge_pr: false, implementing the two-step lifecycle
+  # where execute commands stop at ready-for-human-review and /batch-merge is used
+  # to land work. Override per-stage values to grant merge authority for specific stages.
+  mode: delegated
+
+  # backlog_start — agents must receive an explicit human instruction (via /run-item
+  # or /run-epic with --may-start-backlog true) before starting a new backlog item.
+  backlog_start:
+    allow_without_confirmation: false
+
+  # stages — all stages have may_merge_pr: false by default (two-step lifecycle).
+  # Override specific stages to grant merge authority when needed.
+  stages:
+    spec:
+      may_open_pr: true
+      may_merge_pr: false
+      max_merge_risk: low
+    plan:
+      may_open_pr: true
+      may_merge_pr: false
+      max_merge_risk: low
+    implementation:
+      may_open_pr: true
+      may_merge_pr: false
+      max_merge_risk: low
+
+  # stop_conditions — baseline stops that hold in all modes (additive, never removable).
+  stop_conditions:
+    - unclear_requirements
+    - architecture_decision
+    - failing_ci
+    - unresolved_blocking_review
+    - high_risk_change
+    - destructive_action
+    - missing_tracker_context
+    - missing_required_secret_or_permission
+
+  audit:
+    pr_disposition_record: required
+    work_item_ledger_record: required

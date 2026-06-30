@@ -297,6 +297,65 @@ run_test "mixed_new_legacy_draft_prefers_new" "pr-agent" "$mixed_draft_github"
 run_test "mixed_new_legacy_ready_prefers_new" "haystack" "$mixed_ready_github"
 run_test "mixed_new_legacy_combined_prefers_new" "pr-agent,haystack" "$mixed_all_github"
 
+_LOCAL_OVERRIDE_DIR="$(mktemp -d)"
+cat > "$_LOCAL_OVERRIDE_DIR/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+
+review:
+  on_draft:
+    runner: [codex]
+    github: [pr-agent]
+  on_ready:
+    github: [haystack]
+YAML
+cat > "$_LOCAL_OVERRIDE_DIR/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_draft:
+    runner: [cursor]
+    github: [pr-agent]
+  on_ready:
+    github: [bugbot]
+YAML
+local_override_parsed="$(
+  workflow_repo_root() { printf '%s\n' "$_LOCAL_OVERRIDE_DIR"; }
+  printf 'runner=%s\n' "$(workflow_config_review_on_draft_runner "$(workflow_config_file)" | paste -sd ',' -)"
+  printf 'draft=%s\n' "$(workflow_config_review_on_draft_github "$(workflow_config_file)" | paste -sd ',' -)"
+  printf 'ready=%s\n' "$(workflow_config_review_on_ready_github "$(workflow_config_file)" | paste -sd ',' -)"
+  printf 'all=%s\n' "$(workflow_config_review_platforms "$(workflow_config_file)" | paste -sd ',' -)"
+)"
+run_test "local_review_override_applied" $'runner=cursor\ndraft=pr-agent\nready=bugbot\nall=pr-agent,bugbot' "$local_override_parsed"
+
+_TEMP_CONFIG="$(mktemp)"
+cat > "$_TEMP_CONFIG" <<'YAML'
+schema_version: 2
+
+review:
+  on_draft:
+    runner: [codex]
+    github: [pr-agent]
+  on_ready:
+    github: [haystack]
+YAML
+temp_override_parsed="$(
+  workflow_repo_root() { printf '%s\n' "$_LOCAL_OVERRIDE_DIR"; }
+  WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$_TEMP_CONFIG" | paste -sd ',' -
+)"
+run_test "local_review_override_applies_to_temp_config_when_forced" "pr-agent,bugbot" "$temp_override_parsed"
+
+cat > "$_LOCAL_OVERRIDE_DIR/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_ready:
+    github: []
+YAML
+local_empty_ready_parsed="$(
+  workflow_repo_root() { printf '%s\n' "$_LOCAL_OVERRIDE_DIR"; }
+  workflow_config_review_on_ready_github "$(workflow_config_file)" | paste -sd ',' -
+)"
+run_test "local_review_override_empty_ready_github_applied" "" "$local_empty_ready_parsed"
+rm -rf "$_LOCAL_OVERRIDE_DIR"
+rm -f "$_TEMP_CONFIG"
+unset _LOCAL_OVERRIDE_DIR _TEMP_CONFIG local_override_parsed local_empty_ready_parsed temp_override_parsed
+
 cat > "$_CONFIG_DIR/.ai-dev-workflow-duplicates.yaml" <<'YAML'
 schema_version: 2
 
@@ -314,6 +373,37 @@ case "$duplicate_warning" in
   *) duplicate_detected=no ;;
 esac
 run_test "duplicate_lifecycle_reviewer_warning" "yes" "$duplicate_detected"
+
+_DUP_OVERRIDE_DIR="$(mktemp -d)"
+cat > "$_DUP_OVERRIDE_DIR/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_draft:
+    github: [bugbot]
+  on_ready:
+    github: [bugbot]
+YAML
+_DUP_TEMP_CONFIG="$(mktemp)"
+cat > "$_DUP_TEMP_CONFIG" <<'YAML'
+schema_version: 2
+
+review:
+  on_draft:
+    github: [pr-agent]
+  on_ready:
+    github: [haystack]
+YAML
+duplicate_override_warning="$(
+  workflow_repo_root() { printf '%s\n' "$_DUP_OVERRIDE_DIR"; }
+  WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 emit_review_lifecycle_duplicate_warnings "$_DUP_TEMP_CONFIG" 2>&1 || true
+)"
+case "$duplicate_override_warning" in
+  *'reviewer "bugbot" in more than one bucket'*) duplicate_override_detected=yes ;;
+  *) duplicate_override_detected=no ;;
+esac
+run_test "duplicate_lifecycle_warning_uses_local_override_for_temp_config" "yes" "$duplicate_override_detected"
+rm -rf "$_DUP_OVERRIDE_DIR"
+rm -f "$_DUP_TEMP_CONFIG"
+unset _DUP_OVERRIDE_DIR _DUP_TEMP_CONFIG duplicate_override_warning duplicate_override_detected
 
 declare -a phase_after_clean_platforms=()
 append_phase_after_clean_platforms "coderabbit, pr-agent"
@@ -1047,6 +1137,8 @@ run_platform_review "haystack" "999" "feature/test" "30" "120" >/dev/null 2>&1 |
 run_test "run_platform_review_routes_to_run_haystack_review" "1" "$_haystack_dispatch_called"
 unset -f run_haystack_review
 unset _haystack_dispatch_called
+HARNESS_MODE=1 source "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
+workflow_repo_root() { printf '%s\n' "${HARNESS_REPO_ROOT:-$REPO_ROOT}"; }
 
 # test: legacy ensure_pr_ready_for_after_clean wrapper converts draft PRs before ready-phase reviewers
 _call_log="$(mktemp)"
@@ -1094,6 +1186,81 @@ ready_status=$?
 set -e
 run_test "after_clean_ready_fails_closed_on_ready_error" "2" "$ready_status"
 unset MOCK_GH_OUTPUT MOCK_GH_EXIT MOCK_GH_READY_EXIT ready_status
+
+# test: run_haystack_review skips draft PRs before invoking haystack-reviewer.sh
+_haystack_draft_overrides='
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  require_gh() { :; }
+'
+export MOCK_GH_OUTPUT="true"
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_haystack_draft_overrides"
+  _ec=0
+  run_haystack_review "42" "feature/test" "1" "30" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "haystack_skips_draft_pr_result" "RESULT=skipped" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "haystack_skips_draft_pr_reason" "REASON=pr-is-draft" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "haystack_skips_draft_pr_exit_code" "0" "$actual_exit"
+unset MOCK_GH_OUTPUT _haystack_draft_overrides actual_output actual_exit
+
+# test: run_haystack_review escalates when draft state cannot be determined
+_haystack_draft_overrides='
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  require_gh() { :; }
+'
+export MOCK_GH_OUTPUT=""
+export MOCK_GH_EXIT=1
+actual_output="$(
+  eval "$_haystack_draft_overrides"
+  _ec=0
+  run_haystack_review "42" "feature/test" "1" "30" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "haystack_draft_state_unavailable_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "haystack_draft_state_unavailable_reason" "REASON=draft-state-unavailable" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "haystack_draft_state_unavailable_exit_code" "2" "$actual_exit"
+unset MOCK_GH_OUTPUT MOCK_GH_EXIT _haystack_draft_overrides actual_output actual_exit
+
+# test: run_haystack_review forwards Haystack auth errors from companion script
+_haystack_auth_overrides='
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  require_gh() { :; }
+'
+export MOCK_GH_OUTPUT="false"
+_haystack_reviewer_stub="$(mktemp -d)"
+mkdir -p "$_haystack_reviewer_stub/scripts/development-workflow"
+cat > "$_haystack_reviewer_stub/scripts/development-workflow/haystack-reviewer.sh" <<'HAYSTACK_STUB'
+#!/usr/bin/env bash
+printf 'RESULT=skipped\nREASON=forbidden\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\nCOMMENT_COUNT=0\n'
+exit 3
+HAYSTACK_STUB
+chmod +x "$_haystack_reviewer_stub/scripts/development-workflow/haystack-reviewer.sh"
+workflow_repo_root() { printf "%s\n" "$_haystack_reviewer_stub"; }
+actual_output="$(
+  eval "$_haystack_auth_overrides"
+  _ec=0
+  run_haystack_review "42" "feature/test" "1" "30" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "haystack_forwards_auth_reason" "REASON=forbidden" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "haystack_forwards_auth_exit_code" "0" "$actual_exit"
+rm -rf "$_haystack_reviewer_stub"
+unset MOCK_GH_OUTPUT _haystack_auth_overrides actual_output actual_exit
+workflow_repo_root() { printf '%s\n' "${HARNESS_REPO_ROOT:-$REPO_ROOT}"; }
 
 # ---------------------------------------------------------------------------
 # Area 10: per-platform result tokens in summary comment (#755)
@@ -2054,6 +2221,71 @@ run_test "bugbot_bot_login_env_override" "my-custom-bugbot[bot]" "$actual"
 unset BUGBOT_BOT_LOGIN
 
 # ---------------------------------------------------------------------------
+# Test 16.0c-d: Bugbot clean summary detection must not hide finding markers
+# ---------------------------------------------------------------------------
+bugbot_clean_body="Cursor Bugbot found no new issues in this pull request."
+if is_bugbot_clean_review "$bugbot_clean_body"; then
+  actual="clean"
+else
+  actual="blocking"
+fi
+run_test "bugbot_clean_phrase_is_non_blocking" "clean" "$actual"
+
+bugbot_mixed_body=$'Cursor Bugbot found no issues in this pull request.\n\n**High Severity**\n\n<!-- BUGBOT_BUG_ID: abc123 -->'
+if is_bugbot_clean_review "$bugbot_mixed_body"; then
+  actual="clean"
+else
+  actual="blocking"
+fi
+run_test "bugbot_finding_markers_override_clean_phrase" "blocking" "$actual"
+
+bugbot_multiline_body=$'Cursor Bugbot found no issues in this pull request.\n\nThis review still describes a blocking workflow problem.'
+if is_bugbot_clean_review "$bugbot_multiline_body"; then
+  actual="clean"
+else
+  actual="blocking"
+fi
+run_test "bugbot_clean_phrase_in_multiline_body_is_blocking" "blocking" "$actual"
+
+bugbot_same_line_severity_body="Cursor Bugbot found no issues in this pull request. **High Severity**: still broken"
+if is_bugbot_clean_review "$bugbot_same_line_severity_body"; then
+  actual="clean"
+else
+  actual="blocking"
+fi
+run_test "bugbot_same_line_severity_is_blocking" "blocking" "$actual"
+
+bugbot_same_line_mixed_body="Cursor Bugbot found no issues in this pull request, but the reviewer loop still drops blocking findings."
+if is_bugbot_clean_review "$bugbot_same_line_mixed_body"; then
+  actual="clean"
+else
+  actual="blocking"
+fi
+run_test "bugbot_same_line_mixed_phrase_is_blocking" "blocking" "$actual"
+unset bugbot_clean_body bugbot_mixed_body bugbot_multiline_body bugbot_same_line_severity_body bugbot_same_line_mixed_body actual
+
+if is_bugbot_disabled_message "Bugbot is disabled for this repository."; then
+  actual="disabled"
+else
+  actual="active"
+fi
+run_test "bugbot_disabled_message_detected" "disabled" "$actual"
+
+if is_bugbot_disabled_message "Cursor Bugbot found no issues in this pull request."; then
+  actual="disabled"
+else
+  actual="active"
+fi
+run_test "bugbot_clean_phrase_not_disabled" "active" "$actual"
+
+if is_bugbot_disabled_message "This repository setting is disabled for this repository in general."; then
+  actual="disabled"
+else
+  actual="active"
+fi
+run_test "bugbot_generic_disabled_phrase_not_matched" "active" "$actual"
+
+# ---------------------------------------------------------------------------
 # Test 16.1: clean path — check run conclusion=success, no blocking comments
 # ---------------------------------------------------------------------------
 _bugbot_mock_dir_161="$(mktemp -d)"
@@ -2157,6 +2389,94 @@ run_test "bugbot_needs_fixes_blocking_count_nonzero" "1" \
 run_test "bugbot_needs_fixes_exit_code" "1" "$actual_exit"
 rm -rf "$_bugbot_mock_dir_162"
 unset _bugbot_mock_dir_162 actual_output actual_exit
+
+# ---------------------------------------------------------------------------
+# Test 16.2b: CHANGES_REQUESTED review blocks even with clean body text
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_162b="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_162b/gh" <<'BUGBOT_GH_162B'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc162bsha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"user":{"login":"cursor[bot]"},"submitted_at":"2020-01-02T00:00:00Z","state":"CHANGES_REQUESTED","body":"Cursor Bugbot found no issues in this pull request."}]\n'
+    exit 0 ;;
+  *"check-runs"*)
+    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"success","started_at":"2020-01-01T00:00:00Z"}]}\n'
+    exit 0 ;;
+  *"headRefOid"*)
+    printf 'abc162bsha\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_162B
+chmod +x "$_bugbot_mock_dir_162b/gh"
+
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_162b:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_changes_requested_clean_body_blocks_result" "RESULT=needs_fixes" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_changes_requested_clean_body_blocks_count" "1" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=" | cut -d= -f2)"
+run_test "bugbot_changes_requested_clean_body_blocks_exit_code" "1" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_162b"
+unset _bugbot_mock_dir_162b actual_output actual_exit
+
+# ---------------------------------------------------------------------------
+# Test 16.2c: CHANGES_REQUESTED review blocks even with an empty body
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_162c="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_162c/gh" <<'BUGBOT_GH_162C'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc162csha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"user":{"login":"cursor[bot]"},"submitted_at":"2020-01-02T00:00:00Z","state":"CHANGES_REQUESTED","body":""}]\n'
+    exit 0 ;;
+  *"check-runs"*)
+    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"success","started_at":"2020-01-01T00:00:00Z"}]}\n'
+    exit 0 ;;
+  *"headRefOid"*)
+    printf 'abc162csha\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_162C
+chmod +x "$_bugbot_mock_dir_162c/gh"
+
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_162c:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_changes_requested_empty_body_blocks_result" "RESULT=needs_fixes" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_changes_requested_empty_body_blocks_count" "1" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=" | cut -d= -f2)"
+run_test "bugbot_changes_requested_empty_body_blocks_exit_code" "1" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_162c"
+unset _bugbot_mock_dir_162c actual_output actual_exit
 
 # ---------------------------------------------------------------------------
 # Test 16.3: escalate (timeout) — run appeared but never completed
@@ -2612,6 +2932,93 @@ run_platform_review "bugbot" "999" "feature/test" "30" "120" >/dev/null 2>&1 || 
 run_test "run_platform_review_routes_to_run_bugbot_review" "1" "$_bugbot_dispatch_called"
 unset -f run_bugbot_review
 unset _bugbot_dispatch_called
+HARNESS_MODE=1 source "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
+workflow_repo_root() { printf '%s\n' "${HARNESS_REPO_ROOT:-$REPO_ROOT}"; }
+
+# ---------------------------------------------------------------------------
+# Test 16.11: disabled Bugbot preflight — escalate with bugbot-disabled
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_1611="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_1611/gh" <<'BUGBOT_GH_1611'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc1611sha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:00:00Z","body":"Bugbot is disabled for this repository."}]\n'
+    exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"check-runs"*)
+    printf '{"check_runs":[]}\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_1611
+chmod +x "$_bugbot_mock_dir_1611/gh"
+
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  PATH="$_bugbot_mock_dir_1611:$PATH"
+  _ec=0
+  run_bugbot_review "42" "feature/42-test" "1" "30" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_disabled_preflight_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_disabled_preflight_reason" "REASON=bugbot-disabled" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "bugbot_disabled_preflight_exit_code" "2" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_1611"
+unset _bugbot_mock_dir_1611 actual_output actual_exit
+
+# Test 16.12: stale disabled issue comment before HEAD is ignored
+_bugbot_mock_dir_1612="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_1612/gh" <<'BUGBOT_GH_1612'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc1612sha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-02T00:00:00Z\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-01T00:00:00Z","body":"Bugbot is disabled for this repository."}]\n'
+    exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"check-runs"*)
+    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"success","started_at":"2020-01-02T00:00:00Z"}]}\n'
+    exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_1612
+chmod +x "$_bugbot_mock_dir_1612/gh"
+
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  PATH="$_bugbot_mock_dir_1612:$PATH"
+  _ec=0
+  run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_stale_disabled_comment_result" "RESULT=clean" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_stale_disabled_comment_exit_code" "0" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_1612"
+unset _bugbot_mock_dir_1612 actual_output actual_exit
 
 # ---------------------------------------------------------------------------
 # Summary

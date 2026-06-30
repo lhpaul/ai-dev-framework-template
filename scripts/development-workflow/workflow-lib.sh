@@ -18,6 +18,32 @@ workflow_config_file() {
   printf '%s/.ai-dev-workflow.yaml\n' "$(workflow_repo_root)"
 }
 
+# workflow_effective_config_file
+# Honors AI_DEV_WORKFLOW_CONFIG_FILE when it points to an existing file;
+# otherwise falls back to the repository default .ai-dev-workflow.yaml when present.
+workflow_effective_config_file() {
+  local default
+  if [ -n "${AI_DEV_WORKFLOW_CONFIG_FILE:-}" ] && [ -f "${AI_DEV_WORKFLOW_CONFIG_FILE}" ]; then
+    printf '%s\n' "${AI_DEV_WORKFLOW_CONFIG_FILE}"
+    return 0
+  fi
+  default="$(workflow_config_file)"
+  if [ -f "$default" ]; then
+    printf '%s\n' "$default"
+    return 0
+  fi
+  return 1
+}
+
+workflow_local_config_file() {
+  printf '%s/.ai-dev-workflow.local.yaml\n' "$(workflow_repo_root)"
+}
+
+workflow_is_default_config_file() {
+  local config_file="$1"
+  [ "$config_file" = "$(workflow_config_file)" ] || [ "${WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES:-}" = "1" ]
+}
+
 workflow_config_resolver_script() {
   printf '%s/workflow-config-resolver.py\n' "$(workflow_script_dir)"
 }
@@ -106,6 +132,156 @@ workflow_github_repo_from_context() {
   fi
 }
 
+workflow_product_repo_name_for_github_slug() {
+  local root="$1"
+  local slug="$2"
+  local name context github
+
+  if [ -z "$root" ] || [ -z "$slug" ]; then
+    return 1
+  fi
+
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    if ! context="$(workflow_repository_context "$name" "$root" 2>/dev/null)"; then
+      continue
+    fi
+    github="$(workflow_github_repo_from_context "$context")"
+    if [ "$github" = "$slug" ]; then
+      printf '%s\n' "$name"
+      return 0
+    fi
+  done < <(python3 "$(workflow_config_resolver_script)" list-product-repos --repo-root "$root" 2>/dev/null)
+
+  return 1
+}
+
+workflow_hub_root_for_ci_policy() {
+  local root="$1"
+  local github_slug="${2:-}"
+  local mode context candidate parent repo_name
+
+  if [ -z "$root" ]; then
+    return 1
+  fi
+
+  if [ -n "${WORKFLOW_HUB_REPO_ROOT:-}" ] && [ -f "${WORKFLOW_HUB_REPO_ROOT}/.ai-dev-workflow.yaml" ]; then
+    mode="$(python3 "$(workflow_config_resolver_script)" mode --repo-root "$WORKFLOW_HUB_REPO_ROOT" --json 2>/dev/null | jq -r '.WORKFLOW_MODE // ""')"
+    if [ "$mode" = "workflow_hub" ]; then
+      printf '%s\n' "$WORKFLOW_HUB_REPO_ROOT"
+      return 0
+    fi
+  fi
+
+  mode="$(python3 "$(workflow_config_resolver_script)" mode --repo-root "$root" --json 2>/dev/null | jq -r '.WORKFLOW_MODE // ""')"
+  if [ "$mode" != "product_repo" ]; then
+    return 1
+  fi
+
+  if [ -z "$github_slug" ]; then
+    context="$(workflow_repository_context "" "$root" 2>/dev/null)" || return 1
+    github_slug="$(workflow_github_repo_from_context "$context")"
+  fi
+  [ -n "$github_slug" ] || return 1
+
+  parent="$(dirname "$root")"
+  for candidate in "$parent"/*; do
+    [ -e "$candidate/.ai-dev-workflow.yaml" ] || continue
+    mode="$(python3 "$(workflow_config_resolver_script)" mode --repo-root "$candidate" --json 2>/dev/null | jq -r '.WORKFLOW_MODE // ""')"
+    if [ "$mode" = "workflow_hub" ]; then
+      repo_name="$(workflow_product_repo_name_for_github_slug "$candidate" "$github_slug" 2>/dev/null || true)"
+      if [ -n "$repo_name" ]; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    fi
+  done
+
+  return 1
+}
+
+workflow_merge_ci_policy_into_json() {
+  local json="$1"
+  local root="${2:-}"
+  local repo_name="${3:-}"
+  local trust_repo_name=0
+
+  if [ -z "$root" ]; then
+    printf '%s\n' "$json"
+    return 0
+  fi
+
+  if [ -n "$(printf '%s\n' "$json" | jq -r '.ciPolicy // .ci_policy // ""' 2>/dev/null)" ]; then
+    printf '%s\n' "$json"
+    return 0
+  fi
+
+  if [ -n "$repo_name" ]; then
+    trust_repo_name=1
+  else
+    repo_name="$(printf '%s\n' "$json" | jq -r '
+      .productRepo.name //
+      .productRepoName //
+      .repository.productRepoName //
+      .repository.product_repo //
+      ""
+    ' 2>/dev/null)"
+    if [ -n "$repo_name" ]; then
+      trust_repo_name=1
+    fi
+  fi
+
+  local github_slug resolve_root="$root" context ci_policy mode
+  github_slug="$(printf '%s\n' "$json" | jq -r '.github_repo // ""' 2>/dev/null)"
+
+  mode="$(python3 "$(workflow_config_resolver_script)" mode --repo-root "$root" --json 2>/dev/null | jq -r '.WORKFLOW_MODE // ""')"
+  if [ "$mode" = "product_repo" ]; then
+    local hub_root
+    hub_root="$(workflow_hub_root_for_ci_policy "$root" "$github_slug" 2>/dev/null || true)"
+    if [ -n "$hub_root" ]; then
+      resolve_root="$hub_root"
+      if [ -z "$repo_name" ] && [ -n "$github_slug" ]; then
+        repo_name="$(workflow_product_repo_name_for_github_slug "$hub_root" "$github_slug" 2>/dev/null || true)"
+      fi
+    fi
+  elif [ -z "$repo_name" ] && [ -n "$github_slug" ]; then
+    repo_name="$(workflow_product_repo_name_for_github_slug "$resolve_root" "$github_slug" 2>/dev/null || true)"
+  fi
+
+  if [ -n "$github_slug" ] && [ -z "$repo_name" ]; then
+    printf '%s\n' "$json"
+    return 0
+  fi
+
+  if ! context="$(workflow_repository_context "$repo_name" "$resolve_root" 2>/dev/null)"; then
+    printf '%s\n' "$json"
+    return 0
+  fi
+
+  local resolved_github
+  resolved_github="$(workflow_github_repo_from_context "$context")"
+  if [ "$trust_repo_name" != 1 ] && [ -n "$github_slug" ] && [ -n "$resolved_github" ] && [ "$github_slug" != "$resolved_github" ]; then
+    printf '%s\n' "$json"
+    return 0
+  fi
+
+  if [ -z "$github_slug" ]; then
+    github_slug="$resolved_github"
+  fi
+
+  ci_policy="$(workflow_context_value TARGET_CI_POLICY "$context")"
+  if [ -z "$ci_policy" ]; then
+    printf '%s\n' "$json"
+    return 0
+  fi
+
+  printf '%s\n' "$json" | jq --arg ci_policy "$ci_policy" '
+    if ((.ciPolicy // .ci_policy // "") | length) > 0 then .
+    else . + {ciPolicy: $ci_policy}
+    end
+  ' 2>/dev/null || printf '%s\n' "$json"
+}
+
 branch_prefix() {
   case "$1" in
     spec/*) printf 'spec\n' ;;
@@ -192,6 +368,51 @@ is_soft_suggestion() {
   done <<< "$body"
 
   [ "$saw_content" -eq 1 ]
+}
+
+is_bugbot_clean_review() {
+  local body="$1"
+  local line
+  local normalized_line
+  local non_empty_count=0
+
+  case "$body" in
+    *BUGBOT_BUG_ID*|*BUGBOT_REVIEW*|*"LOCATIONS START"*|*"DESCRIPTION START"*|*"Triggered by project rule"*|*'**High Severity**'*|*'**Medium Severity**'*|*'**Low Severity**'*)
+      return 1
+      ;;
+  esac
+  case "$body" in
+    *"found 1 potential issue"*|*"found 2 potential issue"*|*"found 3 potential issue"*|*"found 4 potential issue"*|*"found 5 potential issue"*)
+      return 1
+      ;;
+  esac
+  while IFS= read -r line; do
+    normalized_line="${line%$'\r'}"
+    normalized_line="${normalized_line#"${normalized_line%%[![:space:]]*}"}"
+    normalized_line="${normalized_line%"${normalized_line##*[![:space:]]}"}"
+    [ -z "$normalized_line" ] && continue
+    non_empty_count=$((non_empty_count + 1))
+    if [ "$non_empty_count" -gt 1 ]; then
+      return 1
+    fi
+  done <<< "$body"
+  case "$normalized_line" in
+    "Cursor Bugbot found no new issues in this pull request."|"Cursor Bugbot found no potential issues in this pull request."|"Cursor Bugbot found no issues in this pull request.")
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+is_bugbot_disabled_message() {
+  local body="$1"
+
+  case "$body" in
+    *"Bugbot is disabled"*|*"Bugbot has not been enabled"*|*"Bugbot isn't enabled"*)
+      return 0
+      ;;
+  esac
+  return 1
 }
 
 open_pr_number_for_branch() {
@@ -345,10 +566,83 @@ workflow_config_review_legacy_list() {
   ' "$config_file"
 }
 
+workflow_config_review_nested_list_declared() {
+  local config_file="$1"
+  local phase="$2"
+  local key="$3"
+
+  [ -f "$config_file" ] || return 1
+
+  awk -v phase="$phase" -v key="$key" '
+    BEGIN { found = 0 }
+
+    /^review:[[:space:]]*(#.*)?$/ {
+      in_review = 1
+      in_phase = 0
+      in_list = 0
+      next
+    }
+
+    in_review && /^[^[:space:]#].*:[[:space:]]*/ {
+      in_review = 0
+      in_phase = 0
+      in_list = 0
+    }
+
+    in_review && $0 ~ ("^[[:space:]][[:space:]]" phase ":[[:space:]]*(#.*)?$") {
+      in_phase = 1
+      in_list = 0
+      next
+    }
+
+    in_phase && /^[[:space:]][[:space:]][A-Za-z0-9_-]+:[[:space:]]*/ && $0 !~ ("^[[:space:]][[:space:]]" phase ":[[:space:]]*") {
+      in_phase = 0
+      in_list = 0
+    }
+
+    in_phase && $0 ~ ("^[[:space:]][[:space:]][[:space:]][[:space:]]" key ":[[:space:]]*\\[") {
+      found = 1
+      exit
+    }
+
+    in_phase && $0 ~ ("^[[:space:]][[:space:]][[:space:]][[:space:]]" key ":[[:space:]]*(#.*)?$") {
+      in_list = 1
+      next
+    }
+
+    in_list && /^[[:space:]][[:space:]][[:space:]][[:space:]][A-Za-z0-9_-]+:[[:space:]]*/ {
+      in_list = 0
+    }
+
+    in_list && /^[[:space:]][[:space:]][[:space:]][[:space:]][[:space:]][[:space:]]-[[:space:]]*/ {
+      found = 1
+      exit
+    }
+
+    END { exit found ? 0 : 1 }
+  ' "$config_file"
+}
+
+workflow_config_review_local_list_if_declared() {
+  local config_file="$1"
+  local phase="$2"
+  local key="$3"
+  local local_file
+
+  workflow_is_default_config_file "$config_file" || return 1
+  local_file="$(workflow_local_config_file)"
+  workflow_config_review_nested_list_declared "$local_file" "$phase" "$key" || return 1
+  workflow_config_review_nested_list "$local_file" "$phase" "$key"
+}
+
 workflow_config_review_on_draft_runner() {
   local config_file="${1:-$(workflow_config_file)}"
 
   [ -f "$config_file" ] || return 0
+
+  if workflow_config_review_local_list_if_declared "$config_file" on_draft runner; then
+    return 0
+  fi
 
   if workflow_config_review_nested_list "$config_file" on_draft runner | grep -q .; then
     workflow_config_review_nested_list "$config_file" on_draft runner
@@ -361,6 +655,10 @@ workflow_config_review_on_draft_github() {
   local config_file="${1:-$(workflow_config_file)}"
 
   [ -f "$config_file" ] || return 0
+
+  if workflow_config_review_local_list_if_declared "$config_file" on_draft github; then
+    return 0
+  fi
 
   if workflow_config_review_nested_list "$config_file" on_draft github | grep -q .; then
     workflow_config_review_nested_list "$config_file" on_draft github
@@ -385,6 +683,10 @@ workflow_config_review_on_ready_github() {
   local config_file="${1:-$(workflow_config_file)}"
 
   [ -f "$config_file" ] || return 0
+
+  if workflow_config_review_local_list_if_declared "$config_file" on_ready github; then
+    return 0
+  fi
 
   if workflow_config_review_nested_list "$config_file" on_ready github | grep -q .; then
     workflow_config_review_nested_list "$config_file" on_ready github

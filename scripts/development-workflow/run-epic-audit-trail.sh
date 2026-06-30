@@ -80,6 +80,24 @@ table_cell_filter='
     | gsub("\\t"; " ");
 '
 
+checkpoint_stage_filter='
+  def stage_rank($stage):
+    if $stage == "spec" then 1
+    elif $stage == "plan" then 2
+    elif $stage == "implementation" then 3
+    else 0 end;
+  def stage_from_branch($branch):
+    if ($branch | test("^spec/")) then "spec"
+    elif ($branch | test("^implementation-plan/")) then "plan"
+    elif ($branch | test("^(feature|fix|refactor|hotfix|backport/hotfix)/")) then "implementation"
+    else "implementation" end;
+  def checkpoint_applies($cp; $item; $prStage):
+    (($cp.item_number | tonumber) == ($item | tonumber))
+    and ($cp.satisfaction_state // "pending") == "pending"
+    and (stage_rank($cp.stage) > 0)
+    and (stage_rank($cp.stage) <= stage_rank($prStage));
+'
+
 render_pr_disposition() {
   local json="$1"
   local missing
@@ -142,6 +160,55 @@ render_pr_disposition() {
         " | " + (($r[$field] // "") | cell) +
         " | " + (($s[$field] // "") | cell) +
         " | " + (($e[$field] // "") | cell) + " |"
+      '
+    fi
+    printf '\n### Checkpoint Policy\n\n'
+    if [ "$(printf '%s\n' "$json" | jq 'if (.checkpoint_policy // .checkpointPolicy // null) == null then 0 else 1 end')" -eq 0 ]; then
+      printf 'Not recorded.\n'
+    else
+      printf '%s\n' "$json" | jq -r "$checkpoint_stage_filter"'
+        (.checkpoint_policy // .checkpointPolicy // {}) as $cp |
+        (.item.number) as $itemNum |
+        (.pr.branch // "") as $branch |
+        ((.pr.stage // "") as $stage |
+          if ($branch | length) > 0 then stage_from_branch($branch)
+          elif ($stage | length) > 0 then $stage
+          else null end) as $prStage |
+        "- Field source: " + (($cp.field_source // $cp.fieldSource // "unknown") | tostring),
+        "- Pending applicable checkpoints: " + (
+          [($cp.effective // $cp.effectivePolicy // [])[]
+            | select(
+                if $prStage == null then
+                  (.satisfaction_state == "pending" and ((.item_number | tonumber) == ($itemNum | tonumber)))
+                else
+                  checkpoint_applies(.; ($itemNum | tostring); $prStage)
+                end
+              )] | length | tostring
+        )
+      '
+      printf '\n| Item | Stage | Domain | State | Reason | Required action |\n'
+      printf '| --- | --- | --- | --- | --- | --- |\n'
+      printf '%s\n' "$json" | jq -r "$table_cell_filter $checkpoint_stage_filter"'
+        (.checkpoint_policy // .checkpointPolicy // {}) as $cp |
+        (.item.number) as $itemNum |
+        (.pr.branch // "") as $branch |
+        ((.pr.stage // "") as $stage |
+          if ($branch | length) > 0 then stage_from_branch($branch)
+          elif ($stage | length) > 0 then $stage
+          else null end) as $prStage |
+        ($cp.effective // $cp.effectivePolicy // [])[]
+        | select((.item_number | tonumber) == ($itemNum | tonumber))
+        | select(
+            if $prStage == null then true
+            else checkpoint_applies(.; ($itemNum | tostring); $prStage) or (.satisfaction_state // "pending") != "pending"
+            end
+          ) |
+        "| #" + (.item_number | tostring) +
+        " | " + ((.stage // "") | cell) +
+        " | " + ((.domain // "") | cell) +
+        " | " + ((.satisfaction_state // "pending") | cell) +
+        " | " + ((.reason // "") | cell) +
+        " | " + ((.required_human_action // "") | cell) + " |"
       '
     fi
     printf '\n### Advisory Decisions\n\n'
@@ -266,16 +333,32 @@ render_epic_ledger() {
           ", maxRisk=" + (($policy.maxRisk // "") | tostring) +
           ", base=" + (($policy.base // "") | tostring)
         else "" end;
-      def notes_with_policy($base; $policy; $gate):
+      def checkpoint_note($checkpoints):
+        if (($checkpoints | type) == "array") and (($checkpoints | length) > 0) then
+          "Checkpoints: " + (
+            $checkpoints
+            | map("#" + (.item_number|tostring) + " " + (.stage // "") + "/" + (.domain // "") + "=" + (.satisfaction_state // "pending"))
+            | join(", ")
+          )
+        else "" end;
+      def notes_with_policy($base; $policy; $gate; $checkpoints):
         [
           ($base // ""),
           policy_note($policy),
+          checkpoint_note($checkpoints),
           (if (($gate // "") | tostring | length) > 0 then "Stop gate: " + ($gate | tostring) else "" end)
         ]
         | map(select((. | tostring | length) > 0))
         | join("\n");
+      def item_checkpoints($item; $rootPolicy):
+        if (($item.checkpoints // $item.effective_checkpoints // null) != null) then
+          ($item.checkpoints // $item.effective_checkpoints // [])
+        else
+          ($rootPolicy.checkpoints // [] | map(select((.item_number | tonumber) == ($item.issue_number | tonumber))))
+        end;
       .items[] |
       (.effective_policy // .effectivePolicy // $rootEffectivePolicy) as $effectivePolicy |
+      item_checkpoints(.; $rootEffectivePolicy) as $itemCheckpoints |
       (.stop_gate // .stopGate // .final_stop_gate // .finalStopGate // "") as $stopGate |
       "| #" + (.issue_number | tostring) + " " + ((.title // "") | cell) +
       " | " + (if .pr_number then "#" + (.pr_number | tostring) else "-" end) +
@@ -284,7 +367,7 @@ render_epic_ledger() {
       " | " + ((.review_result // "") | cell) +
       " | " + ((.decision // "") | cell) +
       " | " + ((.merge_cleanup // "") | cell) +
-      " | " + (notes_with_policy(.notes; $effectivePolicy; $stopGate) | cell) + " |"
+      " | " + (notes_with_policy(.notes; $effectivePolicy; $stopGate; $itemCheckpoints) | cell) + " |"
     '
   } | redact_text
 }

@@ -16,20 +16,15 @@ This protocol may be entered in either of two ways:
 
 ## Routing From /run-work
 
-`/run-work <single-non-epic-target>` enters this protocol after the routing
-classifier (`scripts/development-workflow/run-work-router.sh`, Protocol 96)
-determines the routing mode is `single_item`.
+`/run-work` with a **single** non-epic target is **not** portfolio scope. The
+routing classifier (`run-work-router.sh`, Protocol 96) returns `redirect_item`
+with `REDIRECT_COMMAND=/run-item <target>` and performs no mutation. Re-invoke
+`/run-item` instead of continuing in Protocol 91 under `/run-work`.
 
-**`single_item` → `epic` upgrade** (AC5): When a single target resolves to an
-epic-like issue (one with child items or native sub-issues), the router upgrades
-from `single_item` to `epic` and routes to `95-run-epic-protocol.md` instead.
+Epic-like single targets return `redirect_epic` with guidance to `/run-epic`.
 
-**Existing scope guard applies** (AC2): The hard-bounded scope guard in Step 1
-already prevents out-of-scope mutations for item-specific invocations. No
-additional scope narrowing is needed for the `single_item` routing case.
-
-`/run-item-work` invoked directly (without `/run-work`) is a **compatibility/
-advanced alias** that also enters this protocol. Its behavior is unchanged.
+`/run-item-work` invoked directly (without `/run-work`) is a **deprecated
+compatibility alias** for `/run-item` with identical behavior.
 
 See `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
 for the full routing specification.
@@ -95,6 +90,40 @@ The Work Item Runner:
 2. Determines the next deterministic action for that item
 3. Executes creator, review-gate, PR, CI, and automated-review work as one continuous control loop
 4. Stops only when the item is truly waiting on a human, blocked, or escalated
+
+### Bounded prelude (read-only gate)
+
+When invoked through **`/run-item`** or the `/run-item-work` compatibility alias
+with bounded scope flags, run the shared bounded prelude **before** any artifact
+mutation in Step 1 or later:
+
+```bash
+./scripts/development-workflow/run-bounded-prelude.sh \
+  --original-command "<invocation>" \
+  <scope flags> \
+  [--delegate-review ...] \
+  --json
+```
+
+See [`bounded-run-prelude.md`](../bounded-run-prelude.md).
+
+**Always-confirm**: `policyRecommendation.requiresConfirmation` is always `true`.
+The orchestrator must print the resolved policy summary before any mutation.
+- When all autonomy flags (`--delegate-review`, `--may-merge`, `--may-start-backlog`,
+  `--max-risk`) were provided explicitly in the invocation, those explicit flags
+  serve as the human's confirmation — proceed immediately after printing the summary.
+- When any flag was inferred from scope, scope is ambiguous, or pending checkpoints
+  remain, stop before mutation and ask the human to confirm or re-invoke with
+  corrected flags.
+- When guardrails cannot be read (`guardrails_config_unreadable`), stop before
+  mutation per `guardrails-enforcement.md`.
+
+**Portfolio batch dispatch (`BATCH_CONTEXT=true`)**: When the Portfolio
+Orchestrator dispatches this protocol from Protocol 90, the bounded prelude is
+**not** re-run per item — batch approval in Protocol 90 Step 2 covers tracker
+mutation and human confirmation before dispatch. Operators who need per-item
+policy confirmation must invoke **`/run-item`** directly (which runs the prelude)
+rather than relying on portfolio batch dispatch alone.
 
 ### Persistent orchestration contract
 
@@ -376,27 +405,44 @@ gh issue view <issue-number> --json labels --jq '.labels[].name | select(startsw
 If the label is present:
 
 1. **Derive the integration branch name**: `develop-<slug>` (replace `<slug>` with the value after `integration-branch:`).
-2. **Verify the branch exists on the remote** (output `0` = does not exist, `1` = exists):
+2. **Resolve the branch owner**. In `single_repo`, the integration branch is
+   owned by the current repository. In `workflow_hub`, it is the product
+   implementation base and must be checked against the selected product
+   repository, not the hub repository. Hub-owned spec and plan artifacts still
+   target the hub artifact base branch.
+3. **Verify the branch exists on the owning remote** (output `0` = does not
+   exist, `1` = exists):
 
    ```bash
-   BRANCH_EXISTS=$(set -o pipefail; git ls-remote origin "refs/heads/develop-<slug>" 2>/dev/null | wc -l | tr -d ' ') || {
-     echo "WARNING: failed to verify whether develop-<slug> exists on origin; skipping auto-create for this item."
+   OWNING_REPO_ROOT="<current-or-selected-product-repository-root>"
+   OWNING_REMOTE="origin"
+   BRANCH_EXISTS=$(set -o pipefail; git -C "$OWNING_REPO_ROOT" ls-remote "$OWNING_REMOTE" "refs/heads/develop-<slug>" 2>/dev/null | wc -l | tr -d ' ') || {
+     echo "WARNING: failed to verify whether develop-<slug> exists on the owning remote; skipping auto-create for this item."
      continue  # or return 1 / exit 1 depending on surrounding loop/function context
    }
    ```
 
-3. **If the branch does not exist** (`BRANCH_EXISTS` is `0`), create and push it from `develop`:
+4. **If the branch does not exist** (`BRANCH_EXISTS` is `0`), create and push it
+   from the owning repository's default implementation branch:
 
    ```bash
-   git fetch origin develop
-   git checkout -B develop-<slug> origin/develop
-   git push -u origin develop-<slug>
-   git switch develop  # return to develop immediately after creation
+   OWNING_REPO_ROOT="<current-or-selected-product-repository-root>"
+   OWNING_REMOTE="origin"
+   DEFAULT_IMPLEMENTATION_BRANCH="<default-implementation-branch>"
+   git -C "$OWNING_REPO_ROOT" fetch "$OWNING_REMOTE" "$DEFAULT_IMPLEMENTATION_BRANCH"
+   git -C "$OWNING_REPO_ROOT" checkout -B develop-<slug> "$OWNING_REMOTE/$DEFAULT_IMPLEMENTATION_BRANCH"
+   git -C "$OWNING_REPO_ROOT" push -u "$OWNING_REMOTE" develop-<slug>
+   git -C "$OWNING_REPO_ROOT" switch "$DEFAULT_IMPLEMENTATION_BRANCH"
    ```
 
-   Log: `INFO: created integration branch develop-<slug> from origin/develop for sub-item #<issue-number>.`
+   Log: `INFO: created integration branch develop-<slug> from origin/<default-implementation-branch> for sub-item #<issue-number>.`
 
-4. **Record the base branch**: store `BASE_BRANCH=develop-<slug>` and pass it to every stage-agent dispatch for this item. All PRs opened for this sub-item (spec, plan, implementation, fix, refactor) must target `develop-<slug>`.
+5. **Record the implementation base branch**: store `BASE_BRANCH=develop-<slug>`
+   and pass it to stage-agent dispatch metadata. In `single_repo`, spec, plan,
+   implementation, fix, and refactor PRs target `develop-<slug>`. In
+   `workflow_hub`, only product implementation, fix, refactor, review, CI, merge,
+   and cleanup actions use `develop-<slug>` in the selected product repository;
+   hub-owned spec and plan PRs target the hub artifact base branch.
 
 **Single-item exemption**: When the item carries no `integration-branch:*` label, skip this check. The default base branch (`develop`) applies.
 
@@ -410,6 +456,7 @@ Before any mutation-oriented action, resolve and state repository ownership:
 - local path or remote identity when available
 - mutation target for file edits, branch creation, commits, PR creation,
   reviewer-loop execution, CI polling, and cleanup
+- base branch validation target
 
 Missing mode or explicit `single_repo` keeps the current repository as the owner
 and does not require `--repo`. In `workflow_hub`, specs and plans remain
@@ -417,6 +464,14 @@ hub-owned unless a future contract says otherwise. Product implementation work
 must target the selected product repository. If the selected product repository
 is missing or ambiguous, stop before file mutation, branch creation, commit, or
 implementation PR creation.
+
+In `workflow_hub`, do not validate a product execution base such as `develop`
+against the hub repository before product repository selection. Hub-owned spec
+and plan branches use the hub artifact base branch, typically the hub
+repository default branch. Product implementation branches use the selected
+product repository checkout and that product repository's resolved base branch
+(`BASE_BRANCH` from the run-epic scope when present, otherwise the product
+entry's `default_branch`).
 
 ### Spec-Plan ordering gate
 
@@ -428,11 +483,13 @@ This gate applies whenever the spec and plan are written in the same agent run (
 
 1. Write the plan content locally on the plan branch (the plan may be written proactively, but it must not be pushed or a PR opened yet).
 2. Open the spec PR and advance it to `ready-for-human-review` following the full PR readiness chain (Step 7a, Step 7, Step 8).
-3. Stop and report to the orchestrator with the following structured message:
+3. Resolve `EXPECTED_SPEC_BASE`: in `workflow_hub`, use the hub artifact base
+   branch; otherwise use `BASE_BRANCH` when present, falling back to `develop`.
+4. Stop and report to the orchestrator with the following structured message:
 
-   > Spec PR #N is `ready-for-human-review`. Plan is written and staged locally on branch `implementation-plan/<slug>`, but the plan PR will not be opened until the spec PR is confirmed merged to `develop` (or `develop-<slug>` when the integration-branch context applies). On the next dispatch (after spec merge is confirmed), push the plan branch and open the plan PR.
+   > Spec PR #N is `ready-for-human-review`. Plan is written and staged locally on branch `implementation-plan/<slug>`, but the plan PR will not be opened until the spec PR is confirmed merged to `<expected-spec-base>`. On the next dispatch (after spec merge is confirmed), push the plan branch and open the plan PR.
 
-4. On the next dispatch (after spec merge is confirmed via `gh pr view <spec_pr> --json state` returning `MERGED`), push the plan branch and open the plan PR. The plan content was written in the prior run; do not regenerate it.
+5. On the next dispatch (after spec merge is confirmed via `gh pr view <spec_pr> --json state` returning `MERGED`), push the plan branch and open the plan PR. The plan content was written in the prior run; do not regenerate it.
 
 **Verification before opening a plan PR:**
 
@@ -440,10 +497,11 @@ Before calling `gh pr create` for any `implementation-plan/*` branch, confirm th
 
 ```bash
 # Check whether the spec PR is merged into the expected base branch.
-# EXPECTED_BASE is "develop" by default, or "develop-<slug>" when integration-branch:<slug> is present.
+# EXPECTED_SPEC_BASE is the hub artifact base in workflow_hub mode; otherwise it
+# is "develop" by default, or "develop-<slug>" when integration-branch:<slug> is present.
 # Substitute <spec_pr_number> and <expected-base> with actual values before running:
 gh pr view <spec_pr_number> --json state,baseRefName \
-  --jq 'select(.state=="MERGED" and .baseRefName=="<expected-base>") | "OK"'
+  --jq 'select(.state=="MERGED" and .baseRefName=="<expected-spec-base>") | "OK"'
 # Expected output: OK
 # If no output: the spec PR is not merged into the expected base branch — do not open the plan PR
 ```
@@ -452,7 +510,11 @@ If the spec PR is still `OPEN`, apply the ordering gate above and stop. If the s
 
 **Exception — Refactor items (no spec):** Items following the Refactor path (`02-generate-implementation-plan-protocol.md` without a preceding spec step) are exempt from this gate. There is no spec PR to wait for.
 
-(When the item carries an `integration-branch:<slug>` label, "spec PR merged to the integration branch" means merged to `develop-<slug>`, not to `develop`. The ordering gate applies identically; only the target branch changes. Use `develop-<slug>` as `<expected-base>` in the verification command above.)
+(When the item carries an `integration-branch:<slug>` label in `single_repo`,
+"spec PR merged to the integration branch" means merged to `develop-<slug>`, not
+to `develop`. In `workflow_hub`, hub-owned spec and plan PRs use the hub
+artifact base instead, even when product implementation work uses
+`develop-<slug>`.)
 
 ### Dependency check
 
@@ -483,18 +545,25 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 
 2. Determine the appropriate base branch for the worktree:
 
-   **If `BASE_BRANCH` is present in the handoff metadata** (set by the Portfolio Orchestrator when the item carries an `integration-branch:<slug>` label), use `origin/<BASE_BRANCH>` as the worktree base for all item types except `hotfix/*`. This overrides the default table below.
+   **If `BASE_BRANCH` is present in the handoff metadata** (set by the
+   Portfolio Orchestrator when the item carries an `integration-branch:<slug>`
+   label or by run-epic policy), use `origin/<BASE_BRANCH>` as the base for
+   product implementation, fix, and refactor worktrees except for `hotfix/*`.
+   In `workflow_hub`, this branch must be checked in the selected product
+   repository, not in the hub repository. Hub-owned `spec/*` and
+   `implementation-plan/*` worktrees ignore the product `BASE_BRANCH` and use
+   `origin/<hub-artifact-base-branch>` instead.
 
    **If `BASE_BRANCH` is absent**, use the default table:
 
 | Item type                     | Base branch      |
 | ----------------------------- | ---------------- |
-| Feature (`feature/`)          | `origin/develop` |
-| Refactor (`refactor/`)        | `origin/develop` |
-| Fast Track fix (`fix/`)       | `origin/develop` |
+| Feature (`feature/`)          | `origin/<product-default-branch>` in `workflow_hub`, otherwise `origin/develop` |
+| Refactor (`refactor/`)        | `origin/<product-default-branch>` in `workflow_hub`, otherwise `origin/develop` |
+| Fast Track fix (`fix/`)       | `origin/<product-default-branch>` in `workflow_hub`, otherwise `origin/develop` |
 | Hotfix (`hotfix/`)            | `origin/main`    |
-| Spec (`spec/`)                | `origin/develop` |
-| Plan (`implementation-plan/`) | `origin/develop` |
+| Spec (`spec/`)                | `origin/<hub-artifact-base-branch>` in `workflow_hub`, otherwise `origin/develop` |
+| Plan (`implementation-plan/`) | `origin/<hub-artifact-base-branch>` in `workflow_hub`, otherwise `origin/develop` |
 
 **Note:** Use `origin/<base>` (remote tracking) rather than local `<base>` to avoid git worktree conflicts if the local base branch is already checked out elsewhere.
 
@@ -849,6 +918,7 @@ When work already exists, resume rather than restart.
 - If a workflow branch already exists, use `workflow-next-action.sh --branch <branch>`
 - If a PR already exists, use `workflow-next-action.sh --pr <number>`
 - If labels indicate `needs-fixes`, enter the fix loop instead of reopening the stage from scratch
+- If a run aborts mid-turn due to model quota, stream timeout, or runner unavailability, follow [`provider-contingency-runner-failover.md`](../provider-contingency-runner-failover.md) before manually changing PR labels or restarting from scratch
 
 The Work Item Runner owns the full control loop for this item until it reaches a terminal condition.
 
@@ -905,7 +975,7 @@ gh pr view <pr_number> --json isDraft --jq '.isDraft'
 
 If the result is `true` (PR is a draft), inspect the resolved
 `review.on_draft.runner` list from `.ai-dev-workflow.yaml` (after any
-`.tmp/template-config.json` override) and the `review.on_draft.github` /
+`.ai-dev-workflow.local.yaml` override) and the `review.on_draft.github` /
 `review.on_ready.github` lists.
 
 If `coderabbit` is **only** listed under `review.on_ready.github`, keep the PR as
@@ -1018,65 +1088,47 @@ The agent reads `browser_automation.provider` from `.ai-dev-workflow.yaml`. For 
 
 ### Determining which reviewers to run
 
-Read the `review.on_draft.runner` list from `.ai-dev-workflow.yaml`. If a
-`.tmp/template-config.json` file exists in the repository root (this path is
-gitignored and used for local developer overrides), read its
-`overrides.review.on_draft.runner` list. During the schema_version 2 transition
-release, also accept the legacy `overrides.review.internal_reviewers` list as an
-alias. The override value takes precedence over `.ai-dev-workflow.yaml` for the
-local environment, allowing developers without access to all configured review
-tools to run a subset (e.g., only `claude`) without changing the shared config.
+Read the `review.on_draft.runner` list from `.ai-dev-workflow.yaml`. For local
+developer overrides, prefer `.ai-dev-workflow.local.yaml` (gitignored) with the
+same nested review shape:
 
-Example `.tmp/template-config.json` override format:
-
-```json
-{
-  "overrides": {
-    "review": {
-      "on_draft": {
-        "runner": ["claude"]
-      }
-    }
-  }
-}
+```yaml
+review:
+  on_draft:
+    runner:
+      - cursor
+  internal_reviewers_unavailable_policy: warn
 ```
 
-Legacy override form accepted during the transition release:
+The local YAML file takes precedence over `.ai-dev-workflow.yaml`. This allows
+developers without access to all configured review tools to run a subset, such
+as only `cursor`, without changing the shared config.
 
-```json
-{
-  "overrides": {
-    "review": {
-      "internal_reviewers": ["claude"]
-    }
-  }
-}
-```
+Supported runner reviewer values: `claude`, `cursor`, `codex`, `coderabbit`.
 
-Supported runner reviewer values: `claude`, `codex`, `coderabbit`.
+If neither config file defines `review.on_draft.runner`, fall back to running
+the stage-appropriate reviewer once (default behavior: `claude`).
 
-If neither file defines `review.on_draft.runner` (or the legacy alias), fall
-back to running the stage-appropriate reviewer once (default behavior:
-`claude`).
+When the local file supplies an override, log the following before running the
+availability check:
 
-When `.tmp/template-config.json` supplies an override, log the following before running the availability check:
-
-> `INFO: Using review.on_draft.runner override from .tmp/template-config.json: [<override-list>]. Original list: [<yaml-list>].`
+> `INFO: Using review.on_draft.runner override from .ai-dev-workflow.local.yaml: [<override-list>]. Original list: [<yaml-list>].`
 
 No warning comment is posted for reviewers intentionally removed by the override list (`override-excluded`). If any reviewer still present in the override list is unreachable at runtime, post the standard warning comment for those unreachable reviewers (the runtime-availability check still applies to the override list).
 
 ### Runtime-availability check
 
-Before dispatching any reviewer, classify each entry in the resolved list as `reachable` or `unreachable`. For `claude` and `codex`, the check is deterministic and requires no external network call — runner identity is a sufficient proxy for reviewer reachability (see [codex-reviewer-runtime-fallback spec](../../../specs/developments/20260417203329_codex-reviewer-runtime-fallback/1_codex-reviewer-runtime-fallback_specs.md) — BR-1 and BR-8). For `coderabbit`, reachability is determined at runtime via an App installation check (see below).
+Before dispatching any reviewer, classify each entry in the resolved list as `reachable` or `unreachable`. For `claude`, `cursor`, and `codex`, the check is deterministic and requires no external network call — runner identity is a sufficient proxy for reviewer reachability because the gate only dispatches reviewers the current runner can invoke without a cross-runner CLI handoff. For `coderabbit`, reachability is determined at runtime via an App installation check (see below).
 
 #### Reachability classification table
 
-| Runner context                                    | `claude` reachable? | `codex` reachable? | `coderabbit` reachable?           |
-| ------------------------------------------------- | ------------------- | ------------------ | --------------------------------- |
-| Claude Code (direct human session)                | Yes                 | No                 | Determined at runtime (App check) |
-| Claude Code subagent (dispatched by orchestrator) | Yes                 | No                 | Determined at runtime (App check) |
-| Codex runner / Codex skill                        | Yes                 | Yes                | Determined at runtime (App check) |
-| Direct human (shell / CI with `gh`)               | Yes                 | Yes                | Determined at runtime (App check) |
+| Runner context                                    | `claude` reachable? | `cursor` reachable? | `codex` reachable? | `coderabbit` reachable?           |
+| ------------------------------------------------- | ------------------- | ------------------- | ------------------ | --------------------------------- |
+| Claude Code (direct human session)                | Yes                 | No                  | No                 | Determined at runtime (App check) |
+| Claude Code subagent (dispatched by orchestrator) | Yes                 | No                  | No                 | Determined at runtime (App check) |
+| Cursor direct session or subagent                 | No                  | Yes                 | No                 | Determined at runtime (App check) |
+| Codex runner / Codex skill                        | Yes                 | No                  | Yes                | Determined at runtime (App check) |
+| Direct human (shell / CI with `gh`)               | Yes                 | Yes                 | Yes                | Determined at runtime (App check) |
 
 To determine `coderabbit` reachability, the runner checks whether `coderabbitai[bot]` has any prior activity on the repository (App installation signal — via `gh api repos/{owner}/{repo}/installation` or by checking the PR for a prior CodeRabbit comment), **and** confirms that `.coderabbit.yaml` does not disable auto-review (`reviews.auto_review.enabled: true` required). If either check fails, classify `coderabbit` as `unreachable`.
 
@@ -1086,23 +1138,19 @@ Note: the `auto_review.drafts: false` restriction is **not** treated as an unrea
 
 After classifying each reviewer, apply the configured policy. Read
 `internal_reviewers_unavailable_policy` from `.ai-dev-workflow.yaml` (or its
-local override in `.tmp/template-config.json`). This policy key is retained for
-compatibility even though the reviewer list moved to `review.on_draft.runner`.
-If the key is absent, the default is `warn`.
+local override in `.ai-dev-workflow.local.yaml`). This policy key is retained
+for compatibility even though the reviewer list moved to
+`review.on_draft.runner`. If the key is absent, the default is `warn`.
 
-To override the policy locally without changing shared config, use `.tmp/template-config.json`:
+To override the policy locally without changing shared config, prefer
+`.ai-dev-workflow.local.yaml`:
 
-```json
-{
-  "overrides": {
-    "review": {
-      "on_draft": {
-        "runner": ["claude"]
-      },
-      "internal_reviewers_unavailable_policy": "warn"
-    }
-  }
-}
+```yaml
+review:
+  on_draft:
+    runner:
+      - cursor
+  internal_reviewers_unavailable_policy: warn
 ```
 
 Allowed values: `warn` (default), `fail-if-any-unavailable`.
@@ -1131,11 +1179,11 @@ Post via `gh pr comment`. This comment doubles as the BR-7 mandatory Step 7a sum
 
 **Case A — Zero reviewers reachable (any policy):**
 
-> `Step 7a BLOCKED: no internal reviewer is reachable from the current runner. Effective reviewer set: none. Reachable: []. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. To unblock: run Step 7a from a runner that supports all configured reviewers, or temporarily override 'review.on_draft.runner' via .tmp/template-config.json.`
+> `Step 7a BLOCKED: no internal reviewer is reachable from the current runner. Effective reviewer set: none. Reachable: []. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. To unblock: run Step 7a from a runner that supports all configured reviewers, or temporarily override 'review.on_draft.runner' via .ai-dev-workflow.local.yaml.`
 
 **Case B — `fail-if-any-unavailable` policy triggered (one or more reviewers unreachable, but at least one was reachable):**
 
-> `Step 7a BLOCKED: policy 'fail-if-any-unavailable' triggered — one or more internal reviewers are unreachable. No reviewers were dispatched. Effective reviewer set: none (policy block). Reachable: [<reachable-list>]. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. To unblock: run Step 7a from a runner where all configured reviewers are reachable, or set internal_reviewers_unavailable_policy to 'warn' temporarily, or override 'review.on_draft.runner' via .tmp/template-config.json.`
+> `Step 7a BLOCKED: policy 'fail-if-any-unavailable' triggered — one or more internal reviewers are unreachable. No reviewers were dispatched. Effective reviewer set: none (policy block). Reachable: [<reachable-list>]. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. To unblock: run Step 7a from a runner where all configured reviewers are reachable, or set internal_reviewers_unavailable_policy to 'warn' temporarily, or override 'review.on_draft.runner' via .ai-dev-workflow.local.yaml.`
 
 ### Reviewer dispatch map
 
@@ -1146,6 +1194,9 @@ For each reviewer in the resolved list, dispatch the stage-appropriate agent:
 | `claude`     | `spec/*`                                          | `spec-reviewer` or `01-review-spec-protocol.md`                                                                        |
 | `claude`     | `implementation-plan/*`                           | `implementation-plan-reviewer` or `02-review-implementation-plan-protocol.md`                                          |
 | `claude`     | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `code-reviewer` or `03-review-implementation-protocol.md`                                                              |
+| `cursor`     | `spec/*`                                          | Cursor `spec-reviewer` agent or `01-review-spec-protocol.md`                                                          |
+| `cursor`     | `implementation-plan/*`                           | Cursor `implementation-plan-reviewer` agent or `02-review-implementation-plan-protocol.md`                             |
+| `cursor`     | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | Cursor `code-reviewer` agent or `03-review-implementation-protocol.md`                                                 |
 | `codex`      | `spec/*`                                          | `workflow-spec-reviewer` Codex skill against `REVIEW.md`                                                               |
 | `codex`      | `implementation-plan/*`                           | `workflow-plan-reviewer` Codex skill against `REVIEW.md`                                                               |
 | `codex`      | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `workflow-code-reviewer` Codex skill against `REVIEW.md`                                                               |
@@ -1296,7 +1347,7 @@ If the diff includes any non-text change (e.g., new function, new import, change
 
 ## Step 7: Automated Reviewer Loop
 
-If one or more automated code review platforms are configured (see [`integrations/pr-review-platform.md`](../integrations/pr-review-platform.md)), run this loop after **any push to a PR branch**. If no review platform is configured, skip this step and report `⏭️ skipped` in the Step 6 summary.
+If one or more automated code review platforms are configured (see [`integrations/pr-review-platform.md`](../integrations/pr-review-platform.md)), run this loop after **any push to a PR branch**. If no review platform is configured, set `REVIEWER_LOOP_SKIPPED_NO_PLATFORMS=true`, skip this step, and report `⏭️ skipped` in the Step 6 summary.
 
 **Standalone use:** This step (and Step 8) can be run for a single PR without full orchestration — see [`93-automated-reviewer-loop-protocol.md`](93-automated-reviewer-loop-protocol.md) and the `/run-reviewer-loop` command (Cursor) or `automated-reviewer-loop` agent (Claude Code) or `workflow-reviewer-loop` skill (Codex).
 
@@ -1412,6 +1463,33 @@ The script-posted comment format:
 
 _Posted automatically by `pr-review-loop.sh`._
 ```
+
+**Mandatory readiness order:** a Work Item Runner must never apply
+`ready-for-human-review` immediately after Step 7a or immediately after opening
+the PR. The only valid path to `ready-for-human-review` is:
+
+1. Step 7a internal review gate completes successfully.
+2. Step 7 external automated reviewer loop runs to a terminal `clean` or
+   allowed `skipped` result. When Step 7 is not skipped, it leaves the automated
+   reviewer loop summary comment on the PR. When Step 7 is skipped because no
+   review platforms are configured, carry `REVIEWER_LOOP_SKIPPED_NO_PLATFORMS=true`
+   into Step 8a so the summary check can verify the explicit skip reason.
+3. When Step 7 followed a fixer push or review-feedback cycle, the runner
+   re-issues the GraphQL `reviewThreads` query before Step 7b, as described in
+   "Re-query reviewThreads after each push" below.
+4. Step 7b applies and verifies `ready-for-regression` for implementation PRs.
+5. Step 8 CI loop returns green.
+6. Step 8a readiness checklist passes, including the reviewer-loop summary
+   check and GraphQL `reviewThreads` gate.
+
+Skipping any step above is a protocol violation. If an item-orchestrator or
+stage agent returns with `ready-for-human-review` already applied before the
+sequence is complete, remove that label, add `needs-fixes`, and resume from the
+earliest skipped gate in this sequence. For example: resume at Step 7a when no
+internal review summary exists, Step 7 when no clean/skipped automated reviewer
+loop result exists, Step 7b when an implementation PR is missing
+`ready-for-regression`, Step 8 when CI has not been re-run after the latest
+label or push, or Step 8a when the final readiness checklist was skipped.
 
 ### Draft GitHub gate before ready-phase reviewers
 
@@ -1807,6 +1885,49 @@ Before running the readiness checklist below, perform a best-effort scan of the 
 
 5. After the scan: proceed to the readiness checklist below. The presence of `needs-setup` is a valid co-label with `ready-for-human-review` and does **not** block this checklist or prevent `ready-for-human-review` from being applied (BR-3). The checklist script does not check for or remove `needs-setup` — it is a deliberate signal, not a stale label.
 
+### Human Checkpoint Label Sync (pre-readiness)
+
+When the run carries an effective checkpoint policy (`checkpoints[]` on the epic
+invocation policy or a `checkpoint-policy.json` file saved at policy selection
+time), synchronize the `human-checkpoint-required` label and stable PR comment
+**after** CI and automated review are clean and **before** applying
+`ready-for-human-review`. This runs on every pass through Step 8a — including
+after fixer pushes — so label state always reflects current checkpoint
+satisfaction.
+
+**Timing**: Run after the infrastructure dependency scan above and before Check
+4 (`ready-for-human-review` application) in the readiness checklist.
+
+**Procedure**:
+
+1. Resolve the linked work item number (`ITEM_NUMBER`) and branch name
+   (`BRANCH`) for the PR.
+2. Locate the effective checkpoint policy JSON array (from epic handoff metadata,
+   `checkpoint-policy.json` in the run working directory, or
+   `invocation_policy.effective_policy.checkpoints`).
+3. Detect satisfaction from human signals and sync labels:
+
+   ```bash
+   ./scripts/development-workflow/run-epic-checkpoint-lifecycle.sh sync-pr-labels \
+     --pr "$PR_NUMBER" \
+     --item "$ITEM_NUMBER" \
+     --branch "$BRANCH" \
+     --checkpoints-file checkpoint-policy.json \
+     --write-checkpoints-file checkpoint-policy.json
+   ```
+
+4. When `BLOCKING_COUNT` is greater than zero, apply `ready-for-human-review`
+   **and** keep `human-checkpoint-required` (both labels may coexist per
+   protocol 92 BR-11/BR-3). Record checkpoint reason and required human action
+   in the `<!-- run-epic:checkpoint-status -->` comment posted by the script.
+5. When all applicable checkpoints are `satisfied` or `waived`, the script
+   removes `human-checkpoint-required` automatically.
+6. During fix cycles (Step 9): when applying `needs-fixes`, do **not** remove
+   `human-checkpoint-required` while checkpoints remain `pending`.
+
+**Skip condition**: When no checkpoint policy is in scope for this run (no
+`checkpoints[]` and no `checkpoint-policy.json`), skip this subsection.
+
 Run this checklist for **every PR**:
 
 ```bash
@@ -1857,13 +1978,17 @@ if ! LOOP_SUMMARY_BODY=$(gh pr view "$PR_NUMBER" --json comments --jq '
   exit 7  # Exit code 7 = "reviewer-loop summary missing or non-clean"
 fi
 if [ -z "$LOOP_SUMMARY_BODY" ]; then
-  echo "ERROR: Cannot verify automated reviewer-loop result — no reviewer-loop summary comment found."
-  echo "Run Step 7 (pr-review-loop.sh) before applying ready-for-human-review."
-  exit 7  # Exit code 7 = "reviewer-loop summary missing or non-clean"
+  if [ "${REVIEWER_LOOP_SKIPPED_NO_PLATFORMS:-false}" = "true" ]; then
+    echo "✅ Automated reviewer-loop summary check skipped: Step 7 was skipped because no review platforms are configured."
+  else
+    echo "ERROR: Cannot verify automated reviewer-loop result — no reviewer-loop summary comment found."
+    echo "Run Step 7 (pr-review-loop.sh) before applying ready-for-human-review."
+    exit 7  # Exit code 7 = "reviewer-loop summary missing or non-clean"
+  fi
 fi
-if echo "$LOOP_SUMMARY_BODY" | grep -Eiq '(^|[*[:space:]])Result:([*[:space:]])*(clean|skipped)([[:space:]—.,;:)]|$)|No blocking PR feedback'; then
+if [ -n "$LOOP_SUMMARY_BODY" ] && echo "$LOOP_SUMMARY_BODY" | grep -Eiq '(^|[*[:space:]])Result:([*[:space:]])*(clean|skipped)([[:space:]—.,;:)]|$)|No blocking PR feedback'; then
   echo "✅ Automated reviewer-loop summary result is clean/skipped."
-else
+elif [ -n "$LOOP_SUMMARY_BODY" ]; then
   echo "ERROR: Latest automated reviewer-loop summary is not clean/skipped."
   echo "RESULT=escalate or any non-clean terminal reviewer-loop result MUST NOT apply ready-for-human-review."
   echo "Escalate to the human or return to the reviewer loop according to Step 7."
@@ -1928,35 +2053,40 @@ fi
 # unresolved blocking findings.
 #
 # NOTE: Skip this check ONLY when Step 7 was 'skipped' because no review platforms are configured.
-echo "⛔ STOP: Verifying all review threads are resolved via GraphQL before applying ready-for-human-review..."
-CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
-# GraphQL author.login omits the "[bot]" suffix present in REST API logins; strip it.
-CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
-JQ_FILTER="[.data.repository.pullRequest.reviewThreads.nodes[]
-        | select(.isResolved == false)
-        | select((.isOutdated // false) == false)
-        | select(.comments.nodes[0].author.login as \$a | [\"coderabbitai\",\"devin-ai-integration\",\"greptile-apps\",\"$CODEX_BOT_LOGIN\"] | index(\$a) != null)
-        | select((.comments.nodes[0].body // \"\") | test(\"✅ Addressed\") | not)] | length"
-UNRESOLVED_COUNT=$(gh api graphql -f query='
-  query($owner:String!, $repo:String!, $number:Int!) {
-    repository(owner:$owner, name:$repo) {
-      pullRequest(number:$number) {
-        reviewThreads(first: 100) {
-          nodes { isResolved isOutdated comments(first: 1) { nodes { author { login } body } } }
+if [ "${REVIEWER_LOOP_SKIPPED_NO_PLATFORMS:-false}" = "true" ]; then
+  echo "✅ GraphQL reviewThreads check skipped: Step 7 was skipped because no review platforms are configured."
+else
+  echo "⛔ STOP: Verifying all review threads are resolved via GraphQL before applying ready-for-human-review..."
+  CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
+  # GraphQL author.login omits the "[bot]" suffix present in REST API logins; strip it.
+  CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
+  JQ_FILTER="[.data.repository.pullRequest.reviewThreads.nodes[]
+          | select(.isResolved == false)
+          | select((.isOutdated // false) == false)
+          | select(.comments.nodes[0].author.login as \$a | [\"coderabbitai\",\"devin-ai-integration\",\"greptile-apps\",\"$CODEX_BOT_LOGIN\"] | index(\$a) != null)
+          | select((.comments.nodes[0].body // \"\") | test(\"✅ Addressed\") | not)] | length"
+  UNRESOLVED_COUNT=$(gh api graphql -f query='
+    query($owner:String!, $repo:String!, $number:Int!) {
+      repository(owner:$owner, name:$repo) {
+        pullRequest(number:$number) {
+          reviewThreads(first: 100) {
+            nodes { isResolved isOutdated comments(first: 1) { nodes { author { login } body } } }
+          }
         }
       }
     }
   }' -f owner="<owner>" -f repo="<repo>" -F number="$PR_NUMBER" \
-  --jq "$JQ_FILTER")
+    --jq "$JQ_FILTER")
 
-if [ "$UNRESOLVED_COUNT" -gt 0 ]; then
-  echo "ERROR: Cannot proceed to Check 4 — $UNRESOLVED_COUNT unresolved review thread(s) found."
-  echo "You MUST resolve all bot-authored review threads before applying ready-for-human-review."
-  echo "Run the GraphQL query from Step 8c to identify unresolved threads, address them, push fixes,"
-  echo "and re-run this checklist from the beginning."
-  exit 4  # Exit code 4 = "unresolved review threads at pre-Check-4 gate"
+  if [ "$UNRESOLVED_COUNT" -gt 0 ]; then
+    echo "ERROR: Cannot proceed to Check 4 — $UNRESOLVED_COUNT unresolved review thread(s) found."
+    echo "You MUST resolve all bot-authored review threads before applying ready-for-human-review."
+    echo "Run the GraphQL query from Step 8c to identify unresolved threads, address them, push fixes,"
+    echo "and re-run this checklist from the beginning."
+    exit 4  # Exit code 4 = "unresolved review threads at pre-Check-4 gate"
+  fi
+  echo "✅ GraphQL verification: all review threads resolved. Proceeding to Check 4."
 fi
-echo "✅ GraphQL verification: all review threads resolved. Proceeding to Check 4."
 
 # Check 4: ready-for-human-review label NOT yet applied (we are about to apply it)
 HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c "^ready-for-human-review$" || true)
@@ -2139,6 +2269,8 @@ Verify all of the following. If any check fails, **do not report ready** — tre
 | `ready-for-regression` label                    | Present in `labels[].name` for `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, `backport/hotfix/*`; absent/ignored for `spec/*`, `implementation-plan/*`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | No `needs-fixes` label                          | `needs-fixes` absent from `labels[].name`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `needs-setup` label (if present)                | **Valid co-label** — `needs-setup` may be present alongside `ready-for-human-review` when the diff contains infrastructure dependency signals. Its presence does **not** constitute a verification failure and does not block this check. Do not remove it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `human-checkpoint-required` label (when checkpoints in scope) | When the run carries checkpoint policy for this item: present if and only if applicable checkpoints remain `pending`; absent when all applicable checkpoints are `satisfied` or `waived`. Valid co-label with `ready-for-human-review`. When no checkpoint policy is in scope, ignore this check. |
+| Checkpoint status comment (when checkpoints in scope) | At least one PR comment containing `<!-- run-epic:checkpoint-status -->` whose blocking section matches the current label state. Skip when no checkpoint policy is in scope. |
 | All automated-reviewer `reviewThreads` resolved | GraphQL query above returns empty output — `isResolved: true` (or first comment body contains `✅ Addressed`) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | Automated reviewer loop summary                 | At least one comment whose body contains `"Automated Reviewer Loop Summary"`, `"Reviewer Loop Summary"`, or `"No blocking PR feedback"` (skip this check only when Step 7 was `skipped` because no review platforms are configured), and the latest summary's `Result:` line is `clean` or `skipped`. **This is a hard requirement. Agents applying fixes MUST NOT remove or skip this check — the presence of the comment plus a clean/skipped result is the only reliable signal that Step 7 ran to completion successfully. A PR that has `ready-for-human-review` but lacks this comment or has `RESULT=escalate`, `pending_timeout`, `timeout`, `needs_fixes`, or any other non-clean terminal result is in an incomplete state and must re-run Step 7 or escalate.** (Note: the Step 7a summary comment posted by the internal review gate is a distinct comment from a distinct step — it does not satisfy this check. This check targets the external automated reviewer loop summary from Step 7 only.) |
 | CI checks                                       | All required status checks have `state: SUCCESS` or `conclusion: success` in `statusCheckRollup` (no check in `PENDING`, `FAILURE`, or `ERROR` state)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |

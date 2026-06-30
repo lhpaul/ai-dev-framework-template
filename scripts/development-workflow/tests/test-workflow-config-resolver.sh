@@ -162,6 +162,7 @@ run_contains "workflow_hub_context_name" "TARGET_REPO_NAME=mobile-app" "$hub_out
 run_contains "workflow_hub_context_github_repo" "TARGET_GITHUB_REPO=example/mobile-app" "$hub_output"
 run_contains "workflow_hub_context_default_branch" "TARGET_DEFAULT_BRANCH=main" "$hub_output"
 run_contains "workflow_hub_context_tracker_hints" "TARGET_TRACKER_HINTS=component:mobile" "$hub_output"
+run_contains "workflow_hub_context_ci_policy" "TARGET_CI_POLICY=required" "$hub_output"
 run_contains "workflow_hub_local_path_override" "TARGET_LOCAL_PATH=$TMP_ROOT/local/mobile-app" "$hub_output"
 run_contains "workflow_hub_local_path_source" "TARGET_LOCAL_PATH_SOURCE=local_override" "$hub_output"
 
@@ -213,6 +214,36 @@ run_fails_contains \
   "workflow_hub_unknown_repo" \
   "no workflow_hub.product_repos entry named 'unknown-app'" \
   python3 "$RESOLVER" resolve --repo-root "$hub_dir" --repo unknown-app
+
+ci_policy_dir="$(fixture_dir ci-policy-hub)"
+cat > "$ci_policy_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      ci_policy: none
+YAML
+none_ci_output="$(workflow_repository_context mobile-app "$ci_policy_dir")"
+run_contains "workflow_hub_ci_policy_none" "TARGET_CI_POLICY=none" "$none_ci_output"
+
+bad_ci_dir="$(fixture_dir bad-ci-policy)"
+cat > "$bad_ci_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      ci_policy: maybe
+YAML
+run_fails_contains \
+  "workflow_hub_invalid_ci_policy" \
+  "workflow_hub.product_repos[1].ci_policy must be one of" \
+  python3 "$RESOLVER" resolve --repo-root "$bad_ci_dir" --repo mobile-app
 
 no_local_dir="$(fixture_dir no-local)"
 cat > "$no_local_dir/.ai-dev-workflow.yaml" <<'YAML'
@@ -337,6 +368,19 @@ run_contains "product_repo_context_mode" "WORKFLOW_MODE=product_repo" "$product_
 run_contains "product_repo_context_hub" "WORKFLOW_HUB_GITHUB_REPO=example/workflow-hub" "$product_repo_output"
 run_contains "product_repo_context_branch" "TARGET_DEFAULT_BRANCH=release" "$product_repo_output"
 
+product_ci_none_dir="$(fixture_dir product-ci-none)"
+cat > "$product_ci_none_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: product_repo
+
+product_repo:
+  ci_policy: none
+  workflow_hub:
+    github_repo: example/workflow-hub
+YAML
+product_ci_none_output="$(workflow_repository_context "" "$product_ci_none_dir")"
+run_contains "product_repo_ci_policy_none" "TARGET_CI_POLICY=none" "$product_ci_none_output"
+
 bad_product_repo_dir="$(fixture_dir bad-product-repo)"
 cat > "$bad_product_repo_dir/.ai-dev-workflow.yaml" <<'YAML'
 schema_version: 2
@@ -351,31 +395,42 @@ run_fails_contains \
   python3 "$RESOLVER" resolve --repo-root "$bad_product_repo_dir"
 
 review_dir="$(fixture_dir review-overrides)"
-mkdir -p "$review_dir/.tmp"
-cat > "$review_dir/.tmp/template-config.json" <<'JSON'
-{
-  "overrides": {
-    "review": {
-      "on_draft": {
-        "runner": ["claude"]
-      },
-      "internal_reviewers_unavailable_policy": "fail-if-any-unavailable"
-    }
-  }
-}
-JSON
 cat > "$review_dir/.ai-dev-workflow.local.yaml" <<'YAML'
 review:
   on_draft:
     runner: [codex]
+    github: [pr-agent]
+  on_ready:
+    github: [bugbot]
   internal_reviewers_unavailable_policy: warn
 YAML
 review_output="$(workflow_review_override_context "$review_dir")"
-run_contains "legacy_review_override_precedence_runner" "REVIEW_ON_DRAFT_RUNNER=claude" "$review_output"
-run_contains "legacy_review_override_precedence_runner_source" "REVIEW_ON_DRAFT_RUNNER_SOURCE=.tmp/template-config.json" "$review_output"
-run_contains "legacy_review_override_precedence_policy" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY=fail-if-any-unavailable" "$review_output"
-run_contains "legacy_review_override_precedence_policy_source" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY_SOURCE=.tmp/template-config.json" "$review_output"
-run_contains "legacy_review_override_source" "LOCAL_OVERRIDE_SOURCE=runner:.tmp/template-config.json,policy:.tmp/template-config.json" "$review_output"
+run_contains "local_review_override_runner_value" "REVIEW_ON_DRAFT_RUNNER=codex" "$review_output"
+run_contains "local_review_override_runner_source" "REVIEW_ON_DRAFT_RUNNER_SOURCE=.ai-dev-workflow.local.yaml" "$review_output"
+run_contains "local_review_override_draft_github_value" "REVIEW_ON_DRAFT_GITHUB=pr-agent" "$review_output"
+run_contains "local_review_override_draft_github_source" "REVIEW_ON_DRAFT_GITHUB_SOURCE=.ai-dev-workflow.local.yaml" "$review_output"
+run_contains "local_review_override_ready_github_value" "REVIEW_ON_READY_GITHUB=bugbot" "$review_output"
+run_contains "local_review_override_ready_github_source" "REVIEW_ON_READY_GITHUB_SOURCE=.ai-dev-workflow.local.yaml" "$review_output"
+run_contains "local_review_override_policy_value" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY=warn" "$review_output"
+run_contains "local_review_override_policy_source" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY_SOURCE=.ai-dev-workflow.local.yaml" "$review_output"
+run_contains "local_review_override_combined_source" "LOCAL_OVERRIDE_SOURCE=runner:.ai-dev-workflow.local.yaml,draft-github:.ai-dev-workflow.local.yaml,ready-github:.ai-dev-workflow.local.yaml,policy:.ai-dev-workflow.local.yaml" "$review_output"
+
+empty_review_dir="$(fixture_dir empty-review-overrides)"
+cat > "$empty_review_dir/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_draft:
+    runner: []
+    github: []
+  on_ready:
+    github: []
+YAML
+empty_review_output="$(workflow_review_override_context "$empty_review_dir")"
+run_contains "empty_local_review_override_runner_value" "REVIEW_ON_DRAFT_RUNNER=" "$empty_review_output"
+run_contains "empty_local_review_override_runner_source" "REVIEW_ON_DRAFT_RUNNER_SOURCE=.ai-dev-workflow.local.yaml" "$empty_review_output"
+run_contains "empty_local_review_override_draft_github_value" "REVIEW_ON_DRAFT_GITHUB=" "$empty_review_output"
+run_contains "empty_local_review_override_draft_github_source" "REVIEW_ON_DRAFT_GITHUB_SOURCE=.ai-dev-workflow.local.yaml" "$empty_review_output"
+run_contains "empty_local_review_override_ready_github_value" "REVIEW_ON_READY_GITHUB=" "$empty_review_output"
+run_contains "empty_local_review_override_ready_github_source" "REVIEW_ON_READY_GITHUB_SOURCE=.ai-dev-workflow.local.yaml" "$empty_review_output"
 
 local_review_dir="$(fixture_dir local-review-overrides)"
 cat > "$local_review_dir/.ai-dev-workflow.local.yaml" <<'YAML'
@@ -402,26 +457,30 @@ local_review_output="$(workflow_review_override_context "$local_review_dir")"
 run_contains "local_review_override_runner" "REVIEW_ON_DRAFT_RUNNER=claude,with-comma,codex" "$local_review_output"
 run_contains "local_review_override_source" "LOCAL_OVERRIDE_SOURCE=runner:.ai-dev-workflow.local.yaml,policy:.ai-dev-workflow.local.yaml" "$local_review_output"
 
-mixed_review_dir="$(fixture_dir mixed-review-overrides)"
-mkdir -p "$mixed_review_dir/.tmp"
-cat > "$mixed_review_dir/.tmp/template-config.json" <<'JSON'
+stale_review_dir="$(fixture_dir stale-review-overrides)"
+mkdir -p "$stale_review_dir/.tmp"
+cat > "$stale_review_dir/.tmp/template-config.json" <<'JSON'
 {
   "overrides": {
     "review": {
+      "on_draft": {
+        "runner": ["claude"]
+      },
       "internal_reviewers_unavailable_policy": "fail-if-any-unavailable"
     }
   }
 }
 JSON
-cat > "$mixed_review_dir/.ai-dev-workflow.local.yaml" <<'YAML'
-review:
-  on_draft:
-    runner: [codex]
-YAML
-mixed_review_output="$(workflow_review_override_context "$mixed_review_dir")"
-run_contains "mixed_review_override_runner_source" "REVIEW_ON_DRAFT_RUNNER_SOURCE=.ai-dev-workflow.local.yaml" "$mixed_review_output"
-run_contains "mixed_review_override_policy_source" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY_SOURCE=.tmp/template-config.json" "$mixed_review_output"
-run_contains "mixed_review_override_combined_source" "LOCAL_OVERRIDE_SOURCE=runner:.ai-dev-workflow.local.yaml,policy:.tmp/template-config.json" "$mixed_review_output"
+stale_review_output="$(workflow_review_override_context "$stale_review_dir")"
+run_contains "stale_review_override_runner_empty" "REVIEW_ON_DRAFT_RUNNER=" "$stale_review_output"
+run_contains "stale_review_override_runner_source_empty" "REVIEW_ON_DRAFT_RUNNER_SOURCE=" "$stale_review_output"
+run_contains "stale_review_override_draft_github_empty" "REVIEW_ON_DRAFT_GITHUB=" "$stale_review_output"
+run_contains "stale_review_override_draft_github_source_empty" "REVIEW_ON_DRAFT_GITHUB_SOURCE=" "$stale_review_output"
+run_contains "stale_review_override_ready_github_empty" "REVIEW_ON_READY_GITHUB=" "$stale_review_output"
+run_contains "stale_review_override_ready_github_source_empty" "REVIEW_ON_READY_GITHUB_SOURCE=" "$stale_review_output"
+run_contains "stale_review_override_policy_empty" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY=" "$stale_review_output"
+run_contains "stale_review_override_policy_source_empty" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY_SOURCE=" "$stale_review_output"
+run_contains "stale_review_override_source_empty" "LOCAL_OVERRIDE_SOURCE=" "$stale_review_output"
 
 malformed_dir="$(fixture_dir malformed)"
 cat > "$malformed_dir/.ai-dev-workflow.yaml" <<'YAML'

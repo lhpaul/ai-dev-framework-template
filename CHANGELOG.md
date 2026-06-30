@@ -7,6 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-06-30
+
+### Changed
+
+- **Final orchestration command map** (#1050, #1051, #1076, #1077, #1078, #1080):
+  `/run-work` is now a read-only portfolio scan, `/run-items` is the bounded
+  multi-item execution command, `/run-epic` is epic-only, and `/run-item` is the
+  canonical single-item command across AGENTS, README, protocol, skill, Cursor,
+  and Claude command surfaces.
+- **Bounded orchestration guardrails** (#1049, #1052, #1079): the template now
+  ships delegated guardrails by default, always confirms mutating bounded runs
+  before execution, records PR disposition and work-item ledger audit evidence,
+  and documents optional parallelism limits with default serialized
+  implementation lanes.
+
+### Added
+
+- **Human checkpoint lifecycle** (#1021, #1022, #1023, #1024): adds checkpoint
+  policy recommendations, `human-checkpoint-required` readiness signaling,
+  checkpoint satisfaction and waiver evidence, delegated merge blocking, batch
+  merge discovery support, and an end-to-end smoke-test runbook.
+- **Workflow hub product-repo preflight** (#1038, #1040): `hub-preflight-product-repos.sh`
+  bootstraps workflow readiness labels, validates product-repo CI policy, and
+  lets delegated merge gates honor explicit `ciPolicy: none` when checks are absent.
+- **Reviewer-loop preflight guards** (#1028, #1035, #1037): Bugbot activation is
+  detected from `cursor[bot]` comments before polling; Haystack triage HTTP 401/403
+  errors fail fast with `REASON=unauthorized`/`forbidden` instead of
+  `pending_timeout`; draft PRs skip Haystack with `REASON=pr-is-draft` and guidance
+  to mark ready before rerunning.
+- **Model cost resilience documentation** (#1044, #1045, #1046): pins explicit
+  Cursor subagent models in `.cursor/agents/*.md` and documents tier defaults in
+  `agent-model-config.md`; adds a provider quota/timeout/runner failover runbook
+  and an experimental opt-in LLM router integration pattern for tier-aligned
+  fallback chains.
+- **Cursor and local config workflow surfaces**: adds Cursor as a Step 7a runner
+  reviewer option, exposes Bugbot review overrides, ships Bugbot rules and local
+  runner examples, and moves local workflow overrides to
+  `.ai-dev-workflow.local.yaml`.
+
+### Fixed
+
+- **Workflow readiness handoff guards** (#1071, #1073, #1074): Protocol 91 now
+  states the mandatory Step 7a -> Step 7 -> Step 7b -> Step 8 -> Step 8a order
+  before `ready-for-human-review`; Protocol 90 treats missing reviewer-loop
+  summaries or failing CI as non-terminal batch states; Protocol 03 calls out
+  `post-merge-cleanup.sh` changes as requiring the workflow shell guard before
+  PR creation.
+- **Scan-only and ShellCheck consistency** (#1076): ShellCheck fetches enough
+  base history for `workflow-shell-guard-lint.py`, and Protocol 90 plus command
+  surfaces now consistently skip dispatch-only tracker updates during
+  `/run-work` scan mode.
+- **Spec review checklist: URL-parameterized state completeness check** (#973): adds an explicit check item to the Spec Review Checklist in `REVIEW.md` requiring that any URL-serialized state (query parameters, path parameters, hash fragments) introduced by a spec must define all parameter key names and allowed values; adds a corresponding `blocking` finding type to catch specs that leave the serialization contract underspecified, preventing this class of gap from reaching the external reviewer loop.
+- **Linear orchestrator project scoping** (#972): Portfolio Orchestrator (`/run-work`) now
+  reads `issue_tracker.custom_fields.project` from `.ai-dev-workflow.yaml` and filters
+  Linear item-discovery queries to only items belonging to the configured project. If the
+  field is absent, a visible warning is emitted and the orchestrator falls back to the
+  previous unscoped team query. Prevents cross-codebase items from appearing as candidates
+  in repositories with multi-project Linear workspaces. Updated Protocol 90 Step 1a and
+  `integrations/linear.md` to document the new scoping behavior.
+- **Linear priority drift detection** (#974): orchestrators applying Linear
+  MCP status updates now compare the post-write priority against the
+  dispatch-time value and emit `PRIORITY_DRIFT_WARNING` when drift is detected;
+  adds optional post-write re-read with `TRACKER_WRITE_UNCONFIRMED` and
+  one-retry logic when the status update is not reflected in the API read-back.
+  Updated `linear.md` and Protocol 90 deferred-action collection loop.
+- **Post-merge cleanup pull without upstream tracking** (#1058): `post-merge-cleanup.sh`
+  now uses `git pull --ff-only origin "$DEVELOP_BRANCH"` instead of bare `git pull` so
+  integration branches created without `--set-upstream` no longer cause "no tracking
+  information" errors during cleanup.
+- **Post-merge cleanup closes issues from PR body when branch slug lacks issue number** (#1059):
+  `post-merge-cleanup.sh` now parses the merged PR body and title for GitHub
+  closing keywords (`Closes #N`, `Fixes #N`, `Resolves #N`, etc.) when the
+  branch name contains no embedded issue number (e.g. `feature/model-cost-resilience`).
+  Each referenced issue is closed and its tracker status updated to Merged,
+  preventing silent skip of issue closeout on epic-slug branches.
+- **Post-merge cleanup missing local branch** (#1039): `post-merge-cleanup.sh`
+  continues fetch, base checkout, and tracker closeout when the local branch is
+  already deleted but a merged PR exists for that branch head (common after
+  delegated merge with `--delete-branch`).
+- **Workflow-hub base branch routing**: `/run-epic` scope resolution and
+  spec/plan orchestration now distinguish hub artifact bases from product
+  implementation bases, so a hub repository can use `main` while product
+  implementation PRs target `develop`.
+
 ## [0.33.1] - 2026-06-19
 
 ### Fixed
@@ -966,7 +1050,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.33.1...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.34.0...HEAD
+[0.34.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.33.1...v0.34.0
 [0.33.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.33.0...v0.33.1
 [0.33.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.31.0...v0.32.0

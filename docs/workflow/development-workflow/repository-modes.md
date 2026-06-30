@@ -61,6 +61,20 @@ protocols, hub docs, or hub-owned orchestration scripts opens its code PR in the
 hub. A product implementation opens its code PR in the target product
 repository.
 
+## Base Branch Ownership
+
+Base branch checks must run against the repository that owns the next mutating
+artifact:
+
+- Hub-owned spec and plan PRs validate against the hub repository's artifact
+  base branch, typically the hub default branch.
+- Product implementation PRs validate against the selected product repository's
+  implementation base branch, usually the product entry's `default_branch` or a
+  run-scoped integration branch such as `develop-<slug>`.
+- A `/run-epic --base <branch>` override in `workflow_hub` mode describes the
+  product implementation base. It must not be used as a precondition that the
+  hub repository itself has a branch with the same name.
+
 ## Orchestration Ownership
 
 Workflow orchestration scripts keep planning and tracker state in the hub while
@@ -251,6 +265,7 @@ workflow_hub:
     - name: mobile-app
       github_repo: example/mobile-app
       default_branch: main
+      ci_policy: required
       role: mobile
       scope: customer-facing app
       tracker:
@@ -261,8 +276,9 @@ workflow_hub:
 ```
 
 Each product entry needs a stable `name` and either `github_repo` or `git_url`.
-Optional shared fields may include `default_branch`, `role`, `scope`, `tracker`
-hints, and non-secret app identifiers. Shared product entries must not contain
+Optional shared fields may include `default_branch`, `ci_policy` (`required` or
+explicit `none` for repositories without GitHub Actions checks), `role`, `scope`,
+`tracker` hints, and non-secret app identifiers. Shared product entries must not contain
 local checkout paths, private key paths, secret values, or machine-specific tool
 settings.
 
@@ -378,16 +394,15 @@ against safe test repositories only.
 
 ### Compatibility And Precedence
 
-Existing `.tmp/template-config.json` review overrides remain supported for the
-legacy keys they already handled. New local workflow configuration should use
-`.ai-dev-workflow.local.yaml`.
+Local workflow configuration belongs in `.ai-dev-workflow.local.yaml`. Runtime
+review overrides, checkout paths, and local secret references must use that
+local YAML file rather than ad hoc local config files.
 
 Effective precedence is:
 
-1. `.tmp/template-config.json` for legacy review override keys.
-2. `.ai-dev-workflow.local.yaml` for new local config keys.
-3. `.ai-dev-workflow.yaml` shared config.
-4. Built-in defaults, including missing `mode` resolving as `single_repo`.
+1. `.ai-dev-workflow.local.yaml` for local config keys.
+2. `.ai-dev-workflow.yaml` shared config.
+3. Built-in defaults, including missing `mode` resolving as `single_repo`.
 
 ### Validation And Shell Helpers
 

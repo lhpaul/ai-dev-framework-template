@@ -161,6 +161,37 @@ run_fails_contains "rejects_empty_fixture" "input file is empty" "$GATE" --input
 run_fails_contains "rejects_malformed_fixture" "input file is not valid JSON" "$GATE" --input "$malformed_file"
 run_fails_contains "rejects_whitespace_fixture" "input file is not valid JSON" "$GATE" --input "$whitespace_file"
 
+no_ci_fixture="$(write_fixture no-ci '.statusChecks = [] | .ciPolicy = "none"')"
+run_test "ci_policy_none_allows_empty_checks" "merge_allowed" "$(decision_for "$no_ci_fixture")"
+
+no_ci_failed_fixture="$(write_fixture no-ci-failed '.statusChecks = [{"name": "guard", "status": "COMPLETED", "conclusion": "FAILURE"}] | .ciPolicy = "none"')"
+run_test "ci_policy_none_skips_failed_checks" "merge_allowed" "$(decision_for "$no_ci_failed_fixture")"
+
+stale_ci_risk_fixture="$(write_fixture stale-ci-risk '.statusChecks = [] | .ciPolicy = "none" | .risk = {mergePermitted: false, blockers: ["required CI state is missing or unavailable"]}')"
+run_test "ci_policy_none_ignores_stale_ci_risk_snapshot" "merge_allowed" "$(decision_for "$stale_ci_risk_fixture")"
+
+hub_ci_dir="$TMP_ROOT/hub-ci-policy-none"
+mkdir -p "$hub_ci_dir"
+cat > "$hub_ci_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      ci_policy: none
+YAML
+
+wrong_slug_hub_fixture="$(write_fixture wrong-slug-hub '.statusChecks = [] | .github_repo = "example/wrong-app"')"
+run_test "hub_ci_policy_skips_unknown_github_slug" "blocked" "$("$GATE" --input "$wrong_slug_hub_fixture" --repo-root "$hub_ci_dir" --json | jq -r '.decision')"
+
+missing_ci_hub_fixture="$(write_fixture missing-ci-hub '.statusChecks = [] | .productRepo = {name: "mobile-app"}')"
+run_test "hub_ci_policy_none_from_resolver" "merge_allowed" "$("$GATE" --input "$missing_ci_hub_fixture" --repo-root "$hub_ci_dir" --product-repo mobile-app --json | jq -r '.decision')"
+
+stale_slug_hub_fixture="$(write_fixture stale-slug-hub '.statusChecks = [] | .productRepo = {name: "mobile-app"} | .github_repo = "example/stale-slug"')"
+run_test "hub_ci_policy_uses_product_repo_name_over_stale_slug" "merge_allowed" "$("$GATE" --input "$stale_slug_hub_fixture" --repo-root "$hub_ci_dir" --product-repo mobile-app --json | jq -r '.decision')"
+
 clean_fixture="$(write_fixture clean)"
 run_test "merge_allowed_when_all_gates_clean" "merge_allowed" "$(decision_for "$clean_fixture")"
 run_test "merge_permitted_true" "true" "$("$GATE" --input "$clean_fixture" --json | jq -r '.mergePermitted')"
@@ -258,6 +289,28 @@ run_test "risk_gate_accepts_classifier_shape" "merge_allowed" "$(decision_for "$
 
 missing_risk_fixture="$(write_fixture missing-risk 'del(.risk)')"
 run_test "missing_risk_gate_requires_human" "human_required" "$(decision_for "$missing_risk_fixture")"
+
+pending_checkpoint_fixture="$(write_fixture pending-checkpoint '.item.number = 1023 | .pr.headRefName = "feature/1023-human-checkpoint-gates" | .policy.checkpoints = [{"item_number":1023,"stage":"implementation","domain":"technical","reason":"sensitive merge gate behavior","required_human_action":"approve delegated gate checkpoint handling","satisfaction_state":"pending"}]')"
+run_test "pending_checkpoint_requires_human" "human_required" "$(decision_for "$pending_checkpoint_fixture")"
+run_test "pending_checkpoint_reason_names_action" "true" "$(reason_match_for "$pending_checkpoint_fixture" "approve delegated gate checkpoint handling")"
+
+snake_case_checkpoint_fixture="$(write_fixture snake-case-checkpoint '.item.number = 1023 | .pr.headRefName = "feature/1023-human-checkpoint-gates" | .policy.effective_policy.checkpoints = [{"item_number":1023,"stage":"implementation","domain":"technical","reason":"snake case policy","required_human_action":"approve snake case checkpoint","satisfaction_state":"pending"}]')"
+run_test "snake_case_policy_checkpoint_requires_human" "human_required" "$(decision_for "$snake_case_checkpoint_fixture")"
+
+invocation_policy_checkpoint_fixture="$(write_fixture invocation-policy-checkpoint '.item.number = 1023 | .pr.headRefName = "feature/1023-human-checkpoint-gates" | .invocation_policy.effective_policy.checkpoints = [{"item_number":1023,"stage":"implementation","domain":"technical","reason":"invocation policy","required_human_action":"approve invocation checkpoint","satisfaction_state":"pending"}]')"
+run_test "invocation_policy_checkpoint_requires_human" "human_required" "$(decision_for "$invocation_policy_checkpoint_fixture")"
+
+satisfied_checkpoint_fixture="$(write_fixture satisfied-checkpoint '.item.number = 1023 | .pr.headRefName = "feature/1023-human-checkpoint-gates" | .policy.checkpoints = [{"item_number":1023,"stage":"implementation","domain":"technical","reason":"sensitive merge gate behavior","required_human_action":"approve delegated gate checkpoint handling","satisfaction_state":"satisfied","satisfied_by":"lhpaul"}]')"
+run_test "satisfied_checkpoint_allows_merge" "merge_allowed" "$(decision_for "$satisfied_checkpoint_fixture")"
+
+other_item_checkpoint_fixture="$(write_fixture other-item-checkpoint '.item.number = 1023 | .pr.headRefName = "feature/1023-human-checkpoint-gates" | .policy.checkpoints = [{"item_number":9999,"stage":"implementation","domain":"technical","reason":"other item","required_human_action":"ignore","satisfaction_state":"pending"}]')"
+run_test "other_item_checkpoint_does_not_block" "merge_allowed" "$(decision_for "$other_item_checkpoint_fixture")"
+
+future_stage_checkpoint_fixture="$(write_fixture future-stage-checkpoint '.item.number = 1023 | .pr.headRefName = "implementation-plan/1023-human-checkpoint-gates" | .policy.checkpoints = [{"item_number":1023,"stage":"implementation","domain":"technical","reason":"future implementation review","required_human_action":"approve implementation","satisfaction_state":"pending"}]')"
+run_test "future_stage_checkpoint_does_not_block" "merge_allowed" "$(decision_for "$future_stage_checkpoint_fixture")"
+
+stale_checkpoint_label_fixture="$(write_fixture stale-checkpoint-label '.pr.labels += ["human-checkpoint-required"]')"
+run_test "stale_checkpoint_label_requires_human" "human_required" "$(decision_for "$stale_checkpoint_label_fixture")"
 
 audit_fixture="$(write_fixture audit-missing '.pr.auditDispositionPresent = false')"
 run_test "audit_required_before_merge" "blocked" "$(decision_for "$audit_fixture")"

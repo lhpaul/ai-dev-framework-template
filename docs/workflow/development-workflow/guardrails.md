@@ -129,6 +129,40 @@ guardrails:
 
 ---
 
+## Portfolio parallelism (optional)
+
+The `parallelism` block under `guardrails` configures stage-lane caps for
+`/run-work` portfolio batches (Protocol 90 Step 3). It does not change per-stage
+protocol contracts — only how many items per lane may dispatch concurrently.
+
+| Field | Type | Default | Meaning |
+| ----- | ---- | ------- | ------- |
+| `max_concurrent_by_stage.spec` | integer | `0` (unlimited) | Max concurrent spec-lane items in one batch proposal. |
+| `max_concurrent_by_stage.plan` | integer | `0` (unlimited) | Max concurrent plan-lane items. |
+| `max_concurrent_by_stage.review` | integer | `0` (unlimited) | Max concurrent review-lane items. |
+| `max_concurrent_by_stage.implementation` | integer | `1` | Max concurrent implementation items (conservative default). |
+
+`0` means no cap for that lane. Higher implementation concurrency requires explicit
+configuration; `workflow-batch-plan.sh` may still emit `LOCAL_RUNTIME=exclusive` to
+hold items that would contend for local dev servers, databases, or ports even when
+the lane cap allows more than one implementation item.
+
+```yaml
+guardrails:
+  mode: delegated
+  parallelism:
+    max_concurrent_by_stage:
+      spec: 0
+      plan: 0
+      review: 0
+      implementation: 2
+```
+
+Resolved lane assignments and hold reasons are emitted by
+`scripts/development-workflow/workflow-batch-lanes.sh`.
+
+---
+
 ## Required Evidence
 
 The `required_evidence` field on each stage lists named evidence items that must
@@ -174,6 +208,7 @@ The following stop conditions are always in force:
 | `unresolved_blocking_review`          | A blocking review thread (from a reviewer or automated tool) is unresolved.            |
 | `high_risk_change`                    | The classified PR risk exceeds the stage's configured `max_merge_risk`.                |
 | `destructive_action`                  | The action would delete branches, data, releases, or other non-recoverable artifacts.  |
+| `human_checkpoint_required`           | A declared stage-scoped human checkpoint is still pending for the PR's work item.      |
 | `missing_tracker_context`             | The work item is missing required tracker metadata (status, type, or linked spec).     |
 | `missing_required_secret_or_permission` | A required credential or GitHub permission is absent.                                |
 
@@ -197,6 +232,40 @@ These records are how a human can audit what agents did and why, without reading
 agent session logs. In `manual` and `assisted` modes, humans make every merge
 decision directly, so no disposition record is required (though agents may still
 leave informational comments).
+
+---
+
+## Two-Step Lifecycle and Always-Confirm
+
+The framework ships a **two-step lifecycle** as its default operating model:
+
+1. **Execute** — `/run-item`, `/run-items`, or `/run-epic` advance work to
+   `ready-for-human-review`. These commands stop before merge.
+2. **Land** — `/batch-merge` (or manual merge) lands ready PRs after a human
+   confirms the merge plan.
+
+This separation keeps humans in control of what goes into the integration branch
+while still automating the preparation, review, and CI-readiness steps.
+
+### Always-Confirm Prelude
+
+Every mutating orchestration command (`/run-item`, `/run-items`, `/run-epic`) runs
+the **shared bounded prelude** before any artifact mutation. The prelude always
+sets `requiresConfirmation: true`, which means:
+
+- The resolved policy is always printed before work starts.
+- When all autonomy flags were provided explicitly in the invocation (e.g.,
+  `--delegate-review --may-merge --may-start-backlog true --max-risk high`), those
+  explicit flags serve as the human's confirmation and the orchestrator may
+  proceed immediately after printing the summary.
+- When any flag was inferred or scope is ambiguous, the orchestrator stops and
+  waits for the human to confirm or re-invoke with corrected flags.
+
+**`/run-work` is exempt**: the portfolio scan is read-only (no mutation), so the
+bounded prelude is not required. Only the execute commands run the prelude.
+
+See [`bounded-run-prelude.md`](bounded-run-prelude.md) for the full prelude
+contract and script reference.
 
 ---
 

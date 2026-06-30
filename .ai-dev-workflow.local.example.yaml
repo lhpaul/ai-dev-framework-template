@@ -26,10 +26,24 @@ product_repos:
 
 # Local reviewer/tool overrides. These are developer-specific and should not be
 # committed to the shared workflow config.
+#
+# Cursor pilot example:
+# - copy this file to `.ai-dev-workflow.local.yaml`
+# - set `review.on_draft.runner` to `cursor` while running `/run-work` from
+#   Cursor so Step 7a dispatches the Cursor review agents instead of Codex
+# - override GitHub/App reviewer lists to match the tools available on this
+#   machine, for example PR Agent during draft and Cursor Bugbot after ready
+# - keep `internal_reviewers_unavailable_policy: warn` unless you explicitly
+#   want unavailable local reviewers to hard-fail the gate
 review:
   on_draft:
     runner:
-      - codex
+      - cursor
+    github:
+      - pr-agent
+  on_ready:
+    github:
+      - bugbot
   internal_reviewers_unavailable_policy: warn
 
 tools:
@@ -37,3 +51,9 @@ tools:
     command: haystack
   browser:
     provider: playwright_cli
+
+# Optional sync-template source. Use either local_path or git_url.
+template:
+  source:
+    local_path: ../ai-dev-framework-template
+    # git_url: https://github.com/example/ai-dev-framework-template

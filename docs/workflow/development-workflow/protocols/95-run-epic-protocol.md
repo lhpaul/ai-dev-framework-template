@@ -1,10 +1,9 @@
 # Protocol: Run Epic
 
 **Agent role**: Epic Runner (`run-epic`)
-**Purpose**: Convert a native GitHub epic or explicit item list into a bounded
-execution set, then run an explicitly authorized delegated review and merge
-loop with pre-merge risk classification, audit evidence, cleanup, and
-rediscovery
+**Purpose**: Convert a native GitHub epic into a bounded execution set, then
+run an explicitly authorized delegated review and merge loop with pre-merge
+risk classification, audit evidence, cleanup, and rediscovery
 
 The first phase is a **read-only resolver protocol**, not an implementation
 protocol. It exists to make scoped multi-item work explicit before an agent
@@ -17,19 +16,13 @@ resolved scope.
 
 ## Routing From /run-work
 
-`/run-work <epic-like target>` (or `/run-work --epic <n>`) enters this protocol
-after the routing classifier (`scripts/development-workflow/run-work-router.sh`,
-Protocol 96) determines the routing mode is `epic`. The routing-decision record
-and resolved epic target are available as context.
+`/run-work` does **not** enter this protocol for epic targets. Protocol 96 returns
+`redirect_epic` with `REDIRECT_COMMAND` (e.g. `/run-epic --epic <n>`) and performs
+no mutation. Re-invoke `/run-epic` directly.
 
 **Read-only phase before mutation** (BR6, AC4): The scope resolver must complete
 before any item is created, reviewed, merged, or cleaned up. This is the existing
 read-only contract for this protocol and is not changed by routing.
-
-**`single_item` → `epic` upgrade** (AC5): When a single target resolves to an
-epic-like issue (one with child items or native sub-issues), the router upgrades
-from `single_item` to `epic` before routing here. The resolver then handles scope
-resolution as normal.
 
 `/run-epic` invoked directly (without `/run-work`) is a **compatibility/advanced
 alias** that also enters this protocol. Its behavior is unchanged.
@@ -41,19 +34,21 @@ for the full routing specification.
 
 ## Overview
 
-Use this protocol when a human invokes `/run-epic`, `$run-epic`, `/run-work <epic-like target>`, or asks to run
-an epic / bounded item list as a delegated workflow batch.
+Use this protocol when a human invokes `/run-epic`, `$run-epic`, or asks to run
+a native GitHub epic as a delegated workflow batch. For explicit item lists, use
+`/run-items` instead.
 
-The resolver supports exactly one scope source:
+The resolver accepts one scope source:
 
 ```bash
 ./scripts/development-workflow/run-epic-scope-resolver.sh --epic <issue-number>
-./scripts/development-workflow/run-epic-scope-resolver.sh --items <issue-number>[,<issue-number>...]
 ```
 
 Optional flags:
 
-- `--base <branch>`: override base-branch inference.
+- `--base <branch>`: override base-branch inference for the execution base.
+  In `workflow_hub` mode this is the product implementation PR base, not proof
+  that the hub repository itself must have a branch with that name.
 - `--delegate-review`: allow the runner to make the normal human-review gate
   decision for this invocation.
 - `--may-merge`: allow the runner to merge acceptable in-scope PRs through the
@@ -83,10 +78,13 @@ update tracker status, create branches, open or edit PRs, merge PRs, close
 issues, or delete branches.
 
 When autonomy policy is missing or ambiguous, derive a recommended policy from
-the resolver output before any mutating stage begins:
+the resolver output before any mutating stage begins. For a single combined
+read-only step (scope + repository guardrails snapshot + policy recommendation),
+use [`bounded-run-prelude.md`](../bounded-run-prelude.md) and
+`run-bounded-prelude.sh` — the same path `/run-item` uses before Protocol 91.
 
 ```bash
-./scripts/development-workflow/run-epic-policy-recommender.sh --scope <resolver-json> --original-command "<requested command>" [--base <branch>] [--delegate-review|--no-delegate-review] [--may-merge|--no-may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--json]
+./scripts/development-workflow/run-epic-policy-recommender.sh --scope <resolver-json> --original-command "<requested command>" [--base <branch>] [--delegate-review|--no-delegate-review] [--may-merge|--no-may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--checkpoints-file <json-array>] [--json]
 ```
 
 The recommender is also read-only. It must not update tracker status, create
@@ -96,12 +94,61 @@ copy-paste equivalent command for audit evidence. Use `--no-delegate-review` or
 `--no-may-merge` when the selected policy explicitly disables a recommended
 positive default.
 
+### Human-checkpoint recommendations
+
+Before mutation, the recommender classifies per-item human checkpoints from
+read-only scope metadata (title, type, labels, tracker status). High-leverage
+signals default to checkpoints:
+
+- **Plan + technical**: database schema, migration, or persistent data-model
+  wording.
+- **Spec + product**: unresolved product or acceptance-criteria ambiguity when
+  the item is still in Backlog or spec stage.
+- **Plan or implementation + both**: ambiguous product/technical tradeoffs.
+- **Implementation + technical**: security, auth, permission, or other
+  sensitive-change wording.
+
+The JSON output includes `recommendedPolicy.checkpoints`,
+`selectedPolicy.checkpoints`, `effectivePolicy.checkpoints`, and
+`checkpointPolicy` (`recommended`, `selected`, `effective`) for audit evidence.
+Each checkpoint record carries `item_number`, `stage`, `domain`, `reason`,
+`required_human_action`, and `satisfaction_state` (`pending` by default).
+
+Humans may accept recommendations as-is, customize them, or waive defaults with
+documented rationale before mutation begins. Pass an explicit selected checkpoint
+array with `--checkpoints-file <json-array>`; waived entries must include
+`waiver_rationale`. When recommendations exist and no `--checkpoints-file` is
+supplied, confirmation is required before mutation — silent auto-waiver is not
+permitted.
+
+The preflight summary must show checkpoint policy alongside autonomy policy so
+the human can accept, customize, or waive checkpoints before mutation. Two common
+examples:
+
+- **Plan-stage database/schema checkpoint**: an item titled "Add tenant billing
+  migrations" should recommend a `plan` / `technical` checkpoint with a required
+  action such as "approve the migration and rollback plan". A later
+  implementation PR remains blocked until that plan-stage checkpoint is
+  `satisfied` or `waived`.
+- **Implementation-stage sensitive-change checkpoint**: an item touching auth,
+  permissions, security-sensitive automation, or merge behavior should recommend
+  an `implementation` / `technical` checkpoint with a required action such as
+  "approve the sensitive implementation before delegated merge".
+
+Checkpoint enforcement now spans PR readiness labels, delegated gates, batch
+merge, and audit comments. The lifecycle validation path is documented in
+[`docs/testing/workflow/1024-human-checkpoint-lifecycle.smoke-test.md`](../../../testing/workflow/1024-human-checkpoint-lifecycle.smoke-test.md).
+
 When a later delegated run reaches a candidate PR merge decision, classify that
 PR with:
 
 ```bash
-./scripts/development-workflow/run-epic-risk-classifier.sh --pr <pr-number> --max-risk <low|medium|high>
+./scripts/development-workflow/run-epic-risk-classifier.sh --pr <pr-number> --max-risk <low|medium|high> [--repo-root <path>] [--product-repo <name>]
 ```
+
+In `workflow_hub` mode, pass `--repo-root` and `--product-repo` (or rely on
+`github_repo` / `productRepo.name` in `--input` evidence) so hub `ci_policy` is
+applied when the evidence omits `ciPolicy` / `ci_policy`.
 
 The risk classifier is also read-only. It must not run reviewer loops, poll CI,
 update tracker status, change labels, create comments, merge PRs, close issues,
@@ -124,7 +171,7 @@ Before an authorized merge decision, run the delegated gate with the current
 candidate PR, resolver policy, reviewer, CI, risk, scope, and audit evidence:
 
 ```bash
-./scripts/development-workflow/run-epic-delegated-gate.sh --input <file> [--policy <file>]
+./scripts/development-workflow/run-epic-delegated-gate.sh --input <file> [--policy <file>] [--repo-root <path>] [--product-repo <name>]
 ```
 
 The gate is read-only. It explains whether the runner may proceed to merge,
@@ -133,22 +180,20 @@ missing state. It does not replace `/run-item-work`, reviewer-loop, CI-loop,
 risk classification, audit comments, merge, cleanup, or tracker updates.
 The gate consumes an assembled evidence file; live PR reads happen in the risk
 classifier, audit helper, reviewer loop, CI loop, and normal GitHub checks.
+In `workflow_hub` mode, pass `--repo-root` and `--product-repo` (or include
+`productRepo.name` in the evidence file) so hub `ci_policy` is applied when
+the evidence omits `ciPolicy` / `ci_policy`.
 
 ---
 
 ## Step 1: Validate Scope Input
 
-Require exactly one of:
+Require `--epic <issue-number>`. The `--items` flag is not a user-facing option
+for `/run-epic`; operators who need explicit item lists should use `/run-items`
+instead.
 
-- `--epic <issue-number>`
-- `--items <issue-number>[,<issue-number>...]`
-
-Issue numbers must be positive integers. Reject empty values, zero, non-numeric
-tokens, and mixed `--epic` plus `--items` invocations before any repository or
-tracker lookup.
-
-Explicit item lists are exact. Do not expand siblings, parent epics, labels, or
-linked issues from an explicit list. Duplicate item numbers may be collapsed.
+The epic issue number must be a positive integer. Reject empty values, zero, and
+non-numeric tokens before any repository or tracker lookup.
 
 ---
 
@@ -175,10 +220,11 @@ sub-issue enumeration. Apply this flow instead:
    If the Linear item has no children, report an empty scope clearly — do not
    treat the parent item itself as the only scope item.
 
-2. **For `--items`** — the explicit list is a hard scope boundary (BR-7). Do
-   not expand to siblings, parent epics, or label-matched items. Fetch each
-   listed item's metadata via the Linear MCP before passing it to the scope
-   resolver.
+2. **For internal explicit-item paths** — when a script passes `--items`
+   internally, the explicit list is a hard scope boundary (BR-7). Do not expand
+   to siblings, parent epics, or label-matched items. Fetch each listed item's
+   metadata via the Linear MCP before passing it to the scope resolver. Users
+   invoking `/run-epic` directly should use `/run-items` instead.
 
 3. **Pass pre-resolved data** — the scope resolver (`run-epic-scope-resolver.sh`)
    cannot reach Linear itself. Supply item metadata as structured input. The
@@ -226,6 +272,19 @@ When conflicting integration labels are ambiguous, every item in the result is
 ambiguous. A later mutating workflow must stop until a human supplies `--base`
 or narrows the scope.
 
+### Workflow Hub Base Context
+
+In `workflow_hub` mode, the resolved base branch is attached to the product
+implementation path. Do not validate that branch against the hub repository
+remote before a selected product repository is known. A hub repository may use
+`main` for hub-owned specs, plans, and workflow PRs while its product
+repositories use `develop` for implementation PRs.
+
+Hub-owned spec and plan stages use the hub artifact base branch from the current
+hub repository, typically its default branch. Product implementation, reviewer,
+CI, merge, cleanup, and post-merge branch validation use the selected product
+repository and the resolved execution base.
+
 ---
 
 ## Step 5: Group Items
@@ -252,13 +311,17 @@ execution set.
 Print:
 
 - Scope source and item count.
-- Base branch and inference reason.
+- Base branch, inference reason, workflow mode, base branch ownership target,
+  and base branch validation note.
 - Read-only guarantee.
 - Grouped item list with issue number, title, status, type, and issue state.
 
 When `--json` is supplied, emit valid JSON containing the same fields plus the
-full item metadata. Downstream orchestrators must treat this JSON as the bounded
-scope contract and must not opportunistically mutate items outside it.
+full item metadata. The JSON must include `workflowMode`,
+`baseBranchAppliesTo`, and `baseBranchValidationNote` alongside `baseBranch` so
+downstream orchestrators can validate the base in the repository that owns the
+next mutating artifact. Downstream orchestrators must treat this JSON as the
+bounded scope contract and must not opportunistically mutate items outside it.
 
 The output must also include the invocation policy:
 
@@ -286,14 +349,18 @@ Recommended defaults should favor the most automatic safe configuration:
 - `--max-risk medium` for workflow scripts, orchestration behavior, merge or
   cleanup automation, or shared workflow tooling when later
   `why_safe_to_merge` evidence can be produced.
+- Human-checkpoint recommendations per eligible item when metadata signals
+  schema/migration, product ambiguity, tradeoff ambiguity, or sensitive
+  implementation work (see **Human-checkpoint recommendations** above).
 - Never recommend `high` by default. High-risk work requires explicit human
   selection.
 
 Present a preflight summary before mutation: scoped issues, grouped states,
-base branch, recommended policy, risk rationale, and the copy-paste equivalent
-command. If confirmation is required, ask in-place and continue in the same run
-when the human accepts. Do not ask repeatedly for the same policy choice within
-the same invocation once selected/effective policy has been recorded.
+base branch, recommended policy, recommended checkpoints (if any), risk
+rationale, and the copy-paste equivalent command. If confirmation is required,
+ask in-place and continue in the same run when the human accepts. Do not ask
+repeatedly for the same policy choice within the same invocation once
+selected/effective policy has been recorded.
 
 Exact invocations with all effective policy values already supplied may skip the
 confirmation prompt, but they still record the original command, recommended
@@ -355,11 +422,13 @@ Without delegated review authority, any PR that reaches the normal
 `ready-for-human-review` handoff remains waiting for human review.
 
 **Pre-dispatch: create the integration branch once before dispatching parallel agents.**
-If the resolved base branch does not yet exist on the remote, create and push it
-exactly once before dispatching any in-scope item agents:
+If the resolved base branch is an integration branch that does not yet exist on
+the owning remote, create and push it exactly once before dispatching any
+in-scope item agents. In `workflow_hub` mode, "owning remote" means the selected
+product repository for product implementation work, not the hub repository:
 
 ```bash
-git checkout -b <base-branch> origin/develop  # or the appropriate upstream
+git checkout -b <base-branch> origin/<product-default-branch>  # or the appropriate upstream
 git push -u origin <base-branch>
 ```
 

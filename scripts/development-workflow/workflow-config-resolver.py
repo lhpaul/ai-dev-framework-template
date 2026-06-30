@@ -20,6 +20,7 @@ from typing import Any
 
 
 VALID_MODES = {"single_repo", "workflow_hub", "product_repo"}
+VALID_CI_POLICIES = {"required", "none"}
 LOCAL_ONLY_KEYS = {
     "local_path",
     "checkout_path",
@@ -296,6 +297,19 @@ def mode_from_shared(shared: dict[str, Any], shared_path: Path) -> str:
     return raw_mode
 
 
+def normalize_ci_policy(raw: Any, shared_path: Path, field_path: str) -> str:
+    if raw is None or raw == "":
+        return "required"
+    if not isinstance(raw, str):
+        raise ConfigError(f"{shared_path}: {field_path} must be a string")
+    value = raw.strip()
+    if value not in VALID_CI_POLICIES:
+        raise ConfigError(
+            f"{shared_path}: {field_path} must be one of {', '.join(sorted(VALID_CI_POLICIES))}"
+        )
+    return value
+
+
 def product_repos(shared: dict[str, Any], shared_path: Path) -> list[dict[str, Any]]:
     workflow_hub = as_mapping(shared.get("workflow_hub"), shared_path, "workflow_hub")
     repos = as_list(workflow_hub.get("product_repos"), shared_path, "workflow_hub.product_repos")
@@ -325,6 +339,11 @@ def product_repos(shared: dict[str, Any], shared_path: Path) -> list[dict[str, A
             )
         repo = dict(raw)
         repo["default_branch"] = repo.get("default_branch") or "main"
+        repo["ci_policy"] = normalize_ci_policy(
+            repo.get("ci_policy"),
+            shared_path,
+            f"workflow_hub.product_repos[{index}].ci_policy",
+        )
         normalized.append(repo)
     return normalized
 
@@ -644,12 +663,16 @@ def resolve_context(args: argparse.Namespace) -> dict[str, str]:
         local_value, local_source = resolve_local_path(
             repo_root, local, local_path, str(repo["name"]), bool(args.require_local)
         )
+        github_repo = str(repo.get("github_repo") or "")
+        if not github_repo and repo.get("git_url"):
+            github_repo = github_repo_from_url(str(repo.get("git_url")))
         context.update(
             {
                 "TARGET_REPO_NAME": str(repo.get("name") or ""),
-                "TARGET_GITHUB_REPO": str(repo.get("github_repo") or ""),
+                "TARGET_GITHUB_REPO": github_repo,
                 "TARGET_GIT_URL": str(repo.get("git_url") or ""),
                 "TARGET_DEFAULT_BRANCH": str(repo.get("default_branch") or "main"),
+                "TARGET_CI_POLICY": str(repo.get("ci_policy") or "required"),
                 "TARGET_LOCAL_PATH": local_value,
                 "TARGET_LOCAL_PATH_SOURCE": local_source,
                 "TARGET_TRACKER_HINTS": flatten_tracker_hints(repo),
@@ -664,6 +687,11 @@ def resolve_context(args: argparse.Namespace) -> dict[str, str]:
             "TARGET_REPO_NAME": repo_root.name,
             "TARGET_GITHUB_REPO": parse_remote_slug(repo_root),
             "TARGET_DEFAULT_BRANCH": str(product_repo.get("default_branch") or "main"),
+            "TARGET_CI_POLICY": normalize_ci_policy(
+                product_repo.get("ci_policy"),
+                shared_path,
+                "product_repo.ci_policy",
+            ),
             "TARGET_LOCAL_PATH": str(repo_root),
             "TARGET_LOCAL_PATH_SOURCE": "current_repo",
             "WORKFLOW_HUB_GITHUB_REPO": str(hub.get("github_repo") or ""),
@@ -677,25 +705,15 @@ def resolve_context(args: argparse.Namespace) -> dict[str, str]:
     return context
 
 
-def load_legacy_template_config(repo_root: Path) -> dict[str, Any]:
-    path = repo_root / ".tmp" / "template-config.json"
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ConfigError(f"{path}: could not parse legacy override JSON: {exc}") from exc
-
-
-def list_from_path(data: dict[str, Any], path: list[str]) -> list[str]:
+def list_override_from_path(data: dict[str, Any], path: list[str]) -> tuple[list[str], bool]:
     value: Any = data
     for key in path:
-        if not isinstance(value, dict):
-            return []
+        if not isinstance(value, dict) or key not in value:
+            return [], False
         value = value.get(key)
     if isinstance(value, list):
-        return [str(item) for item in value]
-    return []
+        return [str(item) for item in value], True
+    return [], False
 
 
 def scalar_from_path(data: dict[str, Any], path: list[str]) -> str:
@@ -710,39 +728,44 @@ def scalar_from_path(data: dict[str, Any], path: list[str]) -> str:
 def resolve_review_overrides(args: argparse.Namespace) -> dict[str, str]:
     repo_root = repo_root_from_args(args.repo_root)
     _, local, _, _ = load_configs(repo_root)
-    legacy = load_legacy_template_config(repo_root)
 
-    legacy_runner = list_from_path(legacy, ["overrides", "review", "on_draft", "runner"])
-    if not legacy_runner:
-        legacy_runner = list_from_path(legacy, ["overrides", "review", "internal_reviewers"])
-    local_runner = list_from_path(local, ["review", "on_draft", "runner"])
-    runner = legacy_runner or local_runner
-    runner_source = (
-        ".tmp/template-config.json"
-        if legacy_runner
-        else (".ai-dev-workflow.local.yaml" if local_runner else "")
-    )
+    local_runner, has_local_runner = list_override_from_path(local, ["review", "on_draft", "runner"])
+    runner = local_runner
+    runner_source = ".ai-dev-workflow.local.yaml" if has_local_runner else ""
 
-    legacy_policy = scalar_from_path(
-        legacy, ["overrides", "review", "internal_reviewers_unavailable_policy"]
+    local_draft_github, has_local_draft_github = list_override_from_path(
+        local, ["review", "on_draft", "github"]
     )
+    draft_github = local_draft_github
+    draft_github_source = ".ai-dev-workflow.local.yaml" if has_local_draft_github else ""
+
+    local_ready_github, has_local_ready_github = list_override_from_path(
+        local, ["review", "on_ready", "github"]
+    )
+    ready_github = local_ready_github
+    ready_github_source = ".ai-dev-workflow.local.yaml" if has_local_ready_github else ""
+
     local_policy = scalar_from_path(local, ["review", "internal_reviewers_unavailable_policy"])
-    policy = legacy_policy or local_policy
-    policy_source = (
-        ".tmp/template-config.json"
-        if legacy_policy
-        else (".ai-dev-workflow.local.yaml" if local_policy else "")
-    )
+    policy = local_policy
+    policy_source = ".ai-dev-workflow.local.yaml" if local_policy else ""
 
     sources = []
     if runner_source:
         sources.append(f"runner:{runner_source}")
+    if draft_github_source:
+        sources.append(f"draft-github:{draft_github_source}")
+    if ready_github_source:
+        sources.append(f"ready-github:{ready_github_source}")
     if policy_source:
         sources.append(f"policy:{policy_source}")
 
     return {
         "REVIEW_ON_DRAFT_RUNNER": ",".join(runner),
         "REVIEW_ON_DRAFT_RUNNER_SOURCE": runner_source,
+        "REVIEW_ON_DRAFT_GITHUB": ",".join(draft_github),
+        "REVIEW_ON_DRAFT_GITHUB_SOURCE": draft_github_source,
+        "REVIEW_ON_READY_GITHUB": ",".join(ready_github),
+        "REVIEW_ON_READY_GITHUB_SOURCE": ready_github_source,
         "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY": policy,
         "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY_SOURCE": policy_source,
         "LOCAL_OVERRIDE_SOURCE": ",".join(sources),
@@ -862,9 +885,7 @@ def build_parser() -> argparse.ArgumentParser:
     auth.add_argument("--json", action="store_true", help="print JSON instead of shell KEY=value")
     auth.set_defaults(func=cmd_auth)
 
-    overrides = subcommands.add_parser(
-        "review-overrides", help="print local review override compatibility values"
-    )
+    overrides = subcommands.add_parser("review-overrides", help="print local review override values")
     overrides.add_argument("--repo-root")
     overrides.add_argument("--json", action="store_true", help="print JSON instead of shell KEY=value")
     overrides.set_defaults(func=cmd_review_overrides)

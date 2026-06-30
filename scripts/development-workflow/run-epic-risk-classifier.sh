@@ -9,17 +9,23 @@ source "$SCRIPT_DIR/workflow-lib.sh"
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/development-workflow/run-epic-risk-classifier.sh --pr <number> [--max-risk <low|medium|high>] [--json]
-  ./scripts/development-workflow/run-epic-risk-classifier.sh --input <file> [--max-risk <low|medium|high>] [--json]
+  ./scripts/development-workflow/run-epic-risk-classifier.sh --pr <number> [--max-risk <low|medium|high>] [--repo-root <path>] [--product-repo <name>] [--json]
+  ./scripts/development-workflow/run-epic-risk-classifier.sh --input <file> [--max-risk <low|medium|high>] [--repo-root <path>] [--product-repo <name>] [--json]
 
 Classifies delegated /run-epic PR merge risk. The classifier is read-only: it
 does not run reviewers, poll CI, edit labels, update trackers, merge PRs, close
 issues, post comments, or delete branches.
+
+In workflow_hub mode, pass --repo-root and --product-repo (or include
+productRepo.name / github_repo in the evidence) so hub ci_policy is applied when
+the evidence omits ciPolicy / ci_policy.
 EOF
 }
 
 pr_number=""
 input_file=""
+repo_root=""
+product_repo=""
 max_risk="low"
 json_output=0
 
@@ -112,7 +118,7 @@ live_pr_state() {
   require_gh
 
   if ! pr_json="$(gh pr view "$number" \
-    --json number,title,baseRefName,headRefName,mergeStateStatus,labels,statusCheckRollup,reviewDecision,isDraft 2>/dev/null)"; then
+    --json number,title,baseRefName,headRefName,headRepository,mergeStateStatus,labels,statusCheckRollup,reviewDecision,isDraft 2>/dev/null)"; then
     error_exit "failed to read PR #$number"
   fi
   if [ -z "$pr_json" ]; then
@@ -134,6 +140,13 @@ live_pr_state() {
     title: .title,
     base: .baseRefName,
     head: .headRefName,
+    github_repo: (
+      if (.headRepository.owner.login? and .headRepository.name?) then
+        (.headRepository.owner.login + "/" + .headRepository.name)
+      else
+        ""
+      end
+    ),
     merge_state: .mergeStateStatus,
     is_draft: .isDraft,
     labels: [.labels[]?.name],
@@ -182,6 +195,11 @@ collect_check_blockers() {
   local blockers='[]'
   local checks_json check_count
   local encoded decoded status conclusion name
+
+  if [ "$(printf '%s\n' "$state_json" | jq -r '.ciPolicy // .ci_policy // "required"')" = "none" ]; then
+    printf '%s\n' "$blockers"
+    return 0
+  fi
 
   if ! checks_json="$(printf '%s\n' "$state_json" | jq -c '
     [.status_checks[]?, .required_checks[]?, .checks[]?]
@@ -490,6 +508,16 @@ while [ "$#" -gt 0 ]; do
       max_risk="$2"
       shift 2
       ;;
+    --repo-root)
+      require_value "$@"
+      repo_root="$2"
+      shift 2
+      ;;
+    --product-repo)
+      require_value "$@"
+      product_repo="$2"
+      shift 2
+      ;;
     --json)
       json_output=1
       shift
@@ -529,6 +557,9 @@ if [ -n "$input_file" ]; then
 else
   state_json="$(live_pr_state "$pr_number")"
 fi
+
+effective_root="${repo_root:-$(workflow_repo_root)}"
+state_json="$(workflow_merge_ci_policy_into_json "$state_json" "$effective_root" "$product_repo")"
 
 result_json="$(classify_state "$state_json")"
 if [ "$json_output" -eq 1 ]; then

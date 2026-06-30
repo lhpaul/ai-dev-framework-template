@@ -19,4 +19,8 @@ Recommended model tier: `premium`
 10. Before opening the draft plan PR, complete Protocol 02's Document Quality Gate and include the gate log in the PR description.
 11. Before opening the draft plan PR, call `ensure_on_project_board <issue_number> "Writing Plan"` from `scripts/development-workflow/workflow-lib.sh`. This is a no-op when the issue is already on the board.
 12. When the branch is created, continue through reviewer gate, PR creation, and PR readiness unless the protocol surfaces a real human decision.
-13. Resolve repository mode and artifact owner before writing: `single_repo` uses the current repository; `workflow_hub` keeps plans and plan PRs hub-owned unless a future protocol explicitly changes that; `product_repo` should report the configured hub owner or stop if ownership is ambiguous.
+13. Resolve repository mode, artifact owner, and artifact base branch before
+    writing: `single_repo` uses the current repository; `workflow_hub` keeps
+    plans and plan PRs hub-owned on the hub artifact base branch, even when the
+    product implementation base is different; `product_repo` should report the
+    configured hub owner or stop if ownership is ambiguous.

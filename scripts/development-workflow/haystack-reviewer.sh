@@ -26,7 +26,7 @@
 #   DISPLAY_RESULT=<value> (optional; used by pr-review-loop.sh summaries)
 #   POLICY_REVIEW_REQUIRED=0|1 (optional; present when pr-status is available)
 #   REASON=<value>   (only when RESULT=skipped — values: unavailable, timeout,
-#                     pending_timeout)
+#                     pending_timeout, unauthorized, forbidden)
 #
 # Polling behaviour for transient states (status=pending, status=error, etc.):
 #   When `haystack triage --no-wait` returns ANY non-empty status value other
@@ -38,7 +38,9 @@
 #   "status" field — this is the only condition under which RESULT=clean may be
 #   emitted.  If the budget is exhausted while the analysis is still transient,
 #   RESULT=skipped is emitted with REASON=pending_timeout (distinct from
-#   REASON=unavailable, which means the CLI is absent or authentication failed,
+#   REASON=unavailable, which means the CLI is absent or triage returned
+#   status=none; REASON=unauthorized/forbidden for triage status=error with
+#   message=HTTP 401/403 (surfaced immediately, not poll-retried);
 #   and REASON=timeout, which means a single haystack triage call exceeded the
 #   per-call OS timeout).
 #
@@ -198,6 +200,28 @@ echo "INFO: poll-retry loop — polling every ${POLL_INTERVAL}s, overall timeout
 # invocation of `haystack triage` against a hung network call. It is capped to
 # at most half the remaining budget so the loop always gets at least one retry
 # after a timed-out call.
+
+haystack_triage_auth_error_reason() {
+  local triage_output="$1"
+  local status message
+
+  status="$(printf '%s\n' "$triage_output" | jq -r '.status // empty' 2>/dev/null)"
+  status="${status:-}"
+  [ "$status" != "error" ] && return 1
+  message="$(printf '%s\n' "$triage_output" | jq -r '.message // empty' 2>/dev/null)"
+  message="${message:-}"
+  case "$message" in
+    HTTP\ 401)
+      printf 'unauthorized'
+      return 0
+      ;;
+    HTTP\ 403)
+      printf 'forbidden'
+      return 0
+      ;;
+  esac
+  return 1
+}
 
 TRIAGE_OUTPUT=""
 TRIAGE_EXIT=0
@@ -386,7 +410,21 @@ while true; do
     *)
       # Non-empty, non-"none" status value (e.g. "pending", "error",
       # "Rating synthesis not available", or any future transient state).
-      # Treat as transient — poll-retry after POLL_INTERVAL.
+      # Authorization/API errors (HTTP 401/403) are permanent — fail fast.
+      _auth_reason=""
+      if _auth_reason="$(haystack_triage_auth_error_reason "$TRIAGE_OUTPUT")"; then
+        _error_msg="$(printf '%s\n' "$TRIAGE_OUTPUT" | jq -r '.message // empty' 2>/dev/null)"
+        _error_msg="${_error_msg:-unknown}"
+        echo "INFO: haystack triage returned status=error with message=${_error_msg} — treating as ${_auth_reason} (not retrying)" >&2
+        rm -f "$TRIAGE_STDERR"
+        printf 'RESULT=skipped\n'
+        printf 'REASON=%s\n' "$_auth_reason"
+        printf 'BLOCKING_COUNT=0\n'
+        printf 'SUGGESTION_COUNT=0\n'
+        printf 'COMMENT_COUNT=0\n'
+        exit 3
+      fi
+      # Treat other transient states as still synthesizing — poll-retry after POLL_INTERVAL.
       # NEVER map an unknown or error status to "clean"; only a genuinely
       # completed result (empty STATUS_VALUE above) may yield RESULT=clean.
       echo "INFO: status='${STATUS_VALUE}' — still synthesizing; waiting ${POLL_INTERVAL}s before retry (${elapsed}s elapsed of ${TIMEOUT}s budget)" >&2

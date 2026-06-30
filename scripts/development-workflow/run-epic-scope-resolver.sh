@@ -10,11 +10,12 @@ usage() {
   cat <<'EOF'
 Usage:
   ./scripts/development-workflow/run-epic-scope-resolver.sh --epic <issue-number> [--base <branch>] [--delegate-review] [--may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--json]
-  ./scripts/development-workflow/run-epic-scope-resolver.sh --items <issue-number>[,<issue-number>...] [--base <branch>] [--delegate-review] [--may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--json]
 
-Resolves a delegated epic or explicit item list into a read-only execution set.
+Resolves a delegated epic into a read-only execution set.
 The resolver never starts backlog items, updates tracker status, creates
 branches, opens PRs, merges PRs, closes issues, or deletes branches.
+
+For explicit item lists, use /run-items instead of --items.
 EOF
 }
 
@@ -72,6 +73,8 @@ while [ "$#" -gt 0 ]; do
       ;;
     --items)
       require_value "$@"
+      # --items is a deprecated internal flag. Users should use /run-items instead.
+      echo "DEPRECATED: --items is not a user-facing flag for run-epic-scope-resolver.sh. Use /run-items for explicit item lists." >&2
       items_arg="$2"
       shift 2
       ;;
@@ -115,11 +118,11 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -n "$epic_number" ] && [ -n "$items_arg" ]; then
-  echo "ERROR: pass exactly one of --epic or --items, not both." >&2
+  echo "ERROR: pass --epic or --items, not both." >&2
   exit 64
 fi
 if [ -z "$epic_number" ] && [ -z "$items_arg" ]; then
-  echo "ERROR: pass exactly one of --epic or --items." >&2
+  echo "ERROR: --epic <issue-number> is required. For explicit item lists, use /run-items." >&2
   exit 64
 fi
 if [ -n "$epic_number" ] && ! is_positive_int "$epic_number"; then
@@ -140,6 +143,19 @@ require_gh
 repo="$(repo_slug)"
 owner="${repo%%/*}"
 repo_name="${repo#*/}"
+workflow_mode_context="$(workflow_repository_mode)"
+workflow_mode="$(workflow_context_value WORKFLOW_MODE "$workflow_mode_context")"
+base_branch_applies_to="current_repository_prs"
+base_branch_validation_note="In single_repo mode, validate the resolved base branch against the current repository remote."
+case "$workflow_mode" in
+  workflow_hub)
+    base_branch_applies_to="product_implementation_prs"
+    base_branch_validation_note="In workflow_hub mode, do not validate this base against the hub remote before selecting the product repository; specs and plans stay hub-owned and use the hub artifact base."
+    ;;
+  product_repo)
+    base_branch_validation_note="In product_repo mode, validate the resolved implementation base against the current product repository remote; specs and plans remain hub-owned."
+    ;;
+esac
 
 tmp_dir="$(mktemp -d)"
 items_file="$tmp_dir/items.jsonl"
@@ -489,6 +505,7 @@ enrich_item() {
   jq -n \
     --argjson number "$issue" \
     --arg title "$title" \
+    --arg body "$body" \
     --arg state "$state" \
     --arg stateReason "$state_reason" \
     --arg labels "$labels" \
@@ -503,6 +520,7 @@ enrich_item() {
     '{
       number: $number,
       title: $title,
+      body: $body,
       issueState: $state,
       issueStateReason: $stateReason,
       labels: (if $labels == "" then [] else ($labels | split(",")) end),
@@ -570,6 +588,9 @@ summary_json="$(jq -n \
   --arg itemInput "$items_arg" \
   --arg baseBranch "$base_branch" \
   --arg baseReason "$base_reason" \
+  --arg workflowMode "$workflow_mode" \
+  --arg baseBranchAppliesTo "$base_branch_applies_to" \
+  --arg baseBranchValidationNote "$base_branch_validation_note" \
   --argjson delegateReview "$delegate_review" \
   --argjson mayMerge "$may_merge" \
   --arg mayStartBacklog "$may_start_backlog" \
@@ -583,6 +604,9 @@ summary_json="$(jq -n \
     baseBranch: (if $baseBranch == "" then null else $baseBranch end),
     baseAmbiguous: ($baseBranch == ""),
     baseReason: $baseReason,
+    workflowMode: $workflowMode,
+    baseBranchAppliesTo: $baseBranchAppliesTo,
+    baseBranchValidationNote: $baseBranchValidationNote,
     policy: {
       delegateReview: ($delegateReview == 1),
       mayMerge: ($mayMerge == 1),
@@ -621,6 +645,9 @@ if [ "$(printf '%s\n' "$summary_json" | jq -r '.emptyEpicScope')" = "true" ]; th
   printf 'Native sub-issues: none resolved for epic #%s\n' "$epic_number"
 fi
 printf 'Base branch: %s (%s)\n' "${base_branch:-ambiguous}" "$base_reason"
+printf 'Workflow mode: %s\n' "$workflow_mode"
+printf 'Base applies to: %s\n' "$base_branch_applies_to"
+printf 'Base validation note: %s\n' "$base_branch_validation_note"
 printf 'Delegated review: %s\n' "$(printf '%s\n' "$summary_json" | jq -r '.policy.delegateReview')"
 printf 'May merge: %s\n' "$(printf '%s\n' "$summary_json" | jq -r '.policy.mayMerge')"
 printf 'May start Backlog: %s\n' "$(printf '%s\n' "$summary_json" | jq -r '.policy.mayStartBacklog')"

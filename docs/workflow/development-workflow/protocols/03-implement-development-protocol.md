@@ -33,6 +33,19 @@ When your change creates or materially modifies `.github/workflows/*.yml`, compl
 
 When your change **creates or significantly modifies a `.sh` file**, or when your change **adds or edits shell code blocks (```` ```bash ```` / ```` ```sh ```` fenced blocks) inside a protocol or documentation `.md` file**, complete this checklist before opening the development PR. These are the most common bash scripting anti-patterns that cause rework in the automated reviewer loop.
 
+When the change touches `scripts/development-workflow/post-merge-cleanup.sh`,
+complete this checklist and run the diff-based workflow shell guard before
+opening the PR, even if the edit looks mechanical:
+
+```bash
+python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop
+```
+
+Treat any finding as pre-PR feedback: fix it, rerun the guard, and include the
+guard result in the PR verification notes. This targeted check is mandatory
+because `post-merge-cleanup.sh` combines issue parsing, branch cleanup, GitHub
+API calls, and tracker status writes in one high-blast-radius workflow script.
+
 ### 1. jq variable injection
 
 Always use `--arg name value` for string values and `--argjson name value` for JSON values. Never expand shell variables directly inside jq filter strings.

@@ -4,11 +4,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
-GIT_COMMON_DIR="$(cd "$SCRIPT_DIR" && git rev-parse --git-common-dir)"
-case "$GIT_COMMON_DIR" in
-  /*) REPO_ROOT="$(cd "$GIT_COMMON_DIR/.." && pwd -P)" ;;
-  *) REPO_ROOT="$(cd "$SCRIPT_DIR/$GIT_COMMON_DIR/.." && pwd -P)" ;;
-esac
+REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 HELPER="$REPO_ROOT/scripts/development-workflow/run-epic-audit-trail.sh"
 
 TMP_ROOT="$(mktemp -d)"
@@ -125,7 +121,7 @@ cat > "$pr_fixture" <<'JSON'
 {
   "scope_source": "epic #916",
   "item": {"number": 920, "title": "Add autonomous epic audit trail"},
-  "pr": {"number": 10, "head_sha": "abc123"},
+  "pr": {"number": 10, "head_sha": "abc123", "branch": "implementation-plan/audit-trail"},
   "reviewer": {"result": "clean", "blocking_count": 0, "advisory_count": 2},
   "advisories": [
     {"source": "haystack|triage", "category": "docs\nsync", "decision": "accepted", "rationale": "stale after rg verification with Authorization: dummy Bearer dummy.value"},
@@ -172,6 +168,40 @@ cat > "$pr_fixture" <<'JSON'
   "protocol_deviations": [
     {"action": "accepted advisory", "impact": "none | expected", "mitigation": "documented\nrationale\twith ghp_FAKE_PLACEHOLDER /tmp/fake-placeholder/local"}
   ],
+  "checkpoint_policy": {
+    "field_source": "recommended",
+    "recommended": [
+      {
+        "item_number": 920,
+        "stage": "plan",
+        "domain": "technical",
+        "reason": "schema signals",
+        "required_human_action": "approve data model",
+        "satisfaction_state": "pending"
+      }
+    ],
+    "selected": [
+      {
+        "item_number": 920,
+        "stage": "plan",
+        "domain": "technical",
+        "reason": "schema signals",
+        "required_human_action": "approve data model",
+        "satisfaction_state": "pending"
+      }
+    ],
+    "effective": [
+      {
+        "item_number": 920,
+        "stage": "plan",
+        "domain": "technical",
+        "reason": "schema signals",
+        "required_human_action": "approve data model",
+        "satisfaction_state": "satisfied",
+        "satisfied_by": "human-reviewer"
+      }
+    ]
+  },
   "notes": "token ghp_FAKE_PLACEHOLDER /tmp/fake-placeholder/local"
 }
 JSON
@@ -190,7 +220,7 @@ cat > "$ledger_fixture" <<'JSON'
     }
   },
   "items": [
-    {"issue_number": 920, "title": "Add autonomous | epic audit trail", "pr_number": 10, "tracker_status": "In Development", "risk_level": "medium", "review_result": "clean", "decision": "merge_approved", "merge_cleanup": "verified", "notes": "ready\nBearer token.value"},
+    {"issue_number": 920, "title": "Add autonomous | epic audit trail", "pr_number": 10, "tracker_status": "In Development", "risk_level": "medium", "review_result": "clean", "decision": "merge_approved", "merge_cleanup": "verified", "notes": "ready\nBearer token.value", "checkpoints": [{"item_number": 920, "stage": "plan", "domain": "technical", "satisfaction_state": "satisfied"}]},
     {"issue_number": 918, "title": "Add delegated review and merge loop", "tracker_status": "Backlog", "risk_level": "-", "review_result": "-", "decision": "blocked", "merge_cleanup": "-", "notes": "depends on #920", "stop_gate": "blocked dependency"}
   ]
 }
@@ -236,6 +266,16 @@ run_test "renders_advisory_decision" "yes" "$(grep -q 'accepted' <<< "$pr_output
 run_test "renders_protocol_deviation" "yes" "$(grep -q 'documented<br>rationale' <<< "$pr_output" && echo yes || echo no)"
 run_test "renders_invocation_policy" "yes" "$(grep -q '### Invocation Policy' <<< "$pr_output" && grep -q 'accepted recommended policy' <<< "$pr_output" && echo yes || echo no)"
 run_test "renders_policy_table" "yes" "$(grep -q '| mayStartBacklog | true | true | true |' <<< "$pr_output" && grep -q '| maxRisk | medium | medium | medium |' <<< "$pr_output" && echo yes || echo no)"
+run_test "renders_checkpoint_policy" "yes" "$(grep -q '### Checkpoint Policy' <<< "$pr_output" && grep -q 'approve data model' <<< "$pr_output" && echo yes || echo no)"
+run_test "pending_checkpoint_count_excludes_satisfied" "0" "$(printf '%s\n' "$pr_output" | grep 'Pending applicable checkpoints:' | sed 's/.*: //')"
+
+stage_scoped_fixture="$TMP_ROOT/stage-scoped-checkpoints.json"
+jq '.checkpoint_policy.effective = [
+  {"item_number": 920, "stage": "plan", "domain": "technical", "reason": "plan pending", "required_human_action": "approve plan", "satisfaction_state": "pending"},
+  {"item_number": 920, "stage": "implementation", "domain": "technical", "reason": "impl pending", "required_human_action": "approve impl", "satisfaction_state": "pending"}
+] | .pr.branch = "implementation-plan/audit-trail"' "$pr_fixture" > "$stage_scoped_fixture"
+stage_scoped_output="$("$HELPER" render-pr-disposition --input "$stage_scoped_fixture")"
+run_test "pending_count_scoped_to_pr_stage" "1" "$(printf '%s\n' "$stage_scoped_output" | grep 'Pending applicable checkpoints:' | sed 's/.*: //')"
 run_test "escapes_pr_table_pipes" "yes" "$(grep -Fq 'haystack\\|triage' <<< "$pr_output" && grep -Fq 'none \\| expected' <<< "$pr_output" && echo yes || echo no)"
 run_test "normalizes_pr_table_newlines_tabs" "yes" "$(grep -Fq 'docs<br>sync' <<< "$pr_output" && grep -Fq 'documented<br>rationale with' <<< "$pr_output" && echo yes || echo no)"
 run_test "redacts_sensitive_values" "yes" "$(! grep -Eq 'ghp_FAKE_PLACEHOLDER|Authorization: dummy|Bearer dummy\\.value|/tmp/fake-placeholder' <<< "$pr_output" && grep -Fq 'Authorization: [REDACTED]' <<< "$pr_output" && grep -Fq 'Bearer [REDACTED]' <<< "$pr_output" && echo yes || echo no)"
@@ -250,6 +290,7 @@ run_test "escapes_ledger_table_pipes" "yes" "$(grep -Fq 'Add autonomous \\| epic
 run_test "normalizes_ledger_newlines" "yes" "$(grep -Fq 'ready<br>Bearer [REDACTED]' <<< "$ledger_output" && echo yes || echo no)"
 run_test "ledger_notes_include_effective_policy" "yes" "$(grep -Fq 'Effective policy: mayStartBacklog=true, delegateReview=true, mayMerge=true, maxRisk=medium, base=develop-delegated-epic-orchestration' <<< "$ledger_output" && echo yes || echo no)"
 run_test "ledger_notes_include_stop_gate" "yes" "$(grep -Fq 'Stop gate: blocked dependency' <<< "$ledger_output" && echo yes || echo no)"
+run_test "ledger_notes_include_checkpoints" "yes" "$(grep -Fq 'Checkpoints: #920 plan/technical=satisfied' <<< "$ledger_output" && echo yes || echo no)"
 
 explicit_output="$("$HELPER" render-epic-ledger --input "$explicit_fixture")"
 run_test "explicit_items_skip_epic_ledger" "yes" "$(grep -q 'Not applicable' <<< "$explicit_output" && echo yes || echo no)"
@@ -266,6 +307,32 @@ run_fails_contains "comment_patch_failure_errors" "patch failed" env MOCK_COMMEN
 
 ledger_create_output="$("$HELPER" apply-epic-ledger --input "$ledger_fixture" --epic 900)"
 run_test "creates_epic_ledger_when_missing" "CREATED_COMMENT=1" "$ledger_create_output"
+
+ledger_root_checkpoint_fixture="$TMP_ROOT/ledger-root-checkpoints.json"
+cat > "$ledger_root_checkpoint_fixture" <<'JSON'
+{
+  "epic": {"number": 916, "title": "Delegated epic orchestration"},
+  "invocation_policy": {
+    "effective_policy": {
+      "mayStartBacklog": true,
+      "delegateReview": true,
+      "mayMerge": true,
+      "maxRisk": "medium",
+      "base": "develop-delegated-epic-orchestration",
+      "checkpoints": [
+        {"item_number": 920, "stage": "plan", "domain": "technical", "satisfaction_state": "pending"},
+        {"item_number": 918, "stage": "plan", "domain": "technical", "satisfaction_state": "pending"}
+      ]
+    }
+  },
+  "items": [
+    {"issue_number": 920, "title": "Item A", "tracker_status": "In Development", "decision": "merge_approved"},
+    {"issue_number": 918, "title": "Item B", "tracker_status": "Backlog", "decision": "blocked"}
+  ]
+}
+JSON
+root_checkpoint_ledger_output="$("$HELPER" render-epic-ledger --input "$ledger_root_checkpoint_fixture")"
+run_test "ledger_root_checkpoints_scoped_by_item" "yes" "$(grep -Fq 'Checkpoints: #920 plan/technical=pending' <<< "$root_checkpoint_ledger_output" && ! grep '#918' <<< "$(grep 'Item A' <<< "$root_checkpoint_ledger_output")" && echo yes || echo no)"
 ledger_update_output="$(MOCK_COMMENT_MODE=existing "$HELPER" apply-epic-ledger --input "$ledger_fixture" --epic 900)"
 run_test "updates_existing_epic_ledger_comment" "UPDATED_COMMENT_ID=456" "$ledger_update_output"
 

@@ -256,21 +256,30 @@ If no blocking human decision remains:
 1. Determine the branch slug:
    - **With issue tracker**: `[issue-id]-[feature-slug]` (e.g., `ENG-123-user-auth`)
    - **Without issue tracker**: `[feature-slug]` (e.g., `user-auth`)
-2. Create branch from `develop` — but first run the **pre-branch HEAD verification** to prevent stacked-branch contamination in shared-checkout parallel execution:
+2. Resolve the spec artifact base branch, then create the branch from that base.
+   In `workflow_hub` mode, specs are hub-owned and use the hub repository's
+   artifact base branch, typically the hub default branch. Do not use the
+   product implementation base (`--base develop` from `/run-epic`) as proof that
+   the hub repository must have `develop`.
+
+   Then run the **pre-branch HEAD verification** to prevent stacked-branch
+   contamination in shared-checkout parallel execution:
 
    ```bash
+   set -euo pipefail
+   ARTIFACT_BASE_BRANCH="<artifact-base-branch>"
    git fetch origin
-   git checkout develop && git pull origin develop
-   EXPECTED_SHA=$(git rev-parse "origin/develop") \
-     || { echo "ERROR: git rev-parse origin/develop failed — verify the remote ref exists." >&2; exit 1; }
+   git checkout "$ARTIFACT_BASE_BRANCH" && git pull origin "$ARTIFACT_BASE_BRANCH"
+   EXPECTED_SHA=$(git rev-parse "origin/${ARTIFACT_BASE_BRANCH}") \
+     || { echo "ERROR: git rev-parse origin/${ARTIFACT_BASE_BRANCH} failed — verify the remote ref exists." >&2; exit 1; }
    ACTUAL_SHA=$(git rev-parse HEAD) \
      || { echo "ERROR: git rev-parse HEAD failed — check repository state." >&2; exit 1; }
    if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
-     echo "ERROR: HEAD ($ACTUAL_SHA) does not match origin/develop ($EXPECTED_SHA)." >&2
+     echo "ERROR: HEAD ($ACTUAL_SHA) does not match origin/${ARTIFACT_BASE_BRANCH} ($EXPECTED_SHA)." >&2
      echo "A sibling agent may have moved this checkout. Abort rather than create a stacked branch." >&2
      exit 1
    fi
-   echo "Pre-branch HEAD check passed: HEAD matches origin/develop"
+   echo "Pre-branch HEAD check passed: HEAD matches origin/${ARTIFACT_BASE_BRANCH}"
    git checkout -b spec/[branch-slug]
    ```
 
@@ -281,7 +290,7 @@ If no blocking human decision remains:
 6. **Do NOT update CHANGELOG**: `spec/*` branches are exempt from CHANGELOG entries. The changelog policy only applies to `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches. Do not create or modify `CHANGELOG.md` in this PR.
 7. Commit: `docs: add spec for [feature-name]`
 8. Push: `git push -u origin spec/[branch-slug]`
-9. Open a **draft** PR targeting `develop` with:
+9. Open a **draft** PR targeting the spec artifact base branch with:
    - Title: `docs(spec): [feature-name]`
    - Body: summary of the feature, link to the spec file, list of open questions (if any)
    - When a tracker brief exists: Coverage Matrix summary (each brief objective mapped to AC reference(s) or Out-of-Scope entry) and Deferral Notes for each objective intentionally moved to Out of Scope

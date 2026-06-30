@@ -54,6 +54,14 @@ Parse the output. Each PR candidate is a block of `KEY=VALUE` lines terminated b
 
   When the user supplied an explicit PR list the script proceeds to per-PR readiness checks regardless of label status (some may not have the `ready-for-human-review` label — those are handled in Step 2).
 
+  If discovery warns that a PR is labeled `human-checkpoint-required`, treat it
+  as skipped until the named checkpoint is satisfied or waived. Do not add it
+  back to the candidate list just because `ready-for-human-review` is present.
+  To inspect an explicitly supplied checkpointed PR in the candidate table after
+  human confirmation, rerun discovery with `--include-checkpointed`; merge mode
+  will still refuse the stale label, so the checkpoint lifecycle helper must
+  record `satisfied` or `waived` evidence and sync labels before the merge step.
+
 ### 1c. Display the candidate summary table
 
 Print a summary table so the human can see what was discovered before any gate or merge:
@@ -91,6 +99,23 @@ For each candidate PR:
    Record the human's decision. If the human does not respond or exits, treat as **skip**.
 
 3. Do not silently skip or silently include an unready PR. The human must explicitly decide.
+
+4. If `PR_HAS_HUMAN_CHECKPOINT=true`, display a warning:
+
+   > **Warning**: PR #N — _title_ — still requires a human checkpoint.
+   > The required action must be completed and recorded before this batch can
+   > merge it.
+   >
+   > - Type **satisfied** only after the checkpoint lifecycle evidence records
+   >   `satisfied` or `waived` and the `human-checkpoint-required` label has
+   >   been synced away.
+   > - Type **skip** to exclude it from this run (outcome:
+   >   `skipped_human_checkpoint`).
+
+   Do not proceed on a verbal "include" alone. The merge helper refuses a stale
+   `human-checkpoint-required` label, so the concrete action is to satisfy or
+   waive the checkpoint, rerun label sync, rerun discovery, and continue only
+   after `PR_HAS_HUMAN_CHECKPOINT=false`.
 
 After Step 2, update the candidate list: remove any PRs the human chose to skip and mark them `skipped_not_ready` in the tracking state.
 

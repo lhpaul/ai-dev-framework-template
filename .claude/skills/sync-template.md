@@ -19,25 +19,26 @@ Parse the user's arguments:
 - `--local=/path/to/template` → use that local directory as the template source
 - `--ref=<branch|tag>` → fetch remote at that ref (e.g., `--ref=main`, `--ref=v0.4.0`)
 - `--dry-run` → run Step 0.5 (comprehensive pre-flight diagnostic) only and stop; do not modify any files
-- No arguments → check `.tmp/template-config.json` in the current project
+- No arguments → check `.ai-dev-workflow.local.yaml` in the current project
 
-**If `.tmp/template-config.json` exists**, read it and use the saved source:
+**If `.ai-dev-workflow.local.yaml` contains a template source**, read it and use
+the saved source:
 
-```json
-{ "templatePath": "../ai-dev-framework-template" }
+```yaml
+template:
+  source:
+    local_path: ../ai-dev-framework-template
 ```
 
-or
-
-```json
-{ "templateUrl": "https://github.com/org/repo" }
-```
+or `template.source.git_url` for a remote template repository.
 
 **If no arguments and no config file**, ask the user:
 
-> "I need to know where to find the upstream template. Do you want to use a local path (e.g., `../ai-dev-framework-template`) or a remote GitHub URL? I'll save your answer to `.tmp/template-config.json` for future runs."
+> "I need to know where to find the upstream template. Do you want to use a local path (e.g., `../ai-dev-framework-template`) or a remote GitHub URL? I'll save your answer to `.ai-dev-workflow.local.yaml` for future runs."
 
-Save the user's answer to `.tmp/template-config.json` before continuing (create the `.tmp` directory if needed; it is gitignored).
+Save the user's answer under `template.source.local_path` or
+`template.source.git_url` in `.ai-dev-workflow.local.yaml` before continuing.
+The file is gitignored.
 
 **Remote fetch** (when a URL source is used):
 

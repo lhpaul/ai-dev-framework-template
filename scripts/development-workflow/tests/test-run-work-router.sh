@@ -319,30 +319,36 @@ run_test "whitespace_only_arg_mode" "no_target_scan" \
 # --- Single non-epic issue (AC2) -------------------------------------------
 
 output_978="$(router_output "978")"
-run_test "single_issue_978_mode" "single_item" \
+run_test "single_issue_978_mode" "redirect_item" \
   "$(printf '%s\n' "$output_978" | grep '^MODE=' | cut -d= -f2-)"
 run_test "single_issue_978_scope" "978" \
   "$(printf '%s\n' "$output_978" | grep '^RESOLVED_SCOPE=' | cut -d= -f2-)"
 run_test "single_issue_978_raw_target" "978" \
   "$(printf '%s\n' "$output_978" | grep '^RAW_TARGET=' | cut -d= -f2-)"
+run_test "single_issue_978_redirect" "/run-item 978" \
+  "$(printf '%s\n' "$output_978" | grep '^REDIRECT_COMMAND=' | cut -d= -f2-)"
 
 # --- Single epic-like issue → epic mode (AC5) ------------------------------
 
 output_977="$(router_output "977")"
-run_test "single_epic_issue_977_mode" "epic" \
+run_test "single_epic_issue_977_mode" "redirect_epic" \
   "$(printf '%s\n' "$output_977" | grep '^MODE=' | cut -d= -f2-)"
 run_test "single_epic_issue_977_scope" "977" \
   "$(printf '%s\n' "$output_977" | grep '^RESOLVED_SCOPE=' | cut -d= -f2-)"
+run_test "single_epic_issue_977_redirect" "/run-epic --epic 977" \
+  "$(printf '%s\n' "$output_977" | grep '^REDIRECT_COMMAND=' | cut -d= -f2-)"
 
 # --- --epic flag (explicit epic) (AC4) -------------------------------------
 
 output_epic_flag="$(router_output "--epic" "977")"
-run_test "epic_flag_mode" "epic" \
+run_test "epic_flag_mode" "redirect_epic" \
   "$(printf '%s\n' "$output_epic_flag" | grep '^MODE=' | cut -d= -f2-)"
 run_test "epic_flag_scope" "977" \
   "$(printf '%s\n' "$output_epic_flag" | grep '^RESOLVED_SCOPE=' | cut -d= -f2-)"
 run_test "epic_flag_raw_target" "--epic 977" \
   "$(printf '%s\n' "$output_epic_flag" | grep '^RAW_TARGET=' | cut -d= -f2-)"
+run_test "epic_flag_redirect" "/run-epic --epic 977" \
+  "$(printf '%s\n' "$output_epic_flag" | grep '^REDIRECT_COMMAND=' | cut -d= -f2-)"
 
 # --- --epic with non-integer → ambiguous ------------------------------------
 
@@ -355,27 +361,27 @@ run_test_contains "epic_flag_bad_value_stop_reason" "not a valid issue number" \
 # --- Single branch token (AC2) ---------------------------------------------
 
 output_branch="$(router_output "feature/42-foo")"
-run_test "single_branch_mode" "single_item" \
+run_test "single_branch_mode" "redirect_item" \
   "$(printf '%s\n' "$output_branch" | grep '^MODE=' | cut -d= -f2-)"
 run_test "single_branch_scope" "feature/42-foo" \
   "$(printf '%s\n' "$output_branch" | grep '^RESOLVED_SCOPE=' | cut -d= -f2-)"
 
 output_spec_branch="$(router_output "spec/42-foo")"
-run_test "single_spec_branch_mode" "single_item" \
+run_test "single_spec_branch_mode" "redirect_item" \
   "$(printf '%s\n' "$output_spec_branch" | grep '^MODE=' | cut -d= -f2-)"
 
 output_fix_branch="$(router_output "fix/978-bug")"
-run_test "single_fix_branch_mode" "single_item" \
+run_test "single_fix_branch_mode" "redirect_item" \
   "$(printf '%s\n' "$output_fix_branch" | grep '^MODE=' | cut -d= -f2-)"
 
 output_plan_branch="$(router_output "plan/978-foo")"
-run_test "single_plan_branch_mode" "single_item" \
+run_test "single_plan_branch_mode" "redirect_item" \
   "$(printf '%s\n' "$output_plan_branch" | grep '^MODE=' | cut -d= -f2-)"
 
 # --- Single PR token (AC2) -------------------------------------------------
 
 output_pr="$(router_output "118")"
-run_test "single_pr_118_mode" "single_item" \
+run_test "single_pr_118_mode" "redirect_item" \
   "$(printf '%s\n' "$output_pr" | grep '^MODE=' | cut -d= -f2-)"
 run_test "single_pr_118_scope" "118" \
   "$(printf '%s\n' "$output_pr" | grep '^RESOLVED_SCOPE=' | cut -d= -f2-)"
@@ -393,7 +399,7 @@ mkdir -p "$DEV_FOLDER_TMP/docs/specs/developments/20260617_978-foo"
 pushd "$DEV_FOLDER_TMP" > /dev/null
 output_devfolder="$(PATH="$MOCK_BIN:$PATH" "$ROUTER" "docs/specs/developments/20260617_978-foo" 2>/dev/null)"
 popd > /dev/null
-run_test "single_dev_folder_mode" "single_item" \
+run_test "single_dev_folder_mode" "redirect_item" \
   "$(printf '%s\n' "$output_devfolder" | grep '^MODE=' | cut -d= -f2-)"
 
 # --- PyYAML unavailable: conservative defaults applied ----------------------
@@ -412,30 +418,38 @@ run_test "guardrails_nopyaml_mode_defaults_to_manual" "manual" \
 run_test "guardrails_nopyaml_backlog_defaults_to_false" "false" \
   "$(printf '%s\n' "$output_fallback" | grep '^GUARDRAILS_BACKLOG_START=' | cut -d= -f2-)"
 
-# --- Space-separated explicit list (AC3) ------------------------------------
+# --- Space-separated multi-target list → redirect_items (AC3) ---------------
 
 output_list_space="$(router_output "978" "979")"
-run_test "space_list_mode" "explicit_list" \
+run_test "space_list_mode" "redirect_items" \
   "$(printf '%s\n' "$output_list_space" | grep '^MODE=' | cut -d= -f2-)"
 run_test_contains "space_list_scope_contains_978" "978" \
   "$(printf '%s\n' "$output_list_space" | grep '^RESOLVED_SCOPE=' | cut -d= -f2-)"
 run_test_contains "space_list_scope_contains_979" "979" \
   "$(printf '%s\n' "$output_list_space" | grep '^RESOLVED_SCOPE=' | cut -d= -f2-)"
+run_test_contains "space_list_redirect_command_prefix" "/run-items" \
+  "$(printf '%s\n' "$output_list_space" | grep '^REDIRECT_COMMAND=' | cut -d= -f2-)"
+run_test_contains "space_list_redirect_command_978" "978" \
+  "$(printf '%s\n' "$output_list_space" | grep '^REDIRECT_COMMAND=' | cut -d= -f2-)"
+run_test_contains "space_list_redirect_command_979" "979" \
+  "$(printf '%s\n' "$output_list_space" | grep '^REDIRECT_COMMAND=' | cut -d= -f2-)"
 
-# --- Comma-separated explicit list (AC3) ------------------------------------
+# --- Comma-separated multi-target list → redirect_items (AC3) ---------------
 
 output_list_comma="$(router_output "978,979")"
-run_test "comma_list_mode" "explicit_list" \
+run_test "comma_list_mode" "redirect_items" \
   "$(printf '%s\n' "$output_list_comma" | grep '^MODE=' | cut -d= -f2-)"
 run_test_contains "comma_list_scope_contains_978" "978" \
   "$(printf '%s\n' "$output_list_comma" | grep '^RESOLVED_SCOPE=' | cut -d= -f2-)"
 run_test_contains "comma_list_scope_contains_979" "979" \
   "$(printf '%s\n' "$output_list_comma" | grep '^RESOLVED_SCOPE=' | cut -d= -f2-)"
+run_test_contains "comma_list_redirect_command_prefix" "/run-items" \
+  "$(printf '%s\n' "$output_list_comma" | grep '^REDIRECT_COMMAND=' | cut -d= -f2-)"
 
 # --- Duplicate token collapse (UC3 consideration) ---------------------------
 
 output_dupes="$(router_output "978" "978" "979")"
-run_test "duplicate_tokens_mode" "explicit_list" \
+run_test "duplicate_tokens_mode" "redirect_items" \
   "$(printf '%s\n' "$output_dupes" | grep '^MODE=' | cut -d= -f2-)"
 # Should not have 978 appear twice in scope
 scope_dupes="$(printf '%s\n' "$output_dupes" | grep '^RESOLVED_SCOPE=' | cut -d= -f2-)"
@@ -470,7 +484,7 @@ done
 # --- JSON output (--json flag, AC10) ----------------------------------------
 
 output_json="$(router_output "978" "--json")"
-run_test "json_has_mode_field" "single_item" \
+run_test "json_has_mode_field" "redirect_item" \
   "$(printf '%s\n' "$output_json" | python3 -c 'import json,sys
 data = sys.stdin.read()
 # Extract the JSON block (after key=value lines)

@@ -175,6 +175,28 @@ Use this when:
 - The batch orchestrator needs a deterministic first-pass list of development-folder candidates
 - You want to separate portfolio-level batch planning from single-item orchestration
 
+### `workflow-batch-lanes.sh`
+
+Assigns stage lanes and `proposed` vs `held` dispatch status for portfolio batch
+proposals. Consumes `workflow-batch-plan.sh` output (or `--scan`).
+
+Usage:
+
+```bash
+./scripts/development-workflow/workflow-batch-plan.sh | ./scripts/development-workflow/workflow-batch-lanes.sh
+./scripts/development-workflow/workflow-batch-lanes.sh --scan
+```
+
+What it does:
+
+- Applies `max_concurrent_by_stage` caps (default: unlimited spec/plan/review, implementation `1`)
+- Emits `STAGE_LANE`, `DISPATCH`, `HOLD_REASON`, and `HELD_SUMMARY` per item
+- Honors `LOCAL_RUNTIME=exclusive` holds when multiple implementation items would contend
+
+Use this when:
+
+- Protocol 90 Step 3 needs deterministic lane assignments before dispatch
+
 ### Workflow hub product repository commands
 
 These commands run only when `.ai-dev-workflow.yaml` resolves to
@@ -279,6 +301,28 @@ What it does:
 - Writes a missing local path to `.ai-dev-workflow.local.yaml` only when
   `--bootstrap-local-path` is set and the operator confirms the prompt, or when
   `--yes` is also supplied
+
+#### `hub-preflight-product-repos.sh`
+
+Bootstrap workflow readiness labels and validate CI policy on product GitHub
+repositories before delegated orchestration.
+
+Usage:
+
+```bash
+./scripts/development-workflow/hub-preflight-product-repos.sh --repo mobile-app
+./scripts/development-workflow/hub-preflight-product-repos.sh --all
+./scripts/development-workflow/hub-preflight-product-repos.sh --all --labels-only
+```
+
+What it does:
+
+- Creates missing operational labels (`ready-for-human-review`, `needs-fixes`,
+  `ready-for-regression`, `human-checkpoint-required`) on each configured product
+  GitHub repository
+- Probes GitHub Actions workflow count when `ci_policy` is `required` (default)
+- Passes when `ci_policy: none` is declared for repositories without CI workflows
+- Requires `gh` authentication for remote inspection
 
 #### `hub-list-prs.sh`
 

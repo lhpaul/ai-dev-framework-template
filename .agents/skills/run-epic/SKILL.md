@@ -1,6 +1,6 @@
 ---
 name: run-epic
-description: "Compatibility/advanced alias: resolve a native GitHub epic or explicit item list into a bounded workflow execution scope, with optional delegated review and merge gates. For the recommended starting point, use /run-work <epic-target> instead. Use /run-epic when you need direct control over delegation flags (--delegate-review, --may-merge, --max-risk)."
+description: "Compatibility/advanced alias: resolve a native GitHub epic into a bounded workflow execution scope, with optional delegated review and merge gates. For the recommended starting point, use /run-work <epic-target> instead. Use /run-epic when you need direct control over delegation flags (--delegate-review, --may-merge, --max-risk). For explicit item lists, use /run-items."
 ---
 
 # Run Epic
@@ -16,9 +16,13 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
 1. Read `AGENTS.md` for repository-wide rules.
 2. Read `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md`.
 3. Run `./scripts/development-workflow/run-epic-scope-resolver.sh` with the
-   requested `--epic` or `--items` arguments plus any invocation policy flags:
+   `--epic <issue-number>` argument plus any invocation policy flags:
    `--delegate-review`, `--may-merge`, `--may-start-backlog <true|false>`,
    `--max-risk <low|medium|high>`, and `--base <branch>`.
+   For explicit item lists, use `/run-items` instead of `--items`.
+   In `workflow_hub` mode, treat the resolver's base as the product
+   implementation base. Do not block because that branch is absent from the hub
+   repository; validate it only after the owning product repository is selected.
 4. Treat resolver output as the bounded scope contract. The resolver itself is
    read-only: do not update tracker status, create branches, open PRs, merge
    PRs, close issues, or delete branches from the resolver phase.
@@ -26,12 +30,11 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
    `./scripts/development-workflow/run-epic-policy-recommender.sh --scope <resolver-json> --original-command "<requested command>"`
    with any supplied policy flags, including `--no-delegate-review` or
    `--no-may-merge` for explicit negative selections. Present the recommended
-   policy, risk
-   rationale, base branch, scoped items, and copy-paste equivalent command
-   before mutation. Continue in the same run when the human accepts the
-   recommendation or supplies custom values. Exact fully specified invocations
-   may skip the prompt but still record original, recommended, selected, and
-   effective policy in later audit evidence.
+   policy, checkpoint policy, risk rationale, base branch, scoped items, and
+   copy-paste equivalent command before mutation. Continue in the same run when
+   the human accepts the recommendation or supplies custom values. Exact fully
+   specified invocations may skip the prompt but still record original,
+   recommended, selected, and effective policy in later audit evidence.
 6. When a later delegated run reaches a candidate PR merge decision, run
    `./scripts/development-workflow/run-epic-risk-classifier.sh --pr <pr-number>`
    with the invocation's `--max-risk` before merge. The classifier is also
@@ -39,7 +42,7 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
    readiness-label, or repository merge-protocol checks.
 7. After delegated review, fix, merge, block, or escalation decisions, use
    `./scripts/development-workflow/run-epic-audit-trail.sh` to create or update
-   stable PR disposition and epic ledger comments:
+   stable PR disposition and epic ledger comments, including checkpoint state:
    - `render-pr-disposition --input <file>`
    - `apply-pr-disposition --input <file> --pr <pr-number>`
    - `render-epic-ledger --input <file>`

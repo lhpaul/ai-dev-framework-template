@@ -200,9 +200,10 @@ The sections below keep this document usable as a master reference after the nar
 | Review gate (spec / plan / code) | Native review against `REVIEW.md`                                 | `/review-spec`, `/review-implementation-plan`, `/review-code` | Native review against `REVIEW.md`  | `REVIEW.md` plus compatibility wrappers in `docs/workflow/development-workflow/protocols/`                                                                                                                |
 | Smoke test                       | `smoke-tester` agent                                              | `/smoke-tester`                                               | —                                  | `docs/workflow/development-workflow/protocols/04-smoke-test-protocol.md`                                                                                                                                  |
 | Run reviewer loop                | `/run-reviewer-loop` command (or `automated-reviewer-loop` agent) | `/run-reviewer-loop`                                          | `/run-reviewer-loop` alias or `workflow-reviewer-loop` skill     | `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`                                                                                                                     |
-| Advance one item (alias)         | `/run-item-work` command (or `item-orchestrator` agent)           | `/run-item-work`                                              | `/run-item-work` alias or `workflow-item-orchestrator` skill     | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`                                                                                                                            |
+| Advance one item                 | `/run-item` command (or `item-orchestrator` agent)                | `/run-item`                                                   | `/run-item` alias or `workflow-item-orchestrator` skill            | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — `/run-item-work` is a deprecated alias |
+| Execute bounded batch            | `/run-items`                                                      | `/run-items`                                                  | `/run-items` alias                                               | `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — Protocol 90 `explicit_list` mode; supply two or more item targets; targets `develop` directly |
 | Resolve epic scope / delegated gate (alias) | `/run-epic`                                           | `/run-epic`                                                   | `/run-epic` alias                                                | `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md`                                                                                                                                    |
-| Orchestrate work (primary)       | `/run-work` command (or `orchestrator` agent)                     | `/run-work`                                                   | `/run-work` alias or `workflow-orchestrator` skill               | `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` (no-target / explicit-list), `91` (single-item), `95` (epic)                                                        |
+| Scan portfolio (read-only)       | `/run-work` command (or `orchestrator` agent)                     | `/run-work`                                                   | `/run-work` alias or `workflow-orchestrator` skill               | `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — read-only scan; proposes batch options; single/epic targets redirect to `/run-item` / `/run-epic` (Protocol 96) |
 | Batch merge                      | `/batch-merge`                                                    | `/batch-merge`                                                | `/batch-merge` alias or `batch-merge` skill                      | `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md`                                                                                                                                 |
 | Graduate integration branch      | `/graduate-development <slug>`                                    | —                                                             | `/graduate-development` alias     | Follow `docs/workflow/development-workflow/protocols/05b-graduate-development-protocol.md`                                                                                                                |
 | Prepare release                  | `/prepare-release`                                                | `/prepare-release`                                            | `/prepare-release` alias          | `docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md`                                                                                                                             |
@@ -218,7 +219,7 @@ Codex skills are stored in `.agents/skills/` for repo-scoped Codex discovery, wi
 ./scripts/development-workflow/install-codex-skills.sh
 ```
 
-These skills are thin wrappers around the same workflow protocols used by the other tools. Command-style aliases such as `/add-backlog-item`, `/run-work`, `/run-item-work`, `/run-epic`, `/run-reviewer-loop`, `/batch-merge`, `/post-merge-cleanup`, `/prepare-release`, `/graduate-development`, `/retrospective`, and `/sync-template` map to the canonical workflow skills or protocols so Codex can be used with names similar to Claude Code commands. `/run-work` is the primary adaptive entrypoint: it runs the routing classifier (`run-work-router.sh`, Protocol 96) and routes to no-target scan / explicit-list (Protocol 90), single-item (Protocol 91), or epic (Protocol 95) based on the supplied target. `/run-item-work` and `/run-epic` are compatibility/advanced aliases that bypass routing and invoke their underlying protocols directly. `/run-epic` first resolves a bounded scope, recommends missing autonomy policy in-place before mutation, captures invocation-scoped delegation policy, uses read-only PR risk classification and `run-epic-delegated-gate.sh` before delegated merge decisions, and records stable PR disposition and epic ledger audit comments after delegated decisions.
+These skills are thin wrappers around the same workflow protocols used by the other tools. Command-style aliases such as `/add-backlog-item`, `/run-work`, `/run-item`, `/run-items`, `/run-item-work` (deprecated alias), `/run-epic`, `/run-reviewer-loop`, `/batch-merge`, `/post-merge-cleanup`, `/prepare-release`, `/graduate-development`, `/retrospective`, and `/sync-template` map to the canonical workflow skills or protocols so Codex can be used with names similar to Claude Code commands. `/run-item` and `/run-epic` are the primary bounded commands (shared prelude + Protocol 91 or 95). `/run-items` is the bounded multi-item batch execute command (Protocol 90 `explicit_list` mode — two or more items). `/run-work` is the read-only portfolio scan entrypoint via `run-work-router.sh` (Protocol 96) — it proposes batch options but does not execute; single/epic targets redirect to `/run-item` / `/run-epic`. `/run-item-work` remains a deprecated alias identical to `/run-item`.
 
 ### Workflow Capabilities And Fallbacks
 
@@ -402,9 +403,11 @@ Opening a PR is not a terminal condition. A workflow run should continue until t
 
 Repository-specific workflow integrations are declared in `.ai-dev-workflow.yaml` at the repo root.
 Machine-local overrides belong in `.ai-dev-workflow.local.yaml`, which is
-gitignored. Start from `.ai-dev-workflow.local.example.yaml` when a workflow hub
-needs checkout roots, product-repo local paths, secret references, or local tool
-overrides.
+gitignored. Local review overrides replace the matching shared reviewer list
+for this checkout, including `review.on_draft.runner`,
+`review.on_draft.github`, and `review.on_ready.github`. Start from
+`.ai-dev-workflow.local.example.yaml` when a workflow hub needs checkout roots,
+product-repo local paths, secret references, or local tool overrides.
 
 The file is versioned and intentionally declarative. It is the right place to record which workflow providers this repository uses for:
 
@@ -498,7 +501,7 @@ Important implementation notes:
   [`workflow-hub-setup.md`](workflow-hub-setup.md),
   [`product-repo-injection.md`](product-repo-injection.md), and
   [`cross-repo-pr-flow.md`](cross-repo-pr-flow.md).
-- `review.on_draft.runner` is consumed by the Step 7a internal review gate protocol (`91-orchestrate-work-protocol.md`). If omitted, the gate falls back to running the stage-appropriate `claude` reviewer once. Developers can override the list locally via `.tmp/template-config.json` (gitignored).
+- `review.on_draft.runner` is consumed by the Step 7a internal review gate protocol (`91-orchestrate-work-protocol.md`). If omitted, the gate falls back to running the stage-appropriate `claude` reviewer once. Developers can override the list locally via `.ai-dev-workflow.local.yaml` (gitignored).
 - `review.on_draft.github` and `review.on_ready.github` are consumed by `scripts/development-workflow/pr-review-loop.sh` for external automated PR review (Step 7). If the config file is absent, or both lists are omitted or empty, automated PR review is treated as not configured and the review loop reports `skipped`.
 - Legacy `review.internal_reviewers`, `review.platforms`, and `review.phase_after_clean` keys remain accepted for one transition release and map to the new lifecycle buckets.
 - `template.is_template` when set to `true` marks this repository as a framework template. Protocol 02 Step 0 (Template-Fit Check) becomes mandatory: before writing any implementation plan, the tech lead must verify that the spec is sufficiently generic for all downstream consumers. Set to `true` in the template repository itself; omit or leave `false` in downstream consumer repositories.
@@ -520,8 +523,9 @@ The expected sequence is:
 4. Mark the PR ready for human review only after both loops are clean.
 
 GitHub review platforms are declared in `.ai-dev-workflow.yaml` under
-`review.on_draft.github` and `review.on_ready.github`. The repository helpers
-that support this loop are:
+`review.on_draft.github` and `review.on_ready.github`, with matching
+`.ai-dev-workflow.local.yaml` lists taking precedence for local tool/subscription
+differences. The repository helpers that support this loop are:
 
 - `scripts/development-workflow/pr-review-loop.sh`
 - `scripts/development-workflow/pr-ci-loop.sh`
@@ -610,6 +614,7 @@ Repository helpers:
 - `docs/workflow/development-workflow/integrations/devin.md`
 - `docs/workflow/development-workflow/integrations/coderabbit.md`
 - `docs/workflow/development-workflow/integrations/haystack.md`
+- `docs/workflow/development-workflow/integrations/llm-router.md`
 - `docs/workflow/development-workflow/integrations/github-projects.md`
 - `docs/workflow/development-workflow/integrations/workflow-hub-github-app.md`
 - `docs/workflow/development-workflow/integrations/ci-cd-deployment.md`

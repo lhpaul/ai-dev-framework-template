@@ -11,6 +11,7 @@
 #   # --- Discovery mode ---
 #   ./scripts/development-workflow/batch-merge.sh [--base <branch>] discover
 #   ./scripts/development-workflow/batch-merge.sh [--base <branch>] discover --prs 101,102,103
+#   ./scripts/development-workflow/batch-merge.sh [--base <branch>] discover --include-checkpointed --prs 101,102,103
 #
 #   # --- Per-PR merge mode ---
 #   ./scripts/development-workflow/batch-merge.sh [--base <branch>] merge --pr 101
@@ -30,6 +31,7 @@
 #   PR_READY_LABEL=true|false
 #   PR_IS_DRAFT=true|false
 #   PR_HAS_NEEDS_FIXES=true|false
+#   PR_HAS_HUMAN_CHECKPOINT=true|false
 #   PR_HAS_CHANGELOG=true|false
 #   PR_CREATED_AT=<ISO-8601>
 #   PR_ORDER=<1-based index in merge order>
@@ -84,12 +86,17 @@ TARGET_BASE="${TARGET_BASE:-develop}"
 usage() {
   cat >&2 <<'EOF'
 Usage:
-  batch-merge.sh [--base <branch>] discover [--prs <num1,num2,...>]
+  batch-merge.sh [--base <branch>] discover [--include-checkpointed] [--prs <num1,num2,...>]
   batch-merge.sh [--base <branch>] merge --pr <number>
   batch-merge.sh [--base <branch>] delete-branch --pr <number>
 
   --base  Target integration branch (default: develop).
           Override when merging PRs into an epic integration branch.
+
+  --include-checkpointed
+          Discovery only. Include PRs labeled human-checkpoint-required in the
+          candidate output after protocol-level confirmation. Merge mode still
+          refuses that label until checkpoint satisfaction evidence removes it.
 EOF
   exit 2
 }
@@ -112,7 +119,7 @@ fetch_pr_meta() {
     return 1
   }
 
-  local number title branch base created_at labels_csv ready_label is_draft has_needs_fixes
+  local number title branch base created_at labels_csv ready_label is_draft has_needs_fixes has_human_checkpoint
 
   number="$(printf '%s' "$json" | jq -r '.number')"
   title="$(printf '%s' "$json" | jq -r '.title')"
@@ -131,6 +138,11 @@ fetch_pr_meta() {
   else
     has_needs_fixes="false"
   fi
+  if printf '%s' "$json" | jq -r '.labels[].name' | grep -q '^human-checkpoint-required$'; then
+    has_human_checkpoint="true"
+  else
+    has_human_checkpoint="false"
+  fi
 
   # Check whether the PR diff touches CHANGELOG.md
   local has_changelog="false"
@@ -146,6 +158,7 @@ fetch_pr_meta() {
   print_kv PR_READY_LABEL    "$ready_label"
   print_kv PR_IS_DRAFT       "$is_draft"
   print_kv PR_HAS_NEEDS_FIXES "$has_needs_fixes"
+  print_kv PR_HAS_HUMAN_CHECKPOINT "$has_human_checkpoint"
   print_kv PR_HAS_CHANGELOG  "$has_changelog"
   print_kv PR_CREATED_AT     "$created_at"
 }
@@ -156,9 +169,14 @@ fetch_pr_meta() {
 
 cmd_discover() {
   local explicit_prs=""
+  local include_checkpointed="false"
 
   while [ $# -gt 0 ]; do
     case "$1" in
+      --include-checkpointed)
+        include_checkpointed="true"
+        shift
+        ;;
       --prs)
         [ $# -ge 2 ] && [ -n "${2:-}" ] || die "--prs requires a comma-separated value (e.g. --prs 101,102)"
         explicit_prs="$2"
@@ -239,11 +257,12 @@ cmd_discover() {
       continue
     fi
 
-    local base has_changelog is_draft has_needs_fixes
+    local base has_changelog is_draft has_needs_fixes has_human_checkpoint
     base="$(printf '%s\n' "$meta" | awk -F'=' '$1=="PR_BASE"{print $2}')"
     has_changelog="$(printf '%s\n' "$meta" | awk -F'=' '$1=="PR_HAS_CHANGELOG"{print $2}')"
     is_draft="$(printf '%s\n' "$meta" | awk -F'=' '$1=="PR_IS_DRAFT"{print $2}')"
     has_needs_fixes="$(printf '%s\n' "$meta" | awk -F'=' '$1=="PR_HAS_NEEDS_FIXES"{print $2}')"
+    has_human_checkpoint="$(printf '%s\n' "$meta" | awk -F'=' '$1=="PR_HAS_HUMAN_CHECKPOINT"{print $2}')"
 
     # Filter: only target develop (explicit mode may include any PR numbers)
     if [ "$base" != "$TARGET_BASE" ]; then
@@ -260,6 +279,14 @@ cmd_discover() {
     # Filter: skip PRs labeled needs-fixes (review cycle not complete)
     if [ "$has_needs_fixes" = "true" ]; then
       echo "WARNING: PR #${pr_num} is labeled needs-fixes — skipping" >&2
+      continue
+    fi
+
+    # Filter: skip unsatisfied human checkpoints unless the caller has already
+    # completed the protocol-level checkpoint confirmation path. Merge mode has
+    # a second hard guard and will still refuse a stale checkpoint label.
+    if [ "$has_human_checkpoint" = "true" ] && [ "$include_checkpointed" != "true" ]; then
+      echo "WARNING: PR #${pr_num} is labeled human-checkpoint-required — skipping until the named checkpoint is satisfied or waived and labels are synced" >&2
       continue
     fi
 
@@ -520,6 +547,10 @@ cmd_merge() {
 
   if printf '%s' "$pr_json" | jq -e '.labels[].name | select(. == "needs-fixes")' >/dev/null 2>&1; then
     merge_die "PR #${pr_num} is labeled needs-fixes"
+  fi
+
+  if printf '%s' "$pr_json" | jq -e '.labels[].name | select(. == "human-checkpoint-required")' >/dev/null 2>&1; then
+    merge_die "PR #${pr_num} is labeled human-checkpoint-required — satisfy or waive the checkpoint, record audit evidence, and sync labels before merging"
   fi
 
   # Guard: refuse to proceed if the working tree has unresolved conflict markers.

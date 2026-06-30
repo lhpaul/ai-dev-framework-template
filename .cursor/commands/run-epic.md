@@ -1,5 +1,5 @@
 ---
-description: "Compatibility/advanced alias: resolve a native GitHub epic or explicit item list into a bounded workflow execution scope, with optional delegated review and merge gates. For the recommended starting point, use /run-work <epic-target> instead. Usage: /run-epic --epic <issue-number> | --items <issue-number>[,<issue-number>...] [--base <branch>] [--delegate-review] [--may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--json]"
+description: "Compatibility/advanced alias: resolve a native GitHub epic into a bounded workflow execution scope, with optional delegated review and merge gates. For the recommended starting point, use /run-work <epic-target> instead. For explicit item lists, use /run-items. Usage: /run-epic --epic <issue-number> [--base <branch>] [--delegate-review] [--may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--json]"
 ---
 
 # Cursor Command: Run Epic
@@ -17,22 +17,24 @@ Follow the resolver protocol exactly as defined in:
 
 Key responsibilities:
 
-- Require exactly one of `--epic` or `--items`.
-- Resolve native GitHub sub-issues for `--epic`; keep `--items` exact.
-- Infer the base branch from `--base`, shared `integration-branch:<slug>`, or
-  `develop`.
+- Require `--epic <issue-number>`. For explicit item lists, use `/run-items`.
+- Resolve native GitHub sub-issues for the epic.
+- Infer the execution base branch from `--base`, shared
+  `integration-branch:<slug>`, or the applicable default.
+- In `workflow_hub` mode, treat that base as the product implementation base;
+  do not block because it is absent from the hub repository.
 - Group items as `eligible`, `blocked`, `already_merged`, `in_review`,
   `ambiguous`, or `out_of_scope`.
 - Keep the command read-only: no tracker updates, branches, PRs, merges, issue
   closure, or cleanup.
 - When autonomy policy is missing or ambiguous, run the read-only policy
-  recommender, present the recommended config in-place, and continue the same
-  run when the human accepts or customizes it.
+  recommender, present the recommended config and checkpoint policy in-place,
+  and continue the same run when the human accepts or customizes it.
 - Before any later delegated merge decision, run the PR risk classifier and
   respect its `--max-risk` gate.
 - After delegated review, fix, merge, block, or escalation decisions, update
   stable PR disposition and epic ledger audit comments, including original,
-  recommended, selected, and effective policy.
+  recommended, selected, and effective policy plus checkpoint state.
 - Before merge, run the delegated gate with current scope, policy, reviewer,
   CI, risk, and audit evidence. Merge only when it reports `merge_allowed`.
 
