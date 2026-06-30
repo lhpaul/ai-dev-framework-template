@@ -1,8 +1,8 @@
 # Shared Bounded Run Prelude
 
 Read-only helpers that unify scope resolution, repository guardrails snapshot,
-and policy/checkpoint recommendation for **`/run-item`** and **`/run-epic`** before
-any artifact mutation.
+and policy/checkpoint recommendation for **`/run-item`**, **`/run-items`**, and
+**`/run-epic`** before any artifact mutation.
 
 Related:
 
@@ -46,6 +46,16 @@ Related:
   --json
 ```
 
+**Explicit item list**:
+
+```bash
+./scripts/development-workflow/run-bounded-prelude.sh \
+  --original-command "/run-items 1049 1050" \
+  --items "1049,1050" \
+  --delegate-review --may-merge --may-start-backlog true --max-risk medium \
+  --json
+```
+
 The JSON output includes:
 
 - `scope` — full resolver payload (`groups`, `items`, `baseBranch`, `policy` flags)
@@ -57,8 +67,9 @@ The JSON output includes:
 ## Contract
 
 1. **Read-only** — no tracker updates, branches, PRs, merges, or issue closure.
-2. **One policy path** — single-item runs use the same recommender and checkpoint
-   schema as `/run-epic` (no parallel autonomy system).
+2. **One policy path** — single-item and explicit-list runs use the same
+   recommender and checkpoint schema as `/run-epic` (no parallel autonomy
+   system).
 3. **Always-confirm** — `requiresConfirmation` is always `true`. The orchestrator
    must present the resolved policy to the human before any mutation. When all
    autonomy flags were provided explicitly in the invocation command, those
@@ -76,5 +87,7 @@ The JSON output includes:
 
 - **`/run-item`** and **`/run-epic`** agents should call `run-bounded-prelude.sh`
   before Protocol 91 or 95 mutation steps.
+- **`/run-items`** agents should call `run-bounded-prelude.sh` before Protocol
+  90 `explicit_list` mutation steps.
 - **`/run-work`** portfolio runs do **not** use this prelude (Protocol 90 batch
   proposal path).

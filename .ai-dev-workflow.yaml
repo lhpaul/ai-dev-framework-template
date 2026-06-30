@@ -218,3 +218,7 @@ guardrails:
     - destructive_action
     - missing_tracker_context
     - missing_required_secret_or_permission
+
+  audit:
+    pr_disposition_record: required
+    work_item_ledger_record: required
