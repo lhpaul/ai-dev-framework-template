@@ -1,16 +1,17 @@
 ---
-description: "Portfolio parallel orchestration only (Protocol 90). No-target scan or explicit multi-item batches. Single targets redirect to /run-item; epics redirect to /run-epic. Usage: /run-work [<target> ...]"
+description: "Propose portfolio batches (scan-only). No-target scan produces a batch recommendation; all target invocations emit redirect guidance. No mutation in any mode. Usage: /run-work [<target> ...]"
 ---
 
 # Claude Code Command: Run Work
 
-`/run-work` is **portfolio parallel orchestration only** — not a universal
-"run anything" entrypoint.
+`/run-work` is **portfolio scan and batch proposal only** — a fully read-only
+command that inspects the portfolio and recommends the next safe batch or
+redirect command. It performs **no mutation** in any routing mode.
 
-| Routing mode | Handoff |
-| ------------ | ------- |
-| `no_target_scan` | Protocol 90 (portfolio scan) |
-| `explicit_list` | Protocol 90 (hard bounded batch) |
+| Routing mode | Action |
+| ------------ | ------ |
+| `no_target_scan` | Protocol 90 scan + propose (no dispatch) |
+| `redirect_items` | Stop; re-invoke `/run-items <targets>` (no mutation) |
 | `redirect_item` | Stop; re-invoke `/run-item <target>` (no mutation) |
 | `redirect_epic` | Stop; re-invoke `/run-epic --epic <n>` (no mutation) |
 | `ambiguous` | Stop for human clarification |
@@ -22,10 +23,14 @@ Classifier (read-only):
 ```
 
 When output includes `REDIRECT_COMMAND`, present it to the operator and do not
-enter Protocol 90.
+proceed with any mutation.
 
-Bounded single-item work: `/run-item`. Bounded epic work: `/run-epic`.
+For single-item execution: `/run-item`. For multi-item execution: `/run-items`.
+For bounded epic work: `/run-epic`.
 
-Portfolio protocol: `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
+When mode is `no_target_scan`, follow Protocol 90 Steps 1–3 (scan + propose)
+only. Do not dispatch items under `/run-work`:
 
-In `workflow_hub`, include selected product repository context in implementation handoffs; preserve selected product repository context when dispatching item work.
+Portfolio scan protocol: `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
+
+Routing specification: `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`

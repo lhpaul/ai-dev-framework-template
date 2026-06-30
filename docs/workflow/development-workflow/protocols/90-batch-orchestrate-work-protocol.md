@@ -53,18 +53,22 @@ If the request is explicitly about a single development, branch, or PR, skip thi
 
 ## Routing Entrypoint
 
-This protocol is entered from `/run-work` (or its Codex/Cursor equivalents) when
-the routing classifier (`scripts/development-workflow/run-work-router.sh`,
-Protocol 96) determines the routing mode is `no_target_scan` or `explicit_list`.
+This protocol is entered from two paths:
 
-- **`no_target_scan`**: No target was supplied; the orchestrator scans the
-  portfolio, builds safe parallel batches, and proposes the largest safe plan.
-- **`explicit_list`**: Two or more explicit targets were supplied as a hard
-  bounded scope; the orchestrator runs that exact bounded set.
+- **From `/run-work`** (Protocol 96, `no_target_scan` mode): `/run-work` is
+  scan-and-propose only. The orchestrator runs **Steps 1–3 only** (scan,
+  assess, build batch proposal) and stops without dispatching any items. No
+  tracker updates, branch creation, or PR operations occur. The batch proposal
+  is presented to the operator; execution begins only when the operator invokes
+  `/run-items` (or equivalent) with the recommended targets.
+- **From `/run-items`** (Protocol 96, `explicit_list` mode, when implemented):
+  Two or more explicit targets were supplied as a hard bounded scope; the
+  orchestrator runs that exact bounded set through all steps including dispatch
+  (Steps 4–5).
 
-When the routing mode is `redirect_item` or `redirect_epic`, `/run-work` performs
-**no mutation**. The classifier emits `REDIRECT_COMMAND` pointing to `/run-item`
-or `/run-epic`. Use those bounded commands instead.
+When the routing mode is `redirect_item`, `redirect_epic`, or `redirect_items`,
+`/run-work` performs **no mutation**. The classifier emits `REDIRECT_COMMAND`
+pointing to the appropriate bounded command. Use those commands instead.
 
 See `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
 for the full routing specification.
@@ -445,6 +449,8 @@ Before batching an item, check its `Depends on` field or tracker dependency data
 
 ### Stale `In Development` correction (AC-6, AC-7, AC-8, AC-10)
 
+> **Scan-only mode gate (`/run-work`)**: When the routing entrypoint is `/run-work` (scan-only mode), this section is **skipped entirely** — no tracker mutations occur during the scan-and-propose phase. This correction runs only when executing a full portfolio run via `/run-items` or an equivalent dispatch entrypoint.
+
 After building the initial candidate list from the eligibility table above and after the dependency gate, but **before** Step 2.5 (pre-dispatch tracker updates), scan each candidate item whose tracker status is exactly `In Development`:
 
 1. **Guard — skip if issue number is invalid**: Before running the branch and PR checks, verify that `ISSUE_NUMBER` is a non-empty positive integer. An empty or non-numeric value would cause `git ls-remote` to search for patterns like `refs/heads/feature/-*` or `refs/heads/feature/abc-*`, potentially matching unintended branches. GitHub issue numbers are always positive integers, so a non-integer value indicates a data problem in the candidate list:
@@ -520,6 +526,8 @@ After building the initial candidate list from the eligibility table above and a
 ---
 
 ## Step 2.5: Pre-Dispatch Tracker Status Update
+
+> **Scan-only mode gate (`/run-work`)**: When the routing entrypoint is `/run-work` (scan-only mode), this entire step is **skipped** — no tracker status updates occur during the scan-and-propose phase. Step 2.5 runs only when executing a full portfolio run via `/run-items` or an equivalent dispatch entrypoint.
 
 Before building parallel batches, update the tracker to reflect that eligible items are now actively being worked on. This step runs after Step 2 (eligibility determination) and before Step 3 (batch building).
 

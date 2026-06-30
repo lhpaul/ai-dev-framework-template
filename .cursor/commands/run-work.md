@@ -1,27 +1,31 @@
 ---
-description: "Read-only portfolio scan: discovers what can advance, proposes the largest safe batch options. No execution — for bounded multi-item execution use /run-items; for single items use /run-item; for epics use /run-epic. Usage: /run-work — no targets (scan mode only)."
+description: "Read-only portfolio scan. No-target scan proposes batches; two or more targets redirect to /run-items; single targets redirect to /run-item; epics redirect to /run-epic. No mutation in any mode. Usage: /run-work [<target> ...]"
 ---
 
 # Cursor Command: Run Work
 
-`/run-work` is the **read-only portfolio scan** entrypoint. It scans the
-portfolio and proposes what can advance, without executing or mutating anything.
+`/run-work` is **portfolio scan and batch proposal only** — a fully read-only
+command. It does not advance items directly in any invocation mode.
 
-| Routing mode | Action |
-| ------------ | ------ |
-| `no_target_scan` | Scan portfolio — propose largest safe batch (read-only) |
-| `ambiguous` | Stop; report `stopReason` |
+| Invocation | Routing mode | Action |
+| ---------- | ------------ | ------ |
+| No target | `no_target_scan` | Protocol 90 scan + propose a batch (no dispatch) |
+| Two or more targets | `redirect_items` | **Stop** — re-invoke `/run-items <targets>` |
+| One non-epic target | `redirect_item` | **Stop** — re-invoke `/run-item <target>` |
+| Epic-like / `--epic` | `redirect_epic` | **Stop** — re-invoke `/run-epic --epic <n>` |
+| Ambiguous target | `ambiguous` | **Stop** — report `stopReason`; do not mutate |
 
 Run the router first (read-only):
 
 ```bash
-./scripts/development-workflow/run-work-router.sh [--json]
+./scripts/development-workflow/run-work-router.sh [<target>...] [--json]
 ```
 
 For single-item work use `/run-item`. For bounded multi-item batch execution use
 `/run-items`. For epic-scoped runs use `/run-epic`.
 
-Follow Protocol 90 proposal mode when mode is `no_target_scan`:
+When mode is `no_target_scan`, follow Protocol 90 Steps 1–3 (scan + propose)
+only. Do not dispatch items under `/run-work`:
 
 `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
 

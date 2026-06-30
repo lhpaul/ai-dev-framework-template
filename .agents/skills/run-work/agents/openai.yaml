@@ -1,7 +1,7 @@
 interface:
   display_name: "Run work"
-  short_description: "Portfolio-only /run-work: no-target scan or explicit multi-item batches. Single targets redirect to $run-item; epics redirect to $run-epic."
-  default_prompt: "Use $run-work for portfolio parallel orchestration only. With no target it runs Protocol 90 no-target scan; with two or more work-item targets it runs an explicit bounded batch. Single non-epic targets redirect to $run-item; epic-like targets redirect to $run-epic — /run-work performs no mutation for those. For one bounded item use $run-item; for an epic use $run-epic."
+  short_description: "Propose portfolio batches (scan-only). No-target scan produces a batch recommendation with no dispatch. Two or more targets redirect to $run-items. Single targets redirect to $run-item or $run-epic."
+  default_prompt: "Use $run-work for portfolio scan and batch proposal only. With no target it runs Protocol 90 Steps 1-3 (scan + propose) and returns a batch recommendation without dispatching any items — the operator then uses $run-items to execute. With two or more work-item targets it emits redirect_items with REDIRECT_COMMAND=/run-items ... for the operator to execute. Single non-epic targets redirect to $run-item; epic-like targets redirect to $run-epic. /run-work performs no mutation in any mode. For one bounded item use $run-item; for an epic use $run-epic; for multi-item execution use $run-items."
 
 policy:
   allow_implicit_invocation: false

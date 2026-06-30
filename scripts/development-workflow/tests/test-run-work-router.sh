@@ -418,30 +418,38 @@ run_test "guardrails_nopyaml_mode_defaults_to_manual" "manual" \
 run_test "guardrails_nopyaml_backlog_defaults_to_false" "false" \
   "$(printf '%s\n' "$output_fallback" | grep '^GUARDRAILS_BACKLOG_START=' | cut -d= -f2-)"
 
-# --- Space-separated explicit list (AC3) ------------------------------------
+# --- Space-separated multi-target list → redirect_items (AC3) ---------------
 
 output_list_space="$(router_output "978" "979")"
-run_test "space_list_mode" "explicit_list" \
+run_test "space_list_mode" "redirect_items" \
   "$(printf '%s\n' "$output_list_space" | grep '^MODE=' | cut -d= -f2-)"
 run_test_contains "space_list_scope_contains_978" "978" \
   "$(printf '%s\n' "$output_list_space" | grep '^RESOLVED_SCOPE=' | cut -d= -f2-)"
 run_test_contains "space_list_scope_contains_979" "979" \
   "$(printf '%s\n' "$output_list_space" | grep '^RESOLVED_SCOPE=' | cut -d= -f2-)"
+run_test_contains "space_list_redirect_command_prefix" "/run-items" \
+  "$(printf '%s\n' "$output_list_space" | grep '^REDIRECT_COMMAND=' | cut -d= -f2-)"
+run_test_contains "space_list_redirect_command_978" "978" \
+  "$(printf '%s\n' "$output_list_space" | grep '^REDIRECT_COMMAND=' | cut -d= -f2-)"
+run_test_contains "space_list_redirect_command_979" "979" \
+  "$(printf '%s\n' "$output_list_space" | grep '^REDIRECT_COMMAND=' | cut -d= -f2-)"
 
-# --- Comma-separated explicit list (AC3) ------------------------------------
+# --- Comma-separated multi-target list → redirect_items (AC3) ---------------
 
 output_list_comma="$(router_output "978,979")"
-run_test "comma_list_mode" "explicit_list" \
+run_test "comma_list_mode" "redirect_items" \
   "$(printf '%s\n' "$output_list_comma" | grep '^MODE=' | cut -d= -f2-)"
 run_test_contains "comma_list_scope_contains_978" "978" \
   "$(printf '%s\n' "$output_list_comma" | grep '^RESOLVED_SCOPE=' | cut -d= -f2-)"
 run_test_contains "comma_list_scope_contains_979" "979" \
   "$(printf '%s\n' "$output_list_comma" | grep '^RESOLVED_SCOPE=' | cut -d= -f2-)"
+run_test_contains "comma_list_redirect_command_prefix" "/run-items" \
+  "$(printf '%s\n' "$output_list_comma" | grep '^REDIRECT_COMMAND=' | cut -d= -f2-)"
 
 # --- Duplicate token collapse (UC3 consideration) ---------------------------
 
 output_dupes="$(router_output "978" "978" "979")"
-run_test "duplicate_tokens_mode" "explicit_list" \
+run_test "duplicate_tokens_mode" "redirect_items" \
   "$(printf '%s\n' "$output_dupes" | grep '^MODE=' | cut -d= -f2-)"
 # Should not have 978 appear twice in scope
 scope_dupes="$(printf '%s\n' "$output_dupes" | grep '^RESOLVED_SCOPE=' | cut -d= -f2-)"

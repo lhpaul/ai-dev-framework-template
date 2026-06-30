@@ -47,7 +47,7 @@ jobs:
           fi
 
       - name: Fetch base ref for workflow shell guard lint
-        run: git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"
+        run: git fetch --no-tags origin "$GITHUB_BASE_REF"
 
       - name: Run workflow shell guard lint
         run: python3 scripts/lint/workflow-shell-guard-lint.py --base-ref "origin/$GITHUB_BASE_REF"

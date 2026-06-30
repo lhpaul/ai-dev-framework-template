@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   via `/batch-merge`). The bounded prelude always sets `requiresConfirmation: true`
   so every mutating orchestration command shows the resolved policy before mutation.
   `guardrails.md` documents the two-step lifecycle and always-confirm contract.
+- **Scan-only `/run-work` — portfolio batch proposals without mutation** (#1076): `/run-work` is now fully read-only in all routing modes; `explicit_list` is replaced by `redirect_items` (emits `REDIRECT_COMMAND=/run-items ...` for multi-target invocations); `no_target_scan` produces a portfolio scan + batch proposal only with no item dispatch; `run-work-router.sh`, Protocol 96, Protocol 90 routing entrypoint, and all command/skill surfaces updated accordingly.
 - **Final orchestration command map — command surfaces sync** (#1080): updates all
   operator surfaces (AGENTS.md, README.md, skills, Cursor commands, agents) to
   reflect the finalized command map: `/run-work` = read-only portfolio scan,
@@ -92,6 +93,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **ShellCheck CI merge-base failure** (#1076): removed `--depth=1` from the base-ref fetch step in the ShellCheck workflow so that `workflow-shell-guard-lint.py` three-dot diff can find the merge base when `develop` has advanced past the PR branch root.
+- **Protocol 90 scan-only consistency** (#1076): added explicit scan-mode gate notes to the Stale `In Development` correction section and Step 2.5 Pre-Dispatch Tracker Status Update clarifying both are skipped in `/run-work` (scan-only) mode; aligned the Claude command with Cursor and Codex surfaces by adding an explicit Steps 1–3 paragraph for `no_target_scan`; removed the `workflow_hub` dispatch guidance from the Codex SKILL.md to match Claude and Cursor.
 - **Spec review checklist: URL-parameterized state completeness check** (#973): adds an explicit check item to the Spec Review Checklist in `REVIEW.md` requiring that any URL-serialized state (query parameters, path parameters, hash fragments) introduced by a spec must define all parameter key names and allowed values; adds a corresponding `blocking` finding type to catch specs that leave the serialization contract underspecified, preventing this class of gap from reaching the external reviewer loop.
 - **Linear orchestrator project scoping** (#972): Portfolio Orchestrator (`/run-work`) now
   reads `issue_tracker.custom_fields.project` from `.ai-dev-workflow.yaml` and filters
