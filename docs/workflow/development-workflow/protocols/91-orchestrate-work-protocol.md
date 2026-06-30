@@ -1483,8 +1483,11 @@ the PR. The only valid path to `ready-for-human-review` is:
 Skipping any step above is a protocol violation. If an item-orchestrator or
 stage agent returns with `ready-for-human-review` already applied before the
 sequence is complete, remove that label, add `needs-fixes`, and resume from the
-earliest skipped gate: Step 7a when no internal review summary exists, otherwise
-Step 7.
+earliest skipped gate in this sequence. For example: resume at Step 7a when no
+internal review summary exists, Step 7 when no clean/skipped automated reviewer
+loop result exists, Step 7b when an implementation PR is missing
+`ready-for-regression`, Step 8 when CI has not been re-run after the latest
+label or push, or Step 8a when the final readiness checklist was skipped.
 
 ### Draft GitHub gate before ready-phase reviewers
 
