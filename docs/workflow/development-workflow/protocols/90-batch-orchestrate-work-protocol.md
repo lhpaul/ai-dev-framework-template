@@ -1279,10 +1279,12 @@ After a Work Item Runner returns:
 **Batch-complete gate:** `ready-for-human-review` by itself is not a terminal
 batch-complete signal. Before declaring an explicit-list or portfolio batch
 complete, the orchestrator must verify every in-scope PR has passing required CI
-and either a clean/skipped automated reviewer-loop summary or a configured
-review-platform skip reason. Any PR with failing CI, pending reviewer-loop
-guard, missing summary, or non-clean reviewer-loop result remains in progress
-and must be redispatched or escalated instead of included in the done-report.
+and either a latest automated reviewer-loop summary whose result is clean or
+skipped, or explicit evidence that Step 7 was skipped because no review
+platforms are configured. Any PR with failing CI, pending reviewer-loop guard,
+a missing summary when review platforms are configured, or a non-clean
+reviewer-loop result remains in progress and must be redispatched or escalated
+instead of included in the done-report.
 
 Before reporting any PR as ready for human review, independently query the actual PR state via `gh pr view`. Run this check for every PR that a Work Item Runner reports as ready:
 

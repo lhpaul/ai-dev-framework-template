@@ -1472,14 +1472,19 @@ the PR. The only valid path to `ready-for-human-review` is:
 2. Step 7 external automated reviewer loop runs to a terminal `clean` or
    allowed `skipped` result and, when not skipped, leaves the automated reviewer
    loop summary comment on the PR.
-3. Step 7b applies and verifies `ready-for-regression` for implementation PRs.
-4. Step 8 CI loop returns green.
-5. Step 8a readiness checklist passes, including the reviewer-loop summary
+3. When Step 7 followed a fixer push or review-feedback cycle, the runner
+   re-issues the GraphQL `reviewThreads` query before Step 7b, as described in
+   "Re-query reviewThreads after each push" below.
+4. Step 7b applies and verifies `ready-for-regression` for implementation PRs.
+5. Step 8 CI loop returns green.
+6. Step 8a readiness checklist passes, including the reviewer-loop summary
    check and GraphQL `reviewThreads` gate.
 
 Skipping any step above is a protocol violation. If an item-orchestrator or
-stage agent returns after Step 7a with `ready-for-human-review` already applied,
-remove that label, add `needs-fixes`, and resume from Step 7.
+stage agent returns with `ready-for-human-review` already applied before the
+sequence is complete, remove that label, add `needs-fixes`, and resume from the
+earliest skipped gate: Step 7a when no internal review summary exists, otherwise
+Step 7.
 
 ### Draft GitHub gate before ready-phase reviewers
 
