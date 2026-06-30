@@ -26,11 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   via `/batch-merge`). The bounded prelude always sets `requiresConfirmation: true`
   so every mutating orchestration command shows the resolved policy before mutation.
   `guardrails.md` documents the two-step lifecycle and always-confirm contract.
+  The default guardrails block also requires PR disposition and work-item ledger
+  audit records.
 - **Scan-only `/run-work` — portfolio batch proposals without mutation** (#1076): `/run-work` is now fully read-only in all routing modes; `explicit_list` is replaced by `redirect_items` (emits `REDIRECT_COMMAND=/run-items ...` for multi-target invocations); `no_target_scan` produces a portfolio scan + batch proposal only with no item dispatch; `run-work-router.sh`, Protocol 96, Protocol 90 routing entrypoint, and all command/skill surfaces updated accordingly.
 - **`/run-items` bounded multi-item execute command** (#1077): command and skill
   surfaces now validate explicit lists with the read-only router, run the shared
   bounded prelude before Protocol 90 `explicit_list` execution, target `develop`
-  directly, and include Codex OpenAI metadata for repo-scoped skill discovery.
+  directly, document the shared prelude contract, and include Codex OpenAI
+  metadata for repo-scoped skill discovery.
 - **Final orchestration command map — command surfaces sync** (#1080): updates all
   operator surfaces (AGENTS.md, README.md, skills, Cursor commands, agents) to
   reflect the finalized command map: `/run-work` = read-only portfolio scan,
