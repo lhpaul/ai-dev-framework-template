@@ -77,7 +77,9 @@ normal review output.
 loop posts the explicit trigger command, waits within its documented bounds, and
 reports PR-Agent as clean, needs-fixes, skipped, or escalated. It does not report
 clean without either reusing a current-head PR-Agent comment or documenting a
-non-clean skipped/unavailable state.
+non-clean skipped/unavailable state. The workflow condition must allow the
+reviewer-loop posting identity even when that identity is a trusted bot or
+GitHub App token.
 
 ---
 
@@ -132,4 +134,5 @@ constraints.
 | PR-Agent still runs on every commit push | `synchronize` remains in the workflow trigger list | Remove `synchronize` or verify the downstream repository did not opt back in. |
 | Any human comment triggers PR-Agent | The issue-comment job condition is too broad | Require an exact explicit command in the workflow condition. |
 | Reviewer loop times out waiting for PR-Agent | Trigger comment did not post, PR-Agent is unavailable, or the command is not recognized | Check reviewer-loop output, workflow runs, and PR comments for the documented trigger. |
+| Reviewer loop posts the trigger but no workflow starts | The issue-comment condition excludes the reviewer-loop posting identity | Allow the reviewer-loop identity while keeping exact command matching. |
 | Duplicate PR-Agent runs appear | The adapter is not detecting current-head PR-Agent comments | Verify the head SHA matching logic and existing-comment test coverage. |

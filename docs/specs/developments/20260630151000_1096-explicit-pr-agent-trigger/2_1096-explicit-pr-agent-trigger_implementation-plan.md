@@ -61,10 +61,13 @@ be precise to avoid silently skipping a configured reviewer.
 - [ ] Narrow `issue_comment` execution with a job-level condition requiring all
       of the following:
       - the comment is on a pull request;
-      - the sender is not a bot;
       - the comment body is an exact supported PR-Agent command for review, with
         `/review` as the canonical command unless implementation-time PR-Agent
         compatibility requires a different exact command.
+- [ ] Do not use a blanket bot-sender exclusion that would block the reviewer
+      loop when it authenticates through a bot or GitHub App token. The exact
+      command check is the loop-prevention control; if implementation keeps any
+      actor filter, it must explicitly allow the reviewer-loop posting identity.
 - [ ] Keep existing fork protection and token/model environment behavior.
 - [ ] Add comments in the workflow explaining that review-loop-triggered
       PR-Agent runs happen through the explicit command path, not through
@@ -195,6 +198,7 @@ No seed data is required.
 | --- | --- | --- | --- |
 | The chosen explicit command is not recognized by PR-Agent | Medium | High | Verify the command against current PR-Agent behavior during implementation; keep the workflow condition and reviewer-loop trigger using the same command. |
 | Reviewer loop reports clean without actually triggering configured PR-Agent | Low | High | Test no-comment and trigger-failure paths; non-postable trigger must produce a deterministic non-clean result. |
+| A bot-sender filter blocks reviewer-loop-triggered PR-Agent runs | Medium | High | Use exact command matching as the loop-prevention control and allow the reviewer-loop posting identity in tests. |
 | Downstream repos relied on automatic synchronize review | Medium | Medium | Document the migration and opt-in path clearly in the PR-Agent integration guide. |
 | The trigger comment creates duplicate PR-Agent runs | Medium | Low | Reuse existing current-head comments and add a test proving no duplicate trigger is posted when one exists. |
 
@@ -205,7 +209,8 @@ No seed data is required.
 1. Update `.github/workflows/pr-agent.yml`:
    - remove `synchronize` from `pull_request.types`;
    - constrain `issue_comment` to exact explicit review commands;
-   - keep fork and bot protections.
+   - keep fork protection and avoid blanket bot filtering that blocks the
+     reviewer-loop posting identity.
 2. Update `scripts/development-workflow/pr-review-loop.sh`:
    - add a small helper inside or near `run_pr_agent_review` to post the explicit
      PR-Agent trigger comment;
