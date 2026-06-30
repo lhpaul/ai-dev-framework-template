@@ -1470,8 +1470,10 @@ the PR. The only valid path to `ready-for-human-review` is:
 
 1. Step 7a internal review gate completes successfully.
 2. Step 7 external automated reviewer loop runs to a terminal `clean` or
-   allowed `skipped` result and, when not skipped, leaves the automated reviewer
-   loop summary comment on the PR.
+   allowed `skipped` result. When Step 7 is not skipped, it leaves the automated
+   reviewer loop summary comment on the PR. When Step 7 is skipped because no
+   review platforms are configured, carry `REVIEWER_LOOP_SKIPPED_NO_PLATFORMS=true`
+   into Step 8a so the summary check can verify the explicit skip reason.
 3. When Step 7 followed a fixer push or review-feedback cycle, the runner
    re-issues the GraphQL `reviewThreads` query before Step 7b, as described in
    "Re-query reviewThreads after each push" below.
@@ -1976,13 +1978,17 @@ if ! LOOP_SUMMARY_BODY=$(gh pr view "$PR_NUMBER" --json comments --jq '
   exit 7  # Exit code 7 = "reviewer-loop summary missing or non-clean"
 fi
 if [ -z "$LOOP_SUMMARY_BODY" ]; then
-  echo "ERROR: Cannot verify automated reviewer-loop result — no reviewer-loop summary comment found."
-  echo "Run Step 7 (pr-review-loop.sh) before applying ready-for-human-review."
-  exit 7  # Exit code 7 = "reviewer-loop summary missing or non-clean"
+  if [ "${REVIEWER_LOOP_SKIPPED_NO_PLATFORMS:-false}" = "true" ]; then
+    echo "✅ Automated reviewer-loop summary check skipped: Step 7 was skipped because no review platforms are configured."
+  else
+    echo "ERROR: Cannot verify automated reviewer-loop result — no reviewer-loop summary comment found."
+    echo "Run Step 7 (pr-review-loop.sh) before applying ready-for-human-review."
+    exit 7  # Exit code 7 = "reviewer-loop summary missing or non-clean"
+  fi
 fi
-if echo "$LOOP_SUMMARY_BODY" | grep -Eiq '(^|[*[:space:]])Result:([*[:space:]])*(clean|skipped)([[:space:]—.,;:)]|$)|No blocking PR feedback'; then
+if [ -n "$LOOP_SUMMARY_BODY" ] && echo "$LOOP_SUMMARY_BODY" | grep -Eiq '(^|[*[:space:]])Result:([*[:space:]])*(clean|skipped)([[:space:]—.,;:)]|$)|No blocking PR feedback'; then
   echo "✅ Automated reviewer-loop summary result is clean/skipped."
-else
+elif [ -n "$LOOP_SUMMARY_BODY" ]; then
   echo "ERROR: Latest automated reviewer-loop summary is not clean/skipped."
   echo "RESULT=escalate or any non-clean terminal reviewer-loop result MUST NOT apply ready-for-human-review."
   echo "Escalate to the human or return to the reviewer loop according to Step 7."
