@@ -2691,6 +2691,50 @@ run_pr_agent_review() {
     _pr_agent_latest_comment_field "html_url" "${1:-strict_sha}"
   }
 
+  _pr_agent_active_review_check_count() {
+    gh api "repos/$repo/commits/$head_sha/check-runs" \
+      --jq '[.check_runs[]? | select(.name == "PR-Agent review" and (.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "requested" or .status == "pending"))] | length' \
+      2>/dev/null \
+      || printf '0'
+  }
+
+  _pr_agent_recent_trigger_comment_created_at() {
+    gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+      | jq -rs --arg body "$trigger_body" --arg since "$since_iso" '
+          add // []
+          | [.[]
+             | select(
+                 ((.body // "") == $body) and
+                 ((.created_at // .updated_at // "") > $since)
+               )
+            ]
+          | sort_by(.created_at // .updated_at)
+          | last
+          | .created_at // .updated_at // ""
+        '
+  }
+
+  _pr_agent_trigger_already_pending() {
+    local active_check_count
+    local recent_trigger_created_at
+
+    active_check_count="$(_pr_agent_active_review_check_count)"
+    if [ "${active_check_count:-0}" -gt 0 ] 2>/dev/null; then
+      print_kv PR_AGENT_TRIGGER_SKIPPED active_review_in_progress
+      print_kv PR_AGENT_ACTIVE_CHECK_COUNT "$active_check_count"
+      return 0
+    fi
+
+    recent_trigger_created_at="$(_pr_agent_recent_trigger_comment_created_at)"
+    if [ -n "$recent_trigger_created_at" ]; then
+      print_kv PR_AGENT_TRIGGER_SKIPPED recent_review_trigger
+      print_kv PR_AGENT_TRIGGER_COMMENT_CREATED_AT "$recent_trigger_created_at"
+      return 0
+    fi
+
+    return 1
+  }
+
   _pr_agent_trigger_review() {
     local trigger_response
 
@@ -2944,7 +2988,7 @@ _PR_AGENT_LABELS_
       ;;
   esac
 
-  if ! _pr_agent_trigger_review; then
+  if ! _pr_agent_trigger_already_pending && ! _pr_agent_trigger_review; then
     print_kv RESULT escalate
     print_kv REASON pr_agent_trigger_failed
     print_kv PLATFORM "$platform"
