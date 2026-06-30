@@ -1347,7 +1347,7 @@ If the diff includes any non-text change (e.g., new function, new import, change
 
 ## Step 7: Automated Reviewer Loop
 
-If one or more automated code review platforms are configured (see [`integrations/pr-review-platform.md`](../integrations/pr-review-platform.md)), run this loop after **any push to a PR branch**. If no review platform is configured, skip this step and report `⏭️ skipped` in the Step 6 summary.
+If one or more automated code review platforms are configured (see [`integrations/pr-review-platform.md`](../integrations/pr-review-platform.md)), run this loop after **any push to a PR branch**. If no review platform is configured, set `REVIEWER_LOOP_SKIPPED_NO_PLATFORMS=true`, skip this step, and report `⏭️ skipped` in the Step 6 summary.
 
 **Standalone use:** This step (and Step 8) can be run for a single PR without full orchestration — see [`93-automated-reviewer-loop-protocol.md`](93-automated-reviewer-loop-protocol.md) and the `/run-reviewer-loop` command (Cursor) or `automated-reviewer-loop` agent (Claude Code) or `workflow-reviewer-loop` skill (Codex).
 
