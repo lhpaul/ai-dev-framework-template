@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Release readiness wording**: command and overview surfaces now state that
   `release/*` PR reviewer loops are skipped while the production PR still gets
   regression and CI readiness before merge.
+- **Make PR-Agent explicit** (#1096): Reduce default PR-Agent Actions fan-out
+  while preserving configured reviewer-loop review.
 
 ## [0.34.0] - 2026-06-30
 

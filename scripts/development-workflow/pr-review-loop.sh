@@ -2629,6 +2629,7 @@ run_pr_agent_review() {
   local since_iso=""
   local elapsed=0
   local comment_body=""
+  local trigger_body="/review"
 
   require_gh
   cd_workflow_repo_root
@@ -2688,6 +2689,79 @@ run_pr_agent_review() {
 
   _pr_agent_latest_comment_url() {
     _pr_agent_latest_comment_field "html_url" "${1:-strict_sha}"
+  }
+
+  _pr_agent_active_review_check_count() {
+    gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
+      | jq -rs '[.[].check_runs[]? | select(.name == "PR-Agent review" and (.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "requested" or .status == "pending"))] | length' \
+      2>/dev/null \
+      || printf '0'
+  }
+
+  _pr_agent_recent_trigger_comment_created_at() {
+    local trigger_reuse_window="${PR_AGENT_TRIGGER_REUSE_WINDOW_SECONDS:-$max_wait}"
+
+    case "$trigger_reuse_window" in
+      ''|*[!0-9]*)
+        trigger_reuse_window="$max_wait"
+        ;;
+    esac
+
+    gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+      | jq -rs --arg body "$trigger_body" --arg since "$since_iso" --argjson reuse_window "$trigger_reuse_window" '
+          add // []
+          | [.[]
+             | . as $comment
+             | (($comment.created_at // $comment.updated_at // "") | fromdateiso8601?) as $trigger_time
+             | select(
+                 ((.body // "") == $body) and
+                 ((.created_at // .updated_at // "") > $since) and
+                 ($trigger_time != null) and
+                 ((now - $trigger_time) <= $reuse_window)
+               )
+            ]
+          | sort_by(.created_at // .updated_at)
+          | last
+          | .created_at // .updated_at // ""
+        '
+  }
+
+  _pr_agent_trigger_already_pending() {
+    local active_check_count
+    local recent_trigger_created_at
+
+    active_check_count="$(_pr_agent_active_review_check_count)"
+    if [ "${active_check_count:-0}" -gt 0 ] 2>/dev/null; then
+      print_kv PR_AGENT_TRIGGER_SKIPPED active_review_in_progress
+      print_kv PR_AGENT_ACTIVE_CHECK_COUNT "$active_check_count"
+      return 0
+    fi
+
+    recent_trigger_created_at="$(_pr_agent_recent_trigger_comment_created_at)"
+    if [ -n "$recent_trigger_created_at" ]; then
+      print_kv PR_AGENT_TRIGGER_SKIPPED recent_review_trigger
+      print_kv PR_AGENT_TRIGGER_COMMENT_CREATED_AT "$recent_trigger_created_at"
+      return 0
+    fi
+
+    return 1
+  }
+
+  _pr_agent_trigger_review() {
+    local trigger_response
+
+    if ! trigger_response="$(gh api -X POST "repos/$repo/issues/$pr_number/comments" -f body="$trigger_body" 2>/dev/null)"; then
+      return 1
+    fi
+    if [ -n "$trigger_response" ]; then
+      local trigger_created_at
+      trigger_created_at="$(printf '%s\n' "$trigger_response" | jq -r '.created_at // empty' 2>/dev/null || true)"
+      if [ -n "$trigger_created_at" ]; then
+        print_kv PR_AGENT_TRIGGER_COMMENT_CREATED_AT "$trigger_created_at"
+      fi
+    fi
+    print_kv PR_AGENT_TRIGGER_COMMENT "$trigger_body"
+    return 0
   }
 
   # Extract <strong>LABEL</strong> tokens from the "Recommended focus areas for
@@ -2925,6 +2999,20 @@ _PR_AGENT_LABELS_
       return 2
       ;;
   esac
+
+  if ! _pr_agent_trigger_already_pending && ! _pr_agent_trigger_review; then
+    print_kv RESULT escalate
+    print_kv REASON pr_agent_trigger_failed
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 2
+  fi
 
   # --- Phase 2: Poll until PR-Agent posts its summary comment ---
   while :; do
