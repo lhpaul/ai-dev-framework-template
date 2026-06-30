@@ -1276,6 +1276,14 @@ After a Work Item Runner returns:
 
 > **Artifact-state rule**: The orchestrator's done-report must be built from independently queried artifact state — **never** from agent self-reports alone. A Work Item Runner that claims a PR is "ready" may have timed out before completing all steps, skipped a required action, or simply reported optimistically. The checks below are mandatory queries against `gh` CLI and the GitHub API; they are not optional confirmations of what the agent said it did.
 
+**Batch-complete gate:** `ready-for-human-review` by itself is not a terminal
+batch-complete signal. Before declaring an explicit-list or portfolio batch
+complete, the orchestrator must verify every in-scope PR has passing required CI
+and either a clean/skipped automated reviewer-loop summary or a configured
+review-platform skip reason. Any PR with failing CI, pending reviewer-loop
+guard, missing summary, or non-clean reviewer-loop result remains in progress
+and must be redispatched or escalated instead of included in the done-report.
+
 Before reporting any PR as ready for human review, independently query the actual PR state via `gh pr view`. Run this check for every PR that a Work Item Runner reports as ready:
 
 ```bash

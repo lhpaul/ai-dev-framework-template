@@ -1464,6 +1464,23 @@ The script-posted comment format:
 _Posted automatically by `pr-review-loop.sh`._
 ```
 
+**Mandatory readiness order:** a Work Item Runner must never apply
+`ready-for-human-review` immediately after Step 7a or immediately after opening
+the PR. The only valid path to `ready-for-human-review` is:
+
+1. Step 7a internal review gate completes successfully.
+2. Step 7 external automated reviewer loop runs to a terminal `clean` or
+   allowed `skipped` result and, when not skipped, leaves the automated reviewer
+   loop summary comment on the PR.
+3. Step 7b applies and verifies `ready-for-regression` for implementation PRs.
+4. Step 8 CI loop returns green.
+5. Step 8a readiness checklist passes, including the reviewer-loop summary
+   check and GraphQL `reviewThreads` gate.
+
+Skipping any step above is a protocol violation. If an item-orchestrator or
+stage agent returns after Step 7a with `ready-for-human-review` already applied,
+remove that label, add `needs-fixes`, and resume from Step 7.
+
 ### Draft GitHub gate before ready-phase reviewers
 
 When `.ai-dev-workflow.yaml` contains `review.on_ready.github`, run the external
