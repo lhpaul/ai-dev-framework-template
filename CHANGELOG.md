@@ -100,6 +100,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Workflow readiness handoff guards** (#1071, #1073, #1074): Protocol 91 now
+  states the mandatory Step 7a -> Step 7 -> Step 7b -> Step 8 -> Step 8a order
+  before `ready-for-human-review`; Protocol 90 treats missing reviewer-loop
+  summaries or failing CI as non-terminal batch states; Protocol 03 calls out
+  `post-merge-cleanup.sh` changes as requiring the workflow shell guard before
+  PR creation.
 - **ShellCheck CI merge-base failure** (#1076): removed `--depth=1` from the base-ref fetch step in the ShellCheck workflow so that `workflow-shell-guard-lint.py` three-dot diff can find the merge base when `develop` has advanced past the PR branch root.
 - **Protocol 90 scan-only consistency** (#1076): added explicit scan-mode gate notes to the Stale `In Development` correction section and Step 2.5 Pre-Dispatch Tracker Status Update clarifying both are skipped in `/run-work` (scan-only) mode; aligned the Claude command with Cursor and Codex surfaces by adding an explicit Steps 1–3 paragraph for `no_target_scan`; removed the `workflow_hub` dispatch guidance from the Codex SKILL.md to match Claude and Cursor.
 - **Spec review checklist: URL-parameterized state completeness check** (#973): adds an explicit check item to the Spec Review Checklist in `REVIEW.md` requiring that any URL-serialized state (query parameters, path parameters, hash fragments) introduced by a spec must define all parameter key names and allowed values; adds a corresponding `blocking` finding type to catch specs that leave the serialization contract underspecified, preventing this class of gap from reaching the external reviewer loop.

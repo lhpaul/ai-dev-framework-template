@@ -1347,7 +1347,7 @@ If the diff includes any non-text change (e.g., new function, new import, change
 
 ## Step 7: Automated Reviewer Loop
 
-If one or more automated code review platforms are configured (see [`integrations/pr-review-platform.md`](../integrations/pr-review-platform.md)), run this loop after **any push to a PR branch**. If no review platform is configured, skip this step and report `⏭️ skipped` in the Step 6 summary.
+If one or more automated code review platforms are configured (see [`integrations/pr-review-platform.md`](../integrations/pr-review-platform.md)), run this loop after **any push to a PR branch**. If no review platform is configured, set `REVIEWER_LOOP_SKIPPED_NO_PLATFORMS=true`, skip this step, and report `⏭️ skipped` in the Step 6 summary.
 
 **Standalone use:** This step (and Step 8) can be run for a single PR without full orchestration — see [`93-automated-reviewer-loop-protocol.md`](93-automated-reviewer-loop-protocol.md) and the `/run-reviewer-loop` command (Cursor) or `automated-reviewer-loop` agent (Claude Code) or `workflow-reviewer-loop` skill (Codex).
 
@@ -1463,6 +1463,33 @@ The script-posted comment format:
 
 _Posted automatically by `pr-review-loop.sh`._
 ```
+
+**Mandatory readiness order:** a Work Item Runner must never apply
+`ready-for-human-review` immediately after Step 7a or immediately after opening
+the PR. The only valid path to `ready-for-human-review` is:
+
+1. Step 7a internal review gate completes successfully.
+2. Step 7 external automated reviewer loop runs to a terminal `clean` or
+   allowed `skipped` result. When Step 7 is not skipped, it leaves the automated
+   reviewer loop summary comment on the PR. When Step 7 is skipped because no
+   review platforms are configured, carry `REVIEWER_LOOP_SKIPPED_NO_PLATFORMS=true`
+   into Step 8a so the summary check can verify the explicit skip reason.
+3. When Step 7 followed a fixer push or review-feedback cycle, the runner
+   re-issues the GraphQL `reviewThreads` query before Step 7b, as described in
+   "Re-query reviewThreads after each push" below.
+4. Step 7b applies and verifies `ready-for-regression` for implementation PRs.
+5. Step 8 CI loop returns green.
+6. Step 8a readiness checklist passes, including the reviewer-loop summary
+   check and GraphQL `reviewThreads` gate.
+
+Skipping any step above is a protocol violation. If an item-orchestrator or
+stage agent returns with `ready-for-human-review` already applied before the
+sequence is complete, remove that label, add `needs-fixes`, and resume from the
+earliest skipped gate in this sequence. For example: resume at Step 7a when no
+internal review summary exists, Step 7 when no clean/skipped automated reviewer
+loop result exists, Step 7b when an implementation PR is missing
+`ready-for-regression`, Step 8 when CI has not been re-run after the latest
+label or push, or Step 8a when the final readiness checklist was skipped.
 
 ### Draft GitHub gate before ready-phase reviewers
 
@@ -1951,13 +1978,17 @@ if ! LOOP_SUMMARY_BODY=$(gh pr view "$PR_NUMBER" --json comments --jq '
   exit 7  # Exit code 7 = "reviewer-loop summary missing or non-clean"
 fi
 if [ -z "$LOOP_SUMMARY_BODY" ]; then
-  echo "ERROR: Cannot verify automated reviewer-loop result — no reviewer-loop summary comment found."
-  echo "Run Step 7 (pr-review-loop.sh) before applying ready-for-human-review."
-  exit 7  # Exit code 7 = "reviewer-loop summary missing or non-clean"
+  if [ "${REVIEWER_LOOP_SKIPPED_NO_PLATFORMS:-false}" = "true" ]; then
+    echo "✅ Automated reviewer-loop summary check skipped: Step 7 was skipped because no review platforms are configured."
+  else
+    echo "ERROR: Cannot verify automated reviewer-loop result — no reviewer-loop summary comment found."
+    echo "Run Step 7 (pr-review-loop.sh) before applying ready-for-human-review."
+    exit 7  # Exit code 7 = "reviewer-loop summary missing or non-clean"
+  fi
 fi
-if echo "$LOOP_SUMMARY_BODY" | grep -Eiq '(^|[*[:space:]])Result:([*[:space:]])*(clean|skipped)([[:space:]—.,;:)]|$)|No blocking PR feedback'; then
+if [ -n "$LOOP_SUMMARY_BODY" ] && echo "$LOOP_SUMMARY_BODY" | grep -Eiq '(^|[*[:space:]])Result:([*[:space:]])*(clean|skipped)([[:space:]—.,;:)]|$)|No blocking PR feedback'; then
   echo "✅ Automated reviewer-loop summary result is clean/skipped."
-else
+elif [ -n "$LOOP_SUMMARY_BODY" ]; then
   echo "ERROR: Latest automated reviewer-loop summary is not clean/skipped."
   echo "RESULT=escalate or any non-clean terminal reviewer-loop result MUST NOT apply ready-for-human-review."
   echo "Escalate to the human or return to the reviewer loop according to Step 7."
@@ -2022,35 +2053,40 @@ fi
 # unresolved blocking findings.
 #
 # NOTE: Skip this check ONLY when Step 7 was 'skipped' because no review platforms are configured.
-echo "⛔ STOP: Verifying all review threads are resolved via GraphQL before applying ready-for-human-review..."
-CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
-# GraphQL author.login omits the "[bot]" suffix present in REST API logins; strip it.
-CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
-JQ_FILTER="[.data.repository.pullRequest.reviewThreads.nodes[]
-        | select(.isResolved == false)
-        | select((.isOutdated // false) == false)
-        | select(.comments.nodes[0].author.login as \$a | [\"coderabbitai\",\"devin-ai-integration\",\"greptile-apps\",\"$CODEX_BOT_LOGIN\"] | index(\$a) != null)
-        | select((.comments.nodes[0].body // \"\") | test(\"✅ Addressed\") | not)] | length"
-UNRESOLVED_COUNT=$(gh api graphql -f query='
-  query($owner:String!, $repo:String!, $number:Int!) {
-    repository(owner:$owner, name:$repo) {
-      pullRequest(number:$number) {
-        reviewThreads(first: 100) {
-          nodes { isResolved isOutdated comments(first: 1) { nodes { author { login } body } } }
+if [ "${REVIEWER_LOOP_SKIPPED_NO_PLATFORMS:-false}" = "true" ]; then
+  echo "✅ GraphQL reviewThreads check skipped: Step 7 was skipped because no review platforms are configured."
+else
+  echo "⛔ STOP: Verifying all review threads are resolved via GraphQL before applying ready-for-human-review..."
+  CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
+  # GraphQL author.login omits the "[bot]" suffix present in REST API logins; strip it.
+  CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
+  JQ_FILTER="[.data.repository.pullRequest.reviewThreads.nodes[]
+          | select(.isResolved == false)
+          | select((.isOutdated // false) == false)
+          | select(.comments.nodes[0].author.login as \$a | [\"coderabbitai\",\"devin-ai-integration\",\"greptile-apps\",\"$CODEX_BOT_LOGIN\"] | index(\$a) != null)
+          | select((.comments.nodes[0].body // \"\") | test(\"✅ Addressed\") | not)] | length"
+  UNRESOLVED_COUNT=$(gh api graphql -f query='
+    query($owner:String!, $repo:String!, $number:Int!) {
+      repository(owner:$owner, name:$repo) {
+        pullRequest(number:$number) {
+          reviewThreads(first: 100) {
+            nodes { isResolved isOutdated comments(first: 1) { nodes { author { login } body } } }
+          }
         }
       }
     }
   }' -f owner="<owner>" -f repo="<repo>" -F number="$PR_NUMBER" \
-  --jq "$JQ_FILTER")
+    --jq "$JQ_FILTER")
 
-if [ "$UNRESOLVED_COUNT" -gt 0 ]; then
-  echo "ERROR: Cannot proceed to Check 4 — $UNRESOLVED_COUNT unresolved review thread(s) found."
-  echo "You MUST resolve all bot-authored review threads before applying ready-for-human-review."
-  echo "Run the GraphQL query from Step 8c to identify unresolved threads, address them, push fixes,"
-  echo "and re-run this checklist from the beginning."
-  exit 4  # Exit code 4 = "unresolved review threads at pre-Check-4 gate"
+  if [ "$UNRESOLVED_COUNT" -gt 0 ]; then
+    echo "ERROR: Cannot proceed to Check 4 — $UNRESOLVED_COUNT unresolved review thread(s) found."
+    echo "You MUST resolve all bot-authored review threads before applying ready-for-human-review."
+    echo "Run the GraphQL query from Step 8c to identify unresolved threads, address them, push fixes,"
+    echo "and re-run this checklist from the beginning."
+    exit 4  # Exit code 4 = "unresolved review threads at pre-Check-4 gate"
+  fi
+  echo "✅ GraphQL verification: all review threads resolved. Proceeding to Check 4."
 fi
-echo "✅ GraphQL verification: all review threads resolved. Proceeding to Check 4."
 
 # Check 4: ready-for-human-review label NOT yet applied (we are about to apply it)
 HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c "^ready-for-human-review$" || true)
