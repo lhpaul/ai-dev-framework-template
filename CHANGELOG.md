@@ -7,86 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-06-30
+
 ### Changed
 
-- **Epic-only `/run-epic`** (#1078): removed `--items` from the user-facing
-  surface of `/run-epic`. Protocol 95, `run-epic-scope-resolver.sh` usage text,
-  `.agents/skills/run-epic/SKILL.md`, and `.cursor/commands/run-epic.md` now
-  document `--epic <issue-number>` as the only operator entry point. The
-  `--items` flag is retained internally in the scope resolver for scripts
-  (e.g., the Linear orchestration smoke test) but emits a deprecation warning
-  when used. Operators who need explicit item lists should use `/run-items`.
+- **Final orchestration command map** (#1050, #1051, #1076, #1077, #1078, #1080):
+  `/run-work` is now a read-only portfolio scan, `/run-items` is the bounded
+  multi-item execution command, `/run-epic` is epic-only, and `/run-item` is the
+  canonical single-item command across AGENTS, README, protocol, skill, Cursor,
+  and Claude command surfaces.
+- **Bounded orchestration guardrails** (#1049, #1052, #1079): the template now
+  ships delegated guardrails by default, always confirms mutating bounded runs
+  before execution, records PR disposition and work-item ledger audit evidence,
+  and documents optional parallelism limits with default serialized
+  implementation lanes.
 
 ### Added
 
-- **Guardrails repo defaults and always-confirm bounded prelude** (#1079):
-  `.ai-dev-workflow.yaml` now ships an uncommented `guardrails` block with
-  `mode: delegated` and all stages `may_merge_pr: false`, implementing the
-  two-step lifecycle (execute commands stop at `ready-for-human-review`; merge
-  via `/batch-merge`). The bounded prelude always sets `requiresConfirmation: true`
-  so every mutating orchestration command shows the resolved policy before mutation.
-  `guardrails.md` documents the two-step lifecycle and always-confirm contract.
-  The default guardrails block also requires PR disposition and work-item ledger
-  audit records.
-- **Scan-only `/run-work` — portfolio batch proposals without mutation** (#1076): `/run-work` is now fully read-only in all routing modes; `explicit_list` is replaced by `redirect_items` (emits `REDIRECT_COMMAND=/run-items ...` for multi-target invocations); `no_target_scan` produces a portfolio scan + batch proposal only with no item dispatch; `run-work-router.sh`, Protocol 96, Protocol 90 routing entrypoint, and all command/skill surfaces updated accordingly.
-- **`/run-items` bounded multi-item execute command** (#1077): command and skill
-  surfaces now validate explicit lists with the read-only router, run the shared
-  bounded prelude before Protocol 90 `explicit_list` execution, target `develop`
-  directly, document the shared prelude contract, and include Codex OpenAI
-  metadata for repo-scoped skill discovery.
-- **Final orchestration command map — command surfaces sync** (#1080): updates all
-  operator surfaces (AGENTS.md, README.md, skills, Cursor commands, agents) to
-  reflect the finalized command map: `/run-work` = read-only portfolio scan,
-  `/run-items` = bounded multi-item execute (Protocol 90 `explicit_list` mode),
-  `/run-epic` = epic-only (no `--items` mode), `/run-item` = single item. Adds
-  `/run-items` skill in `.agents/skills/` and Cursor command in `.cursor/commands/`;
-  updates `/run-work` and `/run-epic` descriptions across all surfaces; deprecates
-  `/run-epic --items` in favour of `/run-items`; updates Protocol 96 handoff mapping.
-
-- **Parallel implementation policy for `/run-work` batches** (#1052): `workflow-batch-lanes.sh`
-  assigns stage lanes with default implementation serialization (`max_concurrent: 1`);
-  `workflow-batch-plan.sh` emits `LOCAL_RUNTIME=none|exclusive` for implementation items;
-  Protocol 90 Step 3 and `guardrails.md` document optional `guardrails.parallelism` caps.
-- **Portfolio-only `/run-work` router** (#1051): `run-work-router.sh` and Protocol 96
-  now support only `no_target_scan` and `explicit_list` under `/run-work`; single
-  and epic targets emit `redirect_item` / `redirect_epic` with `REDIRECT_COMMAND`
-  to `/run-item` and `/run-epic`.
-- **`/run-item` command surfaces** (#1050): adds Cursor, Claude Code, and Codex
-  (`run-item` skill) as the canonical single-item bounded command; marks
-  `/run-item-work` as a deprecated compatibility alias and aligns `item-orchestrator`
-  with the shared bounded prelude + Protocol 91 contract.
-- **Shared bounded run prelude** (#1049): `run-bounded-prelude.sh` unifies scope
-  resolution, repository guardrails snapshot, and policy/checkpoint recommendation
-  for `/run-item` and `/run-epic`; adds `run-item-scope-resolver.sh` and extends
-  `run-epic-policy-recommender.sh` for `scopeSource=item`.
-- **Human checkpoint lifecycle documentation** (#1024): adds an end-to-end
-  smoke-test runbook for checkpoint recommendation, readiness labels,
-  satisfaction detection, delegated gate blocking, batch merge handling, audit
-  evidence, and command-surface guidance.
-- **Human checkpoint merge gates** (#1023): delegated `/run-epic` merge gates and
-  batch merge discovery now block unsatisfied `human-checkpoint-required` PRs
-  until checkpoint satisfaction or waiver evidence is recorded and labels are synced.
-- **Human checkpoint PR lifecycle** (#1022): adds `human-checkpoint-required` readiness
-  signal (protocol 92), Step 8a/8c checkpoint label sync in protocol 91,
-  `run-epic-checkpoint-lifecycle.sh` for satisfaction detection and label/comment
-  persistence, and checkpoint policy fields in `run-epic-audit-trail.sh`.
-- **Run-epic checkpoint policy recommendations** (#1021): `run-epic-policy-recommender.sh`
-  now emits per-item human checkpoint recommendations from read-only scope metadata,
-  supports explicit selection/waiver via `--checkpoints-file`, and records
-  recommended/selected/effective checkpoint policy for audit evidence.
-- **Cursor pilot configuration**: adds Cursor as a Step 7a runner reviewer value,
-  supports overriding ready-phase review to Cursor Bugbot from local config,
-  exposes `bugbot` in reviewer-loop usage help, and ships project-level Bugbot
-  rules plus a local Cursor-runner override example for testing the workflow
-  from Cursor.
-- **Local workflow config cleanup**: review-runner overrides and sync-template
-  source guidance now use `.ai-dev-workflow.local.yaml` instead of the legacy
-  `.tmp/template-config.json` path.
+- **Human checkpoint lifecycle** (#1021, #1022, #1023, #1024): adds checkpoint
+  policy recommendations, `human-checkpoint-required` readiness signaling,
+  checkpoint satisfaction and waiver evidence, delegated merge blocking, batch
+  merge discovery support, and an end-to-end smoke-test runbook.
 - **Workflow hub product-repo preflight** (#1038, #1040): `hub-preflight-product-repos.sh`
-  bootstraps workflow readiness labels on configured product GitHub repositories
-  and validates `ci_policy` (`required` vs explicit `none`) before delegated
-  orchestration. Hub `workflow_hub.product_repos[]` accepts optional `ci_policy`;
-  delegated merge gates honor `ciPolicy: none` when CI checks are absent.
+  bootstraps workflow readiness labels, validates product-repo CI policy, and
+  lets delegated merge gates honor explicit `ciPolicy: none` when checks are absent.
 - **Reviewer-loop preflight guards** (#1028, #1035, #1037): Bugbot activation is
   detected from `cursor[bot]` comments before polling; Haystack triage HTTP 401/403
   errors fail fast with `REASON=unauthorized`/`forbidden` instead of
@@ -97,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `agent-model-config.md`; adds a provider quota/timeout/runner failover runbook
   and an experimental opt-in LLM router integration pattern for tier-aligned
   fallback chains.
+- **Cursor and local config workflow surfaces**: adds Cursor as a Step 7a runner
+  reviewer option, exposes Bugbot review overrides, ships Bugbot rules and local
+  runner examples, and moves local workflow overrides to
+  `.ai-dev-workflow.local.yaml`.
 
 ### Fixed
 
@@ -106,8 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   summaries or failing CI as non-terminal batch states; Protocol 03 calls out
   `post-merge-cleanup.sh` changes as requiring the workflow shell guard before
   PR creation.
-- **ShellCheck CI merge-base failure** (#1076): removed `--depth=1` from the base-ref fetch step in the ShellCheck workflow so that `workflow-shell-guard-lint.py` three-dot diff can find the merge base when `develop` has advanced past the PR branch root.
-- **Protocol 90 scan-only consistency** (#1076): added explicit scan-mode gate notes to the Stale `In Development` correction section and Step 2.5 Pre-Dispatch Tracker Status Update clarifying both are skipped in `/run-work` (scan-only) mode; aligned the Claude command with Cursor and Codex surfaces by adding an explicit Steps 1–3 paragraph for `no_target_scan`; removed the `workflow_hub` dispatch guidance from the Codex SKILL.md to match Claude and Cursor.
+- **Scan-only and ShellCheck consistency** (#1076): ShellCheck fetches enough
+  base history for `workflow-shell-guard-lint.py`, and Protocol 90 plus command
+  surfaces now consistently skip dispatch-only tracker updates during
+  `/run-work` scan mode.
 - **Spec review checklist: URL-parameterized state completeness check** (#973): adds an explicit check item to the Spec Review Checklist in `REVIEW.md` requiring that any URL-serialized state (query parameters, path parameters, hash fragments) introduced by a spec must define all parameter key names and allowed values; adds a corresponding `blocking` finding type to catch specs that leave the serialization contract underspecified, preventing this class of gap from reaching the external reviewer loop.
 - **Linear orchestrator project scoping** (#972): Portfolio Orchestrator (`/run-work`) now
   reads `issue_tracker.custom_fields.project` from `.ai-dev-workflow.yaml` and filters
@@ -1100,7 +1050,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.33.1...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.34.0...HEAD
+[0.34.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.33.1...v0.34.0
 [0.33.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.33.0...v0.33.1
 [0.33.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.31.0...v0.32.0
