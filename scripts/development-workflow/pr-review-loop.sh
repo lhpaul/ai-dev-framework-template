@@ -2699,13 +2699,25 @@ run_pr_agent_review() {
   }
 
   _pr_agent_recent_trigger_comment_created_at() {
+    local trigger_reuse_window="${PR_AGENT_TRIGGER_REUSE_WINDOW_SECONDS:-$max_wait}"
+
+    case "$trigger_reuse_window" in
+      ''|*[!0-9]*)
+        trigger_reuse_window="$max_wait"
+        ;;
+    esac
+
     gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-      | jq -rs --arg body "$trigger_body" --arg since "$since_iso" '
+      | jq -rs --arg body "$trigger_body" --arg since "$since_iso" --argjson reuse_window "$trigger_reuse_window" '
           add // []
           | [.[]
+             | . as $comment
+             | (($comment.created_at // $comment.updated_at // "") | fromdateiso8601?) as $trigger_time
              | select(
                  ((.body // "") == $body) and
-                 ((.created_at // .updated_at // "") > $since)
+                 ((.created_at // .updated_at // "") > $since) and
+                 ($trigger_time != null) and
+                 ((now - $trigger_time) <= $reuse_window)
                )
             ]
           | sort_by(.created_at // .updated_at)

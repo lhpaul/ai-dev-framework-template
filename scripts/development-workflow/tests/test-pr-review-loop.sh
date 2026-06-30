@@ -3144,6 +3144,7 @@ chmod +x "$_pr_agent_mock_dir_1704/gh"
 
 actual_output="$(
   PATH="$_pr_agent_mock_dir_1704:$PATH" PR_AGENT_CALL_LOG="$_pr_agent_call_log_1704" \
+    PR_AGENT_TRIGGER_REUSE_WINDOW_SECONDS=999999999 \
     run_pr_agent_review "42" "feature/42-test" "1" "0" || true
 )"
 run_test "pr_agent_recent_trigger_no_duplicate_trigger" "PR_AGENT_TRIGGER_SKIPPED=recent_review_trigger" \
@@ -3156,8 +3157,10 @@ rm -rf "$_pr_agent_mock_dir_1704"
 unset _pr_agent_mock_dir_1704 _pr_agent_call_log_1704 actual_output
 
 _pr_agent_mock_dir_1705="$(mktemp -d)"
+_pr_agent_call_log_1705="$_pr_agent_mock_dir_1705/calls.log"
 cat > "$_pr_agent_mock_dir_1705/gh" <<'PR_AGENT_GH_1705'
 #!/usr/bin/env bash
+printf '%s\n' "$*" >> "$PR_AGENT_CALL_LOG"
 case "$*" in
   *"--jq .head.sha"*)
     printf 'abc1705sha\n'; exit 0 ;;
@@ -3166,9 +3169,9 @@ case "$*" in
   *"commits/abc1705sha/check-runs"*)
     printf '0\n'; exit 0 ;;
   *"-X POST"*"issues/42/comments"*)
-    exit 1 ;;
+    printf '{"created_at":"2026-06-30T00:00:00Z"}\n'; exit 0 ;;
   *"issues/42/comments"*)
-    printf '[]\n'; exit 0 ;;
+    printf '[{"user":{"login":"lhpaul"},"created_at":"2020-01-01T00:00:01Z","updated_at":"2020-01-01T00:00:01Z","body":"/review"}]\n'; exit 0 ;;
   *)
     printf '[]\n'; exit 0 ;;
 esac
@@ -3176,14 +3179,46 @@ PR_AGENT_GH_1705
 chmod +x "$_pr_agent_mock_dir_1705/gh"
 
 actual_output="$(
-  PATH="$_pr_agent_mock_dir_1705:$PATH" run_pr_agent_review "42" "feature/42-test" "1" "0" || true
+  PATH="$_pr_agent_mock_dir_1705:$PATH" PR_AGENT_CALL_LOG="$_pr_agent_call_log_1705" \
+    PR_AGENT_TRIGGER_REUSE_WINDOW_SECONDS=1 \
+    run_pr_agent_review "42" "feature/42-test" "1" "0" || true
+)"
+run_test "pr_agent_stale_trigger_posts_new_trigger" "PR_AGENT_TRIGGER_COMMENT=/review" \
+  "$(printf '%s\n' "$actual_output" | grep "^PR_AGENT_TRIGGER_COMMENT=")"
+run_test "pr_agent_stale_trigger_post_call_made" "1" \
+  "$(grep_count_or_zero "-X POST repos/.*/issues/42/comments" "$_pr_agent_call_log_1705")"
+rm -rf "$_pr_agent_mock_dir_1705"
+unset _pr_agent_mock_dir_1705 _pr_agent_call_log_1705 actual_output
+
+_pr_agent_mock_dir_1706="$(mktemp -d)"
+cat > "$_pr_agent_mock_dir_1706/gh" <<'PR_AGENT_GH_1706'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc1706sha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"commits/abc1706sha/check-runs"*)
+    printf '0\n'; exit 0 ;;
+  *"-X POST"*"issues/42/comments"*)
+    exit 1 ;;
+  *"issues/42/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+PR_AGENT_GH_1706
+chmod +x "$_pr_agent_mock_dir_1706/gh"
+
+actual_output="$(
+  PATH="$_pr_agent_mock_dir_1706:$PATH" run_pr_agent_review "42" "feature/42-test" "1" "0" || true
 )"
 run_test "pr_agent_trigger_failure_escalates" "RESULT=escalate" \
   "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
 run_test "pr_agent_trigger_failure_reason" "REASON=pr_agent_trigger_failed" \
   "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
-rm -rf "$_pr_agent_mock_dir_1705"
-unset _pr_agent_mock_dir_1705 actual_output
+rm -rf "$_pr_agent_mock_dir_1706"
+unset _pr_agent_mock_dir_1706 actual_output
 
 run_test "pr_agent_workflow_no_synchronize_trigger" "0" \
   "$(grep_count_or_zero "types:.*synchronize" "$REPO_ROOT/.github/workflows/pr-agent.yml")"
