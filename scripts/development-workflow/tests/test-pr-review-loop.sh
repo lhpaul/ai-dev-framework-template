@@ -3100,7 +3100,7 @@ case "$*" in
   *"--jq .commit.committer.date"*)
     printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
   *"commits/abc1703sha/check-runs"*)
-    printf '1\n'; exit 0 ;;
+    printf '{"check_runs":[]}\n{"check_runs":[{"name":"PR-Agent review","status":"in_progress"}]}\n'; exit 0 ;;
   *"issues/42/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -3133,7 +3133,7 @@ case "$*" in
   *"--jq .commit.committer.date"*)
     printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
   *"commits/abc1704sha/check-runs"*)
-    printf '0\n'; exit 0 ;;
+    printf '{"check_runs":[]}\n'; exit 0 ;;
   *"issues/42/comments"*)
     printf '[{"user":{"login":"lhpaul"},"created_at":"2020-01-01T00:00:01Z","updated_at":"2020-01-01T00:00:01Z","body":"/review"}]\n'; exit 0 ;;
   *)
@@ -3167,7 +3167,7 @@ case "$*" in
   *"--jq .commit.committer.date"*)
     printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
   *"commits/abc1705sha/check-runs"*)
-    printf '0\n'; exit 0 ;;
+    printf '{"check_runs":[]}\n'; exit 0 ;;
   *"-X POST"*"issues/42/comments"*)
     printf '{"created_at":"2026-06-30T00:00:00Z"}\n'; exit 0 ;;
   *"issues/42/comments"*)
@@ -3199,7 +3199,7 @@ case "$*" in
   *"--jq .commit.committer.date"*)
     printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
   *"commits/abc1706sha/check-runs"*)
-    printf '0\n'; exit 0 ;;
+    printf '{"check_runs":[]}\n'; exit 0 ;;
   *"-X POST"*"issues/42/comments"*)
     exit 1 ;;
   *"issues/42/comments"*)

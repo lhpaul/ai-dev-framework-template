@@ -2692,8 +2692,8 @@ run_pr_agent_review() {
   }
 
   _pr_agent_active_review_check_count() {
-    gh api "repos/$repo/commits/$head_sha/check-runs" \
-      --jq '[.check_runs[]? | select(.name == "PR-Agent review" and (.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "requested" or .status == "pending"))] | length' \
+    gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
+      | jq -rs '[.[].check_runs[]? | select(.name == "PR-Agent review" and (.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "requested" or .status == "pending"))] | length' \
       2>/dev/null \
       || printf '0'
   }
