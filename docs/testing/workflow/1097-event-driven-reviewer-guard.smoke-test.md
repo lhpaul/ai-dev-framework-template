@@ -115,10 +115,17 @@ the fork-head pull request, matching the existing same-repository restriction.
 ## Scenario 7: Local tests cover guard behavior
 
 1. Run the focused guard tests added by the implementation.
+
+   ```bash
+   bash scripts/development-workflow/tests/test-reviewer-loop-guard-workflow.sh
+   ```
+
 2. Run markdown and workflow shell validation.
 
-**Expected result**: Tests cover missing-summary, summary-present,
-summary-comment, non-summary comment, fork-head, and out-of-scope scenarios.
+**Expected result**: The focused test passes and covers the configured triggers,
+absence of default polling, summary marker matching, non-summary comment skips,
+fork-head skips, out-of-scope success, and the unchanged PR-scoped status
+context.
 
 ---
 

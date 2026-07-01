@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   regression and CI readiness before merge.
 - **Make PR-Agent explicit** (#1096): Reduce default PR-Agent Actions fan-out
   while preserving configured reviewer-loop review.
+- **Event-driven reviewer guard** (#1097): Replace default long reviewer-loop
+  guard polling with a fast PR check plus summary-comment readiness refresh.
 
 ## [0.34.0] - 2026-06-30
 
