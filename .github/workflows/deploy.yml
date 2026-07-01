@@ -1,10 +1,6 @@
 name: Deploy (Template Placeholder)
 
 on:
-  push:
-    branches:
-      - develop
-      - main
   workflow_dispatch:
     inputs:
       environment:
@@ -15,6 +11,11 @@ on:
         options:
           - develop
           - production
+      confirm_placeholder:
+        description: "Run the template placeholder deploy job"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -23,9 +24,10 @@ permissions:
 jobs:
   deploy-develop:
     name: Deploy to develop (placeholder)
-    if: |
-      (github.event_name == 'push' && github.ref == 'refs/heads/develop') ||
-      (github.event_name == 'workflow_dispatch' && inputs.environment == 'develop')
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.environment == 'develop' &&
+      inputs.confirm_placeholder == true
     runs-on: ubuntu-latest
     environment: develop
     concurrency:
@@ -44,9 +46,10 @@ jobs:
 
   deploy-production:
     name: Deploy to production (placeholder)
-    if: |
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.environment == 'production' &&
+      inputs.confirm_placeholder == true
     runs-on: ubuntu-latest
     environment: production
     concurrency:

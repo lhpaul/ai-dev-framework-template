@@ -1690,7 +1690,7 @@ discarded when the orchestration session ends.
 
 ## Step 7b: Regression Label (Implementation PRs Only)
 
-After Step 7 completes with result `clean` or `skipped`, and **before** entering Step 8, apply the `ready-for-regression` label on implementation PRs to trigger label-gated e2e/regression CI checks.
+After Step 7 completes with result `clean` or `skipped`, and **before** entering Step 8, apply the `ready-for-regression` label on implementation PRs to trigger configured real regression CI checks, or an explicitly enabled placeholder regression workflow.
 
 **Applies to**: PRs on branches `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, `backport/hotfix/*`
 **Does not apply to**: PRs on branches `spec/*`, `implementation-plan/*`, or graduation PRs (`develop-<slug>` → `develop`) — see the label derivation table in Step 8a for the graduation PR exemption (BR-6)
@@ -1704,7 +1704,7 @@ After Step 7 completes with result `clean` or `skipped`, and **before** entering
 gh pr edit <pr_number> --add-label "ready-for-regression"
 ```
 
-This label triggers the `e2e-regression.yml` workflow (or project-specific equivalents). Step 8's CI loop (`pr-ci-loop.sh`) will then naturally pick up the e2e check as part of its green/red polling via `statusCheckRollup`.
+This label triggers the `e2e-regression.yml` workflow (or project-specific equivalents). The template placeholder remains inactive unless explicitly enabled; downstream real regression suites should keep this label gate when they replace the placeholder. Step 8's CI loop (`pr-ci-loop.sh`) will then naturally pick up configured e2e checks as part of its green/red polling via `statusCheckRollup`.
 
 The `gh pr edit --add-label` command is idempotent — applying a label that already exists is a no-op. When the label is already present from a previous cycle, the `synchronize` event from the latest push will have already re-triggered the workflow.
 

@@ -4,7 +4,13 @@ This template includes a label-gated GitHub Actions workflow for e2e/regression 
 
 - `.github/workflows/e2e-regression.yml`
 
-The workflow triggers on PRs targeting `develop` or `main` when the `ready-for-regression` label is present. It is intentionally generic so downstream repositories can implement their own test suites.
+The placeholder workflow listens for PRs targeting `develop` or `main` when the
+`ready-for-regression` label is present, but the placeholder job is disabled by
+default. It installs dependencies and browsers only when the repository variable
+`ENABLE_TEMPLATE_PLACEHOLDER_REGRESSION` is set to `true`.
+
+The file is intentionally generic so downstream repositories can replace it with
+their own label-gated test suites.
 
 ---
 
@@ -14,7 +20,8 @@ The `ready-for-regression` label is applied by the orchestrator (Step 7b in `91-
 
 1. Step 7a: Internal review gate passes
 2. Step 7: External automated reviewers are clean
-3. **Step 7b: `ready-for-regression` label is applied** (triggers this workflow)
+3. **Step 7b: `ready-for-regression` label is applied** (triggers configured
+   real regression checks, or this placeholder when explicitly enabled)
 4. Step 8: CI loop polls `statusCheckRollup` — the e2e job appears as a check
 
 Regression tests are expensive in time and compute, so they only run after all reviewer gates confirm the code is clean.
@@ -42,7 +49,15 @@ This means e2e tests re-run automatically after fixer pushes — the label stays
 
 ## Default Behavior
 
-The template ships with a minimal Playwright project at `e2e/` that has one always-passing baseline test. This keeps the template pipeline green without external dependencies.
+The template ships with a minimal Playwright project at `e2e/` that has one
+always-passing baseline test. The placeholder workflow is inactive by default so
+private downstream repositories do not install Playwright or browser
+dependencies before regression is intentionally enabled.
+
+To run the placeholder as a temporary validation check, create a repository
+variable named `ENABLE_TEMPLATE_PLACEHOLDER_REGRESSION` with value `true`. Remove
+that variable or set it to any other value to return the placeholder to the
+disabled default.
 
 ---
 
@@ -57,7 +72,11 @@ Replace the placeholder e2e project with project-specific tests:
 
 You may also:
 
-- Add the `E2E regression (placeholder)` check as a required status check in branch protection rules.
+- Remove the `ENABLE_TEMPLATE_PLACEHOLDER_REGRESSION` guard once the placeholder
+  steps are replaced by a real suite that should always run after
+  `ready-for-regression`.
+- Add the real e2e/regression check as a required status check in branch
+  protection rules.
 - Split into multiple workflow files for different test suites (each gated on `ready-for-regression`).
 - Add environment variables or secrets for test infrastructure.
 
@@ -65,7 +84,7 @@ You may also:
 
 ## Scope
 
-The `ready-for-regression` label is applied to implementation PRs (`feature/*`, `fix/*`, `hotfix/*`, `refactor/*`) and to **production** release PRs (`release/*` → `main`) per [`05-prepare-release-protocol.md`](../protocols/05-prepare-release-protocol.md) Step 7.4, so e2e/regression can run before merge. Spec and plan PRs (`spec/*`, `implementation-plan/*`) skip this label and regression testing.
+The `ready-for-regression` label is applied to implementation PRs (`feature/*`, `fix/*`, `hotfix/*`, `refactor/*`) and to **production** release PRs (`release/*` → `main`) per [`05-prepare-release-protocol.md`](../protocols/05-prepare-release-protocol.md) Step 7.4, so configured real e2e/regression checks can run before merge. Spec and plan PRs (`spec/*`, `implementation-plan/*`) skip this label and regression testing.
 
 ---
 
@@ -73,4 +92,6 @@ The `ready-for-regression` label is applied to implementation PRs (`feature/*`, 
 
 - The label persists on the PR after e2e tests pass. It is not removed.
 - This workflow does not store test credentials or environment URLs in the template.
-- For projects without e2e tests, the baseline test keeps the check green. Alternatively, remove the workflow file and do not configure the check as required — the orchestrator will still apply the label but the CI loop will not block on a missing check.
+- For projects without e2e tests, keep the placeholder disabled and do not
+  configure it as a required check. The orchestrator will still apply the label,
+  but the inactive placeholder will not spend runner minutes on browser setup.
