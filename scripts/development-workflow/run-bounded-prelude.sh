@@ -278,12 +278,12 @@ resolver_common=()
 
 case "$scope_mode" in
   epic)
-  if ! "$SCRIPT_DIR/run-epic-scope-resolver.sh" --epic "$epic_number" "${resolver_common[@]}" --json > "$scope_file"; then
+  if ! "$SCRIPT_DIR/run-epic-scope-resolver.sh" --epic "$epic_number" "${resolver_common[@]+"${resolver_common[@]}"}" --json > "$scope_file"; then
     error_exit "epic scope resolution failed"
   fi
     ;;
   items)
-  if ! "$SCRIPT_DIR/run-epic-scope-resolver.sh" --items "$items_arg" "${resolver_common[@]}" --json > "$scope_file"; then
+  if ! "$SCRIPT_DIR/run-epic-scope-resolver.sh" --items "$items_arg" "${resolver_common[@]+"${resolver_common[@]}"}" --json > "$scope_file"; then
     error_exit "items scope resolution failed"
   fi
     ;;
@@ -294,7 +294,7 @@ case "$scope_mode" in
     [ -n "$item_branch" ] && item_args+=(--branch "$item_branch")
     [ -n "$item_pr" ] && item_args+=(--pr "$item_pr")
     [ -n "$item_development" ] && item_args+=(--development "$item_development")
-    if ! "$SCRIPT_DIR/run-item-scope-resolver.sh" "${item_args[@]}" "${resolver_common[@]}" --json > "$scope_file"; then
+    if ! "$SCRIPT_DIR/run-item-scope-resolver.sh" "${item_args[@]+"${item_args[@]}"}" "${resolver_common[@]+"${resolver_common[@]}"}" --json > "$scope_file"; then
       error_exit "item scope resolution failed"
     fi
     ;;
@@ -312,7 +312,7 @@ policy_args=(
 [ -n "$checkpoints_file" ] && policy_args+=(--checkpoints-file "$checkpoints_file")
 policy_args+=(--json)
 
-if ! "$SCRIPT_DIR/run-epic-policy-recommender.sh" "${policy_args[@]}" > "$policy_file"; then
+if ! "$SCRIPT_DIR/run-epic-policy-recommender.sh" "${policy_args[@]+"${policy_args[@]}"}" > "$policy_file"; then
   error_exit "policy recommendation failed"
 fi
 
