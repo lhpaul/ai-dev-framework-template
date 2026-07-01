@@ -99,13 +99,26 @@ branch and exits quickly with the existing non-blocking behavior.
 
 ---
 
-## Scenario 6: Local tests cover guard behavior
+## Scenario 6: Fork-head pull requests are skipped by the guard
+
+1. Open or inspect a pull request whose head repository differs from the base
+   repository.
+2. Trigger the pull request path and, if possible, post a comment containing the
+   reviewer-loop summary markers.
+3. Inspect the guard workflow logs and PR-scoped status contexts.
+
+**Expected result**: The guard does not post reviewer-loop readiness statuses for
+the fork-head pull request, matching the existing same-repository restriction.
+
+---
+
+## Scenario 7: Local tests cover guard behavior
 
 1. Run the focused guard tests added by the implementation.
 2. Run markdown and workflow shell validation.
 
 **Expected result**: Tests cover missing-summary, summary-present,
-summary-comment, non-summary comment, and out-of-scope scenarios.
+summary-comment, non-summary comment, fork-head, and out-of-scope scenarios.
 
 ---
 
@@ -124,7 +137,7 @@ summary-comment, non-summary comment, and out-of-scope scenarios.
 - [ ] AC6: Branch-protection and readiness documentation identifies the result
       downstream repositories should require.
 - [ ] AC7: Tests cover missing-summary, summary-present, and out-of-scope branch
-      cases.
+      cases, including the same-repository guard on fork-head PRs.
 
 ---
 
@@ -134,5 +147,6 @@ summary-comment, non-summary comment, and out-of-scope scenarios.
 | --- | --- | --- |
 | Missing-summary status remains after the summary comment is posted | The issue-comment workflow did not run or could not fetch the PR head SHA | Rerun the guard workflow and inspect the Actions logs for API failures. |
 | A normal comment marks readiness passing | The comment-event path is not checking both canonical summary markers | Tighten marker matching and add a regression test for non-summary comments. |
+| Fork-head PR receives a reviewer-loop readiness status | The comment-event path did not preserve the same-repository head guard | Fetch head repository metadata before posting statuses and skip fork heads. |
 | Out-of-scope branches fail the guard | Branch-prefix detection changed | Verify the configured in-scope prefixes and expected branch name. |
 | Branch protection no longer recognizes the guard | Required status pattern points at an obsolete context | Use the documented `Reviewer-loop completion guard (#*)` pattern or repository-supported equivalent. |

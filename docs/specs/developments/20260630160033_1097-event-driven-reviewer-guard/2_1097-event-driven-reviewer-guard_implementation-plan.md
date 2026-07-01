@@ -50,6 +50,11 @@ existing summary comment and no reviewer platform behavior changes.
       branch from the API, apply the same in-scope branch-prefix rules, and post
       the PR-scoped success status when a valid summary exists. Maps to AC2, AC3,
       and AC4.
+- [ ] Preserve the existing same-repository head guard on both event paths. Fork
+      pull requests must not receive reviewer-loop guard statuses from this
+      workflow because the current `pull_request_target` path intentionally skips
+      fork heads rather than evaluating untrusted head branches. Maps to AC2,
+      AC3, and AC7.
 - [ ] Preserve the existing out-of-scope branch success behavior for non-feature,
       non-fix, non-refactor, and non-hotfix branches. Maps to AC4.
 - [ ] Keep the status context format `Reviewer-loop completion guard (#<PR>)`
@@ -90,9 +95,11 @@ existing summary comment and no reviewer platform behavior changes.
 3. Summary comment event on a pull request posts or refreshes the passing status
    for the current PR head SHA. Maps to AC2 and AC5.
 4. Non-summary issue comments do not change readiness. Maps to AC5.
-5. Out-of-scope branch prefixes pass or skip quickly with the existing
+5. Fork-head pull requests do not receive reviewer-loop guard statuses from this
+   workflow. Maps to AC2, AC3, and AC7.
+6. Out-of-scope branch prefixes pass or skip quickly with the existing
    non-blocking semantics. Maps to AC4.
-6. Documentation and smoke runbooks identify the new readiness signal and remove
+7. Documentation and smoke runbooks identify the new readiness signal and remove
    default long-polling expectations. Maps to AC6 and AC7.
 
 **Smoke test runbook**: `docs/testing/workflow/1097-event-driven-reviewer-guard.smoke-test.md`
@@ -152,6 +159,7 @@ No seed data is required.
 | Summary-comment event does not run for the target PR | Medium | Medium | Include explicit `issue_comment` trigger tests and document manual rerun/check behavior. |
 | Missing-summary status briefly appears before the reviewer-loop summary event posts success | High | Low | Treat this as expected eventual readiness behavior and document that the summary event updates the status. |
 | Workflow accidentally trusts untrusted PR head code | Low | High | Keep logic inline or check out only trusted base-repository code in `pull_request_target` context. |
+| Comment-event path posts statuses for fork-head PRs | Low | High | Fetch the PR head repository from the API and skip when it does not match the base repository, matching the existing pull request guard behavior. |
 | Branch protection points at an obsolete check name | Medium | Medium | Keep the existing context name and update documentation with the unchanged required status pattern. |
 | Status is posted to the wrong SHA on comment events | Low | High | Fetch the PR head from the API during `issue_comment` runs and cover it in tests. |
 
@@ -173,11 +181,13 @@ No production code samples are included in this plan.
    sleep or polling.
 4. Add the summary-comment event behavior that posts a passing status when the
    canonical summary is present.
-5. Preserve and verify the out-of-scope branch success path.
-6. Add shell/static tests for missing-summary, summary-present, summary-comment,
-   non-summary comment, and out-of-scope scenarios.
-7. Update CI enforcement documentation and existing guard smoke-test language.
-8. Add `docs/testing/workflow/1097-event-driven-reviewer-guard.smoke-test.md`.
-9. Run markdown, workflow shell, and focused guard/reviewer-loop tests.
-10. Update `CHANGELOG.md` under `[Unreleased]` using the project's
+5. Preserve and verify the same-repository head guard on pull request and
+   comment-event paths.
+6. Preserve and verify the out-of-scope branch success path.
+7. Add shell/static tests for missing-summary, summary-present, summary-comment,
+   non-summary comment, fork-head, and out-of-scope scenarios.
+8. Update CI enforcement documentation and existing guard smoke-test language.
+9. Add `docs/testing/workflow/1097-event-driven-reviewer-guard.smoke-test.md`.
+10. Run markdown, workflow shell, and focused guard/reviewer-loop tests.
+11. Update `CHANGELOG.md` under `[Unreleased]` using the project's
     `**Bold Title** (#1097):` format.
