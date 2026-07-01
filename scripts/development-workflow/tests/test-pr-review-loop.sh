@@ -1855,14 +1855,39 @@ _codex_trigger_comments='[
 ]'
 _codex_selected_trigger="$(
   printf '%s\n' "$_codex_trigger_comments" \
-    | jq -c --arg sha "abc123" --arg marker "review triggered by workflow runner" --arg bot "chatgpt-codex-connector[bot]" --arg bot_plain "chatgpt-codex-connector" \
-      '[.[] | select(.user.login != $bot and .user.login != $bot_plain) | select((.body | contains($sha)) and (.body | ascii_downcase | contains($marker)))] | sort_by(.created_at) | reverse | .[0] // empty | {id: .id, created_at: .created_at, body: .body}'
+    | jq -sc --arg sha "abc123" --arg marker "review triggered by workflow runner" --arg bot "chatgpt-codex-connector[bot]" --arg bot_plain "chatgpt-codex-connector" \
+      '[.[][] | select(.user.login != $bot and .user.login != $bot_plain) | select((.body | contains($sha)) and (.body | ascii_downcase | contains($marker)))] | sort_by(.created_at) | reverse | .[0] // empty | {id: .id, created_at: .created_at, body: .body}'
 )"
 run_test "codex_trigger_idempotency_selects_newest" "222" \
   "$(printf '%s\n' "$_codex_selected_trigger" | jq -r '.id')"
 run_test "codex_trigger_idempotency_single_object" "1" \
   "$(printf '%s\n' "$_codex_selected_trigger" | wc -l | tr -d ' ')"
-unset _codex_trigger_comments _codex_selected_trigger
+_codex_paginated_trigger_comments='[
+  {
+    "id": 111,
+    "created_at": "2026-01-01T00:00:00Z",
+    "user": {"login": "alice"},
+    "body": "Review triggered by workflow runner for abc123"
+  }
+]
+[
+  {
+    "id": 222,
+    "created_at": "2026-01-01T00:05:00Z",
+    "user": {"login": "bob"},
+    "body": "Review triggered by workflow runner for abc123"
+  }
+]'
+_codex_paginated_selected_trigger="$(
+  printf '%s\n' "$_codex_paginated_trigger_comments" \
+    | jq -sc --arg sha "abc123" --arg marker "review triggered by workflow runner" --arg bot "chatgpt-codex-connector[bot]" --arg bot_plain "chatgpt-codex-connector" \
+      '[.[][] | select(.user.login != $bot and .user.login != $bot_plain) | select((.body | contains($sha)) and (.body | ascii_downcase | contains($marker)))] | sort_by(.created_at) | reverse | .[0] // empty | {id: .id, created_at: .created_at, body: .body}'
+)"
+run_test "codex_trigger_idempotency_paginated_selects_newest" "222" \
+  "$(printf '%s\n' "$_codex_paginated_selected_trigger" | jq -r '.id')"
+run_test "codex_trigger_idempotency_paginated_single_object" "1" \
+  "$(printf '%s\n' "$_codex_paginated_selected_trigger" | wc -l | tr -d ' ')"
+unset _codex_trigger_comments _codex_selected_trigger _codex_paginated_trigger_comments _codex_paginated_selected_trigger
 
 _unlock_pr="80213$$"
 _unlock_lock_dir="/tmp/pr-review-loop-${_unlock_pr}.lockdir"
