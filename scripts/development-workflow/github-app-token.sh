@@ -84,16 +84,37 @@ create_jwt() {
   printf '%s.%s\n' "$signing_input" "$signature"
 }
 
+normalize_private_key_path() {
+  local raw_path="$1"
+
+  case "$raw_path" in
+    \~)
+      printf '%s\n' "$HOME"
+      ;;
+    \~/*)
+      printf '%s/%s\n' "$HOME" "${raw_path#\~/}"
+      ;;
+    /*)
+      printf '%s\n' "$raw_path"
+      ;;
+    *)
+      printf '%s/%s\n' "$REPO_ROOT" "$raw_path"
+      ;;
+  esac
+}
+
 load_private_key_file() {
   local private_key_path="$1"
   local secret_ref="$2"
   local tmp_dir="$3"
+  local resolved_private_key_path
 
   if [ -n "$private_key_path" ]; then
-    if [ ! -r "$private_key_path" ]; then
+    resolved_private_key_path="$(normalize_private_key_path "$private_key_path")"
+    if [ ! -r "$resolved_private_key_path" ]; then
       die "missing_private_key: configured private key path is not readable for selected product repository"
     fi
-    printf '%s\n' "$private_key_path"
+    printf '%s\n' "$resolved_private_key_path"
     return 0
   fi
 
@@ -123,8 +144,12 @@ exchange_token() {
   TOKEN_TMP_DIR="$(mktemp -d)"
 
   local key_file
-  key_file="$(load_private_key_file "$private_key_path" "$secret_ref" "$TOKEN_TMP_DIR")"
-  jwt="$(create_jwt "$app_id" "$key_file" "$TOKEN_TMP_DIR")"
+  if ! key_file="$(load_private_key_file "$private_key_path" "$secret_ref" "$TOKEN_TMP_DIR")"; then
+    exit 1
+  fi
+  if ! jwt="$(create_jwt "$app_id" "$key_file" "$TOKEN_TMP_DIR")"; then
+    die "missing_private_key: failed to sign GitHub App JWT with selected private key"
+  fi
 
   if [ -n "${WORKFLOW_GITHUB_APP_TOKEN_EXCHANGE_CMD:-}" ]; then
     if ! token="$("$WORKFLOW_GITHUB_APP_TOKEN_EXCHANGE_CMD" "$app_id" "$installation_id" "$jwt")"; then

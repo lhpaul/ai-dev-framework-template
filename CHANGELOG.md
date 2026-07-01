@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Workflow item routing no longer treats every GitHub issue as epic-like**:
+  `/run-work` and `/run-item` now read GitHub sub-issue `totalCount` instead of
+  the `subIssues` object key count, and the bounded prelude uses bash-3.2-safe
+  empty-array expansion for stock macOS shells.
 - **Release readiness wording**: command and overview surfaces now state that
   `release/*` PR reviewer loops are skipped while the production PR still gets
   regression and CI readiness before merge.
@@ -25,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Placeholder workflows opt-in** (#1098): Make template placeholder deploy and
   regression workflows opt-in so downstream repositories do not spend runner
   minutes before configuring real pipelines.
+- **Downstream template-sync reviewer corrections**: Codex reviewer idempotency,
+  workflow-hub GitHub App private-key paths, and optional Claude workflow tests
+  now handle downstream sync edge cases without false failures.
 
 ## [0.34.0] - 2026-06-30
 

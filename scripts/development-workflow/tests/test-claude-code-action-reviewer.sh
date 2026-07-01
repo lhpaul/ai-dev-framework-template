@@ -36,6 +36,7 @@ run_test() {
 }
 
 REVIEWER_SCRIPT="scripts/development-workflow/claude-code-action-reviewer.sh"
+# shellcheck disable=SC2034 # Consumed by the sourced reviewer script.
 CLAUDE_CODE_ACTION_REVIEWER_LIBRARY_MODE=1
 # shellcheck source=scripts/development-workflow/claude-code-action-reviewer.sh
 source "$REVIEWER_SCRIPT"
@@ -488,20 +489,24 @@ echo ""
 echo "=== Area 8: workflow prompt configuration ==="
 
 _workflow_file=".github/workflows/claude-code-review.yml"
-# shellcheck disable=SC2016 # Literal GitHub expression expected in workflow YAML.
-if grep -q 'prompt: "/code-review:code-review ${{ github.repository }}/pull/${{ inputs.pr_number }}"' "$_workflow_file"; then
-  _has_prompt=1
-else
-  _has_prompt=0
-fi
-run_test "workflow_has_explicit_code_review_prompt" "1" "$_has_prompt"
+if [ -f "$_workflow_file" ]; then
+  # shellcheck disable=SC2016 # Literal GitHub expression expected in workflow YAML.
+  if grep -q 'prompt: "/code-review:code-review ${{ github.repository }}/pull/${{ inputs.pr_number }}"' "$_workflow_file"; then
+    _has_prompt=1
+  else
+    _has_prompt=0
+  fi
+  run_test "workflow_has_explicit_code_review_prompt" "1" "$_has_prompt"
 
-if grep -q 'plugins: "code-review@claude-code-plugins"' "$_workflow_file"; then
-  _has_plugin=1
+  if grep -q 'plugins: "code-review@claude-code-plugins"' "$_workflow_file"; then
+    _has_plugin=1
+  else
+    _has_plugin=0
+  fi
+  run_test "workflow_has_code_review_plugin" "1" "$_has_plugin"
 else
-  _has_plugin=0
+  echo "INFO: optional Claude Code Action workflow not present; skipping workflow prompt assertions"
 fi
-run_test "workflow_has_code_review_plugin" "1" "$_has_plugin"
 unset _workflow_file _has_prompt _has_plugin
 
 # ---------------------------------------------------------------------------

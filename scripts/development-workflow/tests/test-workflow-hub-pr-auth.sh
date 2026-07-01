@@ -391,6 +391,61 @@ printf 'fixture-installation-token\n'
 SH
 chmod +x "$token_exchange_stub"
 
+relative_key_dir="$(fixture_dir relative-key)"
+mkdir -p "$relative_key_dir/keys"
+make_private_key "$relative_key_dir/keys/mobile-app.pem"
+cat > "$relative_key_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      github_app:
+        app_id: "12345"
+        installation_id: "999"
+YAML
+cat > "$relative_key_dir/.ai-dev-workflow.local.yaml" <<'YAML'
+product_repos:
+  - name: mobile-app
+    github_app:
+      private_key_path: keys/mobile-app.pem
+YAML
+relative_token="$(
+  WORKFLOW_GITHUB_APP_TOKEN_EXCHANGE_CMD="$token_exchange_stub" \
+    bash "$TOKEN_HELPER" --repo-root "$relative_key_dir" --repo mobile-app --print-token
+)"
+run_equals "token_helper_relative_private_key_path" "fixture-installation-token" "$relative_token"
+
+tilde_key_dir="$(fixture_dir tilde-key)"
+tilde_home="$tilde_key_dir/home"
+mkdir -p "$tilde_home"
+make_private_key "$tilde_home/mobile-app.pem"
+cat > "$tilde_key_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      github_app:
+        app_id: "12345"
+        installation_id: "999"
+YAML
+cat > "$tilde_key_dir/.ai-dev-workflow.local.yaml" <<'YAML'
+product_repos:
+  - name: mobile-app
+    github_app:
+      private_key_path: ~/mobile-app.pem
+YAML
+tilde_token="$(
+  HOME="$tilde_home" WORKFLOW_GITHUB_APP_TOKEN_EXCHANGE_CMD="$token_exchange_stub" \
+    bash "$TOKEN_HELPER" --repo-root "$tilde_key_dir" --repo mobile-app --print-token
+)"
+run_equals "token_helper_tilde_private_key_path" "fixture-installation-token" "$tilde_token"
+
 token_stdout="$(
   WORKFLOW_GITHUB_APP_TOKEN_EXCHANGE_CMD="$token_exchange_stub" \
     bash "$TOKEN_HELPER" --repo-root "$hub_dir" --repo mobile-app --print-token 2>"$TMP_ROOT/token.stderr"
