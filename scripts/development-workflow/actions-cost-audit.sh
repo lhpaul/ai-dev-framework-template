@@ -193,13 +193,14 @@ jq -r --arg repo "$REPO" --arg since "$SINCE" --argjson limit "$LIMIT" '
               runs: ($items | length),
               completed: ($items | map(select(.status == "completed")) | length),
               incomplete: ($items | map(select(.durationIncomplete)) | length),
-              totalSeconds: $total,
+              totalSeconds: (if $duration_count > 0 then $total else null end),
+              sortSeconds: $total,
               averageSeconds: (if $duration_count > 0 then ($total / $duration_count) else null end),
               events: ($items | event_summary),
               recentRuns: ($items | run_id_summary)
             }
         )
-      | sort_by(-.totalSeconds, -.runs, .workflow)) as $summary
+      | sort_by(-.sortSeconds, -.runs, .workflow)) as $summary
     | "# GitHub Actions Cost Audit\n\n" +
       scope_line +
       "Runs included: " + ($filtered_count | tostring) + ". Incomplete duration records: " + ($incomplete_count | tostring) + ".\n\n" +

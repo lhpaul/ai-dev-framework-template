@@ -95,6 +95,19 @@ case "${GH_MOCK_MODE:-success}" in
     "url": "https://github.example/runs/202"
   },
   {
+    "databaseId": 203,
+    "workflowName": "In Progress Only",
+    "workflowDatabaseId": 44,
+    "status": "in_progress",
+    "conclusion": null,
+    "createdAt": "2026-07-01T09:00:00Z",
+    "startedAt": "2026-07-01T09:01:00Z",
+    "updatedAt": null,
+    "event": "pull_request",
+    "headBranch": "feature/example",
+    "url": "https://github.example/runs/203"
+  },
+  {
     "databaseId": 301,
     "workflowName": "Old Workflow",
     "workflowDatabaseId": 33,
@@ -132,8 +145,9 @@ run_audit() {
 output="$(GH_MOCK_MODE=success run_audit --limit 5)"
 assert_contains "$output" '^# GitHub Actions Cost Audit$' "report heading missing"
 assert_contains "$output" '\| CI \| 2 \| 1 \| 1 \| 10m \| 10m \|' "CI aggregation should include incomplete run and completed duration"
+assert_contains "$output" '\| In Progress Only \| 1 \| 0 \| 1 \| n/a \| n/a \|' "all-incomplete workflow durations should render as n/a"
 assert_contains "$output" '\| PR-Agent \| 2 \| 2 \| 0 \| 5m \| 2\.5m \|' "PR-Agent aggregation should sum and average duration"
-assert_contains "$output" 'Incomplete duration records: 1' "incomplete duration count missing"
+assert_contains "$output" 'Incomplete duration records: 2' "incomplete duration count missing"
 assert_contains "$output" 'Public/private cost-risk framing' "cost-risk framing section missing"
 assert_contains "$output" 'Private downstream repositories can consume included or paid runner minutes' "private downstream risk language missing"
 assert_contains "$output" '\| make opt-in \|' "make opt-in recommendation outcome missing"
