@@ -66,6 +66,11 @@ section. The comment body will contain one of two stable markers:
 
 For a moderate batch workflow (100 PRs/month, ~20K tokens each), expect **$3–15/month** with DeepSeek.
 
+To review the GitHub Actions runner-time side of PR-Agent usage, run the
+lightweight workflow audit in [`actions-cost-audit.md`](actions-cost-audit.md).
+That audit reports recent workflow run counts and wall time; it does not replace
+provider token-cost estimates or GitHub billing dashboards.
+
 ---
 
 ## Model Configuration

@@ -95,3 +95,6 @@ The `ready-for-regression` label is applied to implementation PRs (`feature/*`, 
 - For projects without e2e tests, keep the placeholder disabled and do not
   configure it as a required check. The orchestrator will still apply the label,
   but the inactive placeholder will not spend runner minutes on browser setup.
+- Use [`actions-cost-audit.md`](actions-cost-audit.md) when reviewing whether
+  regression workflow run volume should stay as-is, be narrowed, or remain
+  opt-in for downstream private repositories.
