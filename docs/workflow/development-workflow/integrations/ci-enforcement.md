@@ -22,6 +22,11 @@ pull request opened from an in-scope implementation branch prefix (`feature/`,
 `fix/`, `refactor/`, `hotfix/`). Runs on PR `opened`, `reopened`,
 `ready_for_review`, and `synchronize` events.
 
+The label is a readiness signal for configured real regression checks. It does
+not by itself enable inactive placeholder regression work; the template
+placeholder in `.github/workflows/e2e-regression.yml` still requires explicit
+downstream opt-in before dependency or browser installation runs.
+
 **Idempotent**: If the label is already present, the workflow completes without
 error and without duplicating the label.
 
@@ -203,3 +208,9 @@ The CI workflows complement, not replace, the agent-side checklist. The agent
 Step 5.1 check in Protocol 91 remains the authoritative gate for the agent
 runner; the CI workflows provide a structural backstop that catches cases where
 the agent did not run or skipped the check.
+
+When a downstream repository has not configured real regression tests, the
+auto-applied label may be present while the template placeholder remains
+inactive. That is expected: the label preserves staged workflow semantics, while
+explicitly enabled placeholder or real regression workflows decide whether
+expensive checks run.

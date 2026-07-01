@@ -18,8 +18,11 @@ jobs:
   e2e:
     name: E2E regression (placeholder)
     if: >-
-      (github.event.action == 'labeled' && github.event.label.name == 'ready-for-regression') ||
-      (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'ready-for-regression'))
+      vars.ENABLE_TEMPLATE_PLACEHOLDER_REGRESSION == 'true' &&
+      (
+        (github.event.action == 'labeled' && github.event.label.name == 'ready-for-regression') ||
+        (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'ready-for-regression'))
+      )
     runs-on: ubuntu-latest
 
     steps:

@@ -158,7 +158,10 @@ in the release branch or document the decision to defer with a comment on the is
 
 ### 7.3 Regression label (release / `main` PR only)
 
-Apply the `ready-for-regression` label to the **production PR only** so label-gated e2e/regression runs (see [`integrations/e2e-regression.md`](../integrations/e2e-regression.md) and `.github/workflows/e2e-regression.yml`).
+Apply the `ready-for-regression` label to the **production PR only** so
+configured real regression checks, or an explicitly enabled placeholder, can run
+(see [`integrations/e2e-regression.md`](../integrations/e2e-regression.md) and
+`.github/workflows/e2e-regression.yml`).
 
 ```bash
 gh pr edit <pr_number> --add-label "ready-for-regression"

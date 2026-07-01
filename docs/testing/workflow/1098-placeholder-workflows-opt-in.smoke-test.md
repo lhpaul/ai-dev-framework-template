@@ -27,6 +27,7 @@ No application seed data is required.
 | Deploy workflow | `.github/workflows/deploy.yml` |
 | Regression workflow | `.github/workflows/e2e-regression.yml` |
 | Opt-in variable | `ENABLE_TEMPLATE_PLACEHOLDER_REGRESSION` |
+| Deploy confirmation input | `confirm_placeholder` |
 | Regression label | `ready-for-regression` |
 
 ---

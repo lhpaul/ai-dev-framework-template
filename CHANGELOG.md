@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while preserving configured reviewer-loop review.
 - **Event-driven reviewer guard** (#1097): Replace default long reviewer-loop
   guard polling with a fast PR check plus summary-comment readiness refresh.
+- **Placeholder workflows opt-in** (#1098): Make template placeholder deploy and
+  regression workflows opt-in so downstream repositories do not spend runner
+  minutes before configuring real pipelines.
 
 ## [0.34.0] - 2026-06-30
 
