@@ -244,8 +244,8 @@ IDEM_STDERR=$(mktemp)
 IDEM_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
   2>"$IDEM_STDERR" \
-  | jq -r --arg sha "$CURRENT_SHA" --arg marker "review triggered by workflow runner" --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" \
-    '.[] | select(.user.login != $bot and .user.login != $bot_plain) | select((.body | contains($sha)) and (.body | ascii_downcase | contains($marker))) | {id: .id, created_at: .created_at, body: .body}' \
+  | jq -sc --arg sha "$CURRENT_SHA" --arg marker "review triggered by workflow runner" --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" \
+    '[.[][] | select(.user.login != $bot and .user.login != $bot_plain) | select((.body | contains($sha)) and (.body | ascii_downcase | contains($marker)))] | sort_by(.created_at) | reverse | .[0] // empty | {id: .id, created_at: .created_at, body: .body}' \
   > "$IDEM_TMPFILE"; then
   TRIGGER_COMMENT_INFO=$(head -c 2000 "$IDEM_TMPFILE")
 else
