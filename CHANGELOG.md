@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Actions cost-audit guidance** (#1099): Add lightweight workflow run-volume
+  and wall-time audit guidance for retrospectives and downstream template-sync
+  reviews.
+
 ### Fixed
 
 - **Release readiness wording**: command and overview surfaces now state that
