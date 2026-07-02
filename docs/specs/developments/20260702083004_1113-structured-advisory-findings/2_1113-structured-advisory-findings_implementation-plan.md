@@ -56,6 +56,11 @@ workflow stages will consume.
   - `path`: optional source path when Haystack supplies one.
   - `line`: optional numeric source line when Haystack supplies one.
   - `fix_hint`: optional fix guidance from Haystack's agent fix prompt.
+- [ ] Use this fallback order for optional fields so implementation behavior is
+      deterministic:
+  - `path`: `.source.path`, `.source.file`, `.path`, then `.file`.
+  - `line`: `.source.line`, `.source.startLine`, `.line`, then `.startLine`.
+  - `fix_hint`: `.agentFixPrompt`, `.fixPrompt`, then `.suggestion`.
 - [ ] Treat optional source fields as best-effort normalization. Missing,
       `null`, or differently-shaped source data must not invalidate the
       structured arrays or change the blocking/advisory counts.
@@ -134,8 +139,10 @@ machine-readable shell output in `haystack-reviewer.sh`.
    when `HAYSTACK_MAJOR_IS_BLOCKING=1`.
 7. `source: null`, missing `source`, and source objects without path/line still
    emit valid entries with optional fields omitted.
-8. Source path and line variants are best-effort: known path-like and line-like
-   fields populate `path` and `line`; unknown shapes do not fail parsing.
+8. Source path and line variants follow the documented fallback order for
+   `.source.path`, `.source.file`, `.path`, `.file`, `.source.line`,
+   `.source.startLine`, `.line`, and `.startLine`; unknown shapes do not fail
+   parsing.
 9. Summary, detail, and fix guidance containing quotes, backslashes, newlines,
    pipes, equals signs, and shell metacharacters remain valid JSON on one
    output line.
@@ -156,7 +163,7 @@ machine-readable shell output in `haystack-reviewer.sh`.
 | 5 | `scripts/development-workflow/tests/test-haystack-reviewer.sh` | Unknown category appears in blocking array. |
 | 6 | `scripts/development-workflow/tests/test-haystack-reviewer.sh` | `Major` category moves between arrays based on `HAYSTACK_MAJOR_IS_BLOCKING`. |
 | 7 | `scripts/development-workflow/tests/test-haystack-reviewer.sh` | Null/missing source omits optional location fields without JSON parse failure. |
-| 8 | `scripts/development-workflow/tests/test-haystack-reviewer.sh` | Known source path/line fields populate normalized `path` and `line`. |
+| 8 | `scripts/development-workflow/tests/test-haystack-reviewer.sh` | Each documented path/line fallback can populate normalized `path` and `line`. |
 | 9 | `scripts/development-workflow/tests/test-haystack-reviewer.sh` | Output line parses with `jq` and preserves escaped text values. |
 | 10 | `scripts/development-workflow/tests/test-haystack-reviewer.sh` | Policy-only result keeps empty arrays and existing policy fields. |
 | 11 | `scripts/development-workflow/tests/test-haystack-reviewer.sh` | Existing unavailable/skipped tests remain unchanged. |
