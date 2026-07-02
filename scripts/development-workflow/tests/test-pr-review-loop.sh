@@ -1262,6 +1262,54 @@ rm -rf "$_haystack_reviewer_stub"
 unset MOCK_GH_OUTPUT _haystack_auth_overrides actual_output actual_exit
 workflow_repo_root() { printf '%s\n' "${HARNESS_REPO_ROOT:-$REPO_ROOT}"; }
 
+# test: run_haystack_review forwards structured advisory and policy fields
+_haystack_structured_overrides='
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  require_gh() { :; }
+'
+export MOCK_GH_OUTPUT="false"
+_haystack_reviewer_stub="$(mktemp -d)"
+mkdir -p "$_haystack_reviewer_stub/scripts/development-workflow"
+cat > "$_haystack_reviewer_stub/scripts/development-workflow/haystack-reviewer.sh" <<'HAYSTACK_STUB'
+#!/usr/bin/env bash
+printf 'RESULT=clean\n'
+printf 'BLOCKING_COUNT=0\n'
+printf 'SUGGESTION_COUNT=1\n'
+printf 'COMMENT_COUNT=1\n'
+printf 'ADVISORY_FINDINGS_JSON=[{"severity":"advisory","category":"Minor","summary":"Structured note","detail":"Details","path":"script.sh","line":12,"fix_hint":"Consider simplifying"}]\n'
+printf 'BLOCKING_FINDINGS_JSON=[]\n'
+printf 'POLICY_STATUS_AVAILABLE=1\n'
+printf 'POLICY_REVIEW_REQUIRED=1\n'
+printf 'POLICY_DISPOSITION=policy-human-review\n'
+printf 'POLICY_VERDICT=needs-review\n'
+printf 'POLICY_ANALYSIS_STATUS=ready\n'
+printf 'POLICY_BUCKET=needs-assignment\n'
+printf 'POLICY_RATING=4\n'
+printf 'POLICY_HAS_REVIEWER=false\n'
+printf 'POLICY_NEEDS_HUMAN=true\n'
+printf 'DISPLAY_RESULT=needs-review: policy\n'
+exit 0
+HAYSTACK_STUB
+chmod +x "$_haystack_reviewer_stub/scripts/development-workflow/haystack-reviewer.sh"
+workflow_repo_root() { printf "%s\n" "$_haystack_reviewer_stub"; }
+actual_output="$(
+  eval "$_haystack_structured_overrides"
+  _ec=0
+  run_haystack_review "42" "feature/test" "1" "30" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+run_test "haystack_forwards_advisory_findings_json" \
+  'ADVISORY_FINDINGS_JSON=[{"severity":"advisory","category":"Minor","summary":"Structured note","detail":"Details","path":"script.sh","line":12,"fix_hint":"Consider simplifying"}]' \
+  "$(printf '%s\n' "$actual_output" | grep "^ADVISORY_FINDINGS_JSON=")"
+run_test "haystack_forwards_policy_review_required" "POLICY_REVIEW_REQUIRED=1" \
+  "$(printf '%s\n' "$actual_output" | grep "^POLICY_REVIEW_REQUIRED=")"
+run_test "haystack_forwards_display_result" "DISPLAY_RESULT=needs-review: policy" \
+  "$(printf '%s\n' "$actual_output" | grep "^DISPLAY_RESULT=")"
+rm -rf "$_haystack_reviewer_stub"
+unset MOCK_GH_OUTPUT _haystack_structured_overrides actual_output
+workflow_repo_root() { printf '%s\n' "${HARNESS_REPO_ROOT:-$REPO_ROOT}"; }
+
 # ---------------------------------------------------------------------------
 # Area 10: per-platform result tokens in summary comment (#755)
 #
@@ -1301,6 +1349,84 @@ run_test "policy_review_compare_verdict" "advisory" "$(normalize_platform_verdic
 run_test "policy_review_does_not_override_needs_fixes" "blocking" "$(normalize_platform_verdict needs_fixes "$_platform_output")"
 run_test "policy_review_does_not_override_skipped" "unavailable" "$(normalize_platform_verdict skipped "$_platform_output")"
 unset _platform_output _prt_display_override _prt_disp
+
+# Test 10.1d: advisory-disposition trigger helper covers all clean advisory signals.
+if advisory_disposition_required_for_platform clean 1 0 ""; then
+  _advisory_trigger_count=1
+else
+  _advisory_trigger_count=0
+fi
+run_test "advisory_disposition_required_by_suggestion_count" "1" "$_advisory_trigger_count"
+if advisory_disposition_required_for_platform clean 0 1 ""; then
+  _advisory_trigger_count=1
+else
+  _advisory_trigger_count=0
+fi
+run_test "advisory_disposition_required_by_policy" "1" "$_advisory_trigger_count"
+if advisory_disposition_required_for_platform clean 0 0 "Possible Issue@@@https://example.test/comment"; then
+  _advisory_trigger_count=1
+else
+  _advisory_trigger_count=0
+fi
+run_test "advisory_disposition_required_by_labels" "1" "$_advisory_trigger_count"
+if advisory_disposition_required_for_platform needs_fixes 1 1 "Possible Issue"; then
+  _advisory_trigger_count=1
+else
+  _advisory_trigger_count=0
+fi
+run_test "advisory_disposition_not_required_for_blocking_result" "0" "$_advisory_trigger_count"
+unset _advisory_trigger_count
+
+# Test 10.1e: platform count parsing accepts only non-negative integers.
+if is_nonnegative_int "0" && is_nonnegative_int "12" && ! is_nonnegative_int "abc" && ! is_nonnegative_int "1abc"; then
+  _count_validation_ok=1
+else
+  _count_validation_ok=0
+fi
+run_test "platform_count_validation_nonnegative_int_only" "1" "$_count_validation_ok"
+if grep -qF 'aggregate_reason="platform_count_parse_failed"' \
+    "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"; then
+  _count_fail_closed=1
+else
+  _count_fail_closed=0
+fi
+run_test "platform_count_parse_failure_fails_closed" "1" "$_count_fail_closed"
+unset _count_validation_ok _count_fail_closed
+
+# Test 10.1f: final aggregate output emits the disposition-required signal.
+if grep -qF 'advisory_disposition_required_output="$advisory_disposition_required"' \
+    "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" \
+    && grep -qF 'print_kv ADVISORY_DISPOSITION_REQUIRED "$advisory_disposition_required_output"' \
+      "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"; then
+  _advisory_signal_emitted=1
+else
+  _advisory_signal_emitted=0
+fi
+run_test "advisory_disposition_required_signal_emitted" "1" "$_advisory_signal_emitted"
+unset _advisory_signal_emitted
+
+# Test 10.1g: malformed advisory JSON is rejected before summary rendering.
+set +e
+compact_advisory_findings_json '{"not":"an array"}' >/dev/null 2>&1
+_compact_status=$?
+set -e
+if [ "$_compact_status" -ne 0 ]; then
+  _compact_rejected=1
+else
+  _compact_rejected=0
+fi
+run_test "advisory_json_non_array_rejected" "1" "$_compact_rejected"
+set +e
+compact_advisory_findings_json '[{"category":"Minor"}' >/dev/null 2>&1
+_compact_status=$?
+set -e
+if [ "$_compact_status" -ne 0 ]; then
+  _compact_rejected=1
+else
+  _compact_rejected=0
+fi
+run_test "advisory_json_malformed_rejected" "1" "$_compact_rejected"
+unset _compact_status _compact_rejected
 
 # Test 10.1c: policy metadata is rendered as an explicit handoff note.
 _platform_name="haystack"
@@ -1449,10 +1575,46 @@ else
   _summary_advisory_split="no"
 fi
 run_test "summary_advisory_split_visible" "yes" "$_summary_advisory_split"
+
+aggregate_advisory_findings_platforms=("haystack")
+aggregate_advisory_findings_jsons=(
+  "$(jq -nc '[{"severity":"advisory","category":"Minor","summary":"Summary with \"quotes\", pipe | equals =, and newline text","detail":"Line one\nLine two","path":"scripts/example.sh","line":12,"fix_hint":"Use $PATH && echo ok"}]')"
+)
+advisory_disposition_required=1
+policy_review_disposition_required=0
+platform_policy_status_notes=()
+_post_review_summary "clean" "" "haystack (clean)" "0" "1" ""
+if [ -n "${_summary_body_capture:-}" ] \
+    && grep -q 'haystack: Minor - Summary with "quotes", pipe | equals =, and newline text' "$_summary_body_capture" \
+    && grep -q "Detail: Line one Line two" "$_summary_body_capture" \
+    && grep -q 'Location: `scripts/example.sh:12`' "$_summary_body_capture" \
+    && grep -q 'Fix hint: Use $PATH && echo ok' "$_summary_body_capture"; then
+  _structured_summary_rendered="yes"
+else
+  _structured_summary_rendered="no"
+fi
+run_test "summary_structured_haystack_advisory_rendered" "yes" "$_structured_summary_rendered"
+
+aggregate_advisory_findings_platforms=()
+aggregate_advisory_findings_jsons=()
+advisory_disposition_required=1
+policy_review_disposition_required=1
+platform_policy_status_notes=("haystack: bucket=needs-assignment; needsHumanReview=true;")
+_post_review_summary "clean" "" "haystack (needs-review: policy)" "0" "0" ""
+if [ -n "${_summary_body_capture:-}" ] \
+    && grep -q "Policy review required: haystack: bucket=needs-assignment; needsHumanReview=true;" "$_summary_body_capture"; then
+  _policy_fallback_rendered="yes"
+else
+  _policy_fallback_rendered="no"
+fi
+run_test "summary_policy_required_fallback_rendered" "yes" "$_policy_fallback_rendered"
 rm -f "$_summary_call_log"
 rm -f "$_summary_body_capture"
 unset MOCK_GH_CALL_LOG MOCK_GH_BODY_CAPTURE MOCK_GH_EXIT MOCK_GH_COMMENTS_OUTPUT
-unset _summary_advisory_split _post_summary_source
+unset _summary_advisory_split _structured_summary_rendered _policy_fallback_rendered
+unset _post_summary_source aggregate_advisory_findings_platforms
+unset aggregate_advisory_findings_jsons advisory_disposition_required
+unset policy_review_disposition_required
 unset -f _post_review_summary
 unset compare_mode compare_verdicts platform_policy_status_notes pr_number branch_name
 

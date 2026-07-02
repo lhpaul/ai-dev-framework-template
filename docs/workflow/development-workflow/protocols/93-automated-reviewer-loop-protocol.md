@@ -661,15 +661,33 @@ advisory dispositions in the post-clean summary flow defined below.
 
 ### Advisory finding dispositions (post-clean)
 
-When `pr-review-loop.sh` exits `clean` and the output contains a non-empty `ADVISORY_LABELS` value (advisory findings from any configured platform), the runner must document the disposition of each advisory finding and update the summary comment before marking the PR ready. This closes the gap between "we saw this finding" and "here is why it was or was not addressed."
+When `pr-review-loop.sh` exits `clean` and the output reports advisory evidence,
+the runner must document the disposition of each advisory finding and update the
+summary comment before marking the PR ready. This closes the gap between "we saw
+this finding" and "here is why it was or was not addressed."
 
 #### When this step triggers
 
-Any clean exit where the script output includes one or more advisory label entries in the `ADVISORY_LABELS` key (comma-separated names, e.g. `Possible Issue,Logic Issue`).
+Any clean exit where one or more of these signals is present:
+
+- `ADVISORY_DISPOSITION_REQUIRED=1`
+- `SUGGESTION_COUNT` is greater than zero
+- `POLICY_REVIEW_REQUIRED=1`
+- `ADVISORY_LABELS` is non-empty
+
+`ADVISORY_DISPOSITION_REQUIRED=1` is the preferred aggregate signal for new
+callers. The other fields remain valid fallback triggers for older script
+versions and for humans inspecting raw platform output.
 
 #### Procedure
 
-1. **For each advisory finding** listed in the "Advisory findings" section of the Automated Reviewer Loop Summary comment, read the full finding text from the linked PR comment.
+1. **For each advisory finding** listed in the "Advisory findings" section of
+   the Automated Reviewer Loop Summary comment, review the available finding
+   context. PR-Agent advisory labels link to the source PR comment. Haystack
+   structured advisory entries include category, summary, detail, optional
+   source location, and optional fix hint directly in the summary. Policy-review
+   required entries include the policy handoff metadata available from the
+   reviewer output.
 
 2. **Determine the disposition** — choose one per finding:
    - **Addressed** — the finding describes a real issue that was fixed in this PR. Cite the commit SHA.
