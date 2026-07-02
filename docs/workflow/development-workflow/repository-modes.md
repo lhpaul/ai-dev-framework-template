@@ -121,6 +121,10 @@ In `workflow_hub` mode:
 - Reviewer-loop wrappers remain thin: they pass repository context through to
   shared scripts/helpers and do not implement independent product repository
   selection rules.
+- External reviewer configuration follows the same default in every repository
+  mode: one external reviewer per repository or product plus internal runner
+  review. Multi-bot external review remains valid as an advanced setup; see
+  [`integrations/pr-review-platform.md`](integrations/pr-review-platform.md).
 
 If product repository context is missing or ambiguous for mutation-oriented
 work, the agent must stop before modifying files, creating branches, committing,

@@ -333,6 +333,40 @@ def raw_haystack_config(config: dict[str, Any], path: Path) -> dict[str, Any]:
     return as_mapping(review.get("haystack"), path, "review.haystack")
 
 
+def external_reviewers_for_phase(
+    config: dict[str, Any], path: Path, phase: str
+) -> tuple[list[Any], Path] | None:
+    if "review" not in config:
+        return None
+    review = as_mapping(config.get("review"), path, "review")
+    if phase not in review:
+        return None
+    phase_config = as_mapping(review.get(phase), path, f"review.{phase}")
+    if "github" not in phase_config:
+        return None
+    return as_list(phase_config.get("github"), path, f"review.{phase}.github"), path
+
+
+def warn_on_multiple_external_reviewers(
+    shared: dict[str, Any], local: dict[str, Any], shared_path: Path, local_path: Path
+) -> None:
+    for phase in ("on_draft", "on_ready"):
+        effective = external_reviewers_for_phase(local, local_path, phase)
+        if effective is None:
+            effective = external_reviewers_for_phase(shared, shared_path, phase)
+        if effective is None:
+            continue
+        reviewers, source_path = effective
+        if len(reviewers) > 1:
+            print(
+                "WARNING: "
+                f"{source_path}: review.{phase}.github lists {len(reviewers)} external reviewers; "
+                "one external reviewer per phase is recommended by default. "
+                "Multi-bot review remains supported as advanced usage.",
+                file=sys.stderr,
+            )
+
+
 def normalize_haystack_config(config: dict[str, Any], path: Path) -> dict[str, str]:
     haystack = raw_haystack_config(config, path)
     if not haystack:
@@ -388,6 +422,7 @@ def normalize_haystack_config(config: dict[str, Any], path: Path) -> dict[str, s
 def validate_workflow_config(shared: dict[str, Any], local: dict[str, Any], shared_path: Path, local_path: Path) -> None:
     normalize_haystack_config(shared, shared_path)
     normalize_haystack_config(local, local_path)
+    warn_on_multiple_external_reviewers(shared, local, shared_path, local_path)
 
 
 def product_repos(shared: dict[str, Any], shared_path: Path) -> list[dict[str, Any]]:

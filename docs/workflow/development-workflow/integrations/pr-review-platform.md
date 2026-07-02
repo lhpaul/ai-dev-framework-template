@@ -17,6 +17,19 @@ Platform-specific setup lives in each platform's own integration doc. See:
 
 Automated PR reviewer tools are **post-push validation**. They do not replace the pre-PR review gate defined in [`REVIEW.md`](../../../../REVIEW.md).
 
+### Recommended Reviewer Count
+
+The recommended default is **one external automated reviewer per repository or
+product**, paired with the runner's internal review gate. The internal review
+gate handles workflow-contract review before the hosted or CLI reviewer checks
+the pushed PR.
+
+Multi-bot external review remains supported, but treat it as advanced usage.
+Each additional external reviewer can increase vendor or runner cost, add review
+latency, duplicate findings, and produce conflicting advice that needs explicit
+disposition. Use multiple external reviewers only when the repository or product
+has a clear reason to pay those coordination costs.
+
 Default policy is **sequential gating**:
 
 - Configure reviewer tools in a fixed order
@@ -94,6 +107,11 @@ passed. Matching lists in `.ai-dev-workflow.local.yaml` replace the shared
 tool/subscription differences. If the effective config is absent, or if both
 effective lists are omitted or empty, no reviewer tool runs and the result is
 skipped. Explicit `--platform` flags always override the config file.
+
+Keep each GitHub/App reviewer list to one external reviewer by default. The
+workflow configuration validator may emit a non-blocking warning when a phase
+lists more than one external reviewer, but multi-reviewer lists remain valid for
+advanced setups.
 
 `review.on_ready.github` is optional. Platforms listed there run only after
 draft GitHub reviewers are clean and the PR has been converted with

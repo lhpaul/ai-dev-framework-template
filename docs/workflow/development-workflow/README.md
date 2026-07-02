@@ -525,7 +525,12 @@ The expected sequence is:
 GitHub review platforms are declared in `.ai-dev-workflow.yaml` under
 `review.on_draft.github` and `review.on_ready.github`, with matching
 `.ai-dev-workflow.local.yaml` lists taking precedence for local tool/subscription
-differences. The repository helpers that support this loop are:
+differences. Prefer one external reviewer per repository or product plus the
+internal runner review gate; multi-bot external review remains supported as an
+advanced setup with added cost, latency, duplicate-finding, and conflict
+trade-offs. See
+[`integrations/pr-review-platform.md`](integrations/pr-review-platform.md) for
+the canonical guidance. The repository helpers that support this loop are:
 
 - `scripts/development-workflow/pr-review-loop.sh`
 - `scripts/development-workflow/pr-ci-loop.sh`
