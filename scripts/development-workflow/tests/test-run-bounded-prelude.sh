@@ -7,6 +7,7 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../../.." && pwd)"
 HELPER="$REPO_ROOT/scripts/development-workflow/run-epic-policy-recommender.sh"
 PRELUDE="$REPO_ROOT/scripts/development-workflow/run-bounded-prelude.sh"
+ITEM_RESOLVER="$REPO_ROOT/scripts/development-workflow/run-item-scope-resolver.sh"
 
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -79,6 +80,73 @@ run_fails "reject_epic_and_issue" "not --epic with item flags" \
   "$PRELUDE" --original-command "/run-item 1" --epic 1047 --issue 1049
 run_fails "reject_multiple_item_flags" "exactly one item target flag" \
   "$PRELUDE" --original-command "/run-item 1" --issue 1049 --branch feature/1049-x
+
+guardrails_config="$TMP_ROOT/ai-dev-workflow-linear-guardrails.yaml"
+cat > "$guardrails_config" <<'YAML'
+schema_version: 2
+review:
+  on_draft:
+    runner:
+      - codex
+issue_tracker:
+  provider: linear
+guardrails:
+  mode: assisted
+  backlog_start:
+    allow_without_confirmation: true
+  stages:
+    spec:
+      may_open_pr: true
+      may_merge_pr: false
+      max_merge_risk: low
+    plan:
+      may_open_pr: true
+      may_merge_pr: false
+      max_merge_risk: low
+    implementation:
+      may_open_pr: true
+      may_merge_pr: false
+      max_merge_risk: low
+YAML
+
+github_config="$TMP_ROOT/ai-dev-workflow-github.yaml"
+cat > "$github_config" <<'YAML'
+schema_version: 2
+issue_tracker:
+  provider: github_projects
+YAML
+
+linear_prelude_out="$(AI_DEV_WORKFLOW_CONFIG_FILE="$guardrails_config" \
+  "$PRELUDE" --original-command "/run-item LEA-185" --issue LEA-185 --json)"
+run_test "linear_issue_identifier_resolves" "LEA-185" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.scope.resolvedIssueIdentifier')"
+run_test "guardrails_section_present" "present" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.guardrails.section')"
+run_test "guardrails_backlog_start_applied" "true" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.policyRecommendation.effectivePolicy.mayStartBacklog')"
+run_test "guardrails_merge_stays_false" "false" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.policyRecommendation.effectivePolicy.mayMerge')"
+run_test "guardrails_implementation_merge_reported" "false" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.guardrails.stages.implementation.may_merge_pr')"
+
+linear_target_prelude_out="$(AI_DEV_WORKFLOW_CONFIG_FILE="$guardrails_config" \
+  "$PRELUDE" --original-command "/run-item LEA-185" --target LEA-185 --json)"
+run_test "linear_target_identifier_resolves" "LEA-185" "$(printf '%s\n' "$linear_target_prelude_out" | jq -r '.scope.resolvedIssueIdentifier')"
+
+linear_resolver_text="$(AI_DEV_WORKFLOW_CONFIG_FILE="$guardrails_config" \
+  "$ITEM_RESOLVER" --issue LEA-185)"
+run_test "linear_resolver_text_defers_tracker" "true" "$(grep -q 'TRACKER_READ_DEFERRED=yes' <<<"$linear_resolver_text" && echo true || echo false)"
+
+linear_resolver_json="$(AI_DEV_WORKFLOW_CONFIG_FILE="$guardrails_config" \
+  "$ITEM_RESOLVER" --issue LEA-185 --json)"
+run_test "linear_resolver_json_defers_tracker" "true" "$(printf '%s\n' "$linear_resolver_json" | jq -r '.trackerReadDeferred')"
+run_test "linear_resolver_json_uses_backlog_placeholder" "Backlog" "$(printf '%s\n' "$linear_resolver_json" | jq -r '.items[0].status')"
+
+linear_target_json="$(AI_DEV_WORKFLOW_CONFIG_FILE="$guardrails_config" \
+  "$ITEM_RESOLVER" --target LEA-185 --json)"
+run_test "linear_target_json_defers_tracker" "true" "$(printf '%s\n' "$linear_target_json" | jq -r '.trackerReadDeferred')"
+
+run_fails "reject_linear_identifier_with_underscore" "invalid --issue identifier" \
+  env AI_DEV_WORKFLOW_CONFIG_FILE="$guardrails_config" "$ITEM_RESOLVER" --issue A_B-123
+run_fails "reject_whitespace_issue_identifier" "invalid --issue identifier" \
+  env AI_DEV_WORKFLOW_CONFIG_FILE="$guardrails_config" "$ITEM_RESOLVER" --issue "   "
+run_fails "reject_linear_identifier_for_non_linear_provider" "invalid --issue identifier" \
+  env AI_DEV_WORKFLOW_CONFIG_FILE="$github_config" "$ITEM_RESOLVER" --issue LEA-185
 
 printf '\nResults: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -10,7 +10,7 @@ usage() {
   cat <<'EOF'
 Usage:
   ./scripts/development-workflow/run-item-scope-resolver.sh --target <token> [--base <branch>] [--delegate-review] [--may-merge] [--may-start-backlog <true|false>] [--max-risk <low|medium|high>] [--json]
-  ./scripts/development-workflow/run-item-scope-resolver.sh --issue <number> [--base <branch>] ... [--json]
+  ./scripts/development-workflow/run-item-scope-resolver.sh --issue <issue-id> [--base <branch>] ... [--json]
   ./scripts/development-workflow/run-item-scope-resolver.sh --branch <name> [--base <branch>] ... [--json]
   ./scripts/development-workflow/run-item-scope-resolver.sh --pr <number> [--base <branch>] ... [--json]
   ./scripts/development-workflow/run-item-scope-resolver.sh --development <path> [--base <branch>] ... [--json]
@@ -69,6 +69,21 @@ valid_max_risk() {
   esac
 }
 
+is_linear_identifier() {
+  [[ "$1" =~ ^[A-Za-z]+-[0-9]+$ ]]
+}
+
+tracker_provider() {
+  local config_file raw_provider
+  config_file="$(workflow_effective_config_file 2>/dev/null)" || config_file=""
+  if [ -n "$config_file" ]; then
+    raw_provider="$(workflow_config_provider issue_tracker "$config_file")"
+  else
+    raw_provider="$(workflow_issue_tracker_provider_raw)"
+  fi
+  workflow_normalize_issue_tracker_provider "$raw_provider"
+}
+
 have_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
@@ -121,6 +136,11 @@ resolve_token_kind() {
   local repo_root pr_num pr_state issue_state
   token="${token#./}"
   repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || repo_root=""
+
+  if [ "$(tracker_provider)" = "linear" ] && is_linear_identifier "$token"; then
+    printf 'issue'
+    return 0
+  fi
 
   if [ -n "$repo_root" ] && [ -d "$repo_root/$token" ] && [[ "$token" == docs/specs/developments/* ]]; then
     printf 'dev_folder'
@@ -265,17 +285,24 @@ item_input=""
 resolved_issue=""
 
 if [ -n "$issue_number" ]; then
-  if ! is_positive_int "$issue_number"; then
-    error_exit "invalid --issue number: $issue_number"
+  if is_positive_int "$issue_number"; then
+    resolved_issue="$issue_number"
+  elif [ "$(tracker_provider)" = "linear" ] && is_linear_identifier "$issue_number"; then
+    resolved_issue="$issue_number"
+  else
+    error_exit "invalid --issue identifier: $issue_number"
   fi
-  resolved_issue="$issue_number"
   item_input="$issue_number"
 elif [ -n "$target_token" ]; then
   item_input="$target_token"
   kind="$(resolve_token_kind "$target_token")" || error_exit "could not resolve --target '$target_token'"
   case "$kind" in
     issue)
-      resolved_issue="${target_token#\#}"
+      if is_linear_identifier "$target_token"; then
+        resolved_issue="$target_token"
+      else
+        resolved_issue="${target_token#\#}"
+      fi
       ;;
     pr)
       pr_num="${target_token#\#}"
@@ -307,14 +334,111 @@ elif [ -n "$development_path" ]; then
   resolved_issue="$(issue_from_development_path "$development_path")" || error_exit "could not resolve issue from $development_path"
 fi
 
-set +e
-is_epic_issue "$resolved_issue"
-epic_check=$?
-set -e
-if [ "$epic_check" -eq 0 ]; then
-  error_exit "issue #$resolved_issue is epic-like; use /run-epic or run-epic-scope-resolver instead"
-elif [ "$epic_check" -eq 2 ]; then
-  error_exit "cannot verify epic scope for issue #$resolved_issue without gh CLI"
+if is_positive_int "$resolved_issue"; then
+  set +e
+  is_epic_issue "$resolved_issue"
+  epic_check=$?
+  set -e
+  if [ "$epic_check" -eq 0 ]; then
+    error_exit "issue #$resolved_issue is epic-like; use /run-epic or run-epic-scope-resolver instead"
+  elif [ "$epic_check" -eq 2 ]; then
+    error_exit "cannot verify epic scope for issue #$resolved_issue without gh CLI"
+  fi
+fi
+
+if ! is_positive_int "$resolved_issue"; then
+  provider="$(tracker_provider)"
+  if [ "$provider" != "linear" ]; then
+    error_exit "non-numeric issue identifiers are supported only when issue_tracker.provider is linear"
+  fi
+  base_branch="${base_override:-develop}"
+  base_reason="default develop base; Linear tracker details are deferred to the orchestrator"
+  if [ -n "$base_override" ]; then
+    base_reason="supplied --base override"
+  fi
+  out_json="$(jq -n \
+    --arg itemInput "$item_input" \
+    --arg resolvedIssue "$resolved_issue" \
+    --arg baseBranch "$base_branch" \
+    --arg baseReason "$base_reason" \
+    --arg maxRisk "$max_risk" \
+    --arg mayStartBacklog "$may_start_backlog" \
+    --argjson delegateReview "$delegate_review" \
+    --argjson mayMerge "$may_merge" \
+    '{
+      scopeSource: "item",
+      epicNumber: null,
+      itemInput: $itemInput,
+      resolvedIssueNumber: null,
+      resolvedIssueIdentifier: $resolvedIssue,
+      trackerReadDeferred: true,
+      baseBranch: $baseBranch,
+      baseAmbiguous: false,
+      baseReason: $baseReason,
+      policy: {
+        delegateReview: ($delegateReview == 1),
+        mayMerge: ($mayMerge == 1),
+        mayStartBacklog: ($mayStartBacklog == "true"),
+        maxRisk: $maxRisk
+      },
+      readOnlyGuarantee: "No tracker status, branch, PR, merge, issue-close, or cleanup mutation was performed.",
+      groups: {
+        eligible: [{
+          number: $resolvedIssue,
+          identifier: $resolvedIssue,
+          title: "",
+          body: "",
+          issueState: "",
+          issueStateReason: "",
+          labels: [],
+          integrationBranchLabel: "",
+          status: "Backlog",
+          type: "",
+          priority: "",
+          dependencies: {state: "none", issues: []},
+          pullRequests: {open: [], merged: []},
+          group: "eligible",
+          trackerReadDeferred: true,
+          ambiguityReason: null
+        }],
+        blocked: [],
+        already_merged: [],
+        in_review: [],
+        ambiguous: [],
+        out_of_scope: []
+      },
+      items: [{
+        number: $resolvedIssue,
+        identifier: $resolvedIssue,
+        title: "",
+        body: "",
+        issueState: "",
+        issueStateReason: "",
+        labels: [],
+        integrationBranchLabel: "",
+        status: "Backlog",
+        type: "",
+        priority: "",
+        dependencies: {state: "none", issues: []},
+        pullRequests: {open: [], merged: []},
+        group: "eligible",
+        trackerReadDeferred: true,
+        ambiguityReason: null
+      }]
+    }')"
+  if [ "$json_output" -eq 1 ]; then
+    printf '%s\n' "$out_json"
+    exit 0
+  fi
+  printf 'PROVIDER=linear\n'
+  printf 'TRACKER_READ_DEFERRED=yes\n'
+  printf 'Run Item Scope Resolver\n'
+  printf 'Resolved issue: %s\n' "$resolved_issue"
+  printf 'Item input: %s\n' "$item_input"
+  printf 'Base branch: %s (%s)\n' "$base_branch" "$base_reason"
+  printf -- '- eligible %s [Linear tracker details deferred]\n' "$resolved_issue"
+  printf 'Read-only: %s\n' "$(printf '%s\n' "$out_json" | jq -r '.readOnlyGuarantee')"
+  exit 0
 fi
 
 resolver_args=(
