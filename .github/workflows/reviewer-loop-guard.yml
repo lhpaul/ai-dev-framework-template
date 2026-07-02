@@ -40,8 +40,13 @@ on:
     types: [created, edited]
 
 concurrency:
-  group: reviewer-loop-guard-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
-  cancel-in-progress: false
+  group: >-
+    reviewer-loop-guard-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}-${{
+      github.event_name == 'issue_comment' &&
+      !contains(github.event.comment.body, '### Automated Reviewer Loop Summary') &&
+      'non-summary' || 'guard'
+    }}
+  cancel-in-progress: true
 
 jobs:
   guard:
@@ -175,14 +180,19 @@ jobs:
               (.body // "" | contains($m1)) and
               (.body // "" | contains($m2))
             )] | length')"; then
-            echo "ERROR: failed to fetch PR comments; posting retry-oriented failure status."
-            gh api \
-              --method POST \
-              "repos/$REPO/statuses/$HEAD_SHA" \
-              -f state="failure" \
-              -f description="Could not fetch PR comments. Re-run the workflow to retry." \
-              -f context="$GUARD_CONTEXT"
-            exit 1
+            if [ "$EVENT_COMMENT_HAS_SUMMARY" = "true" ]; then
+              echo "Failed to fetch PR comments, but triggering comment has summary markers; counting event payload."
+              FOUND=1
+            else
+              echo "ERROR: failed to fetch PR comments; posting retry-oriented failure status."
+              gh api \
+                --method POST \
+                "repos/$REPO/statuses/$HEAD_SHA" \
+                -f state="failure" \
+                -f description="Could not fetch PR comments. Re-run the workflow to retry." \
+                -f context="$GUARD_CONTEXT"
+              exit 1
+            fi
           fi
 
           if [ "$EVENT_COMMENT_HAS_SUMMARY" = "true" ] && [ "${FOUND:-0}" -eq 0 ]; then
@@ -198,16 +208,6 @@ jobs:
           else
             STATE="failure"
             DESCRIPTION="No reviewer-loop summary found. Run the automated reviewer loop before merging."
-          fi
-
-          if [ "$STATE" = "failure" ]; then
-            if LATEST_GUARD_STATE="$(gh api "repos/$REPO/commits/$HEAD_SHA/statuses" \
-              --jq --arg context "$GUARD_CONTEXT" \
-              '[.[] | select(.context == $context)][0].state // ""')" \
-              && [ "$LATEST_GUARD_STATE" = "success" ]; then
-              echo "Existing success status for '${GUARD_CONTEXT}' on ${HEAD_SHA}; skipping stale failure overwrite."
-              exit 0
-            fi
           fi
 
           gh api \
