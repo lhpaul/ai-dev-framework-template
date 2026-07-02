@@ -23,6 +23,8 @@
 #   BLOCKING_COUNT=<n>
 #   SUGGESTION_COUNT=<n>
 #   COMMENT_COUNT=<n>
+#   ADVISORY_FINDINGS_JSON=<json-array> (present for completed reviews)
+#   BLOCKING_FINDINGS_JSON=<json-array> (present for completed reviews)
 #   DISPLAY_RESULT=<value> (optional; used by pr-review-loop.sh summaries)
 #   POLICY_REVIEW_REQUIRED=0|1 (optional; present when pr-status is available)
 #   REASON=<value>   (only when RESULT=skipped — values: unavailable, timeout,
@@ -484,51 +486,73 @@ printf '%s\n' "$TRIAGE_OUTPUT" >&2
 #                      "Weak test coverage", "Major" (see NOTE above)
 # Unrecognised categories: blocking (safe-fail)
 
-# Extract all finding categories as newline-separated list.
+# Build a normalized finding snapshot once, then derive counts and structured
+# output arrays from that snapshot so the two contracts cannot drift.
 # Use '(.findings // [])[]' to avoid the jq-1.7.1-apple quirk where iterating
 # '.findings[]' with a '// "fallback"' alternative fires once on an empty array,
 # producing a spurious value. With '(.findings // [])[]', an empty/null .findings
 # array produces zero output — no sentinel is emitted spuriously.
 # Null/missing .category values are mapped to the sentinel "__UNKNOWN__" so they
 # are treated as blocking (safe-fail) rather than silently dropped.
-CATEGORIES="$(printf '%s\n' "$TRIAGE_OUTPUT" | jq -r '
-  (.findings // [])[] |
-  if (.category | type) == "string" and .category != "" then .category
-  else "__UNKNOWN__"
-  end
+NORMALIZED_FINDINGS_JSON="$(printf '%s\n' "$TRIAGE_OUTPUT" | jq -c --arg major_is_blocking "${HAYSTACK_MAJOR_IS_BLOCKING:-0}" '
+  def category:
+    if (.category | type) == "string" and .category != "" then .category
+    else "__UNKNOWN__"
+    end;
+  def known_category($category):
+    ["Logic error", "Critical", "Major", "Minor", "Advisory", "Nitpick", "Trivial", "Weak test coverage", "Rules violation", "Code contract violation"] | index($category) != null;
+  def blocking($category):
+    $category == "Logic error"
+    or $category == "Critical"
+    or ($category == "Major" and $major_is_blocking == "1")
+    or (known_category($category) | not);
+  def first_string($values):
+    $values | map(select((type == "string") and . != "")) | first;
+  def first_line($values):
+    $values
+    | map(select(. != null and . != ""))
+    | map(if type == "number" then .
+          elif type == "string" and test("^[0-9]+$") then tonumber
+          else empty end)
+    | first;
+  def normalized:
+    category as $category |
+    (if blocking($category) then "blocking" else "advisory" end) as $severity |
+    (first_string([.source.path?, .source.file?, .path?, .file?]) // null) as $path |
+    (first_line([.source.line?, .source.startLine?, .line?, .startLine?]) // null) as $line |
+    (first_string([.agentFixPrompt?, .fixPrompt?, .suggestion?]) // null) as $fix_hint |
+    {
+      severity: $severity,
+      category: $category,
+      summary: ((.summary // "") | tostring),
+      detail: ((.detail // "") | tostring)
+    }
+    + (if $path == null then {} else {path: $path} end)
+    + (if $line == null then {} else {line: $line} end)
+    + (if $fix_hint == null then {} else {fix_hint: $fix_hint} end);
+  [(.findings // [])[] | normalized]
 ')"
 
-BLOCKING_COUNT=0
-SUGGESTION_COUNT=0
+UNKNOWN_CATEGORIES="$(printf '%s\n' "$NORMALIZED_FINDINGS_JSON" | jq -r '
+  .[]
+  | .category as $category
+  | select($category == "__UNKNOWN__" or ((["Logic error", "Critical", "Major", "Minor", "Advisory", "Nitpick", "Trivial", "Weak test coverage", "Rules violation", "Code contract violation"] | index($category)) == null))
+  | .category
+')"
 
-if [ -n "$CATEGORIES" ]; then
+if [ -n "$UNKNOWN_CATEGORIES" ]; then
   while IFS= read -r category; do
     [ -z "${category:-}" ] && continue
-    case "$category" in
-      "Logic error"|"Critical")
-        BLOCKING_COUNT=$((BLOCKING_COUNT + 1))
-        ;;
-      "Major")
-        if [ "${HAYSTACK_MAJOR_IS_BLOCKING:-0}" = "1" ]; then
-          BLOCKING_COUNT=$((BLOCKING_COUNT + 1))
-        else
-          SUGGESTION_COUNT=$((SUGGESTION_COUNT + 1))
-        fi
-        ;;
-      "Minor"|"Advisory"|"Nitpick"|"Trivial"|"Weak test coverage"|"Rules violation"|"Code contract violation")
-        SUGGESTION_COUNT=$((SUGGESTION_COUNT + 1))
-        ;;
-      "__UNKNOWN__"|*)
-        # Null/missing or unrecognised category — safe-fail to blocking
-        echo "INFO: unrecognised finding category '$category' — treating as blocking (safe-fail)" >&2
-        BLOCKING_COUNT=$((BLOCKING_COUNT + 1))
-        ;;
-    esac
+    echo "INFO: unrecognised finding category '$category' — treating as blocking (safe-fail)" >&2
   done <<EOF
-$CATEGORIES
+$UNKNOWN_CATEGORIES
 EOF
 fi
 
+ADVISORY_FINDINGS_JSON="$(printf '%s\n' "$NORMALIZED_FINDINGS_JSON" | jq -c '[.[] | select(.severity == "advisory")]')"
+BLOCKING_FINDINGS_JSON="$(printf '%s\n' "$NORMALIZED_FINDINGS_JSON" | jq -c '[.[] | select(.severity == "blocking")]')"
+BLOCKING_COUNT="$(printf '%s\n' "$BLOCKING_FINDINGS_JSON" | jq 'length')"
+SUGGESTION_COUNT="$(printf '%s\n' "$ADVISORY_FINDINGS_JSON" | jq 'length')"
 COMMENT_COUNT=$((BLOCKING_COUNT + SUGGESTION_COUNT))
 
 echo "INFO: findings parsed — blocking: $BLOCKING_COUNT, advisory: $SUGGESTION_COUNT, total: $COMMENT_COUNT" >&2
@@ -650,6 +674,8 @@ if [ "$PR_STATUS_CHECK" != "0" ]; then
       printf 'BLOCKING_COUNT=1\n'
       printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
       printf 'COMMENT_COUNT=%d\n' "$((SUGGESTION_COUNT + 1))"
+      printf 'ADVISORY_FINDINGS_JSON=%s\n' "$ADVISORY_FINDINGS_JSON"
+      printf 'BLOCKING_FINDINGS_JSON=%s\n' "$BLOCKING_FINDINGS_JSON"
       printf 'POLICY_STATUS_AVAILABLE=0\n'
       printf 'POLICY_REVIEW_REQUIRED=0\n'
       printf 'POLICY_DISPOSITION=blocking\n'
@@ -679,6 +705,8 @@ if [ "$BLOCKING_COUNT" -gt 0 ]; then
   printf 'BLOCKING_COUNT=%d\n' "$BLOCKING_COUNT"
   printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
   printf 'COMMENT_COUNT=%d\n' "$COMMENT_COUNT"
+  printf 'ADVISORY_FINDINGS_JSON=%s\n' "$ADVISORY_FINDINGS_JSON"
+  printf 'BLOCKING_FINDINGS_JSON=%s\n' "$BLOCKING_FINDINGS_JSON"
   printf 'POLICY_STATUS_AVAILABLE=%d\n' "$POLICY_STATUS_AVAILABLE"
   printf 'POLICY_REVIEW_REQUIRED=%d\n' "$POLICY_REVIEW_REQUIRED"
   printf 'POLICY_DISPOSITION=%s\n' "$POLICY_DISPOSITION"
@@ -695,6 +723,8 @@ printf 'RESULT=clean\n'
 printf 'BLOCKING_COUNT=0\n'
 printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
 printf 'COMMENT_COUNT=%d\n' "$COMMENT_COUNT"
+printf 'ADVISORY_FINDINGS_JSON=%s\n' "$ADVISORY_FINDINGS_JSON"
+printf 'BLOCKING_FINDINGS_JSON=%s\n' "$BLOCKING_FINDINGS_JSON"
 printf 'POLICY_STATUS_AVAILABLE=%d\n' "$POLICY_STATUS_AVAILABLE"
 printf 'POLICY_REVIEW_REQUIRED=%d\n' "$POLICY_REVIEW_REQUIRED"
 printf 'POLICY_DISPOSITION=%s\n' "$POLICY_DISPOSITION"

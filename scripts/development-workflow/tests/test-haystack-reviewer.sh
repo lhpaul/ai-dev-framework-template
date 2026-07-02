@@ -250,6 +250,11 @@ _run_reviewer_exit_code() {
   fi
 }
 
+_kv_value() {
+  local key="$1" output="$2"
+  printf '%s\n' "$output" | sed -n "s/^${key}=//p" | head -n 1
+}
+
 # ---------------------------------------------------------------------------
 # Area 1: status=pending triggers poll-retry loop
 # ---------------------------------------------------------------------------
@@ -450,6 +455,123 @@ output=$(_run_reviewer 10 1)
 run_test "rules_violation_result" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
 run_test "rules_violation_suggestion_count" "SUGGESTION_COUNT=1" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
 run_test "rules_violation_blocking_zero" "BLOCKING_COUNT=0" "$(echo "$output" | grep '^BLOCKING_COUNT=')"
+
+# ---------------------------------------------------------------------------
+# Area 5b: structured finding output
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 5b: structured finding output ==="
+
+# Test 5b.1: empty findings still emit parseable empty arrays.
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}'
+_reset_mocks
+_install_haystack_mock
+
+output=$(_run_reviewer 10 1)
+advisory_json="$(_kv_value ADVISORY_FINDINGS_JSON "$output")"
+blocking_json="$(_kv_value BLOCKING_FINDINGS_JSON "$output")"
+
+run_test "structured_empty_advisory_array" "0" "$(printf '%s\n' "$advisory_json" | jq 'length')"
+run_test "structured_empty_blocking_array" "0" "$(printf '%s\n' "$blocking_json" | jq 'length')"
+
+# Test 5b.2: multiple advisories preserve one entry per finding and ordering.
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":4,"findings":[{"category":"Minor","summary":"First advisory","detail":"One","agentFixPrompt":"Fix one"},{"category":"Rules violation","summary":"Second advisory","detail":"Two"}]}'
+_reset_mocks
+_install_haystack_mock
+
+output=$(_run_reviewer 10 1)
+advisory_json="$(_kv_value ADVISORY_FINDINGS_JSON "$output")"
+
+run_test "structured_multi_advisory_count" "2" "$(printf '%s\n' "$advisory_json" | jq 'length')"
+run_test "structured_multi_advisory_order" "First advisory|Second advisory" "$(printf '%s\n' "$advisory_json" | jq -r '.[0].summary + "|" + .[1].summary')"
+run_test "structured_multi_advisory_fix_hint" "Fix one" "$(printf '%s\n' "$advisory_json" | jq -r '.[0].fix_hint')"
+
+# Test 5b.3: mixed blocking/advisory payload partitions findings and counts.
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":2,"findings":[{"category":"Logic error","summary":"Bad logic","detail":"Fix it"},{"category":"Minor","summary":"Small note","detail":"Optional"}]}'
+_reset_mocks
+_install_haystack_mock
+
+output=$(_run_reviewer 10 1)
+advisory_json="$(_kv_value ADVISORY_FINDINGS_JSON "$output")"
+blocking_json="$(_kv_value BLOCKING_FINDINGS_JSON "$output")"
+
+run_test "structured_mixed_result" "RESULT=needs_fixes" "$(echo "$output" | grep '^RESULT=')"
+run_test "structured_mixed_advisory_count" "1" "$(printf '%s\n' "$advisory_json" | jq 'length')"
+run_test "structured_mixed_blocking_count" "1" "$(printf '%s\n' "$blocking_json" | jq 'length')"
+run_test "structured_mixed_blocking_category" "Logic error" "$(printf '%s\n' "$blocking_json" | jq -r '.[0].category')"
+
+# Test 5b.4: missing category safe-fails to blocking with __UNKNOWN__.
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":2,"findings":[{"summary":"No category","detail":"Missing category"}]}'
+_reset_mocks
+_install_haystack_mock
+
+output=$(_run_reviewer 10 1)
+blocking_json="$(_kv_value BLOCKING_FINDINGS_JSON "$output")"
+
+run_test "structured_missing_category_result" "RESULT=needs_fixes" "$(echo "$output" | grep '^RESULT=')"
+run_test "structured_missing_category_value" "__UNKNOWN__" "$(printf '%s\n' "$blocking_json" | jq -r '.[0].category')"
+
+# Test 5b.5: unrecognized category safe-fails to blocking.
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":2,"findings":[{"category":"Unexpected severity","summary":"Unknown","detail":"Unknown"}]}'
+_reset_mocks
+_install_haystack_mock
+
+output=$(_run_reviewer 10 1)
+blocking_json="$(_kv_value BLOCKING_FINDINGS_JSON "$output")"
+
+run_test "structured_unknown_category_result" "RESULT=needs_fixes" "$(echo "$output" | grep '^RESULT=')"
+run_test "structured_unknown_category_value" "Unexpected severity" "$(printf '%s\n' "$blocking_json" | jq -r '.[0].category')"
+
+# Test 5b.6: Major is advisory by default and blocking when opted in.
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":3,"findings":[{"category":"Major","summary":"Major note","detail":"Policy"}]}'
+_reset_mocks
+_install_haystack_mock
+
+output=$(_run_reviewer 10 1)
+advisory_json="$(_kv_value ADVISORY_FINDINGS_JSON "$output")"
+run_test "structured_major_default_advisory" "1" "$(printf '%s\n' "$advisory_json" | jq 'length')"
+
+_reset_mocks
+_install_haystack_mock
+output=$(HAYSTACK_MAJOR_IS_BLOCKING=1 _run_reviewer 10 1)
+blocking_json="$(_kv_value BLOCKING_FINDINGS_JSON "$output")"
+run_test "structured_major_opt_in_blocking" "1" "$(printf '%s\n' "$blocking_json" | jq 'length')"
+
+# Test 5b.7: optional source fields follow documented fallbacks.
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":4,"findings":[{"category":"Minor","summary":"Source path","detail":"","source":{"path":"a.sh","line":7}},{"category":"Minor","summary":"Source file","detail":"","source":{"file":"b.sh","startLine":"8"}},{"category":"Minor","summary":"Top path","detail":"","path":"c.sh","line":"9"},{"category":"Minor","summary":"Top file","detail":"","file":"d.sh","startLine":10}]}'
+_reset_mocks
+_install_haystack_mock
+
+output=$(_run_reviewer 10 1)
+advisory_json="$(_kv_value ADVISORY_FINDINGS_JSON "$output")"
+
+run_test "structured_source_path_fallbacks" "a.sh:7|b.sh:8|c.sh:9|d.sh:10" "$(printf '%s\n' "$advisory_json" | jq -r 'map(.path + ":" + (.line | tostring)) | join("|")')"
+
+# Test 5b.8: missing source omits optional fields without parse failure.
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":4,"findings":[{"category":"Minor","summary":"No source","detail":"No source","source":null}]}'
+_reset_mocks
+_install_haystack_mock
+
+output=$(_run_reviewer 10 1)
+advisory_json="$(_kv_value ADVISORY_FINDINGS_JSON "$output")"
+
+run_test "structured_missing_source_no_path" "false" "$(printf '%s\n' "$advisory_json" | jq '.[0] | has("path")')"
+run_test "structured_missing_source_no_line" "false" "$(printf '%s\n' "$advisory_json" | jq '.[0] | has("line")')"
+
+# Test 5b.9: escaping remains valid JSON on one key-value output line.
+# shellcheck disable=SC2016  # Fixture intentionally keeps literal $PATH in mocked Haystack output.
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":4,"findings":[{"category":"Minor","summary":"Quote \" pipe | equals = slash \\ test","detail":"Line one\nLine two","agentFixPrompt":"Use $PATH && echo ok"}]}'
+_reset_mocks
+_install_haystack_mock
+
+output=$(_run_reviewer 10 1)
+advisory_line="$(printf '%s\n' "$output" | grep '^ADVISORY_FINDINGS_JSON=')"
+advisory_json="${advisory_line#ADVISORY_FINDINGS_JSON=}"
+
+run_test "structured_escaped_single_line" "1" "$(printf '%s\n' "$advisory_line" | wc -l | tr -d ' ')"
+run_test "structured_escaped_detail" "Line one|Line two" "$(printf '%s\n' "$advisory_json" | jq -r '.[0].detail | gsub("\\n"; "|")')"
+# shellcheck disable=SC2016  # Expected value intentionally contains literal $PATH.
+run_test "structured_escaped_fix_hint" 'Use $PATH && echo ok' "$(printf '%s\n' "$advisory_json" | jq -r '.[0].fix_hint')"
 
 # ---------------------------------------------------------------------------
 # Area 6: HAYSTACK_POLL_INTERVAL controls retry cadence (env var)
