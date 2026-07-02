@@ -1578,7 +1578,7 @@ run_test "summary_advisory_split_visible" "yes" "$_summary_advisory_split"
 
 aggregate_advisory_findings_platforms=("haystack")
 aggregate_advisory_findings_jsons=(
-  "$(jq -nc '[{"severity":"advisory","category":"Minor","summary":"Summary with \"quotes\", pipe | equals =, and newline text","detail":"Line one\nLine two","path":"scripts/example.sh","line":12,"fix_hint":"Use $PATH && echo ok"}]')"
+  "$(jq -nc '[{"severity":"advisory","category":"Minor","summary":"Summary with \"quotes\", pipe | equals =, and newline text","detail":"Line one\nLine two","path":"scripts/example.sh","line":12,"fix_hint":"Use $PATH && echo ok","disposition":"known-false-positive","disposition_rule":"test-rule","disposition_rationale":"Known noisy reviewer pattern"}]')"
 )
 advisory_disposition_required=1
 policy_review_disposition_required=0
@@ -1588,7 +1588,8 @@ if [ -n "${_summary_body_capture:-}" ] \
     && grep -q 'haystack: Minor - Summary with "quotes", pipe | equals =, and newline text' "$_summary_body_capture" \
     && grep -q "Detail: Line one Line two" "$_summary_body_capture" \
     && grep -q 'Location: `scripts/example.sh:12`' "$_summary_body_capture" \
-    && grep -q 'Fix hint: Use $PATH && echo ok' "$_summary_body_capture"; then
+    && grep -q 'Fix hint: Use $PATH && echo ok' "$_summary_body_capture" \
+    && grep -q 'Disposition: Known false positive (`test-rule`) - Known noisy reviewer pattern' "$_summary_body_capture"; then
   _structured_summary_rendered="yes"
 else
   _structured_summary_rendered="no"

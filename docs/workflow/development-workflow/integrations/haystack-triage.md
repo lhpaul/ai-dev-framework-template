@@ -123,6 +123,9 @@ data:
 
 | Field | Fallback order |
 | ----- | -------------- |
+| `disposition` | Present when a maintained catalog rule classifies the finding; currently `known-false-positive`. |
+| `disposition_rule` | Stable catalog rule id that matched the finding. |
+| `disposition_rationale` | Human-readable rationale from the catalog rule. |
 | `path` | `.source.path`, `.source.file`, `.path`, `.file` |
 | `line` | Positive integer values from `.source.line`, `.source.startLine`, `.line`, `.startLine` |
 | `fix_hint` | `.agentFixPrompt`, `.fixPrompt`, `.suggestion` |
@@ -142,9 +145,59 @@ Unavailable or skipped review paths keep their existing output contract and may
 omit the structured arrays. Treat missing arrays on skipped output as "no
 completed Haystack finding payload", not as an empty completed review.
 
-`pr-review-loop.sh` does not list the structured Haystack advisory details in PR
-summary comments yet. That consumer-facing summary work is tracked separately in
-issue #1114.
+`pr-review-loop.sh` lists structured Haystack advisory details in PR summary
+comments. When a finding carries a known false-positive disposition, the summary
+shows the matched rule id and rationale without hiding the original category,
+summary, detail, location, or fix hint.
+
+## Machine-readable False-positive Catalog
+
+Known recurring false positives are maintained in
+`scripts/development-workflow/haystack-false-positives.json`. The reviewer reads
+that catalog before normalizing completed Haystack findings. A matched finding
+keeps its original reviewer context and gains these structured fields:
+
+```text
+disposition=known-false-positive
+disposition_rule=<catalog rule id>
+disposition_rationale=<catalog rationale>
+```
+
+The matching finding is treated as advisory for reviewer-loop readiness. Other
+gates still apply: CI, merge-risk classification, human checkpoints, and
+unmatched blocking findings can still stop the PR.
+
+Catalog entries are JSON objects with these fields:
+
+| Field | Required | Description |
+| ----- | -------- | ----------- |
+| `id` | Yes | Stable rule id for audit and summary output. |
+| `label` | Recommended | Human-readable rule label. |
+| `category` | Yes | Exact Haystack category required for the rule to match. |
+| `text_patterns` | Optional | Case-insensitive regular expressions evaluated against summary plus detail. |
+| `summary_patterns` | Optional | Case-insensitive regular expressions evaluated against summary only. |
+| `detail_patterns` | Optional | Case-insensitive regular expressions evaluated against detail only. |
+| `path_patterns` | Optional | Regular expressions evaluated against the normalized path. |
+| `rationale` | Yes | Human-readable explanation for why the finding is a known false positive. |
+
+Pattern fields are intentionally conjunctive by field group: when a rule
+declares both text and path patterns, both groups must match. Within a field
+group, any listed pattern may match. Rules should stay narrow enough that they
+cannot hide real findings that merely share a category. A valid rule must
+include at least one non-empty pattern field in addition to category.
+
+Set `HAYSTACK_FALSE_POSITIVES_FILE=/path/to/catalog.json` to test an alternate
+catalog. If the catalog is missing, empty, malformed, or not a JSON array, the
+reviewer logs a warning and continues without applying known false-positive
+dispositions. The same fail-closed behavior applies when any catalog rule is
+invalid, such as a category-only rule with no evidence predicate or a pattern
+that cannot compile as a regular expression. That preserves the original
+severity classification instead of silently masking findings.
+
+This template catalog is machine-readable. Downstream projects that maintain a
+prose false-positive guide, such as Helm-style `false-positives.md`, should
+cross-reference the catalog rule ids from their prose notes rather than
+duplicating matching logic in narrative form.
 
 ## Review Policy Verdicts
 

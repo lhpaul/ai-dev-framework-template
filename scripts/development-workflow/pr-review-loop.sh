@@ -477,6 +477,11 @@ render_structured_advisory_entries() {
       | gsub("[[:space:]][[:space:]]+"; " ");
     .[] |
       "- " + $platform + ": " + ((.category // "Advisory") | one_line) + " - " + ((.summary // .message // "Advisory finding") | one_line),
+      (if ((.disposition // "") == "known-false-positive") then
+        "  Disposition: Known false positive" +
+        (if (((.disposition_rule // "") | tostring | length) > 0) then " (`" + ((.disposition_rule // "") | one_line) + "`)" else "" end) +
+        (if (((.disposition_rationale // "") | tostring | length) > 0) then " - " + ((.disposition_rationale // "") | one_line) else "" end)
+       else empty end),
       (if (((.detail // "") | tostring | length) > 0) then "  Detail: " + ((.detail // "") | one_line) else empty end),
       (if (((.path // "") | tostring | length) > 0) then
         "  Location: `" + ((.path // "") | one_line) +
