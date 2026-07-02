@@ -19,6 +19,35 @@ Use this when:
 - You want to make the template's bundled Codex skills and command-style aliases available in your local Codex environment
 - You are testing the workflow skills in a downstream repository created from this template
 
+### `actions-cost-audit.sh`
+
+Summarizes recent GitHub Actions workflow run volume and wall time by workflow
+using normal `gh run list` visibility.
+
+Usage:
+
+```bash
+./scripts/development-workflow/actions-cost-audit.sh --limit 100
+./scripts/development-workflow/actions-cost-audit.sh --repo owner/repo --since 2026-07-01T00:00:00Z
+```
+
+What it does:
+
+- Groups recent workflow runs by workflow name
+- Reports run count, completed count, incomplete duration count, total wall time,
+  average wall time, trigger events, and recent run links
+- Prints public/private repository cost-risk framing
+- Emits a recommendation worksheet for retrospectives and template-sync reviews
+
+Use this when:
+
+- You want to identify high-volume or high-wall-time workflow defaults without
+  billing-admin access
+- You are reviewing whether a workflow should be kept, narrowed, made opt-in,
+  replaced, disabled, or investigated
+- A downstream private repository may inherit template workflows that are
+  zero-billable in the public template but expensive after sync
+
 ### `add-backlog-item.sh`
 
 Resolves the configured issue tracker destination for backlog creation and can create a GitHub issue when `issue_tracker.provider` maps to GitHub Issues / GitHub Projects.

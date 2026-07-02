@@ -69,7 +69,7 @@ Before running this smoke test:
 
 ### Step 2: Verify the reviewer-loop guard fails on the new PR
 
-1. Wait for the `reviewer-loop-guard` workflow run to complete on the fixture PR (typically < 60 s).
+1. Wait for the `reviewer-loop-guard` workflow run to complete on the fixture PR.
 2. Check the commit status:
 
    ```bash
@@ -121,14 +121,8 @@ Before running this smoke test:
 *Posted automatically by \`pr-review-loop.sh\`.*"
    ```
 
-2. Push a no-op commit to trigger the `synchronize` event:
-
-   ```bash
-   git commit --allow-empty -m "chore: trigger synchronize event for guard re-evaluation"
-   git push
-   ```
-
-3. Wait for the guard workflow to complete, then re-check the commit status:
+2. Wait for the guard's `issue_comment` event path to complete, then re-check
+   the commit status:
 
    ```bash
    HEAD_SHA=$(gh pr view "$PR_NUM" --json headRefOid --jq '.headRefOid')
@@ -140,6 +134,8 @@ Before running this smoke test:
 
 - `state` is `"success"`.
 - `description` indicates the reviewer-loop summary is present.
+- No extra push is required; the summary comment event refreshes readiness for
+  the current PR head SHA.
 - **Maps to**: Acceptance Criterion #6 (guard passes once the summary comment is present).
 
 ---
@@ -165,7 +161,7 @@ Before running this smoke test:
 
 **Expected result**:
 
-- A new status is posted for the new `HEAD_SHA` under context `Reviewer-loop completion guard (#<PR_NUMBER>)`.
+- A new status is posted quickly for the new `HEAD_SHA` under context `Reviewer-loop completion guard (#<PR_NUMBER>)`.
 - `state` reflects whether the canonical summary comment is present on the PR at evaluation time.
 - **Maps to**: Acceptance Criterion #7 (guard re-evaluates on every push).
 
@@ -275,7 +271,7 @@ Each checkbox maps to an acceptance criterion from the spec.
 - [ ] **AC #6**: After posting the canonical summary comment, the guard check transitioned to passing.
 - [ ] **AC #7**: A subsequent push caused the guard to re-evaluate and post a fresh status on the new SHA.
 - [ ] **AC #9** (defer to CI): Both workflow files pass `actionlint` with no new warnings (verified in the implementation PR's CI run).
-- [ ] **AC #10** (defer to CI): Each workflow declares only the minimum permissions required (`pull-requests: write` for the label workflow; `pull-requests: read` + `statuses: write` for the guard).
+- [ ] **AC #10** (defer to CI): Each workflow declares only the minimum permissions required (`pull-requests: write` for the label workflow; `issues: read` + `pull-requests: read` + `statuses: write` for the guard).
 
 ---
 
@@ -291,7 +287,7 @@ No seed data is required. The smoke test uses fixture branches and PRs created i
 | --- | --- | --- |
 | `apply-regression-label` workflow fails with "Label not found" | The `ready-for-regression` label does not exist in the repo and `gh label create --force` was not included | Verify the workflow includes the `gh label create --force` step before `gh pr edit --add-label` |
 | Guard workflow fails with a GitHub API error instead of a status check | `statuses: write` permission missing from the workflow | Add `statuses: write` under `permissions` in `reviewer-loop-guard.yml` |
-| Guard reports "failure" even after posting the summary comment | Comment body does not contain both required markers | Confirm the comment contains exactly `### Automated Reviewer Loop Summary` and `*Posted automatically by \`pr-review-loop.sh\`.*` |
+| Guard reports "failure" even after posting the summary comment | Comment body does not contain both required markers, or the `issue_comment` workflow did not run | Confirm the comment contains exactly `### Automated Reviewer Loop Summary` and `*Posted automatically by \`pr-review-loop.sh\`.*`; inspect the guard workflow run for the comment event |
 | Out-of-scope branch (`spec/*`) receives the label | `IN_SCOPE_PREFIXES` env var contains an unexpected value | Check the env var default in `apply-regression-label.yml`; ensure `spec/` is not included |
 | `actionlint` reports warnings on the new workflow files | YAML syntax issue or unsupported action reference | Fix the reported lines; re-run `actionlint` |
 
@@ -301,3 +297,5 @@ No seed data is required. The smoke test uses fixture branches and PRs created i
 
 - The guard check uses the GitHub Commit Statuses API (not Checks API). Some branch protection UIs surface statuses and checks in separate sections. Downstream maintainers must search for `Reviewer-loop completion guard (#<PR_NUMBER>)` in the "Statuses" section, not only under "GitHub Actions checks", when configuring branch protection. Because the context name includes the PR number, wildcard matching (e.g. via GitHub Rulesets) is required to enforce it as a required status check.
 - The smoke test steps require a repository where the workflows are active. This runbook cannot be executed entirely offline.
+- Fork-head PRs are skipped by the reviewer-loop guard and do not receive guard
+  statuses from this workflow.

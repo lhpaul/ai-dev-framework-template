@@ -41,6 +41,10 @@ For `scripts/development-workflow/pr-review-loop.sh` to support a platform, the 
 
 If a platform does not yet meet that contract in this repository, it should be documented as **planned but unsupported** and the helper script should report it as `skipped`.
 
+For GitHub Actions-backed platforms such as PR-Agent, the trigger may be an
+explicit PR comment posted by `pr-review-loop.sh`; platforms do not need to run
+on every pull request synchronize event to satisfy this contract.
+
 ---
 
 ## Aggregation Rules

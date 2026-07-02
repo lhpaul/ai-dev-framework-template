@@ -619,6 +619,7 @@ Repository helpers:
 - `docs/workflow/development-workflow/integrations/workflow-hub-github-app.md`
 - `docs/workflow/development-workflow/integrations/ci-cd-deployment.md`
 - `docs/workflow/development-workflow/integrations/e2e-regression.md`
+- `docs/workflow/development-workflow/integrations/actions-cost-audit.md`
 
 ---
 

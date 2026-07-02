@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Actions cost-audit guidance** (#1099): Add lightweight workflow run-volume
+  and wall-time audit guidance for retrospectives and downstream template-sync
+  reviews.
+
 ### Fixed
 
 - **Workflow item routing no longer treats every GitHub issue as epic-like**:
@@ -16,6 +22,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Release readiness wording**: command and overview surfaces now state that
   `release/*` PR reviewer loops are skipped while the production PR still gets
   regression and CI readiness before merge.
+- **Make PR-Agent explicit** (#1096): Reduce default PR-Agent Actions fan-out
+  while preserving configured reviewer-loop review.
+- **Event-driven reviewer guard** (#1097): Replace default long reviewer-loop
+  guard polling with a fast PR check plus summary-comment readiness refresh.
+- **Reviewer-loop guard metadata failures** (#1097): Post retry-oriented failure
+  statuses when PR metadata or head fields cannot be resolved, isolate
+  summary-comment, non-summary comment, and PR-event guard concurrency lanes, and
+  count summary-comment event payloads directly when the comments API lags or
+  fails.
+- **Placeholder workflows opt-in** (#1098): Make template placeholder deploy and
+  regression workflows opt-in so downstream repositories do not spend runner
+  minutes before configuring real pipelines.
 - **Downstream template-sync reviewer corrections**: Codex reviewer idempotency,
   workflow-hub GitHub App private-key paths, and optional Claude workflow tests
   now handle downstream sync edge cases without false failures.

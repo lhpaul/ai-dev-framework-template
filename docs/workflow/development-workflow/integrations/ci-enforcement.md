@@ -22,6 +22,11 @@ pull request opened from an in-scope implementation branch prefix (`feature/`,
 `fix/`, `refactor/`, `hotfix/`). Runs on PR `opened`, `reopened`,
 `ready_for_review`, and `synchronize` events.
 
+The label is a readiness signal for configured real regression checks. It does
+not by itself enable inactive placeholder regression work; the template
+placeholder in `.github/workflows/e2e-regression.yml` still requires explicit
+downstream opt-in before dependency or browser installation runs.
+
 **Idempotent**: If the label is already present, the workflow completes without
 error and without duplicating the label.
 
@@ -45,9 +50,13 @@ every commit batch.
 
 **File**: `.github/workflows/reviewer-loop-guard.yml`
 
-**What it does**: Posts a GitHub commit status check (`success` or `failure`) on
-every in-scope implementation PR push to assert that the automated reviewer-loop
-summary comment is present. The check is named
+**What it does**: Posts a GitHub commit status check (`success` or `failure`) for
+in-scope implementation PRs to assert that the automated reviewer-loop summary
+comment is present. Pull request events perform one fast summary check and post
+the PR-scoped status immediately; the workflow no longer sleeps or polls for
+several minutes by default. A summary `issue_comment` event re-checks the pull
+request comments and refreshes the passing status after `pr-review-loop.sh`
+posts the canonical summary. The check is named
 **"Reviewer-loop completion guard (#\<PR_NUMBER\>)"** — the PR number is included
 in the context name so that two PRs sharing the same commit SHA (e.g. a release
 PR and its backport) cannot overwrite each other's guard result.
@@ -66,9 +75,20 @@ changes to the reviewer-loop script's output contract are required.
 - `failure` (transient) — the GitHub API call to fetch comments failed; the
   workflow exits with code 1 so GitHub retries the check on the next event.
 
+**Comment-event behavior**: The `issue_comment` path only runs for pull request
+comments that contain the canonical summary markers. Normal comments do not
+change reviewer-loop readiness. When a summary comment is detected, the workflow
+fetches the pull request's current head SHA and branch before posting the status,
+so repeated or edited summary comments are idempotent for the current PR head.
+
 **Non-implementation branches always pass**: Branches whose prefix does not match
 `IN_SCOPE_PREFIXES` receive a `success` status with the description
 "Not an implementation branch; guard skipped."
+
+**Fork-head PRs are skipped**: The guard preserves the same-repository
+restriction used by the existing `pull_request_target` path. If the PR head
+repository differs from the base repository, the workflow exits without posting
+reviewer-loop readiness statuses.
 
 ---
 
@@ -166,7 +186,7 @@ repository.
 | Workflow | Permissions declared |
 | -------- | -------------------- |
 | `apply-regression-label.yml` | `pull-requests: write` (minimum required to add a label) |
-| `reviewer-loop-guard.yml` | `pull-requests: read`, `statuses: write` (minimum required to read comments and post a commit status) |
+| `reviewer-loop-guard.yml` | `issues: read`, `pull-requests: read`, `statuses: write` (minimum required to read comments, read PR metadata, and post a commit status) |
 
 No other permissions are requested. Both workflows use the default
 `GITHUB_TOKEN` injected by GitHub Actions and do not require any additional
@@ -188,3 +208,9 @@ The CI workflows complement, not replace, the agent-side checklist. The agent
 Step 5.1 check in Protocol 91 remains the authoritative gate for the agent
 runner; the CI workflows provide a structural backstop that catches cases where
 the agent did not run or skipped the check.
+
+When a downstream repository has not configured real regression tests, the
+auto-applied label may be present while the template placeholder remains
+inactive. That is expected: the label preserves staged workflow semantics, while
+explicitly enabled placeholder or real regression workflows decide whether
+expensive checks run.

@@ -12,7 +12,7 @@ This is a **repo-wide definition**. All agents apply these labels consistently.
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `ready-for-human-review` | The PR is ready for a human reviewer. CI is green. The `REVIEW.md` gate is satisfied. Every configured automated reviewer is clean or skipped.                                                                                                                                                                           |
 | `needs-fixes`            | The PR still needs fixes before it is ready for human review. This may be due to human-requested changes, failing CI, or blocking automated PR feedback.                                                                                                                                                                 |
-| `ready-for-regression`   | Automated code reviews are clean (or skipped). E2e/regression tests should now run. Applied by the orchestrator (Step 7b) on implementation PRs (`feature/*`, `fix/*`, `hotfix/*`, `refactor/*`, `backport/hotfix/*`), and by the prepare-release flow (protocol `05`) on **production** release PRs (`release/*` → `main`) only. |
+| `ready-for-regression`   | Automated code reviews are clean (or skipped). Configured real e2e/regression tests, or an explicitly enabled placeholder, should now run. Applied by the orchestrator (Step 7b) on implementation PRs (`feature/*`, `fix/*`, `hotfix/*`, `refactor/*`, `backport/hotfix/*`), and by the prepare-release flow (protocol `05`) on **production** release PRs (`release/*` → `main`) only. |
 | `needs-setup`            | PR introduces one or more infrastructure dependencies (env vars, secrets, DNS records, service account tokens, etc.) that require human setup steps before the feature can be safely enabled. Co-exists with `ready-for-human-review`; the human removes this label after completing (or intentionally deferring) setup. |
 | `human-checkpoint-required` | The PR's linked work item has at least one `pending` human checkpoint that applies to this PR: same `item_number` and either matching the PR's current workflow stage or an earlier stage not yet `satisfied`/`waived`. Human feedback or approval named in `required_human_action` is still required. Co-exists with `ready-for-human-review` when automation is clean but a checkpoint remains open. Does **not** satisfy when only `needs-setup` is removed. |
 
@@ -57,7 +57,10 @@ Apply this label when **all** of the following are true:
 
 Release PRs typically do not use the same draft → `gh pr ready` path as feature work; internal review may be minimal when the change set is changelog/version-only — still apply this label only after Step 7 is `clean` or `skipped` per protocol `05`.
 
-This label is **not removed** after e2e tests pass — it persists on the PR. The `ready-for-human-review` label is what ultimately signals human readiness after CI (including e2e) is green.
+This label is **not removed** after e2e tests pass — it persists on the PR. The
+`ready-for-human-review` label is what ultimately signals human readiness after
+CI, including configured real e2e/regression checks or an explicitly enabled
+placeholder, is green.
 
 This label is **not applied** to spec or plan PRs (`spec/*`, `implementation-plan/*`). It **is** applied to qualifying release PRs per Case B above.
 

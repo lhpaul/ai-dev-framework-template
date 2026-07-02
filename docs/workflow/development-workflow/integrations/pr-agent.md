@@ -8,10 +8,12 @@ PR-Agent is **optional**. The workflow functions without it. See [`integrations/
 
 ## What PR-Agent Adds
 
-- Automated code review on every push — no trigger comment needed (triggered by the `pull_request` GHA event)
+- Explicit automated code review when the reviewer loop or a maintainer requests
+  `/review`
 - AI-powered analysis powered by any LLM you choose (DeepSeek, Kimi, OpenAI, Claude, Gemini, etc.)
 - No per-seat pricing — cost is purely LLM token usage (~$5–30/month at typical batch volumes)
-- Interactive: developers can post `/review`, `/improve`, `/describe` in PR comments to trigger on demand
+- Interactive: developers can post `/review` in PR comments to trigger a review
+  on demand
 
 ---
 
@@ -19,7 +21,11 @@ PR-Agent is **optional**. The workflow functions without it. See [`integrations/
 
 ### 1. Add the GitHub Actions Workflow
 
-The workflow file is already committed at `.github/workflows/pr-agent.yml`. It triggers automatically on PR open/reopen/ready-for-review events and on PR comment commands.
+The workflow file is already committed at `.github/workflows/pr-agent.yml`.
+It triggers automatically on low-volume PR lifecycle events
+(`opened`, `reopened`, `ready_for_review`) and on the explicit `/review`
+PR comment command. It does **not** run on every PR synchronize event by
+default, and arbitrary human comments do not trigger it.
 
 ### 2. Choose a Model and Add the API Key
 
@@ -40,7 +46,9 @@ The workflow file is already committed at `.github/workflows/pr-agent.yml`. It t
 
 ### 3. Verify the Integration
 
-Open or push to any PR and confirm that `github-actions[bot]` posts an issue comment with a **PR Reviewer Guide** section. The comment body will contain one of two stable markers:
+Open a PR or post `/review` on an existing PR and confirm that
+`github-actions[bot]` posts an issue comment with a **PR Reviewer Guide**
+section. The comment body will contain one of two stable markers:
 
 - `No major issues detected` — clean (`RESULT=clean`)
 - `Recommended focus areas for review` + hard-blocker label — blocking (`RESULT=needs_fixes`)
@@ -57,6 +65,11 @@ Open or push to any PR and confirm that `github-actions[bot]` posts an issue com
 | Kimi K2.6                       | $0.74               | $3.49                | Strong alternative; 262K context window       |
 
 For a moderate batch workflow (100 PRs/month, ~20K tokens each), expect **$3–15/month** with DeepSeek.
+
+To review the GitHub Actions runner-time side of PR-Agent usage, run the
+lightweight workflow audit in [`actions-cost-audit.md`](actions-cost-audit.md).
+That audit reports recent workflow run counts and wall time; it does not replace
+provider token-cost estimates or GitHub billing dashboards.
 
 ---
 
@@ -93,15 +106,18 @@ PR-Agent posts as `github-actions[bot]` (the default identity when using `GITHUB
 
 ### Step 7.1 — Trigger a re-review
 
-**No trigger needed for automated runs.** PR-Agent fires automatically on every push via the `pull_request` GHA event. There is no trigger comment and no `REVIEW_COMMENT_ID`.
+`pr-review-loop.sh` explicitly requests PR-Agent by posting the same command a
+maintainer would post manually:
 
-For **manual re-triggers**, post a comment on the PR:
-
-```
+```text
 /review
 ```
 
-This is handled by the `issue_comment` trigger in the workflow.
+The workflow only treats an exact `/review` PR comment as an issue-comment
+trigger. General PR discussion comments do not run PR-Agent. The exact command
+check is also the loop-prevention control: PR-Agent's own output does not match
+`/review`, while trusted reviewer-loop automation can still request a configured
+review even when it authenticates as a bot or GitHub App.
 
 ### Step 7.2 — Detect review completion
 
@@ -117,7 +133,7 @@ PR-Agent signals completion by posting a plain issue comment (not a formal GitHu
 | Comment with `Recommended focus areas for review` + advisory labels only | Review complete — clean (advisory only)                                         |
 | Comment with neither marker                                              | Ambiguous — escalate for human review                                           |
 | No matching comment and `elapsed < max_wait`                             | GHA still running — wait `poll_interval` and poll again                         |
-| `elapsed >= max_wait` and no comment posted                              | Treat as `skipped` (GHA may not have run, e.g., fork PR with no secrets access) |
+| `elapsed >= max_wait` and no comment posted                              | Treat as `skipped` (GHA may not have run, e.g., fork PR with no secrets access or PR-Agent unavailable) |
 
 Unlike Devin, there are no check runs to monitor — the comment itself is the completion signal.
 
@@ -166,13 +182,30 @@ If fork PRs need automated review, consider using a GitHub App token instead of 
 
 ## Enabling Interactive Commands
 
-With the `issue_comment` trigger active, any PR contributor can post PR-Agent commands:
+With the constrained `issue_comment` trigger active, the template default only
+runs PR-Agent for the explicit review command:
 
 | Command           | Effect                                 |
 | ----------------- | -------------------------------------- |
 | `/review`         | Re-run the full code review            |
-| `/describe`       | Update the PR description              |
-| `/improve`        | Post inline code suggestions           |
-| `/ask <question>` | Ask PR-Agent a question about the code |
 
-These commands fire only when `github.event.sender.type != 'Bot'` (the guard in the workflow), so automated agents posting comments will not accidentally trigger PR-Agent in a loop.
+Downstream repositories may opt into additional PR-Agent commands such as
+`/describe`, `/improve`, or `/ask <question>`, but doing so increases
+issue-comment fan-out and should be an explicit local decision.
+
+## Migration Notes for Downstream Repositories
+
+Earlier versions of this template ran PR-Agent on every same-repository PR
+synchronize event and on every human PR comment. That was convenient, but it
+could consume private-repository runner minutes even when PR-Agent output was
+not needed.
+
+After this change:
+
+- pushing a new commit to a PR does not run PR-Agent by default;
+- arbitrary human comments do not run PR-Agent;
+- `/run-reviewer-loop`, `/run-item`, and `/run-epic` still request PR-Agent when
+  the effective review config includes `pr-agent`;
+- maintainers can still run PR-Agent manually by posting `/review`;
+- downstream projects that want broader automatic PR-Agent behavior must opt in
+  by editing `.github/workflows/pr-agent.yml` locally.
