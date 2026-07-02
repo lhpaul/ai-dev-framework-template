@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-07-02
+
+### Added
+
+- **Actions cost-audit guidance** (#1099): Add lightweight workflow run-volume
+  and wall-time audit guidance for retrospectives and downstream template-sync
+  reviews.
+
+### Changed
+
+- **Make PR-Agent explicit** (#1096): Reduce default PR-Agent Actions fan-out
+  while preserving configured reviewer-loop review.
+- **Event-driven reviewer guard** (#1097): Replace default long reviewer-loop
+  guard polling with a fast PR check plus summary-comment readiness refresh.
+- **Placeholder workflows opt-in** (#1098): Make template placeholder deploy and
+  regression workflows opt-in so downstream repositories do not spend runner
+  minutes before configuring real pipelines.
+- **Release readiness wording**: command and overview surfaces now state that
+  `release/*` PR reviewer loops are skipped while the production PR still gets
+  regression and CI readiness before merge.
+
+### Fixed
+
+- **Workflow item routing no longer treats every GitHub issue as epic-like**:
+  `/run-work` and `/run-item` now read GitHub sub-issue `totalCount` instead of
+  the `subIssues` object key count, and the bounded prelude uses bash-3.2-safe
+  empty-array expansion for stock macOS shells.
+- **Reviewer-loop guard metadata failures** (#1097): Post retry-oriented failure
+  statuses when PR metadata or head fields cannot be resolved, isolate
+  summary-comment, non-summary comment, and PR-event guard concurrency lanes, and
+  count summary-comment event payloads directly when the comments API lags or
+  fails.
+- **Downstream template-sync reviewer corrections**: Codex reviewer idempotency,
+  workflow-hub GitHub App private-key paths, and optional Claude workflow tests
+  now handle downstream sync edge cases without false failures.
+
 ## [0.34.0] - 2026-06-30
 
 ### Changed
@@ -1050,7 +1086,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.34.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.35.0...HEAD
+[0.35.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.33.1...v0.34.0
 [0.33.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.33.0...v0.33.1
 [0.33.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.32.0...v0.33.0

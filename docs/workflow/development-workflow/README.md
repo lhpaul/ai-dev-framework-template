@@ -211,7 +211,7 @@ The sections below keep this document usable as a master reference after the nar
 | Meta-Retrospective               | `/retrospective` (invoke with meta scope, or run directly)        | `/retrospective` (meta scope)                                 | `/retrospective` alias or `workflow-retrospective` skill         | `docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md` — periodic verification of prior improvement effectiveness; recommended every 5 batches                                 |
 | Feedback triage                  | —                                                                 | —                                                             | —                                  | `docs/workflow/development-workflow/protocols/07-feedback-triage-protocol.md` — periodically review GitHub Discussions in the "Feedback & Ideas" category and promote high-signal items to backlog issues |
 
-After opening release PRs, protocol `05` runs the automated reviewer loop, applies `ready-for-regression` on the **PR targeting `main`**, and runs the CI loop until checks are green (or escalation) — same persistence contract as other PR readiness work.
+After opening release PRs, protocol `05` treats the release-branch reviewer loop as skipped, applies `ready-for-regression` on the **PR targeting `main`**, and runs the CI loop until checks are green (or escalation) — same persistence contract as other release readiness work.
 
 Codex skills are stored in `.agents/skills/` for repo-scoped Codex discovery, with legacy canonical definitions retained in `.codex/skills/`. Install them into the local Codex environment with:
 
@@ -619,6 +619,7 @@ Repository helpers:
 - `docs/workflow/development-workflow/integrations/workflow-hub-github-app.md`
 - `docs/workflow/development-workflow/integrations/ci-cd-deployment.md`
 - `docs/workflow/development-workflow/integrations/e2e-regression.md`
+- `docs/workflow/development-workflow/integrations/actions-cost-audit.md`
 
 ---
 

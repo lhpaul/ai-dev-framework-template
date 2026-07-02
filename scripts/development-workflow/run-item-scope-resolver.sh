@@ -101,7 +101,7 @@ is_epic_issue() {
     return 2
   fi
   local sub_count=0 issue_type=0
-  sub_count="$(gh issue view "$num" --json subIssues --jq '.subIssues | length' 2>/dev/null)" || sub_count=0
+  sub_count="$(gh issue view "$num" --json subIssues --jq '.subIssues.totalCount' 2>/dev/null)" || sub_count=0
   case "${sub_count:-}" in
     ''|*[!0-9]*) sub_count="0" ;;
   esac

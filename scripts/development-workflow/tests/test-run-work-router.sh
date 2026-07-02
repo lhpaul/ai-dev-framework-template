@@ -102,6 +102,28 @@ case "$*" in
     ;;
 esac
 
+emit_issue_subissues() {
+  local issue_num="$1" jq_filter="$2"
+  local json
+  case "$issue_num" in
+    977)
+      json='{"subIssues":{"nodes":[{"number":101},{"number":102}],"totalCount":2}}'
+      ;;
+    978|979)
+      json='{"subIssues":{"nodes":[],"totalCount":0}}'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  if [ -n "$jq_filter" ]; then
+    printf '%s\n' "$json" | jq -r "$jq_filter"
+  else
+    printf '%s\n' "$json"
+  fi
+}
+
 # ---- issue view ----
 # Matches: gh issue view <number> --json state --jq .state
 # or:      gh issue view <number> --json subIssues --jq ...
@@ -121,16 +143,16 @@ case "$*" in
   issue\ view\ 999999\ --json\ state\ --jq\ .state)
     exit 1   # not found
     ;;
-  issue\ view\ 978\ --json\ subIssues\ --jq\ '.subIssues | length')
-    printf '0\n'
+  issue\ view\ 978\ --json\ subIssues\ --jq\ *)
+    emit_issue_subissues 978 "$7"
     exit 0
     ;;
-  issue\ view\ 979\ --json\ subIssues\ --jq\ '.subIssues | length')
-    printf '0\n'
+  issue\ view\ 979\ --json\ subIssues\ --jq\ *)
+    emit_issue_subissues 979 "$7"
     exit 0
     ;;
-  issue\ view\ 977\ --json\ subIssues\ --jq\ '.subIssues | length')
-    printf '2\n'    # epic-like: has 2 sub-issues
+  issue\ view\ 977\ --json\ subIssues\ --jq\ *)
+    emit_issue_subissues 977 "$7"
     exit 0
     ;;
   issue\ view\ 977\ --json\ labels\ --jq\ '[.labels[].name] | map(ascii_downcase) | map(select(. == "epic")) | length')

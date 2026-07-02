@@ -1327,7 +1327,12 @@ Verify all of the following by querying artifact state directly. If any check fa
 
 1. Applies the label directly: `gh pr edit <pr_number> --add-label "ready-for-regression"`
 2. Logs the deviation: `PROTOCOL_DEVIATION: ready-for-regression was missing on PR #<N> (<branch-type>) — applied by orchestrator Step 5.1`
-3. **Re-polls CI** — the label triggers the `e2e-regression.yml` workflow. The CI check row in this verification table was evaluated _before_ the label was applied, so the e2e check was not yet in `statusCheckRollup`. After applying the label, wait for CI to settle using `pr-ci-loop.sh <pr_number>` before re-running this verification. Do not mark the PR ready until the re-polled CI check is green.
+3. **Re-polls CI** — the label triggers configured real regression workflows,
+   or an explicitly enabled placeholder. The CI check row in this verification
+   table was evaluated _before_ the label was applied, so configured e2e checks
+   may not yet be in `statusCheckRollup`. After applying the label, wait for CI
+   to settle using `pr-ci-loop.sh <pr_number>` before re-running this
+   verification. Do not mark the PR ready until the re-polled CI check is green.
 
 > **`refactor/*` is not exempt**: Orchestrators must not skip the `ready-for-regression` check for `refactor/*` PRs. Refactors require regression testing before merge regardless of their content. This check has the same priority and remediation path as for `fix/*` or `feature/*` PRs.
 

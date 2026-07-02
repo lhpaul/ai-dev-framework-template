@@ -235,7 +235,7 @@ is_epic_issue() {
   # Try sub-issues first; if that API field is unavailable, still check the epic label.
   local sub_count issue_type
   sub_count="$(gh issue view "$issue_num" --json subIssues \
-    --jq '.subIssues | length' 2>/dev/null)" || sub_count=""
+    --jq '.subIssues.totalCount' 2>/dev/null)" || sub_count=""
   case "${sub_count:-}" in
     ''|*[!0-9]*) sub_count="0" ;;
   esac
