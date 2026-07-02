@@ -190,6 +190,31 @@ else
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
+local_override_single_reviewer_dir="$(fixture_dir local-override-single-reviewer)"
+cat > "$local_override_single_reviewer_dir/.ai-dev-workflow.yaml" <<'YAML'
+review:
+  on_ready:
+    github:
+      - haystack
+      - bugbot
+YAML
+cat > "$local_override_single_reviewer_dir/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_ready:
+    github:
+      - bugbot
+YAML
+local_override_stdout="$TMP_ROOT/local-override-single.stdout"
+local_override_stderr="$TMP_ROOT/local-override-single.stderr"
+if bash "$VALIDATOR" --repo-root "$local_override_single_reviewer_dir" >"$local_override_stdout" 2>"$local_override_stderr"; then
+  run_contains "local_override_single_reviewer_validates" "TARGET_REPO_NAME=local-override-single-reviewer" "$(cat "$local_override_stdout")"
+  run_test "local_override_single_reviewer_no_warning" "" "$(cat "$local_override_stderr")"
+else
+  echo "FAIL: local_override_single_reviewer_validates - validator exited non-zero"
+  cat "$local_override_stderr"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+
 hub_dir="$(fixture_dir workflow-hub)"
 cat > "$hub_dir/.ai-dev-workflow.yaml" <<'YAML'
 schema_version: 2
