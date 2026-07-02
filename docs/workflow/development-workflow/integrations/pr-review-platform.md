@@ -78,6 +78,55 @@ Additional rules:
 
 ---
 
+## Advisory Findings Contract
+
+`ADVISORY_FINDINGS` is the canonical provider-agnostic contract for non-blocking
+automated reviewer findings. Platform wrappers emit it as a compact single-line
+JSON array in their key-value stdout:
+
+```text
+ADVISORY_FINDINGS=[{"source":"haystack","category":"Minor","summary":"..."}]
+```
+
+Consumers must parse the substring after the first `=` as JSON. Do not split the
+JSON value on spaces, commas, pipes, or additional equals signs.
+
+Each advisory finding object includes these required fields:
+
+| Field | Description |
+| ----- | ----------- |
+| `source` | Stable review platform id, such as `pr-agent` or `haystack`. |
+| `category` | Provider category, label, or `Advisory` when the provider has no category. |
+| `summary` | Short human-readable advisory summary. |
+
+Finding objects may include these optional fields when the platform exposes
+them:
+
+| Field | Description |
+| ----- | ----------- |
+| `detail` | Longer reviewer detail or rationale. |
+| `url` | Link to the source review comment or finding. |
+| `path` | File path associated with the finding. |
+| `line` | Line number associated with the finding. |
+| `fix_hint` | Provider-supplied fix suggestion. |
+| `disposition` | Workflow disposition metadata, such as `known-false-positive`. |
+| `disposition_rule` | Stable rule id that produced the disposition. |
+| `disposition_rationale` | Human-readable disposition rationale. |
+
+`pr-review-loop.sh` aggregates platform-level `ADVISORY_FINDINGS` arrays and
+emits a final aggregate `ADVISORY_FINDINGS` value. Summary comments render from
+that unified list. `ADVISORY_DISPOSITION_REQUIRED=1` remains the preferred
+boolean trigger for advisory disposition work on clean exits.
+
+Transition aliases:
+
+- `ADVISORY_LABELS` remains a deprecated PR-Agent compatibility alias for one
+  transition release.
+- `ADVISORY_FINDINGS_JSON` remains a deprecated Haystack compatibility alias for
+  one transition release.
+
+---
+
 ## Platform Configuration
 
 The active review platforms for a repository are declared in `.ai-dev-workflow.yaml` at the repo root:

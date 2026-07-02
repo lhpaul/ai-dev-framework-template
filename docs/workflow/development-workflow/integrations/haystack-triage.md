@@ -145,18 +145,23 @@ machine-readable finding arrays when Haystack triage returns a completed review
 result:
 
 ```text
-ADVISORY_FINDINGS_JSON=[{"severity":"advisory","category":"Minor","summary":"...","detail":"..."}]
+ADVISORY_FINDINGS=[{"source":"haystack","severity":"advisory","category":"Minor","summary":"...","detail":"..."}]
+ADVISORY_FINDINGS_JSON=[{"source":"haystack","severity":"advisory","category":"Minor","summary":"...","detail":"..."}]
 BLOCKING_FINDINGS_JSON=[{"severity":"blocking","category":"Logic error","summary":"...","detail":"..."}]
 ```
 
-These fields are compact single-line JSON arrays. Consumers should parse the
-substring after the first `=` as JSON; do not split array contents on spaces,
-commas, pipes, or additional equals signs.
+`ADVISORY_FINDINGS` is the canonical provider-agnostic advisory contract defined
+in [`pr-review-platform.md`](pr-review-platform.md). `ADVISORY_FINDINGS_JSON` is
+a deprecated compatibility alias retained for one transition release. These
+fields are compact single-line JSON arrays. Consumers should parse the substring
+after the first `=` as JSON; do not split array contents on spaces, commas,
+pipes, or additional equals signs.
 
 Each finding object includes these required fields:
 
 | Field | Description |
 | ----- | ----------- |
+| `source` | Always `haystack` for findings emitted by this wrapper. |
 | `severity` | Normalized workflow severity: `advisory` or `blocking`. |
 | `category` | Haystack category string, or `__UNKNOWN__` when Haystack omitted the category. |
 | `summary` | Short finding summary from `.summary`, `.title`, or `.message`; empty string when Haystack omitted compatible text. |
@@ -177,7 +182,8 @@ data:
 The structured arrays are derived from the same classification pass as
 `BLOCKING_COUNT` and `SUGGESTION_COUNT`, so counts and array lengths should
 match. Existing consumers may continue to rely only on `RESULT`,
-`BLOCKING_COUNT`, `SUGGESTION_COUNT`, and `COMMENT_COUNT`.
+`BLOCKING_COUNT`, `SUGGESTION_COUNT`, and `COMMENT_COUNT`, but new consumers
+should read `ADVISORY_FINDINGS` instead of provider-specific aliases.
 
 When `haystack pr-status --json` returns parseable JSON but a required policy
 field cannot be read, the reviewer fails closed with

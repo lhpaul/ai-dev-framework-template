@@ -489,9 +489,12 @@ _reset_mocks
 _install_haystack_mock
 
 output=$(_run_reviewer 10 1)
+advisory_findings="$(_kv_value ADVISORY_FINDINGS "$output")"
 advisory_json="$(_kv_value ADVISORY_FINDINGS_JSON "$output")"
 blocking_json="$(_kv_value BLOCKING_FINDINGS_JSON "$output")"
 
+run_test "structured_empty_advisory_findings_array" "0" "$(printf '%s\n' "$advisory_findings" | jq 'length')"
+run_test "structured_empty_advisory_alias_equal" "$advisory_findings" "$advisory_json"
 run_test "structured_empty_advisory_array" "0" "$(printf '%s\n' "$advisory_json" | jq 'length')"
 run_test "structured_empty_blocking_array" "0" "$(printf '%s\n' "$blocking_json" | jq 'length')"
 
@@ -501,8 +504,12 @@ _reset_mocks
 _install_haystack_mock
 
 output=$(_run_reviewer 10 1)
+advisory_findings="$(_kv_value ADVISORY_FINDINGS "$output")"
 advisory_json="$(_kv_value ADVISORY_FINDINGS_JSON "$output")"
 
+run_test "structured_multi_advisory_findings_count" "2" "$(printf '%s\n' "$advisory_findings" | jq 'length')"
+run_test "structured_multi_advisory_findings_source" "haystack|haystack" "$(printf '%s\n' "$advisory_findings" | jq -r 'map(.source) | join("|")')"
+run_test "structured_multi_advisory_findings_alias_equal" "$advisory_findings" "$advisory_json"
 run_test "structured_multi_advisory_count" "2" "$(printf '%s\n' "$advisory_json" | jq 'length')"
 run_test "structured_multi_advisory_order" "First advisory|Second advisory" "$(printf '%s\n' "$advisory_json" | jq -r '.[0].summary + "|" + .[1].summary')"
 run_test "structured_multi_advisory_fix_hint" "Fix one" "$(printf '%s\n' "$advisory_json" | jq -r '.[0].fix_hint')"
@@ -607,9 +614,13 @@ _reset_mocks
 _install_haystack_mock
 
 output=$(_run_reviewer 10 1)
+advisory_findings_line="$(printf '%s\n' "$output" | grep '^ADVISORY_FINDINGS=')"
 advisory_line="$(printf '%s\n' "$output" | grep '^ADVISORY_FINDINGS_JSON=')"
+advisory_findings="${advisory_findings_line#ADVISORY_FINDINGS=}"
 advisory_json="${advisory_line#ADVISORY_FINDINGS_JSON=}"
 
+run_test "structured_escaped_canonical_single_line" "1" "$(printf '%s\n' "$advisory_findings_line" | wc -l | tr -d ' ')"
+run_test "structured_escaped_canonical_alias_equal" "$advisory_findings" "$advisory_json"
 run_test "structured_escaped_single_line" "1" "$(printf '%s\n' "$advisory_line" | wc -l | tr -d ' ')"
 run_test "structured_escaped_detail" "Line one|Line two" "$(printf '%s\n' "$advisory_json" | jq -r '.[0].detail | gsub("\\n"; "|")')"
 # shellcheck disable=SC2016  # Expected value intentionally contains literal $PATH.
