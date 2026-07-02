@@ -94,6 +94,58 @@ The `haystack triage --json` output schema uses a `.findings[].category` field a
 
 The `COMMENT_COUNT` output equals `BLOCKING_COUNT + SUGGESTION_COUNT`.
 
+## Structured Finding Output
+
+In addition to the existing count fields, `haystack-reviewer.sh` emits
+machine-readable finding arrays when Haystack triage returns a completed review
+result:
+
+```text
+ADVISORY_FINDINGS_JSON=[{"severity":"advisory","category":"Minor","summary":"...","detail":"..."}]
+BLOCKING_FINDINGS_JSON=[{"severity":"blocking","category":"Logic error","summary":"...","detail":"..."}]
+```
+
+These fields are compact single-line JSON arrays. Consumers should parse the
+substring after the first `=` as JSON; do not split array contents on spaces,
+commas, pipes, or additional equals signs.
+
+Each finding object includes these required fields:
+
+| Field | Description |
+| ----- | ----------- |
+| `severity` | Normalized workflow severity: `advisory` or `blocking`. |
+| `category` | Haystack category string, or `__UNKNOWN__` when Haystack omitted the category. |
+| `summary` | Short finding summary from `.summary`, `.title`, or `.message`; empty string when Haystack omitted compatible text. |
+| `detail` | Detailed finding text from `.detail`, `.message`, or `.body`; empty string when Haystack omitted compatible text. |
+
+The reviewer includes these optional fields when Haystack supplies compatible
+data:
+
+| Field | Fallback order |
+| ----- | -------------- |
+| `path` | `.source.path`, `.source.file`, `.path`, `.file` |
+| `line` | Positive integer values from `.source.line`, `.source.startLine`, `.line`, `.startLine` |
+| `fix_hint` | `.agentFixPrompt`, `.fixPrompt`, `.suggestion` |
+
+The structured arrays are derived from the same classification pass as
+`BLOCKING_COUNT` and `SUGGESTION_COUNT`, so counts and array lengths should
+match. Existing consumers may continue to rely only on `RESULT`,
+`BLOCKING_COUNT`, `SUGGESTION_COUNT`, and `COMMENT_COUNT`.
+
+When `haystack pr-status --json` returns parseable JSON but a required policy
+field cannot be read, the reviewer fails closed with
+`REASON=policy_status_parse_failed`. On that path, `BLOCKING_FINDINGS_JSON`
+includes a synthetic `Policy status parse failed` blocking entry so
+`BLOCKING_COUNT` still matches the blocking array length.
+
+Unavailable or skipped review paths keep their existing output contract and may
+omit the structured arrays. Treat missing arrays on skipped output as "no
+completed Haystack finding payload", not as an empty completed review.
+
+`pr-review-loop.sh` does not list the structured Haystack advisory details in PR
+summary comments yet. That consumer-facing summary work is tracked separately in
+issue #1114.
+
 ## Review Policy Verdicts
 
 Haystack exposes two related but separate result channels:

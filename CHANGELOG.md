@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Structured Haystack advisory findings** (#1113): Added structured Haystack
+  finding output for downstream review summaries and delegated advisory
+  dispositions.
+
 ## [0.35.0] - 2026-07-02
 
 ### Added
