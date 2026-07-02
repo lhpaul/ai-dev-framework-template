@@ -56,6 +56,7 @@ run_test "non_summary_comment_skips" "yes" "$(contains "Issue comment does not c
 run_test "summary_comment_payload_is_counted" "yes" "$(contains "Fresh comment listing did not include triggering summary comment; counting event payload.")"
 run_test "comment_path_fetches_current_pr" "yes" "$(contains 'gh api "repos/$REPO/pulls/$PR_NUMBER"')"
 run_test "comment_path_fetches_current_comments" "yes" "$(contains 'gh api "repos/$REPO/issues/$PR_NUMBER/comments"')"
+run_test "stale_failure_does_not_overwrite_success" "yes" "$(contains "skipping stale failure overwrite")"
 run_test "metadata_fetch_failure_posts_status" "yes" "$(contains "Could not fetch PR metadata. Re-run the workflow to retry.")"
 run_test "missing_head_sha_failure_posts_status" "yes" "$(contains "Could not resolve PR head SHA. Re-run the workflow to retry.")"
 run_test "missing_head_branch_failure_posts_status" "yes" "$(contains "Could not resolve PR head branch. Re-run the workflow to retry.")"

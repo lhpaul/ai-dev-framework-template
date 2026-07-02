@@ -29,7 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Reviewer-loop guard metadata failures** (#1097): Post retry-oriented failure
   statuses when PR metadata or head fields cannot be resolved, and prevent
   non-summary comments from canceling summary-triggered guard refreshes. Summary
-  comment events are also counted directly if the comments API lags.
+  comment events are also counted directly if the comments API lags, and stale
+  PR-event runs no longer overwrite a newer success status.
 - **Placeholder workflows opt-in** (#1098): Make template placeholder deploy and
   regression workflows opt-in so downstream repositories do not spend runner
   minutes before configuring real pipelines.
