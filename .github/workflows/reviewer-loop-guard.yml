@@ -43,8 +43,11 @@ concurrency:
   group: >-
     reviewer-loop-guard-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}-${{
       github.event_name == 'issue_comment' &&
-      !contains(github.event.comment.body, '### Automated Reviewer Loop Summary') &&
-      'non-summary' || 'guard'
+      contains(github.event.comment.body, '### Automated Reviewer Loop Summary') &&
+      'summary-comment' ||
+      github.event_name == 'issue_comment' &&
+      'non-summary' ||
+      'pr-event'
     }}
   cancel-in-progress: true
 

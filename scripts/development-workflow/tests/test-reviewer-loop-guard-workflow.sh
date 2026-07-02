@@ -43,7 +43,9 @@ run_test "pull_request_target_trigger_present" "yes" "$(contains "pull_request_t
 run_test "issue_comment_trigger_present" "yes" "$(contains "issue_comment:")"
 run_test "issue_comment_created_edited" "yes" "$(contains "types: [created, edited]")"
 run_test "pr_event_types_preserved" "yes" "$(contains "types: [opened, reopened, ready_for_review, synchronize]")"
-run_test "non_summary_comments_get_separate_concurrency" "yes" "$(contains "'non-summary' || 'guard'")"
+run_test "summary_comments_get_separate_concurrency" "yes" "$(contains "'summary-comment' ||")"
+run_test "non_summary_comments_get_separate_concurrency" "yes" "$(contains "'non-summary' ||")"
+run_test "pr_events_get_separate_concurrency" "yes" "$(contains "'pr-event'")"
 run_test "guard_path_cancels_stale_runs" "yes" "$(contains "cancel-in-progress: true")"
 
 run_test "no_default_max_wait" "yes" "$(not_contains "GUARD_MAX_WAIT")"
