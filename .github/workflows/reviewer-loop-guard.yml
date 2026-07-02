@@ -73,6 +73,24 @@ jobs:
           MARKER1="### Automated Reviewer Loop Summary"
           # shellcheck disable=SC2016
           MARKER2='*Posted automatically by `pr-review-loop.sh`.*'
+          GUARD_CONTEXT="Reviewer-loop completion guard (#${PR_NUMBER})"
+
+          post_failure_status_if_possible() {
+            local sha="$1"
+            local description="$2"
+
+            if [ -z "${sha:-}" ]; then
+              echo "WARN: cannot post guard failure status because the PR head SHA is unavailable." >&2
+              return 0
+            fi
+
+            gh api \
+              --method POST \
+              "repos/$REPO/statuses/$sha" \
+              -f state="failure" \
+              -f description="$description" \
+              -f context="$GUARD_CONTEXT"
+          }
 
           if [ "$EVENT_NAME" = "issue_comment" ]; then
             case "$COMMENT_BODY" in
@@ -86,19 +104,31 @@ jobs:
 
           if ! pr_json="$(gh api "repos/$REPO/pulls/$PR_NUMBER")"; then
             echo "ERROR: failed to fetch PR #${PR_NUMBER} metadata."
+            post_failure_status_if_possible \
+              "${EVENT_HEAD_SHA:-}" \
+              "Could not fetch PR metadata. Re-run the workflow to retry."
             exit 1
           fi
 
           if ! HEAD_SHA="$(printf '%s\n' "$pr_json" | jq -er '.head.sha')"; then
             echo "ERROR: pull request head SHA is missing for PR #${PR_NUMBER}." >&2
+            post_failure_status_if_possible \
+              "${EVENT_HEAD_SHA:-}" \
+              "Could not resolve PR head SHA. Re-run the workflow to retry."
             exit 1
           fi
           if ! BRANCH="$(printf '%s\n' "$pr_json" | jq -er '.head.ref')"; then
             echo "ERROR: pull request head branch is missing for PR #${PR_NUMBER}." >&2
+            post_failure_status_if_possible \
+              "$HEAD_SHA" \
+              "Could not resolve PR head branch. Re-run the workflow to retry."
             exit 1
           fi
           if ! HEAD_REPO="$(printf '%s\n' "$pr_json" | jq -er '.head.repo.full_name')"; then
             echo "ERROR: pull request head repository is missing for PR #${PR_NUMBER}." >&2
+            post_failure_status_if_possible \
+              "$HEAD_SHA" \
+              "Could not resolve PR head repository. Re-run the workflow to retry."
             exit 1
           fi
 
@@ -122,8 +152,6 @@ jobs:
               break
             fi
           done
-
-          GUARD_CONTEXT="Reviewer-loop completion guard (#${PR_NUMBER})"
 
           if [ "$in_scope" = "false" ]; then
             echo "Branch '${BRANCH}' is not in scope; posting success status (guard skipped)."

@@ -54,6 +54,12 @@ run_test "summary_marker_two_checked" "yes" "$(contains "MARKER2='*Posted automa
 run_test "non_summary_comment_skips" "yes" "$(contains "Issue comment does not contain the canonical reviewer-loop summary markers; skipping.")"
 run_test "comment_path_fetches_current_pr" "yes" "$(contains 'gh api "repos/$REPO/pulls/$PR_NUMBER"')"
 run_test "comment_path_fetches_current_comments" "yes" "$(contains 'gh api "repos/$REPO/issues/$PR_NUMBER/comments"')"
+run_test "metadata_fetch_failure_posts_status" "yes" "$(contains "Could not fetch PR metadata. Re-run the workflow to retry.")"
+run_test "missing_head_sha_failure_posts_status" "yes" "$(contains "Could not resolve PR head SHA. Re-run the workflow to retry.")"
+run_test "missing_head_branch_failure_posts_status" "yes" "$(contains "Could not resolve PR head branch. Re-run the workflow to retry.")"
+run_test "missing_head_repo_failure_posts_status" "yes" "$(contains "Could not resolve PR head repository. Re-run the workflow to retry.")"
+run_test "metadata_failure_uses_event_sha" "yes" "$(contains '${EVENT_HEAD_SHA:-}')"
+run_test "failure_status_helper_present" "yes" "$(contains "post_failure_status_if_possible()")"
 
 run_test "fork_head_guard_present" "yes" "$(contains 'HEAD_REPO" != "$REPO')"
 run_test "fork_head_skip_no_status" "yes" "$(contains "skipping guard status")"
