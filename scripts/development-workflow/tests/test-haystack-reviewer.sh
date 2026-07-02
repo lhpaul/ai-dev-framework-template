@@ -595,6 +595,110 @@ advisory_json="$(_kv_value ADVISORY_FINDINGS_JSON "$output")"
 run_test "structured_invalid_lines_omitted" "0" "$(printf '%s\n' "$advisory_json" | jq '[.[] | select(has("line"))] | length')"
 
 # ---------------------------------------------------------------------------
+# Area 5c: known false-positive catalog
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 5c: known false-positive catalog ==="
+
+# Test 5c.1: CHANGELOG structure false positives are dispositioned.
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":4,"findings":[{"category":"Rules violation","summary":"keep-changelog-unreleased-structure-canonical flagged CHANGELOG structure","detail":"CHANGELOG entry appears outside [Unreleased] in the diff","path":"CHANGELOG.md"}]}'
+_reset_mocks
+_install_haystack_mock
+
+output=$(_run_reviewer 10 1)
+advisory_json="$(_kv_value ADVISORY_FINDINGS_JSON "$output")"
+
+run_test "known_fp_changelog_result" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+run_test "known_fp_changelog_disposition" "known-false-positive" "$(printf '%s\n' "$advisory_json" | jq -r '.[0].disposition')"
+run_test "known_fp_changelog_rule" "changelog-keep-changelog-unreleased-structure" "$(printf '%s\n' "$advisory_json" | jq -r '.[0].disposition_rule')"
+
+# Test 5c.2: hotfix backport CHANGELOG false positives are dispositioned.
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":4,"findings":[{"category":"Rules violation","summary":"hotfix backport changed CHANGELOG [Unreleased] structure","detail":"Backport diff appears to remove [Unreleased] content","source":{"path":"CHANGELOG.md","line":7}}]}'
+_reset_mocks
+_install_haystack_mock
+
+output=$(_run_reviewer 10 1)
+advisory_json="$(_kv_value ADVISORY_FINDINGS_JSON "$output")"
+
+run_test "known_fp_hotfix_result" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+run_test "known_fp_hotfix_disposition" "known-false-positive" "$(printf '%s\n' "$advisory_json" | jq -r '.[0].disposition')"
+run_test "known_fp_hotfix_rule" "hotfix-backport-changelog-structure" "$(printf '%s\n' "$advisory_json" | jq -r '.[0].disposition_rule')"
+
+# Test 5c.3: stale mirror guidance false positives are dispositioned.
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":4,"findings":[{"category":"Rules violation","summary":"Mirror guidance needs review for Claude and Cursor agent surfaces","detail":"Only tool-specific front matter and absent .cursor/skills surface differ"}]}'
+_reset_mocks
+_install_haystack_mock
+
+output=$(_run_reviewer 10 1)
+advisory_json="$(_kv_value ADVISORY_FINDINGS_JSON "$output")"
+
+run_test "known_fp_mirror_disposition" "known-false-positive" "$(printf '%s\n' "$advisory_json" | jq -r '.[0].disposition')"
+run_test "known_fp_mirror_rule" "agent-doc-mirror-guidance-stale-advisory" "$(printf '%s\n' "$advisory_json" | jq -r '.[0].disposition_rule')"
+
+# Test 5c.4: unrelated Rules violation keeps existing advisory classification without disposition.
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":4,"findings":[{"category":"Rules violation","summary":"Workflow contract drift","detail":"A real protocol step is missing from a mirrored command file","path":"docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md"}]}'
+_reset_mocks
+_install_haystack_mock
+
+output=$(_run_reviewer 10 1)
+advisory_json="$(_kv_value ADVISORY_FINDINGS_JSON "$output")"
+
+run_test "known_fp_negative_result" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+run_test "known_fp_negative_no_disposition" "false" "$(printf '%s\n' "$advisory_json" | jq '.[0] | has("disposition")')"
+
+# Test 5c.5: unknown categories retain safe-fail blocking behavior.
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":2,"findings":[{"category":"Unexpected severity","summary":"keep-changelog-unreleased-structure-canonical flagged CHANGELOG structure","detail":"CHANGELOG entry appears outside [Unreleased]","path":"CHANGELOG.md"}]}'
+_reset_mocks
+_install_haystack_mock
+
+output=$(_run_reviewer 10 1)
+blocking_json="$(_kv_value BLOCKING_FINDINGS_JSON "$output")"
+
+run_test "known_fp_unknown_category_result" "RESULT=needs_fixes" "$(echo "$output" | grep '^RESULT=')"
+run_test "known_fp_unknown_category_blocking" "1" "$(printf '%s\n' "$blocking_json" | jq 'length')"
+run_test "known_fp_unknown_category_no_disposition" "false" "$(printf '%s\n' "$blocking_json" | jq '.[0] | has("disposition")')"
+
+# Test 5c.6: multiple findings are classified independently.
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":4,"findings":[{"category":"Rules violation","summary":"keep-changelog-unreleased-structure-canonical flagged CHANGELOG structure","detail":"CHANGELOG entry appears outside [Unreleased]","path":"CHANGELOG.md"},{"category":"Minor","summary":"Unrelated note","detail":"Optional cleanup"}]}'
+_reset_mocks
+_install_haystack_mock
+
+output=$(_run_reviewer 10 1)
+advisory_json="$(_kv_value ADVISORY_FINDINGS_JSON "$output")"
+
+run_test "known_fp_multi_count" "2" "$(printf '%s\n' "$advisory_json" | jq 'length')"
+run_test "known_fp_multi_first_disposition" "known-false-positive" "$(printf '%s\n' "$advisory_json" | jq -r '.[0].disposition')"
+run_test "known_fp_multi_second_no_disposition" "false" "$(printf '%s\n' "$advisory_json" | jq '.[1] | has("disposition")')"
+
+# Test 5c.7: malformed catalog override preserves original classification.
+bad_catalog_file="$(mktemp)"
+printf '{not-json\n' > "$bad_catalog_file"
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":4,"findings":[{"category":"Rules violation","summary":"keep-changelog-unreleased-structure-canonical flagged CHANGELOG structure","detail":"CHANGELOG entry appears outside [Unreleased]","path":"CHANGELOG.md"}]}'
+_reset_mocks
+_install_haystack_mock
+
+output=$(HAYSTACK_FALSE_POSITIVES_FILE="$bad_catalog_file" _run_reviewer 10 1)
+advisory_json="$(_kv_value ADVISORY_FINDINGS_JSON "$output")"
+rm -f "$bad_catalog_file"
+
+run_test "known_fp_bad_catalog_result" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+run_test "known_fp_bad_catalog_no_disposition" "false" "$(printf '%s\n' "$advisory_json" | jq '.[0] | has("disposition")')"
+
+# Test 5c.8: category-only catalog rules are invalid and preserve original classification.
+category_only_catalog_file="$(mktemp)"
+printf '[{"id":"category-only","category":"Rules violation","rationale":"Too broad"}]\n' > "$category_only_catalog_file"
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":4,"findings":[{"category":"Rules violation","summary":"Any rules violation","detail":"No catalog evidence predicate should match this"}]}'
+_reset_mocks
+_install_haystack_mock
+
+output=$(HAYSTACK_FALSE_POSITIVES_FILE="$category_only_catalog_file" _run_reviewer 10 1)
+advisory_json="$(_kv_value ADVISORY_FINDINGS_JSON "$output")"
+rm -f "$category_only_catalog_file"
+
+run_test "known_fp_category_only_result" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+run_test "known_fp_category_only_no_disposition" "false" "$(printf '%s\n' "$advisory_json" | jq '.[0] | has("disposition")')"
+
+# ---------------------------------------------------------------------------
 # Area 6: HAYSTACK_POLL_INTERVAL controls retry cadence (env var)
 # ---------------------------------------------------------------------------
 echo ""

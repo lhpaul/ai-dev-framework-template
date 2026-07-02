@@ -1,0 +1,35 @@
+[
+  {
+    "id": "changelog-keep-changelog-unreleased-structure",
+    "label": "CHANGELOG structure false positive",
+    "category": "Rules violation",
+    "text_patterns": [
+      "keep-changelog-unreleased-structure-canonical"
+    ],
+    "path_patterns": [
+      "(^|/)CHANGELOG\\.md$"
+    ],
+    "rationale": "Haystack can misread correctly nested Keep a Changelog entries from PR diffs; markdownlint and the duplicate-header check are authoritative."
+  },
+  {
+    "id": "hotfix-backport-changelog-structure",
+    "label": "Hotfix backport CHANGELOG structure false positive",
+    "category": "Rules violation",
+    "text_patterns": [
+      "(hotfix|backport).*(CHANGELOG|\\[Unreleased\\])|(CHANGELOG|\\[Unreleased\\]).*(hotfix|backport)"
+    ],
+    "path_patterns": [
+      "(^|/)CHANGELOG\\.md$"
+    ],
+    "rationale": "Hotfix backport diffs can show the main-branch empty Unreleased section even though the develop-side merge preserves the correct changelog structure."
+  },
+  {
+    "id": "agent-doc-mirror-guidance-stale-advisory",
+    "label": "Agent-doc mirror guidance stale advisory",
+    "category": "Rules violation",
+    "text_patterns": [
+      "front matter|\\.cursor/skills|surface"
+    ],
+    "rationale": "Tool-specific front matter differences and the intentionally absent Cursor skills tree are not workflow-body drift; compare live mirrored content before treating the finding as actionable."
+  }
+]

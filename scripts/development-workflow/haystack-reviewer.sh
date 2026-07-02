@@ -103,6 +103,8 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
 if [ $# -lt 3 ]; then
@@ -139,6 +141,7 @@ esac
 TIMEOUT="${HAYSTACK_REVIEWER_TIMEOUT:-120}"
 POLL_INTERVAL="${HAYSTACK_POLL_INTERVAL:-15}"
 PR_STATUS_CHECK="${HAYSTACK_PR_STATUS_CHECK:-1}"
+FALSE_POSITIVES_FILE="${HAYSTACK_FALSE_POSITIVES_FILE:-$SCRIPT_DIR/haystack-false-positives.json}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -187,6 +190,55 @@ if ! command -v jq >/dev/null 2>&1; then
   printf 'COMMENT_COUNT=0\n'
   exit 3
 fi
+
+load_false_positive_catalog() {
+  local catalog_file="$1"
+  local catalog_json
+
+  if [ ! -f "$catalog_file" ]; then
+    echo "WARN: Haystack false-positive catalog not found at $catalog_file; continuing without catalog matches" >&2
+    printf '[]\n'
+    return 0
+  fi
+  if [ ! -s "$catalog_file" ]; then
+    echo "WARN: Haystack false-positive catalog is empty at $catalog_file; continuing without catalog matches" >&2
+    printf '[]\n'
+    return 0
+  fi
+  if ! catalog_json="$(jq -c '
+      def pattern_values($value):
+        if ($value | type) == "array" then
+          [$value[]? | select(type == "string" and . != "")]
+        elif ($value | type) == "string" and $value != "" then
+          [$value]
+        else
+          []
+        end;
+      def has_match_predicate:
+        (
+          pattern_values(.summary_patterns // .summary_pattern)
+          + pattern_values(.detail_patterns // .detail_pattern)
+          + pattern_values(.text_patterns // .text_pattern)
+          + pattern_values(.path_patterns // .path_pattern)
+        ) | length > 0;
+      if type == "array"
+         and all(.[]; type == "object"
+           and ((.id // "") | type == "string" and . != "")
+           and ((.category // "") | type == "string" and . != "")
+           and ((.rationale // "") | type == "string" and . != "")
+           and has_match_predicate)
+      then .
+      else error("catalog must be an array of valid false-positive rules")
+      end
+    ' "$catalog_file" 2>/dev/null)"; then
+    echo "WARN: Haystack false-positive catalog could not be parsed at $catalog_file; continuing without catalog matches" >&2
+    printf '[]\n'
+    return 0
+  fi
+  printf '%s\n' "$catalog_json"
+}
+
+FALSE_POSITIVE_CATALOG_JSON="$(load_false_positive_catalog "$FALSE_POSITIVES_FILE")"
 
 echo "INFO: haystack CLI found: $(command -v haystack)" >&2
 echo "INFO: poll-retry loop — polling every ${POLL_INTERVAL}s, overall timeout: ${TIMEOUT}s" >&2
@@ -495,7 +547,9 @@ printf '%s\n' "$TRIAGE_OUTPUT" >&2
 # array produces zero output — no sentinel is emitted spuriously.
 # Null/missing .category values are mapped to the sentinel "__UNKNOWN__" so they
 # are treated as blocking (safe-fail) rather than silently dropped.
-NORMALIZED_FINDINGS_JSON="$(printf '%s\n' "$TRIAGE_OUTPUT" | jq -c --arg major_is_blocking "${HAYSTACK_MAJOR_IS_BLOCKING:-0}" '
+NORMALIZED_FINDINGS_JSON="$(printf '%s\n' "$TRIAGE_OUTPUT" | jq -c \
+  --arg major_is_blocking "${HAYSTACK_MAJOR_IS_BLOCKING:-0}" \
+  --argjson false_positive_catalog "$FALSE_POSITIVE_CATALOG_JSON" '
   def category:
     if (.category | type) == "string" and .category != "" then .category
     else "__UNKNOWN__"
@@ -516,6 +570,46 @@ NORMALIZED_FINDINGS_JSON="$(printf '%s\n' "$TRIAGE_OUTPUT" | jq -c --arg major_i
           elif type == "string" and test("^[1-9][0-9]*$") then tonumber
           else empty end)
     | first;
+  def pattern_list($value):
+    if ($value | type) == "array" then
+      [$value[]? | select(type == "string" and . != "")]
+    elif ($value | type) == "string" and $value != "" then
+      [$value]
+    else
+      []
+    end;
+  def any_pattern_matches($text; $patterns):
+    ($patterns | length) == 0
+    or any($patterns[]; . as $pattern | (($text // "" | tostring) | test($pattern ; "i")));
+  def path_patterns_match($path; $patterns):
+    ($patterns | length) == 0
+    or ((($path // "") | tostring | length) > 0
+        and any($patterns[]; . as $pattern | ((($path // "") | tostring) | test($pattern))));
+  def rule_matches($rule; $finding):
+    ($rule | type) == "object"
+    and (($rule.id // "") | type == "string" and . != "")
+    and (($rule.category // "") == $finding.category)
+    and ((pattern_list($rule.summary_patterns // $rule.summary_pattern)
+          + pattern_list($rule.detail_patterns // $rule.detail_pattern)
+          + pattern_list($rule.text_patterns // $rule.text_pattern)
+          + pattern_list($rule.path_patterns // $rule.path_pattern)) | length > 0)
+    and any_pattern_matches($finding.summary; pattern_list($rule.summary_patterns // $rule.summary_pattern))
+    and any_pattern_matches($finding.detail; pattern_list($rule.detail_patterns // $rule.detail_pattern))
+    and any_pattern_matches(($finding.summary + "\n" + $finding.detail); pattern_list($rule.text_patterns // $rule.text_pattern))
+    and path_patterns_match(($finding.path // ""); pattern_list($rule.path_patterns // $rule.path_pattern));
+  def apply_false_positive_catalog($finding):
+    ([ $false_positive_catalog[]? | select(rule_matches(.; $finding)) ][0]) as $rule |
+    if $rule == null then
+      $finding
+    else
+      $finding
+      + {
+          severity: "advisory",
+          disposition: "known-false-positive",
+          disposition_rule: ($rule.id // ""),
+          disposition_rationale: ($rule.rationale // "Known false positive")
+        }
+    end;
   def normalized:
     category as $category |
     (if blocking($category) then "blocking" else "advisory" end) as $severity |
@@ -532,7 +626,8 @@ NORMALIZED_FINDINGS_JSON="$(printf '%s\n' "$TRIAGE_OUTPUT" | jq -c --arg major_i
     }
     + (if $path == null then {} else {path: $path} end)
     + (if $line == null then {} else {line: $line} end)
-    + (if $fix_hint == null then {} else {fix_hint: $fix_hint} end);
+    + (if $fix_hint == null then {} else {fix_hint: $fix_hint} end)
+    | apply_false_positive_catalog(.);
   [(.findings // [])[] | normalized]
 ')"
 
