@@ -1277,6 +1277,7 @@ printf 'RESULT=clean\n'
 printf 'BLOCKING_COUNT=0\n'
 printf 'SUGGESTION_COUNT=1\n'
 printf 'COMMENT_COUNT=1\n'
+printf 'ADVISORY_FINDINGS=[{"source":"haystack","severity":"advisory","category":"Minor","summary":"Structured note","detail":"Details","path":"script.sh","line":12,"fix_hint":"Consider simplifying"}]\n'
 printf 'ADVISORY_FINDINGS_JSON=[{"severity":"advisory","category":"Minor","summary":"Structured note","detail":"Details","path":"script.sh","line":12,"fix_hint":"Consider simplifying"}]\n'
 printf 'BLOCKING_FINDINGS_JSON=[]\n'
 printf 'POLICY_STATUS_AVAILABLE=1\n'
@@ -1302,6 +1303,9 @@ actual_output="$(
 run_test "haystack_forwards_advisory_findings_json" \
   'ADVISORY_FINDINGS_JSON=[{"severity":"advisory","category":"Minor","summary":"Structured note","detail":"Details","path":"script.sh","line":12,"fix_hint":"Consider simplifying"}]' \
   "$(printf '%s\n' "$actual_output" | grep "^ADVISORY_FINDINGS_JSON=")"
+run_test "haystack_forwards_advisory_findings" \
+  'ADVISORY_FINDINGS=[{"source":"haystack","severity":"advisory","category":"Minor","summary":"Structured note","detail":"Details","path":"script.sh","line":12,"fix_hint":"Consider simplifying"}]' \
+  "$(printf '%s\n' "$actual_output" | grep "^ADVISORY_FINDINGS=")"
 run_test "haystack_forwards_policy_review_required" "POLICY_REVIEW_REQUIRED=1" \
   "$(printf '%s\n' "$actual_output" | grep "^POLICY_REVIEW_REQUIRED=")"
 run_test "haystack_forwards_display_result" "DISPLAY_RESULT=needs-review: policy" \
@@ -1369,6 +1373,12 @@ else
   _advisory_trigger_count=0
 fi
 run_test "advisory_disposition_required_by_labels" "1" "$_advisory_trigger_count"
+if advisory_disposition_required_for_platform clean 0 0 "" '[{"source":"haystack","category":"Minor","summary":"Structured note"}]'; then
+  _advisory_trigger_count=1
+else
+  _advisory_trigger_count=0
+fi
+run_test "advisory_disposition_required_by_findings" "1" "$_advisory_trigger_count"
 if advisory_disposition_required_for_platform needs_fixes 1 1 "Possible Issue"; then
   _advisory_trigger_count=1
 else
@@ -1397,6 +1407,8 @@ unset _count_validation_ok _count_fail_closed
 if grep -qF 'advisory_disposition_required_output="$advisory_disposition_required"' \
     "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" \
     && grep -qF 'print_kv ADVISORY_DISPOSITION_REQUIRED "$advisory_disposition_required_output"' \
+      "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" \
+    && grep -qF 'print_kv ADVISORY_FINDINGS "$aggregate_advisory_findings_json"' \
       "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"; then
   _advisory_signal_emitted=1
 else
@@ -3307,6 +3319,44 @@ run_test "pr_agent_existing_comment_no_duplicate_trigger" "0" \
   "$(grep_count_or_zero "-X POST repos/.*/issues/42/comments" "$_pr_agent_call_log_1702")"
 rm -rf "$_pr_agent_mock_dir_1702"
 unset _pr_agent_mock_dir_1702 _pr_agent_call_log_1702 actual_output
+
+_pr_agent_mock_dir_1702b="$(mktemp -d)"
+_pr_agent_call_log_1702b="$_pr_agent_mock_dir_1702b/calls.log"
+cat > "$_pr_agent_mock_dir_1702b/gh" <<'PR_AGENT_GH_1702B'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$PR_AGENT_CALL_LOG"
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc1702bsha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"issues/42/comments"*)
+    printf '[{"user":{"login":"github-actions[bot]"},"updated_at":"2020-01-01T00:00:02Z","html_url":"https://example.test/comment-1702b","body":"PR Reviewer Guide abc1702bsha\\nRecommended focus areas for review\\n<strong>Possible Issue</strong>\\n<strong>Performance Concern</strong>\\n---"}]\n'
+    exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+PR_AGENT_GH_1702B
+chmod +x "$_pr_agent_mock_dir_1702b/gh"
+
+actual_output="$(
+  PATH="$_pr_agent_mock_dir_1702b:$PATH" PR_AGENT_CALL_LOG="$_pr_agent_call_log_1702b" \
+    run_pr_agent_review "42" "feature/42-test" "1" "0" || true
+)"
+_pr_agent_advisory_findings="$(kv_value ADVISORY_FINDINGS "$actual_output")"
+run_test "pr_agent_advisory_emits_legacy_labels" \
+  "ADVISORY_LABELS=Possible Issue|Performance Concern@@@https://example.test/comment-1702b" \
+  "$(printf '%s\n' "$actual_output" | grep "^ADVISORY_LABELS=")"
+run_test "pr_agent_advisory_findings_count" "2" \
+  "$(printf '%s\n' "$_pr_agent_advisory_findings" | jq 'length')"
+run_test "pr_agent_advisory_findings_sources" "pr-agent|pr-agent" \
+  "$(printf '%s\n' "$_pr_agent_advisory_findings" | jq -r 'map(.source) | join("|")')"
+run_test "pr_agent_advisory_findings_categories" "Possible Issue|Performance Concern" \
+  "$(printf '%s\n' "$_pr_agent_advisory_findings" | jq -r 'map(.category) | join("|")')"
+run_test "pr_agent_advisory_findings_url" "https://example.test/comment-1702b" \
+  "$(printf '%s\n' "$_pr_agent_advisory_findings" | jq -r '.[0].url')"
+rm -rf "$_pr_agent_mock_dir_1702b"
+unset _pr_agent_mock_dir_1702b _pr_agent_call_log_1702b actual_output _pr_agent_advisory_findings
 
 _pr_agent_mock_dir_1703="$(mktemp -d)"
 _pr_agent_call_log_1703="$_pr_agent_mock_dir_1703/calls.log"

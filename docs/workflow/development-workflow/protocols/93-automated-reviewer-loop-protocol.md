@@ -648,14 +648,17 @@ the normal merge gates: any net-new blocker still follows the standard
 
 ### PR-Agent "Possible Issue" advisory labels
 
-When `pr-review-loop.sh` returns `RESULT=clean` and the output contains an
-`ADVISORY_LABELS` key with `Possible Issue` entries, PR-Agent flagged advisory
-concerns but no hard-blocker labels. **No orchestrator action is required.**
+When `pr-review-loop.sh` returns `RESULT=clean` and the output contains
+`ADVISORY_FINDINGS` entries sourced from PR-Agent, PR-Agent flagged advisory
+concerns but no hard-blocker labels. `ADVISORY_LABELS` remains a deprecated
+compatibility alias for one transition release. **No orchestrator action is
+required.**
 
 `Possible Issue` findings are automatically acknowledged by the script and the loop
-exits clean. The advisory label is recorded in `ADVISORY_LABELS`. Do not dispatch a
-code-reviewer agent or re-invoke the loop because of these labels. Continue to record
-advisory dispositions in the post-clean summary flow defined below.
+exits clean. The advisory is recorded in the unified `ADVISORY_FINDINGS` list.
+Do not dispatch a code-reviewer agent or re-invoke the loop because of these
+findings. Continue to record advisory dispositions in the post-clean summary
+flow defined below.
 
 ---
 
@@ -671,23 +674,24 @@ this finding" and "here is why it was or was not addressed."
 Any clean exit where one or more of these signals is present:
 
 - `ADVISORY_DISPOSITION_REQUIRED=1`
+- `ADVISORY_FINDINGS` is a non-empty JSON array
 - `SUGGESTION_COUNT` is greater than zero
 - `POLICY_REVIEW_REQUIRED=1`
 - `ADVISORY_LABELS` is non-empty
 
 `ADVISORY_DISPOSITION_REQUIRED=1` is the preferred aggregate signal for new
-callers. The other fields remain valid fallback triggers for older script
-versions and for humans inspecting raw platform output.
+callers. `ADVISORY_FINDINGS` is the canonical advisory details source. The
+other fields remain valid fallback triggers for older script versions and for
+humans inspecting raw platform output.
 
 #### Procedure
 
 1. **For each advisory finding** listed in the "Advisory findings" section of
    the Automated Reviewer Loop Summary comment, review the available finding
-   context. PR-Agent advisory labels link to the source PR comment. Haystack
-   structured advisory entries include category, summary, detail, optional
-   source location, and optional fix hint directly in the summary. Policy-review
-   required entries include the policy handoff metadata available from the
-   reviewer output.
+   context. `ADVISORY_FINDINGS` entries include source, category, summary, and
+   optional URL, detail, source location, fix hint, and disposition metadata.
+   Policy-review required entries include the policy handoff metadata available
+   from the reviewer output.
 
 2. **Determine the disposition** — choose one per finding:
    - **Addressed** — the finding describes a real issue that was fixed in this PR. Cite the commit SHA.
@@ -793,9 +797,10 @@ before escalating:
      --max-wait 600
    ```
 
-   Treat `RESULT`, `BLOCKING_COUNT`, `SUGGESTION_COUNT`, and any
-   `ADVISORY_LABELS`/`POSSIBLE_ISSUE_EVAL_OUTCOME` lines as the authoritative
-   classification for this pass. Do not attempt to quote or paraphrase the PR-Agent
+   Treat `RESULT`, `BLOCKING_COUNT`, `SUGGESTION_COUNT`,
+   `ADVISORY_FINDINGS`, and any `POSSIBLE_ISSUE_EVAL_OUTCOME` lines as the
+   authoritative classification for this pass. `ADVISORY_LABELS` remains a
+   transition fallback only. Do not attempt to quote or paraphrase the PR-Agent
    body if the classifier blocked body access.
 
 2. If a traceable URL is needed, fetch metadata without printing the review body:

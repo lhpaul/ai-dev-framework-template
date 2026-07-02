@@ -23,7 +23,8 @@
 #   BLOCKING_COUNT=<n>
 #   SUGGESTION_COUNT=<n>
 #   COMMENT_COUNT=<n>
-#   ADVISORY_FINDINGS_JSON=<json-array> (present for completed reviews)
+#   ADVISORY_FINDINGS=<json-array> (present for completed reviews)
+#   ADVISORY_FINDINGS_JSON=<json-array> (deprecated compatibility alias)
 #   BLOCKING_FINDINGS_JSON=<json-array> (present for completed reviews)
 #   DISPLAY_RESULT=<value> (optional; used by pr-review-loop.sh summaries)
 #   POLICY_REVIEW_REQUIRED=0|1 (optional; present when pr-status is available)
@@ -762,6 +763,7 @@ NORMALIZED_FINDINGS_JSON="$(printf '%s\n' "$TRIAGE_OUTPUT" | jq -c \
     else
       $finding
       + {
+          source: "haystack",
           severity: "advisory",
           disposition: "known-false-positive",
           disposition_rule: ($rule.id // ""),
@@ -777,6 +779,7 @@ NORMALIZED_FINDINGS_JSON="$(printf '%s\n' "$TRIAGE_OUTPUT" | jq -c \
     (first_line([.source.line?, .source.startLine?, .line?, .startLine?]) // null) as $line |
     (first_string([.agentFixPrompt?, .fixPrompt?, .suggestion?]) // null) as $fix_hint |
     {
+      source: "haystack",
       severity: $severity,
       category: $category,
       summary: $summary,
@@ -940,6 +943,7 @@ if [ "$PR_STATUS_CHECK" != "0" ]; then
       printf 'BLOCKING_COUNT=%d\n' "$POLICY_BLOCKING_COUNT"
       printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
       printf 'COMMENT_COUNT=%d\n' "$POLICY_COMMENT_COUNT"
+      printf 'ADVISORY_FINDINGS=%s\n' "$ADVISORY_FINDINGS_JSON"
       printf 'ADVISORY_FINDINGS_JSON=%s\n' "$ADVISORY_FINDINGS_JSON"
       printf 'BLOCKING_FINDINGS_JSON=%s\n' "$POLICY_BLOCKING_FINDINGS_JSON"
       printf 'POLICY_STATUS_AVAILABLE=0\n'
@@ -971,6 +975,7 @@ if [ "$BLOCKING_COUNT" -gt 0 ]; then
   printf 'BLOCKING_COUNT=%d\n' "$BLOCKING_COUNT"
   printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
   printf 'COMMENT_COUNT=%d\n' "$COMMENT_COUNT"
+  printf 'ADVISORY_FINDINGS=%s\n' "$ADVISORY_FINDINGS_JSON"
   printf 'ADVISORY_FINDINGS_JSON=%s\n' "$ADVISORY_FINDINGS_JSON"
   printf 'BLOCKING_FINDINGS_JSON=%s\n' "$BLOCKING_FINDINGS_JSON"
   printf 'POLICY_STATUS_AVAILABLE=%d\n' "$POLICY_STATUS_AVAILABLE"
@@ -989,6 +994,7 @@ printf 'RESULT=clean\n'
 printf 'BLOCKING_COUNT=0\n'
 printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
 printf 'COMMENT_COUNT=%d\n' "$COMMENT_COUNT"
+printf 'ADVISORY_FINDINGS=%s\n' "$ADVISORY_FINDINGS_JSON"
 printf 'ADVISORY_FINDINGS_JSON=%s\n' "$ADVISORY_FINDINGS_JSON"
 printf 'BLOCKING_FINDINGS_JSON=%s\n' "$BLOCKING_FINDINGS_JSON"
 printf 'POLICY_STATUS_AVAILABLE=%d\n' "$POLICY_STATUS_AVAILABLE"

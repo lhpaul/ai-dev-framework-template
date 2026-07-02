@@ -444,6 +444,31 @@ compact_advisory_findings_json() {
   printf '%s\n' "$raw_json" | jq -c 'if type == "array" then . else error("expected advisory finding array") end'
 }
 
+normalize_advisory_findings_json() {
+  local raw_json="$1"
+  local default_source="$2"
+  printf '%s\n' "$raw_json" | jq -c --arg source "$default_source" '
+    if type != "array" then
+      error("expected advisory finding array")
+    else
+      map(
+        if type == "object" then . else {summary: (.|tostring)} end
+        | .source = ((.source // $source) | tostring)
+        | .category = ((.category // "Advisory") | tostring)
+        | .summary = ((.summary // .message // .category // "Advisory finding") | tostring)
+      )
+    end
+  '
+}
+
+combine_advisory_findings_jsons() {
+  if [ "$#" -eq 0 ]; then
+    printf '[]'
+    return 0
+  fi
+  printf '%s\n' "$@" | jq -s -c 'add'
+}
+
 is_nonnegative_int() {
   case "${1:-}" in
     ''|*[!0-9]*) return 1 ;;
@@ -456,6 +481,7 @@ advisory_disposition_required_for_platform() {
   local suggestion_count="${2:-0}"
   local policy_review_required="${3:-0}"
   local advisory_labels="${4:-}"
+  local advisory_findings_json="${5:-}"
 
   [ "$result" = "clean" ] || return 1
   if is_nonnegative_int "$suggestion_count" && [ "$suggestion_count" -gt 0 ]; then
@@ -463,6 +489,10 @@ advisory_disposition_required_for_platform() {
   fi
   [ "$policy_review_required" = "1" ] && return 0
   [ -n "$advisory_labels" ] && return 0
+  if [ -n "$advisory_findings_json" ] \
+      && [ "$(printf '%s\n' "$advisory_findings_json" | jq 'if type == "array" then length else 0 end' 2>/dev/null || printf 0)" -gt 0 ]; then
+    return 0
+  fi
   return 1
 }
 
@@ -476,7 +506,7 @@ render_structured_advisory_entries() {
       | gsub("\\r?\\n"; " ")
       | gsub("[[:space:]][[:space:]]+"; " ");
     .[] |
-      "- " + $platform + ": " + ((.category // "Advisory") | one_line) + " - " + ((.summary // .message // "Advisory finding") | one_line),
+      "- " + ((.source // $platform) | one_line) + ": " + ((.category // "Advisory") | one_line) + " - " + ((.summary // .message // "Advisory finding") | one_line),
       (if ((.disposition // "") == "known-false-positive") then
         "  Disposition: Known false positive" +
         (if (((.disposition_rule // "") | tostring | length) > 0) then " (`" + ((.disposition_rule // "") | one_line) + "`)" else "" end) +
@@ -2164,6 +2194,7 @@ run_haystack_review() {
       print_kv BLOCKING_COUNT 0
       print_kv SUGGESTION_COUNT "$suggestion_count"
       for _haystack_field in \
+        ADVISORY_FINDINGS \
         ADVISORY_FINDINGS_JSON \
         BLOCKING_FINDINGS_JSON \
         POLICY_STATUS_AVAILABLE \
@@ -2197,6 +2228,7 @@ run_haystack_review() {
       print_kv BLOCKING_COUNT "$blocking_count"
       print_kv SUGGESTION_COUNT "$suggestion_count"
       for _haystack_field in \
+        ADVISORY_FINDINGS \
         ADVISORY_FINDINGS_JSON \
         BLOCKING_FINDINGS_JSON \
         POLICY_STATUS_AVAILABLE \
@@ -2943,6 +2975,23 @@ _EXTRACT_POSSIBLE_ISSUE_LABELS_
     printf '%s' "$result"
   }
 
+  _pr_agent_advisory_findings_json() {
+    local advisory_labels="$1"
+    local comment_url="${2:-}"
+    local labels_normalized
+    labels_normalized="$(printf '%s' "$advisory_labels" | tr '|' '\n')"
+    jq -R -s -c --arg source "pr-agent" --arg url "$comment_url" '
+      split("\n")
+      | map(select(length > 0))
+      | map(
+          {source: $source, category: ., summary: .}
+          + (if ($url | length) > 0 then {url: $url} else {} end)
+        )
+    ' <<_PR_AGENT_ADVISORY_FINDINGS_
+$labels_normalized
+_PR_AGENT_ADVISORY_FINDINGS_
+  }
+
   # Evaluate "Possible Issue" advisory labels found in a PR-Agent clean result.
   # "Possible Issue" findings are always treated as acknowledged without dispatching
   # a code-reviewer agent. In practice these findings have never been real blockers
@@ -3030,13 +3079,15 @@ _PR_AGENT_LABELS_
 
   case "$verdict" in
     clean)
-      local _advisory_labels _comment_url _advisory_entry _eval_status
+      local _advisory_labels _comment_url _advisory_entry _advisory_findings_json _eval_status
       _advisory_labels="$(_pr_agent_extract_advisory_labels "$comment_body")"
       if [ -n "$_advisory_labels" ]; then
         _comment_url="$(_pr_agent_latest_comment_url strict_sha)"
         _advisory_entry="${_advisory_labels}@@@${_comment_url}"
+        _advisory_findings_json="$(_pr_agent_advisory_findings_json "$_advisory_labels" "$_comment_url")"
       else
         _advisory_entry=""
+        _advisory_findings_json=""
       fi
       # Evaluate any "Possible Issue" advisory labels before emitting clean.
       _eval_status=0
@@ -3053,6 +3104,7 @@ _PR_AGENT_LABELS_
         print_kv COMMENT_COUNT 0
         print_kv BLOCKING_COUNT 0
         print_kv SUGGESTION_COUNT 0
+        [ -n "$_advisory_findings_json" ] && print_kv ADVISORY_FINDINGS "$_advisory_findings_json"
         [ -n "$_advisory_entry" ] && print_kv ADVISORY_LABELS "$_advisory_entry"
         return 3
       fi
@@ -3065,6 +3117,7 @@ _PR_AGENT_LABELS_
       print_kv COMMENT_COUNT 0
       print_kv BLOCKING_COUNT 0
       print_kv SUGGESTION_COUNT 0
+      [ -n "$_advisory_findings_json" ] && print_kv ADVISORY_FINDINGS "$_advisory_findings_json"
       [ -n "$_advisory_entry" ] && print_kv ADVISORY_LABELS "$_advisory_entry"
       return 0
       ;;
@@ -3140,13 +3193,15 @@ _PR_AGENT_LABELS_
   # --- Phase 3: Classify the comment body ---
   case "$verdict" in
     clean)
-      local _advisory_labels _comment_url _advisory_entry _eval_status
+      local _advisory_labels _comment_url _advisory_entry _advisory_findings_json _eval_status
       _advisory_labels="$(_pr_agent_extract_advisory_labels "$comment_body")"
       if [ -n "$_advisory_labels" ]; then
         _comment_url="$(_pr_agent_latest_comment_url recent_or_sha)"
         _advisory_entry="${_advisory_labels}@@@${_comment_url}"
+        _advisory_findings_json="$(_pr_agent_advisory_findings_json "$_advisory_labels" "$_comment_url")"
       else
         _advisory_entry=""
+        _advisory_findings_json=""
       fi
       # Evaluate any "Possible Issue" advisory labels before emitting clean.
       _eval_status=0
@@ -3163,6 +3218,7 @@ _PR_AGENT_LABELS_
         print_kv COMMENT_COUNT 0
         print_kv BLOCKING_COUNT 0
         print_kv SUGGESTION_COUNT 0
+        [ -n "$_advisory_findings_json" ] && print_kv ADVISORY_FINDINGS "$_advisory_findings_json"
         [ -n "$_advisory_entry" ] && print_kv ADVISORY_LABELS "$_advisory_entry"
         return 3
       fi
@@ -3175,6 +3231,7 @@ _PR_AGENT_LABELS_
       print_kv COMMENT_COUNT 0
       print_kv BLOCKING_COUNT 0
       print_kv SUGGESTION_COUNT 0
+      [ -n "$_advisory_findings_json" ] && print_kv ADVISORY_FINDINGS "$_advisory_findings_json"
       [ -n "$_advisory_entry" ] && print_kv ADVISORY_LABELS "$_advisory_entry"
       return 0
       ;;
@@ -5490,7 +5547,11 @@ for index in "${!platforms[@]}"; do
   platform_blocking_count="$(kv_value_default BLOCKING_COUNT "$platform_output" 0)"
   platform_suggestion_count="$(kv_value_default SUGGESTION_COUNT "$platform_output" 0)"
   platform_advisory_labels="$(kv_value_default ADVISORY_LABELS "$platform_output" "")"
-  platform_advisory_findings_json="$(kv_value_default ADVISORY_FINDINGS_JSON "$platform_output" "")"
+  platform_advisory_findings_json="$(kv_value_default ADVISORY_FINDINGS "$platform_output" "")"
+  if [ -z "$platform_advisory_findings_json" ]; then
+    platform_advisory_findings_json="$(kv_value_default ADVISORY_FINDINGS_JSON "$platform_output" "")"
+  fi
+  platform_advisory_findings_compact=""
   platform_policy_review_required="$(kv_value_default POLICY_REVIEW_REQUIRED "$platform_output" 0)"
   platform_reason="$(kv_value_default REASON "$platform_output" "")"
   if reviewer_failed_label_required_for_result "$platform_result" "$platform_reason"; then
@@ -5519,16 +5580,9 @@ for index in "${!platforms[@]}"; do
       aggregate_advisory_labels="$platform_advisory_labels"
     fi
   fi
-  if advisory_disposition_required_for_platform \
-      "$platform_result" "$platform_suggestion_count" "$platform_policy_review_required" "$platform_advisory_labels"; then
-    advisory_disposition_required=1
-  fi
-  if [ "$platform_result" = "clean" ] && [ "$platform_policy_review_required" = "1" ]; then
-    policy_review_disposition_required=1
-  fi
   last_platform="$platform_name"
   if [ -n "$platform_advisory_findings_json" ]; then
-    if ! platform_advisory_findings_compact="$(compact_advisory_findings_json "$platform_advisory_findings_json" 2>/dev/null)"; then
+    if ! platform_advisory_findings_compact="$(normalize_advisory_findings_json "$platform_advisory_findings_json" "$platform_name" 2>/dev/null)"; then
       aggregate_result="escalate"
       aggregate_reason="advisory_json_parse_failed"
       aggregate_output="$platform_output"
@@ -5541,6 +5595,14 @@ for index in "${!platforms[@]}"; do
       aggregate_advisory_findings_platforms+=("$platform_name")
       aggregate_advisory_findings_jsons+=("$platform_advisory_findings_compact")
     fi
+  fi
+  if advisory_disposition_required_for_platform \
+      "$platform_result" "$platform_suggestion_count" "$platform_policy_review_required" \
+      "$platform_advisory_labels" "$platform_advisory_findings_compact"; then
+    advisory_disposition_required=1
+  fi
+  if [ "$platform_result" = "clean" ] && [ "$platform_policy_review_required" = "1" ]; then
+    policy_review_disposition_required=1
   fi
 
   print_kv "PLATFORM_${platform_index}_NAME" "$platform_name"
@@ -5746,7 +5808,7 @@ _post_review_summary() {
 
 **Advisory findings (non-blocking):**"
   fi
-  if [ -n "$advisory_labels" ]; then
+  if [ -n "$advisory_labels" ] && [ "$structured_advisory_count" -eq 0 ]; then
     # Split entries by ||| separator using sed (IFS does not support multi-char
     # separators). Each entry has the form "<pipe-delimited labels>@@@<url>".
     local _entries_normalized
@@ -5774,26 +5836,6 @@ _ADVISORY_LABEL_LINES_
     done <<_ADVISORY_ENTRY_LINES_
 $_entries_normalized
 _ADVISORY_ENTRY_LINES_
-    # Append "Possible Issue" evaluation outcome when available.
-    if [ -n "$possible_issue_eval_outcome" ]; then
-      local _eval_note
-      case "$possible_issue_eval_outcome" in
-        acknowledged)
-          _eval_note="Auto-acknowledged: Possible Issue is advisory-only — loop proceeded clean"
-          ;;
-        fix_pushed)
-          _eval_note="Evaluated by code-reviewer: fix pushed — loop re-ran on new HEAD"
-          ;;
-        unavailable)
-          _eval_note="Evaluated by code-reviewer: unavailable — fell back to advisory-only (clean)"
-          ;;
-        *)
-          _eval_note="Evaluated by code-reviewer: outcome=${possible_issue_eval_outcome}"
-          ;;
-      esac
-      advisory_section="${advisory_section}
-  _Possible Issue evaluation_: ${_eval_note}"
-    fi
   fi
   if [ "$structured_advisory_count" -gt 0 ]; then
     local _adv_index=0
@@ -5816,6 +5858,25 @@ ${_structured_entries}"
       fi
       _adv_index=$((_adv_index + 1))
     done
+  fi
+  if [ -n "$possible_issue_eval_outcome" ] && [ "$advisory_finding_count" -gt 0 ]; then
+    local _eval_note
+    case "$possible_issue_eval_outcome" in
+      acknowledged)
+        _eval_note="Auto-acknowledged: Possible Issue is advisory-only — loop proceeded clean"
+        ;;
+      fix_pushed)
+        _eval_note="Evaluated by code-reviewer: fix pushed — loop re-ran on new HEAD"
+        ;;
+      unavailable)
+        _eval_note="Evaluated by code-reviewer: unavailable — fell back to advisory-only (clean)"
+        ;;
+      *)
+        _eval_note="Evaluated by code-reviewer: outcome=${possible_issue_eval_outcome}"
+        ;;
+    esac
+    advisory_section="${advisory_section}
+  _Possible Issue evaluation_: ${_eval_note}"
   fi
   if [ "${policy_review_disposition_required:-0}" = "1" ] && [ "$advisory_finding_count" -eq 0 ]; then
     local _policy_fallback="policy review required"
@@ -6242,6 +6303,12 @@ print_kv PLATFORM "$last_platform"
 print_kv COMMENT_COUNT "$total_comment_count"
 print_kv BLOCKING_COUNT "$total_blocking_count"
 print_kv SUGGESTION_COUNT "$total_suggestion_count"
+if [ "${#aggregate_advisory_findings_jsons[@]}" -gt 0 ]; then
+  aggregate_advisory_findings_json="$(combine_advisory_findings_jsons "${aggregate_advisory_findings_jsons[@]}")"
+else
+  aggregate_advisory_findings_json="[]"
+fi
+print_kv ADVISORY_FINDINGS "$aggregate_advisory_findings_json"
 advisory_disposition_required_output="$advisory_disposition_required"
 [ "$aggregate_result" != "clean" ] && advisory_disposition_required_output=0
 print_kv ADVISORY_DISPOSITION_REQUIRED "$advisory_disposition_required_output"
