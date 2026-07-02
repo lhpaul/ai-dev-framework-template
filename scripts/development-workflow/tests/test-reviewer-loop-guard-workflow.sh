@@ -53,6 +53,7 @@ run_test "missing_summary_fails_without_elapsed_wait" "yes" "$(contains "No revi
 run_test "summary_marker_one_checked" "yes" "$(contains "MARKER1=\"### Automated Reviewer Loop Summary\"")"
 run_test "summary_marker_two_checked" "yes" "$(contains "MARKER2='*Posted automatically by \`pr-review-loop.sh\`.*'")"
 run_test "non_summary_comment_skips" "yes" "$(contains "Issue comment does not contain the canonical reviewer-loop summary markers; skipping.")"
+run_test "summary_comment_payload_is_counted" "yes" "$(contains "Fresh comment listing did not include triggering summary comment; counting event payload.")"
 run_test "comment_path_fetches_current_pr" "yes" "$(contains 'gh api "repos/$REPO/pulls/$PR_NUMBER"')"
 run_test "comment_path_fetches_current_comments" "yes" "$(contains 'gh api "repos/$REPO/issues/$PR_NUMBER/comments"')"
 run_test "metadata_fetch_failure_posts_status" "yes" "$(contains "Could not fetch PR metadata. Re-run the workflow to retry.")"

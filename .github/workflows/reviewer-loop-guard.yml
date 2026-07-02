@@ -74,6 +74,7 @@ jobs:
           # shellcheck disable=SC2016
           MARKER2='*Posted automatically by `pr-review-loop.sh`.*'
           GUARD_CONTEXT="Reviewer-loop completion guard (#${PR_NUMBER})"
+          EVENT_COMMENT_HAS_SUMMARY=false
 
           post_failure_status_if_possible() {
             local sha="$1"
@@ -94,7 +95,7 @@ jobs:
 
           if [ "$EVENT_NAME" = "issue_comment" ]; then
             case "$COMMENT_BODY" in
-              *"$MARKER1"*"$MARKER2"*|*"$MARKER2"*"$MARKER1"*) ;;
+              *"$MARKER1"*"$MARKER2"*|*"$MARKER2"*"$MARKER1"*) EVENT_COMMENT_HAS_SUMMARY=true ;;
               *)
                 echo "Issue comment does not contain the canonical reviewer-loop summary markers; skipping."
                 exit 0
@@ -182,6 +183,11 @@ jobs:
               -f description="Could not fetch PR comments. Re-run the workflow to retry." \
               -f context="$GUARD_CONTEXT"
             exit 1
+          fi
+
+          if [ "$EVENT_COMMENT_HAS_SUMMARY" = "true" ] && [ "${FOUND:-0}" -eq 0 ]; then
+            echo "Fresh comment listing did not include triggering summary comment; counting event payload."
+            FOUND=1
           fi
 
           echo "Reviewer-loop summary comments found: ${FOUND}"
