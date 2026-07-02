@@ -241,7 +241,8 @@ existing shell helper style in `pr-review-loop.sh` and `haystack-reviewer.sh`.
     - `bash scripts/development-workflow/tests/test-haystack-reviewer.sh`
     - `bash scripts/development-workflow/tests/test-pr-review-loop.sh`
     - `bash scripts/development-workflow/validate-workflow-config.sh`
-    - `bash -n scripts/development-workflow/haystack-reviewer.sh scripts/development-workflow/pr-review-loop.sh`
+    - `bash -n scripts/development-workflow/haystack-reviewer.sh`
+    - `bash -n scripts/development-workflow/pr-review-loop.sh`
     - `shellcheck scripts/development-workflow/haystack-reviewer.sh scripts/development-workflow/pr-review-loop.sh`
     - `python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop-external-review-loop-hardening`
     - `npx markdownlint-cli2 "docs/workflow/development-workflow/integrations/pr-review-platform.md" "docs/workflow/development-workflow/integrations/haystack-triage.md" "docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md" "docs/testing/workflow/1118-unify-advisory-contract.smoke-test.md" "CHANGELOG.md"`
