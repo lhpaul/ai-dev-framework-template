@@ -584,6 +584,16 @@ advisory_json="$(_kv_value ADVISORY_FINDINGS_JSON "$output")"
 run_test "structured_message_fallback_summary" "Message-only finding" "$(printf '%s\n' "$advisory_json" | jq -r '.[0].summary')"
 run_test "structured_message_fallback_detail" "Message-only finding" "$(printf '%s\n' "$advisory_json" | jq -r '.[0].detail')"
 
+# Test 5b.11: invalid line values are omitted.
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":4,"findings":[{"category":"Minor","summary":"Negative","detail":"","source":{"path":"negative.sh","line":-1}},{"category":"Minor","summary":"Zero","detail":"","source":{"path":"zero.sh","line":"0"}},{"category":"Minor","summary":"Decimal","detail":"","source":{"path":"decimal.sh","line":2.5}}]}'
+_reset_mocks
+_install_haystack_mock
+
+output=$(_run_reviewer 10 1)
+advisory_json="$(_kv_value ADVISORY_FINDINGS_JSON "$output")"
+
+run_test "structured_invalid_lines_omitted" "0" "$(printf '%s\n' "$advisory_json" | jq '[.[] | select(has("line"))] | length')"
+
 # ---------------------------------------------------------------------------
 # Area 6: HAYSTACK_POLL_INTERVAL controls retry cadence (env var)
 # ---------------------------------------------------------------------------

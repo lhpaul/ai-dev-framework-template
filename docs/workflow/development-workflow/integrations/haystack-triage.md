@@ -124,7 +124,7 @@ data:
 | Field | Fallback order |
 | ----- | -------------- |
 | `path` | `.source.path`, `.source.file`, `.path`, `.file` |
-| `line` | `.source.line`, `.source.startLine`, `.line`, `.startLine` |
+| `line` | Positive integer values from `.source.line`, `.source.startLine`, `.line`, `.startLine` |
 | `fix_hint` | `.agentFixPrompt`, `.fixPrompt`, `.suggestion` |
 
 The structured arrays are derived from the same classification pass as

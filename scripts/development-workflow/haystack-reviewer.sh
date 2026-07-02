@@ -483,7 +483,8 @@ printf '%s\n' "$TRIAGE_OUTPUT" >&2
 # Confirmed schema: .findings[].category (not .findings[].severity)
 # Blocking categories: "Logic error", "Critical"
 # Advisory categories: "Minor", "Advisory", "Nitpick", "Trivial",
-#                      "Weak test coverage", "Major" (see NOTE above)
+#                      "Weak test coverage", "Rules violation",
+#                      "Code contract violation", "Major" (see NOTE above)
 # Unrecognised categories: blocking (safe-fail)
 
 # Build a normalized finding snapshot once, then derive counts and structured
@@ -511,8 +512,8 @@ NORMALIZED_FINDINGS_JSON="$(printf '%s\n' "$TRIAGE_OUTPUT" | jq -c --arg major_i
   def first_line($values):
     $values
     | map(select(. != null and . != ""))
-    | map(if type == "number" then .
-          elif type == "string" and test("^[0-9]+$") then tonumber
+    | map(if type == "number" and . >= 1 and floor == . then .
+          elif type == "string" and test("^[1-9][0-9]*$") then tonumber
           else empty end)
     | first;
   def normalized:
