@@ -43,6 +43,7 @@ run_test "pull_request_target_trigger_present" "yes" "$(contains "pull_request_t
 run_test "issue_comment_trigger_present" "yes" "$(contains "issue_comment:")"
 run_test "issue_comment_created_edited" "yes" "$(contains "types: [created, edited]")"
 run_test "pr_event_types_preserved" "yes" "$(contains "types: [opened, reopened, ready_for_review, synchronize]")"
+run_test "non_summary_comments_do_not_cancel_summary_refresh" "yes" "$(contains "cancel-in-progress: false")"
 
 run_test "no_default_max_wait" "yes" "$(not_contains "GUARD_MAX_WAIT")"
 run_test "no_poll_interval" "yes" "$(not_contains "GUARD_POLL_INTERVAL")"

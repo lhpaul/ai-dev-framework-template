@@ -41,7 +41,7 @@ on:
 
 concurrency:
   group: reviewer-loop-guard-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   guard:

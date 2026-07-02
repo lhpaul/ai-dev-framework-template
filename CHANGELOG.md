@@ -27,8 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Event-driven reviewer guard** (#1097): Replace default long reviewer-loop
   guard polling with a fast PR check plus summary-comment readiness refresh.
 - **Reviewer-loop guard metadata failures** (#1097): Post retry-oriented failure
-  statuses when PR metadata or head fields cannot be resolved, avoiding stale
-  successful guard statuses.
+  statuses when PR metadata or head fields cannot be resolved, and prevent
+  non-summary comments from canceling summary-triggered guard refreshes.
 - **Placeholder workflows opt-in** (#1098): Make template placeholder deploy and
   regression workflows opt-in so downstream repositories do not spend runner
   minutes before configuring real pipelines.
