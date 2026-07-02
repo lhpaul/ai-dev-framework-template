@@ -1378,8 +1378,10 @@ run_test "advisory_disposition_not_required_for_blocking_result" "0" "$_advisory
 unset _advisory_trigger_count
 
 # Test 10.1e: final aggregate output emits the disposition-required signal.
-if grep -qF 'print_kv ADVISORY_DISPOSITION_REQUIRED "$advisory_disposition_required"' \
-    "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"; then
+if grep -qF 'advisory_disposition_required_output="$advisory_disposition_required"' \
+    "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" \
+    && grep -qF 'print_kv ADVISORY_DISPOSITION_REQUIRED "$advisory_disposition_required_output"' \
+      "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"; then
   _advisory_signal_emitted=1
 else
   _advisory_signal_emitted=0

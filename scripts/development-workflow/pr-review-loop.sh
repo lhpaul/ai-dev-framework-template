@@ -6216,7 +6216,9 @@ print_kv PLATFORM "$last_platform"
 print_kv COMMENT_COUNT "$total_comment_count"
 print_kv BLOCKING_COUNT "$total_blocking_count"
 print_kv SUGGESTION_COUNT "$total_suggestion_count"
-print_kv ADVISORY_DISPOSITION_REQUIRED "$advisory_disposition_required"
+advisory_disposition_required_output="$advisory_disposition_required"
+[ "$aggregate_result" != "clean" ] && advisory_disposition_required_output=0
+print_kv ADVISORY_DISPOSITION_REQUIRED "$advisory_disposition_required_output"
 
 if [ -n "$aggregate_output" ]; then
   review_comment_id="$(kv_value REVIEW_COMMENT_ID "$aggregate_output")"
