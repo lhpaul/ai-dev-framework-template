@@ -518,14 +518,16 @@ NORMALIZED_FINDINGS_JSON="$(printf '%s\n' "$TRIAGE_OUTPUT" | jq -c --arg major_i
   def normalized:
     category as $category |
     (if blocking($category) then "blocking" else "advisory" end) as $severity |
+    (first_string([.summary?, .title?, .message?]) // "") as $summary |
+    (first_string([.detail?, .message?, .body?]) // "") as $detail |
     (first_string([.source.path?, .source.file?, .path?, .file?]) // null) as $path |
     (first_line([.source.line?, .source.startLine?, .line?, .startLine?]) // null) as $line |
     (first_string([.agentFixPrompt?, .fixPrompt?, .suggestion?]) // null) as $fix_hint |
     {
       severity: $severity,
       category: $category,
-      summary: ((.summary // "") | tostring),
-      detail: ((.detail // "") | tostring)
+      summary: $summary,
+      detail: $detail
     }
     + (if $path == null then {} else {path: $path} end)
     + (if $line == null then {} else {line: $line} end)

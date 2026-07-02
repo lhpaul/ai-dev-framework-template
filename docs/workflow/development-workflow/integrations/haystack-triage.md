@@ -115,8 +115,8 @@ Each finding object includes these required fields:
 | ----- | ----------- |
 | `severity` | Normalized workflow severity: `advisory` or `blocking`. |
 | `category` | Haystack category string, or `__UNKNOWN__` when Haystack omitted the category. |
-| `summary` | Short finding summary, or an empty string when Haystack omitted it. |
-| `detail` | Detailed finding text, or an empty string when Haystack omitted it. |
+| `summary` | Short finding summary from `.summary`, `.title`, or `.message`; empty string when Haystack omitted compatible text. |
+| `detail` | Detailed finding text from `.detail`, `.message`, or `.body`; empty string when Haystack omitted compatible text. |
 
 The reviewer includes these optional fields when Haystack supplies compatible
 data:

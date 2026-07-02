@@ -573,6 +573,17 @@ run_test "structured_escaped_detail" "Line one|Line two" "$(printf '%s\n' "$advi
 # shellcheck disable=SC2016  # Expected value intentionally contains literal $PATH.
 run_test "structured_escaped_fix_hint" 'Use $PATH && echo ok' "$(printf '%s\n' "$advisory_json" | jq -r '.[0].fix_hint')"
 
+# Test 5b.10: Haystack message-only findings still populate text fields.
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":4,"findings":[{"category":"Minor","message":"Message-only finding"}]}'
+_reset_mocks
+_install_haystack_mock
+
+output=$(_run_reviewer 10 1)
+advisory_json="$(_kv_value ADVISORY_FINDINGS_JSON "$output")"
+
+run_test "structured_message_fallback_summary" "Message-only finding" "$(printf '%s\n' "$advisory_json" | jq -r '.[0].summary')"
+run_test "structured_message_fallback_detail" "Message-only finding" "$(printf '%s\n' "$advisory_json" | jq -r '.[0].detail')"
+
 # ---------------------------------------------------------------------------
 # Area 6: HAYSTACK_POLL_INTERVAL controls retry cadence (env var)
 # ---------------------------------------------------------------------------
