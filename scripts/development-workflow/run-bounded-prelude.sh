@@ -46,12 +46,16 @@ error_exit() {
 
 emit_guardrails_unreadable_stop() {
   local detail="${1:-}"
+  local affected="${original_command:-unknown scope}"
+  local human_action="fix the guardrails block in .ai-dev-workflow.yaml, then rerun the bounded command"
   if [ "$json_output" -eq 1 ]; then
-    jq -nc --arg detail "$detail" \
-      '{stopCondition: "guardrails_config_unreadable", readOnlyGuarantee: "No tracker updates, branch creation, PR edits, labels, comments, merges, issue closure, or branch deletion were performed.", detail: $detail}'
+    jq -nc --arg detail "$detail" --arg affected "$affected" --arg humanAction "$human_action" \
+      '{stopCondition: "guardrails_config_unreadable", affectedWorkItem: $affected, humanActionRequired: $humanAction, readOnlyGuarantee: "No tracker updates, branch creation, PR edits, labels, comments, merges, issue closure, or branch deletion were performed.", detail: $detail}'
     exit 1
   fi
-  printf 'STOP: guardrails_config_unreadable\n'
+  printf "STOP: guardrail 'guardrails_config_unreadable' halted this run\n"
+  printf 'Affected work item: %s\n' "$affected"
+  printf 'Human action required: %s\n' "$human_action"
   if [ -n "$detail" ]; then
     printf '%s\n' "$detail" >&2
   fi
@@ -68,34 +72,112 @@ require_value() {
 }
 
 read_guardrails_json() {
-  local config_file py_result _py_exit
+  local config_file py_result _py_exit err_file parse_detail
   if ! config_file="$(workflow_effective_config_file 2>/dev/null)"; then
-    printf '%s\n' '{"section":"absent","mode":"manual","backlog_start":false}'
+    printf '%s\n' '{"section":"absent","mode":"manual","backlog_start":false,"stages":{"spec":{"may_open_pr":true,"may_merge_pr":false,"max_merge_risk":"low","required_evidence":[]},"plan":{"may_open_pr":true,"may_merge_pr":false,"max_merge_risk":"low","required_evidence":[]},"implementation":{"may_open_pr":true,"may_merge_pr":false,"max_merge_risk":"low","required_evidence":[]}},"stop_conditions":[],"audit":{"pr_disposition_record":"not_required","work_item_ledger_record":"not_required"}}'
     return 0
   fi
 
   _py_exit=0
-  py_result="$(python3 - "$config_file" <<'PYEOF'
-import sys, json
+  err_file="$(mktemp)"
+  py_result="$(python3 - "$config_file" "$SCRIPT_DIR/workflow-config-resolver.py" 2>"$err_file" <<'PYEOF'
+import importlib.util
+import json
+from pathlib import Path
+import sys
+
+
+DEFAULT_STAGE = {
+    "may_open_pr": True,
+    "may_merge_pr": False,
+    "max_merge_risk": "low",
+    "required_evidence": [],
+}
+DEFAULT_STAGES = {
+    "spec": dict(DEFAULT_STAGE),
+    "plan": dict(DEFAULT_STAGE),
+    "implementation": dict(DEFAULT_STAGE),
+}
+DEFAULT_AUDIT = {
+    "pr_disposition_record": "not_required",
+    "work_item_ledger_record": "not_required",
+}
+
+
+def as_bool(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return bool(value)
+
+
+def default_guardrails(section="absent"):
+    return {
+        "section": section,
+        "mode": "manual",
+        "backlog_start": False,
+        "stages": DEFAULT_STAGES,
+        "stop_conditions": [],
+        "audit": DEFAULT_AUDIT,
+    }
+
+
 try:
-    import yaml
-    with open(sys.argv[1], 'r') as f:
-        cfg = yaml.safe_load(f) or {}
+    sys.dont_write_bytecode = True
+    resolver_path = Path(sys.argv[2])
+    spec = importlib.util.spec_from_file_location("workflow_config_resolver", resolver_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load {resolver_path}")
+    resolver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(resolver)
+    cfg = resolver.parse_yaml_subset(Path(sys.argv[1]))
     guardrails = cfg.get('guardrails') if isinstance(cfg, dict) else None
     if not isinstance(guardrails, dict):
-        print(json.dumps({"section": "absent", "mode": "manual", "backlog_start": False}))
+        print(json.dumps(default_guardrails()))
         sys.exit(0)
     mode = guardrails.get('mode', 'manual')
     if mode not in ('manual', 'assisted', 'delegated', 'autonomous'):
-        mode = 'manual'
+        raise ValueError(f"guardrails.mode must be manual, assisted, delegated, or autonomous, got {mode!r}")
     backlog_start_cfg = guardrails.get('backlog_start', {})
     if isinstance(backlog_start_cfg, dict):
         allow = backlog_start_cfg.get('allow_without_confirmation', False)
     else:
         allow = False
-    if not isinstance(allow, bool):
-        allow = str(allow).lower() == 'true'
-    print(json.dumps({"section": "present", "mode": mode, "backlog_start": allow}))
+    stages_cfg = guardrails.get("stages", {})
+    stages = {}
+    for stage in ("spec", "plan", "implementation"):
+        cfg_stage = stages_cfg.get(stage, {}) if isinstance(stages_cfg, dict) else {}
+        stage_out = dict(DEFAULT_STAGE)
+        if isinstance(cfg_stage, dict):
+            if "may_open_pr" in cfg_stage:
+                stage_out["may_open_pr"] = as_bool(cfg_stage["may_open_pr"])
+            if "may_merge_pr" in cfg_stage:
+                stage_out["may_merge_pr"] = as_bool(cfg_stage["may_merge_pr"])
+            if "max_merge_risk" in cfg_stage:
+                risk = cfg_stage["max_merge_risk"]
+                if risk not in ("low", "medium", "high"):
+                    raise ValueError(
+                        f"guardrails.stages.{stage}.max_merge_risk must be low, medium, or high, got {risk!r}"
+                    )
+                stage_out["max_merge_risk"] = risk
+            evidence = cfg_stage.get("required_evidence", [])
+            stage_out["required_evidence"] = evidence if isinstance(evidence, list) else []
+        stages[stage] = stage_out
+    stops = guardrails.get("stop_conditions", [])
+    audit_cfg = guardrails.get("audit", {})
+    audit = dict(DEFAULT_AUDIT)
+    if isinstance(audit_cfg, dict):
+        audit["pr_disposition_record"] = audit_cfg.get("pr_disposition_record", "not_required")
+        audit["work_item_ledger_record"] = audit_cfg.get("work_item_ledger_record", "not_required")
+    print(json.dumps({
+        "section": "present",
+        "mode": mode,
+        "backlog_start": as_bool(allow),
+        "stages": stages,
+        "stop_conditions": stops if isinstance(stops, list) else [],
+        "audit": audit,
+    }))
 except Exception as exc:
     print(f"failed to parse guardrails from {sys.argv[1]}: {exc}", file=sys.stderr)
     sys.exit(2)
@@ -103,13 +185,62 @@ PYEOF
   )" || _py_exit=$?
 
   if [ "$_py_exit" -eq 2 ]; then
-    emit_guardrails_unreadable_stop "failed to read guardrails from workflow config $config_file"
+    parse_detail="$(awk 'BEGIN{out=""} {out = out (out == "" ? "" : " ") $0} END{print out}' "$err_file")" || parse_detail=""
+    rm -f "$err_file"
+    if [ -n "$parse_detail" ]; then
+      printf '%s\n' "$parse_detail" >&2
+      return 2
+    fi
+    printf 'failed to read guardrails from workflow config %s\n' "$config_file" >&2
+    return 2
   fi
+  rm -f "$err_file"
   if [ "$_py_exit" -ne 0 ]; then
-    py_result='{"section":"absent","mode":"manual","backlog_start":false}'
+    py_result='{"section":"absent","mode":"manual","backlog_start":false,"stages":{"spec":{"may_open_pr":true,"may_merge_pr":false,"max_merge_risk":"low","required_evidence":[]},"plan":{"may_open_pr":true,"may_merge_pr":false,"max_merge_risk":"low","required_evidence":[]},"implementation":{"may_open_pr":true,"may_merge_pr":false,"max_merge_risk":"low","required_evidence":[]}},"stop_conditions":[],"audit":{"pr_disposition_record":"not_required","work_item_ledger_record":"not_required"}}'
   fi
 
   printf '%s\n' "$py_result"
+}
+
+json_get() {
+  local json="$1" filter="$2"
+  printf '%s\n' "$json" | jq -r "$filter"
+}
+
+guardrails_scope_may_merge() {
+  local guardrails="$1" scope_file="$2"
+  jq -nr --argjson guardrails "$guardrails" --slurpfile scope "$scope_file" '
+    def infer_stage($status):
+      ($status | ascii_downcase) as $s |
+      if $s == "backlog" or ($s | test("writing spec|spec in review|spec")) then "spec"
+      elif $s | test("writing plan|plan in review|plan") then "plan"
+      elif $s | test("development|implement") then "implementation"
+      else "implementation"
+      end;
+    [$scope[0].items[]? | infer_stage(.status // "")] | unique as $stages |
+    if ($stages | length) == 0 then "false"
+    elif all($stages[]; ($guardrails.stages[.].may_merge_pr // false) == true) then "true"
+    else "false"
+    end
+  '
+}
+
+guardrails_scope_max_risk() {
+  local guardrails="$1" scope_file="$2"
+  jq -nr --argjson guardrails "$guardrails" --slurpfile scope "$scope_file" '
+    def infer_stage($status):
+      ($status | ascii_downcase) as $s |
+      if $s == "backlog" or ($s | test("writing spec|spec in review|spec")) then "spec"
+      elif $s | test("writing plan|plan in review|plan") then "plan"
+      elif $s | test("development|implement") then "implementation"
+      else "implementation"
+      end;
+    def rank($risk): {"low":1,"medium":2,"high":3}[$risk] // 1;
+    [$scope[0].items[]? | infer_stage(.status // "")] | unique as $stages |
+    if ($stages | length) == 0 then "low"
+    else [$stages[] | ($guardrails.stages[.].max_merge_risk // "low")] | min_by(rank(.))
+    end
+  '
 }
 
 while [ "$#" -gt 0 ]; do
@@ -269,6 +400,37 @@ cleanup() {
 }
 trap cleanup EXIT
 
+guardrails_error_file="$tmp_dir/guardrails-error.txt"
+if ! guardrails_json="$(read_guardrails_json 2>"$guardrails_error_file")"; then
+  guardrails_detail="$(awk 'BEGIN{out=""} {out = out (out == "" ? "" : " ") $0} END{print out}' "$guardrails_error_file")" || guardrails_detail=""
+  rm -f "$guardrails_error_file"
+  if [ -n "$guardrails_detail" ]; then
+    emit_guardrails_unreadable_stop "$guardrails_detail"
+  fi
+  emit_guardrails_unreadable_stop "failed to read guardrails from workflow config"
+fi
+rm -f "$guardrails_error_file"
+guardrails_section="$(json_get "$guardrails_json" '.section')"
+guardrails_source="conservative-defaults"
+if [ "$guardrails_section" = "present" ]; then
+  guardrails_source="guardrails"
+fi
+may_start_backlog_source=""
+delegate_review_source=""
+may_merge_source=""
+max_risk_source=""
+if [ -z "$may_start_backlog_override" ]; then
+  may_start_backlog_override="$(json_get "$guardrails_json" '.backlog_start | tostring')"
+  may_start_backlog_source="$guardrails_source"
+fi
+if [ -z "$delegate_review_override" ]; then
+  case "$(json_get "$guardrails_json" '.mode')" in
+    assisted|delegated|autonomous) delegate_review_override="true" ;;
+    *) delegate_review_override="false" ;;
+  esac
+  delegate_review_source="$guardrails_source"
+fi
+
 resolver_common=()
 [ -n "$base_override" ] && resolver_common+=(--base "$base_override")
 [ "$delegate_review_override" = "true" ] && resolver_common+=(--delegate-review)
@@ -300,6 +462,15 @@ case "$scope_mode" in
     ;;
 esac
 
+if [ -z "$may_merge_override" ]; then
+  may_merge_override="$(guardrails_scope_may_merge "$guardrails_json" "$scope_file")"
+  may_merge_source="$guardrails_source"
+fi
+if [ -z "$max_risk_override" ]; then
+  max_risk_override="$(guardrails_scope_max_risk "$guardrails_json" "$scope_file")"
+  max_risk_source="$guardrails_source"
+fi
+
 policy_args=(
   --scope "$scope_file"
   --original-command "$original_command"
@@ -315,8 +486,30 @@ policy_args+=(--json)
 if ! "$SCRIPT_DIR/run-epic-policy-recommender.sh" "${policy_args[@]+"${policy_args[@]}"}" > "$policy_file"; then
   error_exit "policy recommendation failed"
 fi
-
-guardrails_json="$(read_guardrails_json)"
+policy_adjusted_file="$tmp_dir/policy.adjusted.json"
+if ! jq -c \
+  --arg mayStartBacklogSource "$may_start_backlog_source" \
+  --arg delegateReviewSource "$delegate_review_source" \
+  --arg mayMergeSource "$may_merge_source" \
+  --arg maxRiskSource "$max_risk_source" \
+  '
+  def maybe_source($field; $source):
+    if $source == "" then . else setpath(["fieldSources", $field]; $source) end;
+  . as $policy
+  | maybe_source("mayStartBacklog"; $mayStartBacklogSource)
+  | maybe_source("delegateReview"; $delegateReviewSource)
+  | maybe_source("mayMerge"; $mayMergeSource)
+  | maybe_source("maxRisk"; $maxRiskSource)
+  | if (
+      [$mayStartBacklogSource, $delegateReviewSource, $mayMergeSource, $maxRiskSource]
+      | any(. != "")
+    ) and .confirmationReason == "policy values are explicit; review resolved policy and confirm before mutation" then
+      .confirmationReason = "one or more autonomy policy values were resolved from repository guardrails or conservative defaults; review resolved policy and confirm before mutation"
+    else . end
+  ' "$policy_file" > "$policy_adjusted_file"; then
+  error_exit "policy source adjustment failed"
+fi
+mv "$policy_adjusted_file" "$policy_file"
 
 prelude_json="$(jq -nc \
   --slurpfile scope "$scope_file" \
@@ -341,6 +534,10 @@ printf 'Guardrails: section=%s mode=%s backlog_start=%s\n' \
   "$(jq -r '.guardrails.section' <<<"$prelude_json")" \
   "$(jq -r '.guardrails.mode' <<<"$prelude_json")" \
   "$(jq -r '.guardrails.backlog_start' <<<"$prelude_json")"
+if [ "$(jq -r '.guardrails.section' <<<"$prelude_json")" = "absent" ]; then
+  printf 'no `guardrails` section found; conservative defaults are in effect\n'
+  printf 'Default guardrails: mode=manual; stages.*.may_open_pr=true; stages.*.may_merge_pr=false; stages.*.max_merge_risk=low; backlog_start.allow_without_confirmation=false; audit records not required\n'
+fi
 printf 'Requires confirmation: %s\n' "$(jq -r '.policyRecommendation.requiresConfirmation' <<<"$prelude_json")"
 printf 'Reason: %s\n' "$(jq -r '.policyRecommendation.confirmationReason' <<<"$prelude_json")"
 printf 'Copy-paste: %s\n' "$(jq -r '.policyRecommendation.copyPasteCommand' <<<"$prelude_json")"
