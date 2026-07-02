@@ -72,7 +72,7 @@ _harness_exit() {
 }
 trap _harness_exit EXIT
 
-for _cmd in bash env jq mktemp date cat rm wc sed tr sleep; do
+for _cmd in bash env jq mktemp date cat rm wc sed tr sleep python3 dirname; do
   _cmd_path="$(command -v "$_cmd")"
   ln -sf "$_cmd_path" "$NO_TIMEOUT_BIN/$_cmd"
 done
@@ -248,6 +248,27 @@ _run_reviewer_exit_code() {
     echo $?
     set -e
   fi
+}
+
+_run_reviewer_with_config() {
+  # Runs haystack-reviewer.sh against a temporary workflow config root without
+  # setting timeout/poll env vars, so repository config values are observable.
+  local config_root="$1"
+  local reviewer_path="${TEST_REVIEWER_PATH:-$MOCK_BIN:$PATH}"
+  rm -f "$_REVIEWER_OUTPUT_FILE" "$_REVIEWER_EXIT_FILE"
+  set +e
+  HAYSTACK_WORKFLOW_REPO_ROOT="$config_root" \
+  HAYSTACK_PR_STATUS_CHECK="${TEST_HAYSTACK_PR_STATUS_CHECK:-0}" \
+  MOCK_CALL_LOG="$CALL_LOG" \
+  MOCK_RESPONSE_SEQ="$RESPONSE_SEQ_FILE" \
+  MOCK_EXIT_SEQ="$EXIT_SEQ_FILE" \
+  MOCK_SLEEP_SEQ="$SLEEP_SEQ_FILE" \
+  PATH="$reviewer_path" \
+    bash "$HAYSTACK_REVIEWER" "123" "owner" "repo" \
+    >"$_REVIEWER_OUTPUT_FILE" 2>/dev/null
+  echo $? > "$_REVIEWER_EXIT_FILE"
+  set -e
+  cat "$_REVIEWER_OUTPUT_FILE"
 }
 
 _kv_value() {
@@ -537,6 +558,27 @@ output=$(HAYSTACK_MAJOR_IS_BLOCKING=1 _run_reviewer 10 1)
 blocking_json="$(_kv_value BLOCKING_FINDINGS_JSON "$output")"
 run_test "structured_major_opt_in_blocking" "1" "$(printf '%s\n' "$blocking_json" | jq 'length')"
 
+major_config_root="$MOCK_BIN/major-config-root"
+mkdir -p "$major_config_root"
+cat > "$major_config_root/.ai-dev-workflow.yaml" <<'YAML'
+review:
+  haystack:
+    major_is_blocking: true
+    timeout_sec: 10
+    poll_interval_sec: 1
+YAML
+_reset_mocks
+_install_haystack_mock
+output=$(_run_reviewer_with_config "$major_config_root")
+blocking_json="$(_kv_value BLOCKING_FINDINGS_JSON "$output")"
+run_test "structured_major_config_blocking" "1" "$(printf '%s\n' "$blocking_json" | jq 'length')"
+
+_reset_mocks
+_install_haystack_mock
+output=$(HAYSTACK_MAJOR_IS_BLOCKING=0 _run_reviewer_with_config "$major_config_root")
+advisory_json="$(_kv_value ADVISORY_FINDINGS_JSON "$output")"
+run_test "structured_major_env_overrides_config" "1" "$(printf '%s\n' "$advisory_json" | jq 'length')"
+
 # Test 5b.7: optional source fields follow documented fallbacks.
 MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":4,"findings":[{"category":"Minor","summary":"Source path","detail":"","source":{"path":"a.sh","line":7}},{"category":"Minor","summary":"Source file","detail":"","source":{"file":"b.sh","startLine":"8"}},{"category":"Minor","summary":"Top path","detail":"","path":"c.sh","line":"9"},{"category":"Minor","summary":"Top file","detail":"","file":"d.sh","startLine":10}]}'
 _reset_mocks
@@ -748,6 +790,79 @@ calls=$(_call_count)
 
 run_test "custom_poll_interval_result" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
 run_test "custom_poll_interval_call_count" "2" "$calls"
+
+# ---------------------------------------------------------------------------
+# Area 6b: review.haystack config defaults and stop rules
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 6b: review.haystack config defaults and stop rules ==="
+
+config_root="$MOCK_BIN/config-root"
+mkdir -p "$config_root"
+cat > "$config_root/.ai-dev-workflow.yaml" <<'YAML'
+review:
+  haystack:
+    poll_interval_sec: 1
+    timeout_sec: 30
+    stop_rule:
+      max_triage_rounds: 1
+YAML
+MOCK_HAYSTACK_OUTPUTS='{"status":"pending"}
+{"status":"pending"}
+{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}'
+_reset_mocks
+_install_haystack_mock
+output=$(_run_reviewer_with_config "$config_root")
+calls=$(_call_count)
+run_test "config_max_triage_rounds_reason" "max_triage_rounds" "$(_kv_value REASON "$output")"
+run_test "config_max_triage_rounds_call_count" "1" "$calls"
+
+cat > "$config_root/.ai-dev-workflow.yaml" <<'YAML'
+review:
+  haystack:
+    poll_interval_sec: 1
+    timeout_sec: 30
+    stop_rule:
+      no_progress_cycles: 1
+YAML
+MOCK_HAYSTACK_OUTPUTS='{"status":"pending","message":"still working","findings":[]}
+{"status":"pending","message":"still working","findings":[]}
+{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}'
+_reset_mocks
+_install_haystack_mock
+output=$(_run_reviewer_with_config "$config_root")
+calls=$(_call_count)
+run_test "config_no_progress_cycles_reason" "no_progress_cycles" "$(_kv_value REASON "$output")"
+run_test "config_no_progress_cycles_call_count" "2" "$calls"
+
+cat > "$config_root/.ai-dev-workflow.yaml" <<'YAML'
+review:
+  haystack:
+    poll_interval_sec: 1
+    timeout_sec: 30
+    stop_rule:
+      max_triage_rounds: 3
+      no_progress_cycles: 1
+YAML
+MOCK_HAYSTACK_OUTPUTS='{"status":"pending","message":"still working","findings":[]}
+{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}'
+_reset_mocks
+_install_haystack_mock
+output=$(_run_reviewer_with_config "$config_root")
+run_test "config_completion_before_stop_rules" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+
+invalid_config_root="$MOCK_BIN/invalid-config-root"
+mkdir -p "$invalid_config_root"
+cat > "$invalid_config_root/.ai-dev-workflow.yaml" <<'YAML'
+review:
+  haystack:
+    poll_interval_sec: 0
+YAML
+_reset_mocks
+_install_haystack_mock
+output=$(_run_reviewer_with_config "$invalid_config_root")
+run_test "config_invalid_reason" "invalid_config" "$(_kv_value REASON "$output")"
+run_test "config_invalid_exit_code" "3" "$(_run_reviewer_exit_code)"
 
 # ---------------------------------------------------------------------------
 # Area 7: argument validation still works after refactor

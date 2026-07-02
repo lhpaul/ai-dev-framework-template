@@ -457,6 +457,102 @@ local_review_output="$(workflow_review_override_context "$local_review_dir")"
 run_contains "local_review_override_runner" "REVIEW_ON_DRAFT_RUNNER=claude,with-comma,codex" "$local_review_output"
 run_contains "local_review_override_source" "LOCAL_OVERRIDE_SOURCE=runner:.ai-dev-workflow.local.yaml,policy:.ai-dev-workflow.local.yaml" "$local_review_output"
 
+haystack_empty_dir="$(fixture_dir haystack-empty)"
+haystack_empty_output="$(python3 "$RESOLVER" review-haystack --repo-root "$haystack_empty_dir")"
+run_contains "haystack_empty_timeout" "HAYSTACK_CONFIG_TIMEOUT_SEC=" "$haystack_empty_output"
+run_contains "haystack_empty_poll_interval" "HAYSTACK_CONFIG_POLL_INTERVAL_SEC=" "$haystack_empty_output"
+run_contains "haystack_empty_major_policy" "HAYSTACK_CONFIG_MAJOR_IS_BLOCKING=" "$haystack_empty_output"
+run_contains "haystack_empty_max_rounds" "HAYSTACK_CONFIG_MAX_TRIAGE_ROUNDS=" "$haystack_empty_output"
+run_contains "haystack_empty_no_progress" "HAYSTACK_CONFIG_NO_PROGRESS_CYCLES=" "$haystack_empty_output"
+
+haystack_dir="$(fixture_dir haystack-config)"
+cat > "$haystack_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+review:
+  haystack:
+    major_is_blocking: false
+    poll_interval_sec: 15
+    timeout_sec: 120
+    stop_rule:
+      max_triage_rounds: 8
+      no_progress_cycles: 3
+YAML
+cat > "$haystack_dir/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  haystack:
+    major_is_blocking: true
+    poll_interval_sec: 10
+    timeout_sec: 180
+    stop_rule:
+      max_triage_rounds: 12
+      no_progress_cycles: 4
+YAML
+haystack_output="$(python3 "$RESOLVER" review-haystack --repo-root "$haystack_dir")"
+run_contains "haystack_local_major_overrides_shared" "HAYSTACK_CONFIG_MAJOR_IS_BLOCKING=1" "$haystack_output"
+run_contains "haystack_local_poll_overrides_shared" "HAYSTACK_CONFIG_POLL_INTERVAL_SEC=10" "$haystack_output"
+run_contains "haystack_local_timeout_overrides_shared" "HAYSTACK_CONFIG_TIMEOUT_SEC=180" "$haystack_output"
+run_contains "haystack_local_max_rounds_overrides_shared" "HAYSTACK_CONFIG_MAX_TRIAGE_ROUNDS=12" "$haystack_output"
+run_contains "haystack_local_no_progress_overrides_shared" "HAYSTACK_CONFIG_NO_PROGRESS_CYCLES=4" "$haystack_output"
+validator_haystack_output="$(bash "$VALIDATOR" --repo-root "$haystack_dir")"
+run_contains "haystack_validate_accepts_valid_config" "TARGET_REPO_NAME=haystack-config" "$validator_haystack_output"
+
+haystack_invalid_bool_dir="$(fixture_dir haystack-invalid-bool)"
+cat > "$haystack_invalid_bool_dir/.ai-dev-workflow.yaml" <<'YAML'
+review:
+  haystack:
+    major_is_blocking: "true"
+YAML
+run_fails_contains \
+  "haystack_rejects_string_boolean" \
+  "review.haystack.major_is_blocking must be a boolean" \
+  python3 "$RESOLVER" review-haystack --repo-root "$haystack_invalid_bool_dir"
+
+haystack_invalid_number_dir="$(fixture_dir haystack-invalid-number)"
+cat > "$haystack_invalid_number_dir/.ai-dev-workflow.yaml" <<'YAML'
+review:
+  haystack:
+    poll_interval_sec: 0
+YAML
+run_fails_contains \
+  "haystack_rejects_zero_poll_interval" \
+  "review.haystack.poll_interval_sec must be a positive integer" \
+  python3 "$RESOLVER" review-haystack --repo-root "$haystack_invalid_number_dir"
+
+haystack_unknown_key_dir="$(fixture_dir haystack-unknown-key)"
+cat > "$haystack_unknown_key_dir/.ai-dev-workflow.yaml" <<'YAML'
+review:
+  haystack:
+    timeout_sec: 120
+    unknown_option: true
+YAML
+run_fails_contains \
+  "haystack_rejects_unknown_key" \
+  "review.haystack contains unsupported field(s): unknown_option" \
+  python3 "$RESOLVER" review-haystack --repo-root "$haystack_unknown_key_dir"
+
+haystack_unknown_stop_rule_dir="$(fixture_dir haystack-unknown-stop-rule)"
+cat > "$haystack_unknown_stop_rule_dir/.ai-dev-workflow.yaml" <<'YAML'
+review:
+  haystack:
+    stop_rule:
+      mystery: 1
+YAML
+run_fails_contains \
+  "haystack_rejects_unknown_stop_rule_key" \
+  "review.haystack.stop_rule contains unsupported field(s): mystery" \
+  python3 "$RESOLVER" review-haystack --repo-root "$haystack_unknown_stop_rule_dir"
+
+haystack_scalar_stop_rule_dir="$(fixture_dir haystack-scalar-stop-rule)"
+cat > "$haystack_scalar_stop_rule_dir/.ai-dev-workflow.yaml" <<'YAML'
+review:
+  haystack:
+    stop_rule: 3
+YAML
+run_fails_contains \
+  "haystack_rejects_scalar_stop_rule" \
+  "field 'review.haystack.stop_rule' must be a mapping" \
+  python3 "$RESOLVER" review-haystack --repo-root "$haystack_scalar_stop_rule_dir"
+
 stale_review_dir="$(fixture_dir stale-review-overrides)"
 mkdir -p "$stale_review_dir/.tmp"
 cat > "$stale_review_dir/.tmp/template-config.json" <<'JSON'

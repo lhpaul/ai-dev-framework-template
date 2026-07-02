@@ -28,7 +28,8 @@
 #   DISPLAY_RESULT=<value> (optional; used by pr-review-loop.sh summaries)
 #   POLICY_REVIEW_REQUIRED=0|1 (optional; present when pr-status is available)
 #   REASON=<value>   (only when RESULT=skipped — values: unavailable, timeout,
-#                     pending_timeout, unauthorized, forbidden)
+#                     invalid_config, pending_timeout, max_triage_rounds,
+#                     no_progress_cycles, unauthorized, forbidden)
 #
 # Polling behaviour for transient states (status=pending, status=error, etc.):
 #   When `haystack triage --no-wait` returns ANY non-empty status value other
@@ -41,9 +42,10 @@
 #   emitted.  If the budget is exhausted while the analysis is still transient,
 #   RESULT=skipped is emitted with REASON=pending_timeout (distinct from
 #   REASON=unavailable, which means the CLI is absent or triage returned
-#   status=none; REASON=unauthorized/forbidden for triage status=error with
-#   message=HTTP 401/403 (surfaced immediately, not poll-retried);
-#   and REASON=timeout, which means a single haystack triage call exceeded the
+#   status=none; REASON=max_triage_rounds/no_progress_cycles for configured
+#   stop-rule exhaustion; REASON=unauthorized/forbidden for triage status=error
+#   with message=HTTP 401/403 (surfaced immediately, not poll-retried); and
+#   REASON=timeout, which means a single haystack triage call exceeded the
 #   per-call OS timeout).
 #
 # Confirmed JSON schema (haystack triage <PR> --json as of 2026-05-25):
@@ -105,6 +107,65 @@ set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 
+HAYSTACK_CONFIG_TIMEOUT_SEC=""
+HAYSTACK_CONFIG_POLL_INTERVAL_SEC=""
+HAYSTACK_CONFIG_MAJOR_IS_BLOCKING=""
+HAYSTACK_CONFIG_MAX_TRIAGE_ROUNDS=""
+HAYSTACK_CONFIG_NO_PROGRESS_CYCLES=""
+
+resolve_workflow_repo_root() {
+  local repo_root
+  if [ -n "${HAYSTACK_WORKFLOW_REPO_ROOT:-}" ]; then
+    printf '%s\n' "$HAYSTACK_WORKFLOW_REPO_ROOT"
+    return 0
+  fi
+  if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" && [ -n "$repo_root" ]; then
+    printf '%s\n' "$repo_root"
+    return 0
+  fi
+  pwd
+}
+
+load_workflow_haystack_config() {
+  local repo_root="$1"
+  local config_output=""
+  local config_key=""
+  local config_value=""
+
+  if ! config_output="$(python3 "$SCRIPT_DIR/workflow-config-resolver.py" review-haystack --repo-root "$repo_root" 2>&1)"; then
+    echo "ERROR: invalid Haystack workflow configuration" >&2
+    printf '%s\n' "$config_output" >&2
+    printf 'RESULT=skipped\n'
+    printf 'REASON=invalid_config\n'
+    printf 'BLOCKING_COUNT=0\n'
+    printf 'SUGGESTION_COUNT=0\n'
+    printf 'COMMENT_COUNT=0\n'
+    exit 3
+  fi
+
+  while IFS='=' read -r config_key config_value; do
+    case "$config_key" in
+      HAYSTACK_CONFIG_TIMEOUT_SEC)
+        HAYSTACK_CONFIG_TIMEOUT_SEC="$config_value"
+        ;;
+      HAYSTACK_CONFIG_POLL_INTERVAL_SEC)
+        HAYSTACK_CONFIG_POLL_INTERVAL_SEC="$config_value"
+        ;;
+      HAYSTACK_CONFIG_MAJOR_IS_BLOCKING)
+        HAYSTACK_CONFIG_MAJOR_IS_BLOCKING="$config_value"
+        ;;
+      HAYSTACK_CONFIG_MAX_TRIAGE_ROUNDS)
+        HAYSTACK_CONFIG_MAX_TRIAGE_ROUNDS="$config_value"
+        ;;
+      HAYSTACK_CONFIG_NO_PROGRESS_CYCLES)
+        HAYSTACK_CONFIG_NO_PROGRESS_CYCLES="$config_value"
+        ;;
+    esac
+  done <<EOF_CONFIG
+$config_output
+EOF_CONFIG
+}
+
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
 if [ $# -lt 3 ]; then
@@ -137,9 +198,16 @@ case "$REPO" in
     ;;
 esac
 
-# Parse optional flags
-TIMEOUT="${HAYSTACK_REVIEWER_TIMEOUT:-120}"
-POLL_INTERVAL="${HAYSTACK_POLL_INTERVAL:-15}"
+WORKFLOW_REPO_ROOT="$(resolve_workflow_repo_root)"
+load_workflow_haystack_config "$WORKFLOW_REPO_ROOT"
+
+# Parse optional flags. Precedence: CLI timeout > env overrides > repository
+# review.haystack config > built-in defaults.
+TIMEOUT="${HAYSTACK_REVIEWER_TIMEOUT:-${HAYSTACK_CONFIG_TIMEOUT_SEC:-120}}"
+POLL_INTERVAL="${HAYSTACK_POLL_INTERVAL:-${HAYSTACK_CONFIG_POLL_INTERVAL_SEC:-15}}"
+MAJOR_IS_BLOCKING="${HAYSTACK_MAJOR_IS_BLOCKING:-${HAYSTACK_CONFIG_MAJOR_IS_BLOCKING:-0}}"
+MAX_TRIAGE_ROUNDS="$HAYSTACK_CONFIG_MAX_TRIAGE_ROUNDS"
+NO_PROGRESS_CYCLES="$HAYSTACK_CONFIG_NO_PROGRESS_CYCLES"
 PR_STATUS_CHECK="${HAYSTACK_PR_STATUS_CHECK:-1}"
 FALSE_POSITIVES_FILE="${HAYSTACK_FALSE_POSITIVES_FILE:-$SCRIPT_DIR/haystack-false-positives.json}"
 
@@ -165,6 +233,37 @@ esac
 case "$POLL_INTERVAL" in
   ''|0|*[!0-9]*)
     echo "ERROR: HAYSTACK_POLL_INTERVAL value '$POLL_INTERVAL' is not a positive integer (must be >= 1)" >&2
+    exit 3
+    ;;
+esac
+
+case "$MAJOR_IS_BLOCKING" in
+  1|true|TRUE)
+    MAJOR_IS_BLOCKING=1
+    ;;
+  ''|0|false|FALSE)
+    MAJOR_IS_BLOCKING=0
+    ;;
+  *)
+    echo "ERROR: HAYSTACK_MAJOR_IS_BLOCKING value '$MAJOR_IS_BLOCKING' must be 0 or 1" >&2
+    exit 3
+    ;;
+esac
+
+case "$MAX_TRIAGE_ROUNDS" in
+  '')
+    ;;
+  0|*[!0-9]*)
+    echo "ERROR: review.haystack.stop_rule.max_triage_rounds value '$MAX_TRIAGE_ROUNDS' is not a positive integer (must be >= 1)" >&2
+    exit 3
+    ;;
+esac
+
+case "$NO_PROGRESS_CYCLES" in
+  '')
+    ;;
+  0|*[!0-9]*)
+    echo "ERROR: review.haystack.stop_rule.no_progress_cycles value '$NO_PROGRESS_CYCLES' is not a positive integer (must be >= 1)" >&2
     exit 3
     ;;
 esac
@@ -292,6 +391,9 @@ TRIAGE_EXIT=0
 elapsed=0
 LOOP_START_TS="$(date +%s 2>/dev/null || printf '0')"
 TRIAGE_STDERR=$(mktemp)
+TRIAGE_ROUND_COUNT=0
+LAST_PROGRESS_SIGNATURE=""
+NO_PROGRESS_REPEAT_COUNT=0
 
 while true; do
   rm -f "$TRIAGE_STDERR"
@@ -315,6 +417,12 @@ while true; do
   fi
   POLL_CALL_TIMEOUT=$(( remaining / 2 ))
   [ "$POLL_CALL_TIMEOUT" -lt 1 ] && POLL_CALL_TIMEOUT=1
+
+  TRIAGE_ROUND_COUNT=$((TRIAGE_ROUND_COUNT + 1))
+  if [ -n "$MAX_TRIAGE_ROUNDS" ] && [ "$TRIAGE_ROUND_COUNT" -gt "$MAX_TRIAGE_ROUNDS" ]; then
+    TRIAGE_EXIT=201  # sentinel: max_triage_rounds exhausted
+    break
+  fi
 
   echo "INFO: running: haystack triage ${OWNER}/${REPO}#${PR_NUMBER} --json --no-wait (elapsed: ${elapsed}s, per-call timeout: ${POLL_CALL_TIMEOUT}s)" >&2
 
@@ -491,6 +599,26 @@ while true; do
       # Treat other transient states as still synthesizing — poll-retry after POLL_INTERVAL.
       # NEVER map an unknown or error status to "clean"; only a genuinely
       # completed result (empty STATUS_VALUE above) may yield RESULT=clean.
+      if [ -n "$NO_PROGRESS_CYCLES" ]; then
+        PROGRESS_SIGNATURE="$(printf '%s\n' "$TRIAGE_OUTPUT" | jq -c '
+          {
+            status: (.status // ""),
+            message: (.message // ""),
+            finding_count: ((.findings // []) | length),
+            categories: [(.findings // [])[]? | (.category // "__UNKNOWN__")] | sort
+          }
+        ' 2>/dev/null || printf 'status=%s' "$STATUS_VALUE")"
+        if [ "$PROGRESS_SIGNATURE" = "$LAST_PROGRESS_SIGNATURE" ]; then
+          NO_PROGRESS_REPEAT_COUNT=$((NO_PROGRESS_REPEAT_COUNT + 1))
+        else
+          LAST_PROGRESS_SIGNATURE="$PROGRESS_SIGNATURE"
+          NO_PROGRESS_REPEAT_COUNT=0
+        fi
+        if [ "$NO_PROGRESS_REPEAT_COUNT" -ge "$NO_PROGRESS_CYCLES" ]; then
+          TRIAGE_EXIT=202  # sentinel: no_progress_cycles exhausted
+          break
+        fi
+      fi
       echo "INFO: status='${STATUS_VALUE}' — still synthesizing; waiting ${POLL_INTERVAL}s before retry (${elapsed}s elapsed of ${TIMEOUT}s budget)" >&2
       # Check budget BEFORE sleeping so we don't overshoot the timeout.
       if [ $((elapsed + POLL_INTERVAL)) -ge "$TIMEOUT" ]; then
@@ -537,6 +665,26 @@ if [ "$TRIAGE_EXIT" -eq 200 ]; then
   exit 2
 fi
 
+if [ "$TRIAGE_EXIT" -eq 201 ]; then
+  echo "INFO: haystack triage stopped after ${MAX_TRIAGE_ROUNDS} triage rounds without completed analysis (max_triage_rounds)" >&2
+  printf 'RESULT=skipped\n'
+  printf 'REASON=max_triage_rounds\n'
+  printf 'BLOCKING_COUNT=0\n'
+  printf 'SUGGESTION_COUNT=0\n'
+  printf 'COMMENT_COUNT=0\n'
+  exit 2
+fi
+
+if [ "$TRIAGE_EXIT" -eq 202 ]; then
+  echo "INFO: haystack triage progress did not change for ${NO_PROGRESS_CYCLES} repeated cycles (no_progress_cycles)" >&2
+  printf 'RESULT=skipped\n'
+  printf 'REASON=no_progress_cycles\n'
+  printf 'BLOCKING_COUNT=0\n'
+  printf 'SUGGESTION_COUNT=0\n'
+  printf 'COMMENT_COUNT=0\n'
+  exit 2
+fi
+
 echo "INFO: haystack triage raw output:" >&2
 printf '%s\n' "$TRIAGE_OUTPUT" >&2
 
@@ -558,7 +706,7 @@ printf '%s\n' "$TRIAGE_OUTPUT" >&2
 # Null/missing .category values are mapped to the sentinel "__UNKNOWN__" so they
 # are treated as blocking (safe-fail) rather than silently dropped.
 NORMALIZED_FINDINGS_JSON="$(printf '%s\n' "$TRIAGE_OUTPUT" | jq -c \
-  --arg major_is_blocking "${HAYSTACK_MAJOR_IS_BLOCKING:-0}" \
+  --arg major_is_blocking "$MAJOR_IS_BLOCKING" \
   --argjson false_positive_catalog "$FALSE_POSITIVE_CATALOG_JSON" '
   def category:
     if (.category | type) == "string" and .category != "" then .category

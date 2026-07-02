@@ -44,6 +44,13 @@ review:
   on_ready:
     github:
       - bugbot
+  haystack:
+    major_is_blocking: false
+    poll_interval_sec: 10
+    timeout_sec: 180
+    stop_rule:
+      max_triage_rounds: 10
+      no_progress_cycles: 4
   internal_reviewers_unavailable_policy: warn
 
 tools:

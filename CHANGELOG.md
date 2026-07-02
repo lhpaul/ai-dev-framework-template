@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Haystack false-positive catalog** (#1115): Added a machine-readable known
   false-positive catalog for recurring Haystack findings and surfaced matched
   dispositions in reviewer output.
+- **Haystack workflow configuration** (#1116): Added repository-level Haystack
+  reviewer settings with validation, override precedence, and stop-rule
+  documentation.
 
 ## [0.35.0] - 2026-07-02
 
