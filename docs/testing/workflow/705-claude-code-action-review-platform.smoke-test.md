@@ -216,9 +216,14 @@ The companion script exits with code 3 (unavailable) when the dispatch itself fa
    ```bash
    scripts/development-workflow/pr-review-loop.sh <pr_number> --platform codex-github
    ```
-3. Compare the key names in both outputs
+3. Compare the shared platform key names in both outputs.
 
-**Expected result**: Both platform outputs contain exactly: `RESULT`, `PLATFORM`, `PR_NUMBER`, `BRANCH`, `FIX_AGENT`, `COMMENT_COUNT`, `BLOCKING_COUNT`, `SUGGESTION_COUNT`. No extra or missing keys in the `claude-code-action` clean output.
+**Expected result**: Both platform outputs contain the same shared platform keys:
+`RESULT`, `PLATFORM`, `PR_NUMBER`, `BRANCH`, `FIX_AGENT`, `COMMENT_COUNT`,
+`BLOCKING_COUNT`, and `SUGGESTION_COUNT`. Aggregate reviewer-loop telemetry such
+as `ADVISORY_DISPOSITION_REQUIRED` may also appear after platform aggregation,
+but `claude-code-action` must not emit platform-specific keys that `codex-github`
+does not emit.
 
 ---
 

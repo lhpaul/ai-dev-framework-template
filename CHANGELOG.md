@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Structured Haystack advisory findings** (#1113): Added structured Haystack
   finding output for downstream review summaries and delegated advisory
   dispositions.
+- **Advisory disposition triggers** (#1114): Added reviewer-loop advisory
+  disposition triggers for Haystack advisory counts, policy-review-required
+  results, and advisory labels.
 
 ## [0.35.0] - 2026-07-02
 

@@ -35,7 +35,7 @@ Before running this smoke test:
    clean review with one structured advisory finding.
 2. Verify the reviewer-loop output remains clean and reports zero blocking
    findings.
-3. Verify the output includes an advisory-disposition-required signal.
+3. Verify the output includes `ADVISORY_DISPOSITION_REQUIRED=1`.
 4. Verify the Automated Reviewer Loop Summary lists the Haystack advisory
    category and summary.
 
@@ -62,8 +62,7 @@ escalate the advisory without manually rerunning Haystack for basic context.
 
 1. Run a fixture where the review result is clean, blocking count is zero, and
    policy review is required.
-2. Verify the reviewer-loop output reports an advisory-disposition-required
-   signal.
+2. Verify the reviewer-loop output reports `ADVISORY_DISPOSITION_REQUIRED=1`.
 3. Verify the summary includes a policy acknowledgement or policy advisory entry.
 
 **Expected result**: Policy-required evidence cannot disappear into a generic
@@ -76,7 +75,7 @@ clean result.
 1. Run or inspect the fixture that simulates a clean PR-Agent result with an
    advisory label.
 2. Verify the existing advisory-label summary entry is still present.
-3. Verify the advisory-disposition-required behavior applies to the label.
+3. Verify `ADVISORY_DISPOSITION_REQUIRED=1` applies to the label.
 
 **Expected result**: Existing PR-Agent advisory behavior is preserved.
 
@@ -90,10 +89,10 @@ clean result.
 
 Each checkbox maps to an acceptance criterion from the spec.
 
-- [ ] AC-1: Clean output with advisory count greater than zero requires
-      disposition before readiness is complete.
-- [ ] AC-2: Clean output with policy review required requires disposition before
-      readiness is complete.
+- [ ] AC-1: Clean output with advisory count greater than zero emits
+      `ADVISORY_DISPOSITION_REQUIRED=1` before readiness is complete.
+- [ ] AC-2: Clean output with policy review required emits
+      `ADVISORY_DISPOSITION_REQUIRED=1` before readiness is complete.
 - [ ] AC-3: Existing advisory-label disposition behavior still runs.
 - [ ] AC-4: Haystack structured advisory details are listed in the reviewer-loop
       summary.

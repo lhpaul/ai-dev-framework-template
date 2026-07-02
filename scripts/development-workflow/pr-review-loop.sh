@@ -431,6 +431,55 @@ kv_value_default() {
   fi
 }
 
+emit_companion_field_if_present() {
+  local key="$1"
+  local kv_output="$2"
+  local value
+  value="$(kv_value "$key" "$kv_output")"
+  [ -n "$value" ] && print_kv "$key" "$value"
+}
+
+compact_advisory_findings_json() {
+  local raw_json="$1"
+  printf '%s\n' "$raw_json" | jq -c 'if type == "array" then . else error("expected advisory finding array") end'
+}
+
+advisory_disposition_required_for_platform() {
+  local result="$1"
+  local suggestion_count="${2:-0}"
+  local policy_review_required="${3:-0}"
+  local advisory_labels="${4:-}"
+
+  [ "$result" = "clean" ] || return 1
+  if [[ "$suggestion_count" =~ ^[0-9]+$ ]] && [ "$suggestion_count" -gt 0 ]; then
+    return 0
+  fi
+  [ "$policy_review_required" = "1" ] && return 0
+  [ -n "$advisory_labels" ] && return 0
+  return 1
+}
+
+render_structured_advisory_entries() {
+  local platform="$1"
+  local findings_json="$2"
+
+  printf '%s\n' "$findings_json" | jq -r --arg platform "$platform" '
+    def one_line:
+      tostring
+      | gsub("\\r?\\n"; " ")
+      | gsub("[[:space:]][[:space:]]+"; " ");
+    .[] |
+      "- " + $platform + ": " + ((.category // "Advisory") | one_line) + " - " + ((.summary // .message // "Advisory finding") | one_line),
+      (if (((.detail // "") | tostring | length) > 0) then "  Detail: " + ((.detail // "") | one_line) else empty end),
+      (if (((.path // "") | tostring | length) > 0) then
+        "  Location: `" + ((.path // "") | one_line) +
+        (if (.line // null) == null then "" else ":" + ((.line // "") | one_line) end) +
+        "`"
+      else empty end),
+      (if (((.fix_hint // "") | tostring | length) > 0) then "  Fix hint: " + ((.fix_hint // "") | one_line) else empty end)
+  '
+}
+
 emit_prefixed_platform_output() {
   local index="$1"
   local kv_output="$2"
@@ -2012,6 +2061,7 @@ run_haystack_review() {
   local blocking_count=0
   local suggestion_count=0
   local comment_count=0
+  local _haystack_field
 
   require_gh
   cd_workflow_repo_root
@@ -2099,6 +2149,22 @@ run_haystack_review() {
       print_kv COMMENT_COUNT "$comment_count"
       print_kv BLOCKING_COUNT 0
       print_kv SUGGESTION_COUNT "$suggestion_count"
+      for _haystack_field in \
+        ADVISORY_FINDINGS_JSON \
+        BLOCKING_FINDINGS_JSON \
+        POLICY_STATUS_AVAILABLE \
+        POLICY_REVIEW_REQUIRED \
+        POLICY_DISPOSITION \
+        POLICY_VERDICT \
+        POLICY_ANALYSIS_STATUS \
+        POLICY_BUCKET \
+        POLICY_RATING \
+        POLICY_HAS_REVIEWER \
+        POLICY_NEEDS_HUMAN \
+        DISPLAY_RESULT; do
+        emit_companion_field_if_present "$_haystack_field" "$script_output"
+      done
+      unset _haystack_field
       return 0
       ;;
     1)
@@ -2116,6 +2182,22 @@ run_haystack_review() {
       print_kv COMMENT_COUNT "$comment_count"
       print_kv BLOCKING_COUNT "$blocking_count"
       print_kv SUGGESTION_COUNT "$suggestion_count"
+      for _haystack_field in \
+        ADVISORY_FINDINGS_JSON \
+        BLOCKING_FINDINGS_JSON \
+        POLICY_STATUS_AVAILABLE \
+        POLICY_REVIEW_REQUIRED \
+        POLICY_DISPOSITION \
+        POLICY_VERDICT \
+        POLICY_ANALYSIS_STATUS \
+        POLICY_BUCKET \
+        POLICY_RATING \
+        POLICY_HAS_REVIEWER \
+        POLICY_NEEDS_HUMAN \
+        DISPLAY_RESULT; do
+        emit_companion_field_if_present "$_haystack_field" "$script_output"
+      done
+      unset _haystack_field
       return 1
       ;;
     2)
@@ -5306,6 +5388,8 @@ total_comment_count=0
 total_blocking_count=0
 total_suggestion_count=0
 aggregate_advisory_labels=""
+advisory_disposition_required=0
+policy_review_disposition_required=0
 reviewer_failed_required=0
 declare -a compare_verdicts=()
 # Per-platform result tokens for the PR summary comment.
@@ -5314,6 +5398,8 @@ declare -a platform_result_tokens=()
 # Per-platform review-policy status notes for the PR summary comment. Haystack
 # emits these from `pr-status`; other platforms normally leave this empty.
 declare -a platform_policy_status_notes=()
+declare -a aggregate_advisory_findings_platforms=()
+declare -a aggregate_advisory_findings_jsons=()
 # Compare-mode: track the first blocking platform seen so later clean platforms
 # do not overwrite the aggregate. These variables are set once and never reset.
 compare_first_blocking_result=""
@@ -5390,6 +5476,8 @@ for index in "${!platforms[@]}"; do
   platform_blocking_count="$(kv_value_default BLOCKING_COUNT "$platform_output" 0)"
   platform_suggestion_count="$(kv_value_default SUGGESTION_COUNT "$platform_output" 0)"
   platform_advisory_labels="$(kv_value_default ADVISORY_LABELS "$platform_output" "")"
+  platform_advisory_findings_json="$(kv_value_default ADVISORY_FINDINGS_JSON "$platform_output" "")"
+  platform_policy_review_required="$(kv_value_default POLICY_REVIEW_REQUIRED "$platform_output" 0)"
   platform_reason="$(kv_value_default REASON "$platform_output" "")"
   if reviewer_failed_label_required_for_result "$platform_result" "$platform_reason"; then
     reviewer_failed_required=1
@@ -5405,7 +5493,29 @@ for index in "${!platforms[@]}"; do
       aggregate_advisory_labels="$platform_advisory_labels"
     fi
   fi
+  if advisory_disposition_required_for_platform \
+      "$platform_result" "$platform_suggestion_count" "$platform_policy_review_required" "$platform_advisory_labels"; then
+    advisory_disposition_required=1
+  fi
+  if [ "$platform_result" = "clean" ] && [ "$platform_policy_review_required" = "1" ]; then
+    policy_review_disposition_required=1
+  fi
   last_platform="$platform_name"
+  if [ -n "$platform_advisory_findings_json" ]; then
+    if ! platform_advisory_findings_compact="$(compact_advisory_findings_json "$platform_advisory_findings_json" 2>/dev/null)"; then
+      aggregate_result="escalate"
+      aggregate_reason="advisory_json_parse_failed"
+      aggregate_output="$platform_output"
+      aggregate_status=2
+      reviewer_failed_required=1
+      platform_result_tokens+=("${platform_name}:escalated (advisory_json_parse_failed)")
+      break
+    fi
+    if [ "$platform_advisory_findings_compact" != "[]" ]; then
+      aggregate_advisory_findings_platforms+=("$platform_name")
+      aggregate_advisory_findings_jsons+=("$platform_advisory_findings_compact")
+    fi
+  fi
 
   print_kv "PLATFORM_${platform_index}_NAME" "$platform_name"
   print_kv "PLATFORM_${platform_index}_RESULT" "$platform_result"
@@ -5455,6 +5565,8 @@ for index in "${!platforms[@]}"; do
   unset _policy_status_available _policy_bucket _policy_needs_human
   unset _policy_disposition _policy_verdict _policy_analysis_status
   unset _policy_rating _policy_has_reviewer _policy_note
+  unset platform_advisory_findings_json platform_advisory_findings_compact
+  unset platform_policy_review_required
 
   # In compare mode, record a normalized verdict for each platform before
   # deciding whether to break. The normalized verdict captures clean / blocking /
@@ -5595,11 +5707,20 @@ _post_review_summary() {
   # Each entry's labels are pipe-separated. Render each label as a list item,
   # linking to the PR-Agent comment URL when available.
   local advisory_section=""
-  if [ -n "$advisory_labels" ]; then
+  local advisory_finding_count=0
+  local structured_advisory_count=0
+  if declare -p aggregate_advisory_findings_jsons >/dev/null 2>&1; then
+    structured_advisory_count="${#aggregate_advisory_findings_jsons[@]}"
+  fi
+  if [ -n "$advisory_labels" ] \
+      || [ "$structured_advisory_count" -gt 0 ] \
+      || [ "${advisory_disposition_required:-0}" = "1" ]; then
     local _entry _labels _url _label
     advisory_section="
 
 **Advisory findings (non-blocking):**"
+  fi
+  if [ -n "$advisory_labels" ]; then
     # Split entries by ||| separator using sed (IFS does not support multi-char
     # separators). Each entry has the form "<pipe-delimited labels>@@@<url>".
     local _entries_normalized
@@ -5620,6 +5741,7 @@ _post_review_summary() {
           advisory_section="${advisory_section}
 - ${_label}"
         fi
+        advisory_finding_count=$((advisory_finding_count + 1))
       done <<_ADVISORY_LABEL_LINES_
 $_labels_normalized
 _ADVISORY_LABEL_LINES_
@@ -5646,6 +5768,42 @@ _ADVISORY_ENTRY_LINES_
       advisory_section="${advisory_section}
   _Possible Issue evaluation_: ${_eval_note}"
     fi
+  fi
+  if [ "$structured_advisory_count" -gt 0 ]; then
+    local _adv_index=0
+    local _structured_entries=""
+    while [ "$_adv_index" -lt "$structured_advisory_count" ]; do
+      if _structured_entries="$(
+        render_structured_advisory_entries \
+          "${aggregate_advisory_findings_platforms[$_adv_index]}" \
+          "${aggregate_advisory_findings_jsons[$_adv_index]}"
+      )"; then
+        if [ -n "$_structured_entries" ]; then
+          advisory_section="${advisory_section}
+${_structured_entries}"
+          advisory_finding_count=$((advisory_finding_count + $(printf '%s\n' "$_structured_entries" | grep -c '^- ' || true)))
+        fi
+      else
+        advisory_section="${advisory_section}
+- Structured advisory findings could not be rendered; rerun the reviewer loop."
+        advisory_finding_count=$((advisory_finding_count + 1))
+      fi
+      _adv_index=$((_adv_index + 1))
+    done
+  fi
+  if [ "${policy_review_disposition_required:-0}" = "1" ] && [ "$advisory_finding_count" -eq 0 ]; then
+    local _policy_fallback="policy review required"
+    if declare -p platform_policy_status_notes >/dev/null 2>&1 \
+        && [ "${#platform_policy_status_notes[@]}" -gt 0 ]; then
+      _policy_fallback="$(IFS=' '; printf '%s' "${platform_policy_status_notes[*]}")"
+    fi
+    advisory_section="${advisory_section}
+- Policy review required: ${_policy_fallback}"
+    advisory_finding_count=$((advisory_finding_count + 1))
+  fi
+  if [ "${advisory_disposition_required:-0}" = "1" ] && [ "$advisory_finding_count" -eq 0 ]; then
+    advisory_section="${advisory_section}
+- Advisory count reported without structured finding details; review platform output reported ${suggestions} suggestion(s)."
   fi
 
   # Step 7b regression-label assertion (clean path, implementation PRs only).
@@ -5812,6 +5970,7 @@ if [ -z "$last_platform" ]; then
   print_kv COMMENT_COUNT 0
   print_kv BLOCKING_COUNT 0
   print_kv SUGGESTION_COUNT 0
+  print_kv ADVISORY_DISPOSITION_REQUIRED 0
   print_kv UNRESOLVED_THREAD_COUNT 0
   _post_review_summary "skipped" "not_configured" "none" "0" "0" "" "" "0" "" "0" "0" "" "0"
   sync_reviewer_failed_label "$pr_number" 0
@@ -6057,6 +6216,7 @@ print_kv PLATFORM "$last_platform"
 print_kv COMMENT_COUNT "$total_comment_count"
 print_kv BLOCKING_COUNT "$total_blocking_count"
 print_kv SUGGESTION_COUNT "$total_suggestion_count"
+print_kv ADVISORY_DISPOSITION_REQUIRED "$advisory_disposition_required"
 
 if [ -n "$aggregate_output" ]; then
   review_comment_id="$(kv_value REVIEW_COMMENT_ID "$aggregate_output")"
