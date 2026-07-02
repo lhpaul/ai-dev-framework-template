@@ -127,6 +127,18 @@ issue_tracker:
   provider: linear
 YAML
 
+invalid_guardrails_config="$TMP_ROOT/ai-dev-workflow-invalid-guardrails.yaml"
+cat > "$invalid_guardrails_config" <<'YAML'
+schema_version: 2
+issue_tracker:
+  provider: linear
+guardrails:
+  mode: assisted
+  stages:
+    implementation:
+      max_merge_risk: extreme
+YAML
+
 linear_prelude_out="$(AI_DEV_WORKFLOW_CONFIG_FILE="$guardrails_config" \
   "$PRELUDE" --original-command "/run-item LEA-185" --issue LEA-185 --json)"
 run_test "linear_issue_identifier_resolves" "LEA-185" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.scope.resolvedIssueIdentifier')"
@@ -134,6 +146,8 @@ run_test "guardrails_section_present" "present" "$(printf '%s\n' "$linear_prelud
 run_test "guardrails_backlog_start_applied" "true" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.policyRecommendation.effectivePolicy.mayStartBacklog')"
 run_test "guardrails_merge_stays_false" "false" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.policyRecommendation.effectivePolicy.mayMerge')"
 run_test "guardrails_implementation_merge_reported" "false" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.guardrails.stages.implementation.may_merge_pr')"
+run_test "guardrails_policy_source_reported" "guardrails" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.policyRecommendation.fieldSources.mayStartBacklog')"
+run_test "guardrails_policy_not_marked_explicit" "false" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.policyRecommendation.confirmationReason | test("policy values are explicit")')"
 
 linear_target_prelude_out="$(AI_DEV_WORKFLOW_CONFIG_FILE="$guardrails_config" \
   "$PRELUDE" --original-command "/run-item LEA-185" --target LEA-185 --json)"
@@ -159,6 +173,17 @@ run_test "absent_guardrails_backlog_default_applied" "false" "$(printf '%s\n' "$
 run_test "absent_guardrails_review_default_applied" "false" "$(printf '%s\n' "$absent_guardrails_out" | jq -r '.policyRecommendation.effectivePolicy.delegateReview')"
 run_test "absent_guardrails_merge_default_applied" "false" "$(printf '%s\n' "$absent_guardrails_out" | jq -r '.policyRecommendation.effectivePolicy.mayMerge')"
 run_test "absent_guardrails_risk_default_applied" "low" "$(printf '%s\n' "$absent_guardrails_out" | jq -r '.policyRecommendation.effectivePolicy.maxRisk')"
+run_test "absent_guardrails_policy_source_reported" "conservative-defaults" "$(printf '%s\n' "$absent_guardrails_out" | jq -r '.policyRecommendation.fieldSources.delegateReview')"
+
+set +e
+invalid_guardrails_out="$(AI_DEV_WORKFLOW_CONFIG_FILE="$invalid_guardrails_config" \
+  "$PRELUDE" --original-command "/run-item LEA-185" --issue LEA-185 --json 2>&1)"
+invalid_guardrails_status=$?
+set -e
+run_test "invalid_guardrails_json_fails" "true" "$([ "$invalid_guardrails_status" -ne 0 ] && echo true || echo false)"
+run_test "invalid_guardrails_json_detail" "true" "$(
+  printf '%s\n' "$invalid_guardrails_out" | jq -r '.detail | test("max_merge_risk")' 2>/dev/null || echo false
+)"
 
 run_fails "reject_linear_identifier_with_underscore" "invalid --issue identifier" \
   env AI_DEV_WORKFLOW_CONFIG_FILE="$guardrails_config" "$ITEM_RESOLVER" --issue A_B-123
