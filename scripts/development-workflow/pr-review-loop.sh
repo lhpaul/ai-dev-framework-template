@@ -444,6 +444,13 @@ compact_advisory_findings_json() {
   printf '%s\n' "$raw_json" | jq -c 'if type == "array" then . else error("expected advisory finding array") end'
 }
 
+is_nonnegative_int() {
+  case "${1:-}" in
+    ''|*[!0-9]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 advisory_disposition_required_for_platform() {
   local result="$1"
   local suggestion_count="${2:-0}"
@@ -451,7 +458,7 @@ advisory_disposition_required_for_platform() {
   local advisory_labels="${4:-}"
 
   [ "$result" = "clean" ] || return 1
-  if [[ "$suggestion_count" =~ ^[0-9]+$ ]] && [ "$suggestion_count" -gt 0 ]; then
+  if is_nonnegative_int "$suggestion_count" && [ "$suggestion_count" -gt 0 ]; then
     return 0
   fi
   [ "$policy_review_required" = "1" ] && return 0
@@ -5481,6 +5488,18 @@ for index in "${!platforms[@]}"; do
   platform_reason="$(kv_value_default REASON "$platform_output" "")"
   if reviewer_failed_label_required_for_result "$platform_result" "$platform_reason"; then
     reviewer_failed_required=1
+  fi
+  if ! is_nonnegative_int "$platform_comment_count" \
+      || ! is_nonnegative_int "$platform_blocking_count" \
+      || ! is_nonnegative_int "$platform_suggestion_count"; then
+    aggregate_result="escalate"
+    aggregate_reason="platform_count_parse_failed"
+    aggregate_output="$platform_output"
+    aggregate_status=2
+    reviewer_failed_required=1
+    last_platform="$platform_name"
+    platform_result_tokens+=("${platform_name}:escalated (platform_count_parse_failed)")
+    break
   fi
 
   total_comment_count=$((total_comment_count + platform_comment_count))

@@ -1377,7 +1377,23 @@ fi
 run_test "advisory_disposition_not_required_for_blocking_result" "0" "$_advisory_trigger_count"
 unset _advisory_trigger_count
 
-# Test 10.1e: final aggregate output emits the disposition-required signal.
+# Test 10.1e: platform count parsing accepts only non-negative integers.
+if is_nonnegative_int "0" && is_nonnegative_int "12" && ! is_nonnegative_int "abc" && ! is_nonnegative_int "1abc"; then
+  _count_validation_ok=1
+else
+  _count_validation_ok=0
+fi
+run_test "platform_count_validation_nonnegative_int_only" "1" "$_count_validation_ok"
+if grep -qF 'aggregate_reason="platform_count_parse_failed"' \
+    "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"; then
+  _count_fail_closed=1
+else
+  _count_fail_closed=0
+fi
+run_test "platform_count_parse_failure_fails_closed" "1" "$_count_fail_closed"
+unset _count_validation_ok _count_fail_closed
+
+# Test 10.1f: final aggregate output emits the disposition-required signal.
 if grep -qF 'advisory_disposition_required_output="$advisory_disposition_required"' \
     "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" \
     && grep -qF 'print_kv ADVISORY_DISPOSITION_REQUIRED "$advisory_disposition_required_output"' \
@@ -1389,7 +1405,7 @@ fi
 run_test "advisory_disposition_required_signal_emitted" "1" "$_advisory_signal_emitted"
 unset _advisory_signal_emitted
 
-# Test 10.1f: malformed advisory JSON is rejected before summary rendering.
+# Test 10.1g: malformed advisory JSON is rejected before summary rendering.
 set +e
 compact_advisory_findings_json '{"not":"an array"}' >/dev/null 2>&1
 _compact_status=$?
