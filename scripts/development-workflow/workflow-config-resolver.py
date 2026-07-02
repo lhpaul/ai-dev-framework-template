@@ -333,6 +333,25 @@ def raw_haystack_config(config: dict[str, Any], path: Path) -> dict[str, Any]:
     return as_mapping(review.get("haystack"), path, "review.haystack")
 
 
+def warn_on_multiple_external_reviewers(config: dict[str, Any], path: Path) -> None:
+    if "review" not in config:
+        return
+    review = as_mapping(config.get("review"), path, "review")
+    for phase in ("on_draft", "on_ready"):
+        if phase not in review:
+            continue
+        phase_config = as_mapping(review.get(phase), path, f"review.{phase}")
+        reviewers = as_list(phase_config.get("github"), path, f"review.{phase}.github")
+        if len(reviewers) > 1:
+            print(
+                "WARNING: "
+                f"{path}: review.{phase}.github lists {len(reviewers)} external reviewers; "
+                "one external reviewer per phase is recommended by default. "
+                "Multi-bot review remains supported as advanced usage.",
+                file=sys.stderr,
+            )
+
+
 def normalize_haystack_config(config: dict[str, Any], path: Path) -> dict[str, str]:
     haystack = raw_haystack_config(config, path)
     if not haystack:
@@ -388,6 +407,8 @@ def normalize_haystack_config(config: dict[str, Any], path: Path) -> dict[str, s
 def validate_workflow_config(shared: dict[str, Any], local: dict[str, Any], shared_path: Path, local_path: Path) -> None:
     normalize_haystack_config(shared, shared_path)
     normalize_haystack_config(local, local_path)
+    warn_on_multiple_external_reviewers(shared, shared_path)
+    warn_on_multiple_external_reviewers(local, local_path)
 
 
 def product_repos(shared: dict[str, Any], shared_path: Path) -> list[dict[str, Any]]:

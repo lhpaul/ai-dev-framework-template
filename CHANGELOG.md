@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Haystack workflow configuration** (#1116): Added repository-level Haystack
   reviewer settings with validation, override precedence, and stop-rule
   documentation.
+- **External reviewer recommendation** (#1117): Documented the
+  one-external-reviewer default pattern and added non-blocking workflow-config
+  warnings for advanced multi-reviewer setups.
 
 ## [0.35.0] - 2026-07-02
 

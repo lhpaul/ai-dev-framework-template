@@ -131,6 +131,65 @@ run_fails_contains \
   "--repo-root requires a value" \
   bash "$VALIDATOR" --repo-root
 
+single_external_reviewer_dir="$(fixture_dir single-external-reviewer)"
+cat > "$single_external_reviewer_dir/.ai-dev-workflow.yaml" <<'YAML'
+review:
+  on_draft:
+    github:
+      - pr-agent
+  on_ready:
+    github:
+      - bugbot
+YAML
+single_external_stdout="$TMP_ROOT/single-external.stdout"
+single_external_stderr="$TMP_ROOT/single-external.stderr"
+if bash "$VALIDATOR" --repo-root "$single_external_reviewer_dir" >"$single_external_stdout" 2>"$single_external_stderr"; then
+  run_contains "single_external_reviewer_validates" "TARGET_REPO_NAME=single-external-reviewer" "$(cat "$single_external_stdout")"
+  run_test "single_external_reviewer_no_warning" "" "$(cat "$single_external_stderr")"
+else
+  echo "FAIL: single_external_reviewer_validates - validator exited non-zero"
+  cat "$single_external_stderr"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+
+multi_draft_reviewer_dir="$(fixture_dir multi-draft-reviewers)"
+cat > "$multi_draft_reviewer_dir/.ai-dev-workflow.yaml" <<'YAML'
+review:
+  on_draft:
+    github:
+      - pr-agent
+      - bugbot
+YAML
+multi_draft_stdout="$TMP_ROOT/multi-draft.stdout"
+multi_draft_stderr="$TMP_ROOT/multi-draft.stderr"
+if bash "$VALIDATOR" --repo-root "$multi_draft_reviewer_dir" >"$multi_draft_stdout" 2>"$multi_draft_stderr"; then
+  run_contains "multi_draft_reviewers_still_valid" "TARGET_REPO_NAME=multi-draft-reviewers" "$(cat "$multi_draft_stdout")"
+  run_contains "multi_draft_reviewers_warn" "review.on_draft.github lists 2 external reviewers" "$(cat "$multi_draft_stderr")"
+else
+  echo "FAIL: multi_draft_reviewers_still_valid - validator exited non-zero"
+  cat "$multi_draft_stderr"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+
+multi_ready_reviewer_dir="$(fixture_dir multi-ready-reviewers)"
+cat > "$multi_ready_reviewer_dir/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_ready:
+    github:
+      - haystack
+      - bugbot
+YAML
+multi_ready_stdout="$TMP_ROOT/multi-ready.stdout"
+multi_ready_stderr="$TMP_ROOT/multi-ready.stderr"
+if bash "$VALIDATOR" --repo-root "$multi_ready_reviewer_dir" >"$multi_ready_stdout" 2>"$multi_ready_stderr"; then
+  run_contains "multi_ready_reviewers_still_valid" "TARGET_REPO_NAME=multi-ready-reviewers" "$(cat "$multi_ready_stdout")"
+  run_contains "multi_ready_reviewers_warn" "review.on_ready.github lists 2 external reviewers" "$(cat "$multi_ready_stderr")"
+else
+  echo "FAIL: multi_ready_reviewers_still_valid - validator exited non-zero"
+  cat "$multi_ready_stderr"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+
 hub_dir="$(fixture_dir workflow-hub)"
 cat > "$hub_dir/.ai-dev-workflow.yaml" <<'YAML'
 schema_version: 2
