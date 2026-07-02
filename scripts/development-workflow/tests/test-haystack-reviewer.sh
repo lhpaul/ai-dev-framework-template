@@ -698,6 +698,20 @@ rm -f "$category_only_catalog_file"
 run_test "known_fp_category_only_result" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
 run_test "known_fp_category_only_no_disposition" "false" "$(printf '%s\n' "$advisory_json" | jq '.[0] | has("disposition")')"
 
+# Test 5c.9: invalid regex catalog rules are invalid and preserve original classification.
+invalid_regex_catalog_file="$(mktemp)"
+printf '[{"id":"invalid-regex","category":"Rules violation","rationale":"Bad regex","text_patterns":["["]}]\n' > "$invalid_regex_catalog_file"
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":4,"findings":[{"category":"Rules violation","summary":"Any rules violation","detail":"Invalid regex must not abort matching"}]}'
+_reset_mocks
+_install_haystack_mock
+
+output=$(HAYSTACK_FALSE_POSITIVES_FILE="$invalid_regex_catalog_file" _run_reviewer 10 1)
+advisory_json="$(_kv_value ADVISORY_FINDINGS_JSON "$output")"
+rm -f "$invalid_regex_catalog_file"
+
+run_test "known_fp_invalid_regex_result" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+run_test "known_fp_invalid_regex_no_disposition" "false" "$(printf '%s\n' "$advisory_json" | jq '.[0] | has("disposition")')"
+
 # ---------------------------------------------------------------------------
 # Area 6: HAYSTACK_POLL_INTERVAL controls retry cadence (env var)
 # ---------------------------------------------------------------------------

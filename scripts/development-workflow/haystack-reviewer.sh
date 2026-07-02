@@ -221,12 +221,22 @@ load_false_positive_catalog() {
           + pattern_values(.text_patterns // .text_pattern)
           + pattern_values(.path_patterns // .path_pattern)
         ) | length > 0;
+      def regex_compiles($pattern):
+        try ("" | test($pattern) | true) catch false;
+      def patterns_compile:
+        all((
+          pattern_values(.summary_patterns // .summary_pattern)
+          + pattern_values(.detail_patterns // .detail_pattern)
+          + pattern_values(.text_patterns // .text_pattern)
+          + pattern_values(.path_patterns // .path_pattern)
+        )[]; regex_compiles(.));
       if type == "array"
          and all(.[]; type == "object"
            and ((.id // "") | type == "string" and . != "")
            and ((.category // "") | type == "string" and . != "")
            and ((.rationale // "") | type == "string" and . != "")
-           and has_match_predicate)
+           and has_match_predicate
+           and patterns_compile)
       then .
       else error("catalog must be an array of valid false-positive rules")
       end
@@ -580,11 +590,11 @@ NORMALIZED_FINDINGS_JSON="$(printf '%s\n' "$TRIAGE_OUTPUT" | jq -c \
     end;
   def any_pattern_matches($text; $patterns):
     ($patterns | length) == 0
-    or any($patterns[]; . as $pattern | (($text // "" | tostring) | test($pattern ; "i")));
+    or any($patterns[]; . as $pattern | try (($text // "" | tostring) | test($pattern ; "i")) catch false);
   def path_patterns_match($path; $patterns):
     ($patterns | length) == 0
     or ((($path // "") | tostring | length) > 0
-        and any($patterns[]; . as $pattern | ((($path // "") | tostring) | test($pattern))));
+        and any($patterns[]; . as $pattern | try ((($path // "") | tostring) | test($pattern)) catch false));
   def rule_matches($rule; $finding):
     ($rule | type) == "object"
     and (($rule.id // "") | type == "string" and . != "")

@@ -190,8 +190,9 @@ Set `HAYSTACK_FALSE_POSITIVES_FILE=/path/to/catalog.json` to test an alternate
 catalog. If the catalog is missing, empty, malformed, or not a JSON array, the
 reviewer logs a warning and continues without applying known false-positive
 dispositions. The same fail-closed behavior applies when any catalog rule is
-invalid, such as a category-only rule with no evidence predicate. That preserves
-the original severity classification instead of silently masking findings.
+invalid, such as a category-only rule with no evidence predicate or a pattern
+that cannot compile as a regular expression. That preserves the original
+severity classification instead of silently masking findings.
 
 This template catalog is machine-readable. Downstream projects that maintain a
 prose false-positive guide, such as Helm-style `false-positives.md`, should
