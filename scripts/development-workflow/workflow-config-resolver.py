@@ -21,6 +21,8 @@ from typing import Any
 
 VALID_MODES = {"single_repo", "workflow_hub", "product_repo"}
 VALID_CI_POLICIES = {"required", "none"}
+HAYSTACK_KEYS = {"major_is_blocking", "poll_interval_sec", "timeout_sec", "stop_rule"}
+HAYSTACK_STOP_RULE_KEYS = {"max_triage_rounds", "no_progress_cycles"}
 LOCAL_ONLY_KEYS = {
     "local_path",
     "checkout_path",
@@ -310,6 +312,84 @@ def normalize_ci_policy(raw: Any, shared_path: Path, field_path: str) -> str:
     return value
 
 
+def positive_int_string(value: Any, path: Path, field_path: str) -> str:
+    if not isinstance(value, str) or not re.match(r"^[1-9][0-9]*$", value):
+        raise ConfigError(f"{path}: {field_path} must be a positive integer")
+    return value
+
+
+def bool_string(value: Any, path: Path, field_path: str) -> str:
+    if not isinstance(value, bool):
+        raise ConfigError(f"{path}: {field_path} must be a boolean")
+    return "1" if value else "0"
+
+
+def raw_haystack_config(config: dict[str, Any], path: Path) -> dict[str, Any]:
+    if "review" not in config:
+        return {}
+    review = as_mapping(config.get("review"), path, "review")
+    if "haystack" not in review:
+        return {}
+    return as_mapping(review.get("haystack"), path, "review.haystack")
+
+
+def normalize_haystack_config(config: dict[str, Any], path: Path) -> dict[str, str]:
+    haystack = raw_haystack_config(config, path)
+    if not haystack:
+        return {}
+
+    unknown = sorted(str(key) for key in haystack if key not in HAYSTACK_KEYS)
+    if unknown:
+        raise ConfigError(
+            f"{path}: review.haystack contains unsupported field(s): {', '.join(unknown)}"
+        )
+
+    normalized: dict[str, str] = {}
+    if "major_is_blocking" in haystack:
+        normalized["HAYSTACK_CONFIG_MAJOR_IS_BLOCKING"] = bool_string(
+            haystack.get("major_is_blocking"), path, "review.haystack.major_is_blocking"
+        )
+    if "poll_interval_sec" in haystack:
+        normalized["HAYSTACK_CONFIG_POLL_INTERVAL_SEC"] = positive_int_string(
+            haystack.get("poll_interval_sec"), path, "review.haystack.poll_interval_sec"
+        )
+    if "timeout_sec" in haystack:
+        normalized["HAYSTACK_CONFIG_TIMEOUT_SEC"] = positive_int_string(
+            haystack.get("timeout_sec"), path, "review.haystack.timeout_sec"
+        )
+
+    if "stop_rule" in haystack:
+        stop_rule = as_mapping(
+            haystack.get("stop_rule"), path, "review.haystack.stop_rule"
+        )
+        unknown_stop_rule = sorted(
+            str(key) for key in stop_rule if key not in HAYSTACK_STOP_RULE_KEYS
+        )
+        if unknown_stop_rule:
+            raise ConfigError(
+                f"{path}: review.haystack.stop_rule contains unsupported field(s): {', '.join(unknown_stop_rule)}"
+            )
+        if "max_triage_rounds" in stop_rule:
+            normalized["HAYSTACK_CONFIG_MAX_TRIAGE_ROUNDS"] = positive_int_string(
+                stop_rule.get("max_triage_rounds"),
+                path,
+                "review.haystack.stop_rule.max_triage_rounds",
+            )
+        if "no_progress_cycles" in stop_rule:
+            normalized["HAYSTACK_CONFIG_NO_PROGRESS_CYCLES"] = positive_int_string(
+                stop_rule.get("no_progress_cycles"),
+                path,
+                "review.haystack.stop_rule.no_progress_cycles",
+            )
+
+    return normalized
+
+
+def validate_workflow_config(shared: dict[str, Any], local: dict[str, Any], shared_path: Path, local_path: Path) -> None:
+    normalize_haystack_config(shared, shared_path)
+    normalize_haystack_config(local, local_path)
+
+
 def product_repos(shared: dict[str, Any], shared_path: Path) -> list[dict[str, Any]]:
     workflow_hub = as_mapping(shared.get("workflow_hub"), shared_path, "workflow_hub")
     repos = as_list(workflow_hub.get("product_repos"), shared_path, "workflow_hub.product_repos")
@@ -570,6 +650,7 @@ def first_present(*values: Any) -> str:
 def resolve_auth_context(args: argparse.Namespace) -> dict[str, str]:
     repo_root = repo_root_from_args(args.repo_root)
     shared, local, shared_path, local_path = load_configs(repo_root)
+    validate_workflow_config(shared, local, shared_path, local_path)
     mode = mode_from_shared(shared, shared_path)
     if mode != "workflow_hub":
         return {
@@ -636,6 +717,7 @@ def resolve_auth_context(args: argparse.Namespace) -> dict[str, str]:
 def resolve_context(args: argparse.Namespace) -> dict[str, str]:
     repo_root = repo_root_from_args(args.repo_root)
     shared, local, shared_path, local_path = load_configs(repo_root)
+    validate_workflow_config(shared, local, shared_path, local_path)
     mode = mode_from_shared(shared, shared_path)
     context: dict[str, str] = {
         "WORKFLOW_MODE": mode,
@@ -727,7 +809,8 @@ def scalar_from_path(data: dict[str, Any], path: list[str]) -> str:
 
 def resolve_review_overrides(args: argparse.Namespace) -> dict[str, str]:
     repo_root = repo_root_from_args(args.repo_root)
-    _, local, _, _ = load_configs(repo_root)
+    shared, local, shared_path, local_path = load_configs(repo_root)
+    validate_workflow_config(shared, local, shared_path, local_path)
 
     local_runner, has_local_runner = list_override_from_path(local, ["review", "on_draft", "runner"])
     runner = local_runner
@@ -770,6 +853,23 @@ def resolve_review_overrides(args: argparse.Namespace) -> dict[str, str]:
         "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY_SOURCE": policy_source,
         "LOCAL_OVERRIDE_SOURCE": ",".join(sources),
     }
+
+
+def resolve_haystack_config(args: argparse.Namespace) -> dict[str, str]:
+    repo_root = repo_root_from_args(args.repo_root)
+    shared, local, shared_path, local_path = load_configs(repo_root)
+    shared_values = normalize_haystack_config(shared, shared_path)
+    local_values = normalize_haystack_config(local, local_path)
+    values = {
+        "HAYSTACK_CONFIG_MAJOR_IS_BLOCKING": "",
+        "HAYSTACK_CONFIG_POLL_INTERVAL_SEC": "",
+        "HAYSTACK_CONFIG_TIMEOUT_SEC": "",
+        "HAYSTACK_CONFIG_MAX_TRIAGE_ROUNDS": "",
+        "HAYSTACK_CONFIG_NO_PROGRESS_CYCLES": "",
+    }
+    values.update(shared_values)
+    values.update(local_values)
+    return values
 
 
 def print_shell_context(values: dict[str, str]) -> None:
@@ -837,6 +937,11 @@ def cmd_review_overrides(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_review_haystack(args: argparse.Namespace) -> int:
+    print_context(args, resolve_haystack_config(args))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Resolve AI workflow repository context")
     subcommands = parser.add_subparsers(dest="command", required=True)
@@ -889,6 +994,11 @@ def build_parser() -> argparse.ArgumentParser:
     overrides.add_argument("--repo-root")
     overrides.add_argument("--json", action="store_true", help="print JSON instead of shell KEY=value")
     overrides.set_defaults(func=cmd_review_overrides)
+
+    haystack = subcommands.add_parser("review-haystack", help="print Haystack review config values")
+    haystack.add_argument("--repo-root")
+    haystack.add_argument("--json", action="store_true", help="print JSON instead of shell KEY=value")
+    haystack.set_defaults(func=cmd_review_haystack)
     return parser
 
 

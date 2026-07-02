@@ -12,7 +12,7 @@ For information about Haystack's local git hooks (truncation checker, LLM_RULES.
 
 Key properties:
 
-- **Poll-retry on pending**: When `haystack triage` returns `status=pending` (analysis still in progress), `haystack-reviewer.sh` waits `HAYSTACK_POLL_INTERVAL` seconds (default: 15) and retries automatically until the analysis completes or the overall `HAYSTACK_REVIEWER_TIMEOUT` budget is exhausted. This eliminates the timing-gap false-negative where the reviewer loop ran within the first 2–4 minutes of a PR push and silently skipped findings.
+- **Poll-retry on pending**: When `haystack triage` returns `status=pending` (analysis still in progress), `haystack-reviewer.sh` waits the configured poll interval, defaulting to 15 seconds, and retries automatically until the analysis completes, the overall timeout budget expires, or a configured stop rule fires. This eliminates the timing-gap false-negative where the reviewer loop ran within the first 2–4 minutes of a PR push and silently skipped findings.
 - **Policy-verdict visibility**: After triage completes, `haystack-reviewer.sh` also reads `haystack pr-status <PR> --json`. When Haystack reports `needsHumanReview: true` or `analysisVerdict: "needs-review"`, the reviewer loop keeps the result non-blocking if there are no blocking findings but displays `haystack (needs-review: policy)` in the PR summary instead of `haystack (clean)`. The summary also records the Haystack bucket, `needsHumanReview`, and a disposition such as `blocking`, `policy-human-review`, `advisory-only`, or `good-to-merge`.
 - **No per-hour rate cap**: Unlike some hosted review services, Haystack triage is not subject to hourly review limits (as of the time of writing).
 - **Graceful degradation**: If the `haystack` CLI is absent or unauthenticated, the reviewer exits with `UNAVAILABLE` and the review loop continues with the remaining configured platforms.
@@ -54,6 +54,50 @@ review:
 ```
 
 No other configuration changes are required in `.ai-dev-workflow.yaml`.
+Repositories may optionally define Haystack reviewer defaults in the same
+`review` section:
+
+```yaml
+review:
+  on_ready:
+    github:
+      - haystack
+  haystack:
+    major_is_blocking: false
+    poll_interval_sec: 15
+    timeout_sec: 120
+    stop_rule:
+      max_triage_rounds: 8
+      no_progress_cycles: 3
+```
+
+All `review.haystack` fields are optional. Omitted fields fall back to the
+built-in defaults used by `haystack-reviewer.sh`.
+
+Supported settings:
+
+| Setting | Type | Default | Description |
+| ------- | ---- | ------- | ----------- |
+| `major_is_blocking` | boolean | `false` | Treat `Major` findings as blocking instead of advisory. |
+| `poll_interval_sec` | positive integer | `15` | Seconds to wait between transient `haystack triage --no-wait` calls. |
+| `timeout_sec` | positive integer | `120` | Total seconds allowed across all triage polling before `REASON=pending_timeout` or `REASON=timeout`. |
+| `stop_rule.max_triage_rounds` | positive integer | unset | Maximum number of triage calls before `REASON=max_triage_rounds`. |
+| `stop_rule.no_progress_cycles` | positive integer | unset | Maximum repeated unchanged transient-progress cycles before `REASON=no_progress_cycles`. |
+
+Validation is performed by
+`scripts/development-workflow/validate-workflow-config.sh`. Invalid booleans,
+non-positive integers, scalar `stop_rule` values, and unsupported
+`review.haystack` keys fail closed with setting-specific errors.
+
+Runtime overrides have this precedence:
+
+1. `--timeout <seconds>` passed directly to `haystack-reviewer.sh`.
+2. Environment variables for existing runtime controls:
+   `HAYSTACK_REVIEWER_TIMEOUT`, `HAYSTACK_POLL_INTERVAL`, and
+   `HAYSTACK_MAJOR_IS_BLOCKING`.
+3. `review.haystack` values in `.ai-dev-workflow.local.yaml`, then
+   `.ai-dev-workflow.yaml`.
+4. Built-in defaults.
 
 If the repository creates implementation PRs as drafts, prefer
 `review.on_ready.github` for Haystack. In this mode the reviewer loop lets
@@ -284,14 +328,18 @@ If both conditions hold, the finding is a false positive and can be dismissed. G
 
 ---
 
-## Timeout and Poll Interval Configuration
+## Timeout, Poll Interval, and Stop-rule Configuration
 
-`haystack-reviewer.sh` polls `haystack triage` until the analysis completes or the overall budget expires. Two environment variables control this behaviour:
+`haystack-reviewer.sh` polls `haystack triage` until the analysis completes,
+the overall budget expires, or a configured stop rule fires. Repository
+defaults live under `review.haystack`; existing environment variables remain
+available as one-run overrides.
 
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
-| `HAYSTACK_REVIEWER_TIMEOUT` | `120` | Total seconds the script may spend across all poll-retry calls. When this budget is exhausted while the analysis is still `pending`, the script exits with `REASON=pending_timeout`. |
-| `HAYSTACK_POLL_INTERVAL` | `15` | Seconds to wait between successive `haystack triage --no-wait` calls when the response carries `status=pending`. |
+| `HAYSTACK_REVIEWER_TIMEOUT` | `review.haystack.timeout_sec` or `120` | Total seconds the script may spend across all poll-retry calls. When this budget is exhausted while the analysis is still `pending`, the script exits with `REASON=pending_timeout`. |
+| `HAYSTACK_POLL_INTERVAL` | `review.haystack.poll_interval_sec` or `15` | Seconds to wait between successive `haystack triage --no-wait` calls when the response carries a transient `status`. |
+| `HAYSTACK_MAJOR_IS_BLOCKING` | `review.haystack.major_is_blocking` or `0` | Set to `1` to treat `Major` findings as blocking. |
 
 Override both via environment variable:
 
@@ -301,6 +349,14 @@ HAYSTACK_REVIEWER_TIMEOUT=180 HAYSTACK_POLL_INTERVAL=20 \
 ```
 
 If a single `haystack triage` call hangs (e.g., network issue), the script enforces a per-call timeout of `floor(remaining_budget / 2)` seconds (minimum 1 second) and retries as long as the overall budget allows. When the budget is finally exhausted due to a hung call, the script exits with `REASON=timeout` (exit code 2).
+
+Stop rules are configured only through `review.haystack.stop_rule`.
+`max_triage_rounds` caps the number of `haystack triage --no-wait` calls before
+the script exits with `REASON=max_triage_rounds`. `no_progress_cycles` compares
+a stable transient-progress signature and exits with
+`REASON=no_progress_cycles` when that signature repeats for the configured
+number of cycles. Completed Haystack payloads always take precedence over stop
+rules.
 
 ---
 
@@ -388,7 +444,7 @@ INFO: status=pending — waiting 15s before retry (15s elapsed of 120s budget)
 
 **Cause**: `haystack triage --no-wait` exits immediately when the Haystack cloud analysis is not yet complete. Haystack analysis typically takes 2–4 minutes after a PR is pushed.
 
-**Behaviour since issue #795**: `haystack-reviewer.sh` now **automatically polls and retries** when it receives `status=pending`. It waits `HAYSTACK_POLL_INTERVAL` seconds (default: 15) between calls and continues retrying until the analysis completes or the `HAYSTACK_REVIEWER_TIMEOUT` budget (default: 120 seconds) is exhausted.
+**Behaviour since issue #795**: `haystack-reviewer.sh` now **automatically polls and retries** when it receives `status=pending`. It waits the configured poll interval between calls and continues retrying until the analysis completes, the configured timeout budget is exhausted, or a configured stop rule fires.
 
 If the overall budget is exhausted while the analysis is still pending, the script emits:
 
@@ -402,7 +458,7 @@ REASON=pending_timeout
 
 **Recovery options**:
 
-1. **Increase the timeout**: Set `HAYSTACK_REVIEWER_TIMEOUT=300` to give Haystack more time to complete analysis.
+1. **Increase the timeout**: Set `HAYSTACK_REVIEWER_TIMEOUT=300` or `review.haystack.timeout_sec: 300` to give Haystack more time to complete analysis.
 2. **Re-run the review loop manually** after a few minutes: `./scripts/development-workflow/pr-review-loop.sh <pr_number>`.
 3. **Run haystack triage directly** if you need an immediate result:
 

@@ -52,6 +52,19 @@ review:
     # are clean and the PR has been converted with `gh pr ready`.
     github:
       - haystack
+
+  # Optional Haystack reviewer defaults. Omit this section to keep the built-in
+  # defaults used by scripts/development-workflow/haystack-reviewer.sh.
+  # Runtime environment variables still take precedence for one-off CI/local
+  # runs: HAYSTACK_REVIEWER_TIMEOUT, HAYSTACK_POLL_INTERVAL, and
+  # HAYSTACK_MAJOR_IS_BLOCKING.
+  # haystack:
+  #   major_is_blocking: false
+  #   poll_interval_sec: 15
+  #   timeout_sec: 120
+  #   stop_rule:
+  #     max_triage_rounds: 8
+  #     no_progress_cycles: 3
   #
   # Configurable codex-github options (set via env vars or script flags to codex-github-reviewer.sh):
   #   CODEX_GITHUB_TRIGGER_PHRASE  — trigger phrase sent to the bot (default: "@codex review")

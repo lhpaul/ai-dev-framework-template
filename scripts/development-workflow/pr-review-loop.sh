@@ -2056,8 +2056,10 @@ run_haystack_review() {
   #   0 → RESULT=clean    (no blocking findings)
   #   1 → RESULT=needs_fixes (one or more blocking findings)
   #   2 → RESULT=escalate; REASON forwarded from companion script:
-  #         REASON=timeout         — per-call OS timeout exhausted budget
-  #         REASON=pending_timeout — analysis stayed pending past timeout budget
+  #         REASON=timeout             — per-call OS timeout exhausted budget
+  #         REASON=pending_timeout     — analysis stayed pending past timeout budget
+  #         REASON=max_triage_rounds   — configured triage-round stop rule fired
+  #         REASON=no_progress_cycles  — configured no-progress stop rule fired
   #   3 → RESULT=skipped; REASON forwarded (unavailable, unauthorized, forbidden, …)
   local pr_number="$1"
   local branch_name="$2"
