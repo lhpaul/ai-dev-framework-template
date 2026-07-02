@@ -961,11 +961,14 @@ chmod +x "$MOCK_BIN/jq"
 
 output=$(_run_reviewer 30 1)
 ec=$(cat "$_REVIEWER_EXIT_FILE")
+blocking_json="$(_kv_value BLOCKING_FINDINGS_JSON "$output")"
 
 run_test "policy_parse_failure_result" "RESULT=needs_fixes" "$(echo "$output" | grep '^RESULT=')"
 run_test "policy_parse_failure_reason" "REASON=policy_status_parse_failed" "$(echo "$output" | grep '^REASON=')"
 run_test "policy_parse_failure_blocking_count" "BLOCKING_COUNT=1" "$(echo "$output" | grep '^BLOCKING_COUNT=')"
 run_test "policy_parse_failure_comment_count" "COMMENT_COUNT=1" "$(echo "$output" | grep '^COMMENT_COUNT=')"
+run_test "policy_parse_failure_blocking_json_count" "1" "$(printf '%s\n' "$blocking_json" | jq 'length')"
+run_test "policy_parse_failure_blocking_json_category" "Policy status parse failed" "$(printf '%s\n' "$blocking_json" | jq -r '.[0].category')"
 run_test "policy_parse_failure_exit_code" "1" "$ec"
 rm -f "$MOCK_BIN/jq"
 unset TEST_HAYSTACK_PR_STATUS_CHECK

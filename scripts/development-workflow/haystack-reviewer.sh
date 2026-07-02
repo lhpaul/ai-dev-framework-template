@@ -671,13 +671,23 @@ if [ "$PR_STATUS_CHECK" != "0" ]; then
       fi
     else
       echo "ERROR: haystack pr-status field parse failed — failing closed" >&2
+      POLICY_BLOCKING_FINDINGS_JSON="$(printf '%s\n' "$BLOCKING_FINDINGS_JSON" | jq -c '
+        . + [{
+          "severity": "blocking",
+          "category": "Policy status parse failed",
+          "summary": "Haystack policy status parse failed",
+          "detail": "haystack pr-status returned JSON but required fields could not be parsed"
+        }]
+      ')"
+      POLICY_BLOCKING_COUNT="$(printf '%s\n' "$POLICY_BLOCKING_FINDINGS_JSON" | jq 'length')"
+      POLICY_COMMENT_COUNT=$((POLICY_BLOCKING_COUNT + SUGGESTION_COUNT))
       printf 'RESULT=needs_fixes\n'
       printf 'REASON=policy_status_parse_failed\n'
-      printf 'BLOCKING_COUNT=1\n'
+      printf 'BLOCKING_COUNT=%d\n' "$POLICY_BLOCKING_COUNT"
       printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
-      printf 'COMMENT_COUNT=%d\n' "$((SUGGESTION_COUNT + 1))"
+      printf 'COMMENT_COUNT=%d\n' "$POLICY_COMMENT_COUNT"
       printf 'ADVISORY_FINDINGS_JSON=%s\n' "$ADVISORY_FINDINGS_JSON"
-      printf 'BLOCKING_FINDINGS_JSON=%s\n' "$BLOCKING_FINDINGS_JSON"
+      printf 'BLOCKING_FINDINGS_JSON=%s\n' "$POLICY_BLOCKING_FINDINGS_JSON"
       printf 'POLICY_STATUS_AVAILABLE=0\n'
       printf 'POLICY_REVIEW_REQUIRED=0\n'
       printf 'POLICY_DISPOSITION=blocking\n'

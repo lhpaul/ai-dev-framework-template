@@ -132,6 +132,12 @@ The structured arrays are derived from the same classification pass as
 match. Existing consumers may continue to rely only on `RESULT`,
 `BLOCKING_COUNT`, `SUGGESTION_COUNT`, and `COMMENT_COUNT`.
 
+When `haystack pr-status --json` returns parseable JSON but a required policy
+field cannot be read, the reviewer fails closed with
+`REASON=policy_status_parse_failed`. On that path, `BLOCKING_FINDINGS_JSON`
+includes a synthetic `Policy status parse failed` blocking entry so
+`BLOCKING_COUNT` still matches the blocking array length.
+
 Unavailable or skipped review paths keep their existing output contract and may
 omit the structured arrays. Treat missing arrays on skipped output as "no
 completed Haystack finding payload", not as an empty completed review.
