@@ -139,6 +139,10 @@ JSON
           cat <<'JSON'
 {"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_custom_type","name":"Custom Type","options":[{"id":"OPT_workflow_custom","name":"Workflow"},{"id":"OPT_bug_custom","name":"Bug"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
 JSON
+        elif [ "${MOCK_STATUS_FIELD_MODE:-existing}" = "type_and_custom_type" ]; then
+          cat <<'JSON'
+{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_workflow","name":"Workflow"},{"id":"OPT_bug","name":"Bug"}]},{"id":"PVTSSF_custom_type","name":"Custom Type","options":[{"id":"OPT_workflow_custom","name":"Workflow"},{"id":"OPT_bug_custom","name":"Bug"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
+JSON
         elif [[ "$*" == *"projectId=PVT_project_2"* ]]; then
           cat <<'JSON'
 {"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_type_project_2","name":"Type","options":[{"id":"OPT_workflow_project_2","name":"Workflow"},{"id":"OPT_bug_project_2","name":"Bug"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
@@ -178,9 +182,15 @@ JSON
 JSON
     ;;
   "project item-list 1 --owner lhpaul --limit 1000 --format json")
-    cat <<'JSON'
+    if [ "${MOCK_PROJECT_ITEM_LIST_MODE:-existing}" = "custom_type_conflict" ]; then
+      cat <<'JSON'
+{"items":[{"content":{"number":824},"status":"Backlog","priority":"High","type":"Bug","customType":"Workflow","title":"Workflow helper issue"},{"content":{"number":825},"status":"Backlog","priority":"High","type":"Workflow","customType":"Bug","title":"Bug helper issue"}]}
+JSON
+    else
+      cat <<'JSON'
 {"items":[{"content":{"number":824},"status":"Backlog","priority":"High","type":"Workflow","customType":"Workflow","title":"Workflow helper issue"},{"content":{"number":825},"status":"Backlog","priority":"High","type":"Bug","customType":"Bug","title":"Bug helper issue"},{"content":{"number":826},"status":"Done","priority":"High","type":"Workflow","customType":"Workflow","title":"Done workflow helper issue"},{"content":{"number":827},"status":"Merged","priority":"High","type":"Workflow","customType":"Workflow","title":"Merged workflow helper issue"},{"content":{"number":828},"status":"Released","priority":"High","type":"Workflow","customType":"Workflow","title":"Released workflow helper issue"},{"content":{"number":829},"status":"Cancelled","priority":"High","type":"Workflow","customType":"Workflow","title":"Cancelled workflow helper issue"}]}
 JSON
+    fi
     ;;
   "project item-add "*)
     printf 'PVTI_added\n'
@@ -394,6 +404,20 @@ reset_log
 __workflow_project_type_field_cache_project_id=""
 __workflow_project_type_field_cache_field_name=""
 __workflow_project_type_field_cache_json=""
+export MOCK_STATUS_FIELD_MODE=type_and_custom_type
+export MOCK_TYPE_FIELD_NAME="Custom Type"
+type_field_json="$(workflow_github_project_type_field_json "PVT_project_1")"
+unset MOCK_STATUS_FIELD_MODE
+unset MOCK_TYPE_FIELD_NAME
+type_field_id="$(printf '%s' "$type_field_json" | jq -r '.field_id // empty')"
+type_field_name="$(printf '%s' "$type_field_json" | jq -r '.field_name // empty')"
+run_test "configured_custom_type_beats_type_field_id" "PVTSSF_custom_type" "$type_field_id"
+run_test "configured_custom_type_beats_type_field_name" "Custom Type" "$type_field_name"
+
+reset_log
+__workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_field_name=""
+__workflow_project_type_field_cache_json=""
 export MOCK_STATUS_FIELD_MODE=custom_type_only
 export MOCK_TYPE_FIELD_NAME="Custom Type"
 type_field_json="$(workflow_github_project_type_field_json "PVT_project_1")"
@@ -494,6 +518,17 @@ workflow_issue_numbers="$(printf '%s' "$workflow_issues" | jq -r '.[].number' | 
 run_test "workflow_type_discovery_filters_open_type" "824" "$workflow_issue_numbers"
 run_test "workflow_type_discovery_filters_terminal_statuses" "824" "$workflow_issue_numbers"
 run_test "workflow_type_discovery_uses_single_board_scan" "1" "$(count_log_matches 'project item-list')"
+
+reset_log
+export MOCK_TYPE_FIELD_NAME="Custom Type"
+export MOCK_PROJECT_ITEM_LIST_MODE=custom_type_conflict
+workflow_issues="$(list_open_workflow_type_issues)"
+unset MOCK_TYPE_FIELD_NAME
+unset MOCK_PROJECT_ITEM_LIST_MODE
+workflow_issue_numbers="$(printf '%s' "$workflow_issues" | jq -r '.[].number' | tr '\n' ' ' | sed 's/ $//')"
+first_workflow_type="$(printf '%s' "$workflow_issues" | jq -r '.[0].type')"
+run_test "workflow_type_discovery_custom_type_beats_stale_type" "824" "$workflow_issue_numbers"
+run_test "workflow_type_discovery_custom_type_conflict_value" "Workflow" "$first_workflow_type"
 
 reset_log
 export MOCK_TYPE_FIELD_NAME="Custom Type"

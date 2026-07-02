@@ -1731,13 +1731,16 @@ candidate_names = []
 for name in (configured, 'Type', 'Custom Type', 'CustomType'):
     if name and name not in candidate_names:
         candidate_names.append(name)
-for field in fields:
-    if field.get('name') in candidate_names:
-        field_json = json.dumps({
-            'field_id': field.get('id') or '',
-            'field_name': field.get('name') or '',
-            'options': {option.get('name') or '': option.get('id') or '' for option in field.get('options') or []},
-        }, separators=(',', ':'))
+for candidate_name in candidate_names:
+    for field in fields:
+        if field.get('name') == candidate_name:
+            field_json = json.dumps({
+                'field_id': field.get('id') or '',
+                'field_name': field.get('name') or '',
+                'options': {option.get('name') or '': option.get('id') or '' for option in field.get('options') or []},
+            }, separators=(',', ':'))
+            break
+    if field_json:
         break
 page_info = field_connection.get('pageInfo') or {}
 has_next = 'true' if page_info.get('hasNextPage') else 'false'
@@ -2686,8 +2689,15 @@ list_open_workflow_type_issues() {
   fi
 
   if ! printf '%s' "$project_items" | jq --argjson open "$open_issues" --arg type_field_name "$type_field_name" '
+    def custom_type_value:
+      (.[$type_field_name] // .customType // ."Custom Type" // ."CustomType" // .customtype);
+
     def classification_type:
-      (.[$type_field_name] // .type // .customType // ."Custom Type" // ."CustomType" // .customtype // "");
+      if ($type_field_name == "" or $type_field_name == "Type") then
+        (.type // custom_type_value // "")
+      else
+        (custom_type_value // .type // "")
+      end;
 
     def terminal($status):
       ($status // "") as $s
