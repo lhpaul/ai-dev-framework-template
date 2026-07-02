@@ -139,6 +139,25 @@ guardrails:
       max_merge_risk: extreme
 YAML
 
+stage_guardrails_config="$TMP_ROOT/ai-dev-workflow-stage-guardrails.yaml"
+cat > "$stage_guardrails_config" <<'YAML'
+schema_version: 2
+issue_tracker:
+  provider: linear
+guardrails:
+  mode: assisted
+  stages:
+    spec:
+      may_merge_pr: false
+      max_merge_risk: low
+    plan:
+      may_merge_pr: true
+      max_merge_risk: high
+    implementation:
+      may_merge_pr: true
+      max_merge_risk: high
+YAML
+
 linear_prelude_out="$(AI_DEV_WORKFLOW_CONFIG_FILE="$guardrails_config" \
   "$PRELUDE" --original-command "/run-item LEA-185" --issue LEA-185 --json)"
 run_test "linear_issue_identifier_resolves" "LEA-185" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.scope.resolvedIssueIdentifier')"
@@ -184,6 +203,11 @@ run_test "invalid_guardrails_json_fails" "true" "$([ "$invalid_guardrails_status
 run_test "invalid_guardrails_json_detail" "true" "$(
   printf '%s\n' "$invalid_guardrails_out" | jq -r '.detail | test("max_merge_risk")' 2>/dev/null || echo false
 )"
+
+stage_guardrails_out="$(AI_DEV_WORKFLOW_CONFIG_FILE="$stage_guardrails_config" \
+  "$PRELUDE" --original-command "/run-item LEA-185" --issue LEA-185 --json)"
+run_test "stage_guardrails_active_merge_limit" "false" "$(printf '%s\n' "$stage_guardrails_out" | jq -r '.policyRecommendation.effectivePolicy.mayMerge')"
+run_test "stage_guardrails_active_risk_limit" "low" "$(printf '%s\n' "$stage_guardrails_out" | jq -r '.policyRecommendation.effectivePolicy.maxRisk')"
 
 run_fails "reject_linear_identifier_with_underscore" "invalid --issue identifier" \
   env AI_DEV_WORKFLOW_CONFIG_FILE="$guardrails_config" "$ITEM_RESOLVER" --issue A_B-123

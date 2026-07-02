@@ -207,6 +207,42 @@ json_get() {
   printf '%s\n' "$json" | jq -r "$filter"
 }
 
+guardrails_scope_may_merge() {
+  local guardrails="$1" scope_file="$2"
+  jq -nr --argjson guardrails "$guardrails" --slurpfile scope "$scope_file" '
+    def infer_stage($status):
+      ($status | ascii_downcase) as $s |
+      if $s == "backlog" or ($s | test("writing spec|spec in review|spec")) then "spec"
+      elif $s | test("writing plan|plan in review|plan") then "plan"
+      elif $s | test("development|implement") then "implementation"
+      else "implementation"
+      end;
+    [$scope[0].items[]? | infer_stage(.status // "")] | unique as $stages |
+    if ($stages | length) == 0 then "false"
+    elif all($stages[]; ($guardrails.stages[.].may_merge_pr // false) == true) then "true"
+    else "false"
+    end
+  '
+}
+
+guardrails_scope_max_risk() {
+  local guardrails="$1" scope_file="$2"
+  jq -nr --argjson guardrails "$guardrails" --slurpfile scope "$scope_file" '
+    def infer_stage($status):
+      ($status | ascii_downcase) as $s |
+      if $s == "backlog" or ($s | test("writing spec|spec in review|spec")) then "spec"
+      elif $s | test("writing plan|plan in review|plan") then "plan"
+      elif $s | test("development|implement") then "implementation"
+      else "implementation"
+      end;
+    def rank($risk): {"low":1,"medium":2,"high":3}[$risk] // 1;
+    [$scope[0].items[]? | infer_stage(.status // "")] | unique as $stages |
+    if ($stages | length) == 0 then "low"
+    else [$stages[] | ($guardrails.stages[.].max_merge_risk // "low")] | min_by(rank(.))
+    end
+  '
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --original-command)
@@ -394,22 +430,6 @@ if [ -z "$delegate_review_override" ]; then
   esac
   delegate_review_source="$guardrails_source"
 fi
-if [ -z "$may_merge_override" ]; then
-  if [ "$(json_get "$guardrails_json" '[.stages.spec.may_merge_pr, .stages.plan.may_merge_pr, .stages.implementation.may_merge_pr] | any')" = "true" ]; then
-    may_merge_override="true"
-  else
-    may_merge_override="false"
-  fi
-  may_merge_source="$guardrails_source"
-fi
-if [ -z "$max_risk_override" ]; then
-  max_risk_override="$(json_get "$guardrails_json" '
-    def rank: {"low":1,"medium":2,"high":3}[.] // 0;
-    [.stages.spec.max_merge_risk, .stages.plan.max_merge_risk, .stages.implementation.max_merge_risk]
-    | max_by(rank)
-  ')"
-  max_risk_source="$guardrails_source"
-fi
 
 resolver_common=()
 [ -n "$base_override" ] && resolver_common+=(--base "$base_override")
@@ -441,6 +461,15 @@ case "$scope_mode" in
     fi
     ;;
 esac
+
+if [ -z "$may_merge_override" ]; then
+  may_merge_override="$(guardrails_scope_may_merge "$guardrails_json" "$scope_file")"
+  may_merge_source="$guardrails_source"
+fi
+if [ -z "$max_risk_override" ]; then
+  max_risk_override="$(guardrails_scope_max_risk "$guardrails_json" "$scope_file")"
+  max_risk_source="$guardrails_source"
+fi
 
 policy_args=(
   --scope "$scope_file"
