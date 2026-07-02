@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Unify advisory contract** (#1118): Added a provider-agnostic reviewer
   advisory contract while preserving transition aliases.
 
+### Fixed
+
+- **GitHub Projects classification field handling**: Backlog creation and
+  tracker helpers can now set and read configurable Type-like fields such as
+  `Custom Type` or `CustomType`, while preserving `Type` as the default.
+
 ## [0.35.0] - 2026-07-02
 
 ### Added

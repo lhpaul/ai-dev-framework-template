@@ -107,12 +107,16 @@ JSON
 JSON
 	              ;;
 	          esac
-	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "legacy_field_value" ]; then
-	          cat <<'JSON'
+        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "legacy_field_value" ]; then
+          cat <<'JSON'
 	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"fieldValueByName":{"name":"Spec Ready"},"type":{"name":"Workflow"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
 JSON
-	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "missing_fields" ]; then
-	          cat <<'JSON'
+        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "custom_type_value" ]; then
+          cat <<'JSON'
+	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"status":{"name":"Spec Ready"},"type":null,"typeDefault":null,"typeCustomSpaced":{"name":"Workflow"},"typeCustomCompact":null}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
+JSON
+        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "missing_fields" ]; then
+          cat <<'JSON'
 	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
 JSON
 	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "released" ]; then
@@ -131,6 +135,10 @@ JSON
           exit 42
         elif [ "${MOCK_STATUS_FIELD_MODE:-existing}" = "invalid_json" ]; then
           printf 'not json\n'
+        elif [ "${MOCK_STATUS_FIELD_MODE:-existing}" = "custom_type_only" ]; then
+          cat <<'JSON'
+{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_custom_type","name":"Custom Type","options":[{"id":"OPT_workflow_custom","name":"Workflow"},{"id":"OPT_bug_custom","name":"Bug"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
+JSON
         elif [[ "$*" == *"projectId=PVT_project_2"* ]]; then
           cat <<'JSON'
 {"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_type_project_2","name":"Type","options":[{"id":"OPT_workflow_project_2","name":"Workflow"},{"id":"OPT_bug_project_2","name":"Bug"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
@@ -171,7 +179,7 @@ JSON
     ;;
   "project item-list 1 --owner lhpaul --limit 1000 --format json")
     cat <<'JSON'
-{"items":[{"content":{"number":824},"status":"Backlog","priority":"High","type":"Workflow","title":"Workflow helper issue"},{"content":{"number":825},"status":"Backlog","priority":"High","type":"Bug","title":"Bug helper issue"},{"content":{"number":826},"status":"Done","priority":"High","type":"Workflow","title":"Done workflow helper issue"},{"content":{"number":827},"status":"Merged","priority":"High","type":"Workflow","title":"Merged workflow helper issue"},{"content":{"number":828},"status":"Released","priority":"High","type":"Workflow","title":"Released workflow helper issue"},{"content":{"number":829},"status":"Cancelled","priority":"High","type":"Workflow","title":"Cancelled workflow helper issue"}]}
+{"items":[{"content":{"number":824},"status":"Backlog","priority":"High","type":"Workflow","customType":"Workflow","title":"Workflow helper issue"},{"content":{"number":825},"status":"Backlog","priority":"High","type":"Bug","customType":"Bug","title":"Bug helper issue"},{"content":{"number":826},"status":"Done","priority":"High","type":"Workflow","customType":"Workflow","title":"Done workflow helper issue"},{"content":{"number":827},"status":"Merged","priority":"High","type":"Workflow","customType":"Workflow","title":"Merged workflow helper issue"},{"content":{"number":828},"status":"Released","priority":"High","type":"Workflow","customType":"Workflow","title":"Released workflow helper issue"},{"content":{"number":829},"status":"Cancelled","priority":"High","type":"Workflow","customType":"Workflow","title":"Cancelled workflow helper issue"}]}
 JSON
     ;;
   "project item-add "*)
@@ -199,6 +207,13 @@ workflow_issue_tracker_provider_raw() {
 
 workflow_issue_tracker_project_number() {
   printf '%s\n' "${MOCK_TRACKER_PROJECT_NUMBER-1}"
+}
+
+workflow_issue_tracker_custom_field() {
+  case "$1" in
+    type_field) printf '%s' "${MOCK_TYPE_FIELD_NAME:-}" ;;
+    *) printf '' ;;
+  esac
 }
 
 PASS_COUNT=0
@@ -244,6 +259,21 @@ run_test "targeted_type_read" "Workflow" "$tracker_type"
 run_test "type_read_avoids_full_board_scan" "" "$(forbidden_project_reads)"
 
 reset_log
+export MOCK_PROJECT_ITEM_MODE=custom_type_value
+export MOCK_TYPE_FIELD_NAME="Custom Type"
+tracker_type="$(get_tracker_type_for_issue 824)"
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_TYPE_FIELD_NAME
+run_test "targeted_custom_type_read" "Workflow" "$tracker_type"
+run_test "custom_type_read_uses_configured_field" "1" "$(count_log_matches 'typeFieldName=Custom Type')"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=custom_type_value
+tracker_type="$(get_tracker_type_for_issue 824)"
+unset MOCK_PROJECT_ITEM_MODE
+run_test "targeted_type_read_falls_back_to_custom_type" "Workflow" "$tracker_type"
+
+reset_log
 export MOCK_PROJECT_ITEM_MODE=paginated
 status="$(get_tracker_status_for_issue 824)"
 unset MOCK_PROJECT_ITEM_MODE
@@ -265,7 +295,7 @@ export MOCK_PROJECT_ITEM_MODE=missing_fields
 missing_fields_stderr="$(workflow_github_project_item_for_issue 824 1 2>&1 >/dev/null || true)"
 unset MOCK_PROJECT_ITEM_MODE
 case "$missing_fields_stderr" in
-  *"named exactly 'Status'"*"named exactly 'Type'"*) missing_fields_result="warned" ;;
+  *"named exactly 'Status'"*"classification field exists and the item value is set"*) missing_fields_result="warned" ;;
   *) missing_fields_result="$missing_fields_stderr" ;;
 esac
 run_test "project_item_missing_named_fields_warns" "warned" "$missing_fields_result"
@@ -351,6 +381,7 @@ run_test "type_update_mutates_project_item" "1" "$(count_log_matches 'api graphq
 
 reset_log
 __workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_field_name=""
 __workflow_project_type_field_cache_json=""
 export MOCK_STATUS_FIELD_MODE=paginated
 type_field_json="$(workflow_github_project_type_field_json "PVT_project_1")"
@@ -358,6 +389,30 @@ unset MOCK_STATUS_FIELD_MODE
 type_field_id="$(printf '%s' "$type_field_json" | jq -r '.field_id // empty')"
 run_test "type_field_lookup_paginates" "PVTSSF_type" "$type_field_id"
 run_test "type_field_lookup_uses_two_field_queries" "2" "$(count_log_matches 'fields')"
+
+reset_log
+__workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_field_name=""
+__workflow_project_type_field_cache_json=""
+export MOCK_STATUS_FIELD_MODE=custom_type_only
+export MOCK_TYPE_FIELD_NAME="Custom Type"
+type_field_json="$(workflow_github_project_type_field_json "PVT_project_1")"
+unset MOCK_STATUS_FIELD_MODE
+unset MOCK_TYPE_FIELD_NAME
+type_field_id="$(printf '%s' "$type_field_json" | jq -r '.field_id // empty')"
+type_field_name="$(printf '%s' "$type_field_json" | jq -r '.field_name // empty')"
+run_test "configured_custom_type_field_lookup_id" "PVTSSF_custom_type" "$type_field_id"
+run_test "configured_custom_type_field_lookup_name" "Custom Type" "$type_field_name"
+
+reset_log
+__workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_field_name=""
+__workflow_project_type_field_cache_json=""
+export MOCK_STATUS_FIELD_MODE=custom_type_only
+type_field_json="$(workflow_github_project_type_field_json "PVT_project_1")"
+unset MOCK_STATUS_FIELD_MODE
+type_field_id="$(printf '%s' "$type_field_json" | jq -r '.field_id // empty')"
+run_test "type_field_lookup_falls_back_to_custom_type" "PVTSSF_custom_type" "$type_field_id"
 
 reset_log
 type_field_output=""
@@ -369,6 +424,7 @@ run_test "type_field_empty_project_id_avoids_graphql" "0" "$(count_log_matches '
 
 reset_log
 __workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_field_name=""
 __workflow_project_type_field_cache_json=""
 type_field_json="$(workflow_github_project_type_field_json "PVT_project_1")"
 type_field_id_one="$(printf '%s' "$type_field_json" | jq -r '.field_id // empty')"
@@ -380,6 +436,7 @@ run_test "type_field_cache_scoped_by_project" "2" "$(count_log_matches 'fields')
 
 reset_log
 __workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_field_name=""
 __workflow_project_type_field_cache_json=""
 export MOCK_STATUS_FIELD_MODE=graphql_fail
 type_field_output=""
@@ -392,6 +449,7 @@ run_test "type_field_graphql_failure_no_cache" "" "$__workflow_project_type_fiel
 
 reset_log
 __workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_field_name=""
 __workflow_project_type_field_cache_json=""
 export MOCK_STATUS_FIELD_MODE=graphql_fail
 type_field_stderr=""
@@ -418,6 +476,7 @@ run_test "status_field_graphql_failure_reports_captured_gh_stderr" "captured" "$
 
 reset_log
 __workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_field_name=""
 __workflow_project_type_field_cache_json=""
 export MOCK_STATUS_FIELD_MODE=invalid_json
 type_update_output="$(update_tracker_type_best_effort 824 "Workflow" 2>&1)"
@@ -435,6 +494,15 @@ workflow_issue_numbers="$(printf '%s' "$workflow_issues" | jq -r '.[].number' | 
 run_test "workflow_type_discovery_filters_open_type" "824" "$workflow_issue_numbers"
 run_test "workflow_type_discovery_filters_terminal_statuses" "824" "$workflow_issue_numbers"
 run_test "workflow_type_discovery_uses_single_board_scan" "1" "$(count_log_matches 'project item-list')"
+
+reset_log
+export MOCK_TYPE_FIELD_NAME="Custom Type"
+workflow_issues="$(list_open_workflow_type_issues)"
+unset MOCK_TYPE_FIELD_NAME
+workflow_issue_numbers="$(printf '%s' "$workflow_issues" | jq -r '.[].number' | tr '\n' ' ' | sed 's/ $//')"
+first_workflow_type="$(printf '%s' "$workflow_issues" | jq -r '.[0].type')"
+run_test "workflow_type_discovery_uses_configured_custom_type" "824" "$workflow_issue_numbers"
+run_test "workflow_type_discovery_returns_custom_type_value" "Workflow" "$first_workflow_type"
 
 reset_log
 export MOCK_TRACKER_PROVIDER=linear

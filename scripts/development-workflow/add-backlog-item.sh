@@ -11,7 +11,7 @@ usage() {
   cat <<'EOF'
 Usage:
   add-backlog-item.sh resolve
-  add-backlog-item.sh create --title <title> (--body <text> | --body-file <path>) [--label <name>] ... [--priority <value>] [--size <value>]
+  add-backlog-item.sh create --title <title> (--body <text> | --body-file <path>) [--label <name>] ... [--type <value>] [--priority <value>] [--size <value>]
 
 resolve
   Prints machine-readable lines:
@@ -27,6 +27,8 @@ create
                       When omitted, defaults to Medium for GitHub Projects.
   --size <value>      Optional. Set the project Size field. Valid values: XS, S, M, L, XL.
                       When omitted, the Size field is left unset.
+  --type <value>      Optional. Set the project classification field. Valid values: Feature, Bug,
+                      Refactor, Workflow. When omitted, the Type field is left unset.
 EOF
 }
 
@@ -47,7 +49,7 @@ resolve_cmd() {
 
 create_cmd() {
   local caller_pwd="$PWD"
-  local title="" body="" body_file="" priority="" size="" labels=()
+  local title="" body="" body_file="" priority="" size="" type_label="" labels=()
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -79,6 +81,11 @@ create_cmd() {
       --size)
         [ $# -lt 2 ] || [ -z "${2:-}" ] && { echo "Missing value for --size" >&2; usage >&2; exit 2; }
         size="$2"
+        shift 2
+        ;;
+      --type)
+        [ $# -lt 2 ] || [ -z "${2:-}" ] && { echo "Missing value for --type" >&2; usage >&2; exit 2; }
+        type_label="$2"
         shift 2
         ;;
       -h|--help)
@@ -145,6 +152,9 @@ create_cmd() {
     ensure_on_project_board "$issue_number" "Backlog"
     # Update project Priority (default Medium) and Size when GitHub Projects is configured.
     # The update_tracker_*_best_effort helpers are fail-open; they always return 0.
+    if [ -n "$type_label" ]; then
+      update_tracker_type_best_effort "$issue_number" "$type_label"
+    fi
     local effective_priority="${priority:-Medium}"
     update_tracker_priority_best_effort "$issue_number" "$effective_priority"
     if [ -n "$size" ]; then

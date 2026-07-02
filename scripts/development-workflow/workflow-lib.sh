@@ -1223,6 +1223,7 @@ __workflow_github_project_id_cache_id=""
 __workflow_project_status_field_cache_project_id=""
 __workflow_project_status_field_cache_json=""
 __workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_field_name=""
 __workflow_project_type_field_cache_json=""
 # Cache for named single-select fields (Priority, Size, etc.) — indexed by
 # "<project_id>:<field_name>" stored in parallel arrays.
@@ -1230,6 +1231,16 @@ __workflow_project_named_field_cache_keys=()
 __workflow_project_named_field_cache_vals=()
 __workflow_last_gh_stdout=""
 __workflow_last_gh_stderr=""
+
+workflow_github_project_type_field_name() {
+  local configured
+  configured="$(workflow_issue_tracker_custom_field type_field)"
+  if [ -n "$configured" ]; then
+    printf '%s' "$configured"
+    return 0
+  fi
+  printf 'Type'
+}
 
 workflow_run_gh_capture_stderr() {
   local stderr_file
@@ -1360,7 +1371,7 @@ workflow_github_project_item_for_issue() {
   local issue_number="$1"
   local project_number="$2"
   local project_owner project_id repo_owner repo_name response
-  local cursor page_state item_json has_next end_cursor page_count line missing_fields
+  local cursor page_state item_json has_next end_cursor page_count line missing_fields type_field_name
   local -a graphql_args
 
   case "$issue_number" in
@@ -1386,6 +1397,7 @@ workflow_github_project_item_for_issue() {
     printf ''
     return 0
   fi
+  type_field_name="$(workflow_github_project_type_field_name)"
 
   cursor=""
   page_count=0
@@ -1395,6 +1407,7 @@ workflow_github_project_item_for_issue() {
       -f owner="$repo_owner"
       -f repo="$repo_name"
       -F issueNumber="$issue_number"
+      -f typeFieldName="$type_field_name"
     )
     if [ -n "$cursor" ]; then
       graphql_args+=(-f after="$cursor")
@@ -1402,7 +1415,7 @@ workflow_github_project_item_for_issue() {
     # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
     graphql_args+=(
       -f query='
-        query($owner: String!, $repo: String!, $issueNumber: Int!, $after: String) {
+        query($owner: String!, $repo: String!, $issueNumber: Int!, $after: String, $typeFieldName: String!) {
           repository(owner: $owner, name: $repo) {
             issue(number: $issueNumber) {
               projectItems(first: 100, after: $after) {
@@ -1412,7 +1425,16 @@ workflow_github_project_item_for_issue() {
                   status: fieldValueByName(name: "Status") {
                     ... on ProjectV2ItemFieldSingleSelectValue { name }
                   }
-                  type: fieldValueByName(name: "Type") {
+                  type: fieldValueByName(name: $typeFieldName) {
+                    ... on ProjectV2ItemFieldSingleSelectValue { name }
+                  }
+                  typeDefault: fieldValueByName(name: "Type") {
+                    ... on ProjectV2ItemFieldSingleSelectValue { name }
+                  }
+                  typeCustomSpaced: fieldValueByName(name: "Custom Type") {
+                    ... on ProjectV2ItemFieldSingleSelectValue { name }
+                  }
+                  typeCustomCompact: fieldValueByName(name: "CustomType") {
                     ... on ProjectV2ItemFieldSingleSelectValue { name }
                   }
                 }
@@ -1447,7 +1469,11 @@ for item in project_items.get('nodes') or []:
     project = item.get('project') or {}
     if project.get('id') == project_id:
         status_value = item.get('status') or item.get('fieldValueByName') or {}
-        type_value = item.get('type') or {}
+        type_value = {}
+        for candidate in (item.get('type'), item.get('typeDefault'), item.get('typeCustomSpaced'), item.get('typeCustomCompact')):
+            if (candidate or {}).get('name'):
+                type_value = candidate
+                break
         missing = []
         if not status_value.get('name'):
             missing.append('Status')
@@ -1496,7 +1522,7 @@ EOF
       esac
       case ",$missing_fields," in
         *",Type,"*)
-          echo "Warning: project item for issue #${issue_number} has no Type value. The workflow expects a single-select field named exactly 'Type'." >&2
+          echo "Warning: project item for issue #${issue_number} has no '${type_field_name}' value. Verify the GitHub Projects classification field exists and the item value is set." >&2
           ;;
       esac
       printf '%s' "$item_json"
@@ -1637,7 +1663,7 @@ EOF
 # absent. Callers must treat those cases as explicit lookup failures.
 workflow_github_project_type_field_json() {
   local project_id="$1"
-  local response cursor page_state field_json has_next end_cursor page_count line
+  local response cursor page_state field_json has_next end_cursor page_count line type_field_name
   local -a graphql_args
 
   if [ -z "$project_id" ]; then
@@ -1645,8 +1671,10 @@ workflow_github_project_type_field_json() {
     printf ''
     return 1
   fi
+  type_field_name="$(workflow_github_project_type_field_name)"
 
   if [ "$__workflow_project_type_field_cache_project_id" != "$project_id" ] || \
+     [ "$__workflow_project_type_field_cache_field_name" != "$type_field_name" ] || \
      [ -z "$__workflow_project_type_field_cache_json" ]; then
     __workflow_project_type_field_cache_json=""
     cursor=""
@@ -1691,6 +1719,7 @@ workflow_github_project_type_field_json() {
 
       if ! page_state="$(printf '%s' "$response" | python3 -c "
 import json, sys
+configured = sys.argv[1]
 try:
     data = json.loads(sys.stdin.read(), strict=False)
 except Exception:
@@ -1698,10 +1727,15 @@ except Exception:
 field_connection = (((data.get('data') or {}).get('node') or {}).get('fields') or {})
 fields = field_connection.get('nodes') or []
 field_json = ''
+candidate_names = []
+for name in (configured, 'Type', 'Custom Type', 'CustomType'):
+    if name and name not in candidate_names:
+        candidate_names.append(name)
 for field in fields:
-    if field.get('name') == 'Type':
+    if field.get('name') in candidate_names:
         field_json = json.dumps({
             'field_id': field.get('id') or '',
+            'field_name': field.get('name') or '',
             'options': {option.get('name') or '': option.get('id') or '' for option in field.get('options') or []},
         }, separators=(',', ':'))
         break
@@ -1711,7 +1745,7 @@ end_cursor = page_info.get('endCursor') or ''
 print('FIELD_JSON=' + field_json)
 print('HAS_NEXT=' + has_next)
 print('END_CURSOR=' + end_cursor)
-" 2>/dev/null)"; then
+" "$type_field_name" 2>/dev/null)"; then
         echo "Warning: could not parse GraphQL project Type field response for project '${project_id}'." >&2
         printf ''
         return 1
@@ -1750,6 +1784,7 @@ EOF
       return 1
     fi
     __workflow_project_type_field_cache_project_id="$project_id"
+    __workflow_project_type_field_cache_field_name="$type_field_name"
   fi
 
   printf '%s' "$__workflow_project_type_field_cache_json"
@@ -2218,7 +2253,7 @@ finalize_release_marker_best_effort() {
 update_tracker_type_best_effort() {
   local issue_number="$1"
   local type_label="$2"
-  local project_number project_id field_json field_id option_id item_json item_id
+  local project_number project_id field_json field_id field_name option_id item_json item_id
 
   local _uttbe_provider
   _uttbe_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
@@ -2271,6 +2306,13 @@ print(data.get('field_id') or '', end='')
     echo "Warning: could not parse Type field metadata; skipping tracker Type update."
     return 0
   fi
+  if ! field_name=$(printf '%s' "$field_json" | python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read(), strict=False)
+print(data.get('field_name') or 'Type', end='')
+"); then
+    field_name="Type"
+  fi
   if ! option_id=$(printf '%s' "$field_json" | python3 -c "
 import json, sys
 data = json.loads(sys.stdin.read(), strict=False)
@@ -2284,7 +2326,7 @@ print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
     return 0
   fi
 
-  echo "Updating tracker Type for issue #${issue_number} to '${type_label}'..."
+  echo "Updating tracker Type for issue #${issue_number} to '${type_label}' using field '${field_name}'..."
   # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
   if workflow_run_gh_capture_stderr api graphql \
     -f projectId="$project_id" \
@@ -2584,7 +2626,7 @@ update_tracker_size_best_effort() {
 # Discovery is intentionally open-issues-first, then one project item-list
 # cross-reference, so callers avoid per-item full-board scans.
 list_open_workflow_type_issues() {
-  local project_number owner open_issues project_items repo_owner repo_name repo_slug
+  local project_number owner open_issues project_items repo_owner repo_name repo_slug type_field_name
 
   local _lowti_provider
   _lowti_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
@@ -2625,6 +2667,7 @@ list_open_workflow_type_issues() {
     return 0
   fi
   repo_slug="${repo_owner}/${repo_name}"
+  type_field_name="$(workflow_github_project_type_field_name)"
 
   if ! open_issues="$(gh issue list --repo "$repo_slug" --state open --limit 1000 --json number,title,labels,createdAt,url 2>/dev/null)"; then
     echo "Warning: failed to list open GitHub issues; cannot discover Workflow Type issues." >&2
@@ -2642,13 +2685,16 @@ list_open_workflow_type_issues() {
     return 0
   fi
 
-  if ! printf '%s' "$project_items" | jq --argjson open "$open_issues" '
+  if ! printf '%s' "$project_items" | jq --argjson open "$open_issues" --arg type_field_name "$type_field_name" '
+    def classification_type:
+      (.[$type_field_name] // .type // .customType // ."Custom Type" // ."CustomType" // .customtype // "");
+
     def terminal($status):
       ($status // "") as $s
       | ($s == "Done" or $s == "Merged" or $s == "Released" or $s == "Cancelled");
 
     [ .items[]
-      | select((.type // "") == "Workflow")
+      | select(classification_type == "Workflow")
       | . as $item
       | ($open[] | select(.number == $item.content.number)) as $issue
       | select(terminal($item.status) | not)
@@ -2659,7 +2705,7 @@ list_open_workflow_type_issues() {
           createdAt: $issue.createdAt,
           status: ($item.status // ""),
           priority: ($item.priority // ""),
-          type: ($item.type // "")
+          type: classification_type
         }
     ]
   ' 2>/dev/null; then

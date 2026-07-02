@@ -7,7 +7,8 @@
 #   3. Happy path: URL parsed, board membership checked, Priority defaults to Medium
 #   4. --priority flag: uses supplied value instead of Medium default
 #   5. --size flag: triggers Size field update
-#   6. No --size: Size field update is not called
+#   6. --type flag: triggers Type field update
+#   7. No --size / --type: Size and Type updates are not called
 #
 # Usage: bash scripts/development-workflow/tests/test-add-backlog-item.sh
 
@@ -72,7 +73,7 @@ case "$*" in
         printf '{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_123","project":{"id":"PVT_project_1","number":1},"status":{"name":"Backlog"},"type":{"name":"Feature"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}\n'
         ;;
       *"fields(first:"*)
-        printf '{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_priority","name":"Priority","options":[{"id":"OPT_urgent","name":"Urgent"},{"id":"OPT_high","name":"High"},{"id":"OPT_medium","name":"Medium"},{"id":"OPT_low","name":"Low"}]},{"id":"PVTSSF_size","name":"Size","options":[{"id":"OPT_size_xs","name":"XS"},{"id":"OPT_size_s","name":"S"},{"id":"OPT_size_m","name":"M"},{"id":"OPT_size_l","name":"L"},{"id":"OPT_size_xl","name":"XL"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}\n'
+        printf '{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_priority","name":"Priority","options":[{"id":"OPT_urgent","name":"Urgent"},{"id":"OPT_high","name":"High"},{"id":"OPT_medium","name":"Medium"},{"id":"OPT_low","name":"Low"}]},{"id":"PVTSSF_size","name":"Size","options":[{"id":"OPT_size_xs","name":"XS"},{"id":"OPT_size_s","name":"S"},{"id":"OPT_size_m","name":"M"},{"id":"OPT_size_l","name":"L"},{"id":"OPT_size_xl","name":"XL"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_feature","name":"Feature"},{"id":"OPT_bug","name":"Bug"},{"id":"OPT_refactor","name":"Refactor"},{"id":"OPT_workflow","name":"Workflow"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}\n'
         ;;
       *"updateProjectV2ItemFieldValue"*)
         printf '{"data":{"updateProjectV2ItemFieldValue":{"projectV2Item":{"id":"PVTI_item_123"}}}}\n'
@@ -178,6 +179,7 @@ run_test "happy_path_checks_board_membership" "yes" "$([ "$board_check_count" -g
 run_test "happy_path_updates_priority" "1" "$(count_log_matches 'fieldId=PVTSSF_priority')"
 run_test "happy_path_default_priority_is_medium" "1" "$(count_log_matches 'optionId=OPT_medium')"
 run_test "happy_path_skips_size_update" "0" "$(count_log_matches 'fieldId=PVTSSF_size')"
+run_test "happy_path_skips_type_update" "0" "$(count_log_matches 'fieldId=PVTSSF_type')"
 
 echo ""
 echo "=== create: --priority flag overrides Medium default ==="
@@ -195,6 +197,15 @@ run_test "size_flag_exits_zero" "0" "$(get_exit)"
 run_test "size_flag_updates_size_field" "1" "$(count_log_matches 'fieldId=PVTSSF_size')"
 run_test "size_flag_uses_m_option" "1" "$(count_log_matches 'optionId=OPT_size_m')"
 run_test "size_flag_also_updates_priority" "1" "$(count_log_matches 'fieldId=PVTSSF_priority')"
+
+echo ""
+echo "=== create: --type flag updates Type field ==="
+
+run_create "ok" --title "Test" --body "body" --type "Workflow"
+run_test "type_flag_exits_zero" "0" "$(get_exit)"
+run_test "type_flag_updates_type_field" "1" "$(count_log_matches 'fieldId=PVTSSF_type')"
+run_test "type_flag_uses_workflow_option" "1" "$(count_log_matches 'optionId=OPT_workflow')"
+run_test "type_flag_also_updates_priority" "1" "$(count_log_matches 'fieldId=PVTSSF_priority')"
 
 echo ""
 echo "=== create: Linear provider — emits TRACKER_ACTION_REQUIRED=create_item title=... ==="

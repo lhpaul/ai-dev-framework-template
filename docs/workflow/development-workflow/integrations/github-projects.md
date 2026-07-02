@@ -106,6 +106,13 @@ integrations:
   for framework/process/tooling items. In this template repository, workflow
   framework work also uses `Workflow`.
 
+Projects may use a different field name for the same classification concept
+when the exact `Type` field is not available, such as `Custom Type` or
+`CustomType`. Configure that name with `issue_tracker.custom_fields.type_field`
+so workflow helpers read and update the correct single-select field. When the
+configuration is absent, helpers default to `Type` and fall back to common names
+`Custom Type` and `CustomType` during targeted reads and field metadata lookup.
+
 ### 4. Issue Labels (on the Repository)
 
 Labels live on the repository, not the project. Keep labels for operational
@@ -506,12 +513,16 @@ Use explicit issue numbers to avoid accidental broad transitions. Items not incl
 
 ## Custom Fields
 
-The `issue_tracker.custom_fields` flat map in `.ai-dev-workflow.yaml` is available for provider-specific configuration extensions. For the `github_projects` provider, **no `custom_fields` keys are currently recognised by workflow scripts**.
+The `issue_tracker.custom_fields` flat map in `.ai-dev-workflow.yaml` is available for provider-specific configuration extensions. For the `github_projects` provider, workflow scripts recognise these keys:
+
+| Key          | Purpose                                                                                                     |
+| ------------ | ----------------------------------------------------------------------------------------------------------- |
+| `type_field` | Optional classification field name to use instead of `Type` (for example, `Custom Type` or `CustomType`). |
 
 Key points:
 
 - The `project_number` field is a standard top-level `issue_tracker` field — it is not a custom field and must remain under `issue_tracker` directly, not under `custom_fields`.
-- Any keys placed under `custom_fields` are silently ignored by all current GitHub Projects scripts.
+- Unknown keys placed under `custom_fields` are silently ignored by current GitHub Projects scripts.
 - Future provider-specific fields (e.g., additional project metadata) may be added here as the integration evolves.
 
 Read the `workflow_issue_tracker_custom_field` helper documentation in `scripts/development-workflow/workflow-lib.sh` for the parsing API available to future consumers.

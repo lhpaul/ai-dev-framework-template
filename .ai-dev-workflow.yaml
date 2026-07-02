@@ -143,6 +143,10 @@ issue_tracker:
   #   custom_fields:
   #     project: my-linear-project-id
   #
+  # Example (GitHub Projects with a nonstandard classification field name):
+  #   custom_fields:
+  #     type_field: "Custom Type"
+  #
   # custom_fields:
   #   project: ""
 
