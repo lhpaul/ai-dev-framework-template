@@ -356,30 +356,28 @@ cleanup() {
 trap cleanup EXIT
 
 guardrails_json="$(read_guardrails_json)"
-if [ "$(json_get "$guardrails_json" '.section')" = "present" ]; then
-  if [ -z "$may_start_backlog_override" ]; then
-    may_start_backlog_override="$(json_get "$guardrails_json" '.backlog_start | tostring')"
+if [ -z "$may_start_backlog_override" ]; then
+  may_start_backlog_override="$(json_get "$guardrails_json" '.backlog_start | tostring')"
+fi
+if [ -z "$delegate_review_override" ]; then
+  case "$(json_get "$guardrails_json" '.mode')" in
+    assisted|delegated|autonomous) delegate_review_override="true" ;;
+    *) delegate_review_override="false" ;;
+  esac
+fi
+if [ -z "$may_merge_override" ]; then
+  if [ "$(json_get "$guardrails_json" '[.stages.spec.may_merge_pr, .stages.plan.may_merge_pr, .stages.implementation.may_merge_pr] | any')" = "true" ]; then
+    may_merge_override="true"
+  else
+    may_merge_override="false"
   fi
-  if [ -z "$delegate_review_override" ]; then
-    case "$(json_get "$guardrails_json" '.mode')" in
-      assisted|delegated|autonomous) delegate_review_override="true" ;;
-      *) delegate_review_override="false" ;;
-    esac
-  fi
-  if [ -z "$may_merge_override" ]; then
-    if [ "$(json_get "$guardrails_json" '[.stages.spec.may_merge_pr, .stages.plan.may_merge_pr, .stages.implementation.may_merge_pr] | any')" = "true" ]; then
-      may_merge_override="true"
-    else
-      may_merge_override="false"
-    fi
-  fi
-  if [ -z "$max_risk_override" ]; then
-    max_risk_override="$(json_get "$guardrails_json" '
-      def rank: {"low":1,"medium":2,"high":3}[.] // 0;
-      [.stages.spec.max_merge_risk, .stages.plan.max_merge_risk, .stages.implementation.max_merge_risk]
-      | max_by(rank)
-    ')"
-  fi
+fi
+if [ -z "$max_risk_override" ]; then
+  max_risk_override="$(json_get "$guardrails_json" '
+    def rank: {"low":1,"medium":2,"high":3}[.] // 0;
+    [.stages.spec.max_merge_risk, .stages.plan.max_merge_risk, .stages.implementation.max_merge_risk]
+    | max_by(rank)
+  ')"
 fi
 
 resolver_common=()

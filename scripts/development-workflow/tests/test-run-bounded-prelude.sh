@@ -116,6 +116,17 @@ issue_tracker:
   provider: github_projects
 YAML
 
+absent_guardrails_config="$TMP_ROOT/ai-dev-workflow-linear-no-guardrails.yaml"
+cat > "$absent_guardrails_config" <<'YAML'
+schema_version: 2
+review:
+  on_draft:
+    runner:
+      - codex
+issue_tracker:
+  provider: linear
+YAML
+
 linear_prelude_out="$(AI_DEV_WORKFLOW_CONFIG_FILE="$guardrails_config" \
   "$PRELUDE" --original-command "/run-item LEA-185" --issue LEA-185 --json)"
 run_test "linear_issue_identifier_resolves" "LEA-185" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.scope.resolvedIssueIdentifier')"
@@ -140,6 +151,14 @@ run_test "linear_resolver_json_uses_backlog_placeholder" "Backlog" "$(printf '%s
 linear_target_json="$(AI_DEV_WORKFLOW_CONFIG_FILE="$guardrails_config" \
   "$ITEM_RESOLVER" --target LEA-185 --json)"
 run_test "linear_target_json_defers_tracker" "true" "$(printf '%s\n' "$linear_target_json" | jq -r '.trackerReadDeferred')"
+
+absent_guardrails_out="$(AI_DEV_WORKFLOW_CONFIG_FILE="$absent_guardrails_config" \
+  "$PRELUDE" --original-command "/run-item LEA-185" --issue LEA-185 --json)"
+run_test "absent_guardrails_section_reported" "absent" "$(printf '%s\n' "$absent_guardrails_out" | jq -r '.guardrails.section')"
+run_test "absent_guardrails_backlog_default_applied" "false" "$(printf '%s\n' "$absent_guardrails_out" | jq -r '.policyRecommendation.effectivePolicy.mayStartBacklog')"
+run_test "absent_guardrails_review_default_applied" "false" "$(printf '%s\n' "$absent_guardrails_out" | jq -r '.policyRecommendation.effectivePolicy.delegateReview')"
+run_test "absent_guardrails_merge_default_applied" "false" "$(printf '%s\n' "$absent_guardrails_out" | jq -r '.policyRecommendation.effectivePolicy.mayMerge')"
+run_test "absent_guardrails_risk_default_applied" "low" "$(printf '%s\n' "$absent_guardrails_out" | jq -r '.policyRecommendation.effectivePolicy.maxRisk')"
 
 run_fails "reject_linear_identifier_with_underscore" "invalid --issue identifier" \
   env AI_DEV_WORKFLOW_CONFIG_FILE="$guardrails_config" "$ITEM_RESOLVER" --issue A_B-123
