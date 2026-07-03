@@ -555,10 +555,11 @@ When all gates permit merge:
 2. Verify GitHub reports the PR state as `MERGED`.
 3. Delete or prune the merged branch as appropriate.
 4. Run post-merge cleanup for the correct base branch. For direct single-PR
-   merges, use the cleanup helper after merge verification:
+   merges, use the cleanup helper after merge verification. In `workflow_hub`
+   mode, pass `--repo <product-repo>` for product-owned implementation branches:
 
    ```bash
-   ./scripts/development-workflow/post-merge-cleanup.sh --base <base-branch> <merged-branch>
+   ./scripts/development-workflow/post-merge-cleanup.sh [--repo <product-repo>] --base <base-branch> <merged-branch>
    ```
 
    For scoped batch merges, follow Protocol 94 so every merged PR runs its

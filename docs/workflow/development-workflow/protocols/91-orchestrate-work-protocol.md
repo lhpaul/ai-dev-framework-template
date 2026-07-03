@@ -2334,10 +2334,11 @@ state according to this table:
 - When a spec or plan PR is merged, set the tracker status to the corresponding **Ready** status (`Spec Ready` or `Plan Ready`) — **not** `Merged`. Only implementation PRs (feature, fix, refactor, hotfix) go to `Merged`.
 - The `/post-merge-cleanup` skill and `post-merge-cleanup` command follow this same table when updating tracker status.
 - Prefer the canonical cleanup helper after merge verification. Pass the target
-  base explicitly when it is not the repository default:
+  base explicitly when it is not the repository default. In `workflow_hub` mode,
+  pass `--repo <product-repo>` for product-owned implementation branches:
 
 ```bash
-./scripts/development-workflow/post-merge-cleanup.sh --base <base-branch> <merged-branch>
+./scripts/development-workflow/post-merge-cleanup.sh [--repo <product-repo>] --base <base-branch> <merged-branch>
 ```
 
 - After cleanup, re-read the live tracker status and Project status. If the live
