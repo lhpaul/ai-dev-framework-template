@@ -38,8 +38,11 @@ proposal step.
 9. After all in-scope PRs reach `ready-for-human-review`, inspect the effective
    guardrails. When the relevant stages allow `may_merge_pr: true`, route into
    Protocol 94 batch merge and continue through merge, cleanup, and tracker
-   reconciliation. If any stage does not allow merge, stop at the
-   `ready-for-human-review` handoff and name the blocking guardrail.
+   reconciliation. If any stage does not allow merge, finish at the
+   `ready-for-human-review` handoff, report the exact
+   `stages.<stage>.may_merge_pr: false` guardrail for each affected PR, and tell
+   the human to invoke `$batch-merge` or adjust guardrails to permit delegated
+   merging.
 10. For single-item advancement use `$run-item`; for epic-scoped runs use `$run-epic`;
    for read-only portfolio scan and proposal use `$run-work`.
 
