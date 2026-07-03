@@ -37,8 +37,10 @@ proposal step.
    has a deterministic next action.
 9. After all in-scope PRs reach `ready-for-human-review`, inspect the effective
    guardrails. When the relevant stages allow `may_merge_pr: true`, route into
-   Protocol 94 batch merge and continue through merge, cleanup, and tracker
-   reconciliation. If any stage does not allow merge, finish at the
+   Protocol 94 batch merge using only the explicit in-scope PR list: run
+   `batch-merge.sh discover --prs <comma-separated-in-scope-prs>` and continue
+   through merge, cleanup, and tracker reconciliation. Never use Protocol 94
+   auto-discovery from `/run-items`. If any stage does not allow merge, finish at the
    `ready-for-human-review` handoff, report the exact
    `stages.<stage>.may_merge_pr: false` guardrail for each affected PR, and tell
    the human to invoke `$batch-merge` or adjust guardrails to permit delegated
