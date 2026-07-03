@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **AI Workflow — guarded run-items batch merge**: `$run-items` now routes ready
+  in-scope PRs into Protocol 94 batch merge when effective guardrails permit
+  `may_merge_pr: true`, and otherwise reports the blocking guardrail at the
+  human-review handoff.
+
 ### Fixed
 
 - **Linear-backed run-item guardrails**: bounded `/run-item` runs now accept
