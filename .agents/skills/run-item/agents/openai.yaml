@@ -1,7 +1,7 @@
 interface:
   display_name: "Run item"
   short_description: "Primary bounded command: advance one non-epic workflow item with shared prelude before Protocol 91."
-  default_prompt: "Use $run-item to advance exactly one non-epic workflow item. Run run-bounded-prelude.sh read-only first (scope, guardrails, policy/checkpoints), then follow Protocol 91 until a terminal condition. $run-item-work is a deprecated alias with identical behavior. Epic-like targets should use $run-epic. In workflow_hub mode, state selected product repository and mutation target before implementation mutation."
+  default_prompt: "Use $run-item to advance exactly one non-epic workflow item. Run run-bounded-prelude.sh read-only first (scope, guardrails, policy/checkpoints), then follow Protocol 91 until a terminal condition. If delegated merge authority is active and the gate returns merge_allowed, continue through merge, branch cleanup, post-merge-cleanup, and live tracker verification before reporting terminal. $run-item-work is a deprecated alias with identical behavior. Epic-like targets should use $run-epic. In workflow_hub mode, state selected product repository and mutation target before implementation mutation."
 
 policy:
   allow_implicit_invocation: false

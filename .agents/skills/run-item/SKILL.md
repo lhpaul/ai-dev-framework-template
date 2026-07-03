@@ -34,6 +34,10 @@ advances exactly one non-epic item through Protocol 91.
    values before mutation. Enforce gates per
    `docs/workflow/development-workflow/guardrails-enforcement.md` section 3.
 7. Epic-like targets must use `$run-epic` / `/run-epic`, not this command.
+8. When the delegated merge gate returns `merge_allowed`, continue through merge,
+   remote/local branch cleanup, `post-merge-cleanup.sh`, and live tracker
+   verification before reporting the item terminal. Do not stop at
+   `ready-for-human-review` in a delegated merge run.
 
 > **Deprecated alias**: `$run-item-work` / `/run-item-work` resolves to the same
 > behavior for legacy invocations.

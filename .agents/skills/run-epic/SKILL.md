@@ -52,6 +52,9 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
    scope, reviewer, CI, risk, and audit evidence; pass `--policy <file>` when
    the resolver policy is captured separately. Merge only when the gate reports
    `merge_allowed`.
+   After `merge_allowed`, follow Protocol 95 Step 11 through merge verification,
+   branch deletion/pruning, `post-merge-cleanup.sh`, live tracker verification,
+   audit update, and rediscovery before treating that PR as complete.
 9. **Guardrails layer context**: The `--delegate-review`, `--may-merge`,
    `--may-start-backlog`, and `--max-risk` flags are the **invocation-override**
    layer (highest priority) of the three-layer guardrails precedence. The
