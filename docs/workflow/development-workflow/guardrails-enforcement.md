@@ -223,6 +223,7 @@ table is required for consistent stop reporting.
 | `high_risk_change` | The PR is classified above the configured `max_merge_risk` for the stage. |
 | `destructive_action` | The next action would delete branches, data, releases, or other non-recoverable artifacts. |
 | `human_checkpoint_required` | A declared stage-scoped human checkpoint for the PR's work item is still pending, or the PR still carries `human-checkpoint-required`. |
+| `graduation_approval_required` | A `develop-<slug>` -> `develop` graduation PR is the next merge candidate but explicit human graduation approval has not been recorded through `/graduate-development <slug>`. |
 | `missing_tracker_context` | A required tracker field (status, type, assignee, dependency link) is absent or unresolvable. |
 | `missing_required_secret_or_permission` | A required credential, GitHub permission, or access token is absent. |
 | `guardrails_config_unreadable` | The `guardrails` block in `.ai-dev-workflow.yaml` is missing required fields, uses invalid values, or is internally contradictory. |

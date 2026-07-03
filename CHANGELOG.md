@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Workflow graduation guard**: Stop `/run-epic` delegated merges at
+  `graduation_approval_required` for `develop-<slug>` -> `develop` graduation
+  PRs unless explicit graduation approval is recorded.
 - **Delegated merge cleanup guidance**: `/run-item` and `/run-epic` now state
   that delegated `merge_allowed` runs continue through branch cleanup,
   `post-merge-cleanup`, and live tracker verification before reporting terminal.

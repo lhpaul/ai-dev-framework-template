@@ -133,6 +133,11 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     end;
   def implementation_branch:
     (.pr.headRefName // "") | test("^(feature|fix|refactor|hotfix|backport/hotfix)/");
+  def graduation_pr:
+    ((.pr.headRefName // "") | test("^develop-[^/]+$")) and
+    ((.pr.baseRefName // "") == "develop");
+  def graduation_approved:
+    (policy.graduationApproved // false) == true;
   def stage_rank($stage):
     if $stage == "spec" then 1
     elif $stage == "plan" then 2
@@ -184,6 +189,9 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
    else $reasons end) as $reasons |
   (if (policy.mayMerge // false) != true
    then add_reason($reasons; "delegated merge authority is missing")
+   else $reasons end) as $reasons |
+  (if graduation_pr and (graduation_approved | not)
+   then add_reason($reasons; "graduation_approval_required: PR #" + ((.pr.number // "unknown") | tostring) + " merges integration branch " + ((.pr.headRefName // "") | tostring) + " to " + ((.pr.baseRefName // "") | tostring) + "; run /graduate-development <slug> and record explicit human approval before delegated merge")
    else $reasons end) as $reasons |
   (if (.item.status // "") == "Backlog" and ((policy.mayStartBacklog // false) != true)
    then add_reason($reasons; "Backlog item cannot start without explicit may-start-backlog authority")
@@ -245,7 +253,7 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     decision: (
       if $count == 0 then "merge_allowed"
       elif ($reasons | any(test("reviewer blocking|CI checks|unresolved blocking|advisories"))) then "fix_required"
-      elif ($reasons | any(test("authority|risk gate|needs-setup|not in the resolved|Backlog|human_checkpoint_required|human-checkpoint"))) then "human_required"
+      elif ($reasons | any(test("authority|risk gate|needs-setup|not in the resolved|Backlog|human_checkpoint_required|human-checkpoint|graduation_approval_required"))) then "human_required"
       else "blocked"
       end
     ),
@@ -255,6 +263,7 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
       if $count == 0 then "record merge evidence and use the repository merge protocol"
       elif ($reasons | any(test("reviewer blocking|CI checks|unresolved blocking|advisories"))) then "remove readiness labels, fix, rerun validation, reviewer loop, CI loop, and this gate"
       elif ($reasons | any(test("human_checkpoint_required|human-checkpoint"))) then "stop for the named human checkpoint action, record satisfied or waived evidence, sync labels, and rerun this gate"
+      elif ($reasons | any(test("graduation_approval_required"))) then "stop for explicit graduation approval via /graduate-development before mutating"
       elif ($reasons | any(test("authority|risk gate|needs-setup|not in the resolved|Backlog"))) then "stop for human authority or setup before mutating"
       else "block until required state is available"
       end
