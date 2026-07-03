@@ -243,6 +243,22 @@ run_test "implementation_pr_still_requires_regression_label" "blocked" "$(decisi
 implementation_skipped_with_label_fixture="$(write_fixture implementation-skipped-with-label '.statusChecks += [{"name": "E2E regression (placeholder)", "status": "COMPLETED", "conclusion": "SKIPPED"}]')"
 run_test "implementation_pr_with_regression_label_allows_skipped_check" "merge_allowed" "$(decision_for "$implementation_skipped_with_label_fixture")"
 
+graduation_fixture="$(write_fixture graduation '.pr.headRefName = "develop-graduation-guard" | .pr.baseRefName = "develop" | .pr.labels = ["ready-for-human-review"]')"
+run_test "graduation_pr_requires_explicit_approval" "human_required" "$(decision_for "$graduation_fixture")"
+run_test "graduation_pr_reason_names_guard" "true" "$(reason_match_for "$graduation_fixture" "graduation_approval_required")"
+
+missing_graduation_policy_fixture="$(write_fixture missing-graduation-policy '.pr.headRefName = "develop-graduation-guard" | .pr.baseRefName = "develop" | .pr.labels = ["ready-for-human-review"] | del(.policy.graduationApproved)')"
+run_test "missing_graduation_approval_defaults_unapproved" "human_required" "$(decision_for "$missing_graduation_policy_fixture")"
+
+develop_prefixed_path_fixture="$(write_fixture develop-prefixed-path '.pr.headRefName = "develop/graduation-guard" | .pr.baseRefName = "develop" | .pr.labels = ["ready-for-human-review"]')"
+run_test "develop_prefixed_path_branch_is_not_graduation" "merge_allowed" "$(decision_for "$develop_prefixed_path_fixture")"
+
+develop_branch_to_integration_fixture="$(write_fixture develop-branch-to-integration '.pr.headRefName = "develop-graduation-guard" | .pr.baseRefName = "develop-parent" | .pr.labels = ["ready-for-human-review"]')"
+run_test "develop_branch_to_non_develop_base_is_not_graduation" "merge_allowed" "$(decision_for "$develop_branch_to_integration_fixture")"
+
+approved_graduation_fixture="$(write_fixture approved-graduation '.pr.headRefName = "develop-graduation-guard" | .pr.baseRefName = "develop" | .pr.labels = ["ready-for-human-review"] | .policy.graduationApproved = true')"
+run_test "graduation_pr_allows_recorded_approval" "merge_allowed" "$(decision_for "$approved_graduation_fixture")"
+
 setup_fixture="$(write_fixture setup '.pr.labels += ["needs-setup"]')"
 run_test "needs_setup_requires_human" "human_required" "$(decision_for "$setup_fixture")"
 

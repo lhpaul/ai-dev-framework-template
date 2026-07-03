@@ -537,7 +537,14 @@ Before merge:
 10. Confirm the risk classifier permits merge under the invocation's
     `--max-risk`.
 11. Confirm the PR disposition audit comment exists for the reviewed head SHA.
-12. Run `run-epic-delegated-gate.sh` against the assembled evidence.
+12. Confirm the candidate PR is not a graduation PR
+    (`develop-<slug>` -> `develop`) unless explicit graduation approval has
+    been recorded in the assembled policy evidence as
+    `graduationApproved: true`. `/run-epic` delegated merge authority applies to
+    in-scope child PRs, not to integration-branch graduation. A graduation PR
+    without this approval must stop with `graduation_approval_required` and be
+    resumed through `/graduate-development <slug>`.
+13. Run `run-epic-delegated-gate.sh` against the assembled evidence.
 
 Proceed to the repository merge protocol only when the delegated gate reports
 `merge_allowed`. If the gate reports `fix_required`, remove readiness labels,
@@ -552,6 +559,9 @@ reports `blocked`, stop until required state is available.
 When all gates permit merge:
 
 1. Merge with the repository-approved merge path for the PR target branch.
+   This merge step is for in-scope child PRs. If the candidate is a graduation
+   PR (`develop-<slug>` -> `develop`), stop unless the explicit graduation
+   approval evidence described in the delegated gate checklist is present.
 2. Verify GitHub reports the PR state as `MERGED`.
 3. Delete or prune the merged branch as appropriate.
 4. Run post-merge cleanup for the correct base branch. For direct single-PR
@@ -603,4 +613,6 @@ real external condition or authority boundary, or the invocation policy forbids
 starting the remaining Backlog work. Final stop messages must name the exact
 gate: missing authority, risk classification, CI/check state, unresolved
 reviewer findings, tracker ambiguity, delegated gate state, or backlog-start
-policy.
+policy. When all child items are merged but the integration branch has not been
+explicitly approved for graduation, stop at `graduation_approval_required` and
+report the integration branch as `ready_for_graduation`.
