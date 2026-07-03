@@ -129,7 +129,10 @@ rather than relying on portfolio batch dispatch alone.
 
 A single Work Item Runner run should keep advancing the selected item until it reaches one of these **terminal conditions**:
 
-- A PR is clean and waiting for human review / merge
+- A PR is clean and waiting for human review / merge because delegated merge
+  authority is absent, blocked, or denied for this stage
+- A delegated merge was permitted and completed, with branch cleanup and live
+  tracker verification complete
 - A human product or architecture decision is required
 - The automated review loop or CI loop escalated after retry / timeout limits
 - The item is blocked by an unmet dependency
@@ -1746,6 +1749,13 @@ above the stage `max_merge_risk` stops the run and names the `high_risk_change`
 guardrail. When `may_merge_pr` is `false`, do not merge automatically — leave the
 PR at the `ready-for-human-review` handoff.
 
+When the gate returns `merge_allowed`, the item run does **not** stop at
+`ready-for-human-review`. Continue through the repository-approved merge path,
+verify GitHub reports the PR as `MERGED`, delete or prune the merged branch as
+appropriate, run `post-merge-cleanup.sh` for the correct base branch, and perform
+the live tracker verification described in Step 10 before reporting the item
+terminal.
+
 **Only after Step 7 (and Step 7b for implementation PRs) has completed**, wait for required checks to settle.
 
 Prefer the helper script:
@@ -2308,9 +2318,11 @@ See `92-pr-readiness-signal-protocol.md` for label definitions.
 
 ---
 
-## Step 10: Post-Merge Status Transitions
+## Step 10: Post-Merge Status Transitions and Local Cleanup
 
-When a human confirms that a PR has been merged, update the issue tracker and clean up local state according to this table:
+When a human confirms that a PR has been merged, or when this runner merged a PR
+through the delegated merge gate, update the issue tracker and clean up local
+state according to this table:
 
 | Merged PR branch type                             | Set tracker status to |
 | ------------------------------------------------- | --------------------- |
@@ -2322,7 +2334,18 @@ When a human confirms that a PR has been merged, update the issue tracker and cl
 
 - When a spec or plan PR is merged, set the tracker status to the corresponding **Ready** status (`Spec Ready` or `Plan Ready`) — **not** `Merged`. Only implementation PRs (feature, fix, refactor, hotfix) go to `Merged`.
 - The `/post-merge-cleanup` skill and `post-merge-cleanup` command follow this same table when updating tracker status.
-- After updating the tracker, clean up local branches and worktrees associated with the merged PR:
+- Prefer the canonical cleanup helper after merge verification. Pass the target
+  base explicitly when it is not the repository default. In `workflow_hub` mode,
+  pass `--repo <product-repo>` for product-owned implementation branches:
+
+```bash
+./scripts/development-workflow/post-merge-cleanup.sh [--repo <product-repo>] --base <base-branch> <merged-branch>
+```
+
+- After cleanup, re-read the live tracker status and Project status. If the live
+  status does not match the expected value in the table above, re-apply the
+  tracker transition before reporting the item terminal.
+- If manual cleanup is required, clean up local branches and worktrees associated with the merged PR:
 
 ```bash
 git fetch origin

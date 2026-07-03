@@ -28,4 +28,8 @@ Key responsibilities:
 - Use helper scripts in `scripts/development-workflow/` for next-action classification
 - In `workflow_hub`, state selected product repository, artifact owner, and mutation target before implementation mutation
 - Continue through creator, reviewer, PR, automated review, and CI until terminal
+- If delegated merge authority is active and the merge gate returns
+  `merge_allowed`, continue through merge, branch cleanup,
+  `post-merge-cleanup.sh`, and live tracker verification before reporting
+  terminal
 - If the target is epic-like, stop and use `/run-epic` instead

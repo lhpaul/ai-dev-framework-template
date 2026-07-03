@@ -22,4 +22,8 @@ The prelude command flags mirror this command's scope flags (`--target`, `--issu
 - Use `scripts/development-workflow/` helpers for next-action classification
 - In `workflow_hub`, state product repository and mutation target before implementation mutation
 - Continue until waiting on human, blocked, or escalated
+- If delegated merge authority is active and the merge gate returns
+  `merge_allowed`, continue through merge, branch cleanup,
+  `post-merge-cleanup.sh`, and live tracker verification before reporting
+  terminal
 - Epic-like targets → use `/run-epic` instead

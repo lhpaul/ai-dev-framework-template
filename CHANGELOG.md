@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Delegated merge cleanup guidance**: `/run-item` and `/run-epic` now state
+  that delegated `merge_allowed` runs continue through branch cleanup,
+  `post-merge-cleanup`, and live tracker verification before reporting terminal.
 - **Linear-backed run-item guardrails**: bounded `/run-item` runs now accept
   Linear issue keys, apply repository guardrail defaults before policy
   recommendation, and avoid requiring PyYAML for guardrail parsing.

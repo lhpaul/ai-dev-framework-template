@@ -1,7 +1,7 @@
 interface:
   display_name: "Workflow Item Orchestrator"
   short_description: "Advance one workflow item until it reaches a terminal condition."
-  default_prompt: "Use $workflow-item-orchestrator to resume one workflow item until terminal. In workflow_hub mode, state selected product repository, artifact owner, and mutation target before implementation mutation."
+  default_prompt: "Use $workflow-item-orchestrator to resume one workflow item until terminal. If delegated merge authority is active and the gate returns merge_allowed, continue through merge, branch cleanup, post-merge-cleanup, and live tracker verification before reporting terminal. In workflow_hub mode, state selected product repository, artifact owner, and mutation target before implementation mutation."
 
 policy:
   allow_implicit_invocation: true
