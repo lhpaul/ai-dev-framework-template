@@ -129,7 +129,8 @@ rather than relying on portfolio batch dispatch alone.
 
 A single Work Item Runner run should keep advancing the selected item until it reaches one of these **terminal conditions**:
 
-- A PR is clean and waiting for human review / merge
+- A PR is clean and waiting for human review / merge because delegated merge
+  authority is absent, blocked, or denied for this stage
 - A delegated merge was permitted and completed, with branch cleanup and live
   tracker verification complete
 - A human product or architecture decision is required
