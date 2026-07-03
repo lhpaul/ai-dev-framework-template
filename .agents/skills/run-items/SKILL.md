@@ -36,8 +36,11 @@ proposal step.
 8. Do not stop after advancing one item if another item in the explicit list still
    has a deterministic next action.
 9. After all in-scope PRs reach `ready-for-human-review`, inspect the effective
-   guardrails. When the relevant stages allow `may_merge_pr: true`, route into
-   Protocol 94 batch merge using only the explicit in-scope PR list: run
+   guardrails. When the relevant stages allow `may_merge_pr: true`, run
+   Guardrails Enforcement Gate 5 for each in-scope PR, including
+   `run-epic-risk-classifier.sh` and `run-epic-delegated-gate.sh`; continue only
+   when every in-scope PR returns `merge_allowed`. Then route into Protocol 94
+   batch merge using only the explicit in-scope PR list: run
    `batch-merge.sh discover --prs <comma-separated-in-scope-prs>` and continue
    through merge, cleanup, and tracker reconciliation. Never use Protocol 94
    auto-discovery from `/run-items`. If any stage does not allow merge, finish at the

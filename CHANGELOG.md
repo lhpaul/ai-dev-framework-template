@@ -10,10 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **AI Workflow — guarded run-items batch merge**: `/run-items` command surfaces
-  now route ready in-scope PRs into scoped Protocol 94 batch merge when effective
-  guardrails permit `may_merge_pr: true`, never use auto-discovery for explicit
-  item batches, and otherwise report the merge guardrail and handoff action at
-  human review.
+  now require Guardrails Enforcement Gate 5 `merge_allowed` before routing ready
+  in-scope PRs into scoped Protocol 94 batch merge, never use auto-discovery for
+  explicit item batches, and otherwise report the merge guardrail and handoff
+  action at human review.
 
 ### Fixed
 
