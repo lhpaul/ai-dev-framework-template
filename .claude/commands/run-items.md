@@ -57,8 +57,14 @@ Key responsibilities:
   target before implementation mutation; stop when context is missing or ambiguous.
 - Do not stop after advancing one item if another in the list still has a
   deterministic next action.
-- Stop with in-scope PRs at `ready-for-human-review`; landing is a separate
-  `/batch-merge` step.
+- After all in-scope PRs reach `ready-for-human-review`, inspect the effective
+  guardrails. When the relevant stages allow `may_merge_pr: true`, route into
+  Protocol 94 batch merge and continue through merge, cleanup, and tracker
+  reconciliation. If any stage does not allow merge, finish at the
+  `ready-for-human-review` handoff, report the exact
+  `stages.<stage>.may_merge_pr: false` guardrail for each affected PR, and tell
+  the human to invoke `/batch-merge` or adjust guardrails to permit delegated
+  merging.
 
 For single-item advancement use `/run-item`. For epic-scoped runs use `/run-epic`.
 For read-only portfolio scan and proposal use `/run-work`.
