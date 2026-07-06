@@ -163,8 +163,6 @@ tmp_dir="$(mktemp -d)"
 items_file="$tmp_dir/items.jsonl"
 subissues_file="$tmp_dir/subissues.jsonl"
 touch "$items_file" "$subissues_file"
-open_prs_raw_cache=""
-closed_prs_raw_cache=""
 
 cleanup() {
   rm -rf "$tmp_dir"
@@ -324,55 +322,84 @@ integration_label_for_issue_json() {
   jq -r '[.labels[].name | select(startswith("integration-branch:"))] | first // ""'
 }
 
+base_branch_cache_file() {
+  local branch="$1"
+  local safe
+  safe="$(printf '%s' "$branch" | tr -c 'A-Za-z0-9' '_')"
+  printf '%s/prs_base_%s.json\n' "$tmp_dir" "$safe"
+}
+
+fetch_prs_for_base() {
+  local branch="$1"
+  local cache_file
+  cache_file="$(base_branch_cache_file "$branch")"
+
+  if [ ! -f "$cache_file" ]; then
+    if ! gh pr list --repo "$repo" --state all --base "$branch" \
+      --json number,title,headRefName,baseRefName,state,isDraft,labels,mergedAt \
+      --limit 500 > "$cache_file" 2>/dev/null; then
+      error_exit "failed to read PRs targeting base branch ${branch}."
+    fi
+  fi
+
+  printf '%s\n' "$cache_file"
+}
+
 linked_pr_json() {
   local issue="$1"
-  local open_prs merged_prs
+  local integration_label="$2"
+  local candidate_base bases base cache_file open_prs merged_prs
 
-  if [ -z "$open_prs_raw_cache" ]; then
-    if ! open_prs_raw_cache="$(gh api --paginate --slurp \
-      "repos/${repo}/pulls?state=open&per_page=100" 2>/dev/null)"; then
-      error_exit "failed to read open PRs while resolving issue #${issue}."
+  bases="develop"
+  if [ -n "$integration_label" ]; then
+    candidate_base="develop-${integration_label#integration-branch:}"
+    if [ "$candidate_base" != "develop" ]; then
+      bases="develop
+$candidate_base"
     fi
   fi
-  if ! open_prs="$(printf '%s\n' "$open_prs_raw_cache" | jq --arg issue "$issue" '
-        [ .[][]
-          | select(.head.ref | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
-          | {
-              number,
-              title,
-              state: "OPEN",
-              headRefName: .head.ref,
-              baseRefName: .base.ref,
-              isDraft: .draft,
-              labels: [.labels[].name]
-            }
-        ]')"; then
-    error_exit "failed to parse open PRs while resolving issue #${issue}."
-  fi
 
-  if [ -z "$closed_prs_raw_cache" ]; then
-    if ! closed_prs_raw_cache="$(gh api --paginate --slurp \
-      "repos/${repo}/pulls?state=closed&per_page=100" 2>/dev/null)"; then
-      error_exit "failed to read closed PRs while resolving issue #${issue}."
+  open_prs="[]"
+  merged_prs="[]"
+  while IFS= read -r base; do
+    [ -n "$base" ] || continue
+    cache_file="$(fetch_prs_for_base "$base")"
+
+    if ! open_prs="$(jq --arg issue "$issue" --argjson acc "$open_prs" '
+          $acc + [ .[] | select(.state == "OPEN")
+            | select(.headRefName | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
+            | {
+                number,
+                title,
+                state: "OPEN",
+                headRefName,
+                baseRefName,
+                isDraft,
+                labels: [.labels[].name]
+              }
+          ]' "$cache_file")"; then
+      error_exit "failed to parse open PRs targeting ${base} while resolving issue #${issue}."
     fi
-  fi
-  if ! merged_prs="$(printf '%s\n' "$closed_prs_raw_cache" | jq --arg issue "$issue" '
-        [ .[][]
-          | select(.merged_at != null)
-          | select(.head.ref | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
-          | {
-              number,
-              title,
-              state: "MERGED",
-              headRefName: .head.ref,
-              baseRefName: .base.ref,
-              isDraft: false,
-              labels: [],
-              mergedAt: .merged_at
-            }
-        ]')"; then
-    error_exit "failed to parse merged PRs while resolving issue #${issue}."
-  fi
+
+    if ! merged_prs="$(jq --arg issue "$issue" --argjson acc "$merged_prs" '
+          $acc + [ .[] | select(.state == "MERGED")
+            | select(.headRefName | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
+            | {
+                number,
+                title,
+                state: "MERGED",
+                headRefName,
+                baseRefName,
+                isDraft: false,
+                labels: [],
+                mergedAt
+              }
+          ]' "$cache_file")"; then
+      error_exit "failed to parse merged PRs targeting ${base} while resolving issue #${issue}."
+    fi
+  done <<EOF
+$bases
+EOF
 
   jq -n --argjson open "$open_prs" --argjson merged "$merged_prs" \
     '{open: $open, merged: $merged}'
@@ -475,7 +502,7 @@ enrich_item() {
   ')"; then
     error_exit "failed to parse issue #${issue} priority."
   fi
-  pr_json="$(linked_pr_json "$issue")"
+  pr_json="$(linked_pr_json "$issue" "$integration_label")"
   dep_json="$(dependency_json "$body")"
   if ! merged_impl_count="$(printf '%s\n' "$pr_json" | jq '[.merged[] | select(.headRefName | test("^(feature|fix|refactor|hotfix)/"))] | length')"; then
     error_exit "failed to parse merged PR state for issue #${issue}."
