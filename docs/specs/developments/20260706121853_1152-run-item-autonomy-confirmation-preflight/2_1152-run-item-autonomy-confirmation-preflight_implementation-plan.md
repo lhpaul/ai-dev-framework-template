@@ -77,11 +77,12 @@ stack-specific implementation pattern.
       so the bounded prelude section explicitly says the runner must present the
       new confirmation summary before mutation.
 - [ ] In Protocol 91, introduce a named invocation-scoped state such as
-      `RUN_ITEM_POLICY_CONFIRMED=true` after the human confirms inferred policy
-      or after all autonomy flags are explicit and no unresolved checkpoint or
-      guardrail conflict blocks mutation. Use this as the mechanism that
-      prevents redundant prompts for the same selected policy. This satisfies
-      AC4 and AC5.
+      `RUN_ITEM_POLICY_CONFIRMED=true`, plus companion binding fields for the
+      resolved item identifier and normalized selected policy, after the human
+      confirms inferred policy or after all autonomy flags are explicit and no
+      unresolved checkpoint or guardrail conflict blocks mutation. Use the full
+      binding as the mechanism that prevents redundant prompts only for the same
+      selected item and policy. This satisfies AC4 and AC5.
 - [ ] Update the Protocol 91 backlog-start gate language so a confirmed bounded
       prelude for the same resolved item satisfies the initial backlog-start
       confirmation. The gate must still stop when no confirmed policy exists, a
@@ -292,7 +293,7 @@ No persistent seed data is required.
 | --- | --- | --- | --- |
 | A second policy model is accidentally introduced in command wrappers. | Medium | High | Keep shell helpers as the source of policy truth and make wrappers print `confirmationSummary` rather than re-deriving policy. |
 | Confirmation could be treated as a silent checkpoint waiver. | Medium | High | Keep checkpoint satisfaction state explicit and require waiver rationale in helper validation and protocol text. |
-| Backlog-start confirmation could be skipped for unrelated items. | Low | High | Scope `RUN_ITEM_POLICY_CONFIRMED` to the resolved item identifier and selected policy only. |
+| Backlog-start confirmation could be skipped for unrelated items. | Low | High | Require Protocol 91 to store companion binding fields with `RUN_ITEM_POLICY_CONFIRMED`, including the resolved item identifier and normalized selected policy, and ignore the confirmation when either value changes. |
 | Summary text could drift across Codex, Claude, and Cursor surfaces. | Medium | Medium | Update mirrored surfaces in the same implementation PR and add smoke/static checks for the common phrases. |
 | Shell JSON additions break existing consumers. | Low | Medium | Make `confirmationSummary` additive and keep existing JSON fields unchanged. |
 

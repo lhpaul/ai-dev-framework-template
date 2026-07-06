@@ -130,7 +130,9 @@ Inspect:
 ```bash
 rg -n "confirmation summary|invocation-scoped|no redundant|pending checkpoint|explicit autonomy" \
   .agents/skills/run-item/SKILL.md \
+  .agents/skills/run-item/agents/openai.yaml \
   .codex/skills/workflow-item-orchestrator/SKILL.md \
+  .codex/skills/workflow-item-orchestrator/agents/openai.yaml \
   .claude/commands/run-item.md \
   .cursor/commands/run-item.md \
   .claude/agents/item-orchestrator.md \
