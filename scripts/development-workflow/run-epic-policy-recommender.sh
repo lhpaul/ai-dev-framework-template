@@ -334,15 +334,23 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
     if $override == "" then $recommended else bool_override($override) end;
   def value_string($override; $recommended):
     if $override == "" then $recommended else $override end;
+  def is_run_items_command:
+    ($originalCommand | test("^(/|\\$)run-items(\\s|$)"));
   def command_prefix:
-    if ($originalCommand | test("^/run-item(\\s|$)")) then "/run-item"
+    if ($originalCommand | test("^/run-items(\\s|$)")) then "/run-items"
+    elif ($originalCommand | test("^\\$run-items(\\s|$)")) then "$run-items"
+    elif ($originalCommand | test("^/run-item(\\s|$)")) then "/run-item"
     elif ($originalCommand | test("^/run-epic(\\s|$)")) then "/run-epic"
     else "$run-epic" end;
   def canonical_scope_command:
     if (.scopeSource // "") == "epic" and (.epicNumber // null) != null then
       command_prefix + " --epic " + (.epicNumber | tostring)
     elif (.scopeSource // "") == "items" and ((.itemInput // "") | tostring | length) > 0 then
-      command_prefix + " --items " + ((.itemInput // "") | tostring)
+      if is_run_items_command then
+        command_prefix + " " + (((.itemInput // "") | tostring) | gsub(","; " "))
+      else
+        command_prefix + " --items " + ((.itemInput // "") | tostring)
+      end
     elif (.scopeSource // "") == "item" and ((.itemInput // "") | tostring | length) > 0 then
       "/run-item " + ((.itemInput // "") | tostring)
     else
@@ -488,7 +496,13 @@ if [ "$json_output" -eq 1 ]; then
   exit 0
 fi
 
-printf 'Run Epic Policy Recommendation\n'
+case "$original_command" in
+  /run-items*|\$run-items*) recommendation_heading="Run Items Policy Recommendation" ;;
+  /run-item*|\$run-item*) recommendation_heading="Run Item Policy Recommendation" ;;
+  *) recommendation_heading="Run Epic Policy Recommendation" ;;
+esac
+
+printf '%s\n' "$recommendation_heading"
 printf 'Requires confirmation: %s\n' "$(printf '%s\n' "$recommendation_json" | jq -r '.requiresConfirmation')"
 printf 'Reason: %s\n' "$(printf '%s\n' "$recommendation_json" | jq -r '.confirmationReason')"
 printf 'Effective policy:\n'

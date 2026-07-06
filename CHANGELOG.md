@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Clarify run-item autonomy confirmation** (#1152): add a run-epic-style
+  confirmation summary for single-item runs, preserve checkpoint and guardrail
+  stops, and avoid redundant approval prompts after an invocation-scoped
+  confirmation.
 - **Consolidate PR policy workflows** (#1150): Replace redundant lightweight PR
   policy workflow fan-out with one API-only PR policy workflow while preserving
   reviewer-loop and regression-readiness guarantees.

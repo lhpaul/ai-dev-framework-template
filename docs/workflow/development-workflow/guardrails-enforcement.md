@@ -118,6 +118,12 @@ Writing Plan, or In Development for the first time:
 
 - If `backlog_start.allow_without_confirmation` is `true` (or the effective
   mode is `autonomous`): proceed without asking.
+- If the run is a direct `/run-item` invocation and Protocol 91 recorded
+  `RUN_ITEM_POLICY_CONFIRMED=true` with companion bindings for the same resolved
+  item identifier and normalized selected policy: proceed without asking again.
+  The selected policy must grant enough backlog-start authority for the proposed
+  transition. Ignore the binding when the item differs, the selected policy
+  differs, or the requested action exceeds the selected policy.
 - Otherwise: stop and ask the human to confirm, naming the items proposed to
   start. Do not proceed until the human confirms.
 

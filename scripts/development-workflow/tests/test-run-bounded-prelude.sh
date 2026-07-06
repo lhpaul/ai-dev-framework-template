@@ -167,6 +167,21 @@ run_test "guardrails_merge_stays_false" "false" "$(printf '%s\n' "$linear_prelud
 run_test "guardrails_implementation_merge_reported" "false" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.guardrails.stages.implementation.may_merge_pr')"
 run_test "guardrails_policy_source_reported" "guardrails" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.policyRecommendation.fieldSources.mayStartBacklog')"
 run_test "guardrails_policy_not_marked_explicit" "false" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.policyRecommendation.confirmationReason | test("policy values are explicit")')"
+run_test "confirmation_summary_exists" "true" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.policyRecommendation.confirmationSummary.title == "Run item policy confirmation"')"
+run_test "confirmation_summary_scope_lines" "true" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.policyRecommendation.confirmationSummary.scopeLines | any(test("Resolved item"))')"
+run_test "confirmation_summary_policy_lines" "true" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.policyRecommendation.confirmationSummary.policyLines | any(test("May start Backlog.*guardrails"))')"
+run_test "confirmation_summary_copy_paste" "true" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.policyRecommendation.confirmationSummary.copyPasteLine | test("/run-item LEA-185")')"
+run_test "confirmation_summary_read_only" "true" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.policyRecommendation.confirmationSummary.readOnlyLine | test("No tracker updates")')"
+run_test "confirmation_summary_binding" "RUN_ITEM_POLICY_CONFIRMED" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.policyRecommendation.confirmationSummary.invocationBinding.stateName')"
+
+linear_prelude_text="$(AI_DEV_WORKFLOW_CONFIG_FILE="$guardrails_config" \
+  "$PRELUDE" --original-command "/run-item LEA-185" --issue LEA-185)"
+run_test "text_output_prints_confirmation_summary" "true" "$(
+  grep -Fq 'Run item policy confirmation' <<<"$linear_prelude_text" &&
+  grep -Fq 'Effective policy:' <<<"$linear_prelude_text" &&
+  grep -Fq 'Copy-paste equivalent:' <<<"$linear_prelude_text" &&
+  echo true || echo false
+)"
 
 linear_target_prelude_out="$(AI_DEV_WORKFLOW_CONFIG_FILE="$guardrails_config" \
   "$PRELUDE" --original-command "/run-item LEA-185" --target LEA-185 --json)"
