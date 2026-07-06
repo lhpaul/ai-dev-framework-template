@@ -140,6 +140,7 @@ JSON
       109) state="CLOSED"; state_reason="NOT_PLANNED"; labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
       110) labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
       111) body='Blocked by #108'; labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
+      113) labels_json='[{"name":"integration-branch:foo"}]' ;;
     esac
     jq -n \
       --argjson number "$issue_number" \
@@ -150,6 +151,21 @@ JSON
       --argjson labels "$labels_json" \
       '{number:$number,title:$title,state:$state,stateReason:$stateReason,body:$body,labels:$labels,projectItems:[{priority:{name:"High"}}]}'
     ;;
+  issue\ view\ *\ --json\ labels)
+    issue_number="${3}"
+    if [ "${MOCK_LABEL_FETCH_FAIL:-}" = "$issue_number" ]; then
+      printf 'label fetch failed for #%s\n' "$issue_number" >&2
+      exit 64
+    fi
+    labels_json='[]'
+    case "$issue_number" in
+      101|102|103|104|107|109|110|111) labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
+      105) labels_json='[{"name":"integration-branch:alpha"}]' ;;
+      106) labels_json='[{"name":"integration-branch:beta"}]' ;;
+      113) labels_json='[{"name":"integration-branch:foo"}]' ;;
+    esac
+    jq -n --argjson labels "$labels_json" '{labels:$labels}'
+    ;;
   issue\ view\ *\ --json\ number,title,state)
     issue_number="${3}"
     state="OPEN"
@@ -157,15 +173,23 @@ JSON
     jq -n --argjson number "$issue_number" --arg state "$state" \
       '{number:$number,title:("Dependency " + ($number|tostring)),state:$state}'
     ;;
-  api\ --paginate\ --slurp\ repos/lhpaul/ai-dev-framework-template/pulls\?state=open\&per_page=100)
-    cat <<'JSON'
-[[{"number":2102,"title":"Plan PR","head":{"ref":"implementation-plan/102-two"},"base":{"ref":"develop-delegated-epic-orchestration"},"draft":false,"labels":[{"name":"ready-for-human-review"}],"merged_at":null},{"number":2110,"title":"Unready PR","head":{"ref":"feature/110-ten"},"base":{"ref":"develop-delegated-epic-orchestration"},"draft":false,"labels":[],"merged_at":null}]]
+  api\ --paginate\ --slurp\ repos/lhpaul/ai-dev-framework-template/pulls\?state=all\&base=*\&per_page=100)
+    base="$(printf '%s\n' "$*" | sed -n 's/.*base=\([^&][^&]*\)&per_page=.*/\1/p')"
+    case "$base" in
+      develop-delegated-epic-orchestration)
+        cat <<'JSON'
+[[{"number":2101,"title":"Merged plan PR","head":{"ref":"implementation-plan/101-one"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"closed","draft":false,"labels":[],"merged_at":"2026-06-12T11:00:00Z"},{"number":2102,"title":"Plan PR","head":{"ref":"implementation-plan/102-two"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"open","draft":false,"labels":[{"name":"ready-for-human-review"}],"merged_at":null},{"number":2103,"title":"Merged PR","head":{"ref":"feature/103-three"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"closed","draft":false,"labels":[],"merged_at":"2026-06-12T12:00:00Z"},{"number":2104,"title":"Closed unmerged PR","head":{"ref":"feature/104-four"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"closed","draft":false,"labels":[],"merged_at":null},{"number":2110,"title":"Unready PR","head":{"ref":"feature/110-ten"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"open","draft":false,"labels":[],"merged_at":null},{"number":2112,"title":"Merged unlabeled issue PR","head":{"ref":"feature/112-twelve"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"closed","draft":false,"labels":[],"merged_at":"2026-06-13T13:00:00Z"}]]
 JSON
-    ;;
-  api\ --paginate\ --slurp\ repos/lhpaul/ai-dev-framework-template/pulls\?state=closed\&per_page=100)
-    cat <<'JSON'
-[[{"number":2101,"title":"Merged plan PR","head":{"ref":"implementation-plan/101-one"},"base":{"ref":"develop-delegated-epic-orchestration"},"draft":false,"labels":[],"merged_at":"2026-06-12T11:00:00Z"},{"number":2103,"title":"Merged PR","head":{"ref":"feature/103-three"},"base":{"ref":"develop-delegated-epic-orchestration"},"draft":false,"labels":[],"merged_at":"2026-06-12T12:00:00Z"},{"number":2104,"title":"Closed unmerged PR","head":{"ref":"feature/104-four"},"base":{"ref":"develop-delegated-epic-orchestration"},"draft":false,"labels":[],"merged_at":null}]]
+        ;;
+      develop-custom)
+        cat <<'JSON'
+[[{"number":2205,"title":"Merged override PR","head":{"ref":"feature/105-five"},"base":{"ref":"develop-custom"},"state":"closed","draft":false,"labels":[],"merged_at":"2026-06-13T12:00:00Z"}]]
 JSON
+        ;;
+      *)
+        printf '[[]]\n'
+        ;;
+    esac
     ;;
   *)
     printf 'unexpected gh invocation: gh %s\n' "$*" >&2
@@ -234,7 +258,6 @@ run_fails_contains "rejects_flag_as_may_start_backlog_value" "--may-start-backlo
 run_fails_contains "rejects_flag_as_max_risk_value" "--max-risk requires a value" "$RESOLVER" --items 101 --max-risk --json
 run_fails_contains "missing_epic_clear_error" "not found or inaccessible" env MOCK_EPIC_MODE=missing "$RESOLVER" --epic 900
 run_fails_contains "parent_mismatch_rejected" "does not point back" env MOCK_PARENT_MODE=mismatch "$RESOLVER" --epic 900
-
 items_output="$(run_json --items 101,101,102 --delegate-review --may-merge --may-start-backlog true --max-risk medium)"
 run_test "explicit_items_deduped" "2" "$(printf '%s\n' "$items_output" | jq '.items | length')"
 run_test "explicit_items_no_expansion" "101,102" "$(printf '%s\n' "$items_output" | jq -r '[.items[].number] | join(",")')"
@@ -253,7 +276,8 @@ run_test "text_policy_includes_max_risk" "yes" "$(grep -q 'Max risk: high' <<< "
 
 override_output="$(run_json --items 105,106 --base develop-custom)"
 run_test "base_override_wins" "develop-custom" "$(printf '%s\n' "$override_output" | jq -r '.baseBranch')"
-run_test "base_override_keeps_eligible" "2" "$(printf '%s\n' "$override_output" | jq '.groups.eligible | length')"
+run_test "base_override_lookup_detects_merged" "105" "$(printf '%s\n' "$override_output" | jq -r '.groups.already_merged[0].number')"
+run_test "base_override_keeps_remaining_eligible" "106" "$(printf '%s\n' "$override_output" | jq -r '.groups.eligible[0].number')"
 
 ambiguous_output="$(run_json --items 105,106)"
 run_test "conflicting_labels_no_base" "null" "$(printf '%s\n' "$ambiguous_output" | jq -r '.baseBranch')"
@@ -293,6 +317,39 @@ run_test "json_read_only_guarantee" "yes" "$(
 run_test "no_mutating_gh_commands" "no" "$(
   grep -Eq '(^issue edit|^pr create|^pr merge|^project item-edit|^project item-add|mutation)' "$CALL_LOG" && echo yes || echo no
 )"
+
+: > "$CALL_LOG"
+cache_probe_output="$(run_json --items 101,102)"
+run_test "pr_lookup_uses_base_scoped_pagination" "yes" "$(
+  grep -q 'pulls?state=all&base=develop-delegated-epic-orchestration&per_page=100' "$CALL_LOG" && echo yes || echo no
+)"
+run_test "pr_lookup_includes_develop_base" "yes" "$(
+  grep -q 'pulls?state=all&base=develop&per_page=100' "$CALL_LOG" && echo yes || echo no
+)"
+run_test "pr_lookup_avoids_unbounded_rest_history" "no" "$(
+  grep -q 'pulls?state=\(open\|closed\|all\)&per_page=100' "$CALL_LOG" && echo yes || echo no
+)"
+run_test "pr_lookup_cache_preserves_grouping" "102" "$(printf '%s\n' "$cache_probe_output" | jq -r '.groups.in_review[0].number')"
+
+unlabeled_shared_base_output="$(run_json --items 101,112)"
+run_test "unlabeled_item_uses_scope_shared_base" "112" "$(printf '%s\n' "$unlabeled_shared_base_output" | jq -r '.groups.already_merged[] | select(.number == 112) | .number')"
+
+label_fetch_failure_output="$(MOCK_LABEL_FETCH_FAIL=101 run_json --items 101,112)"
+run_test "label_fetch_failure_keeps_partial_scope" "2" "$(printf '%s\n' "$label_fetch_failure_output" | jq '.items | length')"
+run_test "label_fetch_failure_marks_unlabeled_ambiguous" "112" "$(printf '%s\n' "$label_fetch_failure_output" | jq -r '.groups.ambiguous[] | select(.number == 112) | .number')"
+run_test "label_fetch_failure_explains_ambiguity" "yes" "$(
+  printf '%s\n' "$label_fetch_failure_output" | jq -e '.groups.ambiguous[] | select(.number == 112) | .ambiguityReason == "scope integration branch candidates could not be fully resolved"' >/dev/null &&
+    echo yes || echo no
+)"
+
+: > "$CALL_LOG"
+cache_collision_output="$(run_json --items 113 --base develop/foo)"
+run_test "pr_lookup_cache_keys_do_not_collide" "yes" "$(
+  grep -q 'pulls?state=all&base=develop-foo&per_page=100' "$CALL_LOG" &&
+    grep -q 'pulls?state=all&base=develop/foo&per_page=100' "$CALL_LOG" &&
+    echo yes || echo no
+)"
+run_test "cache_collision_probe_still_resolves_item" "113" "$(printf '%s\n' "$cache_collision_output" | jq -r '.items[0].number')"
 
 echo ""
 echo "=== Provider normalization and deferred-read signals (#966) ==="
