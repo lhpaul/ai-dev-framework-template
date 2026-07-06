@@ -489,8 +489,8 @@ if [ "$json_output" -eq 1 ]; then
 fi
 
 case "$original_command" in
-  /run-item*|\$run-item*) recommendation_heading="Run Item Policy Recommendation" ;;
   /run-items*|\$run-items*) recommendation_heading="Run Items Policy Recommendation" ;;
+  /run-item*|\$run-item*) recommendation_heading="Run Item Policy Recommendation" ;;
   *) recommendation_heading="Run Epic Policy Recommendation" ;;
 esac
 

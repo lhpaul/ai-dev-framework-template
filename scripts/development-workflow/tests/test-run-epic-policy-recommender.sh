@@ -223,6 +223,13 @@ run_test "run_item_text_output_heading" "yes" "$(
   echo yes || echo no
 )"
 
+items_text_output="$("$HELPER" --scope "$backlog_fixture" --original-command "/run-items 949 950")"
+run_test "run_items_text_output_heading" "yes" "$(
+  grep -q 'Run Items Policy Recommendation' <<< "$items_text_output" &&
+  ! grep -q 'Run Item Policy Recommendation' <<< "$items_text_output" &&
+  echo yes || echo no
+)"
+
 PATH="$MOCK_BIN:$PATH" "$HELPER" --scope "$backlog_fixture" --original-command "\$run-epic issues 949" --json >/dev/null
 run_test "does_not_call_gh_or_git" "0" "$(wc -l < "$CALL_LOG" | tr -d ' ')"
 
