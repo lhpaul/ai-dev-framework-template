@@ -83,6 +83,10 @@ real deployment workflows protect quality and release safety. Cost reduction
 should start with low-signal fan-out, placeholder jobs, duplicated checks, broad
 path triggers, or workflows that no longer gate a meaningful decision.
 
+The consolidated `.github/workflows/pr-policy.yml` workflow is an example of a
+`replace` outcome: it preserves reviewer-loop and regression-readiness policy
+while replacing redundant lightweight PR policy fan-out with one API-only job.
+
 ---
 
 ## Data Limitations
