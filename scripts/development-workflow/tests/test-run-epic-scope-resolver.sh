@@ -165,6 +165,11 @@ JSON
 [[{"number":2101,"title":"Merged plan PR","head":{"ref":"implementation-plan/101-one"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"closed","draft":false,"labels":[],"merged_at":"2026-06-12T11:00:00Z"},{"number":2102,"title":"Plan PR","head":{"ref":"implementation-plan/102-two"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"open","draft":false,"labels":[{"name":"ready-for-human-review"}],"merged_at":null},{"number":2103,"title":"Merged PR","head":{"ref":"feature/103-three"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"closed","draft":false,"labels":[],"merged_at":"2026-06-12T12:00:00Z"},{"number":2104,"title":"Closed unmerged PR","head":{"ref":"feature/104-four"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"closed","draft":false,"labels":[],"merged_at":null},{"number":2110,"title":"Unready PR","head":{"ref":"feature/110-ten"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"open","draft":false,"labels":[],"merged_at":null}]]
 JSON
         ;;
+      develop-custom)
+        cat <<'JSON'
+[[{"number":2205,"title":"Merged override PR","head":{"ref":"feature/105-five"},"base":{"ref":"develop-custom"},"state":"closed","draft":false,"labels":[],"merged_at":"2026-06-13T12:00:00Z"}]]
+JSON
+        ;;
       *)
         printf '[[]]\n'
         ;;
@@ -256,7 +261,8 @@ run_test "text_policy_includes_max_risk" "yes" "$(grep -q 'Max risk: high' <<< "
 
 override_output="$(run_json --items 105,106 --base develop-custom)"
 run_test "base_override_wins" "develop-custom" "$(printf '%s\n' "$override_output" | jq -r '.baseBranch')"
-run_test "base_override_keeps_eligible" "2" "$(printf '%s\n' "$override_output" | jq '.groups.eligible | length')"
+run_test "base_override_lookup_detects_merged" "105" "$(printf '%s\n' "$override_output" | jq -r '.groups.already_merged[0].number')"
+run_test "base_override_keeps_remaining_eligible" "106" "$(printf '%s\n' "$override_output" | jq -r '.groups.eligible[0].number')"
 
 ambiguous_output="$(run_json --items 105,106)"
 run_test "conflicting_labels_no_base" "null" "$(printf '%s\n' "$ambiguous_output" | jq -r '.baseBranch')"

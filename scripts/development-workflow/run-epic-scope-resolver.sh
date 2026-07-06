@@ -350,14 +350,11 @@ linked_pr_json() {
   local integration_label="$2"
   local candidate_base bases base cache_file open_prs merged_prs
 
-  bases="develop"
+  candidate_base=""
   if [ -n "$integration_label" ]; then
     candidate_base="develop-${integration_label#integration-branch:}"
-    if [ "$candidate_base" != "develop" ]; then
-      bases="develop
-$candidate_base"
-    fi
   fi
+  bases="$(printf '%s\n%s\n%s\n' "develop" "$candidate_base" "$base_override" | sed '/^$/d' | sort -u)"
 
   open_prs="[]"
   merged_prs="[]"
