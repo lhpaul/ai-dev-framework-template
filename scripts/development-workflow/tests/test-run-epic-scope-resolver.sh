@@ -157,16 +157,16 @@ JSON
     jq -n --argjson number "$issue_number" --arg state "$state" \
       '{number:$number,title:("Dependency " + ($number|tostring)),state:$state}'
     ;;
-  pr\ list\ --repo\ lhpaul/ai-dev-framework-template\ --state\ all\ --base\ *\ --json\ number,title,headRefName,baseRefName,state,isDraft,labels,mergedAt\ --limit\ 500)
-    base="$(printf '%s\n' "$*" | sed -n 's/.* --base \([^ ][^ ]*\) --json .*/\1/p')"
+  api\ --paginate\ --slurp\ repos/lhpaul/ai-dev-framework-template/pulls\?state=all\&base=*\&per_page=100)
+    base="$(printf '%s\n' "$*" | sed -n 's/.*base=\([^&][^&]*\)&per_page=.*/\1/p')"
     case "$base" in
       develop-delegated-epic-orchestration)
         cat <<'JSON'
-[{"number":2101,"title":"Merged plan PR","headRefName":"implementation-plan/101-one","baseRefName":"develop-delegated-epic-orchestration","state":"MERGED","isDraft":false,"labels":[],"mergedAt":"2026-06-12T11:00:00Z"},{"number":2102,"title":"Plan PR","headRefName":"implementation-plan/102-two","baseRefName":"develop-delegated-epic-orchestration","state":"OPEN","isDraft":false,"labels":[{"name":"ready-for-human-review"}],"mergedAt":null},{"number":2103,"title":"Merged PR","headRefName":"feature/103-three","baseRefName":"develop-delegated-epic-orchestration","state":"MERGED","isDraft":false,"labels":[],"mergedAt":"2026-06-12T12:00:00Z"},{"number":2104,"title":"Closed unmerged PR","headRefName":"feature/104-four","baseRefName":"develop-delegated-epic-orchestration","state":"CLOSED","isDraft":false,"labels":[],"mergedAt":null},{"number":2110,"title":"Unready PR","headRefName":"feature/110-ten","baseRefName":"develop-delegated-epic-orchestration","state":"OPEN","isDraft":false,"labels":[],"mergedAt":null}]
+[[{"number":2101,"title":"Merged plan PR","head":{"ref":"implementation-plan/101-one"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"closed","draft":false,"labels":[],"merged_at":"2026-06-12T11:00:00Z"},{"number":2102,"title":"Plan PR","head":{"ref":"implementation-plan/102-two"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"open","draft":false,"labels":[{"name":"ready-for-human-review"}],"merged_at":null},{"number":2103,"title":"Merged PR","head":{"ref":"feature/103-three"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"closed","draft":false,"labels":[],"merged_at":"2026-06-12T12:00:00Z"},{"number":2104,"title":"Closed unmerged PR","head":{"ref":"feature/104-four"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"closed","draft":false,"labels":[],"merged_at":null},{"number":2110,"title":"Unready PR","head":{"ref":"feature/110-ten"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"open","draft":false,"labels":[],"merged_at":null}]]
 JSON
         ;;
       *)
-        printf '[]\n'
+        printf '[[]]\n'
         ;;
     esac
     ;;
@@ -299,14 +299,14 @@ run_test "no_mutating_gh_commands" "no" "$(
 
 : > "$CALL_LOG"
 cache_probe_output="$(run_json --items 101,102)"
-run_test "pr_lookup_uses_base_scoped_cli" "yes" "$(
-  grep -q 'pr list --repo lhpaul/ai-dev-framework-template --state all --base develop-delegated-epic-orchestration' "$CALL_LOG" && echo yes || echo no
+run_test "pr_lookup_uses_base_scoped_pagination" "yes" "$(
+  grep -q 'pulls?state=all&base=develop-delegated-epic-orchestration&per_page=100' "$CALL_LOG" && echo yes || echo no
 )"
 run_test "pr_lookup_includes_develop_base" "yes" "$(
-  grep -q 'pr list --repo lhpaul/ai-dev-framework-template --state all --base develop ' "$CALL_LOG" && echo yes || echo no
+  grep -q 'pulls?state=all&base=develop&per_page=100' "$CALL_LOG" && echo yes || echo no
 )"
 run_test "pr_lookup_avoids_unbounded_rest_history" "no" "$(
-  grep -q 'pulls?state=' "$CALL_LOG" && echo yes || echo no
+  grep -q 'pulls?state=\(open\|closed\|all\)&per_page=100' "$CALL_LOG" && echo yes || echo no
 )"
 run_test "pr_lookup_cache_preserves_grouping" "102" "$(printf '%s\n' "$cache_probe_output" | jq -r '.groups.in_review[0].number')"
 

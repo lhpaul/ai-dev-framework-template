@@ -335,9 +335,9 @@ fetch_prs_for_base() {
   cache_file="$(base_branch_cache_file "$branch")"
 
   if [ ! -f "$cache_file" ]; then
-    if ! gh pr list --repo "$repo" --state all --base "$branch" \
-      --json number,title,headRefName,baseRefName,state,isDraft,labels,mergedAt \
-      --limit 500 > "$cache_file" 2>/dev/null; then
+    if ! gh api --paginate --slurp \
+      "repos/${repo}/pulls?state=all&base=${branch}&per_page=100" \
+      > "$cache_file" 2>/dev/null; then
       error_exit "failed to read PRs targeting base branch ${branch}."
     fi
   fi
@@ -366,15 +366,15 @@ $candidate_base"
     cache_file="$(fetch_prs_for_base "$base")"
 
     if ! open_prs="$(jq --arg issue "$issue" --argjson acc "$open_prs" '
-          $acc + [ .[] | select(.state == "OPEN")
-            | select(.headRefName | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
+          $acc + [ .[][] | select(.state == "open")
+            | select(.head.ref | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
             | {
                 number,
                 title,
                 state: "OPEN",
-                headRefName,
-                baseRefName,
-                isDraft,
+                headRefName: .head.ref,
+                baseRefName: .base.ref,
+                isDraft: .draft,
                 labels: [.labels[].name]
               }
           ]' "$cache_file")"; then
@@ -382,17 +382,17 @@ $candidate_base"
     fi
 
     if ! merged_prs="$(jq --arg issue "$issue" --argjson acc "$merged_prs" '
-          $acc + [ .[] | select(.state == "MERGED")
-            | select(.headRefName | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
+          $acc + [ .[][] | select(.merged_at != null)
+            | select(.head.ref | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
             | {
                 number,
                 title,
                 state: "MERGED",
-                headRefName,
-                baseRefName,
+                headRefName: .head.ref,
+                baseRefName: .base.ref,
                 isDraft: false,
                 labels: [],
-                mergedAt
+                mergedAt: .merged_at
               }
           ]' "$cache_file")"; then
       error_exit "failed to parse merged PRs targeting ${base} while resolving issue #${issue}."

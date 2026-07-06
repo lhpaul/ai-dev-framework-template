@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Run-epic scope resolver PR lookup**: Avoid scanning the full repository PR
-  history by resolving linked PRs from cached `gh pr list --base` results for
+  history by resolving linked PRs from cached, paginated results scoped to
   `develop` and each item's integration branch.
 - **Workflow graduation guard**: Stop `/run-epic` delegated merges at
   `graduation_approval_required` for `develop-<slug>` -> `develop` graduation
