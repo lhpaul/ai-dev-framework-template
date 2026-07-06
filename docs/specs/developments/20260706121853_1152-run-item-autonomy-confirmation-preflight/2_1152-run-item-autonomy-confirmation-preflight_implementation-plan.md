@@ -95,9 +95,14 @@ stack-specific implementation pattern.
       new summary contract, explicit flag behavior, pending-checkpoint behavior,
       and no-redundant-prompt continuation rule for `/run-item`. This satisfies
       AC1 through AC7.
-- [ ] Update `docs/workflow/development-workflow/guardrails-enforcement.md` only
-      if needed to cross-reference the invocation-scoped confirmation mechanism.
-      Do not change guardrails field names or modes. This supports AC6 and AC8.
+- [ ] Update `docs/workflow/development-workflow/guardrails-enforcement.md`
+      Gate 2 so it recognizes the same Protocol 91 invocation-scoped
+      confirmation binding for the resolved item and selected policy. Gate 2
+      must not require a second backlog-start confirmation when that binding
+      matches, and must still stop when the binding is absent, belongs to a
+      different item, or permits less authority than the requested action. Do not
+      change guardrails field names or modes. This supports AC3, AC5, AC6, and
+      AC8.
 
 ### Agent and Command Surfaces
 
