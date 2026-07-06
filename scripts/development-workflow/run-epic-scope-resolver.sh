@@ -162,7 +162,9 @@ esac
 tmp_dir="$(mktemp -d)"
 items_file="$tmp_dir/items.jsonl"
 subissues_file="$tmp_dir/subissues.jsonl"
+scope_label_failures_file="$tmp_dir/scope_label_failures.txt"
 touch "$items_file" "$subissues_file"
+: > "$scope_label_failures_file"
 
 cleanup() {
   rm -rf "$tmp_dir"
@@ -358,7 +360,8 @@ resolve_scope_pr_bases() {
   while IFS= read -r issue; do
     [ -n "$issue" ] || continue
     if ! issue_json="$(gh issue view "$issue" --json labels 2>/dev/null)"; then
-      error_exit "failed to read labels for issue #${issue} while resolving PR base candidates."
+      printf '%s\n' "$issue" >> "$scope_label_failures_file"
+      continue
     fi
     if ! integration_label="$(printf '%s\n' "$issue_json" | integration_label_for_issue_json)"; then
       error_exit "failed to parse issue #${issue} integration branch label."
@@ -480,7 +483,7 @@ dependency_json() {
 enrich_item() {
   local issue="$1"
   local issue_json title state state_reason labels integration_label status type priority pr_json dep_json group body
-  local merged_impl_count open_review_count dep_state ambiguity_reason
+  local merged_impl_count open_review_count dep_state ambiguity_reason scope_base_ambiguity_reason
 
   if ! issue_json="$(gh issue view "$issue" --json number,title,state,stateReason,body,labels,projectItems 2>/dev/null)"; then
     jq -n --argjson number "$issue" '{number:$number,title:"",state:"UNKNOWN",group:"ambiguous",ambiguityReason:"issue could not be read"}'
@@ -526,7 +529,15 @@ enrich_item() {
   ')"; then
     error_exit "failed to parse issue #${issue} priority."
   fi
-  pr_json="$(linked_pr_json "$issue" "$integration_label")"
+  scope_base_ambiguity_reason=""
+  if [ -z "$integration_label" ] && [ -z "$base_override" ] && [ -s "$scope_label_failures_file" ]; then
+    scope_base_ambiguity_reason="scope integration branch candidates could not be fully resolved"
+  fi
+  if [ -n "$scope_base_ambiguity_reason" ]; then
+    pr_json="$(jq -n '{open: [], merged: []}')"
+  else
+    pr_json="$(linked_pr_json "$issue" "$integration_label")"
+  fi
   dep_json="$(dependency_json "$body")"
   if ! merged_impl_count="$(printf '%s\n' "$pr_json" | jq '[.merged[] | select(.headRefName | test("^(feature|fix|refactor|hotfix)/"))] | length')"; then
     error_exit "failed to parse merged PR state for issue #${issue}."
@@ -540,7 +551,10 @@ enrich_item() {
 
   group="eligible"
   ambiguity_reason=""
-  if completed_status "$status" || [ "$state_reason" = "COMPLETED" ] \
+  if [ -n "$scope_base_ambiguity_reason" ]; then
+    group="ambiguous"
+    ambiguity_reason="$scope_base_ambiguity_reason"
+  elif completed_status "$status" || [ "$state_reason" = "COMPLETED" ] \
     || [ "$merged_impl_count" -gt 0 ]; then
     group="already_merged"
   elif [ "$status" = "Cancelled" ] || { [ "$state" = "CLOSED" ] && [ "$state_reason" != "COMPLETED" ]; }; then

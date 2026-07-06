@@ -258,8 +258,6 @@ run_fails_contains "rejects_flag_as_may_start_backlog_value" "--may-start-backlo
 run_fails_contains "rejects_flag_as_max_risk_value" "--max-risk requires a value" "$RESOLVER" --items 101 --max-risk --json
 run_fails_contains "missing_epic_clear_error" "not found or inaccessible" env MOCK_EPIC_MODE=missing "$RESOLVER" --epic 900
 run_fails_contains "parent_mismatch_rejected" "does not point back" env MOCK_PARENT_MODE=mismatch "$RESOLVER" --epic 900
-run_fails_contains "label_fetch_failure_rejected" "failed to read labels for issue #101" env MOCK_LABEL_FETCH_FAIL=101 "$RESOLVER" --items 101
-
 items_output="$(run_json --items 101,101,102 --delegate-review --may-merge --may-start-backlog true --max-risk medium)"
 run_test "explicit_items_deduped" "2" "$(printf '%s\n' "$items_output" | jq '.items | length')"
 run_test "explicit_items_no_expansion" "101,102" "$(printf '%s\n' "$items_output" | jq -r '[.items[].number] | join(",")')"
@@ -335,6 +333,14 @@ run_test "pr_lookup_cache_preserves_grouping" "102" "$(printf '%s\n' "$cache_pro
 
 unlabeled_shared_base_output="$(run_json --items 101,112)"
 run_test "unlabeled_item_uses_scope_shared_base" "112" "$(printf '%s\n' "$unlabeled_shared_base_output" | jq -r '.groups.already_merged[] | select(.number == 112) | .number')"
+
+label_fetch_failure_output="$(MOCK_LABEL_FETCH_FAIL=101 run_json --items 101,112)"
+run_test "label_fetch_failure_keeps_partial_scope" "2" "$(printf '%s\n' "$label_fetch_failure_output" | jq '.items | length')"
+run_test "label_fetch_failure_marks_unlabeled_ambiguous" "112" "$(printf '%s\n' "$label_fetch_failure_output" | jq -r '.groups.ambiguous[] | select(.number == 112) | .number')"
+run_test "label_fetch_failure_explains_ambiguity" "yes" "$(
+  printf '%s\n' "$label_fetch_failure_output" | jq -e '.groups.ambiguous[] | select(.number == 112) | .ambiguityReason == "scope integration branch candidates could not be fully resolved"' >/dev/null &&
+    echo yes || echo no
+)"
 
 : > "$CALL_LOG"
 cache_collision_output="$(run_json --items 113 --base develop/foo)"
