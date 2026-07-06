@@ -140,6 +140,7 @@ JSON
       109) state="CLOSED"; state_reason="NOT_PLANNED"; labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
       110) labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
       111) body='Blocked by #108'; labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
+      113) labels_json='[{"name":"integration-branch:foo"}]' ;;
     esac
     jq -n \
       --argjson number "$issue_number" \
@@ -149,6 +150,17 @@ JSON
       --arg body "$body" \
       --argjson labels "$labels_json" \
       '{number:$number,title:$title,state:$state,stateReason:$stateReason,body:$body,labels:$labels,projectItems:[{priority:{name:"High"}}]}'
+    ;;
+  issue\ view\ *\ --json\ labels)
+    issue_number="${3}"
+    labels_json='[]'
+    case "$issue_number" in
+      101|102|103|104|107|109|110|111) labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
+      105) labels_json='[{"name":"integration-branch:alpha"}]' ;;
+      106) labels_json='[{"name":"integration-branch:beta"}]' ;;
+      113) labels_json='[{"name":"integration-branch:foo"}]' ;;
+    esac
+    jq -n --argjson labels "$labels_json" '{labels:$labels}'
     ;;
   issue\ view\ *\ --json\ number,title,state)
     issue_number="${3}"
@@ -162,7 +174,7 @@ JSON
     case "$base" in
       develop-delegated-epic-orchestration)
         cat <<'JSON'
-[[{"number":2101,"title":"Merged plan PR","head":{"ref":"implementation-plan/101-one"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"closed","draft":false,"labels":[],"merged_at":"2026-06-12T11:00:00Z"},{"number":2102,"title":"Plan PR","head":{"ref":"implementation-plan/102-two"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"open","draft":false,"labels":[{"name":"ready-for-human-review"}],"merged_at":null},{"number":2103,"title":"Merged PR","head":{"ref":"feature/103-three"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"closed","draft":false,"labels":[],"merged_at":"2026-06-12T12:00:00Z"},{"number":2104,"title":"Closed unmerged PR","head":{"ref":"feature/104-four"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"closed","draft":false,"labels":[],"merged_at":null},{"number":2110,"title":"Unready PR","head":{"ref":"feature/110-ten"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"open","draft":false,"labels":[],"merged_at":null}]]
+[[{"number":2101,"title":"Merged plan PR","head":{"ref":"implementation-plan/101-one"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"closed","draft":false,"labels":[],"merged_at":"2026-06-12T11:00:00Z"},{"number":2102,"title":"Plan PR","head":{"ref":"implementation-plan/102-two"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"open","draft":false,"labels":[{"name":"ready-for-human-review"}],"merged_at":null},{"number":2103,"title":"Merged PR","head":{"ref":"feature/103-three"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"closed","draft":false,"labels":[],"merged_at":"2026-06-12T12:00:00Z"},{"number":2104,"title":"Closed unmerged PR","head":{"ref":"feature/104-four"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"closed","draft":false,"labels":[],"merged_at":null},{"number":2110,"title":"Unready PR","head":{"ref":"feature/110-ten"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"open","draft":false,"labels":[],"merged_at":null},{"number":2112,"title":"Merged unlabeled issue PR","head":{"ref":"feature/112-twelve"},"base":{"ref":"develop-delegated-epic-orchestration"},"state":"closed","draft":false,"labels":[],"merged_at":"2026-06-13T13:00:00Z"}]]
 JSON
         ;;
       develop-custom)
@@ -315,6 +327,18 @@ run_test "pr_lookup_avoids_unbounded_rest_history" "no" "$(
   grep -q 'pulls?state=\(open\|closed\|all\)&per_page=100' "$CALL_LOG" && echo yes || echo no
 )"
 run_test "pr_lookup_cache_preserves_grouping" "102" "$(printf '%s\n' "$cache_probe_output" | jq -r '.groups.in_review[0].number')"
+
+unlabeled_shared_base_output="$(run_json --items 101,112)"
+run_test "unlabeled_item_uses_scope_shared_base" "112" "$(printf '%s\n' "$unlabeled_shared_base_output" | jq -r '.groups.already_merged[] | select(.number == 112) | .number')"
+
+: > "$CALL_LOG"
+cache_collision_output="$(run_json --items 113 --base develop/foo)"
+run_test "pr_lookup_cache_keys_do_not_collide" "yes" "$(
+  grep -q 'pulls?state=all&base=develop-foo&per_page=100' "$CALL_LOG" &&
+    grep -q 'pulls?state=all&base=develop/foo&per_page=100' "$CALL_LOG" &&
+    echo yes || echo no
+)"
+run_test "cache_collision_probe_still_resolves_item" "113" "$(printf '%s\n' "$cache_collision_output" | jq -r '.items[0].number')"
 
 echo ""
 echo "=== Provider normalization and deferred-read signals (#966) ==="

@@ -325,7 +325,9 @@ integration_label_for_issue_json() {
 base_branch_cache_file() {
   local branch="$1"
   local safe
-  safe="$(printf '%s' "$branch" | tr -c 'A-Za-z0-9' '_')"
+  if ! safe="$(printf '%s' "$branch" | od -An -tx1 | tr -d ' \n')"; then
+    error_exit "failed to derive PR cache key for base branch ${branch}."
+  fi
   printf '%s/prs_base_%s.json\n' "$tmp_dir" "$safe"
 }
 
@@ -345,6 +347,31 @@ fetch_prs_for_base() {
   printf '%s\n' "$cache_file"
 }
 
+resolve_scope_pr_bases() {
+  local bases_file issue issue_json integration_label candidate_base
+  bases_file="$tmp_dir/pr_bases.txt"
+  printf '%s\n' "develop" > "$bases_file"
+  if [ -n "$base_override" ]; then
+    printf '%s\n' "$base_override" >> "$bases_file"
+  fi
+
+  while IFS= read -r issue; do
+    [ -n "$issue" ] || continue
+    if ! issue_json="$(gh issue view "$issue" --json labels 2>/dev/null)"; then
+      continue
+    fi
+    if ! integration_label="$(printf '%s\n' "$issue_json" | integration_label_for_issue_json)"; then
+      error_exit "failed to parse issue #${issue} integration branch label."
+    fi
+    if [ -n "$integration_label" ]; then
+      candidate_base="develop-${integration_label#integration-branch:}"
+      printf '%s\n' "$candidate_base" >> "$bases_file"
+    fi
+  done < "$subissues_file"
+
+  sort -u "$bases_file"
+}
+
 linked_pr_json() {
   local issue="$1"
   local integration_label="$2"
@@ -354,7 +381,7 @@ linked_pr_json() {
   if [ -n "$integration_label" ]; then
     candidate_base="develop-${integration_label#integration-branch:}"
   fi
-  bases="$(printf '%s\n%s\n%s\n' "develop" "$candidate_base" "$base_override" | sed '/^$/d' | sort -u)"
+  bases="$(printf '%s\n%s\n' "$scope_pr_bases" "$candidate_base" | sed '/^$/d' | sort -u)"
 
   open_prs="[]"
   merged_prs="[]"
@@ -571,6 +598,8 @@ if [ -n "$epic_number" ]; then
 else
   parse_explicit_items "$items_arg"
 fi
+
+scope_pr_bases="$(resolve_scope_pr_bases)"
 
 while IFS= read -r issue; do
   [ -n "$issue" ] || continue
