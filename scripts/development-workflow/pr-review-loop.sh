@@ -4800,8 +4800,8 @@ METRICS_HEADER
 #         Within the reviewer-loop operating model, ready-for-regression is
 #         owned by the loop and should be present whenever the loop runs after
 #         the first summary comment. A label drop after the summary comment exists
-#         means remove-regression-label-on-push.yml fired (the #805 scenario), so
-#         restoring here is correct.
+#         means the PR policy workflow removed a stale label after a new push
+#         (the #805 scenario), so restoring here is correct.
 #       • summary comment ABSENT + label missing   → do NOT restore.
 #         This is the normal initial state (loop has never run), and the only
 #         window in which a human intentional removal is unambiguous. A deliberate

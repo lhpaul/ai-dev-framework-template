@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Consolidate PR policy workflows** (#1150): Replace redundant lightweight PR
+  policy workflow fan-out with one API-only PR policy workflow while preserving
+  reviewer-loop and regression-readiness guarantees.
 - **AI Workflow — guarded run-items batch merge**: `/run-items` command surfaces
   now require Guardrails Enforcement Gate 5 `merge_allowed` before routing ready
   in-scope PRs into scoped Protocol 94 batch merge, never use auto-discovery for

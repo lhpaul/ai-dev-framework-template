@@ -16,7 +16,14 @@ their own label-gated test suites.
 
 ## How It Fits Into the Workflow
 
-The `ready-for-regression` label is applied by the orchestrator (Step 7b in `91-orchestrate-work-protocol.md`) after the automated reviewer loop (Step 7) is clean, and before the CI loop (Step 8). The prepare-release flow applies the same label on production release PRs per `05-prepare-release-protocol.md` Step 7.4. This means:
+The `ready-for-regression` label is applied by the orchestrator (Step 7b in
+`91-orchestrate-work-protocol.md`) after the automated reviewer loop (Step 7) is
+clean, and before the CI loop (Step 8). The `pr-policy.yml` workflow also
+auto-applies the label to same-repository implementation PRs on open, reopen, or
+ready-for-review, and removes stale labels on new pushes only when the reviewer
+loop has not yet posted its canonical summary. The prepare-release flow applies
+the same label on production release PRs per `05-prepare-release-protocol.md`
+Step 7.4. This means:
 
 1. Step 7a: Internal review gate passes
 2. Step 7: External automated reviewers are clean
@@ -90,7 +97,9 @@ The `ready-for-regression` label is applied to implementation PRs (`feature/*`, 
 
 ## Notes
 
-- The label persists on the PR after e2e tests pass. It is not removed.
+- The label persists on the PR after e2e tests pass. It is removed from
+  implementation PRs only when `pr-policy.yml` sees a new push before the
+  reviewer-loop summary exists.
 - This workflow does not store test credentials or environment URLs in the template.
 - For projects without e2e tests, keep the placeholder disabled and do not
   configure it as a required check. The orchestrator will still apply the label,
