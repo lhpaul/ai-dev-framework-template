@@ -43,7 +43,7 @@ jobs:
     if: github.event_name != 'issue_comment' || github.event.issue.pull_request
     runs-on: ubuntu-latest
     permissions:
-      issues: read
+      issues: write
       pull-requests: write
       statuses: write
 

@@ -87,7 +87,7 @@ run_test "label_remove_preserved" "yes" "$(contains '--remove-label "$LABEL_NAME
 run_test "label_removal_skips_on_comment_failure" "yes" "$(contains "Skipping label removal to avoid dropping a loop-applied label on API failure.")"
 run_test "label_removal_skips_after_summary" "yes" "$(contains 'Reviewer loop has already run on PR #${PR_NUMBER}')"
 
-run_test "permissions_include_issues_read" "yes" "$(contains "issues: read")"
+run_test "permissions_include_issues_write" "yes" "$(contains "issues: write")"
 run_test "permissions_include_pull_requests_write" "yes" "$(contains "pull-requests: write")"
 run_test "permissions_include_statuses_write" "yes" "$(contains "statuses: write")"
 

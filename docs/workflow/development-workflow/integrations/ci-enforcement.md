@@ -189,7 +189,7 @@ repository.
 
 | Permission | Why it is needed |
 | --- | --- |
-| `issues: read` | Read PR issue comments to find the reviewer-loop summary. |
+| `issues: write` | Read PR issue comments and create the `ready-for-regression` repository label when it is absent. |
 | `pull-requests: write` | Read PR metadata and apply or remove PR labels. |
 | `statuses: write` | Post the reviewer-loop guard commit status. |
 
