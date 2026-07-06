@@ -153,6 +153,10 @@ JSON
     ;;
   issue\ view\ *\ --json\ labels)
     issue_number="${3}"
+    if [ "${MOCK_LABEL_FETCH_FAIL:-}" = "$issue_number" ]; then
+      printf 'label fetch failed for #%s\n' "$issue_number" >&2
+      exit 64
+    fi
     labels_json='[]'
     case "$issue_number" in
       101|102|103|104|107|109|110|111) labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
@@ -254,6 +258,7 @@ run_fails_contains "rejects_flag_as_may_start_backlog_value" "--may-start-backlo
 run_fails_contains "rejects_flag_as_max_risk_value" "--max-risk requires a value" "$RESOLVER" --items 101 --max-risk --json
 run_fails_contains "missing_epic_clear_error" "not found or inaccessible" env MOCK_EPIC_MODE=missing "$RESOLVER" --epic 900
 run_fails_contains "parent_mismatch_rejected" "does not point back" env MOCK_PARENT_MODE=mismatch "$RESOLVER" --epic 900
+run_fails_contains "label_fetch_failure_rejected" "failed to read labels for issue #101" env MOCK_LABEL_FETCH_FAIL=101 "$RESOLVER" --items 101
 
 items_output="$(run_json --items 101,101,102 --delegate-review --may-merge --may-start-backlog true --max-risk medium)"
 run_test "explicit_items_deduped" "2" "$(printf '%s\n' "$items_output" | jq '.items | length')"

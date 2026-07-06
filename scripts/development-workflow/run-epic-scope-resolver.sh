@@ -358,7 +358,7 @@ resolve_scope_pr_bases() {
   while IFS= read -r issue; do
     [ -n "$issue" ] || continue
     if ! issue_json="$(gh issue view "$issue" --json labels 2>/dev/null)"; then
-      continue
+      error_exit "failed to read labels for issue #${issue} while resolving PR base candidates."
     fi
     if ! integration_label="$(printf '%s\n' "$issue_json" | integration_label_for_issue_json)"; then
       error_exit "failed to parse issue #${issue} integration branch label."
