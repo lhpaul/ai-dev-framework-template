@@ -48,6 +48,8 @@ run_test "issue_comment_created_edited" "yes" "$(contains "types: [created, edit
 run_test "pr_event_types_preserved" "yes" "$(contains "types: [opened, reopened, ready_for_review, synchronize]")"
 run_test "summary_comments_get_separate_concurrency" "yes" "$(contains "'summary-comment' ||")"
 run_test "non_summary_comments_get_separate_concurrency" "yes" "$(contains "'non-summary' ||")"
+run_test "synchronize_events_get_separate_concurrency" "yes" "$(contains "'pr-synchronize' ||")"
+run_test "label_apply_events_get_separate_concurrency" "yes" "$(contains "'pr-label-and-guard' ||")"
 run_test "pr_events_get_separate_concurrency" "yes" "$(contains "'pr-event'")"
 run_test "guard_path_cancels_stale_runs" "yes" "$(contains "cancel-in-progress: true")"
 
@@ -82,10 +84,13 @@ run_test "regression_label_create_preserved" "yes" "$(contains 'gh label create 
 run_test "regression_label_create_race_handled" "yes" "$(contains "Concurrent creator race")"
 run_test "label_applies_on_open_reopen_ready" "yes" "$(contains "opened|reopened|ready_for_review)")"
 run_test "label_add_preserved" "yes" "$(contains '--add-label "$LABEL_NAME"')"
+run_test "label_add_failure_continues_to_guard" "yes" "$(contains "Continuing to reviewer-loop guard status.")"
 run_test "synchronize_removes_stale_label" "yes" "$(contains 'EVENT_ACTION" = "synchronize"')"
 run_test "label_remove_preserved" "yes" "$(contains '--remove-label "$LABEL_NAME"')"
 run_test "label_removal_skips_on_comment_failure" "yes" "$(contains "Skipping label removal to avoid dropping a loop-applied label on API failure.")"
 run_test "label_removal_skips_after_summary" "yes" "$(contains 'Reviewer loop has already run on PR #${PR_NUMBER}')"
+run_test "label_policy_failure_flag_present" "yes" "$(contains "LABEL_POLICY_FAILED=true")"
+run_test "label_policy_failure_after_guard_status" "yes" "$(contains "PR policy label mutation failed after reviewer-loop guard status was posted.")"
 
 run_test "permissions_include_issues_write" "yes" "$(contains "issues: write")"
 run_test "permissions_include_pull_requests_write" "yes" "$(contains "pull-requests: write")"

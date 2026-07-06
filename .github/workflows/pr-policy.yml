@@ -34,6 +34,11 @@ concurrency:
       'summary-comment' ||
       github.event_name == 'issue_comment' &&
       'non-summary' ||
+      github.event_name == 'pull_request_target' &&
+      github.event.action == 'synchronize' &&
+      'pr-synchronize' ||
+      github.event_name == 'pull_request_target' &&
+      'pr-label-and-guard' ||
       'pr-event'
     }}
   cancel-in-progress: true
@@ -74,6 +79,7 @@ jobs:
           GUARD_CONTEXT="Reviewer-loop completion guard (#${PR_NUMBER})"
           EVENT_COMMENT_HAS_SUMMARY=false
           COMMENTS_FETCH_FAILED=false
+          LABEL_POLICY_FAILED=false
           FOUND=0
 
           post_failure_status_if_possible() {
@@ -107,7 +113,7 @@ jobs:
               if ! gh label list --repo "$REPO" --search "$LABEL_NAME" --json name \
                   | jq -e --arg name "$LABEL_NAME" '.[] | select(.name == $name)' > /dev/null 2>&1; then
                 echo "ERROR: Failed to create ${LABEL_NAME} label." >&2
-                exit 1
+                return 1
               fi
             fi
           }
@@ -215,11 +221,17 @@ jobs:
             case "$EVENT_ACTION" in
               opened|reopened|ready_for_review)
                 echo "Branch '${BRANCH}' is in scope; ensuring and applying ${LABEL_NAME}."
-                ensure_regression_label_exists
-                gh pr edit "$PR_NUMBER" \
+                if ! ensure_regression_label_exists; then
+                  echo "WARN: Failed to ensure ${LABEL_NAME} label exists. Continuing to reviewer-loop guard status." >&2
+                  LABEL_POLICY_FAILED=true
+                elif ! gh pr edit "$PR_NUMBER" \
                   --repo "$REPO" \
-                  --add-label "$LABEL_NAME"
-                echo "Label '${LABEL_NAME}' applied to PR #${PR_NUMBER}."
+                  --add-label "$LABEL_NAME"; then
+                  echo "WARN: Failed to apply ${LABEL_NAME} to PR #${PR_NUMBER}. Continuing to reviewer-loop guard status." >&2
+                  LABEL_POLICY_FAILED=true
+                else
+                  echo "Label '${LABEL_NAME}' applied to PR #${PR_NUMBER}."
+                fi
                 ;;
             esac
           fi
@@ -232,12 +244,13 @@ jobs:
               --repo "$REPO" \
               --json labels); then
               echo "ERROR: Failed to read labels for PR #${PR_NUMBER}." >&2
-              exit 1
-            fi
-            if ! LABEL=$(printf '%s\n' "$labels_json" \
+              LABEL_POLICY_FAILED=true
+              LABEL=""
+            elif ! LABEL=$(printf '%s\n' "$labels_json" \
               | jq -r --arg name "$LABEL_NAME" '.labels[].name | select(. == $name)'); then
               echo "ERROR: Failed to parse labels for PR #${PR_NUMBER}." >&2
-              exit 1
+              LABEL_POLICY_FAILED=true
+              LABEL=""
             fi
 
             if [ -z "$LABEL" ]; then
@@ -248,10 +261,14 @@ jobs:
               echo "Reviewer loop has already run on PR #${PR_NUMBER} (found ${FOUND} summary comment(s)). Skipping label removal."
             else
               echo "Label '${LABEL_NAME}' found and reviewer loop has not run yet. Removing it."
-              gh pr edit "$PR_NUMBER" \
+              if ! gh pr edit "$PR_NUMBER" \
                 --repo "$REPO" \
-                --remove-label "$LABEL_NAME"
-              echo "Label removed successfully."
+                --remove-label "$LABEL_NAME"; then
+                echo "WARN: Failed to remove stale ${LABEL_NAME} from PR #${PR_NUMBER}. Continuing to reviewer-loop guard status." >&2
+                LABEL_POLICY_FAILED=true
+              else
+                echo "Label removed successfully."
+              fi
             fi
           fi
 
@@ -284,6 +301,11 @@ jobs:
             -f context="$GUARD_CONTEXT"
 
           echo "Posted commit status '${STATE}' for SHA ${HEAD_SHA} with context '${GUARD_CONTEXT}'."
+
+          if [ "$LABEL_POLICY_FAILED" = "true" ]; then
+            echo "PR policy label mutation failed after reviewer-loop guard status was posted."
+            exit 1
+          fi
 
           if [ "$STATE" = "failure" ]; then
             echo "Guard FAILED: the automated reviewer loop must run to completion before this PR is treated as ready."
