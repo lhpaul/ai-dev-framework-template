@@ -8,8 +8,8 @@ description: Advance a single workflow item until it reaches a real terminal con
 Recommended model tier: `balanced`
 
 1. Read `AGENTS.md` for repository-wide rules, branch overrides, and terminal-condition expectations.
-2. Run the read-only bounded prelude before mutation unless handoff metadata includes
-   `BATCH_CONTEXT=true` (portfolio batch dispatch — skip prelude per Protocol 91):
+2. Unless handoff metadata includes `BATCH_CONTEXT=true`, run the read-only
+   bounded prelude before mutation:
    `./scripts/development-workflow/run-bounded-prelude.sh --original-command "<invocation>" <scope flags> --json`
    See `docs/workflow/development-workflow/bounded-run-prelude.md`. Print
    `policyRecommendation.confirmationSummary`, including effective policy, field
@@ -20,7 +20,10 @@ Recommended model tier: `balanced`
    immediately after printing the summary and recording the invocation-scoped
    `RUN_ITEM_POLICY_CONFIRMED` item/policy binding. Otherwise (any flag was
    inferred, scope is ambiguous, or pending checkpoints remain), stop for human
-   acceptance, checkpoint input, or customization before continuing.
+   acceptance, checkpoint input, or customization before continuing. When
+   `BATCH_CONTEXT=true`, skip this per-item prelude, summary printing, and
+   `RUN_ITEM_POLICY_CONFIRMED` binding; portfolio batch approval in Protocol 90
+   covers the confirmation gate.
 3. Read `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`.
 4. Prefer the helper scripts in `scripts/development-workflow/` for next-action classification, resume behavior, CI polling, and automated review polling before using ad hoc shell commands.
 5. Treat the protocol as canonical. Use the matching workflow skill for the next stage when your runner supports skill-to-skill handoff; otherwise continue in the current session by following the referenced stage protocol directly.
