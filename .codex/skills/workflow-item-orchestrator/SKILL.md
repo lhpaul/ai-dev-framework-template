@@ -11,13 +11,16 @@ Recommended model tier: `balanced`
 2. Run the read-only bounded prelude before mutation unless handoff metadata includes
    `BATCH_CONTEXT=true` (portfolio batch dispatch — skip prelude per Protocol 91):
    `./scripts/development-workflow/run-bounded-prelude.sh --original-command "<invocation>" <scope flags> --json`
-   See `docs/workflow/development-workflow/bounded-run-prelude.md`. Print the
-   resolved policy summary. If all autonomy flags (`--delegate-review`,
-   `--may-merge`, `--may-start-backlog`, `--max-risk`) were provided explicitly
-   in the invocation, those explicit flags serve as human confirmation — proceed
-   immediately after printing the summary. Otherwise (any flag was inferred,
-   scope is ambiguous, or pending checkpoints remain), stop for human acceptance
-   or customization before continuing.
+   See `docs/workflow/development-workflow/bounded-run-prelude.md`. Print
+   `policyRecommendation.confirmationSummary`, including effective policy, field
+   sources, pending checkpoint guidance, copy-paste equivalent, and the read-only
+   guarantee. If all autonomy flags (`--delegate-review`, `--may-merge`,
+   `--may-start-backlog`, `--max-risk`) were provided explicitly in the
+   invocation, those explicit flags serve as human confirmation — proceed
+   immediately after printing the summary and recording the invocation-scoped
+   `RUN_ITEM_POLICY_CONFIRMED` item/policy binding. Otherwise (any flag was
+   inferred, scope is ambiguous, or pending checkpoints remain), stop for human
+   acceptance, checkpoint input, or customization before continuing.
 3. Read `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`.
 4. Prefer the helper scripts in `scripts/development-workflow/` for next-action classification, resume behavior, CI polling, and automated review polling before using ad hoc shell commands.
 5. Treat the protocol as canonical. Use the matching workflow skill for the next stage when your runner supports skill-to-skill handoff; otherwise continue in the current session by following the referenced stage protocol directly.

@@ -74,7 +74,9 @@ while [ "$#" -gt 0 ]; do
     --items)
       require_value "$@"
       # --items is a deprecated internal flag. Users should use /run-items instead.
-      echo "DEPRECATED: --items is not a user-facing flag for run-epic-scope-resolver.sh. Use /run-items for explicit item lists." >&2
+      if [ "${RUN_EPIC_SCOPE_RESOLVER_INTERNAL_ITEMS:-0}" != "1" ]; then
+        echo "DEPRECATED: --items is not a user-facing flag for run-epic-scope-resolver.sh. Use /run-items for explicit item lists." >&2
+      fi
       items_arg="$2"
       shift 2
       ;;

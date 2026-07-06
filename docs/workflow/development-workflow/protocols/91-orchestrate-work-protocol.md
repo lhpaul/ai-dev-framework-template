@@ -108,10 +108,28 @@ mutation in Step 1 or later:
 See [`bounded-run-prelude.md`](../bounded-run-prelude.md).
 
 **Always-confirm**: `policyRecommendation.requiresConfirmation` is always `true`.
-The orchestrator must print the resolved policy summary before any mutation.
+The orchestrator must print `policyRecommendation.confirmationSummary` before
+any mutation. The summary is the operator-facing contract for scope, effective
+policy, field sources, pending checkpoints, copy-paste equivalent, and the
+read-only guarantee.
+
+When the human confirms the summary, or when all required autonomy flags are
+explicit and no unresolved checkpoint or guardrail conflict blocks mutation,
+record the invocation-scoped binding before continuing:
+
+- `RUN_ITEM_POLICY_CONFIRMED=true`
+- `RUN_ITEM_POLICY_CONFIRMED_ITEM=<resolved item identifier>`
+- `RUN_ITEM_POLICY_CONFIRMED_POLICY=<normalized selected policy>`
+
+The normalized policy must include at least backlog-start authority, delegated
+review, merge authority, max risk, base branch, and checkpoint count. This
+binding prevents redundant prompts only while the runner remains on the same
+resolved item with the same selected policy.
+
 - When all autonomy flags (`--delegate-review`, `--may-merge`, `--may-start-backlog`,
   `--max-risk`) were provided explicitly in the invocation, those explicit flags
-  serve as the human's confirmation — proceed immediately after printing the summary.
+  serve as the human's confirmation — proceed immediately after printing the summary
+  and recording the invocation-scoped binding.
 - When any flag was inferred from scope, scope is ambiguous, or pending checkpoints
   remain, stop before mutation and ask the human to confirm or re-invoke with
   corrected flags.
@@ -227,9 +245,11 @@ When dispatching a subagent for this item, include a short "Tracker Work Item Su
 > item into Writing Spec, Writing Plan, or In Development for the first time,
 > apply the backlog-start gate from `guardrails-enforcement.md` section 3 Gate 2.
 > If `backlog_start.allow_without_confirmation` is not `true` in the effective
-> guardrails, stop before starting the item and ask the human to confirm, naming
-> the items proposed to start. Resuming an item already in progress is not a
-> backlog start.
+> guardrails, a matching `RUN_ITEM_POLICY_CONFIRMED` binding for the same
+> resolved item and selected policy satisfies this confirmation. Otherwise, stop
+> before starting the item and ask the human to confirm, naming the items
+> proposed to start. Resuming an item already in progress is not a backlog
+> start.
 
 | Current state / detection                                          | Can advance if...                                                                                                                                   | Next action                                                                                                                                                                                                                                                                  |
 | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

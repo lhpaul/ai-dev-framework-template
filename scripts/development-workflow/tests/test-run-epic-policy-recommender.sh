@@ -216,6 +216,13 @@ run_test "docs_scope_recommends_low" "low" "$(printf '%s\n' "$docs_output" | jq 
 text_output="$("$HELPER" --scope "$backlog_fixture" --original-command "\$run-epic issues 949")"
 run_test "text_output_names_effective_policy" "yes" "$(grep -q 'Effective policy' <<< "$text_output" && grep -q 'Copy-paste equivalent' <<< "$text_output" && echo yes || echo no)"
 
+item_text_output="$("$HELPER" --scope "$backlog_fixture" --original-command "/run-item 949")"
+run_test "run_item_text_output_heading" "yes" "$(
+  grep -q 'Run Item Policy Recommendation' <<< "$item_text_output" &&
+  ! grep -q 'Run Epic Policy Recommendation' <<< "$item_text_output" &&
+  echo yes || echo no
+)"
+
 PATH="$MOCK_BIN:$PATH" "$HELPER" --scope "$backlog_fixture" --original-command "\$run-epic issues 949" --json >/dev/null
 run_test "does_not_call_gh_or_git" "0" "$(wc -l < "$CALL_LOG" | tr -d ' ')"
 

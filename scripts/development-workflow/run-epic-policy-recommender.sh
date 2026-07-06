@@ -488,7 +488,13 @@ if [ "$json_output" -eq 1 ]; then
   exit 0
 fi
 
-printf 'Run Epic Policy Recommendation\n'
+case "$original_command" in
+  /run-item*|\$run-item*) recommendation_heading="Run Item Policy Recommendation" ;;
+  /run-items*|\$run-items*) recommendation_heading="Run Items Policy Recommendation" ;;
+  *) recommendation_heading="Run Epic Policy Recommendation" ;;
+esac
+
+printf '%s\n' "$recommendation_heading"
 printf 'Requires confirmation: %s\n' "$(printf '%s\n' "$recommendation_json" | jq -r '.requiresConfirmation')"
 printf 'Reason: %s\n' "$(printf '%s\n' "$recommendation_json" | jq -r '.confirmationReason')"
 printf 'Effective policy:\n'

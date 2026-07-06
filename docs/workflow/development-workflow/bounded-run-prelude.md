@@ -61,6 +61,9 @@ The JSON output includes:
 - `scope` — full resolver payload (`groups`, `items`, `baseBranch`, `policy` flags)
 - `guardrails` — repository `guardrails` snapshot (`mode`, `backlog_start`)
 - `policyRecommendation` — same shape as `run-epic-policy-recommender.sh` alone
+- `policyRecommendation.confirmationSummary` — operator-facing summary lines for
+  resolved scope, effective policy, field sources, checkpoints, copy-paste
+  equivalent, read-only guarantee, and the Protocol 91 invocation binding.
 
 ---
 
@@ -71,14 +74,21 @@ The JSON output includes:
    recommender and checkpoint schema as `/run-epic` (no parallel autonomy
    system).
 3. **Always-confirm** — `requiresConfirmation` is always `true`. The orchestrator
-   must present the resolved policy to the human before any mutation. When all
-   autonomy flags were provided explicitly in the invocation command, those
-   explicit flags serve as the human's confirmation and the orchestrator may
-   proceed immediately after printing the policy summary. When any flag was
-   inferred, scope is ambiguous, or pending checkpoints remain, the orchestrator
-   must stop and wait for explicit human acceptance or re-invocation with
+   must present `policyRecommendation.confirmationSummary` before any mutation.
+   When all autonomy flags were provided explicitly in the invocation command,
+   those explicit flags serve as the human's confirmation and the orchestrator
+   may proceed immediately after printing the policy summary and recording the
+   invocation-scoped confirmation binding. When any flag was inferred, scope is
+   ambiguous, or pending checkpoints remain, the orchestrator must stop and wait
+   for explicit human acceptance, checkpoint policy input, or re-invocation with
    corrected flags.
-4. **Epic-like items** — `run-item-scope-resolver.sh` rejects epic issues; use
+4. **Invocation-scoped continuation** — after confirmation, Protocol 91 records
+   `RUN_ITEM_POLICY_CONFIRMED=true` with companion resolved-item and normalized
+   selected-policy bindings. The binding satisfies only redundant prompts for
+   the same item and policy. It never waives new guardrail stops, failed review,
+   failed CI, risk violations, missing permissions, destructive-action stops, or
+   pending checkpoints.
+5. **Epic-like items** — `run-item-scope-resolver.sh` rejects epic issues; use
    `--epic` instead.
 
 ---

@@ -8,7 +8,12 @@ Follow the **`/run-item`** bounded command contract:
 
 1. Run the shared bounded prelude read-only before mutation (`bounded-run-prelude.md`)
    **unless** handoff metadata includes `BATCH_CONTEXT=true` (portfolio batch dispatch
-   from Protocol 90 — prelude is skipped per Protocol 91).
+   from Protocol 90 — prelude is skipped per Protocol 91). Print
+   `policyRecommendation.confirmationSummary`; after explicit flags or human
+   acceptance, record the invocation-scoped `RUN_ITEM_POLICY_CONFIRMED`
+   item/policy binding and avoid redundant prompts for the same selected policy.
+   Pending checkpoints, guardrail stops, review/CI failures, risk violations,
+   and missing permissions still stop the run.
 2. Follow the single-item orchestration protocol:
 
 `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`

@@ -511,6 +511,81 @@ if ! jq -c \
 fi
 mv "$policy_adjusted_file" "$policy_file"
 
+policy_summary_file="$tmp_dir/policy.summary.json"
+if ! jq -c \
+  --slurpfile scope "$scope_file" \
+  --arg readOnly "No tracker updates, branch creation, PR edits, labels, comments, merges, issue closure, or branch deletion were performed." \
+  '
+  $scope[0] as $scopePayload |
+  ($scopePayload.resolvedIssueNumber // $scopePayload.resolvedIssueIdentifier // $scopePayload.itemInput // $scopePayload.epicNumber // "unresolved") as $resolvedItem |
+  ([
+    $scopePayload.items[]?
+    | select(((.number // .identifier // "") | tostring) == ($resolvedItem | tostring))
+    | .title // empty
+  ] | first) as $resolvedTitle |
+  def bool_text($value): if $value then "true" else "false" end;
+  def source_line($label; $value): "- " + $label + ": " + ($value | tostring);
+  def checkpoint_line:
+    "- #" + (.item_number | tostring) + " "
+    + ((.stage // "stage") | tostring) + "/" + ((.domain // "domain") | tostring)
+    + " [" + ((.satisfaction_state // "pending") | tostring) + "]: "
+    + ((.required_human_action // .reason // "checkpoint requires human review") | tostring);
+  .confirmationSummary = {
+    title: (
+      if ($scopePayload.scopeSource // .scope.source // "") == "item" then
+        "Run item policy confirmation"
+      else
+        "Bounded run policy confirmation"
+      end
+    ),
+    scopeLines: [
+      source_line("Scope"; ($scopePayload.scopeSource // .scope.source // "unknown")),
+      source_line("Resolved item"; (
+        ($resolvedItem | tostring)
+        + if ($resolvedTitle // "") == "" then "" else " - " + ($resolvedTitle | tostring) end
+      )),
+      source_line("Base"; (.effectivePolicy.base // "ambiguous")),
+      source_line("Base source"; (.fieldSources.base // "unknown"))
+    ],
+    policyLines: [
+      source_line("May start Backlog"; (bool_text(.effectivePolicy.mayStartBacklog) + " (" + (.fieldSources.mayStartBacklog // "unknown") + ")")),
+      source_line("Delegated review"; (bool_text(.effectivePolicy.delegateReview) + " (" + (.fieldSources.delegateReview // "unknown") + ")")),
+      source_line("May merge"; (bool_text(.effectivePolicy.mayMerge) + " (" + (.fieldSources.mayMerge // "unknown") + ")")),
+      source_line("Max risk"; ((.effectivePolicy.maxRisk // "low") + " (" + (.fieldSources.maxRisk // "unknown") + ")"))
+    ],
+    checkpointLines: (
+      if ((.effectivePolicy.checkpoints // []) | length) == 0 then
+        ["- No human checkpoints selected."]
+      else
+        [.effectivePolicy.checkpoints[] | checkpoint_line]
+      end
+    ),
+    continuationLines: [
+      source_line("Requires confirmation"; (.requiresConfirmation | tostring)),
+      source_line("Reason"; (.confirmationReason // "review resolved policy before mutation")),
+      "- Confirmation is invocation-scoped to the resolved item and selected policy.",
+      "- Confirmation does not waive new guardrail stops, failed review, failed CI, risk violations, or pending checkpoints."
+    ],
+    copyPasteLine: source_line("Copy-paste equivalent"; (.copyPasteCommand // "")),
+    readOnlyLine: source_line("Read-only guarantee"; $readOnly),
+    invocationBinding: {
+      stateName: "RUN_ITEM_POLICY_CONFIRMED",
+      item: ($resolvedItem | tostring),
+      policy: {
+        mayStartBacklog: .effectivePolicy.mayStartBacklog,
+        delegateReview: .effectivePolicy.delegateReview,
+        mayMerge: .effectivePolicy.mayMerge,
+        maxRisk: .effectivePolicy.maxRisk,
+        base: .effectivePolicy.base,
+        checkpointCount: ((.effectivePolicy.checkpoints // []) | length)
+      }
+    }
+  }
+  ' "$policy_file" > "$policy_summary_file"; then
+  error_exit "policy confirmation summary generation failed"
+fi
+mv "$policy_summary_file" "$policy_file"
+
 prelude_json="$(jq -nc \
   --slurpfile scope "$scope_file" \
   --slurpfile policy "$policy_file" \
@@ -538,7 +613,18 @@ if [ "$(jq -r '.guardrails.section' <<<"$prelude_json")" = "absent" ]; then
   printf 'no `guardrails` section found; conservative defaults are in effect\n'
   printf 'Default guardrails: mode=manual; stages.*.may_open_pr=true; stages.*.may_merge_pr=false; stages.*.max_merge_risk=low; backlog_start.allow_without_confirmation=false; audit records not required\n'
 fi
-printf 'Requires confirmation: %s\n' "$(jq -r '.policyRecommendation.requiresConfirmation' <<<"$prelude_json")"
-printf 'Reason: %s\n' "$(jq -r '.policyRecommendation.confirmationReason' <<<"$prelude_json")"
-printf 'Copy-paste: %s\n' "$(jq -r '.policyRecommendation.copyPasteCommand' <<<"$prelude_json")"
-printf 'Read-only: %s\n' "$(jq -r '.readOnlyGuarantee' <<<"$prelude_json")"
+printf '\n'
+jq -r '
+  .policyRecommendation.confirmationSummary as $summary
+  | $summary.title,
+    "Scope:",
+    ($summary.scopeLines[]),
+    "Effective policy:",
+    ($summary.policyLines[]),
+    "Human checkpoints:",
+    ($summary.checkpointLines[]),
+    "Continuation:",
+    ($summary.continuationLines[]),
+    $summary.copyPasteLine,
+    $summary.readOnlyLine
+' <<<"$prelude_json"
