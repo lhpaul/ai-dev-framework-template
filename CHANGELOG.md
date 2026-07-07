@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Retroactive backlog tracking gate** (#1134): require implementation PRs
+  that grew from ad-hoc work to create or reference a tracker item before the PR
+  opens.
 - **Downstream template-sync follow-ups**: upstream reusable Leasity sync-review
   corrections for PR-Agent triggering, guarded command matching, guardrails
   parse diagnostics, tracker-provider checks, scope-base resolution, and GitHub

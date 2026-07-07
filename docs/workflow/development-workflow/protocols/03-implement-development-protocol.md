@@ -420,6 +420,26 @@ If the implementation includes any test script, test function, or validation har
 
 Append a brief self-review log to the draft PR description. If all checks are clean, one line is enough, for example: `Pre-submission self-review: stale markers — none, caller consistency — verified, coverage — all acceptance criteria addressed.` If the pass found and fixed a gap, note the finding and the commit that addressed it.
 
+## Pre-PR Tracking Item Gate
+
+Before opening any implementation PR, verify the work has a tracker item that
+can be referenced from the PR body and post-merge cleanup path. This gate applies
+even when the conversation started as an ad-hoc investigation and only became
+mutating work later.
+
+The gate passes when at least one of these is true:
+
+- The branch name includes the tracker identifier.
+- The PR body will include a `Closes #N`, `Fixes #N`, or equivalent tracker
+  reference.
+- The Work Item Runner supplied an explicit tracker item in the handoff.
+
+If none is true, create or accept a retroactive backlog item before opening the
+PR. The item must record the problem statement, implementation rationale, and
+verification plan well enough for future release notes and post-merge cleanup to
+trace the change. Use the new item number in the branch name when practical; at
+minimum, include a closing/reference keyword in the PR description.
+
 ---
 
 ## Path 1: Full Pipeline
@@ -675,6 +695,11 @@ Use Conventional Commits (see `docs/best-practices/2-version-control.md`).
 ### Step 8: Open PR (Draft)
 
 **Pre-Submission Self-Review Pass (mandatory — before opening the PR)**: Complete the [Pre-Submission Self-Review Pass](#pre-submission-self-review-pass) using `git diff develop...HEAD` for normal `develop`-target work, or `git diff develop-<slug>...HEAD` for integration-branch items. For Full Pipeline work, the coverage check must confirm every spec acceptance criterion is addressed. This pass complements, and does not replace, the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) when a test harness is involved. Add the self-review log to the PR description.
+
+**Pre-PR Tracking Item Gate (mandatory — before opening the PR)**: Complete the
+[Pre-PR Tracking Item Gate](#pre-pr-tracking-item-gate). If no tracker item
+exists, create or accept a retroactive backlog item and reference it in the PR
+description before running `gh pr create`.
 
 **Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
 
@@ -988,8 +1013,9 @@ Fix all ShellCheck warnings before committing. Workflow scripts must also be bas
 7. Commit: `refactor([scope]): [description]`
 8. Push branch to remote
 9. **Pre-Submission Self-Review Pass (mandatory — before opening the PR)**: Complete the [Pre-Submission Self-Review Pass](#pre-submission-self-review-pass) using `git diff develop...HEAD` for normal `develop`-target work, or `git diff develop-<slug>...HEAD` for integration-branch items. For Refactor work, the coverage check must confirm every implementation-plan acceptance criterion is addressed. This pass complements, and does not replace, the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) when a test harness is involved. Add the self-review log to the PR description.
-10. **Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
-11. Open a **draft** PR targeting `develop` with refactor-appropriate metadata (do **not** reuse Path 1 Step 8 verbatim — that path uses `feat(...)` and a spec link):
+10. **Pre-PR Tracking Item Gate (mandatory — before opening the PR)**: Complete the [Pre-PR Tracking Item Gate](#pre-pr-tracking-item-gate). If no tracker item exists, create or accept a retroactive backlog item and reference it in the PR description before running `gh pr create`.
+11. **Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
+12. Open a **draft** PR targeting `develop` with refactor-appropriate metadata (do **not** reuse Path 1 Step 8 verbatim — that path uses `feat(...)` and a spec link):
     - **Title**: `refactor([scope]): [short description]`
     - **Description**:
       - What was refactored and why
@@ -1230,6 +1256,11 @@ git push -u origin fix/[branch-slug]
 ### Step 8: Open PR (Draft)
 
 **Pre-Submission Self-Review Pass (mandatory — before opening the PR)**: Complete the [Pre-Submission Self-Review Pass](#pre-submission-self-review-pass) using `git diff develop...HEAD` for normal `develop`-target work, or `git diff develop-<slug>...HEAD` for integration-branch items. For Fast Track Fix work, the coverage check must confirm the diff addresses the issue body's stated problem and proposed fix. This pass complements, and does not replace, the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) when a test harness is involved. Add the self-review log to the PR description.
+
+**Pre-PR Tracking Item Gate (mandatory — before opening the PR)**: Complete the
+[Pre-PR Tracking Item Gate](#pre-pr-tracking-item-gate). If no tracker item
+exists, create or accept a retroactive backlog item and reference it in the PR
+description before running `gh pr create`.
 
 **Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
 
@@ -1510,6 +1541,11 @@ git push -u origin hotfix/[branch-slug]
 ### Step 8: Open PR (Draft)
 
 **Pre-Submission Self-Review Pass (mandatory — before opening the PR)**: Complete the [Pre-Submission Self-Review Pass](#pre-submission-self-review-pass) using `git diff main...HEAD`. For Hotfix work, the coverage check must confirm the diff addresses the incident issue body's stated problem and proposed fix. This pass complements, and does not replace, the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) when a test harness is involved. Add the self-review log to the PR description.
+
+**Pre-PR Tracking Item Gate (mandatory — before opening the PR)**: Complete the
+[Pre-PR Tracking Item Gate](#pre-pr-tracking-item-gate). If no tracker item
+exists, create or accept a retroactive backlog item and reference it in the PR
+description before running `gh pr create`.
 
 **Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
 
