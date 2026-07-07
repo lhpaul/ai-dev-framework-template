@@ -3276,7 +3276,7 @@ run_test "pr_agent_trigger_failure_reason" "REASON=pr_agent_trigger_failed" \
 rm -rf "$_pr_agent_mock_dir_1706"
 unset _pr_agent_mock_dir_1706 actual_output
 
-run_test "pr_agent_workflow_no_synchronize_trigger" "0" \
+run_test "pr_agent_workflow_synchronize_trigger" "1" \
   "$(grep_count_or_zero "types:.*synchronize" "$REPO_ROOT/.github/workflows/pr-agent.yml")"
 run_test "pr_agent_workflow_exact_review_command" "1" \
   "$(grep_count_or_zero "github.event.comment.body == '/review'" "$REPO_ROOT/.github/workflows/pr-agent.yml")"

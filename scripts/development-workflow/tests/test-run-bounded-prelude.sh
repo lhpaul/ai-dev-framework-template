@@ -218,6 +218,9 @@ run_test "invalid_guardrails_json_fails" "true" "$([ "$invalid_guardrails_status
 run_test "invalid_guardrails_json_detail" "true" "$(
   printf '%s\n' "$invalid_guardrails_out" | jq -r '.detail | test("max_merge_risk")' 2>/dev/null || echo false
 )"
+run_test "invalid_guardrails_json_detail_sanitized" "false" "$(
+  printf '%s\n' "$invalid_guardrails_out" | jq -r --arg path "$invalid_guardrails_config" '.detail | contains($path)' 2>/dev/null || echo true
+)"
 
 stage_guardrails_out="$(AI_DEV_WORKFLOW_CONFIG_FILE="$stage_guardrails_config" \
   "$PRELUDE" --original-command "/run-item LEA-185" --issue LEA-185 --json)"

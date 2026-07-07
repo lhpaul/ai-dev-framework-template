@@ -336,9 +336,10 @@ run_test "unlabeled_item_uses_scope_shared_base" "112" "$(printf '%s\n' "$unlabe
 
 label_fetch_failure_output="$(MOCK_LABEL_FETCH_FAIL=101 run_json --items 101,112)"
 run_test "label_fetch_failure_keeps_partial_scope" "2" "$(printf '%s\n' "$label_fetch_failure_output" | jq '.items | length')"
-run_test "label_fetch_failure_marks_unlabeled_ambiguous" "112" "$(printf '%s\n' "$label_fetch_failure_output" | jq -r '.groups.ambiguous[] | select(.number == 112) | .number')"
-run_test "label_fetch_failure_explains_ambiguity" "yes" "$(
-  printf '%s\n' "$label_fetch_failure_output" | jq -e '.groups.ambiguous[] | select(.number == 112) | .ambiguityReason == "scope integration branch candidates could not be fully resolved"' >/dev/null &&
+run_test "label_fetch_failure_falls_back_to_full_issue_labels" "develop-delegated-epic-orchestration" "$(printf '%s\n' "$label_fetch_failure_output" | jq -r '.baseBranch')"
+run_test "label_fetch_failure_does_not_poison_unrelated_unlabeled_item" "112" "$(printf '%s\n' "$label_fetch_failure_output" | jq -r '.groups.already_merged[] | select(.number == 112) | .number')"
+run_test "label_fetch_failure_avoids_unrelated_ambiguity" "yes" "$(
+  ! printf '%s\n' "$label_fetch_failure_output" | jq -e '.groups.ambiguous[] | select(.number == 112)' >/dev/null &&
     echo yes || echo no
 )"
 

@@ -5,6 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
+RUN_EPIC_SCOPE_RESOLVER_CMD="${RUN_EPIC_SCOPE_RESOLVER_CMD:-$SCRIPT_DIR/run-epic-scope-resolver.sh}"
 
 usage() {
   cat <<'EOF'
@@ -451,7 +452,7 @@ resolver_args=(
 [ "$may_merge" -eq 1 ] && resolver_args+=(--may-merge)
 resolver_args+=(--json)
 
-if ! scope_json="$(RUN_EPIC_SCOPE_RESOLVER_INTERNAL_ITEMS=1 "$SCRIPT_DIR/run-epic-scope-resolver.sh" "${resolver_args[@]}")"; then
+if ! scope_json="$(RUN_EPIC_SCOPE_RESOLVER_INTERNAL_ITEMS=1 "$RUN_EPIC_SCOPE_RESOLVER_CMD" "${resolver_args[@]}")"; then
   error_exit "underlying scope resolver failed for issue #$resolved_issue"
 fi
 
