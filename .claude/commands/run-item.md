@@ -18,8 +18,20 @@ Run the shared bounded prelude and single-item loop per
 The prelude command flags mirror this command's scope flags (`--target`, `--issue`,
 `--branch`, `--pr`, `--development`, policy overrides, `--json`).
 
+- Print `policyRecommendation.confirmationSummary` before mutation, including
+  effective policy, field sources, pending checkpoint guidance, copy-paste
+  equivalent, and the read-only guarantee.
+- After explicit autonomy flags or human acceptance, record the
+  invocation-scoped `RUN_ITEM_POLICY_CONFIRMED` item/policy binding and do not
+  re-prompt for the same selected policy.
+- Pending checkpoints, guardrail stops, review/CI failures, risk violations, and
+  missing permissions still stop the run.
 - Resolve exactly one non-epic workflow item
 - Use `scripts/development-workflow/` helpers for next-action classification
 - In `workflow_hub`, state product repository and mutation target before implementation mutation
 - Continue until waiting on human, blocked, or escalated
+- If delegated merge authority is active and the merge gate returns
+  `merge_allowed`, continue through merge, branch cleanup,
+  `post-merge-cleanup.sh`, and live tracker verification before reporting
+  terminal
 - Epic-like targets → use `/run-epic` instead

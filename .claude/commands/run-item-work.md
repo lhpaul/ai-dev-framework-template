@@ -12,3 +12,7 @@ Follow the same protocol and prelude as `/run-item`:
 - `.claude/commands/run-item.md`
 - `docs/workflow/development-workflow/bounded-run-prelude.md`
 - `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
+
+The alias inherits `/run-item` preflight confirmation behavior, including
+`policyRecommendation.confirmationSummary` and the invocation-scoped
+`RUN_ITEM_POLICY_CONFIRMED` item/policy binding.

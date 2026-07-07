@@ -15,3 +15,7 @@ Behavior is identical to `/run-item`:
 
 This alias bypasses `/run-work` routing and advances exactly one known item
 directly. For portfolio scans or epic batches, use `/run-work` or `/run-epic`.
+
+The alias inherits `/run-item` preflight confirmation behavior, including
+`policyRecommendation.confirmationSummary` and the invocation-scoped
+`RUN_ITEM_POLICY_CONFIRMED` item/policy binding.

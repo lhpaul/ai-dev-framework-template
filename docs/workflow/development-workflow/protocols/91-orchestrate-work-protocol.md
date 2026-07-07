@@ -108,10 +108,28 @@ mutation in Step 1 or later:
 See [`bounded-run-prelude.md`](../bounded-run-prelude.md).
 
 **Always-confirm**: `policyRecommendation.requiresConfirmation` is always `true`.
-The orchestrator must print the resolved policy summary before any mutation.
+The orchestrator must print `policyRecommendation.confirmationSummary` before
+any mutation. The summary is the operator-facing contract for scope, effective
+policy, field sources, pending checkpoints, copy-paste equivalent, and the
+read-only guarantee.
+
+When the human confirms the summary, or when all required autonomy flags are
+explicit and no unresolved checkpoint or guardrail conflict blocks mutation,
+record the invocation-scoped binding before continuing:
+
+- `RUN_ITEM_POLICY_CONFIRMED=true`
+- `RUN_ITEM_POLICY_CONFIRMED_ITEM=<resolved item identifier>`
+- `RUN_ITEM_POLICY_CONFIRMED_POLICY=<normalized selected policy>`
+
+The normalized policy must include at least backlog-start authority, delegated
+review, merge authority, max risk, base branch, and checkpoint count. This
+binding prevents redundant prompts only while the runner remains on the same
+resolved item with the same selected policy.
+
 - When all autonomy flags (`--delegate-review`, `--may-merge`, `--may-start-backlog`,
   `--max-risk`) were provided explicitly in the invocation, those explicit flags
-  serve as the human's confirmation — proceed immediately after printing the summary.
+  serve as the human's confirmation — proceed immediately after printing the summary
+  and recording the invocation-scoped binding.
 - When any flag was inferred from scope, scope is ambiguous, or pending checkpoints
   remain, stop before mutation and ask the human to confirm or re-invoke with
   corrected flags.
@@ -129,7 +147,10 @@ rather than relying on portfolio batch dispatch alone.
 
 A single Work Item Runner run should keep advancing the selected item until it reaches one of these **terminal conditions**:
 
-- A PR is clean and waiting for human review / merge
+- A PR is clean and waiting for human review / merge because delegated merge
+  authority is absent, blocked, or denied for this stage
+- A delegated merge was permitted and completed, with branch cleanup and live
+  tracker verification complete
 - A human product or architecture decision is required
 - The automated review loop or CI loop escalated after retry / timeout limits
 - The item is blocked by an unmet dependency
@@ -224,9 +245,11 @@ When dispatching a subagent for this item, include a short "Tracker Work Item Su
 > item into Writing Spec, Writing Plan, or In Development for the first time,
 > apply the backlog-start gate from `guardrails-enforcement.md` section 3 Gate 2.
 > If `backlog_start.allow_without_confirmation` is not `true` in the effective
-> guardrails, stop before starting the item and ask the human to confirm, naming
-> the items proposed to start. Resuming an item already in progress is not a
-> backlog start.
+> guardrails, a matching `RUN_ITEM_POLICY_CONFIRMED` binding for the same
+> resolved item and selected policy satisfies this confirmation. Otherwise, stop
+> before starting the item and ask the human to confirm, naming the items
+> proposed to start. Resuming an item already in progress is not a backlog
+> start.
 
 | Current state / detection                                          | Can advance if...                                                                                                                                   | Next action                                                                                                                                                                                                                                                                  |
 | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1746,6 +1769,13 @@ above the stage `max_merge_risk` stops the run and names the `high_risk_change`
 guardrail. When `may_merge_pr` is `false`, do not merge automatically — leave the
 PR at the `ready-for-human-review` handoff.
 
+When the gate returns `merge_allowed`, the item run does **not** stop at
+`ready-for-human-review`. Continue through the repository-approved merge path,
+verify GitHub reports the PR as `MERGED`, delete or prune the merged branch as
+appropriate, run `post-merge-cleanup.sh` for the correct base branch, and perform
+the live tracker verification described in Step 10 before reporting the item
+terminal.
+
 **Only after Step 7 (and Step 7b for implementation PRs) has completed**, wait for required checks to settle.
 
 Prefer the helper script:
@@ -2308,9 +2338,11 @@ See `92-pr-readiness-signal-protocol.md` for label definitions.
 
 ---
 
-## Step 10: Post-Merge Status Transitions
+## Step 10: Post-Merge Status Transitions and Local Cleanup
 
-When a human confirms that a PR has been merged, update the issue tracker and clean up local state according to this table:
+When a human confirms that a PR has been merged, or when this runner merged a PR
+through the delegated merge gate, update the issue tracker and clean up local
+state according to this table:
 
 | Merged PR branch type                             | Set tracker status to |
 | ------------------------------------------------- | --------------------- |
@@ -2322,7 +2354,18 @@ When a human confirms that a PR has been merged, update the issue tracker and cl
 
 - When a spec or plan PR is merged, set the tracker status to the corresponding **Ready** status (`Spec Ready` or `Plan Ready`) — **not** `Merged`. Only implementation PRs (feature, fix, refactor, hotfix) go to `Merged`.
 - The `/post-merge-cleanup` skill and `post-merge-cleanup` command follow this same table when updating tracker status.
-- After updating the tracker, clean up local branches and worktrees associated with the merged PR:
+- Prefer the canonical cleanup helper after merge verification. Pass the target
+  base explicitly when it is not the repository default. In `workflow_hub` mode,
+  pass `--repo <product-repo>` for product-owned implementation branches:
+
+```bash
+./scripts/development-workflow/post-merge-cleanup.sh [--repo <product-repo>] --base <base-branch> <merged-branch>
+```
+
+- After cleanup, re-read the live tracker status and Project status. If the live
+  status does not match the expected value in the table above, re-apply the
+  tracker transition before reporting the item terminal.
+- If manual cleanup is required, clean up local branches and worktrees associated with the merged PR:
 
 ```bash
 git fetch origin

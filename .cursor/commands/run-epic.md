@@ -25,8 +25,8 @@ Key responsibilities:
   do not block because it is absent from the hub repository.
 - Group items as `eligible`, `blocked`, `already_merged`, `in_review`,
   `ambiguous`, or `out_of_scope`.
-- Keep the command read-only: no tracker updates, branches, PRs, merges, issue
-  closure, or cleanup.
+- Keep the resolver phase read-only: no tracker updates, branches, PRs, merges,
+  issue closure, or cleanup during scope resolution.
 - When autonomy policy is missing or ambiguous, run the read-only policy
   recommender, present the recommended config and checkpoint policy in-place,
   and continue the same run when the human accepts or customizes it.
@@ -37,6 +37,9 @@ Key responsibilities:
   recommended, selected, and effective policy plus checkpoint state.
 - Before merge, run the delegated gate with current scope, policy, reviewer,
   CI, risk, and audit evidence. Merge only when it reports `merge_allowed`.
+- After `merge_allowed`, continue through Protocol 95 Step 11: merge, merge
+  verification, branch deletion/pruning, `post-merge-cleanup.sh`, live tracker
+  verification, audit update, and rediscovery.
 
 Use the helper script:
 

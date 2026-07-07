@@ -16,12 +16,16 @@ advances exactly one non-epic item through Protocol 91.
    `./scripts/development-workflow/run-bounded-prelude.sh --original-command "<invocation>" <scope flags> --json`
    See `docs/workflow/development-workflow/bounded-run-prelude.md`.
 3. When `policyRecommendation.requiresConfirmation` is true in the prelude JSON,
-   print the resolved policy summary. If all autonomy flags (`--delegate-review`,
+   print `policyRecommendation.confirmationSummary`, including effective policy,
+   field sources, pending checkpoint guidance, copy-paste equivalent, and the
+   read-only guarantee. If all autonomy flags (`--delegate-review`,
    `--may-merge`, `--may-start-backlog`, `--max-risk`) were provided explicitly
    in the invocation, those explicit flags serve as human confirmation — proceed
-   immediately after printing the summary. Otherwise (any flag was inferred from
-   scope, scope is ambiguous, or pending checkpoints remain), stop and ask the
-   human to confirm, customize, or re-invoke with corrected flags.
+   immediately after printing the summary and recording the invocation-scoped
+   `RUN_ITEM_POLICY_CONFIRMED` item/policy binding. Otherwise (any flag was
+   inferred from scope, scope is ambiguous, or pending checkpoints remain), stop
+   and ask the human to confirm, customize, provide checkpoint input, or
+   re-invoke with corrected flags.
 4. Read `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
    and follow it exactly. Do **not** delegate to `workflow-item-orchestrator` in the
    same run after Step 2 — that skill also runs the prelude and would duplicate
@@ -34,6 +38,10 @@ advances exactly one non-epic item through Protocol 91.
    values before mutation. Enforce gates per
    `docs/workflow/development-workflow/guardrails-enforcement.md` section 3.
 7. Epic-like targets must use `$run-epic` / `/run-epic`, not this command.
+8. When the delegated merge gate returns `merge_allowed`, continue through merge,
+   remote/local branch cleanup, `post-merge-cleanup.sh`, and live tracker
+   verification before reporting the item terminal. Do not stop at
+   `ready-for-human-review` in a delegated merge run.
 
 > **Deprecated alias**: `$run-item-work` / `/run-item-work` resolves to the same
 > behavior for legacy invocations.

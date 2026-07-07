@@ -65,7 +65,7 @@ Playwright or browser dependencies when placeholder regression is not enabled.
 
 **Maps to**: AC3, AC6, AC7
 
-1. Open `.github/workflows/apply-regression-label.yml`.
+1. Open `.github/workflows/pr-policy.yml`.
 2. Confirm implementation PR label automation still applies
    `ready-for-regression`.
 3. Confirm the regression workflow or docs make the label a readiness signal for

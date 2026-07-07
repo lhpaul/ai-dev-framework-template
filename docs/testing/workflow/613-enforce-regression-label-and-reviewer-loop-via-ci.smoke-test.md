@@ -266,12 +266,12 @@ Each checkbox maps to an acceptance criterion from the spec.
 - [ ] **AC #1**: Opening a PR from `fix/613-smoke-test-fixture` caused `ready-for-regression` to be applied automatically without any agent or human action.
 - [ ] **AC #2**: Opening a PR from `spec/613-smoke-test-fixture` did not result in `ready-for-regression` being applied.
 - [ ] **AC #3**: Converting the draft implementation PR to non-draft resulted in the label being present.
-- [ ] **AC #4**: Re-running the label workflow when the label was already present completed without failure and without duplicating the label.
+- [ ] **AC #4**: Re-running the PR policy workflow when the label was already present completed without failure and without duplicating the label.
 - [ ] **AC #5**: The implementation PR with no reviewer-loop summary comment showed a failing `Reviewer-loop completion guard (#<PR_NUMBER>)` check.
 - [ ] **AC #6**: After posting the canonical summary comment, the guard check transitioned to passing.
 - [ ] **AC #7**: A subsequent push caused the guard to re-evaluate and post a fresh status on the new SHA.
-- [ ] **AC #9** (defer to CI): Both workflow files pass `actionlint` with no new warnings (verified in the implementation PR's CI run).
-- [ ] **AC #10** (defer to CI): Each workflow declares only the minimum permissions required (`pull-requests: write` for the label workflow; `issues: read` + `pull-requests: read` + `statuses: write` for the guard).
+- [ ] **AC #9** (defer to CI): The PR policy workflow passes `actionlint` with no new warnings (verified in the implementation PR's CI run).
+- [ ] **AC #10** (defer to CI): The PR policy workflow declares only the minimum permissions required (`issues: read`, `pull-requests: write`, and `statuses: write`).
 
 ---
 
@@ -285,11 +285,11 @@ No seed data is required. The smoke test uses fixture branches and PRs created i
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| `apply-regression-label` workflow fails with "Label not found" | The `ready-for-regression` label does not exist in the repo and `gh label create --force` was not included | Verify the workflow includes the `gh label create --force` step before `gh pr edit --add-label` |
-| Guard workflow fails with a GitHub API error instead of a status check | `statuses: write` permission missing from the workflow | Add `statuses: write` under `permissions` in `reviewer-loop-guard.yml` |
+| PR policy workflow fails with "Label not found" | The `ready-for-regression` label does not exist in the repo and label creation was not included | Verify the workflow includes the `gh label create` step before `gh pr edit --add-label` |
+| Guard workflow fails with a GitHub API error instead of a status check | `statuses: write` permission missing from the workflow | Add `statuses: write` under `permissions` in `pr-policy.yml` |
 | Guard reports "failure" even after posting the summary comment | Comment body does not contain both required markers, or the `issue_comment` workflow did not run | Confirm the comment contains exactly `### Automated Reviewer Loop Summary` and `*Posted automatically by \`pr-review-loop.sh\`.*`; inspect the guard workflow run for the comment event |
-| Out-of-scope branch (`spec/*`) receives the label | `IN_SCOPE_PREFIXES` env var contains an unexpected value | Check the env var default in `apply-regression-label.yml`; ensure `spec/` is not included |
-| `actionlint` reports warnings on the new workflow files | YAML syntax issue or unsupported action reference | Fix the reported lines; re-run `actionlint` |
+| Out-of-scope branch (`spec/*`) receives the label | `IN_SCOPE_PREFIXES` env var contains an unexpected value | Check the env var default in `pr-policy.yml`; ensure `spec/` is not included |
+| `actionlint` reports warnings on the workflow file | YAML syntax issue or unsupported action reference | Fix the reported lines; re-run `actionlint` |
 
 ---
 
@@ -297,5 +297,5 @@ No seed data is required. The smoke test uses fixture branches and PRs created i
 
 - The guard check uses the GitHub Commit Statuses API (not Checks API). Some branch protection UIs surface statuses and checks in separate sections. Downstream maintainers must search for `Reviewer-loop completion guard (#<PR_NUMBER>)` in the "Statuses" section, not only under "GitHub Actions checks", when configuring branch protection. Because the context name includes the PR number, wildcard matching (e.g. via GitHub Rulesets) is required to enforce it as a required status check.
 - The smoke test steps require a repository where the workflows are active. This runbook cannot be executed entirely offline.
-- Fork-head PRs are skipped by the reviewer-loop guard and do not receive guard
-  statuses from this workflow.
+- Fork-head PRs are skipped by the PR policy workflow and do not receive guard
+  statuses or implementation-only label mutations from this workflow.

@@ -35,8 +35,19 @@ proposal step.
    or ambiguous.
 8. Do not stop after advancing one item if another item in the explicit list still
    has a deterministic next action.
-9. Stop with in-scope PRs at `ready-for-human-review`; landing is a separate
-   `$batch-merge` step.
+9. After all in-scope PRs reach `ready-for-human-review`, inspect the effective
+   guardrails. When the relevant stages allow `may_merge_pr: true`, run
+   Guardrails Enforcement Gate 5 for each in-scope PR, including
+   `run-epic-risk-classifier.sh` and `run-epic-delegated-gate.sh`; continue only
+   when every in-scope PR returns `merge_allowed`. Then route into Protocol 94
+   batch merge using only the explicit in-scope PR list: run
+   `batch-merge.sh discover --prs <comma-separated-in-scope-prs>` and continue
+   through merge, cleanup, and tracker reconciliation. Never use Protocol 94
+   auto-discovery from `/run-items`. If any stage does not allow merge, finish at the
+   `ready-for-human-review` handoff, report the exact
+   `stages.<stage>.may_merge_pr: false` guardrail for each affected PR, and tell
+   the human to invoke `$batch-merge` or adjust guardrails to permit delegated
+   merging.
 10. For single-item advancement use `$run-item`; for epic-scoped runs use `$run-epic`;
    for read-only portfolio scan and proposal use `$run-work`.
 

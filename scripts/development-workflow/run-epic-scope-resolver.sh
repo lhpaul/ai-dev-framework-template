@@ -74,7 +74,9 @@ while [ "$#" -gt 0 ]; do
     --items)
       require_value "$@"
       # --items is a deprecated internal flag. Users should use /run-items instead.
-      echo "DEPRECATED: --items is not a user-facing flag for run-epic-scope-resolver.sh. Use /run-items for explicit item lists." >&2
+      if [ "${RUN_EPIC_SCOPE_RESOLVER_INTERNAL_ITEMS:-0}" != "1" ]; then
+        echo "DEPRECATED: --items is not a user-facing flag for run-epic-scope-resolver.sh. Use /run-items for explicit item lists." >&2
+      fi
       items_arg="$2"
       shift 2
       ;;
@@ -160,9 +162,9 @@ esac
 tmp_dir="$(mktemp -d)"
 items_file="$tmp_dir/items.jsonl"
 subissues_file="$tmp_dir/subissues.jsonl"
+scope_label_failures_file="$tmp_dir/scope_label_failures.txt"
 touch "$items_file" "$subissues_file"
-open_prs_raw_cache=""
-closed_prs_raw_cache=""
+: > "$scope_label_failures_file"
 
 cleanup() {
   rm -rf "$tmp_dir"
@@ -322,55 +324,109 @@ integration_label_for_issue_json() {
   jq -r '[.labels[].name | select(startswith("integration-branch:"))] | first // ""'
 }
 
+base_branch_cache_file() {
+  local branch="$1"
+  local safe
+  if ! safe="$(printf '%s' "$branch" | od -An -tx1 | tr -d ' \n')"; then
+    error_exit "failed to derive PR cache key for base branch ${branch}."
+  fi
+  printf '%s/prs_base_%s.json\n' "$tmp_dir" "$safe"
+}
+
+fetch_prs_for_base() {
+  local branch="$1"
+  local cache_file
+  cache_file="$(base_branch_cache_file "$branch")"
+
+  if [ ! -f "$cache_file" ]; then
+    if ! gh api --paginate --slurp \
+      "repos/${repo}/pulls?state=all&base=${branch}&per_page=100" \
+      > "$cache_file" 2>/dev/null; then
+      error_exit "failed to read PRs targeting base branch ${branch}."
+    fi
+  fi
+
+  printf '%s\n' "$cache_file"
+}
+
+resolve_scope_pr_bases() {
+  local bases_file issue issue_json integration_label candidate_base
+  bases_file="$tmp_dir/pr_bases.txt"
+  printf '%s\n' "develop" > "$bases_file"
+  if [ -n "$base_override" ]; then
+    printf '%s\n' "$base_override" >> "$bases_file"
+  fi
+
+  while IFS= read -r issue; do
+    [ -n "$issue" ] || continue
+    if ! issue_json="$(gh issue view "$issue" --json labels 2>/dev/null)"; then
+      printf '%s\n' "$issue" >> "$scope_label_failures_file"
+      continue
+    fi
+    if ! integration_label="$(printf '%s\n' "$issue_json" | integration_label_for_issue_json)"; then
+      error_exit "failed to parse issue #${issue} integration branch label."
+    fi
+    if [ -n "$integration_label" ]; then
+      candidate_base="develop-${integration_label#integration-branch:}"
+      printf '%s\n' "$candidate_base" >> "$bases_file"
+    fi
+  done < "$subissues_file"
+
+  sort -u "$bases_file"
+}
+
 linked_pr_json() {
   local issue="$1"
-  local open_prs merged_prs
+  local integration_label="$2"
+  local candidate_base bases base cache_file open_prs merged_prs
 
-  if [ -z "$open_prs_raw_cache" ]; then
-    if ! open_prs_raw_cache="$(gh api --paginate --slurp \
-      "repos/${repo}/pulls?state=open&per_page=100" 2>/dev/null)"; then
-      error_exit "failed to read open PRs while resolving issue #${issue}."
-    fi
+  candidate_base=""
+  if [ -n "$integration_label" ]; then
+    candidate_base="develop-${integration_label#integration-branch:}"
   fi
-  if ! open_prs="$(printf '%s\n' "$open_prs_raw_cache" | jq --arg issue "$issue" '
-        [ .[][]
-          | select(.head.ref | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
-          | {
-              number,
-              title,
-              state: "OPEN",
-              headRefName: .head.ref,
-              baseRefName: .base.ref,
-              isDraft: .draft,
-              labels: [.labels[].name]
-            }
-        ]')"; then
-    error_exit "failed to parse open PRs while resolving issue #${issue}."
-  fi
+  bases="$(printf '%s\n%s\n' "$scope_pr_bases" "$candidate_base" | sed '/^$/d' | sort -u)"
 
-  if [ -z "$closed_prs_raw_cache" ]; then
-    if ! closed_prs_raw_cache="$(gh api --paginate --slurp \
-      "repos/${repo}/pulls?state=closed&per_page=100" 2>/dev/null)"; then
-      error_exit "failed to read closed PRs while resolving issue #${issue}."
+  open_prs="[]"
+  merged_prs="[]"
+  while IFS= read -r base; do
+    [ -n "$base" ] || continue
+    cache_file="$(fetch_prs_for_base "$base")"
+
+    if ! open_prs="$(jq --arg issue "$issue" --argjson acc "$open_prs" '
+          $acc + [ .[][] | select(.state == "open")
+            | select(.head.ref | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
+            | {
+                number,
+                title,
+                state: "OPEN",
+                headRefName: .head.ref,
+                baseRefName: .base.ref,
+                isDraft: .draft,
+                labels: [.labels[].name]
+              }
+          ]' "$cache_file")"; then
+      error_exit "failed to parse open PRs targeting ${base} while resolving issue #${issue}."
     fi
-  fi
-  if ! merged_prs="$(printf '%s\n' "$closed_prs_raw_cache" | jq --arg issue "$issue" '
-        [ .[][]
-          | select(.merged_at != null)
-          | select(.head.ref | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
-          | {
-              number,
-              title,
-              state: "MERGED",
-              headRefName: .head.ref,
-              baseRefName: .base.ref,
-              isDraft: false,
-              labels: [],
-              mergedAt: .merged_at
-            }
-        ]')"; then
-    error_exit "failed to parse merged PRs while resolving issue #${issue}."
-  fi
+
+    if ! merged_prs="$(jq --arg issue "$issue" --argjson acc "$merged_prs" '
+          $acc + [ .[][] | select(.merged_at != null)
+            | select(.head.ref | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
+            | {
+                number,
+                title,
+                state: "MERGED",
+                headRefName: .head.ref,
+                baseRefName: .base.ref,
+                isDraft: false,
+                labels: [],
+                mergedAt: .merged_at
+              }
+          ]' "$cache_file")"; then
+      error_exit "failed to parse merged PRs targeting ${base} while resolving issue #${issue}."
+    fi
+  done <<EOF
+$bases
+EOF
 
   jq -n --argjson open "$open_prs" --argjson merged "$merged_prs" \
     '{open: $open, merged: $merged}'
@@ -427,7 +483,7 @@ dependency_json() {
 enrich_item() {
   local issue="$1"
   local issue_json title state state_reason labels integration_label status type priority pr_json dep_json group body
-  local merged_impl_count open_review_count dep_state ambiguity_reason
+  local merged_impl_count open_review_count dep_state ambiguity_reason scope_base_ambiguity_reason
 
   if ! issue_json="$(gh issue view "$issue" --json number,title,state,stateReason,body,labels,projectItems 2>/dev/null)"; then
     jq -n --argjson number "$issue" '{number:$number,title:"",state:"UNKNOWN",group:"ambiguous",ambiguityReason:"issue could not be read"}'
@@ -473,7 +529,15 @@ enrich_item() {
   ')"; then
     error_exit "failed to parse issue #${issue} priority."
   fi
-  pr_json="$(linked_pr_json "$issue")"
+  scope_base_ambiguity_reason=""
+  if [ -z "$integration_label" ] && [ -z "$base_override" ] && [ -s "$scope_label_failures_file" ]; then
+    scope_base_ambiguity_reason="scope integration branch candidates could not be fully resolved"
+  fi
+  if [ -n "$scope_base_ambiguity_reason" ]; then
+    pr_json="$(jq -n '{open: [], merged: []}')"
+  else
+    pr_json="$(linked_pr_json "$issue" "$integration_label")"
+  fi
   dep_json="$(dependency_json "$body")"
   if ! merged_impl_count="$(printf '%s\n' "$pr_json" | jq '[.merged[] | select(.headRefName | test("^(feature|fix|refactor|hotfix)/"))] | length')"; then
     error_exit "failed to parse merged PR state for issue #${issue}."
@@ -487,7 +551,10 @@ enrich_item() {
 
   group="eligible"
   ambiguity_reason=""
-  if completed_status "$status" || [ "$state_reason" = "COMPLETED" ] \
+  if [ -n "$scope_base_ambiguity_reason" ]; then
+    group="ambiguous"
+    ambiguity_reason="$scope_base_ambiguity_reason"
+  elif completed_status "$status" || [ "$state_reason" = "COMPLETED" ] \
     || [ "$merged_impl_count" -gt 0 ]; then
     group="already_merged"
   elif [ "$status" = "Cancelled" ] || { [ "$state" = "CLOSED" ] && [ "$state_reason" != "COMPLETED" ]; }; then
@@ -545,6 +612,8 @@ if [ -n "$epic_number" ]; then
 else
   parse_explicit_items "$items_arg"
 fi
+
+scope_pr_bases="$(resolve_scope_pr_bases)"
 
 while IFS= read -r issue; do
   [ -n "$issue" ] || continue

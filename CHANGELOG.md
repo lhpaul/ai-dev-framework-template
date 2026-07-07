@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-07-06
+
+### Changed
+
+- **Clarify run-item autonomy confirmation** (#1152): add a run-epic-style
+  confirmation summary for single-item runs, preserve checkpoint and guardrail
+  stops, and avoid redundant approval prompts after an invocation-scoped
+  confirmation.
+- **Consolidate PR policy workflows** (#1150): Replace redundant lightweight PR
+  policy workflow fan-out with one API-only PR policy workflow while preserving
+  reviewer-loop and regression-readiness guarantees.
+- **AI Workflow — guarded run-items batch merge**: `/run-items` command surfaces
+  now require Guardrails Enforcement Gate 5 `merge_allowed` before routing ready
+  in-scope PRs into scoped Protocol 94 batch merge, never use auto-discovery for
+  explicit item batches, and otherwise report the merge guardrail and handoff
+  action at human review.
+
+### Fixed
+
+- **Run-epic scope resolver PR lookup**: Avoid scanning the full repository PR
+  history by resolving linked PRs from cached, paginated results scoped to
+  `develop` and each item's integration branch.
+- **Workflow graduation guard**: Stop `/run-epic` delegated merges at
+  `graduation_approval_required` for `develop-<slug>` -> `develop` graduation
+  PRs unless explicit graduation approval is recorded.
+- **Delegated merge cleanup guidance**: `/run-item` and `/run-epic` now state
+  that delegated `merge_allowed` runs continue through branch cleanup,
+  `post-merge-cleanup`, and live tracker verification before reporting terminal.
+- **Linear-backed run-item guardrails**: bounded `/run-item` runs now accept
+  Linear issue keys, apply repository guardrail defaults before policy
+  recommendation, and avoid requiring PyYAML for guardrail parsing.
+
 ## [0.35.0] - 2026-07-02
 
 ### Added
@@ -1086,7 +1118,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.35.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.36.0...HEAD
+[0.36.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.33.1...v0.34.0
 [0.33.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.33.0...v0.33.1
