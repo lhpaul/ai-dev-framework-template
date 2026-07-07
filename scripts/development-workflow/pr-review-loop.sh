@@ -5130,6 +5130,69 @@ if [ -z "$branch_name" ] && [ -n "$_release_guard_head" ]; then
   branch_name="$_release_guard_head"
 fi
 
+post_release_guard_summary() {
+  local _pr_number="$1"
+  local _branch_name="$2"
+  local _repo _existing_comment_id _patch_payload _comment_posted _body_tmpfile
+  local _comment_body
+
+  if [ -z "$_pr_number" ]; then
+    return 0
+  fi
+
+  _comment_body="$(cat <<EOF
+### Automated Reviewer Loop Summary
+
+**Result:** skipped — release/hotfix PR reviewer loop intentionally skipped
+**Platforms:** none
+**Findings:** 0 blocking, 0 suggestions
+**Release readiness:** Review happens on develop-targeting feature/fix PRs. For \`${_branch_name:-release/hotfix}\` PRs targeting \`main\`, validate release artifacts, run \`pr-ci-loop.sh\`, then apply \`ready-for-human-review\` when CI is green.
+
+*Posted automatically by \`pr-review-loop.sh\`.*
+EOF
+)"
+
+  set +e
+
+  _existing_comment_id=""
+  _repo="$(repo_slug 2>/dev/null)"
+  if [ -n "$_repo" ]; then
+    _existing_comment_id="$(
+      gh api "repos/$_repo/issues/$_pr_number/comments" --paginate 2>/dev/null \
+        | jq -rs '
+            add // []
+            | [.[]
+               | select(
+                   (.body // "" | contains("### Automated Reviewer Loop Summary")) and
+                   (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
+                 )
+              ]
+            | sort_by(.created_at)
+            | last
+            | .id // empty
+          '
+    )"
+  fi
+
+  _patch_payload="$(jq -n --arg body "$_comment_body" '{body: $body}')"
+  _comment_posted=0
+  if [ -n "$_repo" ] && [ -n "$_existing_comment_id" ]; then
+    if gh api "repos/$_repo/issues/comments/$_existing_comment_id" \
+        --method PATCH \
+        --input - <<< "$_patch_payload" >/dev/null 2>&1; then
+      _comment_posted=1
+    fi
+  fi
+  if [ "$_comment_posted" -eq 0 ]; then
+    _body_tmpfile="$(mktemp)"
+    printf '%s' "$_comment_body" > "$_body_tmpfile"
+    gh pr comment "$_pr_number" --body-file "$_body_tmpfile" >/dev/null 2>&1
+    rm -f "$_body_tmpfile"
+  fi
+
+  set -e
+}
+
 if [ "$_release_guard_fired" -eq 0 ]; then
   echo "Release PR detected — reviewer loop skipped." >&2
   echo "Review happens on develop-targeting feature/fix PRs, not on release/* or hotfix/* branches." >&2
@@ -5141,6 +5204,7 @@ if [ "$_release_guard_fired" -eq 0 ]; then
   # Remove any stale reviewer-failed label left from a prior failed run so the
   # PR is not misleadingly labeled after a clean release-guard skip exit.
   sync_reviewer_failed_label "$pr_number" 0
+  post_release_guard_summary "$pr_number" "${branch_name:-}"
   exit 0
 fi
 # --- End release PR early-exit guard ---

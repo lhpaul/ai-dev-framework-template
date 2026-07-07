@@ -227,6 +227,27 @@ stage_guardrails_out="$(AI_DEV_WORKFLOW_CONFIG_FILE="$stage_guardrails_config" \
 run_test "stage_guardrails_active_merge_limit" "false" "$(printf '%s\n' "$stage_guardrails_out" | jq -r '.policyRecommendation.effectivePolicy.mayMerge')"
 run_test "stage_guardrails_active_risk_limit" "low" "$(printf '%s\n' "$stage_guardrails_out" | jq -r '.policyRecommendation.effectivePolicy.maxRisk')"
 
+multi_stage_scope="$(write_fixture multi-stage-scope '{
+  "items": [
+    {"number": 1, "status": "Spec Ready"},
+    {"number": 2, "status": "In Development"}
+  ]
+}')"
+multi_stage_guardrails='{
+  "stages": {
+    "spec": {"max_merge_risk": "low"},
+    "plan": {"max_merge_risk": "medium"},
+    "implementation": {"max_merge_risk": "high"}
+  }
+}'
+multi_stage_max_risk="$(
+  {
+    awk '/^guardrails_scope_max_risk/ { in_func = 1 } in_func { print } in_func && /^}/ { exit }' "$PRELUDE"
+    printf 'guardrails_scope_max_risk "$1" "$2"\n'
+  } | bash -s -- "$multi_stage_guardrails" "$multi_stage_scope"
+)"
+run_test "stage_guardrails_multi_stage_max_risk_uses_highest" "high" "$multi_stage_max_risk"
+
 run_fails "reject_linear_identifier_with_underscore" "invalid --issue identifier" \
   env AI_DEV_WORKFLOW_CONFIG_FILE="$guardrails_config" "$ITEM_RESOLVER" --issue A_B-123
 run_fails "reject_whitespace_issue_identifier" "invalid --issue identifier" \

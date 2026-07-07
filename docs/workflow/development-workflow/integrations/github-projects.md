@@ -392,11 +392,21 @@ The **Portfolio Orchestrator**, **Work Item Runner**, or stage agent updates the
 
 ---
 
-## Automated Tracker Updates on PR Merge (GitHub Actions)
+## Automated Tracker Updates on PR Merge (GitHub Projects + GitHub Actions)
 
-The repository ships a GitHub Actions workflow (`.github/workflows/update-tracker-on-merge.yml`)
-that automatically updates the GitHub Projects status whenever a workflow PR is merged to `develop`.
-This eliminates the stale-status problem that occurs between orchestrator runs.
+GitHub Projects-backed repositories may include a GitHub Actions workflow
+(`.github/workflows/update-tracker-on-merge.yml`) that automatically updates the
+GitHub Projects status whenever a workflow PR is merged to `develop`. This
+automation applies only when `.ai-dev-workflow.yaml` declares
+`issue_tracker.provider: github_projects` and the repository has configured the
+project variables listed below.
+
+For Linear-backed repositories, do not add this GitHub Projects workflow. Use
+the Linear MCP/API closeout path described in [`linear.md`](linear.md) instead.
+For GitHub Issues without Projects, PR merge cleanup can close issues, but there
+is no Project Status field to update. This provider-specific scoping avoids the
+stale-status problem that occurs between orchestrator runs in GitHub Projects
+repositories without implying equivalent behavior for every tracker provider.
 
 ### Branch-to-status mapping
 
@@ -418,7 +428,7 @@ This eliminates the stale-status problem that occurs between orchestrator runs.
 5. Updates the `Status` field to the appropriate value
 6. For implementation branches (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`): also closes the GitHub issue
 
-### Required configuration
+### Required configuration (GitHub Projects only)
 
 Set the following as **repository variables** (not secrets — these are not sensitive):
 
@@ -440,7 +450,7 @@ gh variable set GITHUB_PROJECT_OWNER --body "<your-github-username-or-org>"
 - Minimum permissions: `pull-requests: read`, `issues: write`, `projects: write`
 - All external action SHAs are pinned to exact commit hashes (no floating `@v7` tags)
 
-### Relationship to `post-merge-cleanup`
+### Relationship to `post-merge-cleanup` (GitHub Projects only)
 
 The GitHub Actions workflow and the `post-merge-cleanup` CLI command perform the same tracker
 update logic. They are complementary:
