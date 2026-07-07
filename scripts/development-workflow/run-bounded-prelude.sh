@@ -256,7 +256,7 @@ guardrails_scope_max_risk() {
     def rank($risk): {"low":1,"medium":2,"high":3}[$risk] // 1;
     [$scope[0].items[]? | infer_stage(.status // "")] | unique as $stages |
     if ($stages | length) == 0 then "low"
-    else [$stages[] | ($guardrails.stages[.].max_merge_risk // "low")] | min_by(rank(.))
+    else [$stages[] | ($guardrails.stages[.].max_merge_risk // "low")] | max_by(rank(.))
     end
   '
 }
