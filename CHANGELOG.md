@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Run-items CI continuation** (#1162): clarify that same-session
+  `/run-items` supervision must continue past transient watch failures,
+  skipped duplicate check noise, and incomplete CI evidence until a real
+  terminal condition is reached.
 - **Downstream template-sync follow-ups**: upstream reusable Leasity sync-review
   corrections for PR-Agent triggering, guarded command matching, guardrails
   parse diagnostics, tracker-provider checks, scope-base resolution, and GitHub

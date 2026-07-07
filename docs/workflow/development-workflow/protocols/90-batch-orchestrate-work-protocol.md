@@ -1286,6 +1286,17 @@ a missing summary when review platforms are configured, or a non-clean
 reviewer-loop result remains in progress and must be redispatched or escalated
 instead of included in the done-report.
 
+**In-flight CI/watch states are non-terminal:** A transient watch failure,
+cancelled duplicate run, skipped superseded run, pending/queued check, or
+incomplete `statusCheckRollup` snapshot does not end a same-session
+`/run-items` execution. Re-query the authoritative PR state (`gh pr view` plus
+the required GraphQL review-thread read), re-run `pr-ci-loop.sh` when CI evidence
+is incomplete or newly triggered, and continue supervising until the PR is green,
+blocked by a named stop condition, escalated by the retry/timeout limits, merged
+through an allowed delegated path, or handed off because the effective guardrails
+forbid merge. Do not hand control back to the human merely because a local
+watch command exited early while GitHub still shows work in progress.
+
 Before reporting any PR as ready for human review, independently query the actual PR state via `gh pr view`. Run this check for every PR that a Work Item Runner reports as ready:
 
 ```bash
@@ -1657,6 +1668,12 @@ The orchestrator prepares and validates the batch but **does not merge autonomou
 After all currently eligible items have reached a terminal condition, provide a consolidated summary.
 
 > **Done-report source rule**: Every field in this summary — labels present, CHANGELOG touched, reviewer loop completed, CI green — must be sourced from the artifact queries run in Step 5.1, not from agent self-reports. If Step 5.1 was not run for a PR, run it now before writing the summary. Never assert that a PR is "ready" based solely on what a Work Item Runner claimed.
+>
+> **No in-flight handoff rule**: Do not write the final summary while any
+> in-scope PR still has pending/queued checks, incomplete CI evidence, a stale or
+> missing reviewer-loop summary, or an unresolved transient watch failure. Those
+> states remain under Step 5 supervision until they become green, blocked,
+> escalated, merged, or explicitly held by guardrails.
 
 ```markdown
 ## Batch Orchestration Summary

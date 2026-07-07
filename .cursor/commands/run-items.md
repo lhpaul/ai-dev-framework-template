@@ -55,6 +55,11 @@ Key responsibilities:
 - In `workflow_hub`, include selected product repository context in implementation handoffs.
 - Do not stop after advancing one item if another in the list still has a
   deterministic next action.
+- Do not stop at transient in-flight CI/watch states. If a local watch exits
+  early, duplicate checks are skipped/cancelled, or GitHub still shows pending
+  or incomplete check evidence, re-query authoritative PR/check state and keep
+  supervising until every in-scope PR is green, blocked, escalated, merged, or
+  held by guardrails.
 - After all in-scope PRs reach `ready-for-human-review`, inspect the effective
   guardrails. When the relevant stages allow `may_merge_pr: true`, run
   Guardrails Enforcement Gate 5 for each in-scope PR, including
