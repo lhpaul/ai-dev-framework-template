@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-07-06
+
 ### Changed
 
 - **Clarify run-item autonomy confirmation** (#1152): add a run-epic-style
@@ -1116,7 +1118,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.35.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.36.0...HEAD
+[0.36.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.33.1...v0.34.0
 [0.33.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.33.0...v0.33.1
