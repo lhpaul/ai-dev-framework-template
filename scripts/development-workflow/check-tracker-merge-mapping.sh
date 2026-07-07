@@ -22,11 +22,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../.." && pwd)"
-WORKFLOW_FILE="$REPO_ROOT/.github/workflows/update-tracker-on-merge.yml"
+WORKFLOW_FILE="${WORKFLOW_FILE_OVERRIDE:-$REPO_ROOT/.github/workflows/update-tracker-on-merge.yml}"
 
 if [ ! -f "$WORKFLOW_FILE" ]; then
-  echo "ERROR: workflow file not found: $WORKFLOW_FILE" >&2
-  exit 1
+  echo "SKIP: workflow file not found: $WORKFLOW_FILE"
+  echo "Non-GitHub tracker providers intentionally omit update-tracker-on-merge.yml."
+  exit 0
 fi
 
 ERRORS=0

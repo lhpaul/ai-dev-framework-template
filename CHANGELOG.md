@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Downstream template-sync follow-ups**: upstream reusable Leasity sync-review
+  corrections for PR-Agent triggering, guarded command matching, guardrails
+  parse diagnostics, tracker-provider checks, scope-base resolution, and GitHub
+  App token signing.
+
 ## [0.36.0] - 2026-07-06
 
 ### Changed

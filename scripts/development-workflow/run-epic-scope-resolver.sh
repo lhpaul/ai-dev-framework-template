@@ -360,8 +360,13 @@ resolve_scope_pr_bases() {
   while IFS= read -r issue; do
     [ -n "$issue" ] || continue
     if ! issue_json="$(gh issue view "$issue" --json labels 2>/dev/null)"; then
-      printf '%s\n' "$issue" >> "$scope_label_failures_file"
-      continue
+      if ! issue_json="$(gh issue view "$issue" --json number,title,state,stateReason,body,labels,projectItems 2>/dev/null)"; then
+        # Keep scopes read-only and fail-open: later enrichment can still
+        # resolve other items, while unresolved base candidates mark only
+        # affected unlabeled items ambiguous instead of completing them.
+        printf '%s\n' "$issue" >> "$scope_label_failures_file"
+        continue
+      fi
     fi
     if ! integration_label="$(printf '%s\n' "$issue_json" | integration_label_for_issue_json)"; then
       error_exit "failed to parse issue #${issue} integration branch label."
@@ -530,7 +535,7 @@ enrich_item() {
     error_exit "failed to parse issue #${issue} priority."
   fi
   scope_base_ambiguity_reason=""
-  if [ -z "$integration_label" ] && [ -z "$base_override" ] && [ -s "$scope_label_failures_file" ]; then
+  if [ -z "$integration_label" ] && [ -z "$base_override" ] && grep -Fxq "$issue" "$scope_label_failures_file"; then
     scope_base_ambiguity_reason="scope integration branch candidates could not be fully resolved"
   fi
   if [ -n "$scope_base_ambiguity_reason" ]; then

@@ -79,7 +79,12 @@ create_jwt() {
   printf '%s' "$header" > "$tmp_dir/header.json"
   printf '%s' "$payload" > "$tmp_dir/payload.json"
   signing_input="$(base64url_file "$tmp_dir/header.json").$(base64url_file "$tmp_dir/payload.json")"
-  printf '%s' "$signing_input" | openssl dgst -sha256 -sign "$private_key_file" > "$tmp_dir/signature.bin"
+  if ! printf '%s' "$signing_input" | openssl dgst -sha256 -sign "$private_key_file" > "$tmp_dir/signature.bin"; then
+    return 1
+  fi
+  if [ ! -s "$tmp_dir/signature.bin" ]; then
+    return 1
+  fi
   signature="$(base64url_file "$tmp_dir/signature.bin")"
   printf '%s.%s\n' "$signing_input" "$signature"
 }
