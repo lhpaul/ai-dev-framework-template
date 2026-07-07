@@ -31,6 +31,10 @@ Verify: `git rev-parse --abbrev-ref HEAD` must print the integration branch name
 
 Key rules:
 
+- Before writing or editing any repository file, verify you are on the intended
+  workflow branch or inside the item worktree. If the checkout is on `develop`
+  or `main`, create the feature/fix/refactor/hotfix branch or worktree before
+  the first edit; do not start in the shared checkout and move changes later
 - For Full Pipeline: read spec + plan + runbook BEFORE writing any code
 - For Refactor: read plan + runbook BEFORE writing any code (no spec)
 - For Fast Track: stop and report if scope exceeds the brief

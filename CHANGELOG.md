@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Pre-edit branch guard** (#1133): require implementation agents to create or
+  enter the item branch/worktree before the first file edit instead of starting
+  changes in a shared checkout.
 - **Downstream template-sync follow-ups**: upstream reusable Leasity sync-review
   corrections for PR-Agent triggering, guarded command matching, guardrails
   parse diagnostics, tracker-provider checks, scope-base resolution, and GitHub

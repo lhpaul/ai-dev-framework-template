@@ -17,6 +17,22 @@
 
 ---
 
+## Pre-Edit Branch/Worktree Guard
+
+Before writing or editing any repository file for implementation work, verify
+the session is already on the intended workflow branch or inside an isolated
+worktree that was created for the item. If the current checkout is on a shared
+branch such as `develop` or `main`, create the required feature/fix/refactor,
+hotfix, or worktree branch before the first file edit. Do not start edits in the
+main checkout and move them to a branch later.
+
+This guard applies to all implementation paths, including ad-hoc investigations
+that begin as read-only questions and then become real code or documentation
+changes. The first mutating action must happen after branch/worktree isolation is
+in place.
+
+---
+
 ## GitHub Actions Workflow Security Checklist
 
 When your change creates or materially modifies `.github/workflows/*.yml`, complete this checklist before opening the development PR.
