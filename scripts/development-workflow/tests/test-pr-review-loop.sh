@@ -2146,6 +2146,7 @@ trap '_integration_cleanup' EXIT
 #  - everything else: succeed silently
 cat > "$_integration_mock_bin/gh" <<'INTEG_GH_MOCK'
 #!/usr/bin/env bash
+[ -n "${INTEG_MOCK_GH_LOG:-}" ] && printf '%s\n' "$*" >> "$INTEG_MOCK_GH_LOG"
 case "$*" in
   *"headRefName"*)
     # Use a variable for the default to avoid the bash brace-balance issue:
@@ -2174,6 +2175,8 @@ _run_loop_integration() {
 
 # Test 15.1: release/* head branch → main loop emits RESULT=skipped, REASON=release_pr, exits 0
 export INTEG_MOCK_HEAD_JSON='{"headRefName":"release/v9.9.9"}'
+_integ_gh_log="$(mktemp)"
+export INTEG_MOCK_GH_LOG="$_integ_gh_log"
 _integ_out=""
 _integ_exit=0
 set +e
@@ -2185,10 +2188,17 @@ run_test "mainloop_release_guard_result_skipped" "RESULT=skipped" \
 run_test "mainloop_release_guard_reason_release_pr" "REASON=release_pr" \
   "$(printf '%s\n' "$_integ_out" | grep '^REASON=')"
 run_test "mainloop_release_guard_exit0" "0" "$_integ_exit"
+run_test "mainloop_release_guard_posts_summary" "1" "$(
+  grep -c -- 'pr comment 999 --body-file' "$_integ_gh_log" 2>/dev/null || true
+)"
+rm -f "$_integ_gh_log"
+unset INTEG_MOCK_GH_LOG
 unset INTEG_MOCK_HEAD_JSON
 
 # Test 15.2: hotfix/* head branch → main loop also emits RESULT=skipped, exits 0
 export INTEG_MOCK_HEAD_JSON='{"headRefName":"hotfix/v9.9.1"}'
+_integ_gh_log="$(mktemp)"
+export INTEG_MOCK_GH_LOG="$_integ_gh_log"
 _integ_out=""
 _integ_exit=0
 set +e
@@ -2198,6 +2208,11 @@ set -e
 run_test "mainloop_hotfix_guard_result_skipped" "RESULT=skipped" \
   "$(printf '%s\n' "$_integ_out" | grep '^RESULT=')"
 run_test "mainloop_hotfix_guard_exit0" "0" "$_integ_exit"
+run_test "mainloop_hotfix_guard_posts_summary" "1" "$(
+  grep -c -- 'pr comment 998 --body-file' "$_integ_gh_log" 2>/dev/null || true
+)"
+rm -f "$_integ_gh_log"
+unset INTEG_MOCK_GH_LOG
 unset INTEG_MOCK_HEAD_JSON
 
 # Test 15.3: --branch release/v9.9.9 flag → guard fires without a gh call, exits 0

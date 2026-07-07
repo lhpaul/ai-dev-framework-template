@@ -13,7 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Downstream sync-template guardrails** (#1168) (hotfix): clarify that
   GitHub Projects merge automation is provider-specific and ensure mixed-stage
-  guardrail scopes use the highest configured merge-risk ceiling.
+  guardrail scopes use the highest configured merge-risk ceiling. Release and
+  hotfix reviewer-loop skips now also post the canonical summary marker required
+  by the PR policy guard.
 
 ## [0.36.1] - 2026-07-07
 
