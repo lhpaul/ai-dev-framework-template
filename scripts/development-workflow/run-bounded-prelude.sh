@@ -71,6 +71,22 @@ require_value() {
   fi
 }
 
+sanitize_guardrails_parse_detail() {
+  local detail="$1"
+  local schema_detail
+
+  schema_detail="${detail#*: }"
+  case "$schema_detail" in
+    guardrails.mode\ must\ be\ manual,\ assisted,\ delegated,\ or\ autonomous,*|\
+    guardrails.stages.*.max_merge_risk\ must\ be\ low,\ medium,\ or\ high,*)
+      printf '%s\n' "$schema_detail"
+      ;;
+    *)
+      printf 'failed to parse guardrails from workflow config\n'
+      ;;
+  esac
+}
+
 read_guardrails_json() {
   local config_file py_result _py_exit err_file parse_detail
   if ! config_file="$(workflow_effective_config_file 2>/dev/null)"; then
@@ -188,16 +204,18 @@ PYEOF
     parse_detail="$(awk 'BEGIN{out=""} {out = out (out == "" ? "" : " ") $0} END{print out}' "$err_file")" || parse_detail=""
     rm -f "$err_file"
     if [ -n "$parse_detail" ]; then
-      printf '%s\n' "$parse_detail" >&2
+      sanitize_guardrails_parse_detail "$parse_detail" >&2
       return 2
     fi
-    printf 'failed to read guardrails from workflow config %s\n' "$config_file" >&2
+    printf 'failed to read guardrails from workflow config\n' >&2
+    return 2
+  fi
+  if [ "$_py_exit" -ne 0 ]; then
+    rm -f "$err_file"
+    printf 'unexpected guardrails parser failure\n' >&2
     return 2
   fi
   rm -f "$err_file"
-  if [ "$_py_exit" -ne 0 ]; then
-    py_result='{"section":"absent","mode":"manual","backlog_start":false,"stages":{"spec":{"may_open_pr":true,"may_merge_pr":false,"max_merge_risk":"low","required_evidence":[]},"plan":{"may_open_pr":true,"may_merge_pr":false,"max_merge_risk":"low","required_evidence":[]},"implementation":{"may_open_pr":true,"may_merge_pr":false,"max_merge_risk":"low","required_evidence":[]}},"stop_conditions":[],"audit":{"pr_disposition_record":"not_required","work_item_ledger_record":"not_required"}}'
-  fi
 
   printf '%s\n' "$py_result"
 }
@@ -212,9 +230,9 @@ guardrails_scope_may_merge() {
   jq -nr --argjson guardrails "$guardrails" --slurpfile scope "$scope_file" '
     def infer_stage($status):
       ($status | ascii_downcase) as $s |
-      if $s == "backlog" or ($s | test("writing spec|spec in review|spec")) then "spec"
-      elif $s | test("writing plan|plan in review|plan") then "plan"
-      elif $s | test("development|implement") then "implementation"
+      if $s == "backlog" or ($s | test("(^|[^[:alnum:]])(writing spec|spec in review|spec ready|spec)([^[:alnum:]]|$)")) then "spec"
+      elif $s | test("(^|[^[:alnum:]])(writing plan|plan in review|plan ready|plan)([^[:alnum:]]|$)") then "plan"
+      elif $s | test("(^|[^[:alnum:]])(in development|development in review|development|implementing|implementation)([^[:alnum:]]|$)") then "implementation"
       else "implementation"
       end;
     [$scope[0].items[]? | infer_stage(.status // "")] | unique as $stages |
@@ -230,9 +248,9 @@ guardrails_scope_max_risk() {
   jq -nr --argjson guardrails "$guardrails" --slurpfile scope "$scope_file" '
     def infer_stage($status):
       ($status | ascii_downcase) as $s |
-      if $s == "backlog" or ($s | test("writing spec|spec in review|spec")) then "spec"
-      elif $s | test("writing plan|plan in review|plan") then "plan"
-      elif $s | test("development|implement") then "implementation"
+      if $s == "backlog" or ($s | test("(^|[^[:alnum:]])(writing spec|spec in review|spec ready|spec)([^[:alnum:]]|$)")) then "spec"
+      elif $s | test("(^|[^[:alnum:]])(writing plan|plan in review|plan ready|plan)([^[:alnum:]]|$)") then "plan"
+      elif $s | test("(^|[^[:alnum:]])(in development|development in review|development|implementing|implementation)([^[:alnum:]]|$)") then "implementation"
       else "implementation"
       end;
     def rank($risk): {"low":1,"medium":2,"high":3}[$risk] // 1;
@@ -406,8 +424,9 @@ if ! guardrails_json="$(read_guardrails_json 2>"$guardrails_error_file")"; then
   rm -f "$guardrails_error_file"
   if [ -n "$guardrails_detail" ]; then
     emit_guardrails_unreadable_stop "$guardrails_detail"
+  else
+    emit_guardrails_unreadable_stop "failed to read guardrails from workflow config"
   fi
-  emit_guardrails_unreadable_stop "failed to read guardrails from workflow config"
 fi
 rm -f "$guardrails_error_file"
 guardrails_section="$(json_get "$guardrails_json" '.section')"

@@ -229,6 +229,21 @@ run_test "run_items_text_output_heading" "yes" "$(
   ! grep -q 'Run Item Policy Recommendation' <<< "$items_text_output" &&
   echo yes || echo no
 )"
+
+itemized_text_output="$("$HELPER" --scope "$backlog_fixture" --original-command "/run-itemized 949")"
+run_test "run_itemized_not_misclassified_as_run_item" "yes" "$(
+  grep -q 'Run Epic Policy Recommendation' <<< "$itemized_text_output" &&
+  ! grep -q 'Run Item Policy Recommendation' <<< "$itemized_text_output" &&
+  echo yes || echo no
+)"
+
+items_suffix_text_output="$("$HELPER" --scope "$backlog_fixture" --original-command "/run-itemsX 949")"
+run_test "run_items_suffix_not_misclassified_as_run_items" "yes" "$(
+  grep -q 'Run Epic Policy Recommendation' <<< "$items_suffix_text_output" &&
+  ! grep -q 'Run Items Policy Recommendation' <<< "$items_suffix_text_output" &&
+  echo yes || echo no
+)"
+
 run_items_output="$("$HELPER" --scope "$backlog_fixture" --original-command "/run-items 949 950" --json)"
 run_test "run_items_copy_paste_uses_run_items" "yes" "$(
   run_items_copy_paste="$(printf '%s\n' "$run_items_output" | jq -r '.copyPasteCommand')"

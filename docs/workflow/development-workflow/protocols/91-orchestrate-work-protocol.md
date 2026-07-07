@@ -1784,6 +1784,16 @@ Prefer the helper script:
 ./scripts/development-workflow/pr-ci-loop.sh <pr_number>
 ```
 
+If a local watch/poll command exits before GitHub has reached a final state,
+treat that as an incomplete observation, not as a terminal item state. Re-query
+`gh pr view <pr_number> --json statusCheckRollup,labels,isDraft,headRefOid`,
+ignore superseded duplicate runs that are cancelled or skipped in favor of newer
+checks for the same head SHA, and re-run `pr-ci-loop.sh` whenever required
+checks are still pending/queued or the regression label was just applied. A
+same-session runner must continue the Step 8 loop until the helper returns
+`green`, `red`, or `timeout`; only `red` and `timeout` trigger the actions in the
+table below.
+
 Interpret the result as follows:
 
 | Result    | Action                                                                                                         |
