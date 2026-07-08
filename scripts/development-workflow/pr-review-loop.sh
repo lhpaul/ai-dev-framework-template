@@ -5205,10 +5205,6 @@ if [ "$_release_guard_fired" -eq 0 ]; then
   echo "Release PR detected — reviewer loop skipped." >&2
   echo "Review happens on develop-targeting feature/fix PRs, not on release/* or hotfix/* branches." >&2
   echo "Release readiness path: validate release artifacts → run pr-ci-loop.sh → apply ready-for-human-review when CI is green." >&2
-  print_kv RESULT skipped
-  print_kv REASON release_pr
-  print_kv PR_NUMBER "$pr_number"
-  print_kv BRANCH "${branch_name:-}"
   # Remove any stale reviewer-failed label left from a prior failed run so the
   # PR is not misleadingly labeled after a clean release-guard skip exit.
   sync_reviewer_failed_label "$pr_number" 0
@@ -5219,6 +5215,10 @@ if [ "$_release_guard_fired" -eq 0 ]; then
     print_kv BRANCH "${branch_name:-}"
     exit 1
   fi
+  print_kv RESULT skipped
+  print_kv REASON release_pr
+  print_kv PR_NUMBER "$pr_number"
+  print_kv BRANCH "${branch_name:-}"
   exit 0
 fi
 # --- End release PR early-exit guard ---
