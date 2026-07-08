@@ -196,6 +196,9 @@ JSON
   search\ prs\ repo:lhpaul/ai-dev-framework-template\ is:pr\ head:feature/114\ --json\ number\ -q\ .[].number)
     printf '2114\n'
     ;;
+  search\ prs\ repo:lhpaul/ai-dev-framework-template\ is:pr\ head:feature/11\ --json\ number\ -q\ .[].number)
+    printf '2114\n'
+    ;;
   search\ prs\ repo:lhpaul/ai-dev-framework-template\ is:pr\ head:*\ --json\ number\ -q\ .[].number)
     ;;
   pr\ view\ 2114\ --json\ number,title,state,headRefName,baseRefName,isDraft,labels,mergedAt)
@@ -315,6 +318,10 @@ run_test "unready_open_pr_remains_eligible" "eligible" "$(printf '%s\n' "$unread
 head_search_output="$(run_json --items 114)"
 run_test "head_search_fallback_detects_unlabeled_open_pr" "in_review" "$(printf '%s\n' "$head_search_output" | jq -r '.items[0].group')"
 run_test "head_search_fallback_preserves_pr_number" "2114" "$(printf '%s\n' "$head_search_output" | jq -r '.items[0].pullRequests.open[0].number')"
+
+head_search_boundary_output="$(run_json --items 11)"
+run_test "head_search_boundary_ignores_partial_issue_match" "eligible" "$(printf '%s\n' "$head_search_boundary_output" | jq -r '.items[0].group')"
+run_test "head_search_boundary_returns_no_wrong_pr" "0" "$(printf '%s\n' "$head_search_boundary_output" | jq '.items[0].pullRequests.open | length')"
 
 closed_output="$(run_json --items 109)"
 run_test "closed_not_planned_not_complete" "ambiguous" "$(printf '%s\n' "$closed_output" | jq -r '.items[0].group')"

@@ -368,6 +368,12 @@ discover_prs_via_head_search() {
       if ! pr_json="$(gh pr view "$number" --json number,title,state,headRefName,baseRefName,isDraft,labels,mergedAt 2>/dev/null)"; then
         continue
       fi
+      if ! printf '%s\n' "$pr_json" | jq -e \
+          --arg prefix "$prefix" \
+          --arg issue "$issue" \
+          '.headRefName | test("^" + $prefix + "/" + $issue + "(-|$)")' >/dev/null 2>&1; then
+        continue
+      fi
       if printf '%s\n' "$pr_json" | jq -e '.mergedAt != null' >/dev/null 2>&1; then
         merged="$(printf '%s\n' "$pr_json" | jq --argjson acc "$merged" '
           $acc + [{
