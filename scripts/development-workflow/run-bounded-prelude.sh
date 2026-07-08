@@ -464,7 +464,7 @@ case "$scope_mode" in
   fi
     ;;
   items)
-  if ! "$SCRIPT_DIR/run-epic-scope-resolver.sh" --items "$items_arg" "${resolver_common[@]+"${resolver_common[@]}"}" --json > "$scope_file"; then
+  if ! RUN_EPIC_SCOPE_RESOLVER_INTERNAL_ITEMS=1 "$SCRIPT_DIR/run-epic-scope-resolver.sh" --items "$items_arg" "${resolver_common[@]+"${resolver_common[@]}"}" --json > "$scope_file"; then
     error_exit "items scope resolution failed"
   fi
     ;;

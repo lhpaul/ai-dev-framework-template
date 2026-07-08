@@ -40,6 +40,9 @@ config in `.ai-dev-workflow.yaml` and report effective values before any mutatio
 Enforce per-stage PR-open, delegated review, delegated merge, and completion gates
 per `docs/workflow/development-workflow/guardrails-enforcement.md` section 3.
 When no `guardrails` section is found, apply conservative defaults and state them.
+When the delegated merge gate returns `merge_allowed`, continue through merge,
+branch cleanup, `post-merge-cleanup.sh`, and live tracker verification before
+reporting the item terminal.
 
 That document is the single source of truth for this supporting role. Key responsibilities:
 

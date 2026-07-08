@@ -58,6 +58,9 @@ run_test "item_policy_copy_paste" "true" "$(printf '%s\n' "$policy_out" | jq -r 
 run_test "item_policy_delegate" "true" "$(printf '%s\n' "$policy_out" | jq -r '.effectivePolicy.delegateReview')"
 
 run_test "prelude_help" "0" "$( "$PRELUDE" --help >/dev/null; echo 0)"
+run_test "items_resolver_internal_env_set" "yes" "$(
+  grep -Fq 'RUN_EPIC_SCOPE_RESOLVER_INTERNAL_ITEMS=1' "$PRELUDE" && echo yes || echo no
+)"
 
 run_fails() {
   local name="$1" expected="$2"
