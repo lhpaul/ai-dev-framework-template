@@ -44,8 +44,11 @@ proposal step.
    guardrails. When the relevant stages allow `may_merge_pr: true`, run
    Guardrails Enforcement Gate 5 for each in-scope PR, including
    `run-epic-risk-classifier.sh` and `run-epic-delegated-gate.sh`; continue only
-   when every in-scope PR returns `merge_allowed`. Then route into Protocol 94
-   batch merge using only the explicit in-scope PR list: run
+   when every in-scope PR returns `merge_allowed`. The bounded-prelude
+   confirmation (or explicit autonomy flags) recorded for this `/run-items`
+   invocation is the required merge gate for Protocol 90 `explicit_list` batches.
+   Then route into Protocol 94 batch merge using only the explicit in-scope PR list:
+   run
    `batch-merge.sh discover --prs <comma-separated-in-scope-prs>` and continue
    through merge, cleanup, and tracker reconciliation. Never use Protocol 94
    auto-discovery from `/run-items`. If any stage does not allow merge, finish at the

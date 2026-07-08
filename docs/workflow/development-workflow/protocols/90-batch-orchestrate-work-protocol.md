@@ -64,7 +64,12 @@ This protocol is entered from two paths:
 - **From `/run-items`** (Protocol 96, `explicit_list` mode, when implemented):
   Two or more explicit targets were supplied as a hard bounded scope; the
   orchestrator runs that exact bounded set through all steps including dispatch
-  (Steps 4–5).
+  (Steps 4–5). When guardrails permit delegated merge, `/run-items` may continue
+  after `ready-for-human-review` through Guardrails Enforcement Gate 5 and scoped
+  Protocol 94 batch merge per `.agents/skills/run-items/SKILL.md` rule 10. The
+  bounded-prelude confirmation recorded for that invocation is the merge gate;
+  Step 5.5 below applies to batches proposed by `/run-work`, not to this
+  explicit-list execution path.
 
 When the routing mode is `redirect_item`, `redirect_epic`, or `redirect_items`,
 `/run-work` performs **no mutation**. The classifier emits `REDIRECT_COMMAND`

@@ -141,6 +141,7 @@ JSON
       110) labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
       111) body='Blocked by #108'; labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
       113) labels_json='[{"name":"integration-branch:foo"}]' ;;
+      114) labels_json='[]' ;;
     esac
     jq -n \
       --argjson number "$issue_number" \
@@ -163,6 +164,7 @@ JSON
       105) labels_json='[{"name":"integration-branch:alpha"}]' ;;
       106) labels_json='[{"name":"integration-branch:beta"}]' ;;
       113) labels_json='[{"name":"integration-branch:foo"}]' ;;
+      114) labels_json='[]' ;;
     esac
     jq -n --argjson labels "$labels_json" '{labels:$labels}'
     ;;
@@ -190,6 +192,19 @@ JSON
         printf '[[]]\n'
         ;;
     esac
+    ;;
+  search\ prs\ repo:lhpaul/ai-dev-framework-template\ is:pr\ head:feature/114\ --json\ number\ -q\ .[].number)
+    printf '2114\n'
+    ;;
+  search\ prs\ repo:lhpaul/ai-dev-framework-template\ is:pr\ head:feature/11\ --json\ number\ -q\ .[].number)
+    printf '2114\n'
+    ;;
+  search\ prs\ repo:lhpaul/ai-dev-framework-template\ is:pr\ head:*\ --json\ number\ -q\ .[].number)
+    ;;
+  pr\ view\ 2114\ --json\ number,title,state,headRefName,baseRefName,isDraft,labels,mergedAt)
+    cat <<'JSON'
+{"number":2114,"title":"Unlabeled fallback PR","state":"OPEN","headRefName":"feature/114-unlabeled-fallback","baseRefName":"develop-missing-label","isDraft":false,"labels":[{"name":"ready-for-human-review"}],"mergedAt":null}
+JSON
     ;;
   *)
     printf 'unexpected gh invocation: gh %s\n' "$*" >&2
@@ -299,6 +314,14 @@ run_test "merged_pr_group_detected" "already_merged" "$(printf '%s\n' "$merged_o
 
 unready_pr_output="$(run_json --items 110)"
 run_test "unready_open_pr_remains_eligible" "eligible" "$(printf '%s\n' "$unready_pr_output" | jq -r '.items[0].group')"
+
+head_search_output="$(run_json --items 114)"
+run_test "head_search_fallback_detects_unlabeled_open_pr" "in_review" "$(printf '%s\n' "$head_search_output" | jq -r '.items[0].group')"
+run_test "head_search_fallback_preserves_pr_number" "2114" "$(printf '%s\n' "$head_search_output" | jq -r '.items[0].pullRequests.open[0].number')"
+
+head_search_boundary_output="$(run_json --items 11)"
+run_test "head_search_boundary_ignores_partial_issue_match" "eligible" "$(printf '%s\n' "$head_search_boundary_output" | jq -r '.items[0].group')"
+run_test "head_search_boundary_returns_no_wrong_pr" "0" "$(printf '%s\n' "$head_search_boundary_output" | jq '.items[0].pullRequests.open | length')"
 
 closed_output="$(run_json --items 109)"
 run_test "closed_not_planned_not_complete" "ambiguous" "$(printf '%s\n' "$closed_output" | jq -r '.items[0].group')"

@@ -2156,6 +2156,13 @@ case "$*" in
     printf '%s\n' "${INTEG_MOCK_HEAD_JSON:-$_hdr_default}"
     exit 0
     ;;
+  pr\ comment\ *)
+    if [ "${INTEG_MOCK_PR_COMMENT_FAIL:-0}" = "1" ]; then
+      printf 'mock pr comment failure\n' >&2
+      exit 64
+    fi
+    exit 0
+    ;;
   *"pr edit"*|*"api"*|*"pr view"*)
     exit 0
     ;;
@@ -2193,6 +2200,25 @@ run_test "mainloop_release_guard_posts_summary" "1" "$(
 )"
 rm -f "$_integ_gh_log"
 unset INTEG_MOCK_GH_LOG
+unset INTEG_MOCK_HEAD_JSON
+
+# Test 15.1b: release guard escalates if it cannot post the required summary marker
+export INTEG_MOCK_HEAD_JSON='{"headRefName":"release/v9.9.10"}'
+export INTEG_MOCK_PR_COMMENT_FAIL=1
+_integ_out=""
+_integ_exit=0
+set +e
+_integ_out="$(_run_loop_integration 997)"
+_integ_exit=$?
+set -e
+run_test "mainloop_release_guard_comment_failure_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$_integ_out" | grep '^RESULT=' | tail -1)"
+run_test "mainloop_release_guard_comment_failure_reason" "REASON=release_guard_summary_failed" \
+  "$(printf '%s\n' "$_integ_out" | grep '^REASON=' | tail -1)"
+run_test "mainloop_release_guard_comment_failure_single_result" "1" \
+  "$(printf '%s\n' "$_integ_out" | grep -c '^RESULT=')"
+run_test "mainloop_release_guard_comment_failure_exit1" "1" "$_integ_exit"
+unset INTEG_MOCK_PR_COMMENT_FAIL
 unset INTEG_MOCK_HEAD_JSON
 
 # Test 15.2: hotfix/* head branch → main loop also emits RESULT=skipped, exits 0

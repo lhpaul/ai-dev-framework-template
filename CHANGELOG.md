@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.36.3] - 2026-07-08
+
+### Fixed
+
+- **Faind sync-template follow-ups** (#1171) (hotfix): port reusable downstream
+  fixes for backlog Type propagation, release/hotfix reviewer-loop summary
+  failures, explicit-list resolver invocation, PR head-search scope fallback,
+  and delegated `/run-items` merge guidance.
+
 ## [0.36.2] - 2026-07-07
 
 ### Fixed
@@ -1147,7 +1156,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.36.2...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.36.3...HEAD
+[0.36.3]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.36.2...v0.36.3
 [0.36.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.36.1...v0.36.2
 [0.36.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.36.0...v0.36.1
 [0.36.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.35.0...v0.36.0
