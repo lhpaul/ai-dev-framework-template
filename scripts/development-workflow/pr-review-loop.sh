@@ -5186,11 +5186,19 @@ EOF
   if [ "$_comment_posted" -eq 0 ]; then
     _body_tmpfile="$(mktemp)"
     printf '%s' "$_comment_body" > "$_body_tmpfile"
-    gh pr comment "$_pr_number" --body-file "$_body_tmpfile" >/dev/null 2>&1
+    if gh pr comment "$_pr_number" --body-file "$_body_tmpfile" >/dev/null 2>&1; then
+      _comment_posted=1
+    else
+      echo "WARN: failed to post release guard summary comment for PR ${_pr_number}" >&2
+    fi
     rm -f "$_body_tmpfile"
   fi
 
   set -e
+  if [ "$_comment_posted" -eq 0 ]; then
+    return 1
+  fi
+  return 0
 }
 
 if [ "$_release_guard_fired" -eq 0 ]; then
@@ -5204,7 +5212,13 @@ if [ "$_release_guard_fired" -eq 0 ]; then
   # Remove any stale reviewer-failed label left from a prior failed run so the
   # PR is not misleadingly labeled after a clean release-guard skip exit.
   sync_reviewer_failed_label "$pr_number" 0
-  post_release_guard_summary "$pr_number" "${branch_name:-}"
+  if ! post_release_guard_summary "$pr_number" "${branch_name:-}"; then
+    print_kv RESULT escalate
+    print_kv REASON release_guard_summary_failed
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "${branch_name:-}"
+    exit 1
+  fi
   exit 0
 fi
 # --- End release PR early-exit guard ---

@@ -349,6 +349,63 @@ fetch_prs_for_base() {
   printf '%s\n' "$cache_file"
 }
 
+# Fallback when label-derived base scans miss PRs on integration branches
+# (develop-<slug>) that are not represented by integration-branch:* labels in scope.
+discover_prs_via_head_search() {
+  local issue="$1"
+  local prefix query numbers number pr_json open merged
+  open='[]'
+  merged='[]'
+  for prefix in spec implementation-plan feature fix refactor hotfix; do
+    query="repo:${repo} is:pr head:${prefix}/${issue}"
+    numbers=""
+    if ! numbers="$(gh search prs "$query" --json number -q '.[].number' 2>/dev/null)"; then
+      numbers=""
+    fi
+    for number in $numbers; do
+      [ -n "$number" ] || continue
+      pr_json=""
+      if ! pr_json="$(gh pr view "$number" --json number,title,state,headRefName,baseRefName,isDraft,labels,mergedAt 2>/dev/null)"; then
+        continue
+      fi
+      if printf '%s\n' "$pr_json" | jq -e '.mergedAt != null' >/dev/null 2>&1; then
+        merged="$(printf '%s\n' "$pr_json" | jq --argjson acc "$merged" '
+          $acc + [{
+            number: .number,
+            title: .title,
+            state: "MERGED",
+            headRefName: .headRefName,
+            baseRefName: .baseRefName,
+            isDraft: false,
+            labels: [],
+            mergedAt: .mergedAt
+          }]
+        ')"
+      elif [ "$(printf '%s\n' "$pr_json" | jq -r '.state')" = "OPEN" ]; then
+        open="$(printf '%s\n' "$pr_json" | jq --argjson acc "$open" '
+          $acc + [{
+            number: .number,
+            title: .title,
+            state: "OPEN",
+            headRefName: .headRefName,
+            baseRefName: .baseRefName,
+            isDraft: .isDraft,
+            labels: [.labels[].name]
+          }]
+        ')"
+      fi
+    done
+  done
+  jq -n --argjson open "$open" --argjson merged "$merged" '{open: $open, merged: $merged}'
+}
+
+discover_integration_bases_for_issue() {
+  local issue="$1"
+  discover_prs_via_head_search "$issue" \
+    | jq -r '.open[].baseRefName, .merged[].baseRefName' \
+    | awk '/^develop-/ { print }'
+}
+
 resolve_scope_pr_bases() {
   local bases_file issue issue_json integration_label candidate_base
   bases_file="$tmp_dir/pr_bases.txt"
@@ -375,6 +432,14 @@ resolve_scope_pr_bases() {
       candidate_base="develop-${integration_label#integration-branch:}"
       printf '%s\n' "$candidate_base" >> "$bases_file"
     fi
+  done < "$subissues_file"
+
+  while IFS= read -r issue; do
+    [ -n "$issue" ] || continue
+    while IFS= read -r base; do
+      [ -n "$base" ] || continue
+      printf '%s\n' "$base" >> "$bases_file"
+    done < <(discover_integration_bases_for_issue "$issue")
   done < "$subissues_file"
 
   sort -u "$bases_file"
@@ -433,8 +498,13 @@ linked_pr_json() {
 $bases
 EOF
 
-  jq -n --argjson open "$open_prs" --argjson merged "$merged_prs" \
-    '{open: $open, merged: $merged}'
+  local _linked_result
+  _linked_result="$(jq -n --argjson open "$open_prs" --argjson merged "$merged_prs" \
+    '{open: $open, merged: $merged}')"
+  if [ "$(printf '%s\n' "$_linked_result" | jq '(.open | length) + (.merged | length)')" -eq 0 ]; then
+    _linked_result="$(discover_prs_via_head_search "$issue")"
+  fi
+  printf '%s\n' "$_linked_result"
 }
 
 dependency_json() {
