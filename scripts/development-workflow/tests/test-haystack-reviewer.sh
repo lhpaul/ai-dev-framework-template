@@ -1179,6 +1179,33 @@ MOCK_GH_CHECK_RUNS="$(
     check_runs: [
       {
         name: "Haystack / Review",
+        status: "completed",
+        conclusion: "failure",
+        details_url: "https://haystackeditor.com/review/owner/repo/123",
+        started_at: "2026-07-12T15:26:22Z",
+        output: {title: "Haystack found issues", summary: "Haystack found issues but did not expose structured category output."}
+      }
+    ]
+  }'
+)"
+export MOCK_GH_CHECK_RUNS
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"status":"pending"}'
+MOCK_HAYSTACK_EXITS='0'
+_install_mock_with_exits
+_install_gh_check_run_mock
+
+output=$(_run_reviewer 1 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "check_run_fallback_unparseable_failure_result" "RESULT=needs_fixes" "$(echo "$output" | grep '^RESULT=')"
+run_test "check_run_fallback_unparseable_failure_blocking" "BLOCKING_COUNT=1" "$(echo "$output" | grep '^BLOCKING_COUNT=')"
+run_test "check_run_fallback_unparseable_failure_exit_code" "1" "$ec"
+
+MOCK_GH_CHECK_RUNS="$(
+  jq -n '{
+    check_runs: [
+      {
+        name: "Haystack / Review",
         status: "in_progress",
         conclusion: null,
         started_at: "2026-07-12T15:26:22Z"

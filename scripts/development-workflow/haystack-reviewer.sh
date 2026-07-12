@@ -289,9 +289,9 @@ EOF
       return 0
       ;;
     failure|FAILURE|action_required|ACTION_REQUIRED|startup_failure|STARTUP_FAILURE)
-      if [ "$comment_count" -eq 0 ] && [ "${findings_count:-0}" -gt 0 ]; then
-        # The check run reported findings but did not expose category lines in
-        # the summary. Fail closed rather than treating a failed review as clean.
+      if [ "$comment_count" -eq 0 ] && [ "${findings_count:-unknown}" != "0" ]; then
+        # The check run failed but did not expose parseable category lines. Fail
+        # closed unless the summary explicitly reports zero findings.
         blocking_count=1
         comment_count=1
       fi
