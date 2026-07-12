@@ -109,6 +109,44 @@ export WORKFLOW_TARGET_GITHUB_REPO="$repo"
 export GH_REPO="$repo"
 min_no_checks_wait=$((poll_interval * 2))
 
+configured_reviewer_check_names_json() {
+  local config_file="${1:-}"
+  local platform=""
+  local -a names=()
+
+  if [ -z "$config_file" ]; then
+    config_file="$(workflow_effective_config_file 2>/dev/null || workflow_config_file)"
+  fi
+
+  if [ -f "$config_file" ]; then
+    while IFS= read -r platform; do
+      platform="$(printf '%s' "$platform" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+      [ -z "$platform" ] && continue
+      case "$platform" in
+        haystack)
+          names+=("${HAYSTACK_CHECK_NAME:-Haystack / Review}")
+          ;;
+        bugbot)
+          names+=("${BUGBOT_CHECK_NAME:-Cursor Bugbot}")
+          ;;
+      esac
+    done < <(
+      if [ "$config_file" = "$(workflow_config_file)" ]; then
+        WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$config_file"
+      else
+        workflow_config_review_platforms "$config_file"
+      fi
+    )
+  fi
+
+  if [ "${#names[@]}" -eq 0 ]; then
+    printf '[]\n'
+    return 0
+  fi
+
+  printf '%s\n' "${names[@]}" | jq -R . | jq -s .
+}
+
 # is_devin_status_stale <pr_number> <repo>
 #
 # Returns 0 (stale — safe to skip) when:
@@ -265,11 +303,63 @@ while :; do
     print_kv PENDING_CHECKS ""
     exit 1
   fi
+  reviewer_check_names="$(
+    configured_reviewer_check_names_json
+  )"
+  if ! ci_checks_json="$(
+    printf '%s\n' "$normalized_checks_json" | jq --argjson reviewer_names "$reviewer_check_names" '
+      [
+        .[]
+        | select(
+            (.name // .context // .workflowName // "unknown") as $check_name
+            | ($reviewer_names | index($check_name) | not)
+          )
+      ]
+    '
+  )"; then
+    print_kv RESULT red
+    print_kv PR_NUMBER "$pr_number"
+    print_kv REPO "$repo"
+    print_kv REASON check_json_parse_failed
+    print_kv TOTAL_CHECK_COUNT 0
+    print_kv FAILING_CHECK_COUNT 1
+    print_kv FAILING_CHECKS check_json_parse_failed
+    print_kv PENDING_CHECK_COUNT 0
+    print_kv PENDING_CHECKS ""
+    print_kv REVIEWER_CHECK_COUNT 0
+    print_kv REVIEWER_CHECKS ""
+    exit 1
+  fi
+  reviewer_check_count="$(
+    printf '%s\n' "$normalized_checks_json" | jq --argjson reviewer_names "$reviewer_check_names" '
+      [
+        .[]
+        | select(
+            (.name // .context // .workflowName // "unknown") as $check_name
+            | ($reviewer_names | index($check_name))
+          )
+      ]
+      | length
+    '
+  )"
+  reviewer_check_list="$(
+    printf '%s\n' "$normalized_checks_json" | jq -r --argjson reviewer_names "$reviewer_check_names" '
+      [
+        .[]
+        | select(
+            (.name // .context // .workflowName // "unknown") as $check_name
+            | ($reviewer_names | index($check_name))
+          )
+        | (.name // .context // .workflowName // "unknown")
+      ]
+      | join(",")
+    '
+  )"
   total_check_count="$(
-    printf '%s\n' "$normalized_checks_json" | jq 'length'
+    printf '%s\n' "$ci_checks_json" | jq 'length'
   )"
   pending_count="$(
-    printf '%s\n' "$normalized_checks_json" | jq '
+    printf '%s\n' "$ci_checks_json" | jq '
       .
       | map(select(
           ((.status // "") != "" and (.status != "COMPLETED"))
@@ -282,7 +372,7 @@ while :; do
     '
   )"
   pending_list="$(
-    printf '%s\n' "$normalized_checks_json" | jq -r '
+    printf '%s\n' "$ci_checks_json" | jq -r '
       .
       | map(select(
           ((.status // "") != "" and (.status != "COMPLETED"))
@@ -296,7 +386,7 @@ while :; do
     '
   )"
   failing_count="$(
-    printf '%s\n' "$normalized_checks_json" | jq '
+    printf '%s\n' "$ci_checks_json" | jq '
       .
       | map(select(
           (.conclusion == "FAILURE")
@@ -311,7 +401,7 @@ while :; do
     '
   )"
   failing_list="$(
-    printf '%s\n' "$normalized_checks_json" | jq -r '
+    printf '%s\n' "$ci_checks_json" | jq -r '
       .
       | map(select(
           (.conclusion == "FAILURE")
@@ -366,6 +456,8 @@ while :; do
     print_kv FAILING_CHECKS "$failing_list"
     print_kv PENDING_CHECK_COUNT "$pending_count"
     print_kv PENDING_CHECKS "$pending_list"
+    print_kv REVIEWER_CHECK_COUNT "$reviewer_check_count"
+    print_kv REVIEWER_CHECKS "$reviewer_check_list"
     exit 1
   fi
 
@@ -384,6 +476,8 @@ while :; do
     print_kv FAILING_CHECKS ""
     print_kv PENDING_CHECK_COUNT 0
     print_kv PENDING_CHECKS ""
+    print_kv REVIEWER_CHECK_COUNT "$reviewer_check_count"
+    print_kv REVIEWER_CHECKS "$reviewer_check_list"
     exit 0
   fi
 
@@ -396,6 +490,8 @@ while :; do
     print_kv FAILING_CHECKS "$failing_list"
     print_kv PENDING_CHECK_COUNT "$pending_count"
     print_kv PENDING_CHECKS "$pending_list"
+    print_kv REVIEWER_CHECK_COUNT "$reviewer_check_count"
+    print_kv REVIEWER_CHECKS "$reviewer_check_list"
     exit 2
   fi
 

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Haystack GitHub App review checks** (#1188): treat configured Haystack
+  check runs as reviewer-loop state instead of generic CI, with check-run
+  fallback/readback when CLI triage cannot return completed findings.
+
 ## [0.36.3] - 2026-07-08
 
 ### Fixed
