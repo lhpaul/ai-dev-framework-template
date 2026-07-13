@@ -1174,6 +1174,48 @@ run_test "check_run_fallback_advisory_blocking_zero" "BLOCKING_COUNT=0" "$(echo 
 run_test "check_run_fallback_advisory_suggestions" "SUGGESTION_COUNT=2" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
 run_test "check_run_fallback_advisory_exit_code" "0" "$ec"
 
+_check_summary_custom='**Verdict:** `pass`
+**Rating:** `5/5`
+**Findings:** 0'
+MOCK_GH_CHECK_RUNS="$(
+  jq -n --arg summary "$_check_summary_custom" '[
+    {
+      check_runs: [
+        {
+          name: "Unrelated Check",
+          status: "completed",
+          conclusion: "failure",
+          started_at: "2026-07-12T15:25:22Z"
+        }
+      ]
+    },
+    {
+      check_runs: [
+        {
+          name: "Custom Haystack Review",
+          status: "completed",
+          conclusion: "success",
+          details_url: "https://haystackeditor.com/review/owner/repo/123",
+          started_at: "2026-07-12T15:26:22Z",
+          output: {title: "Haystack passed", summary: $summary}
+        }
+      ]
+    }
+  ]'
+)"
+export MOCK_GH_CHECK_RUNS
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"status":"pending"}'
+MOCK_HAYSTACK_EXITS='0'
+_install_mock_with_exits
+_install_gh_check_run_mock
+
+output=$(HAYSTACK_CHECK_NAME="Custom Haystack Review" _run_reviewer 1 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "check_run_fallback_custom_paginated_name_result" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+run_test "check_run_fallback_custom_paginated_name_conclusion" "CHECK_RUN_CONCLUSION=success" "$(echo "$output" | grep '^CHECK_RUN_CONCLUSION=')"
+run_test "check_run_fallback_custom_paginated_name_exit_code" "0" "$ec"
+
 MOCK_GH_CHECK_RUNS="$(
   jq -n '{
     check_runs: [
@@ -1201,6 +1243,20 @@ run_test "check_run_fallback_unparseable_failure_result" "RESULT=needs_fixes" "$
 run_test "check_run_fallback_unparseable_failure_blocking" "BLOCKING_COUNT=1" "$(echo "$output" | grep '^BLOCKING_COUNT=')"
 run_test "check_run_fallback_unparseable_failure_exit_code" "1" "$ec"
 
+MOCK_GH_CHECK_RUNS='not-json'
+export MOCK_GH_CHECK_RUNS
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"status":"pending"}'
+MOCK_HAYSTACK_EXITS='0'
+_install_mock_with_exits
+_install_gh_check_run_mock
+
+output=$(_run_reviewer 1 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "check_run_fallback_malformed_json_result" "RESULT=skipped" "$(echo "$output" | grep '^RESULT=')"
+run_test "check_run_fallback_malformed_json_reason" "REASON=pending_timeout" "$(echo "$output" | grep '^REASON=')"
+run_test "check_run_fallback_malformed_json_exit_code" "2" "$ec"
+
 MOCK_GH_CHECK_RUNS="$(
   jq -n '{
     check_runs: [
@@ -1226,7 +1282,7 @@ run_test "check_run_fallback_pending_result" "RESULT=skipped" "$(echo "$output" 
 run_test "check_run_fallback_pending_reason" "REASON=pending_check_run" "$(echo "$output" | grep '^REASON=')"
 run_test "check_run_fallback_pending_exit_code" "2" "$ec"
 
-unset MOCK_GH_CHECK_RUNS _check_summary_blocking _check_summary_advisory
+unset MOCK_GH_CHECK_RUNS _check_summary_blocking _check_summary_advisory _check_summary_custom
 
 # ---------------------------------------------------------------------------
 # Summary

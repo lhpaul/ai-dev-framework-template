@@ -344,6 +344,19 @@ run_contains "ci_loop_ignores_configured_haystack_review_check" "RESULT=green" "
 run_contains "ci_loop_reports_ignored_reviewer_check" "REVIEWER_CHECKS=Haystack / Review" "$ci_haystack_review_output"
 run_contains "ci_loop_counts_only_ci_checks" "TOTAL_CHECK_COUNT=1" "$ci_haystack_review_output"
 
+ci_custom_haystack_review_output="$(
+  AI_DEV_WORKFLOW_CONFIG_FILE="$ci_haystack_config" \
+  HAYSTACK_CHECK_NAME="Custom Haystack Review" \
+  GH_PR_VIEW_JSON='{"headRefName":"feature/900-product-routing","labels":[],"isDraft":false,"comments":[],"statusCheckRollup":[{"__typename":"CheckRun","name":"Custom Haystack Review","status":"COMPLETED","conclusion":"FAILURE"},{"__typename":"CheckRun","name":"Unit Tests","status":"COMPLETED","conclusion":"SUCCESS"}]}' \
+  PATH="$stub_bin:$PATH" "$REPO_ROOT/scripts/development-workflow/pr-ci-loop.sh" \
+    72 \
+    --repo example/mobile-app \
+    --poll-interval 1 \
+    --max-wait 2
+)"
+run_contains "ci_loop_uses_custom_haystack_check_name" "RESULT=green" "$ci_custom_haystack_review_output"
+run_contains "ci_loop_reports_custom_reviewer_check" "REVIEWER_CHECKS=Custom Haystack Review" "$ci_custom_haystack_review_output"
+
 run_fails_contains \
   "ci_loop_still_fails_real_ci_with_haystack_review_check" \
   "FAILING_CHECKS=Unit Tests" \

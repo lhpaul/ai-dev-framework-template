@@ -201,13 +201,19 @@ fetch_haystack_check_run_json() {
   fi
   [ -n "$head_sha" ] || return 1
 
-  if ! runs_json="$(gh api "repos/${OWNER}/${REPO}/commits/${head_sha}/check-runs" 2>/dev/null)"; then
+  if ! runs_json="$(gh api --paginate --slurp "repos/${OWNER}/${REPO}/commits/${head_sha}/check-runs" 2>/dev/null)"; then
     return 1
   fi
   [ -n "$runs_json" ] || return 1
 
   if ! check_json="$(printf '%s\n' "$runs_json" | jq -c --arg name "$CHECK_NAME" '
-    (.check_runs // [])
+    [
+      if type == "array" then
+        .[] | (.check_runs[]? // empty)
+      else
+        .check_runs[]? // empty
+      end
+    ]
     | map(select((.name // "") == $name))
     | sort_by(.started_at // .completed_at // "")
     | last // empty
