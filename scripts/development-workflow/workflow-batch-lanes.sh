@@ -140,9 +140,11 @@ echo
 
 batch_input=""
 if [ "$scan_mode" -eq 1 ]; then
-  scan_args=()
-  [ -n "${development_paths[*]:-}" ] && scan_args+=("${development_paths[@]}")
-  batch_input="$("$SCRIPT_DIR/workflow-batch-plan.sh" "${scan_args[@]}")"
+  if [ "${#development_paths[@]}" -gt 0 ]; then
+    batch_input="$("$SCRIPT_DIR/workflow-batch-plan.sh" --repo-root "$repo_root" "${development_paths[@]}")"
+  else
+    batch_input="$("$SCRIPT_DIR/workflow-batch-plan.sh" --repo-root "$repo_root")"
+  fi
 else
   batch_input="$(cat)"
 fi

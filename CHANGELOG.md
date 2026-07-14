@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Run-work scan helper caveats** (#1198): parse router guardrails without a
+  PyYAML dependency and make batch-lane scan mode Bash 3.2 safe when no paths
+  are supplied.
 - **Haystack GitHub App review checks** (#1188): treat configured Haystack
   check runs as reviewer-loop state instead of generic CI, with check-run
   fallback/readback when CLI triage cannot return completed findings.

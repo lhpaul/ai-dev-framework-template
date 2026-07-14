@@ -150,27 +150,26 @@ read_guardrails_config() {
     return 0
   fi
 
-  # Use python3 to safely parse YAML (avoid jq YAML limitations).
+  # Use the repo's stdlib-only workflow config parser so the router does not
+  # depend on PyYAML being installed in the runner environment.
   # Capture exit code explicitly — do not use || true to suppress failures.
   local py_result _py_exit
   _py_exit=0
-  py_result="$(python3 - "$config_file" <<'PYEOF'
+  py_result="$(python3 - "$config_file" "$SCRIPT_DIR/workflow-config-resolver.py" <<'PYEOF'
 import sys, json
+import importlib.util
+from pathlib import Path
 
 try:
-    # Try to import yaml; fall back to basic parsing if unavailable.
-    try:
-        import yaml
-        with open(sys.argv[1], 'r') as f:
-            cfg = yaml.safe_load(f) or {}
-    except ImportError:
-        sys.stderr.write(
-            "run-work-router: error: PyYAML is required to parse guardrails config.\n"
-            "Install it with: pip install pyyaml  (or pip3 install pyyaml)\n"
-            "Applying conservative guardrails defaults (mode=manual, backlog_start=false).\n"
-        )
-        print(json.dumps({"section": "absent", "mode": "manual", "backlog_start": False}))
-        sys.exit(0)
+    sys.dont_write_bytecode = True
+    config_path = Path(sys.argv[1])
+    resolver_path = Path(sys.argv[2])
+    spec = importlib.util.spec_from_file_location("workflow_config_resolver", resolver_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load workflow-config-resolver.py")
+    resolver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(resolver)
+    cfg = resolver.parse_yaml_subset(config_path)
 
     guardrails = cfg.get('guardrails') if isinstance(cfg, dict) else None
     if not isinstance(guardrails, dict):
