@@ -258,7 +258,7 @@ teach the same terminal behavior for merge-authorized and merge-denied runs.
 | ----------------------- | -------------------------- | ----------- |
 | `merged`                | Merged                     | Merge authority was granted, all gates passed, the PR was merged, cleanup ran, and tracker verification completed or was reported. |
 | `ready_human_merge`     | Ready for human merge      | Merge authority was absent; the PR is automation-clean and waiting for human review or merge. |
-| `merge_blocked`         | Merge blocked              | Merge authority was granted, but a review, CI, risk, setup, merge-state, tracker, or delegated-gate blocker prevented merge. |
+| `merge_blocked`         | Merge blocked              | Merge authority was granted and the PR reached readiness, but a post-readiness merge gate such as risk, setup, merge state, tracker evidence, delegated gate, or stale readiness evidence prevented merge. |
 | `policy_inconsistent`   | Policy inconsistent        | A runner reached a terminal state that does not match the selected merge policy and no valid blocker was reported. |
 | `out_of_scope`          | Out of scope               | The PR is not part of the resolved invocation scope and must not be merged by this run. |
 
@@ -267,6 +267,9 @@ teach the same terminal behavior for merge-authorized and merge-denied runs.
 - A ready PR with `merge_granted` advances to `merged` when all merge gates pass.
 - A ready PR with `merge_granted` advances to `merge_blocked` when any required
   merge gate blocks.
+- A PR that fails review or CI before reaching readiness remains in the normal
+  blocked or escalated state for that workflow stage; it does not become
+  `merge_blocked`.
 - A ready PR with `merge_denied` advances to `ready_human_merge`.
 - A PR may resolve to `policy_inconsistent` when the reported terminal state
   contradicts the selected policy and no named blocker explains the stop.
