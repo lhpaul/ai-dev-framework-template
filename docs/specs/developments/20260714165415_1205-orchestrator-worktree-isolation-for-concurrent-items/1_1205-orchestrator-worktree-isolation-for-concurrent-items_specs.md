@@ -17,8 +17,9 @@ runner starts editing files.
 - **BO-1**: Protocol 90 and the `/run-items` bounded execution path require
   worktree isolation for any batch with two or more concurrent file-mutating
   runners.
-- **BO-2**: The pre-dispatch checklist verifies that every concurrent runner is
-  dispatched with worktree isolation and a distinct worktree path.
+- **BO-2**: The pre-dispatch checklist verifies that every concurrent
+  file-mutating runner is dispatched with worktree isolation and a distinct
+  worktree path.
 - **BO-3**: Each dispatched runner confirms, before its first file edit, that it
   is operating inside its assigned isolated worktree rather than the main clone.
 - **BO-4**: The workflow distinguishes this dispatch-time shared-tree
@@ -193,21 +194,23 @@ guessing which runner or branch is affected.
   lists every mutating item with a distinct worktree path and confirms that
   worktree isolation is enabled for each one.
 - [ ] **AC-3**: Given a concurrent mutating batch where one runner lacks a
-  worktree isolation assignment, the workflow stops before dispatching that
-  runner and reports the affected item plus the missing assignment.
+  worktree isolation assignment, the workflow stops the batch before
+  dispatching any concurrent mutating runner and reports the affected item plus
+  the missing assignment.
 - [ ] **AC-4**: Given a concurrent mutating batch where two runners are assigned
   the same worktree path, the workflow stops before dispatch and reports both
   affected items plus the duplicate path.
-- [ ] **AC-5**: Given a dispatched runner in batch context, the runner confirms
-  its current working directory is inside the assigned worktree before its first
-  file edit, branch-changing command, commit, or push.
-- [ ] **AC-6**: Given a dispatched runner whose current working directory is the
-  main repository checkout, the runner stops before mutating files and reports
-  the expected worktree path, observed path, expected branch, and observed
-  branch when available.
-- [ ] **AC-7**: Given a dispatched runner inside a worktree but on the wrong
-  branch, the runner stops before mutating files and reports the expected and
-  observed branch values.
+- [ ] **AC-5**: Given a concurrent file-mutating runner dispatched in batch
+  context, the runner confirms its current working directory is inside the
+  assigned worktree before its first file edit, branch-changing command, commit,
+  or push.
+- [ ] **AC-6**: Given a concurrent file-mutating runner whose current working
+  directory is the main repository checkout, the runner stops before mutating
+  files and reports the expected worktree path, observed path, expected branch,
+  and observed branch when available.
+- [ ] **AC-7**: Given a concurrent file-mutating runner inside a worktree but on
+  the wrong branch, the runner stops before mutating files and reports the
+  expected and observed branch values.
 - [ ] **AC-8**: Given a runner reports that mutation may already have occurred
   outside its assigned worktree, the workflow escalates for human inspection and
   does not auto-reset, auto-restore, or auto-commit the unexpected changes.
