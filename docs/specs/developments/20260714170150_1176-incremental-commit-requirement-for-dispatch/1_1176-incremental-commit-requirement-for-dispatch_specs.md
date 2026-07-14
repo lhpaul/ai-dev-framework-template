@@ -88,8 +88,9 @@ recoverable checkpoints as logical sub-parts complete.
    corresponding commit on the item branch.
 3. The actor resumes from the latest committed checkpoint rather than
    reconstructing completed work from uncommitted edits.
-4. If no sub-part was completed, the actor can treat the absence of commits as
-   evidence that no recoverable completed work exists.
+4. If no sub-part was completed after the last known checkpoint, the actor can
+   treat the absence of a newer incremental checkpoint commit as evidence that
+   no additional completed work exists.
 
 **Postconditions**: Recovery has a deterministic starting point: either a
 committed completed sub-part or a clear absence of completed work.
@@ -194,9 +195,10 @@ validation, or merge checkpoint.
 - [ ] AC4: Given a crashed or disconnected run after at least one logical
       sub-part completed, a recovery operator can inspect the item branch or
       worktree and find committed partial progress for the completed sub-part.
-- [ ] AC5: Given a crashed or disconnected run with no completed sub-part, the
-      absence of an incremental commit is acceptable recovery evidence that no
-      completed checkpoint existed.
+- [ ] AC5: Given a crashed or disconnected run with no completed sub-part after
+      the last known checkpoint, the absence of a newer incremental commit is
+      acceptable recovery evidence that no additional completed checkpoint
+      existed.
 - [ ] AC6: Given a PR with incremental commits, the PR must still pass the
       normal internal review, automated reviewer loop, CI, readiness-label, and
       tracker-transition gates before it is reported ready for human review.
