@@ -222,10 +222,10 @@ teach the same terminal behavior for merge-authorized and merge-denied runs.
   the PR is ready, low risk, and otherwise mergeable.
 - BR7: Batch and epic orchestrators must report inconsistent terminal behavior.
   In a merge-granted run, a named merge gate blocker resolves to
-  `merge_blocked` or escalated with that blocker; if no valid blocker explains
-  the mismatch, the outcome is `policy_inconsistent`. In a merge-denied run,
-  pre-readiness blockers keep their normal blocked or escalated outcome, while
-  a ready PR resolves to `ready_human_merge`.
+  `merge_blocked`; if no valid blocker explains the mismatch, the outcome is
+  `policy_inconsistent`. In a merge-denied run, pre-readiness blockers keep
+  their normal blocked or escalated outcome, while a ready PR resolves to
+  `ready_human_merge`.
 - BR8: The final summary for each affected PR must state whether merge was
   granted or denied, what terminal state was expected, and what terminal state
   was reached.
