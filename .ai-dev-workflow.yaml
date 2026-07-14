@@ -129,6 +129,9 @@ issue_tracker:
   # Example (Linear):
   #   custom_fields:
   #     project: my-linear-project-id
+  # Example (GitHub Projects board whose classification field is not named Type):
+  #   custom_fields:
+  #     type_field: Custom Type
   #
   # custom_fields:
   #   project: ""
