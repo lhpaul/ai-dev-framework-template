@@ -170,7 +170,8 @@ items are clearly listed for human follow-up.
   delivered sub-item in a terminal issue state and terminal project status.
 - BR2: Terminal project status means the configured delivery-complete display label
   for the tracker, such as `Done` or `Released`.
-- BR3: Already-terminal planned sub-items are valid closeout results and must not be
+- BR3: Already-terminal planned sub-items are valid closeout results only when
+  both issue state and project status are already terminal; they must not be
   moved backward.
 - BR4: The parent epic must be closed only after the core planned deliverable
   graduates and delivered planned sub-items are reconciled, unless the operator
@@ -193,7 +194,7 @@ items are clearly listed for human follow-up.
 | Code value | Display label | Description |
 | ---------- | ------------- | ----------- |
 | `delivered_terminal` | Done or Released | The tracker's configured terminal delivery status for a planned item whose work graduated to `develop`. |
-| `already_terminal` | Already terminal | The issue or project item was already closed or in a terminal delivery status before the sweep. |
+| `already_terminal` | Already terminal | The issue was already closed and the project item was already in terminal delivery status before the sweep. |
 | `skipped_optional` | Skipped - optional/deferred | The item was intentionally left open because it is optional, deferred, cancelled, or explicitly excluded from the graduation. |
 | `failed` | Failed | The workflow could not close the issue or update its project status and human repair is required. |
 
@@ -233,9 +234,12 @@ items are clearly listed for human follow-up.
 - [ ] AC2: If a planned delivered sub-item is still open after graduation
       closeout starts, the workflow closes it and moves its project status to
       the configured terminal delivery status.
-- [ ] AC3: If a planned delivered sub-item is already closed or already in a
+- [ ] AC3: If a planned delivered sub-item is already closed and already in a
       terminal delivery status, the workflow reports it as already terminal and
       does not move it backward.
+- [ ] AC3a: If a planned delivered sub-item is closed but its project status is
+      not terminal, the workflow updates the project status before reporting the
+      item as reconciled.
 - [ ] AC4: The parent epic is closed after the core deliverable graduates and
       delivered planned sub-items are reconciled, unless the operator explicitly
       defers epic closure.
@@ -248,8 +252,9 @@ items are clearly listed for human follow-up.
       workflow still reports successful updates for other items and lists the
       failed item for retry or manual repair.
 - [ ] AC8: Rerunning graduation closeout after a partial failure reconciles only
-      the still-open or non-terminal planned delivered items and treats
-      previously reconciled items as already terminal.
+      the still-open, closed-but-non-terminal, or otherwise non-terminal planned
+      delivered items and treats previously fully reconciled items as already
+      terminal.
 - [ ] AC9: A portfolio scan after successful closeout does not return delivered
       planned sub-items as open actionable work.
 - [ ] AC10: The accepted implementation documents whether it satisfies closeout
@@ -262,7 +267,7 @@ items are clearly listed for human follow-up.
 | --- | --- |
 | 1. Prevent sub-items from remaining open after graduation | BR1, BR10, AC1, AC2, AC9 |
 | 2. Add post-graduation closeout for issues referenced by integration-branch PRs | Use Case 1, BR1, BR6, AC1, AC10 |
-| 3. Close still-open sub-items and set terminal status | BR1, BR2, AC2, AC3, AC8 |
+| 3. Close still-open sub-items and set terminal status | BR1, BR2, AC2, AC3, AC3a, AC8 |
 | 4. Close the parent epic | BR4, AC4 |
 | 5. Remove phantom open work from planning queries | Use Case 2, AC9 |
 | 6. Preserve human disposition for optional or deferred items | BR5, BR7, AC5 |
