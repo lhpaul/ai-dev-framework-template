@@ -65,6 +65,9 @@ run_test "plan_lane_proposed" "proposed" "$(printf '%s\n' "$mixed_output" | awk 
 run_test "first_impl_proposed" "proposed" "$(printf '%s\n' "$mixed_output" | awk '/SLUG=item-impl-a/{f=1} f&&/^DISPATCH=/{sub(/^DISPATCH=/,""); print; exit}')"
 run_test "second_impl_held" "held" "$(printf '%s\n' "$mixed_output" | awk '/SLUG=item-impl-b/{f=1} f&&/^DISPATCH=/{sub(/^DISPATCH=/,""); print; exit}')"
 
+scan_no_paths_output="$("$LANES" --repo-root "$fixture_repo" --scan 2>&1)"
+run_test "scan_mode_no_paths_returns_none" "yes" "$(printf '%s\n' "$scan_no_paths_output" | grep -q '^(none)$' && echo yes || echo no)"
+
 high_parallel_repo="$TMP_ROOT/high-parallel"
 mkdir -p "$high_parallel_repo/docs/specs/developments"
 cat > "$high_parallel_repo/.ai-dev-workflow.yaml" <<'YAML'
