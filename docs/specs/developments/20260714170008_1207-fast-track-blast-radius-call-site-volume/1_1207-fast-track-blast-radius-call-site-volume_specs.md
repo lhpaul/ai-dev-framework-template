@@ -37,18 +37,20 @@ The implementation plan will decide the exact search mechanism, thresholds, and 
 2. Agent applies the existing Fast Track eligibility checks, including the cross-layer scope check.
 3. Agent identifies the primary entity that would be renamed or modified, when the brief makes one identifiable.
 4. Agent checks whether the entity appears widely enough in non-test source files to indicate high call-site volume.
-5. Agent records the routing decision: either Fast Track remains eligible, or the item is promoted to Full Pipeline because high call-site volume was detected.
+5. Agent performs the external-system configuration check for every Fast Track routing decision and records whether no signal was found, a signal was found, or clarification is required.
+6. Agent records the routing decision: either Fast Track remains eligible, or the item is promoted to Full Pipeline because high call-site volume or external-system impact was detected.
 
 **Postconditions**:
 
-- Fast Track is used only when both layer spread and call-site volume look bounded.
-- High-volume changes are routed to spec and plan work before implementation.
+- Fast Track is used only when layer spread, call-site volume, and external-system impact all look bounded.
+- High-volume or externally impactful changes are routed to spec and plan work before implementation.
 
 **Information shown**:
 
 - The routing summary names the blast-radius check outcome.
 - When high call-site volume is detected, the summary includes the number of affected source files or occurrences available to the agent.
 - When the primary entity cannot be identified from the brief, the summary says so and explains whether that uncertainty blocks Fast Track.
+- The routing summary includes the external-system check result even when no external-system signal is found.
 
 **Actions available**:
 
@@ -100,25 +102,26 @@ The implementation plan will decide the exact search mechanism, thresholds, and 
 - High volume does not need to prove every reference requires a code change. It is a planning-risk signal.
 - The plan stage should decide how to reduce false positives without making the pre-dispatch gate expensive or brittle.
 
-### Use Case 3: Agent checks for live external system configuration impact
+### Use Case 3: Agent records live external system configuration impact for every Fast Track decision
 
 **Actor**: Work Item Runner deciding whether Fast Track is safe for a change whose impact may extend outside the repository.
 
 **Preconditions**:
 
-- A tracker item or human brief describes a change that may affect live automation, third-party API schemas, integration contracts, workflow configuration, or sibling repositories.
+- A tracker item or human brief is being evaluated for Fast Track, regardless of whether it already suggests external-system impact.
 - Repository search may not reveal all affected external configuration.
 
 **Steps**:
 
 1. Agent reads the brief and recent comments for external-system indicators.
-2. Agent explicitly asks, in the routing decision, whether the change affects live external system configuration or contracts.
+2. Agent explicitly checks, in the routing decision, whether the change affects live external system configuration or contracts.
 3. If the answer is yes or strongly indicated by the brief, agent does not proceed as a simple Fast Track item without a plan-stage audit.
-4. If the answer is unknown but plausible and material, agent asks the human for clarification or records a follow-up requirement before implementation begins.
+4. If no external-system signal is found, agent records that outcome before continuing the remaining Fast Track checks.
+5. If the answer is unknown but plausible and material, agent asks the human for clarification or records a follow-up requirement before implementation begins.
 
 **Postconditions**:
 
-- External configuration scope is considered before Fast Track dispatch.
+- External configuration scope is considered and recorded before every Fast Track dispatch.
 - Known external-system impact routes to Full Pipeline or to a clearly tracked pre-flight follow-up, rather than being discovered mid-implementation.
 
 **Information shown**:
