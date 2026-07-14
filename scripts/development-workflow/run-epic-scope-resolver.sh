@@ -356,9 +356,55 @@ fetch_prs_for_base() {
 # (develop-<slug>) that are not represented by integration-branch:* labels in scope.
 discover_prs_via_head_search() {
   local issue="$1"
-  local prefix query numbers number pr_json open merged
+  local prefix query numbers number pr_json open merged search_json primary_result primary_count
   open='[]'
   merged='[]'
+
+  if search_json="$(gh pr list --state all --search "${issue} in:head" \
+      --json number,title,state,headRefName,baseRefName,isDraft,labels,mergedAt \
+      --limit 100 2>/dev/null)"; then
+    if ! primary_result="$(jq --arg issue "$issue" '
+      {
+        open: [
+          .[]
+          | select(.state == "OPEN")
+          | select(.headRefName | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
+          | {
+              number,
+              title,
+              state: "OPEN",
+              headRefName,
+              baseRefName,
+              isDraft,
+              labels: [.labels[].name]
+            }
+        ],
+        merged: [
+          .[]
+          | select(.mergedAt != null)
+          | select(.headRefName | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
+          | {
+              number,
+              title,
+              state: "MERGED",
+              headRefName,
+              baseRefName,
+              isDraft: false,
+              labels: [],
+              mergedAt
+          }
+        ]
+      }
+    ' <<< "$search_json")"; then
+      primary_result=""
+    elif ! primary_count="$(printf '%s\n' "$primary_result" | jq '(.open | length) + (.merged | length)')"; then
+      primary_count=0
+    elif [ "$primary_count" -gt 0 ]; then
+      printf '%s\n' "$primary_result"
+      return 0
+    fi
+  fi
+
   for prefix in spec implementation-plan feature fix refactor hotfix; do
     query="repo:${repo} is:pr head:${prefix}/${issue}"
     numbers=""
@@ -464,6 +510,15 @@ linked_pr_json() {
     candidate_base="develop-${integration_label#integration-branch:}"
   fi
   bases="$(printf '%s\n%s\n' "$scope_pr_bases" "$candidate_base" | sed '/^$/d' | sort -u)"
+
+  # The default unlabeled develop scope is common for `/run-items` Backlog
+  # starts. Avoid paginating every historical PR targeting develop when the
+  # branch naming convention gives us a precise, issue-scoped lookup.
+  if [ -z "$integration_label" ] && [ "$bases" = "develop" ]; then
+    discover_prs_via_head_search "$issue" \
+      | jq '{open: (.open | unique_by(.number)), merged: (.merged | unique_by(.number))}'
+    return 0
+  fi
 
   open_prs="[]"
   merged_prs="[]"

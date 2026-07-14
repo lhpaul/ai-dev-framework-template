@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Bounded prelude PR lookup**: avoid paginating every historical PR targeting
+  `develop` for unlabeled `/run-items` Backlog starts by using targeted
+  issue-head PR search before falling back to legacy lookup paths.
 - **Zeki overlay workflow helper fixes** (#1191, #1192, #1193, #1194): honor
   configured GitHub Projects classification fields, default backlog priority to
   Normal, fail closed when GitHub trackers lack merge-status automation, and
