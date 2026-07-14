@@ -162,7 +162,7 @@ The implementation plan will decide the exact search mechanism, thresholds, and 
 - [ ] AC-6: The guidance defines the expected routing outcome when the primary entity is ambiguous: explain why the check is not applicable or ask for clarification when ambiguity blocks a defensible Fast Track decision.
 - [ ] AC-7: The development workflow overview or Fast Track criteria document call-site volume as a blast-radius check distinct from layer presence.
 - [ ] AC-8: The Fast Track routing guidance includes an explicit external-system configuration prompt covering live automation, third-party API schemas, integration contracts, sibling repositories, or similar external config that repository search may miss.
-- [ ] AC-9: The guidance states that known or likely external-system impact disqualifies simple Fast Track routing unless a human explicitly approves a separate pre-flight follow-up.
+- [ ] AC-9: The guidance states that known or likely external-system impact blocks immediate Fast Track implementation and requires either Full Pipeline routing or a tracked pre-flight follow-up before any later Fast Track dispatch.
 - [ ] AC-10: The implementation plan identifies where thresholds and search mechanics will be configured or documented, without the spec prescribing the exact technical implementation.
 
 ---
