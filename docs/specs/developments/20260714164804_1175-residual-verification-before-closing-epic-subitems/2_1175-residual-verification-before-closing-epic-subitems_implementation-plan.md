@@ -55,6 +55,7 @@
 
 - [ ] Update `REVIEW.md` so reviewers flag applicable workflow PRs that can reach `ready-for-human-review` without residual gate evidence or with residuals silently deferred in prose. Maps to BR-3, BR-4, BR-8, and AC-3.
 - [ ] Update `.claude/agents/developer.md` and `.cursor/agents/developer.md` to instruct implementation agents to produce residual evidence for sweep, batch, and helper-extraction items.
+- [ ] Update `.claude/agents/tech-lead.md`, `.cursor/agents/tech-lead.md`, and `.codex/skills/workflow-plan-writer/SKILL.md` so plan-writing guidance mirrors the new Protocol 02 residual-evidence planning note.
 - [ ] Update `.claude/agents/item-orchestrator.md` and `.cursor/agents/item-orchestrator.md` to require the residual gate before readiness handoff.
 - [ ] Update `.claude/agents/orchestrator.md` and `.cursor/agents/orchestrator.md` so batch supervision recognizes residual-gate block/escalation outcomes.
 - [ ] Update `.codex/skills/workflow-implementer/SKILL.md`, `.codex/skills/workflow-item-orchestrator/SKILL.md`, and `.codex/skills/workflow-orchestrator/SKILL.md` for Codex parity.
@@ -103,11 +104,14 @@ This plan introduces a cross-cutting completion-quality gate that can apply to m
 - `REVIEW.md` - reviewer expectations.
 - `.claude/agents/developer.md` - Claude implementation guidance.
 - `.cursor/agents/developer.md` - Cursor implementation guidance.
+- `.claude/agents/tech-lead.md` - Claude plan-writing guidance for residual evidence strategy.
+- `.cursor/agents/tech-lead.md` - Cursor plan-writing guidance for residual evidence strategy.
 - `.claude/agents/item-orchestrator.md` - Claude item-runner guidance.
 - `.cursor/agents/item-orchestrator.md` - Cursor item-runner guidance.
 - `.claude/agents/orchestrator.md` - Claude batch-runner guidance.
 - `.cursor/agents/orchestrator.md` - Cursor batch-runner guidance.
 - `.codex/skills/workflow-implementer/SKILL.md` - Codex implementation guidance.
+- `.codex/skills/workflow-plan-writer/SKILL.md` - Codex plan-writing guidance for residual evidence strategy.
 - `.codex/skills/workflow-item-orchestrator/SKILL.md` - Codex item-runner guidance.
 - `.codex/skills/workflow-orchestrator/SKILL.md` - Codex batch-runner guidance.
 - `.agents/skills/run-item/SKILL.md` - command-style item runner guidance.
@@ -121,8 +125,6 @@ This plan introduces a cross-cutting completion-quality gate that can apply to m
 
 - `.codex/skills/batch-merge/SKILL.md` - batch merge should continue to require `ready-for-human-review`; residual gate enforcement belongs before that label is applied.
 - `.codex/skills/post-merge-cleanup/SKILL.md` - cleanup runs after merge and should not own readiness validation.
-- `.codex/skills/workflow-plan-writer/SKILL.md` - existing parser and cross-cutting planning rules are sufficient for this plan.
-- `.claude/agents/tech-lead.md` and `.cursor/agents/tech-lead.md` - existing plan-writer guidance already points to Protocol 02; update only if Protocol 02 adds a new checklist that must be mirrored explicitly.
 
 ---
 
