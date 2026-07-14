@@ -32,7 +32,7 @@ dispatch-time shared-tree contamination separate from nested-agent PR creation.
 | Repo revision | `git rev-parse --short HEAD` | `d26edf4` |
 | Template-fit check | Read `.ai-dev-workflow.yaml` and spec overview | `template.is_template: true`; spec is workflow-template generic and passes Step 0. |
 | Existing dispatch surfaces | `grep -rl "90-batch-orchestrate-work-protocol\\|91-orchestrate-work-protocol\\|workflow-item-orchestrator\\|run-items" .claude/agents/ .cursor/agents/ .codex/skills/ .agents/skills/ 2>/dev/null \| sort` | Identified run-items, orchestrator, and item-orchestrator surfaces listed in this plan. |
-| Isolation terminology search | `rg -n "isolation|worktree|BATCH_CONTEXT|run-items" docs/workflow/development-workflow .agents/skills .codex/skills .claude .cursor REVIEW.md AGENTS.md` | Existing BATCH_CONTEXT and worktree discipline exists in Protocol 90/91, item-orchestrator prompts, and developer prompts; missing explicit `isolation: "worktree"` dispatch manifest. |
+| Isolation terminology search | `rg -n "isolation|worktree|BATCH_CONTEXT|run-items" docs/workflow/development-workflow .agents/skills .codex/skills .claude .cursor REVIEW.md AGENTS.md` | Existing BATCH_CONTEXT and worktree discipline exists in Protocol 90/91, item-orchestrator prompts, developer prompts, and implementer skill guidance; missing explicit `isolation: "worktree"` dispatch manifest. |
 
 ---
 
@@ -50,6 +50,8 @@ dispatch-time shared-tree contamination separate from nested-agent PR creation.
   - Add the per-runner pre-mutation self-check for `BATCH_CONTEXT=true`.
   - Require expected worktree path, observed path, expected branch, and observed branch in the runner summary.
   - State that wrong CWD or wrong branch stops before mutation; possible out-of-worktree mutation escalates to human inspection.
+- [ ] `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md`
+  - Mirror the developer-stage handoff implication: when a developer/implementer runs inside `BATCH_CONTEXT=true`, it must receive and verify the assigned worktree path before any file edit or git state-changing command.
 
 ### Command And Skill Surfaces
 
@@ -64,6 +66,8 @@ dispatch-time shared-tree contamination separate from nested-agent PR creation.
   - Require the `BATCH_CONTEXT=true` pre-mutation worktree/branch self-check and summary evidence.
 - [ ] `.codex/skills/workflow-item-orchestrator/agents/openai.yaml`
   - Mirror the item-runner default-prompt requirement.
+- [ ] `.codex/skills/workflow-implementer/SKILL.md`
+  - Ensure implementer-stage guidance matches the required item-runner handoff fields and pre-mutation path check.
 - [ ] `.claude/commands/run-items.md`
   - Add user-facing command guidance for concurrent mutating batches.
 - [ ] `.cursor/commands/run-items.md`
@@ -76,6 +80,10 @@ dispatch-time shared-tree contamination separate from nested-agent PR creation.
   - Require pre-mutation self-check evidence when `BATCH_CONTEXT=true`.
 - [ ] `.cursor/agents/item-orchestrator.md`
   - Mirror the item-orchestrator self-check requirement.
+- [ ] `.claude/agents/developer.md`
+  - Confirm developer-stage branch-skip and path-discipline guidance names the assigned worktree path as a required handoff value.
+- [ ] `.cursor/agents/developer.md`
+  - Mirror the developer-stage branch-skip and path-discipline guidance.
 
 ### Review And Documentation
 
@@ -164,9 +172,9 @@ batch handoff summaries.
 - [ ] `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` - add per-runner pre-mutation worktree and branch self-check evidence.
 - [ ] `REVIEW.md` - add reviewer check for concurrent mutating dispatch isolation evidence.
 - [ ] `.agents/skills/run-items/SKILL.md` and `.agents/skills/run-items/agents/openai.yaml` - mirror the run-items command contract.
-- [ ] `.codex/skills/workflow-orchestrator/SKILL.md`, `.codex/skills/workflow-item-orchestrator/SKILL.md`, and `.codex/skills/workflow-item-orchestrator/agents/openai.yaml` - mirror Codex orchestration and runner behavior.
+- [ ] `.codex/skills/workflow-orchestrator/SKILL.md`, `.codex/skills/workflow-item-orchestrator/SKILL.md`, `.codex/skills/workflow-item-orchestrator/agents/openai.yaml`, and `.codex/skills/workflow-implementer/SKILL.md` - mirror Codex orchestration, runner, and implementer-stage behavior.
 - [ ] `.claude/commands/run-items.md` and `.cursor/commands/run-items.md` - mirror user-facing command behavior.
-- [ ] `.claude/agents/orchestrator.md`, `.cursor/agents/orchestrator.md`, `.claude/agents/item-orchestrator.md`, and `.cursor/agents/item-orchestrator.md` - mirror agent dispatch and runner self-check behavior.
+- [ ] `.claude/agents/orchestrator.md`, `.cursor/agents/orchestrator.md`, `.claude/agents/item-orchestrator.md`, `.cursor/agents/item-orchestrator.md`, `.claude/agents/developer.md`, and `.cursor/agents/developer.md` - mirror agent dispatch, runner self-check, and developer-stage path discipline.
 - [ ] `AGENTS.md` - update only if the concise top-level run-items command description needs a note after protocol changes.
 
 ---
@@ -206,16 +214,18 @@ examples and kept consistent across mirrored surfaces.
    `.claude/commands/run-items.md`, and `.cursor/commands/run-items.md`.
 5. Update orchestrator and item-orchestrator mirrors for Claude, Cursor, and
    Codex using the file list in this plan.
-6. Update `REVIEW.md` with a blocking review check for concurrent mutating batch
+6. Update developer-stage protocol and implementer surfaces so stage-agent
+   handoffs cannot omit the assigned worktree path.
+7. Update `REVIEW.md` with a blocking review check for concurrent mutating batch
    isolation evidence and the #1200 distinction.
-7. Run the live mirror search from the Verification Log and confirm all expected
+8. Run the live mirror search from the Verification Log and confirm all expected
    surfaces include the isolation contract or an explicit rationale for no
    change.
-8. Run markdown lint and the workflow heuristic linter:
+9. Run markdown lint and the workflow heuristic linter:
    `npx markdownlint-cli2 "docs/workflow/development-workflow/**/*.md" ".agents/skills/**/*.md" ".codex/skills/**/*.md" ".claude/**/*.md" ".cursor/**/*.md" "REVIEW.md" "AGENTS.md"`
    and
    `find docs/specs/developments docs/testing/workflow -name "*.md" -print0 | xargs -0 python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md`.
-9. Execute the smoke test runbook and record results in the implementation PR.
-10. Do not update `CHANGELOG.md` during the plan stage. During implementation,
+10. Execute the smoke test runbook and record results in the implementation PR.
+11. Do not update `CHANGELOG.md` during the plan stage. During implementation,
     add an `[Unreleased]` entry using the project format:
     `- **Require Worktree Isolation for Concurrent Runners** (#1205): Require concurrent mutating batch dispatches to use distinct isolated worktrees and pre-mutation runner self-checks.`
