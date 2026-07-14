@@ -30,8 +30,8 @@ Derived from issue #1202:
    passing, pending, or failed.
 6. Require direct evidence for external-runtime or environment verification
    claims when an agent reports them.
-7. Include the assertion evidence in the completion report in a human-auditable
-   form.
+7. Include raw or verbatim assertion evidence in the completion report in a
+   human-auditable form.
 8. Flag any disagreement between the agent's expected state and observed state
    to the parent orchestrator or human instead of reporting success.
 9. Reduce human re-verification burden in bounded multi-item runs without
@@ -52,7 +52,8 @@ such as ready for human review, blocked, escalated, or waiting on merge.
 2. Before reporting, the runner performs a completion self-check against the
    current repository, worktree, PR, review, CI, and tracker surfaces that are
    relevant to the reported terminal state.
-3. The runner records the observed values in the final report.
+3. The runner records the observed values and raw evidence excerpts in the final
+   report.
 4. The runner compares observed values with the state it intends to claim.
 5. The runner reports the item as ready only when the observed values support
    the claimed terminal state.
@@ -72,6 +73,8 @@ verification command from scratch.
   apply.
 - Tracker transition attempted and live tracker status when tracker access is
   available.
+- Raw or verbatim evidence for each asserted value, or a clearly labeled
+  normalized provider value when a raw command transcript is not practical.
 
 **Actions available**:
 
@@ -212,8 +215,9 @@ evidence, or they are clearly marked as unverified.
   from memory, prior status text, expected command effects, or stale helper
   output.
 - **BR-3**: Every final report claim about branch, HEAD, worktree, PR, labels,
-  CI, review, tracker, or external runtime state must be either verified, not
-  applicable, or unavailable with a reason.
+  CI, review, tracker, or external runtime state must be either verified with
+  raw or verbatim observed evidence, not applicable, or unavailable with a
+  reason.
 - **BR-4**: PR-related completion reports must verify the PR base branch,
   draft/readiness state, label list, current CI/check state, and changed-file
   scope from the live PR surface.
@@ -237,8 +241,9 @@ evidence, or they are clearly marked as unverified.
 ## Operational Visibility
 
 - **Completion report evidence**: Final item reports should include a dedicated
-  ground-truth verification section with observed values and a pass, discrepancy,
-  not-applicable, or unavailable result per checked surface.
+  ground-truth verification section with raw or verbatim observed evidence,
+  observed values, and a pass, discrepancy, not-applicable, or unavailable result
+  per checked surface.
 - **Discrepancy visibility**: Any discrepancy should be prominent in the final
   report and should identify the next required human or orchestrator action.
 - **Batch visibility**: In bounded multi-item runs, the parent summary should be
@@ -253,9 +258,10 @@ evidence, or they are clearly marked as unverified.
 - [ ] **AC1**: The workflow requires a completion self-check before any Work
       Item Runner report claims an item is ready, done, blocked, escalated, or
       waiting on a human.
-- [ ] **AC2**: A completion report for an item with a PR includes current branch,
-      HEAD SHA, worktree/workspace location, PR number, PR base branch,
-      draft/readiness state, labels, changed-file summary, and CI/check status.
+- [ ] **AC2**: A completion report for an item with a PR includes raw or
+      verbatim evidence for current branch, HEAD SHA, worktree/workspace
+      location, PR number, PR base branch, draft/readiness state, labels,
+      changed-file summary, and CI/check status.
 - [ ] **AC3**: A completion report for an item without a PR still includes
       current branch, HEAD SHA, worktree/workspace location, tracker status when
       available, and an explanation for why PR fields are not applicable.
@@ -267,8 +273,8 @@ evidence, or they are clearly marked as unverified.
       review state, dirty workspace, or unavailable required surface, the report
       flags a discrepancy and does not claim successful completion.
 - [ ] **AC6**: Completion reports mark each checked surface as verified, not
-      applicable, or unavailable with a short rationale when unavailable or not
-      applicable.
+      applicable, or unavailable, and include raw/verbatim evidence for verified
+      surfaces plus a short rationale when unavailable or not applicable.
 - [ ] **AC7**: Parallel batch item reports include worktree evidence sufficient
       for the parent orchestrator to confirm the assigned worktree and branch
       were used.
@@ -292,7 +298,7 @@ evidence, or they are clearly marked as unverified.
 | 4. Verify PR base, labels, readiness, and changed files from live PR state | AC2, AC4, AC5, BR-4 |
 | 5. Verify CI status from the current PR/check provider | AC2, AC4, AC5 |
 | 6. Require direct evidence for external-runtime or environment claims | AC8 |
-| 7. Include assertion evidence in a human-auditable form | AC2, AC3, AC6 |
+| 7. Include raw or verbatim assertion evidence in a human-auditable form | AC2, AC3, AC6, BR-3 |
 | 8. Flag disagreement to the parent orchestrator or human instead of reporting success | AC5, AC9, BR-7 |
 | 9. Reduce human re-verification burden without changing merge authority or replacing gates | AC10, Use Case 3, BR-9 |
 
