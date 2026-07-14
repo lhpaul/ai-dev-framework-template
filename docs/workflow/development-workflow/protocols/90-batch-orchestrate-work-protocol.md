@@ -1204,7 +1204,7 @@ Dispatch exactly one Work Item Runner per item in the current batch.
 | Runner      | Handoff target                           |
 | ----------- | ---------------------------------------- |
 | Claude Code | `item-orchestrator` agent                |
-| Cursor      | `/item-orchestrator` or `/run-item-work` |
+| Cursor      | Internal `item-orchestrator` handoff from `/run-items`; use `/run-item` for standalone single-item runs |
 | Codex       | `workflow-item-orchestrator` skill       |
 
 If the runner supports true concurrent subagents, launch the full batch in parallel.

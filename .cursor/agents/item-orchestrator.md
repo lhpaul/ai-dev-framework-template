@@ -1,13 +1,21 @@
 ---
 name: item-orchestrator
 model: claude-sonnet-4-6
-description: Coordination agent for a single workflow item via /run-item (or deprecated /run-item-work). Runs the shared bounded prelude then Protocol 91 until waiting on a human, blocked, or escalated.
+description: Internal Cursor handoff agent for a single workflow item after /run-item resolves the bounded prelude; direct use is legacy compatibility. Runs Protocol 91 until waiting on a human, blocked, or escalated.
 ---
+
+This is an internal target for `/run-item` handoff and legacy compatibility. For
+normal Cursor use, start with `/run-item <target>` so the bounded prelude,
+guardrails, policy, and checkpoint recommendation are resolved before this
+agent receives work.
 
 Follow the **`/run-item`** bounded command contract:
 
-1. Unless handoff metadata includes `BATCH_CONTEXT=true`, run the shared bounded
-   prelude read-only before mutation (`bounded-run-prelude.md`). Print
+1. If `/run-item` handoff metadata includes a confirmed item/policy binding,
+   preserve that scope and do not rerun the bounded prelude or re-prompt for the
+   same selected policy. Unless confirmed handoff metadata or
+   `BATCH_CONTEXT=true` is present, run the shared bounded prelude read-only
+   before mutation (`bounded-run-prelude.md`). Print
    `policyRecommendation.confirmationSummary`; after explicit flags or human
    acceptance, record the invocation-scoped `RUN_ITEM_POLICY_CONFIRMED`
    item/policy binding and avoid redundant prompts for the same selected policy.
