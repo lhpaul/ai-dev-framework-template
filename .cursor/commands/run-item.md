@@ -8,6 +8,16 @@ description: "Primary bounded command: advance exactly one non-epic workflow ite
 bounded prelude before any mutation, then advances exactly one non-epic item
 through Protocol 91 until a real terminal condition.
 
+In Cursor, `/run-item <target>` is the normal user-facing entrypoint. After the
+bounded prelude has been printed and explicit flags or human acceptance confirm
+the selected scope and policy, Cursor may hand off internally to the configured
+`item-orchestrator` subagent and then to stage-specific subagents. That internal
+handoff preserves the confirmed item, base branch, guardrails, selected policy,
+and checkpoint state; the receiving context must not rerun the bounded prelude
+or re-prompt for the same confirmed policy. If Cursor cannot perform that
+handoff in the current environment, continue from `/run-item` in the current
+context and preserve all Protocol 91 stops.
+
 For portfolio-wide or ambiguous targets, use `/run-work` (portfolio scan) or
 `/run-epic` (bounded epic). `/run-item-work` is a deprecated compatibility alias
 with identical behavior.

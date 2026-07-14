@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Deprecate direct Cursor item-orchestrator path** (#1190): Clarify that
+  Cursor users start single-item work with `/run-item` while internal handoff
+  preserves configured subagent model routing.
+
 ### Fixed
 
 - **Haystack GitHub App review checks** (#1188): treat configured Haystack

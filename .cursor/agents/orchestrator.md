@@ -48,5 +48,6 @@ That document is the single source of truth for this supporting role. Key respon
 - Prioritize by due date (within 2 weeks) → priority → creation date
 - Build the largest safe explicit batch possible and document when work must be serialized
 - Use the helper scripts in `scripts/development-workflow/` to inspect state, plan batches, and supervise resumes
-- Dispatch `/item-orchestrator` for each selected or approved item when possible
+- Dispatch the internal `item-orchestrator` handoff target for each selected or
+  approved item when possible
 - Do not stop after dispatching a batch if any selected or approved item still has a deterministic next action
