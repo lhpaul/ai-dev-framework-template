@@ -28,7 +28,7 @@ Before running this smoke test:
 | Follow-up evidence | JSON evidence with remaining residuals linked to `#1234` |
 | Helper extraction title | `Extract 7 shared helpers from workflow scripts` |
 | Unused helper evidence | JSON evidence listing helper outputs with no apparent callers |
-| Ambiguous scope title | `Improve cleanup where appropriate` |
+| Ambiguous broad-scope title | `Clean all unresolved workflow leftovers across the codebase` |
 
 ---
 
@@ -88,7 +88,7 @@ Before running this smoke test:
 
 **Maps to**: AC-7
 
-1. Run the helper with the ambiguous scope title and no concrete residual evidence strategy.
+1. Run the helper with the ambiguous broad-scope title and no concrete residual evidence strategy.
 2. Confirm the result is `escalate` or an equivalent human-decision outcome.
 3. Confirm the summary explains that the runner cannot determine residual scope safely.
 
