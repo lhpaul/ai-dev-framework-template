@@ -114,9 +114,9 @@ Epic sub-items that describe sweep or batch work need an explicit completion che
 
 ## Business Rules
 
-- **BR-1**: The scope-residual gate must run before a sweep or batch sub-item is marked ready for human review or otherwise reported as complete.
-- **BR-2**: A sweep or batch sub-item is in scope for this gate when the issue title or brief states broad completion language, such as "all", "across", a numeric target count, a codebase-wide cleanup, a batch extraction, or multiple named targets.
-- **BR-3**: Passing CI, automated review, or an internal review gate is not sufficient evidence that sweep scope is complete.
+- **BR-1**: The scope-residual gate must run before a sweep, batch, or helper-extraction sub-item is marked ready for human review or otherwise reported as complete.
+- **BR-2**: A sub-item is in scope for this gate when the issue title or brief states broad completion language, such as "all", "across", a numeric target count, a codebase-wide cleanup, a batch extraction, helper extraction, or multiple named targets.
+- **BR-3**: Passing CI, automated review, or an internal review gate is not sufficient evidence that the stated completion scope is complete.
 - **BR-4**: The residual verification evidence must be visible to a human reviewer in the PR, workflow comment, or terminal summary.
 - **BR-5**: If residuals remain, each residual group must have one of these dispositions before readiness: completed now, explicitly outside scope, or tracked in a linked follow-up issue.
 - **BR-6**: If any in-scope residual has no disposition, the runner must block readiness and report the item as needing fixes or human decision.
@@ -140,7 +140,7 @@ Epic sub-items that describe sweep or batch work need an explicit completion che
 - **AC-5**: Given a helper-extraction item that creates helper outputs with no apparent callers, when the residual gate runs, then the runner flags the unused helper outputs before readiness and requires completion, follow-up tracking, or explicit out-of-scope rationale.
 - **AC-6**: Given an item whose stated scope includes a target count, when the residual summary is produced, then it reports the checked target and remaining count or grouping in human-readable form.
 - **AC-7**: Given an item whose sweep scope is ambiguous, when the runner reaches the residual gate, then the runner escalates for a human decision instead of marking the item complete.
-- **AC-8**: Given an epic or batch summary containing sweep or batch sub-items, when the summary is produced, then each applicable sub-item shows whether residual verification passed, blocked readiness, or continued with a linked follow-up disposition.
+- **AC-8**: Given an epic or batch summary containing sweep, batch, or helper-extraction sub-items, when the summary is produced, then each applicable sub-item shows whether residual verification passed, blocked readiness, or continued with a linked follow-up disposition.
 
 ## Coverage Matrix
 
@@ -160,4 +160,3 @@ Epic sub-items that describe sweep or batch work need an explicit completion che
 - Defining the exact implementation mechanism for search, static analysis, or caller detection; the implementation plan will choose the appropriate tooling and integration points.
 - Changing human review, merge authority, or guardrail policy beyond blocking readiness when residual evidence is missing or incomplete.
 - Automatically creating follow-up issues without the workflow already having authority to create backlog items.
-
