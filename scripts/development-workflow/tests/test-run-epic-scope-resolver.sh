@@ -206,6 +206,24 @@ JSON
     ;;
   search\ prs\ repo:lhpaul/ai-dev-framework-template\ is:pr\ head:*\ --json\ number\ -q\ .[].number)
     ;;
+  pr\ list\ --state\ all\ --search\ *\ in:head\ --json\ number,title,state,headRefName,baseRefName,isDraft,labels,mergedAt\ --limit\ 100)
+    [ "${MOCK_PR_LIST_SEARCH:-0}" = "1" ] || exit 64
+    search_issue="$(printf '%s\n' "$*" | sed -n 's/.*--search \([0-9][0-9]*\) in:head .*/\1/p')"
+    case "$search_issue" in
+      114)
+        if [ "${MOCK_PR_LIST_SEARCH_EMPTY:-}" = "$search_issue" ]; then
+          printf '[]\n'
+          exit 0
+        fi
+        cat <<'JSON'
+[{"number":2114,"title":"Unlabeled primary PR","state":"OPEN","headRefName":"feature/114-unlabeled-primary","baseRefName":"develop-missing-label","isDraft":false,"labels":[{"name":"ready-for-human-review"}],"mergedAt":null}]
+JSON
+        ;;
+      *)
+        printf '[]\n'
+        ;;
+    esac
+    ;;
   pr\ view\ 2114\ --json\ number,title,state,headRefName,baseRefName,isDraft,labels,mergedAt)
     cat <<'JSON'
 {"number":2114,"title":"Unlabeled fallback PR","state":"OPEN","headRefName":"feature/114-unlabeled-fallback","baseRefName":"develop-missing-label","isDraft":false,"labels":[{"name":"ready-for-human-review"}],"mergedAt":null}
@@ -323,6 +341,23 @@ run_test "unready_open_pr_remains_eligible" "eligible" "$(printf '%s\n' "$unread
 head_search_output="$(run_json --items 114)"
 run_test "head_search_fallback_detects_unlabeled_open_pr" "in_review" "$(printf '%s\n' "$head_search_output" | jq -r '.items[0].group')"
 run_test "head_search_fallback_preserves_pr_number" "2114" "$(printf '%s\n' "$head_search_output" | jq -r '.items[0].pullRequests.open[0].number')"
+
+: > "$CALL_LOG"
+primary_pr_list_output="$(MOCK_PR_LIST_SEARCH=1 run_json --items 114)"
+run_test "primary_pr_list_detects_unlabeled_open_pr" "in_review" "$(printf '%s\n' "$primary_pr_list_output" | jq -r '.items[0].group')"
+run_test "primary_pr_list_uses_single_issue_search" "yes" "$(
+  grep -q 'pr list --state all --search 114 in:head' "$CALL_LOG" && echo yes || echo no
+)"
+run_test "primary_pr_list_avoids_prefix_search_loop" "no" "$(
+  awk 'index($0, "search prs repo:lhpaul/ai-dev-framework-template is:pr head:feature/114") { found=1 } END { print found ? "yes" : "no" }' "$CALL_LOG"
+)"
+
+: > "$CALL_LOG"
+primary_empty_fallback_output="$(MOCK_PR_LIST_SEARCH=1 MOCK_PR_LIST_SEARCH_EMPTY=114 run_json --items 114)"
+run_test "primary_empty_search_falls_back_to_prefix_loop" "in_review" "$(printf '%s\n' "$primary_empty_fallback_output" | jq -r '.items[0].group')"
+run_test "primary_empty_search_uses_prefix_fallback" "yes" "$(
+  awk 'index($0, "search prs repo:lhpaul/ai-dev-framework-template is:pr head:feature/114") { found=1 } END { print found ? "yes" : "no" }' "$CALL_LOG"
+)"
 
 head_search_boundary_output="$(run_json --items 11)"
 run_test "head_search_boundary_ignores_partial_issue_match" "eligible" "$(printf '%s\n' "$head_search_boundary_output" | jq -r '.items[0].group')"
