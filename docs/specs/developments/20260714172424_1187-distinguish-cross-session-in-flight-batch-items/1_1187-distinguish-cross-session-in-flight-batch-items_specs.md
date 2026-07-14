@@ -6,15 +6,17 @@
 
 `/run-work` scan output should help the operator distinguish portfolio context
 from the decision being requested in the current session. When a scan finds
-items already in progress, waiting for human merge, or otherwise being handled
-elsewhere, those items are useful context but should not look like the proposed
-start batch. The report should label informational items separately from
-Backlog items that need the operator's current approval.
+cross-session items already in progress, items waiting for human merge, or items
+otherwise being handled elsewhere, those items are useful context but should not
+look like the proposed start batch. The report should label informational items
+separately from Backlog items that need the operator's current approval and from
+resume work that can advance in the current run.
 
 This change keeps `/run-work` scan-and-propose behavior read-only while making
 the proposal easier to act on. Operators should be able to read the report once
-and know which items are merely being shown for awareness, which items they can
-approve now, and which command or approval action will start the proposed batch.
+and know which items are merely being shown for awareness, which resume items
+can advance now, which Backlog items they can approve now, and which command or
+approval action will start the proposed batch.
 
 ## Brief Objective List
 
@@ -23,8 +25,8 @@ Derived from issue #1187:
 1. Identify the confusion caused when `/run-work` reports cross-session
    in-flight items alongside a proposed Backlog start batch without explaining
    their different meanings.
-2. Label in-flight or review-waiting portfolio items as informational context,
-   not as items awaiting the current session's decision.
+2. Label cross-session in-flight or review-waiting portfolio items as
+   informational context, not as items awaiting the current session's decision.
 3. Label proposal-eligible Backlog items as the proposed batch that requires
    the operator's current decision.
 4. Preserve useful portfolio awareness by still showing cross-session in-flight
@@ -46,8 +48,8 @@ be proposed for the current session.
 **Steps**:
 
 1. The operator invokes `/run-work` with no target.
-2. The scan builds a portfolio map containing in-flight context and
-   proposal-eligible Backlog work.
+2. The scan builds a portfolio map containing in-flight context, any
+   current-session resume work, and proposal-eligible Backlog work.
 3. The report presents cross-session or waiting items under an informational
    marker.
 4. The report presents Backlog items under a proposed-batch marker.
@@ -60,6 +62,8 @@ elsewhere and which items are awaiting approval in the current session.
 
 - Informational in-flight items with item number, title, current workflow state,
   and why they are not actionable in this `/run-work` decision.
+- Current-session resume items, when present, with item number, title, current
+  workflow state, and next action.
 - Proposed Backlog batch items with item number, title, priority, type, next
   stage, and parallelization notes.
 - The exact action requested from the operator for the proposed batch.
@@ -75,26 +79,29 @@ elsewhere and which items are awaiting approval in the current session.
 
 - Items already waiting for human review or merge may still matter as portfolio
   context, but they must not appear to be part of the proposed start batch.
+- Resume work that can advance in the current session must not be mislabeled as
+  informational.
 - The report should not require the operator to infer intent from batch numbers
   alone.
 
-### Use Case 2: Operator sees only in-flight or waiting items
+### Use Case 2: Operator sees only cross-session or waiting items
 
 **Actor**: Workflow operator running `/run-work`.
-**Preconditions**: The portfolio has in-flight, review-waiting, or
-merge-waiting items, but no safe Backlog start batch can be proposed.
+**Preconditions**: The portfolio has cross-session in-flight, review-waiting, or
+merge-waiting items, but no current-session resume work and no safe Backlog
+start batch can be proposed.
 
 **Steps**:
 
 1. The operator invokes `/run-work` with no target.
-2. The scan reports the in-flight or waiting items as informational context.
+2. The scan reports the cross-session or waiting items as informational context.
 3. The report states that no current-session start decision is being requested.
 4. If a human action exists outside the current session, such as reviewing or
    merging an existing PR, the report names that action separately.
 
 **Postconditions**: The operator understands that `/run-work` did not propose a
-new batch and that any listed in-flight items are not queued for current-session
-dispatch.
+new batch and that any listed cross-session or waiting items are not queued for
+current-session dispatch.
 
 **Information shown**:
 
@@ -187,13 +194,16 @@ cross-session context and current-session decisions.
 
 - `/run-work` scan-only mode remains read-only: it may report a proposal but
   must not mutate tracker state, create branches, open PRs, or dispatch work.
-- A portfolio item that is already in progress, in review, waiting for human
-  merge, or being handled by another session is informational unless the current
-  command explicitly targets it for execution.
+- A portfolio item that is already being handled by another session, waiting for
+  human review or merge, or otherwise outside the current command's actionable
+  scope is informational.
+- A resume item whose next deterministic action can advance in the current
+  session must be labeled as actionable resume work, not informational context.
 - Proposal-eligible Backlog items are the only items that may be presented as
   awaiting the operator's current start decision in a `/run-work` scan.
-- The proposed-batch section must list the exact items included in the current
-  decision and must exclude informational items.
+- The proposed-batch section must list the exact Backlog items included in the
+  current start decision and must exclude informational and actionable-resume
+  items.
 - Informational items may still be shown when they explain portfolio capacity,
   dependency order, active parallel work, or human review/merge queues.
 - The report must not rely on batch numbering alone to communicate
@@ -208,6 +218,8 @@ cross-session context and current-session decisions.
 
 - Use a clear display marker for proposal-eligible items:
   `PROPOSED BATCH - your decision`.
+- Use a clear display marker for current-session resume items:
+  `ACTIONABLE RESUME - can advance now`.
 - Use a clear display marker for cross-session or waiting items:
   `INFORMATIONAL - not actionable in this proposal`.
 - When an informational item is waiting on a specific human action, the report
@@ -217,8 +229,8 @@ cross-session context and current-session decisions.
   so the operator can see what they are approving.
 - Informational sections must use wording that discourages accidental approval
   or dispatch, such as "shown for context" or "already handled elsewhere".
-- Held or blocked Backlog items must be labeled separately from both
-  informational items and proposed-batch items.
+- Held or blocked Backlog items must be labeled separately from informational,
+  actionable-resume, and proposed-batch items.
 
 ## Statuses / Enum Values
 
@@ -226,15 +238,20 @@ These are user-facing report categories, not tracker workflow statuses.
 
 | Code value | Display label | Description |
 | --- | --- | --- |
-| `informational` | Informational - not actionable in this proposal | A portfolio item shown for awareness because it is in flight, waiting for review or merge, owned by another active session, or otherwise outside the current `/run-work` start decision. |
+| `informational` | Informational - not actionable in this proposal | A portfolio item shown for awareness because it is waiting for review or merge, owned by another active session, or otherwise outside the current `/run-work` action or start decision. |
+| `actionable_resume` | Actionable resume - can advance now | An already-started item whose next deterministic action can advance in the current run without being confused with a Backlog start proposal. |
 | `proposed_batch` | Proposed batch - your decision | A Backlog item included in the current proposed start batch and awaiting operator approval or bounded execution. |
 | `held` | Held - not included in proposed batch | A candidate item that was evaluated but not included because of dependency, priority, capacity, conflict, or ordering constraints. |
 
 **Valid transitions**:
 
+- An `informational` item can become `actionable_resume` only when the current
+  run is allowed to advance it and it is no longer waiting on another session or
+  human action.
+- An `actionable_resume` item can become normal in-flight work after execution
+  begins through the appropriate bounded workflow.
 - An `informational` item can become `proposed_batch` only after it returns to a
-  proposal-eligible Backlog state or the operator explicitly targets it through
-  a bounded execution command.
+  proposal-eligible Backlog state.
 - A `proposed_batch` item becomes normal in-flight work only after the operator
   approves the proposal and execution begins through the appropriate bounded
   workflow.
@@ -245,8 +262,8 @@ These are user-facing report categories, not tracker workflow statuses.
 ## Operational Visibility
 
 - **Scan summary**: Shows separate sections for informational items,
-  proposed-batch items, and held or blocked items when those categories are
-  present.
+  actionable-resume items, proposed-batch items, and held or blocked items when
+  those categories are present.
 - **Decision summary**: States exactly what the operator is being asked to
   approve, including the recommended command or confirmation path.
 - **Review visibility**: Spec and implementation review should verify that
@@ -267,31 +284,35 @@ These are user-facing report categories, not tracker workflow statuses.
 - [ ] AC3: Proposal-eligible Backlog items use a display marker equivalent to
       `PROPOSED BATCH - your decision` and include the item number, title,
       priority, type, next stage, and parallelization notes.
-- [ ] AC4: The current decision text names only proposed-batch items as awaiting
-      approval or bounded execution.
-- [ ] AC5: Given a scan with only in-flight, review-waiting, or merge-waiting
-      items, the output says no Backlog start batch is currently proposed.
+- [ ] AC4: The current start-decision text names only proposed-batch items as
+      awaiting Backlog start approval.
+- [ ] AC5: Given a scan with only cross-session in-flight, review-waiting, or
+      merge-waiting items, the output says no Backlog start batch is currently
+      proposed.
 - [ ] AC6: Given held or blocked Backlog candidates, the output labels them
-      separately from both informational items and proposed-batch items and
-      states the hold reason.
+      separately from informational, actionable-resume, and proposed-batch items
+      and states the hold reason.
 - [ ] AC7: Approving or invoking the recommended command for the proposed batch
       cannot reasonably be read as approving informational items.
 - [ ] AC8: Protocol 90 scan-output guidance and `/run-work` command or skill
       guidance use consistent names and meanings for informational,
-      proposed-batch, and held items.
+      actionable-resume, proposed-batch, and held items.
 - [ ] AC9: Workflow smoke-test or documentation coverage includes a mixed scan
       scenario that demonstrates the category distinction.
+- [ ] AC10: Given a scan with current-session resume work, the output labels
+      that work as actionable resume work rather than informational context or
+      proposed Backlog start work.
 
 ## Coverage Matrix
 
 | Brief objective | Coverage |
 | --- | --- |
 | 1. Identify the confusion caused when mixed scan output lacks meaning labels. | Use Case 1, Business Rules, AC1, AC4, AC7 |
-| 2. Label in-flight or review-waiting items as informational context. | Use Cases 1-2, UX Rules, Statuses, AC1, AC2, AC5 |
+| 2. Label cross-session in-flight or review-waiting items as informational context. | Use Cases 1-2, UX Rules, Statuses, AC1, AC2, AC5, AC10 |
 | 3. Label proposal-eligible Backlog items as the proposed batch requiring the current decision. | Use Cases 1 and 3, UX Rules, Statuses, AC3, AC4, AC7 |
 | 4. Preserve portfolio awareness for cross-session in-flight items. | Use Cases 1-2, Business Rules, Operational Visibility, AC2, AC5 |
 | 5. Make the report clear about what action the operator can take now. | Use Cases 1-3, UX Rules, Operational Visibility, AC4, AC7 |
-| 6. Cover Protocol 90 Step 2 scan output and the `/run-work` proposal report surface. | Use Case 4, Business Rules, Operational Visibility, AC8, AC9 |
+| 6. Cover Protocol 90 Step 2 scan output and the `/run-work` proposal report surface. | Use Case 4, Business Rules, Operational Visibility, AC8, AC9, AC10 |
 
 ## PR-Visible Deferral Notes
 
