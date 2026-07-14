@@ -20,12 +20,12 @@ still need a human disposition decision.
 
 Derived from issue #1178:
 
-1. Prevent integration-branch epic sub-items from remaining open after their
-   graduation PR merges to `develop`.
+1. Prevent delivered planned integration-branch epic sub-items from remaining
+   open after their graduation PR merges to `develop`.
 2. Add a graduation closeout sweep after the graduation PR merge for issues
    referenced by PRs that merged into the integration branch.
-3. For each planned sub-item that is still open, close the issue and move its
-   project status to the configured terminal delivery status.
+3. For each delivered planned sub-item that is still open, close the issue and
+   move its project status to the configured terminal delivery status.
 4. Close the parent epic after the core deliverable has graduated.
 5. Remove stale tracker state that creates phantom open work and blocks future
    planning queries.
@@ -53,12 +53,14 @@ workflow can identify the parent epic and planned sub-items.
    deferred, cancelled, or explicitly excluded sub-items.
 4. The workflow closes every still-open planned delivered sub-item and updates
    its project status to the configured terminal delivery status.
-5. The workflow closes the parent epic unless the operator has explicitly
-   requested that it remain open.
+5. After delivered planned sub-items are reconciled, the workflow closes the
+   parent epic unless the operator has explicitly requested that it remain open.
 6. The workflow reports the closeout results.
 
-**Postconditions**: Delivered planned sub-items and the parent epic no longer
-appear as open planning work after graduation.
+**Postconditions**: Delivered planned sub-items no longer appear as open
+planning work after graduation. The parent epic is closed unless the operator
+explicitly defers closure, in which case the closeout summary records that the
+epic intentionally remains open.
 
 **Information shown**:
 
@@ -134,6 +136,9 @@ or update one or more planned delivered items.
    attempted action, and reason the item still requires human repair.
 4. The workflow leaves optional or unresolved-disposition items open and reports
    the required human choice.
+5. If any delivered planned sub-item remains unreconciled, the workflow reports
+   that parent epic closure is held until those failures are repaired or the
+   operator explicitly defers epic closure.
 
 **Postconditions**: Successfully reconciled items are terminal, and unresolved
 items are clearly listed for human follow-up.
@@ -167,8 +172,9 @@ items are clearly listed for human follow-up.
   for the tracker, such as `Done` or `Released`.
 - BR3: Already-terminal planned sub-items are valid closeout results and must not be
   moved backward.
-- BR4: The parent epic must be closed after the core planned deliverable graduates
-  unless the operator explicitly defers epic closure.
+- BR4: The parent epic must be closed only after the core planned deliverable
+  graduates and delivered planned sub-items are reconciled, unless the operator
+  explicitly defers epic closure.
 - BR5: Optional, deferred, cancelled, or explicitly excluded sub-items must not be
   silently closed as part of the planned-delivery sweep.
 - BR6: Issues referenced by sub-item PRs merged into the integration branch must be
@@ -207,8 +213,10 @@ items are clearly listed for human follow-up.
 
 - **Closeout summary**: Graduation closeout must report the integration branch,
   graduation PR, parent epic, planned sub-items, and final result for each item.
-- **Tracker visibility**: Delivered planned sub-items and the parent epic must no
-  longer appear as open actionable work after successful closeout.
+- **Tracker visibility**: Delivered planned sub-items must no longer appear as
+  open actionable work after successful closeout. The parent epic must also be
+  closed unless the operator explicitly defers epic closure and the summary
+  records that decision.
 - **Human follow-up visibility**: Failed, optional, deferred, cancelled, or
   explicitly excluded items must be listed with the human action needed.
 - **Audit trail**: The workflow should leave enough issue or PR-visible evidence
@@ -228,8 +236,9 @@ items are clearly listed for human follow-up.
 - [ ] AC3: If a planned delivered sub-item is already closed or already in a
       terminal delivery status, the workflow reports it as already terminal and
       does not move it backward.
-- [ ] AC4: The parent epic is closed after the core deliverable graduates unless
-      the operator explicitly defers epic closure.
+- [ ] AC4: The parent epic is closed after the core deliverable graduates and
+      delivered planned sub-items are reconciled, unless the operator explicitly
+      defers epic closure.
 - [ ] AC5: Optional, deferred, cancelled, or explicitly excluded sub-items remain
       open unless the operator chooses a terminal disposition for them.
 - [ ] AC6: The closeout summary lists closed, already terminal, skipped, and
