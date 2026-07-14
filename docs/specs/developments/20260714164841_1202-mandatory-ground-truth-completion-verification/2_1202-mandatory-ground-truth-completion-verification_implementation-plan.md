@@ -62,17 +62,27 @@ changing merge authority, review gates, CI gates, or project data models.
       where practical. This covers AC4, AC5, and AC10.
 - [ ] Verified tracker evidence uses `get_tracker_status_for_issue` from
       `scripts/development-workflow/workflow-lib.sh` when the configured
-      provider supports CLI reads; unavailable tracker reads are reported as
-      `unavailable` with rationale instead of blocking by default. This covers
-      AC3, AC6, and AC8.
+      provider supports CLI reads. Tracker status is a required surface whenever
+      the terminal report claims tracker synchronization, issue status, or
+      post-merge reconciliation; unavailable required tracker reads emit
+      `unavailable_required` and a non-zero exit. Tracker reads are optional only
+      when the report explicitly says tracker state was not part of the terminal
+      claim. This covers AC3, AC5, AC6, and AC8.
 - [ ] External runtime, database, browser, deployment, and environment claims are
       accepted only through explicit `--claim` records whose evidence command or
-      result is provided by the caller; otherwise the helper marks the claim
-      `unavailable` or `not_verified`. This covers AC8.
+      result is provided by the caller. A claim marked `required=true` emits
+      `unavailable_required` and a non-zero exit when evidence is missing or
+      unreadable; a claim marked `required=false` emits `unavailable_optional`
+      and does not by itself block terminal success. This covers AC5 and AC8.
 - [ ] Any mismatch between expected branch, expected PR base, expected labels,
       clean workspace, green CI, changed-file scope, review status, or tracker
       state produces a `discrepancy` result and a non-zero exit code. This covers
       AC5 and AC9.
+- [ ] Define the required-surface table in the helper documentation and tests:
+      branch, HEAD, workspace cleanliness, PR base, PR labels, CI status, review
+      summary, review threads, changed-file scope, and tracker state are required
+      when the terminal claim references them. External runtime/browser/database
+      evidence is required only when the caller marks the claim required.
 
 ### Workflow Protocols
 
@@ -154,9 +164,12 @@ changing merge authority, review gates, CI gates, or project data models.
 - [ ] Cover a discrepancy path where the helper observes the wrong PR base,
       missing readiness label, dirty workspace, or failing CI and exits non-zero
       without reporting success. This covers AC5 and AC9.
-- [ ] Cover unavailable tracker or external-runtime evidence so output marks the
-      surface unavailable with rationale rather than inventing a verified value.
-      This covers AC6 and AC8.
+- [ ] Cover unavailable required tracker evidence so output marks the surface
+      `unavailable_required`, prints the rationale, exits non-zero, and does not
+      report terminal success. This covers AC5, AC6, and AC8.
+- [ ] Cover unavailable optional tracker or external-runtime evidence so output
+      marks the surface `unavailable_optional` with rationale while allowing the
+      terminal report to proceed when no required surface failed. This covers AC8.
 - [ ] Add the human-readable smoke runbook at
       `docs/testing/workflow/1202-mandatory-ground-truth-completion-verification.smoke-test.md`.
 

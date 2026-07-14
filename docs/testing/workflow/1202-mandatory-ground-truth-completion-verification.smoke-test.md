@@ -83,14 +83,14 @@ orchestrator to detect wrong-worktree or duplicate-worktree execution.
 
 1. Run the helper against a fixture where one expected value is wrong, such as an
    unexpected PR base branch, missing `ready-for-human-review` label, unexpected
-   changed file, dirty workspace, failing CI, unresolved review state, or
-   unavailable required surface.
+   changed file, dirty workspace, failing CI, unresolved review state, or a
+   required tracker/review/runtime surface that cannot be read.
 2. Inspect the exit code and report body.
 
 **Expected result**: The helper exits non-zero, marks the affected surface as
-`discrepancy` or `unavailable`, prints expected and observed values, and does
-not claim the item is successful, ready, done, blocked, escalated, or waiting on
-a human without naming the failed evidence.
+`discrepancy` or `unavailable_required`, prints expected and observed values,
+and does not claim the item is successful, ready, done, blocked, escalated, or
+waiting on a human without naming the failed evidence.
 
 ### Step 5: External runtime claims require observed evidence
 
@@ -101,8 +101,10 @@ a human without naming the failed evidence.
 2. Repeat once with direct observed evidence and once without it.
 
 **Expected result**: The claim with evidence is marked `verified` and includes
-the observed result. The claim without evidence is marked not verified or
-unavailable with a reason; it is not silently treated as successful.
+the observed result. A required claim without evidence is marked
+`unavailable_required` and exits non-zero. An optional claim without evidence is
+marked `unavailable_optional` with a reason and is not silently treated as
+verified.
 
 ### Step 6: Batch summary consumes item evidence
 
@@ -165,4 +167,3 @@ No application seed data is required.
   require a live downstream product application.
 - Providers without CLI-accessible tracker reads may legitimately report tracker
   evidence as unavailable with rationale.
-
