@@ -335,12 +335,15 @@ base_branch_cache_file() {
 
 fetch_prs_for_base() {
   local branch="$1"
-  local cache_file
+  local cache_file encoded_branch
   cache_file="$(base_branch_cache_file "$branch")"
+  if ! encoded_branch="$(jq -nr --arg branch "$branch" '$branch | @uri')"; then
+    error_exit "failed to URI-encode base branch ${branch}."
+  fi
 
   if [ ! -f "$cache_file" ]; then
     if ! gh api --paginate --slurp \
-      "repos/${repo}/pulls?state=all&base=${branch}&per_page=100" \
+      "repos/${repo}/pulls?state=all&base=${encoded_branch}&per_page=100" \
       > "$cache_file" 2>/dev/null; then
       error_exit "failed to read PRs targeting base branch ${branch}."
     fi
@@ -506,10 +509,11 @@ EOF
 
   local _linked_result
   _linked_result="$(jq -n --argjson open "$open_prs" --argjson merged "$merged_prs" \
-    '{open: $open, merged: $merged}')"
+    '{open: ($open | unique_by(.number)), merged: ($merged | unique_by(.number))}')"
   if [ "$(printf '%s\n' "$_linked_result" | jq '(.open | length) + (.merged | length)')" -eq 0 ]; then
     _linked_result="$(discover_prs_via_head_search "$issue")"
   fi
+  _linked_result="$(printf '%s\n' "$_linked_result" | jq '{open: (.open | unique_by(.number)), merged: (.merged | unique_by(.number))}')"
   printf '%s\n' "$_linked_result"
 }
 

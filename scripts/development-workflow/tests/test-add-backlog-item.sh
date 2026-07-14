@@ -4,8 +4,8 @@
 # Exercises issue #965's Priority/Size field updates:
 #   1. Malformed gh output warns and skips project field updates
 #   2. Non-numeric issue number in URL warns and skips project field updates
-#   3. Happy path: URL parsed, board membership checked, Priority defaults to Medium
-#   4. --priority flag: uses supplied value instead of Medium default
+#   3. Happy path: URL parsed, board membership checked, Priority defaults to Normal
+#   4. --priority flag: uses supplied value instead of Normal default
 #   5. --size flag: triggers Size field update
 #   6. No --size: Size field update is not called
 #   7. --type flag: triggers Type field update
@@ -73,7 +73,7 @@ case "$*" in
         printf '{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_123","project":{"id":"PVT_project_1","number":1},"status":{"name":"Backlog"},"type":{"name":"Feature"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}\n'
         ;;
       *"fields(first:"*)
-        printf '{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_priority","name":"Priority","options":[{"id":"OPT_urgent","name":"Urgent"},{"id":"OPT_high","name":"High"},{"id":"OPT_medium","name":"Medium"},{"id":"OPT_low","name":"Low"}]},{"id":"PVTSSF_size","name":"Size","options":[{"id":"OPT_size_xs","name":"XS"},{"id":"OPT_size_s","name":"S"},{"id":"OPT_size_m","name":"M"},{"id":"OPT_size_l","name":"L"},{"id":"OPT_size_xl","name":"XL"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_type_feature","name":"Feature"},{"id":"OPT_type_bug","name":"Bug"},{"id":"OPT_type_refactor","name":"Refactor"},{"id":"OPT_type_workflow","name":"Workflow"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}\n'
+        printf '{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_priority","name":"Priority","options":[{"id":"OPT_urgent","name":"Urgent"},{"id":"OPT_high","name":"High"},{"id":"OPT_normal","name":"Normal"},{"id":"OPT_low","name":"Low"}]},{"id":"PVTSSF_size","name":"Size","options":[{"id":"OPT_size_xs","name":"XS"},{"id":"OPT_size_s","name":"S"},{"id":"OPT_size_m","name":"M"},{"id":"OPT_size_l","name":"L"},{"id":"OPT_size_xl","name":"XL"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_type_feature","name":"Feature"},{"id":"OPT_type_bug","name":"Bug"},{"id":"OPT_type_refactor","name":"Refactor"},{"id":"OPT_type_workflow","name":"Workflow"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}\n'
         ;;
       *"updateProjectV2ItemFieldValue"*)
         printf '{"data":{"updateProjectV2ItemFieldValue":{"projectV2Item":{"id":"PVTI_item_123"}}}}\n'
@@ -164,7 +164,7 @@ run_test "nonnumeric_skips_board_check" "0" "$(count_log_matches 'projectItems')
 run_test "nonnumeric_skips_priority_update" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
 
 echo ""
-echo "=== create: happy path — issue URL in output, Priority defaults to Medium ==="
+echo "=== create: happy path — issue URL in output, Priority defaults to Normal ==="
 
 run_create "ok" --title "Test" --body "body"
 run_test "happy_path_exits_zero" "0" "$(get_exit)"
@@ -177,16 +177,23 @@ run_test "happy_path_prints_issue_url" "yes" "$url_in_output"
 board_check_count="$(count_log_matches 'projectItems')"
 run_test "happy_path_checks_board_membership" "yes" "$([ "$board_check_count" -ge 1 ] && echo yes || echo no)"
 run_test "happy_path_updates_priority" "1" "$(count_log_matches 'fieldId=PVTSSF_priority')"
-run_test "happy_path_default_priority_is_medium" "1" "$(count_log_matches 'optionId=OPT_medium')"
+run_test "happy_path_default_priority_is_normal" "1" "$(count_log_matches 'optionId=OPT_normal')"
 run_test "happy_path_skips_size_update" "0" "$(count_log_matches 'fieldId=PVTSSF_size')"
 
 echo ""
-echo "=== create: --priority flag overrides Medium default ==="
+echo "=== create: --priority flag overrides Normal default ==="
 
 run_create "ok" --title "Test" --body "body" --priority "High"
 run_test "explicit_priority_exits_zero" "0" "$(get_exit)"
 run_test "explicit_priority_high_used" "1" "$(count_log_matches 'optionId=OPT_high')"
-run_test "explicit_priority_not_medium" "0" "$(count_log_matches 'optionId=OPT_medium')"
+run_test "explicit_priority_not_normal" "0" "$(count_log_matches 'optionId=OPT_normal')"
+
+echo ""
+echo "=== create: Medium priority aliases to Normal ==="
+
+run_create "ok" --title "Test" --body "body" --priority "Medium"
+run_test "medium_priority_alias_exits_zero" "0" "$(get_exit)"
+run_test "medium_priority_alias_uses_normal" "1" "$(count_log_matches 'optionId=OPT_normal')"
 
 echo ""
 echo "=== create: --size flag updates Size field ==="

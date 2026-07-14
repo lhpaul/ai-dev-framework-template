@@ -24,10 +24,24 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../.." && pwd)"
 WORKFLOW_FILE="${WORKFLOW_FILE_OVERRIDE:-$REPO_ROOT/.github/workflows/update-tracker-on-merge.yml}"
 
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source "$SCRIPT_DIR/workflow-lib.sh"
+
 if [ ! -f "$WORKFLOW_FILE" ]; then
-  echo "SKIP: workflow file not found: $WORKFLOW_FILE"
-  echo "Non-GitHub tracker providers intentionally omit update-tracker-on-merge.yml."
-  exit 0
+  provider_config="$(workflow_effective_config_file || true)"
+  provider="$(workflow_normalize_issue_tracker_provider "$(workflow_config_provider issue_tracker "$provider_config")")"
+  case "$provider" in
+    github|github_issues|github_projects)
+      echo "ERROR: workflow file not found: $WORKFLOW_FILE"
+      echo "GitHub-based tracker provider '${provider}' requires update-tracker-on-merge.yml."
+      exit 1
+      ;;
+    *)
+      echo "SKIP: workflow file not found: $WORKFLOW_FILE"
+      echo "Non-GitHub tracker providers intentionally omit update-tracker-on-merge.yml."
+      exit 0
+      ;;
+  esac
 fi
 
 ERRORS=0

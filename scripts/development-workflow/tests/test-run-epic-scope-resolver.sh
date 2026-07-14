@@ -188,6 +188,11 @@ JSON
 [[{"number":2205,"title":"Merged override PR","head":{"ref":"feature/105-five"},"base":{"ref":"develop-custom"},"state":"closed","draft":false,"labels":[],"merged_at":"2026-06-13T12:00:00Z"}]]
 JSON
         ;;
+      develop)
+        cat <<'JSON'
+[[{"number":2102,"title":"Plan PR duplicate from develop","head":{"ref":"implementation-plan/102-two"},"base":{"ref":"develop"},"state":"open","draft":false,"labels":[{"name":"ready-for-human-review"}],"merged_at":null}]]
+JSON
+        ;;
       *)
         printf '[[]]\n'
         ;;
@@ -353,6 +358,7 @@ run_test "pr_lookup_avoids_unbounded_rest_history" "no" "$(
   grep -q 'pulls?state=\(open\|closed\|all\)&per_page=100' "$CALL_LOG" && echo yes || echo no
 )"
 run_test "pr_lookup_cache_preserves_grouping" "102" "$(printf '%s\n' "$cache_probe_output" | jq -r '.groups.in_review[0].number')"
+run_test "linked_prs_dedupe_overlapping_bases" "1" "$(printf '%s\n' "$cache_probe_output" | jq '[.items[] | select(.number == 102)][0].pullRequests.open | length')"
 
 unlabeled_shared_base_output="$(run_json --items 101,112)"
 run_test "unlabeled_item_uses_scope_shared_base" "112" "$(printf '%s\n' "$unlabeled_shared_base_output" | jq -r '.groups.already_merged[] | select(.number == 112) | .number')"
@@ -370,7 +376,7 @@ run_test "label_fetch_failure_avoids_unrelated_ambiguity" "yes" "$(
 cache_collision_output="$(run_json --items 113 --base develop/foo)"
 run_test "pr_lookup_cache_keys_do_not_collide" "yes" "$(
   grep -q 'pulls?state=all&base=develop-foo&per_page=100' "$CALL_LOG" &&
-    grep -q 'pulls?state=all&base=develop/foo&per_page=100' "$CALL_LOG" &&
+    grep -q 'pulls?state=all&base=develop%2Ffoo&per_page=100' "$CALL_LOG" &&
     echo yes || echo no
 )"
 run_test "cache_collision_probe_still_resolves_item" "113" "$(printf '%s\n' "$cache_collision_output" | jq -r '.items[0].number')"

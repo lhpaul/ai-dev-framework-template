@@ -115,6 +115,14 @@ JSON
 	          cat <<'JSON'
 	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
 JSON
+	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "custom_type_only" ]; then
+	          cat <<'JSON'
+	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"status":{"name":"Spec Ready"},"customType":{"name":"Workflow"},"type":{"name":"Bug"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
+JSON
+	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "configured_type_only" ]; then
+	          cat <<'JSON'
+	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"status":{"name":"Spec Ready"},"configuredType":{"name":"Workflow"},"customType":{"name":"Bug"},"type":{"name":"Bug"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
+JSON
 	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "released" ]; then
 	          cat <<'JSON'
 	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"status":{"name":"Released"},"type":{"name":"Workflow"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
@@ -148,6 +156,23 @@ JSON
 JSON
               ;;
           esac
+        elif [ "${MOCK_STATUS_FIELD_MODE:-existing}" = "custom_type_after_type" ]; then
+          case "$*" in
+            *"after=cursor_field_1"*)
+              cat <<'JSON'
+{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_custom_type","name":"Custom Type","options":[{"id":"OPT_workflow_custom","name":"Workflow"},{"id":"OPT_bug_custom","name":"Bug"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
+JSON
+              ;;
+            *)
+              cat <<'JSON'
+{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_workflow","name":"Workflow"},{"id":"OPT_bug","name":"Bug"}]}],"pageInfo":{"hasNextPage":true,"endCursor":"cursor_field_1"}}}}}
+JSON
+              ;;
+          esac
+        elif [ "${MOCK_STATUS_FIELD_MODE:-existing}" = "configured_type" ]; then
+          cat <<'JSON'
+{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_custom_type","name":"Custom Type","options":[{"id":"OPT_workflow_custom","name":"Workflow"}]},{"id":"PVTSSF_configured_type","name":"Configured Type","options":[{"id":"OPT_workflow_configured","name":"Workflow"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_workflow","name":"Workflow"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
+JSON
         else
           cat <<'JSON'
 {"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_status","name":"Status","options":[{"id":"OPT_spec_ready","name":"Spec Ready"},{"id":"OPT_in_development","name":"In Development"},{"id":"OPT_merged","name":"Merged"},{"id":"OPT_released","name":"Released"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_workflow","name":"Workflow"},{"id":"OPT_bug","name":"Bug"},{"id":"OPT_refactor","name":"Refactor"},{"id":"OPT_feature","name":"Feature"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
@@ -201,6 +226,13 @@ workflow_issue_tracker_project_number() {
   printf '%s\n' "${MOCK_TRACKER_PROJECT_NUMBER-1}"
 }
 
+workflow_issue_tracker_custom_field() {
+  case "$1" in
+    type_field) printf '%s\n' "${MOCK_TRACKER_TYPE_FIELD:-}" ;;
+    *) printf '\n' ;;
+  esac
+}
+
 PASS_COUNT=0
 FAIL_COUNT=0
 
@@ -242,6 +274,22 @@ reset_log
 tracker_type="$(get_tracker_type_for_issue 824)"
 run_test "targeted_type_read" "Workflow" "$tracker_type"
 run_test "type_read_avoids_full_board_scan" "" "$(forbidden_project_reads)"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=custom_type_only
+tracker_type="$(get_tracker_type_for_issue 824)"
+unset MOCK_PROJECT_ITEM_MODE
+run_test "targeted_type_read_prefers_custom_type" "Workflow" "$tracker_type"
+run_test "custom_type_read_passes_empty_configured_field" "1" "$(count_log_matches 'typeFieldName=')"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=configured_type_only
+export MOCK_TRACKER_TYPE_FIELD="Configured Type"
+tracker_type="$(get_tracker_type_for_issue 824)"
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_TRACKER_TYPE_FIELD
+run_test "targeted_type_read_prefers_configured_field" "Workflow" "$tracker_type"
+run_test "configured_type_read_passes_field_name" "1" "$(count_log_matches 'typeFieldName=Configured Type')"
 
 reset_log
 export MOCK_PROJECT_ITEM_MODE=paginated
@@ -351,6 +399,7 @@ run_test "type_update_mutates_project_item" "1" "$(count_log_matches 'api graphq
 
 reset_log
 __workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_preferred=""
 __workflow_project_type_field_cache_json=""
 export MOCK_STATUS_FIELD_MODE=paginated
 type_field_json="$(workflow_github_project_type_field_json "PVT_project_1")"
@@ -358,6 +407,45 @@ unset MOCK_STATUS_FIELD_MODE
 type_field_id="$(printf '%s' "$type_field_json" | jq -r '.field_id // empty')"
 run_test "type_field_lookup_paginates" "PVTSSF_type" "$type_field_id"
 run_test "type_field_lookup_uses_two_field_queries" "2" "$(count_log_matches 'fields')"
+
+reset_log
+__workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_preferred=""
+__workflow_project_type_field_cache_json=""
+export MOCK_STATUS_FIELD_MODE=custom_type_after_type
+type_field_json="$(workflow_github_project_type_field_json "PVT_project_1")"
+unset MOCK_STATUS_FIELD_MODE
+type_field_id="$(printf '%s' "$type_field_json" | jq -r '.field_id // empty')"
+type_field_name="$(printf '%s' "$type_field_json" | jq -r '.field_name // empty')"
+run_test "type_field_prefers_custom_type_after_type" "PVTSSF_custom_type" "$type_field_id"
+run_test "type_field_reports_custom_type_name" "Custom Type" "$type_field_name"
+run_test "type_field_custom_type_after_type_uses_two_field_queries" "2" "$(count_log_matches 'fields')"
+
+reset_log
+__workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_preferred=""
+__workflow_project_type_field_cache_json=""
+workflow_issue_tracker_custom_field() {
+  case "$1" in
+    type_field) printf 'Configured Type\n' ;;
+    *) printf '\n' ;;
+  esac
+}
+export MOCK_STATUS_FIELD_MODE=configured_type
+type_field_json="$(workflow_github_project_type_field_json "PVT_project_1")"
+unset MOCK_STATUS_FIELD_MODE
+type_field_id="$(printf '%s' "$type_field_json" | jq -r '.field_id // empty')"
+run_test "type_field_prefers_configured_name" "PVTSSF_configured_type" "$type_field_id"
+
+# Restore the real custom-field helper after the override above.
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh"
+workflow_issue_tracker_provider_raw() {
+  printf '%s\n' "${MOCK_TRACKER_PROVIDER:-github_projects}"
+}
+workflow_issue_tracker_project_number() {
+  printf '%s\n' "${MOCK_TRACKER_PROJECT_NUMBER-1}"
+}
 
 reset_log
 type_field_output=""
@@ -369,6 +457,7 @@ run_test "type_field_empty_project_id_avoids_graphql" "0" "$(count_log_matches '
 
 reset_log
 __workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_preferred=""
 __workflow_project_type_field_cache_json=""
 type_field_json="$(workflow_github_project_type_field_json "PVT_project_1")"
 type_field_id_one="$(printf '%s' "$type_field_json" | jq -r '.field_id // empty')"
@@ -380,6 +469,7 @@ run_test "type_field_cache_scoped_by_project" "2" "$(count_log_matches 'fields')
 
 reset_log
 __workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_preferred=""
 __workflow_project_type_field_cache_json=""
 export MOCK_STATUS_FIELD_MODE=graphql_fail
 type_field_output=""
@@ -392,6 +482,7 @@ run_test "type_field_graphql_failure_no_cache" "" "$__workflow_project_type_fiel
 
 reset_log
 __workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_preferred=""
 __workflow_project_type_field_cache_json=""
 export MOCK_STATUS_FIELD_MODE=graphql_fail
 type_field_stderr=""
@@ -418,6 +509,7 @@ run_test "status_field_graphql_failure_reports_captured_gh_stderr" "captured" "$
 
 reset_log
 __workflow_project_type_field_cache_project_id=""
+__workflow_project_type_field_cache_preferred=""
 __workflow_project_type_field_cache_json=""
 export MOCK_STATUS_FIELD_MODE=invalid_json
 type_update_output="$(update_tracker_type_best_effort 824 "Workflow" 2>&1)"
