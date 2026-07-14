@@ -55,6 +55,21 @@ github_missing_output="$(run_with_workflow "$TMP_DIR/missing-update-tracker-on-m
 printf '%s\n' "$github_missing_output" | grep -q "GitHub-based tracker provider 'github_projects' requires update-tracker-on-merge.yml" \
   || fail "missing GitHub workflow output should explain the required workflow"
 
+github_hyphen_config="$TMP_DIR/github-projects-hyphen.yaml"
+cat > "$github_hyphen_config" <<'YAML'
+schema_version: 2
+issue_tracker:
+  provider: github-projects
+YAML
+
+github_hyphen_missing_exit=0
+github_hyphen_missing_output="$(run_with_workflow "$TMP_DIR/missing-update-tracker-on-merge.yml" "$github_hyphen_config" 2>&1)" \
+  || github_hyphen_missing_exit=$?
+[ "$github_hyphen_missing_exit" -eq 1 ] \
+  || fail "missing workflow should fail closed for hyphenated GitHub tracker providers"
+printf '%s\n' "$github_hyphen_missing_output" | grep -q "GitHub-based tracker provider 'github_projects' requires update-tracker-on-merge.yml" \
+  || fail "hyphenated GitHub workflow output should identify the normalized provider"
+
 valid_workflow="$TMP_DIR/update-tracker-on-merge.yml"
 touch "$valid_workflow"
 cat > "$valid_workflow" <<'YAML'

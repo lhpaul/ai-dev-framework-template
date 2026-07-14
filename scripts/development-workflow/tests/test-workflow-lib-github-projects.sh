@@ -115,6 +115,14 @@ JSON
 	          cat <<'JSON'
 	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
 JSON
+	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "custom_type_only" ]; then
+	          cat <<'JSON'
+	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"status":{"name":"Spec Ready"},"customType":{"name":"Workflow"},"type":{"name":"Bug"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
+JSON
+	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "configured_type_only" ]; then
+	          cat <<'JSON'
+	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"status":{"name":"Spec Ready"},"configuredType":{"name":"Workflow"},"customType":{"name":"Bug"},"type":{"name":"Bug"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
+JSON
 	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "released" ]; then
 	          cat <<'JSON'
 	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"status":{"name":"Released"},"type":{"name":"Workflow"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
@@ -218,6 +226,13 @@ workflow_issue_tracker_project_number() {
   printf '%s\n' "${MOCK_TRACKER_PROJECT_NUMBER-1}"
 }
 
+workflow_issue_tracker_custom_field() {
+  case "$1" in
+    type_field) printf '%s\n' "${MOCK_TRACKER_TYPE_FIELD:-}" ;;
+    *) printf '\n' ;;
+  esac
+}
+
 PASS_COUNT=0
 FAIL_COUNT=0
 
@@ -259,6 +274,22 @@ reset_log
 tracker_type="$(get_tracker_type_for_issue 824)"
 run_test "targeted_type_read" "Workflow" "$tracker_type"
 run_test "type_read_avoids_full_board_scan" "" "$(forbidden_project_reads)"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=custom_type_only
+tracker_type="$(get_tracker_type_for_issue 824)"
+unset MOCK_PROJECT_ITEM_MODE
+run_test "targeted_type_read_prefers_custom_type" "Workflow" "$tracker_type"
+run_test "custom_type_read_passes_empty_configured_field" "1" "$(count_log_matches 'typeFieldName=')"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=configured_type_only
+export MOCK_TRACKER_TYPE_FIELD="Configured Type"
+tracker_type="$(get_tracker_type_for_issue 824)"
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_TRACKER_TYPE_FIELD
+run_test "targeted_type_read_prefers_configured_field" "Workflow" "$tracker_type"
+run_test "configured_type_read_passes_field_name" "1" "$(count_log_matches 'typeFieldName=Configured Type')"
 
 reset_log
 export MOCK_PROJECT_ITEM_MODE=paginated

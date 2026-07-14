@@ -1106,7 +1106,7 @@ workflow_issue_tracker_provider_raw() {
 
 workflow_normalize_issue_tracker_provider() {
   local raw="$1"
-  printf '%s' "$raw" | tr '[:upper:]' '[:lower:]'
+  printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | tr '-' '_'
 }
 
 # emit_linear_deferred_action <action_type> <issue_id> [key=value]
@@ -1361,7 +1361,7 @@ workflow_github_project_item_for_issue() {
   local issue_number="$1"
   local project_number="$2"
   local project_owner project_id repo_owner repo_name response
-  local cursor page_state item_json has_next end_cursor page_count line missing_fields
+  local cursor page_state item_json has_next end_cursor page_count line missing_fields type_field_name
   local -a graphql_args
 
   case "$issue_number" in
@@ -1387,6 +1387,7 @@ workflow_github_project_item_for_issue() {
     printf ''
     return 0
   fi
+  type_field_name="$(workflow_issue_tracker_custom_field type_field "$(workflow_effective_config_file || true)")"
 
   cursor=""
   page_count=0
@@ -1396,6 +1397,7 @@ workflow_github_project_item_for_issue() {
       -f owner="$repo_owner"
       -f repo="$repo_name"
       -F issueNumber="$issue_number"
+      -f typeFieldName="$type_field_name"
     )
     if [ -n "$cursor" ]; then
       graphql_args+=(-f after="$cursor")
@@ -1403,7 +1405,7 @@ workflow_github_project_item_for_issue() {
     # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not by Bash.
     graphql_args+=(
       -f query='
-        query($owner: String!, $repo: String!, $issueNumber: Int!, $after: String) {
+        query($owner: String!, $repo: String!, $issueNumber: Int!, $typeFieldName: String!, $after: String) {
           repository(owner: $owner, name: $repo) {
             issue(number: $issueNumber) {
               projectItems(first: 100, after: $after) {
@@ -1411,6 +1413,15 @@ workflow_github_project_item_for_issue() {
                   id
                   project { id number }
                   status: fieldValueByName(name: "Status") {
+                    ... on ProjectV2ItemFieldSingleSelectValue { name }
+                  }
+                  configuredType: fieldValueByName(name: $typeFieldName) {
+                    ... on ProjectV2ItemFieldSingleSelectValue { name }
+                  }
+                  customType: fieldValueByName(name: "Custom Type") {
+                    ... on ProjectV2ItemFieldSingleSelectValue { name }
+                  }
+                  compactCustomType: fieldValueByName(name: "CustomType") {
                     ... on ProjectV2ItemFieldSingleSelectValue { name }
                   }
                   type: fieldValueByName(name: "Type") {
@@ -1436,6 +1447,7 @@ workflow_github_project_item_for_issue() {
     if ! page_state="$(printf '%s' "$response" | python3 -c "
 import json, sys
 project_id = sys.argv[1]
+preferred = sys.argv[2]
 try:
     data = json.loads(sys.stdin.read(), strict=False)
 except Exception:
@@ -1448,7 +1460,19 @@ for item in project_items.get('nodes') or []:
     project = item.get('project') or {}
     if project.get('id') == project_id:
         status_value = item.get('status') or item.get('fieldValueByName') or {}
-        type_value = item.get('type') or {}
+        type_candidates = []
+        if preferred:
+            type_candidates.append(item.get('configuredType') or {})
+        type_candidates.extend([
+            item.get('customType') or {},
+            item.get('compactCustomType') or {},
+            item.get('type') or {},
+        ])
+        type_value = {}
+        for candidate in type_candidates:
+            if candidate.get('name'):
+                type_value = candidate
+                break
         missing = []
         if not status_value.get('name'):
             missing.append('Status')
@@ -1469,7 +1493,7 @@ print('ITEM=' + match)
 print('MISSING_FIELDS=' + missing_fields)
 print('HAS_NEXT=' + has_next)
 print('END_CURSOR=' + end_cursor)
-" "$project_id" 2>/dev/null)"; then
+" "$project_id" "$type_field_name" 2>/dev/null)"; then
       echo "Warning: could not parse GraphQL project item response for issue #${issue_number}; tracker status not read." >&2
       printf ''
       return 0
