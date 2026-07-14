@@ -139,7 +139,8 @@ grants or denies merge authority for the affected stages.
    delegated authority from PRs ready for human merge because authority was
    absent.
 4. If any runner stops before the expected terminal state, the orchestrator
-   reports the gate that stopped it instead of silently treating the PR as done.
+   reports the named gate that stopped it, or reports `policy_inconsistent` when
+   no valid blocker explains the stop.
 
 **Postconditions**: Agents in the same batch do not interpret the same
 `--may-merge` policy differently. The batch has a coherent final state:
@@ -219,9 +220,10 @@ teach the same terminal behavior for merge-authorized and merge-denied runs.
   the merge when merge authority is granted and gates pass.
 - BR6: A runner must not execute a merge when merge authority is absent, even if
   the PR is ready, low risk, and otherwise mergeable.
-- BR7: Batch and epic orchestrators must report inconsistent terminal behavior
-  as blocked or escalated instead of silently accepting a PR that stopped at a
-  different terminal state than the selected policy requires.
+- BR7: Batch and epic orchestrators must report inconsistent terminal behavior.
+  If a named gate blocks the expected terminal state, the outcome is
+  `merge_blocked` or escalated with that blocker; if no valid blocker explains
+  the mismatch, the outcome is `policy_inconsistent`.
 - BR8: The final summary for each affected PR must state whether merge was
   granted or denied, what terminal state was expected, and what terminal state
   was reached.
