@@ -186,4 +186,3 @@ The implementation plan will decide the exact search mechanism, thresholds, and 
 | When call-site volume exceeds the configured threshold, promote the item to Full Pipeline with a note explaining the detected high call-site volume. | Use Case 2, BR-4, BR-5, AC-2, AC-5, AC-10 |
 | Document call-site volume as a complement to the existing cross-layer scope check: cross-layer checks architectural spread; call-site volume checks propagation breadth regardless of layer count. | Overview, Use Case 1, Use Case 2, BR-2, AC-2, AC-7 |
 | Add a Fast Track routing prompt for live external system configuration, such as workflow automation, third-party API schemas, or other external config that may not be visible in a repository search. | Use Case 3, BR-7, BR-8, AC-8, AC-9 |
-*** End Patch
