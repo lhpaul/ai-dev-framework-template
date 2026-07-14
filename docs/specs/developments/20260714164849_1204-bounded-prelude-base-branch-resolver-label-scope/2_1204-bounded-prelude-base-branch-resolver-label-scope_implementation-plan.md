@@ -121,13 +121,18 @@ and must preserve existing fields: `baseBranch`, `baseAmbiguous`, `baseReason`,
 - [ ] `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` -
       align explicit-list handoff guidance with the bounded-prelude resolver:
       partial or mixed labels do not override the batch base.
-- [ ] `.agents/skills/run-items/SKILL.md`, `.claude/commands/run-items.md`, and
-      `.cursor/commands/run-items.md` - clarify the explicit-list default to
-      `develop` and the shared valid integration-label exception, if the
-      implementation keeps that exception.
+- [ ] `.agents/skills/run-items/SKILL.md`,
+      `.agents/skills/run-items/agents/openai.yaml`,
+      `.claude/commands/run-items.md`, and `.cursor/commands/run-items.md` -
+      clarify the explicit-list default to `develop` and the shared valid
+      integration-label exception.
 - [ ] `.agents/skills/run-epic/SKILL.md`, `.claude/commands/run-epic.md`, and
       `.cursor/commands/run-epic.md` - clarify remote-validation behavior for
       label-derived integration bases.
+- [ ] `.codex/skills/workflow-item-orchestrator/SKILL.md` and
+      `.codex/skills/workflow-orchestrator/SKILL.md` - keep Codex orchestration
+      guidance aligned with bounded-prelude warning lines and base-validation
+      status exposed to the runner.
 
 ### Infrastructure / Configuration
 
@@ -222,12 +227,20 @@ numbers, fixture labels, and temporary directories.
       item can force the whole batch base.
 - [ ] `.agents/skills/run-items/SKILL.md` - align command alias guidance with
       the resolver's explicit-list label-scope contract.
+- [ ] `.agents/skills/run-items/agents/openai.yaml` - align the Codex display
+      prompt for the same explicit-list label-scope contract.
 - [ ] `.claude/commands/run-items.md` - same as above.
 - [ ] `.cursor/commands/run-items.md` - same as above.
 - [ ] `.agents/skills/run-epic/SKILL.md` - document label-derived base
       validation.
 - [ ] `.claude/commands/run-epic.md` - same as above.
 - [ ] `.cursor/commands/run-epic.md` - same as above.
+- [ ] `.codex/skills/workflow-item-orchestrator/SKILL.md` - mention that the
+      bounded-prelude confirmation summary may include base-selection warnings
+      and validation status.
+- [ ] `.codex/skills/workflow-orchestrator/SKILL.md` - align Protocol 90
+      explicit-list handoff guidance with the resolver-selected base and
+      warning contract.
 
 ---
 
