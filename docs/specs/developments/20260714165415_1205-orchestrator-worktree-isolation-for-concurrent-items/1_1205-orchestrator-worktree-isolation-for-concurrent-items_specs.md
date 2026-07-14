@@ -34,18 +34,18 @@ runner starts editing files.
 
 **Actor**: Portfolio Orchestrator
 **Preconditions**: A human has approved a bounded batch containing two or more
-items that may create or modify files.
+file-mutating item runners that will execute concurrently.
 
 **Steps**:
 
 1. The orchestrator resolves the approved item list and identifies which item
-   runners may mutate files.
-2. Before dispatching the runners, the orchestrator verifies that each mutating
-   runner has worktree isolation enabled.
-3. The orchestrator verifies that each runner has a distinct assigned worktree
-   path.
-4. The orchestrator dispatches the runners only after every mutating runner has
-   a complete isolation assignment.
+   runners will mutate files concurrently.
+2. Before dispatching the concurrent mutating runners, the orchestrator verifies
+   that each one has worktree isolation enabled.
+3. The orchestrator verifies that each concurrent mutating runner has a distinct
+   assigned worktree path.
+4. The orchestrator dispatches the concurrent mutating runners only after every
+   one has a complete isolation assignment.
 
 **Postconditions**: Every concurrent mutating runner starts in an assigned
 worktree, and no runner is expected to share the main repository checkout for
