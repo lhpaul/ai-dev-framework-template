@@ -497,19 +497,29 @@ print_section() {
 
 validate_graduation_pr
 
+NATIVE_DISCOVERY_OK=1
 if ! discover_native_subissues; then
   echo "Warning: native sub-issue discovery failed for epic #${EPIC_ISSUE}; using label fallback only." >&2
+  NATIVE_DISCOVERY_OK=0
 fi
 if [ ! -s "$CANDIDATES_FILE" ]; then
   if ! discover_label_subitems; then
     echo "Warning: label fallback discovery failed for ${INTEGRATION_LABEL}." >&2
+    record_result "$FAILED_FILE" "discovery" "Candidate discovery" "label:${INTEGRATION_LABEL}" "label_fallback_failed"
   fi
 else
   # Still include label-discovered legacy items when native sub-issues exist.
-  discover_label_subitems || true
+  if ! discover_label_subitems && [ "$NATIVE_DISCOVERY_OK" -eq 0 ]; then
+    echo "Warning: label fallback discovery failed for ${INTEGRATION_LABEL}." >&2
+    record_result "$FAILED_FILE" "discovery" "Candidate discovery" "label:${INTEGRATION_LABEL}" "label_fallback_failed"
+  fi
 fi
 if ! discover_closing_keyword_refs; then
   echo "Warning: could not read merged PR closing-keyword references for ${INTEGRATION_BRANCH}." >&2
+  record_result "$FAILED_FILE" "discovery" "Candidate discovery" "pr:${INTEGRATION_BRANCH}" "merged_pr_discovery_failed"
+fi
+if [ ! -s "$CANDIDATES_FILE" ]; then
+  record_result "$FAILED_FILE" "discovery" "Candidate discovery" "native-subissue,label:${INTEGRATION_LABEL},pr:${INTEGRATION_BRANCH}" "no_delivered_subitems_discovered"
 fi
 
 cut -f1 "$CANDIDATES_FILE" | sort -n -u > "$UNIQUE_ISSUES_FILE"

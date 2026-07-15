@@ -297,6 +297,7 @@ After the human merges the graduation PR (must use a **merge commit**):
    - updates closed-but-non-terminal delivered sub-items to the terminal Project status;
    - reports already terminal sub-items without moving them backward;
    - skips optional/deferred/excluded sub-items and reports the required human disposition;
+   - fails closed when candidate discovery is incomplete or no delivered sub-items can be identified;
    - closes the parent epic only after delivered planned sub-items reconcile, unless epic closure is explicitly deferred.
 
    Terminal Project status is resolved in this order: `GITHUB_PROJECT_STATUS_GRADUATED`, `GITHUB_PROJECT_STATUS_MERGED`, then `Merged`.

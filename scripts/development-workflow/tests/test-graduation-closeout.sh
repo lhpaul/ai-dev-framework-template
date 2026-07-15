@@ -126,6 +126,10 @@ JSON
     ;;
   "pr list --state merged --base develop-test --limit 1000 --json number,title,body")
     case "${MOCK_PR_MODE:-single_ref}" in
+      fail)
+        printf 'mock pr list failure\n' >&2
+        exit 46
+        ;;
       none)
         printf '[]\n'
         ;;
@@ -259,6 +263,41 @@ last_output_body() {
 last_output_status() {
   head -n 1 <<< "$1"
 }
+
+echo ""
+echo "=== graduation closeout: discovery failures fail closed ==="
+reset_fixture
+export MOCK_NATIVE_MODE=fail
+export MOCK_PR_MODE=none
+write_issue 900 "Parent epic" OPEN
+set_status 900 "In Development"
+empty_discovery_result="$(run_closeout)"
+empty_discovery_body="$(last_output_body "$empty_discovery_result")"
+run_test "empty_discovery_exit_one" "1" "$(last_output_status "$empty_discovery_result")"
+run_contains "empty_discovery_failed_result" "GRADUATION_CLOSEOUT_RESULT=failed" "$empty_discovery_body"
+run_contains "empty_discovery_reason" "no_delivered_subitems_discovered" "$empty_discovery_body"
+run_contains "empty_discovery_epic_held" "EPIC_RESULT=held" "$empty_discovery_body"
+run_test "empty_discovery_no_epic_close" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/900.json"))["state"])')"
+
+reset_fixture
+export MOCK_PR_MODE=fail
+write_issue 101 "Open child" OPEN
+write_issue 102 "Closed nonterminal" CLOSED
+write_issue 103 "Closed terminal" CLOSED
+write_issue 104 "Optional child" OPEN optional
+write_issue 900 "Parent epic" OPEN
+set_status 101 "In Development"
+set_status 102 "Development in Review"
+set_status 103 "Merged"
+set_status 104 "In Development"
+set_status 900 "In Development"
+pr_discovery_result="$(run_closeout)"
+pr_discovery_body="$(last_output_body "$pr_discovery_result")"
+run_test "pr_discovery_exit_one" "1" "$(last_output_status "$pr_discovery_result")"
+run_contains "pr_discovery_reason" "merged_pr_discovery_failed" "$pr_discovery_body"
+run_contains "pr_discovery_epic_held" "EPIC_RESULT=held" "$pr_discovery_body"
+run_test "pr_discovery_child_still_processed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/101.json"))["state"])')"
+run_test "pr_discovery_no_epic_close" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/900.json"))["state"])')"
 
 echo ""
 echo "=== graduation closeout: graduation PR validation ==="
