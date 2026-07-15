@@ -134,6 +134,28 @@ Nested or spawned agents must pass that base to
 PR creation. If the base is ambiguous, stop before dispatch rather than letting
 a child agent infer a PR target.
 
+The Portfolio Orchestrator also owns parent-visible fork enumeration. For each
+dispatched item with a positive numeric issue number, run the nested artifact
+guard in `audit` mode before child dispatch and again after the child returns
+control:
+
+```bash
+./scripts/development-workflow/run-nested-artifact-guard.sh \
+  --mode audit \
+  --issue "$ISSUE_NUMBER" \
+  --expected-branch "$EXPECTED_BRANCH" \
+  --expected-worktree "$EXPECTED_WORKTREE" \
+  --approved-base "$BASE_BRANCH" \
+  --repo-root "$ARTIFACT_REPO_ROOT"
+```
+
+Use the repository root that owns the item artifacts. In `workflow_hub` mode,
+implementation branches and PRs are product-owned, so `ARTIFACT_REPO_ROOT` must
+be the selected product checkout; hub-owned spec and plan artifacts use the hub
+checkout. Treat `RESULT=unexpected_fork`, `RESULT=wrong_base`,
+`RESULT=missing_base`, and `RESULT=scan_failed` as parent-level blockers and
+include the guard output in the batch summary.
+
 ### Backlog-Start Gate
 
 Before proposing or starting any not-yet-started Backlog item (in Step 2 and

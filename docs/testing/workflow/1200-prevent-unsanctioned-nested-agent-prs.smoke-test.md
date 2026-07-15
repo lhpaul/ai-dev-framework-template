@@ -98,7 +98,8 @@ item as ready.
 
 **Maps to**: AC7, AC8, AC9, AC10
 
-1. Run the parent audit with issue scope limited to `1200`.
+1. Run the parent audit with issue scope limited to `1200`, approved base
+   `develop`, and the artifact-owning `--repo-root`.
 2. Include mocked artifacts for issue `1200` and a separate out-of-scope issue.
 3. Confirm the audit reports only in-scope unexpected forks for issue `1200` as
    actionable for this run.
@@ -149,6 +150,7 @@ bash scripts/development-workflow/tests/test-workflow-hub-pr-auth.sh
 Expected coverage includes canonical artifacts, duplicate local/remote/worktree
 artifacts, `ENG-1200` tracker prefixes, lowercase/path lookalikes,
 `backport/hotfix/*` branches, wrong-base PRs, audit-only unexpected forks,
+missing approved base in audit mode, repository-qualified PR scans,
 explicit split approval, `gh pr list` scan failure, mixed in-scope/out-of-scope
 PR data, malformed PR JSON, split approval that cannot override wrong-base PRs,
 and `open-product-pr.sh --approved-base` dry-run/live mismatch stops.

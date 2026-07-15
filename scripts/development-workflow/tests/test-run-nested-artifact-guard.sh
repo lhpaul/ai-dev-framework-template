@@ -25,7 +25,7 @@ mkdir -p "$MOCK_BIN"
 cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
 case "$*" in
-  "pr list --state open --search 1200 --json number,headRefName,baseRefName,title")
+  "pr list --state open --json number,headRefName,baseRefName,title"|"pr list --repo example/repo --state open --json number,headRefName,baseRefName,title")
     case "${MOCK_GH_PR_MODE:-empty}" in
       fail)
         printf 'mock gh failure\n' >&2
@@ -135,6 +135,11 @@ out="$(guard_output --repo-root "$repo" --mode pre-pr --issue 1200 --expected-br
 run_test "missing_base_exit" "1" "$(status_code "$out")"
 run_contains "missing_base_result" "RESULT=missing_base" "$(body "$out")"
 
+repo="$(make_repo audit-missing-base)"
+out="$(guard_output --repo-root "$repo" --mode audit --issue 1200 --expected-branch feature/1200-canonical-path)"
+run_test "audit_missing_base_exit" "1" "$(status_code "$out")"
+run_contains "audit_missing_base_result" "RESULT=missing_base" "$(body "$out")"
+
 repo="$(make_repo canonical)"
 out="$(guard_output --repo-root "$repo" --mode pre-create --issue 1200 --expected-branch feature/1200-canonical-path --approved-base develop)"
 run_test "canonical_exit_zero" "0" "$(status_code "$out")"
@@ -211,9 +216,26 @@ run_contains "split_wrong_base_still_blocks" "RESULT=wrong_base" "$(body "$out")
 
 repo="$(make_repo audit)"
 git -C "$repo" branch feature/1200-audit-fork
-out="$(guard_output --repo-root "$repo" --mode audit --issue 1200 --expected-branch feature/1200-canonical-path)"
+out="$(guard_output --repo-root "$repo" --mode audit --issue 1200 --expected-branch feature/1200-canonical-path --approved-base develop)"
 run_test "audit_unexpected_exit_one" "1" "$(status_code "$out")"
 run_contains "audit_unexpected_result" "RESULT=unexpected_fork" "$(body "$out")"
+
+repo="$(make_repo audit-wrong-pr-base)"
+export MOCK_GH_PR_MODE=canonical_wrong_base
+out="$(guard_output --repo-root "$repo" --mode audit --issue 1200 --expected-branch feature/1200-canonical-path --approved-base develop)"
+unset MOCK_GH_PR_MODE
+run_test "audit_wrong_base_exit_one" "1" "$(status_code "$out")"
+run_contains "audit_wrong_base_result" "RESULT=wrong_base" "$(body "$out")"
+
+repo="$(make_repo github-origin)"
+origin_url="$(git -C "$repo" config --get remote.origin.url)"
+git -C "$repo" remote set-url origin https://github.com/example/repo.git
+git -C "$repo" config "url.${origin_url}.insteadOf" https://github.com/example/repo.git
+export MOCK_GH_PR_MODE=wrong_base
+out="$(guard_output --repo-root "$repo" --mode pre-pr --issue 1200 --expected-branch feature/1200-canonical-path --approved-base develop)"
+unset MOCK_GH_PR_MODE
+run_test "github_origin_exit_one" "1" "$(status_code "$out")"
+run_contains "github_origin_repo_scan" "RESULT=wrong_base" "$(body "$out")"
 
 repo="$(make_repo split)"
 git -C "$repo" branch feature/1200-split-path

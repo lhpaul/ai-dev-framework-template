@@ -14,7 +14,7 @@ REPO_ROOT="$(pwd)"
 usage() {
   cat <<'USAGE'
 Usage:
-  run-nested-artifact-guard.sh --mode <pre-create|pre-pr|audit> --issue <number> --expected-branch <branch> [--approved-base <branch>] [--expected-worktree <path>] [--allow-split true|false] [--repo-root <path>]
+  run-nested-artifact-guard.sh --mode <pre-create|pre-pr|audit> --issue <number> --expected-branch <branch> --approved-base <branch> [--expected-worktree <path>] [--allow-split true|false] [--repo-root <path>]
 
 Checks issue-scoped worktrees, branches, remote branches, and open PRs before a
 nested or spawned agent creates workflow artifacts. The guard is read-only.
@@ -100,7 +100,7 @@ case "$ALLOW_SPLIT" in
   true|false) ;;
   *) die_usage "--allow-split must be true or false" ;;
 esac
-if [ "$MODE" != "audit" ] && [ -z "$APPROVED_BASE" ]; then
+if [ -z "$APPROVED_BASE" ]; then
   printf 'RESULT=missing_base\n'
   printf 'ISSUE=%s\n' "$ISSUE_NUMBER"
   printf 'MODE=%s\n' "$MODE"
@@ -260,18 +260,18 @@ scan_open_prs() {
     exit 1
   fi
   repo_slug=""
-  if remote_url="$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null)"; then
+  if remote_url="$(git -C "$REPO_ROOT" config --get remote.origin.url 2>/dev/null)"; then
     repo_slug="$(github_repo_from_url "$remote_url")"
   fi
   if [ -n "$repo_slug" ]; then
-    output="$(gh pr list --repo "$repo_slug" --state open --search "$ISSUE_NUMBER" --json number,headRefName,baseRefName,title 2>/dev/null)" || {
+    output="$(gh pr list --repo "$repo_slug" --state open --json number,headRefName,baseRefName,title 2>/dev/null)" || {
       printf 'RESULT=scan_failed\n'
       printf 'SCAN=open_prs\n'
       printf 'REQUIRED_ACTION=Retry gh PR scan before nested artifact creation.\n'
       exit 1
     }
   else
-    output="$(gh pr list --state open --search "$ISSUE_NUMBER" --json number,headRefName,baseRefName,title 2>/dev/null)" || {
+    output="$(gh pr list --state open --json number,headRefName,baseRefName,title 2>/dev/null)" || {
       printf 'RESULT=scan_failed\n'
       printf 'SCAN=open_prs\n'
       printf 'REQUIRED_ACTION=Retry gh PR scan before nested artifact creation.\n'

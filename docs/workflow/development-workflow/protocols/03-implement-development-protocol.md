@@ -578,6 +578,7 @@ The PR opened at the end of this path must target `develop-<slug>` when the labe
 
 ```bash
 BASE_BRANCH="develop"  # or develop-<slug> when an integration-branch label is present
+ARTIFACT_REPO_ROOT="${ARTIFACT_REPO_ROOT:-$(pwd)}"
 EXPECTED_SHA=$(git rev-parse "origin/${BASE_BRANCH}") \
   || { echo "ERROR: git rev-parse origin/${BASE_BRANCH} failed — verify the remote ref exists." >&2; exit 1; }
 ACTUAL_SHA=$(git rev-parse HEAD) \
@@ -593,12 +594,16 @@ if [ -n "${ISSUE_NUMBER:-}" ]; then
     --mode pre-create \
     --issue "$ISSUE_NUMBER" \
     --expected-branch "feature/[branch-slug]" \
-    --approved-base "$BASE_BRANCH"
+    --approved-base "$BASE_BRANCH" \
+    --repo-root "$ARTIFACT_REPO_ROOT"
 fi
 git checkout -b feature/[branch-slug]   # or fix/[branch-slug], refactor/[branch-slug]
 ```
 
 If the check fails, do not proceed. Report the mismatch to the caller so the working tree can be reset to the correct base before retrying.
+In `workflow_hub` mode, set `ARTIFACT_REPO_ROOT` to the selected product
+checkout for implementation-owned branches and PRs; hub-owned spec and plan
+artifacts use the hub checkout.
 
 **Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout develop` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, confirm your working directory is inside the worktree path, not the main repo root (run `pwd` and compare). See the "Critical: Worktree Git Discipline" block in Protocol 91 Step 3 for the full pre-operation checklist.
 
@@ -769,12 +774,14 @@ Before running `gh pr create`, verify that the current branch was actually cut f
 
 ```bash
 BASE_BRANCH="develop"  # or develop-<slug> when an integration-branch label is present
+ARTIFACT_REPO_ROOT="${ARTIFACT_REPO_ROOT:-$(pwd)}"
 if [ -n "${ISSUE_NUMBER:-}" ]; then
   ./scripts/development-workflow/run-nested-artifact-guard.sh \
     --mode pre-pr \
     --issue "$ISSUE_NUMBER" \
     --expected-branch "feature/[branch-slug]" \
-    --approved-base "$BASE_BRANCH"
+    --approved-base "$BASE_BRANCH" \
+    --repo-root "$ARTIFACT_REPO_ROOT"
 fi
 # 1. Verify the current branch descends from the approved base (not from main or another branch)
 if ! git merge-base --is-ancestor "origin/${BASE_BRANCH}" HEAD; then
@@ -957,6 +964,7 @@ git pull origin develop
 
 ```bash
 BASE_BRANCH="develop"
+ARTIFACT_REPO_ROOT="${ARTIFACT_REPO_ROOT:-$(pwd)}"
 EXPECTED_SHA=$(git rev-parse "origin/${BASE_BRANCH}") \
   || { echo "ERROR: git rev-parse origin/${BASE_BRANCH} failed — verify the remote ref exists." >&2; exit 1; }
 ACTUAL_SHA=$(git rev-parse HEAD) \
@@ -972,7 +980,8 @@ if [ -n "${ISSUE_NUMBER:-}" ]; then
     --mode pre-create \
     --issue "$ISSUE_NUMBER" \
     --expected-branch "refactor/[branch-slug]" \
-    --approved-base "$BASE_BRANCH"
+    --approved-base "$BASE_BRANCH" \
+    --repo-root "$ARTIFACT_REPO_ROOT"
 fi
 git checkout -b refactor/[branch-slug]
 ```
@@ -1099,12 +1108,14 @@ Fix all ShellCheck warnings before committing. Workflow scripts must also be bas
 
 ```bash
 BASE_BRANCH="develop"  # or develop-<slug> when an integration-branch label is present
+ARTIFACT_REPO_ROOT="${ARTIFACT_REPO_ROOT:-$(pwd)}"
 if [ -n "${ISSUE_NUMBER:-}" ]; then
   ./scripts/development-workflow/run-nested-artifact-guard.sh \
     --mode pre-pr \
     --issue "$ISSUE_NUMBER" \
     --expected-branch "refactor/[branch-slug]" \
-    --approved-base "$BASE_BRANCH"
+    --approved-base "$BASE_BRANCH" \
+    --repo-root "$ARTIFACT_REPO_ROOT"
 fi
 # 1. Verify the current branch descends from the approved base
 if ! git merge-base --is-ancestor "origin/${BASE_BRANCH}" HEAD; then
@@ -1230,6 +1241,7 @@ git checkout develop && git pull origin develop
 
 ```bash
 BASE_BRANCH="develop"  # or develop-<slug> when an integration-branch label is present
+ARTIFACT_REPO_ROOT="${ARTIFACT_REPO_ROOT:-$(pwd)}"
 EXPECTED_SHA=$(git rev-parse "origin/${BASE_BRANCH}") \
   || { echo "ERROR: git rev-parse origin/${BASE_BRANCH} failed — verify the remote ref exists." >&2; exit 1; }
 ACTUAL_SHA=$(git rev-parse HEAD) \
@@ -1245,7 +1257,8 @@ if [ -n "${ISSUE_NUMBER:-}" ]; then
     --mode pre-create \
     --issue "$ISSUE_NUMBER" \
     --expected-branch "fix/[branch-slug]" \
-    --approved-base "$BASE_BRANCH"
+    --approved-base "$BASE_BRANCH" \
+    --repo-root "$ARTIFACT_REPO_ROOT"
 fi
 git checkout -b fix/[branch-slug]
 ```
@@ -1360,12 +1373,14 @@ fix-focused description (omit spec/plan links when none exist):
 
 ```bash
 BASE_BRANCH="develop"  # or develop-<slug> when an integration-branch label is present
+ARTIFACT_REPO_ROOT="${ARTIFACT_REPO_ROOT:-$(pwd)}"
 if [ -n "${ISSUE_NUMBER:-}" ]; then
   ./scripts/development-workflow/run-nested-artifact-guard.sh \
     --mode pre-pr \
     --issue "$ISSUE_NUMBER" \
     --expected-branch "fix/[branch-slug]" \
-    --approved-base "$BASE_BRANCH"
+    --approved-base "$BASE_BRANCH" \
+    --repo-root "$ARTIFACT_REPO_ROOT"
 fi
 # 1. Verify the current branch descends from the approved base
 if ! git merge-base --is-ancestor "origin/${BASE_BRANCH}" HEAD; then
@@ -1525,7 +1540,8 @@ if [ -n "${ISSUE_NUMBER:-}" ]; then
     --mode pre-create \
     --issue "$ISSUE_NUMBER" \
     --expected-branch "hotfix/[branch-slug]" \
-    --approved-base main
+    --approved-base main \
+    --repo-root "$(pwd)"
 fi
 git checkout -b hotfix/[branch-slug]
 ```
@@ -1667,7 +1683,8 @@ if [ -n "${ISSUE_NUMBER:-}" ]; then
     --mode pre-pr \
     --issue "$ISSUE_NUMBER" \
     --expected-branch "hotfix/[branch-slug]" \
-    --approved-base main
+    --approved-base main \
+    --repo-root "$(pwd)"
 fi
 # 1. Verify the current branch descends from origin/main (hotfixes are cut from main)
 if ! git merge-base --is-ancestor origin/main HEAD; then
@@ -1712,7 +1729,8 @@ if [ -n "${ISSUE_NUMBER:-}" ]; then
     --mode pre-create \
     --issue "$ISSUE_NUMBER" \
     --expected-branch "backport/hotfix/[slug]" \
-    --approved-base develop
+    --approved-base develop \
+    --repo-root "$(pwd)"
 fi
 git checkout -b backport/hotfix/[slug] origin/main
 ```
@@ -1727,7 +1745,8 @@ if [ -n "${ISSUE_NUMBER:-}" ]; then
     --mode pre-pr \
     --issue "$ISSUE_NUMBER" \
     --expected-branch "backport/hotfix/[slug]" \
-    --approved-base develop
+    --approved-base develop \
+    --repo-root "$(pwd)"
 fi
 # Verify the backport branch descends from origin/main (it was cut from origin/main post-merge)
 if ! git merge-base --is-ancestor origin/main HEAD; then

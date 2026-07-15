@@ -123,7 +123,8 @@ Usage:
   --mode pre-create \
   --issue 1200 \
   --expected-branch feature/1200-example \
-  --approved-base develop
+  --approved-base develop \
+  --repo-root "$(pwd)"
 ```
 
 What it does:
@@ -132,13 +133,19 @@ What it does:
 - Treats the expected branch or expected worktree as canonical.
 - Reports duplicate issue-scoped artifacts as `RESULT=blocked_duplicate`.
 - Reports wrong-base open PRs as `RESULT=wrong_base`.
-- Reports missing parent-approved base context as `RESULT=missing_base`.
+- Reports missing parent-approved base context as `RESULT=missing_base` in all
+  modes, including `audit`.
 - Reports scan failures as `RESULT=scan_failed` instead of assuming clean.
+- Uses `--repo-root` to choose which repository owns the artifacts being
+  scanned; in `workflow_hub` mode, product implementation artifacts must scan
+  the selected product checkout rather than the hub checkout.
 
 Use this when:
 
 - A parent runner is about to dispatch a child agent that may create a branch.
 - A stage agent is about to open or ready a workflow PR.
+- A parent runner is auditing in-scope forks before dispatch or after a child
+  returns control.
 - A deliberate split needs explicit `--allow-split true` approval with the
   approved base recorded in the parent summary.
 
