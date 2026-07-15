@@ -99,11 +99,22 @@ path_contains() {
   esac
 }
 
+git_output_or_empty() {
+  local output status
+  set +e
+  output="$(git "$@" 2>/dev/null)"
+  status=$?
+  set -e
+  if [ "$status" -eq 0 ]; then
+    printf '%s\n' "$output"
+  fi
+}
+
 current_cwd="$(pwd -P 2>/dev/null || pwd)"
-observed_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+observed_branch="$(git_output_or_empty rev-parse --abbrev-ref HEAD)"
 
 if [ -z "$main_repo_root" ]; then
-  git_common_dir="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+  git_common_dir="$(git_output_or_empty rev-parse --git-common-dir)"
   if [ -n "$git_common_dir" ]; then
     case "$git_common_dir" in
       /*) main_repo_root="$(cd "$git_common_dir/.." && pwd -P)" ;;
