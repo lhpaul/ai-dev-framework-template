@@ -104,6 +104,10 @@ JSON
 {"data":{"repository":{"issue":{"number":900,"title":"Epic","subIssues":{"nodes":[{"number":101,"title":"One","state":"OPEN"}],"pageInfo":{"hasNextPage":true,"endCursor":"cursor_page_1"}}}}}}
 JSON
           fi
+        elif [ "${MOCK_EPIC_MODE:-populated}" = "mixed-labels" ]; then
+          cat <<'JSON'
+{"data":{"repository":{"issue":{"number":900,"title":"Epic","subIssues":{"nodes":[{"number":105,"title":"Five","state":"OPEN"},{"number":106,"title":"Six","state":"OPEN"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
+JSON
         else
           cat <<'JSON'
 {"data":{"repository":{"issue":{"number":900,"title":"Epic","subIssues":{"nodes":[{"number":101,"title":"One","state":"OPEN"},{"number":102,"title":"Two","state":"OPEN"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
@@ -441,6 +445,11 @@ run_test "epic_subissues_resolved" "101,102" "$(printf '%s\n' "$epic_output" | j
 
 paginated_output="$(MOCK_EPIC_MODE=paginated run_json --epic 900)"
 run_test "epic_pagination_resolved" "101,102" "$(printf '%s\n' "$paginated_output" | jq -r '[.items[].number] | join(",")')"
+
+epic_mixed_output="$(MOCK_EPIC_MODE=mixed-labels run_json --epic 900)"
+run_test "epic_mixed_labels_no_base" "null" "$(printf '%s\n' "$epic_mixed_output" | jq -r '.baseBranch')"
+run_test "epic_mixed_labels_base_ambiguous" "true" "$(printf '%s\n' "$epic_mixed_output" | jq -r '.baseAmbiguous')"
+run_test "epic_mixed_labels_mark_items_ambiguous" "2" "$(printf '%s\n' "$epic_mixed_output" | jq '.groups.ambiguous | length')"
 
 empty_output="$(MOCK_EPIC_MODE=empty run_json --epic 900)"
 run_test "empty_epic_reports_scope" "true" "$(printf '%s\n' "$empty_output" | jq -r '.emptyEpicScope')"

@@ -786,6 +786,7 @@ base_validation_branch=""
 
 base_branch=""
 base_reason=""
+set_ambiguous=0
 if [ -n "$base_override" ]; then
   base_branch="$base_override"
   base_reason="supplied --base override"
@@ -828,14 +829,24 @@ elif [ "$integration_count" -eq 1 ]; then
     fi
   fi
 elif [ "$integration_count" -gt 1 ]; then
-  base_branch="develop"
-  base_reason="mixed integration branch labels; falling back to develop"
   base_validation_result="skipped_mixed_labels"
-  base_warnings_json="$(printf '%s\n' "$integration_labels" | jq -R -s -c \
-    'split("\n") | map(select(. != "")) | [("mixed integration branch labels in scope: " + join(", ") + "; using develop")]')"
+  if [ -n "$epic_number" ]; then
+    base_branch=""
+    base_reason="conflicting integration branch labels"
+    set_ambiguous=1
+  else
+    base_branch="develop"
+    base_reason="mixed integration branch labels; falling back to develop"
+    base_warnings_json="$(printf '%s\n' "$integration_labels" | jq -R -s -c \
+      'split("\n") | map(select(. != "")) | [("mixed integration branch labels in scope: " + join(", ") + "; using develop")]')"
+  fi
 else
   base_branch="develop"
   base_reason="no integration branch label"
+fi
+
+if [ "$set_ambiguous" -eq 1 ]; then
+  items_json="$(printf '%s\n' "$items_json" | jq 'map(.group = "ambiguous" | .ambiguityReason = "conflicting integration branch labels")')"
 fi
 
 empty_epic=0
