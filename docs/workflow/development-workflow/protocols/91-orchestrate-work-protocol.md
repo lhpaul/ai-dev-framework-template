@@ -1786,13 +1786,16 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
 
 **When ALL criteria are met — apply the fixes directly** in the current session using Edit/Bash tools:
 
-1. Apply every blocking finding in one pass (follow the batching rule: all in one commit).
-2. Commit with a descriptive message (e.g., `fix: address [platform] findings inline ([brief description])`).
-3. Push the commit. _(Push before resolving threads — if push fails, threads must not be falsely marked resolved.)_
-4. Reply to each finding's review thread with the fix description and commit SHA.
-5. Resolve each addressed thread via the GraphQL `resolveReviewThread` mutation.
-6. **Increment `cycle`** (the same counter used in the sub-agent loop). Inline fix retries are bounded by `max_cycles` exactly like sub-agent retries — the inline path is a faster lane, not an unbounded one.
-7. Run `pr-review-loop.sh` again from the top of Step 7. If it returns `clean`, proceed normally. If the loop still reports unresolved blocking findings **and** `cycle >= max_cycles`, escalate to human (the just-pushed fix is always given a chance to be verified before escalating).
+1. If `BATCH_CONTEXT=true`, complete the pre-mutation isolation self-check above
+   before any inline edit, branch-changing command, commit, push, PR mutation, or
+   tracker mutation. Stop before mutation if the check fails.
+2. Apply every blocking finding in one pass (follow the batching rule: all in one commit).
+3. Commit with a descriptive message (e.g., `fix: address [platform] findings inline ([brief description])`).
+4. Push the commit. _(Push before resolving threads — if push fails, threads must not be falsely marked resolved.)_
+5. Reply to each finding's review thread with the fix description and commit SHA.
+6. Resolve each addressed thread via the GraphQL `resolveReviewThread` mutation.
+7. **Increment `cycle`** (the same counter used in the sub-agent loop). Inline fix retries are bounded by `max_cycles` exactly like sub-agent retries — the inline path is a faster lane, not an unbounded one.
+8. Run `pr-review-loop.sh` again from the top of Step 7. If it returns `clean`, proceed normally. If the loop still reports unresolved blocking findings **and** `cycle >= max_cycles`, escalate to human (the just-pushed fix is always given a chance to be verified before escalating).
 
 **Do not dispatch a sub-agent for mechanical findings.** Sub-agent startup overhead (context loading, planning) typically costs 10–20 minutes for changes that take 30 seconds to apply directly.
 

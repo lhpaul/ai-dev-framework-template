@@ -928,7 +928,7 @@ Each mutating runner entry must include:
 - Expected workflow branch
 - Absolute worktree path
 - `isolation: "worktree"`
-- Mutation classification (`mutating` or `read_only`)
+- Mutation classification (`mutating`)
 - Artifact-owning repo root
 - Approved base branch
 
