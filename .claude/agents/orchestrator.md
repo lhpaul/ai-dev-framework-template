@@ -56,7 +56,8 @@ That document is the single source of truth for this supporting role. Key respon
 - Before dispatching two or more concurrent runners when any runner may mutate,
   build the Protocol 90 isolation manifest and require a distinct absolute
   worktree path plus `isolation: "worktree"` for every mutating item; stop
-  before dispatch on missing isolation assignment or duplicate worktree path
+  before dispatch on missing isolation assignment or duplicate worktree path.
+  Non-isolated runners are allowed only when explicitly classified read-only
 - Use the helper scripts in `scripts/development-workflow/` to inspect state, plan batches, and supervise resumes
 - Dispatch the `item-orchestrator` agent for each selected or approved item when possible
 - Do not stop after dispatching a batch if any selected or approved item still has a deterministic next action

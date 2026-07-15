@@ -821,9 +821,16 @@ The guard is **non-blocking**: it emits a `GUARDRAIL WARNING` and returns exit c
 **Stage-agent handoff branch-skip requirement** (`BATCH_CONTEXT=true` only): Every stage-agent handoff (to `developer`, `tech-lead`, `product-manager`, or any other stage agent) when `BATCH_CONTEXT=true` **must** include:
 
 1. The literal resolved `<worktree-path>` value (e.g., `/path/to/repo/.claude/worktrees/lh-168/fix-lh-168-slug`).
-2. The explicit instruction: "BATCH_CONTEXT=true — the worktree is already on branch `<branch>`. Do NOT run `git checkout develop`, `git checkout -b`, `git switch`, `git reset`, or `git restore` from the main repo root. Confirm CWD matches `<worktree-path>` before any git state-changing command."
+2. The expected branch, artifact repo root, approved base branch, mutation
+   classification, and `isolation: "worktree"` when the stage agent may mutate
+   artifacts.
+3. The explicit instruction: "BATCH_CONTEXT=true — the worktree is already on branch `<branch>`. Do NOT run `git checkout develop`, `git checkout -b`, `git switch`, `git reset`, or `git restore` from the main repo root. Confirm CWD matches `<worktree-path>` before any git state-changing command."
 
-Omitting either of these from the handoff is the root cause of the branch-leak pattern where stage subagents run Protocol 03's branching steps (`git checkout develop && git checkout -b <branch>`) from the main repo root CWD, silently switching the main working tree to the feature branch.
+Omitting any required instruction or metadata field from the handoff is the root
+cause of the branch-leak pattern where stage subagents run Protocol 03's
+branching steps (`git checkout develop && git checkout -b <branch>`) from the
+main repo root CWD, silently switching the main working tree to the feature
+branch.
 
 **Critical: Worktree Git Discipline** (`BATCH_CONTEXT=true` only)
 
