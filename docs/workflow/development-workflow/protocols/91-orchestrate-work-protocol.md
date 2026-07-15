@@ -523,10 +523,11 @@ If the label is present:
 4. **If the branch does not exist** (`BRANCH_STATUS` is `2`), create and push it
    from the owning repository's default implementation branch:
 
-   ```bash
-   OWNING_REPO_ROOT="<current-or-selected-product-repository-root>"
-   OWNING_REMOTE="origin"
-   DEFAULT_IMPLEMENTATION_BRANCH="<default-implementation-branch>"
+	   ```bash
+	   set -euo pipefail
+	   OWNING_REPO_ROOT="<current-or-selected-product-repository-root>"
+	   OWNING_REMOTE="origin"
+	   DEFAULT_IMPLEMENTATION_BRANCH="<default-implementation-branch>"
    git -C "$OWNING_REPO_ROOT" fetch "$OWNING_REMOTE" "$DEFAULT_IMPLEMENTATION_BRANCH"
    git -C "$OWNING_REPO_ROOT" checkout -B develop-<slug> "$OWNING_REMOTE/$DEFAULT_IMPLEMENTATION_BRANCH"
    git -C "$OWNING_REPO_ROOT" push -u "$OWNING_REMOTE" develop-<slug>

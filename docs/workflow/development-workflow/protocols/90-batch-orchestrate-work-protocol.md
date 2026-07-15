@@ -951,10 +951,11 @@ If an `integration-branch:<slug>` label is found:
 
 3. **If the branch does not exist** (`BRANCH_STATUS` is `2`), create and push it from `develop`:
 
-   ```bash
-   git fetch origin develop
-   git checkout -B develop-<slug> origin/develop
-   git push -u origin develop-<slug>
+	   ```bash
+	   set -euo pipefail
+	   git fetch origin develop
+	   git checkout -B develop-<slug> origin/develop
+	   git push -u origin develop-<slug>
    git switch develop  # return to develop immediately after creation
    ```
 
