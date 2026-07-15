@@ -434,6 +434,12 @@ After the draft PR exists, the **Work Item Runner** owns the rest of the lifecyc
 - Apply `ready-for-human-review` and move the tracker to **Plan in Review** when the PR is human-ready
 - Stop only when the PR is waiting on human review / merge or the run has escalated
 
+For sweep, batch, helper-extraction, or pattern-completeness work, the plan must
+name the residual verification strategy and evidence source that implementation
+will use before `ready-for-human-review`. The plan should identify whether the
+evidence is occurrence/file counts, linked follow-up residuals, out-of-scope
+rationale, or apparent caller evidence for helper outputs.
+
 If this protocol is invoked **standalone** rather than through the Work Item Runner, hand off manually by following `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` from the newly opened draft PR.
 
 See `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.

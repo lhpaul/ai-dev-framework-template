@@ -561,7 +561,12 @@ Before merge:
 10. Confirm the risk classifier permits merge under the invocation's
     `--max-risk`.
 11. Confirm the PR disposition audit comment exists for the reviewed head SHA.
-12. Confirm the candidate PR is not a graduation PR
+12. For sweep, batch, helper-extraction, numeric-target, or
+    pattern-completeness sub-items, confirm the PR disposition or item summary
+    includes residual gate evidence: `RESULT=pass` or `RESULT=not_applicable`.
+    A blocked or escalated residual gate means the sub-item is not complete and
+    must remain out of delegated merge.
+13. Confirm the candidate PR is not a graduation PR
     (`develop-<slug>` -> `develop`) unless explicit graduation approval has
     been recorded in the assembled policy evidence as
     `graduationApproved: true`. `/run-epic` delegated merge authority applies to

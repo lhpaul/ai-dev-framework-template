@@ -40,6 +40,9 @@ proposal step.
    or incomplete check evidence, re-query authoritative PR/check state and keep
    supervising until every in-scope PR is green, blocked, escalated, merged, or
    held by guardrails.
+   For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
+   items, require residual gate evidence before accepting an item as
+   `ready-for-human-review`.
 10. After all in-scope PRs reach `ready-for-human-review`, inspect the effective
    guardrails. When the relevant stages allow `may_merge_pr: true`, run
    Guardrails Enforcement Gate 5 for each in-scope PR, including

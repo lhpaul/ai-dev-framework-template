@@ -22,6 +22,8 @@ Before running this smoke test:
 
 | Item | Value |
 | --- | --- |
+| Residual gate helper | `scripts/development-workflow/scope-residual-gate.sh` |
+| Main shell test | `scripts/development-workflow/tests/test-scope-residual-gate.sh` |
 | Sweep issue title | `Clean 127 console.log occurrences across apps/admin` |
 | Clean evidence | JSON evidence with zero residual groups |
 | Blocking evidence | JSON evidence with at least one residual group and no disposition |

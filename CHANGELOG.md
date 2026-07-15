@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Add residual verification gate for sweep sub-items** (#1175): Require
+  broad-scope workflow items to record residual evidence before readiness.
+
 ### Changed
 
 - **Deprecate direct Cursor item-orchestrator path** (#1190): Clarify that

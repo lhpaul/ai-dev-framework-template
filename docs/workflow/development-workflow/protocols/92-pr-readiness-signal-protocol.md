@@ -27,6 +27,9 @@ Apply this label when **all** of the following are true:
 - [ ] Step 7's latest automated reviewer-loop summary has `Result: clean` or `Result: skipped`; `RESULT=escalate`, `pending_timeout`, `timeout`, `needs_fixes`, or any other non-clean terminal result blocks this label
 - [ ] Every configured automated PR reviewer has no blocking PR feedback (or is skipped)
 - [ ] All feedback from a previous human review cycle has been addressed
+- [ ] For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
+      items, the latest residual gate result is `pass` or `not_applicable`.
+      `block` maps to `needs-fixes`; `escalate` maps to a human-decision stop.
 
 ---
 

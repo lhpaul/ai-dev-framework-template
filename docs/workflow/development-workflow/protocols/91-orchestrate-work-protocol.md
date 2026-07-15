@@ -164,6 +164,12 @@ These are **not** terminal conditions and must not stop the run:
 - A PR is open but still waiting for CI or automated review to finish
 - Automated review found blocking PR feedback that the matching fixer agent can address
 
+For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
+items, `ready-for-human-review` is also non-terminal until
+`scripts/development-workflow/scope-residual-gate.sh` has produced `RESULT=pass`
+or `RESULT=not_applicable`. `RESULT=block` keeps the item in fixes, and
+`RESULT=escalate` is a named human-decision stop.
+
 ---
 
 ## Step 1: Resolve the Target Item
