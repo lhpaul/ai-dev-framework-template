@@ -369,9 +369,11 @@ Usage:
   --evidence /tmp/residual-evidence.json
 ```
 
-The helper is read-only. It emits `RESULT=pass|block|escalate|not_applicable`,
+The helper is read-only. `classify` emits `RESULT=requires_verification` for
+applicable scopes and `RESULT=not_applicable` otherwise. `verify` emits
+`RESULT=pass|block|escalate|not_applicable`. Both modes emit
 `SCOPE_CLASSIFICATION`, `RESIDUAL_GROUPS`, `FOLLOW_UPS`, and `SUMMARY` fields,
-and never updates labels, trackers, comments, PRs, branches, or issues.
+and never update labels, trackers, comments, PRs, branches, or issues.
 
 #### `hub-list-prs.sh`
 

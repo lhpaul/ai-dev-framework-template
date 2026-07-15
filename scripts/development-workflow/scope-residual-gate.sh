@@ -123,7 +123,7 @@ fi
 if [ "$command" = "classify" ]; then
   result="not_applicable"
   if [ "$classification" != "not_applicable" ]; then
-    result="pass"
+    result="requires_verification"
   fi
   printf 'RESULT=%s\n' "$result"
   printf 'SCOPE_CLASSIFICATION=%s\n' "$classification"

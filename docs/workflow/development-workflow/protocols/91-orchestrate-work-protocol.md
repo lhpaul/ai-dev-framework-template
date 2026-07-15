@@ -2121,8 +2121,9 @@ fi
 # Check 3.5: residual gate for broad-scope work.
 # When item title/body/spec/plan indicates sweep, batch, helper extraction,
 # numeric target counts, or pattern-based completeness, the runner must execute
-# scripts/development-workflow/scope-residual-gate.sh before Check 4 and expose
-# the latest result here.
+# scripts/development-workflow/scope-residual-gate.sh verify before Check 4 and
+# expose the latest verify result here. A classify-only
+# RESULT=requires_verification does not satisfy readiness.
 if [ "${RESIDUAL_GATE_REQUIRED:-false}" = "true" ]; then
   case "${RESIDUAL_GATE_RESULT:-}" in
     pass|not_applicable)
@@ -2137,6 +2138,12 @@ if [ "${RESIDUAL_GATE_REQUIRED:-false}" = "true" ]; then
     escalate)
       echo "ERROR: Residual gate escalated for a human decision."
       echo "Do not apply ready-for-human-review until the residual scope decision is resolved."
+      exit 8
+      ;;
+    requires_verification)
+      echo "ERROR: Residual gate was only classified; evidence verification has not run."
+      echo "Run scripts/development-workflow/scope-residual-gate.sh verify and re-enter Step 8a."
+      gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
       exit 8
       ;;
     *)

@@ -78,6 +78,7 @@ bad_remaining="$TMP_DIR/bad-remaining.json"
 write_json "$bad_remaining" '{"checked_scope":"console.log cleanup","residual_groups":[{"summary":"admin logs","remaining_count":"unknown"}],"helper_outputs":[]}'
 
 out="$( "$HELPER" classify --issue-title "Clean 127 console.log occurrences across apps/admin" )"
+assert_field "classify_requires_verification_not_pass" "requires_verification" "$out" "RESULT"
 assert_field "classifies_boundary_variants" "numeric_sweep" "$out" "SCOPE_CLASSIFICATION"
 assert_field "preserves_numeric_target_in_summary" "127" "$out" "TARGET_COUNT"
 
