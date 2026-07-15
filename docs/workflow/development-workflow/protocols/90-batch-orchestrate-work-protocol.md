@@ -939,8 +939,8 @@ Pre-dispatch validation is mandatory:
   `unclear_requirements`; name the affected item, the expected branch, the
   missing isolation field, and the human action needed to unblock.
 - If two mutating runners are assigned the same worktree path, stop before
-  dispatch with guardrail stop condition `destructive_action`; name both items,
-  the shared path, and the human action needed to unblock.
+  dispatch with guardrail stop condition `unclear_requirements`; name both
+  items, the shared path, and the human action needed to unblock.
 - A non-isolated runner is allowed only when it is explicitly classified
   `read_only` and will not edit files, switch branches, create commits, push,
   open or update PRs, modify labels, or update tracker state.
@@ -1334,11 +1334,24 @@ Do **not** redispatch the same subagent for the same item in the same batch run.
 
 ### Inline fallback (AC2)
 
-Execute the item from the main session. If the worktree was already created during dispatch, use that path. If the denial occurred before the worktree was created (early preflight failure in Protocol 91 Step 3.5), create it first:
+Execute the item from the current orchestration session, but operate only inside
+the manifest-assigned worktree. If the worktree was already created during
+dispatch, use that exact absolute path. If the denial occurred before the
+worktree was created (early preflight failure in Protocol 91 Step 3.5), create
+it at the manifest-assigned absolute worktree path first. Stop with guardrail
+stop condition `unclear_requirements` if the manifest assignment is missing; do
+not substitute a generic path or continue from the main repository checkout.
 
 ```bash
-git worktree add <path> <branch>
+git worktree add <manifest-assigned-worktree-path> <branch>
 ```
+
+Before any inline edit, branch-changing command, commit, push, PR mutation, or
+tracker mutation, run the same Protocol 91 pre-mutation isolation self-check:
+`BATCH_CONTEXT=true`, expected branch, artifact repo root, approved base branch,
+mutation classification, and `isolation: "worktree"` must be present; `pwd -P`
+must be at or under the manifest-assigned worktree path; and `git rev-parse
+--abbrev-ref HEAD` must match the expected branch.
 
 Re-evaluate item state from scratch:
 
