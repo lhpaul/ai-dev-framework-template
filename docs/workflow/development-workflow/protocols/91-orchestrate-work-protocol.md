@@ -796,9 +796,10 @@ matches the isolation assignment from the Portfolio Orchestrator:
 
 If the observed directory is outside the expected worktree path, if the runner
 is in the main repo root, or if the observed branch differs from the expected
-branch, stop before mutation. The stop report must include item identifier,
-expected worktree, observed directory, expected branch, observed branch, and the
-human action needed to unblock.
+branch, stop before mutation with guardrail stop condition
+`unclear_requirements`. The stop report must include the stop condition name,
+item identifier, expected worktree, observed directory, expected branch,
+observed branch, and the human action needed to unblock.
 
 If there is evidence that mutation may already have occurred outside the
 assigned worktree, escalate for human inspection instead of trying to repair it
