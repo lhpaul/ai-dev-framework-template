@@ -131,6 +131,9 @@ What it does:
 
 - Scans registered worktrees, local branches, remote branches, and open PRs.
 - Treats the expected branch or expected worktree as canonical.
+- Compares non-PR artifacts against the expected workflow stage so merged
+  prior-stage `spec/*`, `implementation-plan/*`, or `hotfix/*` branches do not
+  block the next legitimate stage.
 - Reports duplicate issue-scoped artifacts as `RESULT=blocked_duplicate`.
 - Reports wrong-base open PRs as `RESULT=wrong_base`.
 - Reports missing parent-approved base context as `RESULT=missing_base` in all

@@ -151,6 +151,8 @@ Expected coverage includes canonical artifacts, duplicate local/remote/worktree
 artifacts, `ENG-1200` tracker prefixes, lowercase/path lookalikes,
 `backport/hotfix/*` branches, wrong-base PRs, audit-only unexpected forks,
 missing approved base in audit mode, repository-qualified PR scans,
+stage-aware prior-branch filtering, expected-worktree branch mismatches,
+audit forks that cannot be bypassed by split approval,
 explicit split approval, `gh pr list` scan failure, mixed in-scope/out-of-scope
 PR data, malformed PR JSON, split approval that cannot override wrong-base PRs,
 and `open-product-pr.sh --approved-base` dry-run/live mismatch stops.

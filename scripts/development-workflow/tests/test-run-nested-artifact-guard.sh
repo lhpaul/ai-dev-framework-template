@@ -153,6 +153,15 @@ run_test "duplicate_local_exit_one" "1" "$(status_code "$out")"
 run_contains "duplicate_local_result" "RESULT=blocked_duplicate" "$(body "$out")"
 run_contains "duplicate_local_branch" "feature/1200-duplicate-path" "$(body "$out")"
 
+repo="$(make_repo prior-stage)"
+git -C "$repo" branch spec/1200-approved-spec
+git -C "$repo" branch implementation-plan/1200-approved-plan
+out="$(guard_output --repo-root "$repo" --mode pre-create --issue 1200 --expected-branch feature/1200-canonical-path --approved-base develop)"
+run_test "prior_stage_exit_zero" "0" "$(status_code "$out")"
+run_contains "prior_stage_clean" "RESULT=clean" "$(body "$out")"
+run_not_contains "prior_stage_ignores_spec" "spec/1200-approved-spec" "$(body "$out")"
+run_not_contains "prior_stage_ignores_plan" "implementation-plan/1200-approved-plan" "$(body "$out")"
+
 repo="$(make_repo boundary)"
 git -C "$repo" branch feature/12000-unrelated-path
 git -C "$repo" branch feature/foo-1200
@@ -183,14 +192,28 @@ run_contains "remote_duplicate_reported" "kind=remote_branch branch=feature/1200
 repo="$(make_repo backport)"
 git -C "$repo" branch backport/hotfix/1200-backport-path
 out="$(guard_output --repo-root "$repo" --mode pre-create --issue 1200 --expected-branch feature/1200-canonical-path --approved-base develop)"
+run_test "backport_prefix_non_stage_exit_zero" "0" "$(status_code "$out")"
+run_contains "backport_prefix_non_stage_clean" "RESULT=clean" "$(body "$out")"
+
+repo="$(make_repo backport-duplicate)"
+git -C "$repo" branch backport/hotfix/1200-other-backport
+out="$(guard_output --repo-root "$repo" --mode pre-create --issue 1200 --expected-branch backport/hotfix/1200-backport-path --approved-base develop)"
 run_test "backport_prefix_exit_one" "1" "$(status_code "$out")"
-run_contains "backport_prefix_reported" "backport/hotfix/1200-backport-path" "$(body "$out")"
+run_contains "backport_prefix_reported" "backport/hotfix/1200-other-backport" "$(body "$out")"
 
 repo="$(make_repo worktree)"
 git -C "$repo" worktree add -q -b feature/1200-duplicate-worktree "$TMP_ROOT/worktree-dup"
 out="$(guard_output --repo-root "$repo" --mode pre-create --issue 1200 --expected-branch feature/1200-canonical-path --approved-base develop)"
 run_test "worktree_duplicate_exit_one" "1" "$(status_code "$out")"
 run_contains "worktree_duplicate_path" "$TMP_ROOT/worktree-dup" "$(body "$out")"
+
+repo="$(make_repo expected-path-wrong-branch)"
+expected_wrong_path="$TMP_ROOT/worktree-expected-path-wrong-branch"
+git -C "$repo" worktree add -q -b feature/1200-wrong-worktree-branch "$expected_wrong_path"
+out="$(guard_output --repo-root "$repo" --mode pre-create --issue 1200 --expected-branch feature/1200-canonical-path --expected-worktree "$expected_wrong_path" --approved-base develop)"
+run_test "expected_path_wrong_branch_exit_one" "1" "$(status_code "$out")"
+run_contains "expected_path_wrong_branch_result" "RESULT=blocked_duplicate" "$(body "$out")"
+run_contains "expected_path_wrong_branch_reported" "feature/1200-wrong-worktree-branch" "$(body "$out")"
 
 repo="$(make_repo wrong-pr-base)"
 export MOCK_GH_PR_MODE=wrong_base
@@ -219,6 +242,18 @@ git -C "$repo" branch feature/1200-audit-fork
 out="$(guard_output --repo-root "$repo" --mode audit --issue 1200 --expected-branch feature/1200-canonical-path --approved-base develop)"
 run_test "audit_unexpected_exit_one" "1" "$(status_code "$out")"
 run_contains "audit_unexpected_result" "RESULT=unexpected_fork" "$(body "$out")"
+
+repo="$(make_repo audit-split)"
+git -C "$repo" branch feature/1200-audit-split-fork
+out="$(guard_output --repo-root "$repo" --mode audit --issue 1200 --expected-branch feature/1200-canonical-path --approved-base develop --allow-split true)"
+run_test "audit_split_exit_one" "1" "$(status_code "$out")"
+run_contains "audit_split_still_reports_fork" "RESULT=unexpected_fork" "$(body "$out")"
+
+repo="$(make_repo backport-prior-stage)"
+git -C "$repo" branch hotfix/1200-released-hotfix
+out="$(guard_output --repo-root "$repo" --mode pre-create --issue 1200 --expected-branch backport/hotfix/1200-backport-path --approved-base develop)"
+run_test "backport_prior_hotfix_exit_zero" "0" "$(status_code "$out")"
+run_contains "backport_prior_hotfix_clean" "RESULT=clean" "$(body "$out")"
 
 repo="$(make_repo audit-wrong-pr-base)"
 export MOCK_GH_PR_MODE=canonical_wrong_base

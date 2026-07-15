@@ -125,17 +125,34 @@ branch_matches_issue() {
   [[ "$branch" =~ ^(feature|fix|refactor|hotfix|spec|implementation-plan|backport/hotfix)/(([A-Z][A-Z0-9]{1,7}|[a-z][a-z0-9])-)?${ISSUE_NUMBER}($|-) ]]
 }
 
+artifact_stage() {
+  local branch="$1"
+  case "$branch" in
+    feature/*|fix/*|refactor/*) printf 'implementation\n' ;;
+    spec/*) printf 'spec\n' ;;
+    implementation-plan/*) printf 'plan\n' ;;
+    hotfix/*) printf 'hotfix\n' ;;
+    backport/hotfix/*) printf 'backport_hotfix\n' ;;
+    *) printf 'other\n' ;;
+  esac
+}
+
+branch_conflicts_expected_stage() {
+  local branch="$1"
+  local expected_stage branch_stage_value
+  expected_stage="$(artifact_stage "$EXPECTED_BRANCH")"
+  branch_stage_value="$(artifact_stage "$branch")"
+  [ "$branch_stage_value" = "$expected_stage" ]
+}
+
 is_canonical_artifact() {
   local kind="$1"
   local branch="$2"
-  local path_or_number="$3"
 
   if [ "$branch" = "$EXPECTED_BRANCH" ]; then
     return 0
   fi
-  if [ "$kind" = "worktree" ] && [ -n "$EXPECTED_WORKTREE" ] && [ "$path_or_number" = "$EXPECTED_WORKTREE" ]; then
-    return 0
-  fi
+  [ "$kind" != "worktree" ] || return 1
   return 1
 }
 
@@ -152,6 +169,7 @@ add_artifact() {
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$kind" "$branch" "$location" "$base" "$state" "$canonical" >> "$ARTIFACTS_FILE"
     return 0
   fi
+  branch_conflicts_expected_stage "$branch" || return 0
   if is_canonical_artifact "$kind" "$branch" "$location"; then
     canonical="true"
     printf '%s\t%s\t%s\t%s\t%s\n' "$kind" "$branch" "$location" "$base" "$state" >> "$CANONICAL_FILE"
@@ -325,7 +343,7 @@ fi
 
 if [ "$wrong_base_count" -gt 0 ]; then
   result="wrong_base"
-elif [ "$ALLOW_SPLIT" = "true" ] && [ -n "$APPROVED_BASE" ]; then
+elif [ "$MODE" != "audit" ] && [ "$ALLOW_SPLIT" = "true" ] && [ -n "$APPROVED_BASE" ]; then
   result="clean"
 elif [ "$duplicate_count" -gt 0 ]; then
   if [ "$MODE" = "audit" ]; then

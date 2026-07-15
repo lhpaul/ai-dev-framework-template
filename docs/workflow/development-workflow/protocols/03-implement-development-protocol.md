@@ -1541,7 +1541,7 @@ if [ -n "${ISSUE_NUMBER:-}" ]; then
     --issue "$ISSUE_NUMBER" \
     --expected-branch "hotfix/[branch-slug]" \
     --approved-base main \
-    --repo-root "$(pwd)"
+    --repo-root "${ARTIFACT_REPO_ROOT:-$(pwd)}"
 fi
 git checkout -b hotfix/[branch-slug]
 ```
@@ -1684,7 +1684,7 @@ if [ -n "${ISSUE_NUMBER:-}" ]; then
     --issue "$ISSUE_NUMBER" \
     --expected-branch "hotfix/[branch-slug]" \
     --approved-base main \
-    --repo-root "$(pwd)"
+    --repo-root "${ARTIFACT_REPO_ROOT:-$(pwd)}"
 fi
 # 1. Verify the current branch descends from origin/main (hotfixes are cut from main)
 if ! git merge-base --is-ancestor origin/main HEAD; then
@@ -1730,7 +1730,7 @@ if [ -n "${ISSUE_NUMBER:-}" ]; then
     --issue "$ISSUE_NUMBER" \
     --expected-branch "backport/hotfix/[slug]" \
     --approved-base develop \
-    --repo-root "$(pwd)"
+    --repo-root "${ARTIFACT_REPO_ROOT:-$(pwd)}"
 fi
 git checkout -b backport/hotfix/[slug] origin/main
 ```
@@ -1746,7 +1746,7 @@ if [ -n "${ISSUE_NUMBER:-}" ]; then
     --issue "$ISSUE_NUMBER" \
     --expected-branch "backport/hotfix/[slug]" \
     --approved-base develop \
-    --repo-root "$(pwd)"
+    --repo-root "${ARTIFACT_REPO_ROOT:-$(pwd)}"
 fi
 # Verify the backport branch descends from origin/main (it was cut from origin/main post-merge)
 if ! git merge-base --is-ancestor origin/main HEAD; then

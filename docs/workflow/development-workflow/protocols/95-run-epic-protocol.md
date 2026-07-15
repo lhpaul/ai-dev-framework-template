@@ -451,17 +451,22 @@ branch or open a PR, run `run-nested-artifact-guard.sh` with the resolved
 execution base:
 
 ```bash
+ARTIFACT_REPO_ROOT="${ARTIFACT_REPO_ROOT:-$(pwd)}"
 ./scripts/development-workflow/run-nested-artifact-guard.sh \
   --mode pre-create \
   --issue <issue-number> \
   --expected-branch <branch-prefix>/<slug> \
-  --approved-base <base-branch>
+  --approved-base <base-branch> \
+  --repo-root "$ARTIFACT_REPO_ROOT"
 ```
 
 Run the same helper with `--mode pre-pr` before a child opens or readies a PR.
 `RESULT=missing_base`, `RESULT=blocked_duplicate`, `RESULT=wrong_base`, and
 `RESULT=scan_failed` block delegated progress until the canonical path is
 resumed or an explicit split is approved and recorded with `--allow-split true`.
+Use the repository root that owns the child artifact. In `workflow_hub` mode,
+product implementation branches and PRs must scan the selected product checkout;
+hub-owned spec and plan artifacts use the hub checkout.
 
 **Intended long-term fix — worktree isolation**: The durable solution to
 shared-checkout contamination is to dispatch each parallel agent into a
