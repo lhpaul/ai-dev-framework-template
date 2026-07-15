@@ -721,13 +721,20 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 
 **Note:** Use `origin/<base>` (remote tracking) rather than local `<base>` to avoid git worktree conflicts if the local base branch is already checked out elsewhere.
 
-3. Create the worktree. The command depends on whether the item's branch already exists:
+3. Create the worktree at the worktree path assigned by the Protocol 90
+   isolation manifest. Do not invent, shorten, or substitute a different
+   `<worktree-path>` for a concurrent mutating batch. If `BATCH_CONTEXT=true`,
+   the runner may mutate artifacts, and the manifest-assigned absolute worktree
+   path is missing, stop before creating a worktree or mutating files and report
+   the missing assignment to the Portfolio Orchestrator. The command depends on
+   whether the item's branch already exists:
 
 ```bash
 # Fetch latest remote refs first
 git fetch origin
 
 # Case A: New item — branch does not exist yet
+# <worktree-path> must be the manifest-assigned absolute path.
 git worktree add <worktree-path> -b <branch-prefix>/<slug> origin/<base-branch>
 
 # Case B: Resuming item — branch exists locally
@@ -1799,6 +1806,11 @@ Required fixer handoff values (parallel batches only):
 
 - `BATCH_CONTEXT=true`
 - `WORKTREE_PATH=<resolved-absolute-worktree-path>` — the same path used when this item was first dispatched
+- `EXPECTED_BRANCH=<branch>`
+- `ARTIFACT_REPO_ROOT=<artifact-owning-repo-root>`
+- `APPROVED_BASE_BRANCH=<base-branch>`
+- `MUTATION_CLASSIFICATION=mutating`
+- `isolation: "worktree"`
 - The explicit branch-skip instruction: "BATCH_CONTEXT=true — the worktree is already on branch `<branch>`. Do NOT run `git checkout develop`, `git checkout -b`, `git switch`, `git reset`, or `git restore` from the main repo root."
 
 **Fixer agent batching rule (mandatory):**

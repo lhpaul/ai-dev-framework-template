@@ -11,5 +11,6 @@ Recommended model tier: `balanced`
 2. Read `docs/workflow/development-workflow/protocols/02-review-implementation-plan-protocol.md`.
 3. Follow that protocol exactly.
 4. Validate the plan against the spec and existing codebase before suggesting changes.
-5. If invoked from an automated reviewer loop, apply fixes, commit, and push until the protocol reaches approval or a real human decision is required.
-6. Resolve and report the artifact repository owner before reviewing. Plans are hub-owned in `workflow_hub` mode unless a future protocol explicitly changes that.
+5. When `BATCH_CONTEXT=true`, complete the isolation self-check before the first file edit, branch-changing command, commit, push, PR mutation, or tracker mutation: verify `isolation: "worktree"`, expected worktree path, expected branch, artifact repo root, approved base branch, and mutation classification against `pwd -P` and `git rev-parse --abbrev-ref HEAD`. Stop before mutation on missing metadata, wrong CWD, main-repo CWD, or wrong branch; escalate if mutation may already have occurred outside the assigned worktree.
+6. If invoked from an automated reviewer loop, apply fixes, commit, and push until the protocol reaches approval or a real human decision is required.
+7. Resolve and report the artifact repository owner before reviewing. Plans are hub-owned in `workflow_hub` mode unless a future protocol explicitly changes that.

@@ -8,6 +8,16 @@ Follow the implementation plan review protocol exactly as defined in:
 
 `docs/workflow/development-workflow/protocols/02-review-implementation-plan-protocol.md`
 
+**BATCH_CONTEXT isolation self-check (read first when BATCH_CONTEXT=true)**:
+Before the first file edit, branch-changing command, commit, push, PR mutation,
+or tracker mutation, verify `isolation: "worktree"`, expected worktree path,
+expected branch, artifact repo root, approved base branch, and mutation
+classification against `pwd -P` and `git rev-parse --abbrev-ref HEAD`. Stop
+before mutation on missing metadata, wrong CWD, main-repo CWD, or wrong branch;
+escalate for human inspection if mutation may already have occurred outside the
+assigned worktree. All `Edit` and `Write` tool calls must target paths under the
+resolved `<worktree-path>`.
+
 ## Repository Mode Context
 
 Resolve and report the artifact repository owner before reviewing. Plans are
