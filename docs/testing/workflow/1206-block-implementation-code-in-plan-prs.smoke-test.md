@@ -14,8 +14,9 @@ Before running this smoke test:
 - [ ] The implementation branch is checked out.
 - [ ] `gh` is authenticated for the repository if live PR mode is tested.
 - [ ] The new stage-alignment checker test harness passes locally.
-- [ ] At least three fixture inputs are available: aligned documentation-stage
-      PR, mismatched plan PR, and mismatched spec PR.
+- [ ] Fixture inputs are available for aligned documentation-stage PRs,
+      mismatched plan PRs, mismatched spec PRs, and empty documentation-stage
+      changed-file lists.
 
 ---
 
@@ -27,6 +28,7 @@ Before running this smoke test:
 | Mismatched plan fixture | `implementation-plan/1206-example` with `src/example.ts` or `supabase/migrations/20260714000000_example.sql` |
 | Mismatched spec fixture | `spec/1206-example` with `src/example.ts` |
 | Aligned spec fixture | `spec/1206-example` with `docs/specs/developments/example/1_example_specs.md` |
+| Empty documentation-stage diff fixture | `implementation-plan/1206-empty` with no changed files |
 | Stable warning marker | `<!-- documentation-stage-alignment -->` |
 
 ---
@@ -39,8 +41,8 @@ Before running this smoke test:
 
 1. Run `bash scripts/development-workflow/tests/test-check-documentation-stage-alignment.sh`.
 2. Confirm the output reports passing cases for aligned plan, mismatched plan,
-   mismatched spec, aligned spec, resume-style fixture input, and stable warning
-   comment behavior.
+   mismatched spec, aligned spec, empty documentation-stage diff, resume-style
+   fixture input, and stable warning comment behavior.
 
 **Expected result**: The harness exits successfully and names all required
 stage-alignment scenarios.
@@ -147,10 +149,12 @@ Each checkbox maps to an acceptance criterion from the spec.
       AC6.
 - [ ] Resume behavior evaluates the current PR diff. AC7.
 - [ ] Valid documentation-only spec and plan PRs are not blocked. AC8.
+- [ ] Empty changed-file lists on documentation-stage branches block readiness
+      instead of passing as aligned. AC8, AC10.
 - [ ] The implementation documents the selected enforcement and exception
       mechanism. AC9.
 - [ ] Verification coverage includes mismatched plan, mismatched spec, and
-      aligned documentation-stage examples. AC10.
+      aligned documentation-stage plus empty-diff examples. AC10.
 
 ---
 
@@ -180,4 +184,3 @@ No database seed data is required.
 - This runbook validates the workflow guard, not a product UI.
 - Live PR mode is optional for local smoke testing when fixture mode covers the
   same changed-file classification behavior.
-

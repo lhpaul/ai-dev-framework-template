@@ -57,6 +57,10 @@ agent and skill guidance, a new script, and a script test harness.
       `docs/specs/developments/**/1_*_specs.md` for spec branches,
       `docs/specs/developments/**/2_*_implementation-plan.md` for plan
       branches, and `docs/testing/**/*.smoke-test.md` for plan-stage runbooks.
+- [ ] Treat an empty changed-file list on `spec/*` or `implementation-plan/*`
+      PRs as a documentation-stage mismatch, not as aligned. The checker should
+      report that no stage artifact was found and block readiness until the diff
+      can be corrected or investigated.
 - [ ] Treat all other changed paths as unexpected implementation or
       stage-collapse evidence. The first implementation may report file paths
       directly instead of trying to infer every possible file category.
@@ -255,8 +259,11 @@ with at least these cases:
 3. `implementation_branch_not_applicable` covers Edge case 1.
 4. `spec_branch_blocks_source_file` covers Edge case 4.
 5. `plan_branch_blocks_migration_and_source_file` covers Edge cases 4 and 5.
-6. `diff_read_failure_exits_infrastructure_error` covers Edge case 6.
-7. `warning_comment_uses_stable_marker` covers Edge case 7.
+6. `documentation_stage_empty_diff_blocks_readiness` covers Edge case 6 empty
+   changed-file lists.
+7. `diff_read_failure_exits_infrastructure_error` covers Edge case 6
+   infrastructure failures.
+8. `warning_comment_uses_stable_marker` covers Edge case 7.
 
 ### Suppression Semantics
 
@@ -304,9 +311,11 @@ runbook.
 3. Mismatched spec-stage PR blocks readiness and reports unexpected files. Maps
    to AC3, AC4, AC5, and AC6.
 4. Resumed contaminated PR is evaluated from the current diff. Maps to AC7.
-5. Selected enforcement mechanism and exception behavior are documented. Maps to
+5. Empty changed-file lists on documentation-stage branches block readiness
+   instead of passing vacuously. Maps to AC8 and AC10.
+6. Selected enforcement mechanism and exception behavior are documented. Maps to
    AC9.
-6. Verification examples include mismatched plan, mismatched spec, and aligned
+7. Verification examples include mismatched plan, mismatched spec, and aligned
    documentation-stage fixtures. Maps to AC10.
 
 **Smoke test runbook**:
