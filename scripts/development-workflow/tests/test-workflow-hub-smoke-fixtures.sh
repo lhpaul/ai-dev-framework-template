@@ -356,6 +356,7 @@ mobile_pr_output="$(
     --repo-root "$hub_dir" \
     --repo mobile-app \
     --base main \
+    --approved-base main \
     --head feature/883-fixture-routing \
     --title "Fixture mobile PR" \
     --body-file "$body_file" \
@@ -366,6 +367,7 @@ admin_pr_output="$(
     --repo-root "$hub_dir" \
     --repo admin-portal \
     --base develop \
+    --approved-base develop \
     --head feature/883-fixture-routing \
     --title "Fixture admin PR" \
     --body-file "$body_file" \

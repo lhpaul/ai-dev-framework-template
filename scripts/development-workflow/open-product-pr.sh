@@ -11,7 +11,7 @@ TOKEN_HELPER="$SCRIPT_DIR/github-app-token.sh"
 
 usage() {
   cat <<'USAGE'
-Usage: open-product-pr.sh --repo <product-name> --base <branch> --head <branch> --title <title> --body-file <path> [--repo-root <path>] [--dry-run]
+Usage: open-product-pr.sh --repo <product-name> --base <branch> --approved-base <branch> --head <branch> --title <title> --body-file <path> [--repo-root <path>] [--dry-run]
 
 Opens a pull request in the selected product repository. Dry-run mode prints the
 target repo and redacted command shape without requiring credentials.
@@ -70,6 +70,7 @@ github_repo_from_url() {
 
 REPO_NAME=""
 BASE_BRANCH=""
+APPROVED_BASE=""
 HEAD_BRANCH=""
 TITLE=""
 BODY_FILE=""
@@ -90,6 +91,11 @@ while [ "$#" -gt 0 ]; do
     --base)
       [ "$#" -ge 2 ] || die "--base requires a value"
       BASE_BRANCH="$2"
+      shift 2
+      ;;
+    --approved-base)
+      [ "$#" -ge 2 ] || die "--approved-base requires a value"
+      APPROVED_BASE="$2"
       shift 2
       ;;
     --head)
@@ -123,6 +129,8 @@ done
 
 [ -n "$REPO_NAME" ] || die "--repo is required"
 [ -n "$BASE_BRANCH" ] || die "--base is required"
+[ -n "$APPROVED_BASE" ] || die "--approved-base is required"
+[ "$BASE_BRANCH" = "$APPROVED_BASE" ] || die "base '$BASE_BRANCH' does not match approved base '$APPROVED_BASE'"
 [ -n "$HEAD_BRANCH" ] || die "--head is required"
 [ -n "$TITLE" ] || die "--title is required"
 [ -n "$BODY_FILE" ] || die "--body-file is required"
@@ -150,6 +158,7 @@ if [ "$DRY_RUN" = true ]; then
   printf 'DRY_RUN=true\n'
   printf 'TARGET_REPO=%s\n' "$TARGET_REPO"
   printf 'BASE_BRANCH=%s\n' "$BASE_BRANCH"
+  printf 'APPROVED_BASE=%s\n' "$APPROVED_BASE"
   printf 'HEAD_BRANCH=%s\n' "$HEAD_BRANCH"
   printf 'TITLE=%s\n' "$TITLE"
   printf 'COMMAND=%s\n' "GH_TOKEN=<redacted> gh pr create --repo $(quote_arg "$TARGET_REPO") --base $(quote_arg "$BASE_BRANCH") --head $(quote_arg "$HEAD_BRANCH") --title $(quote_arg "$TITLE") --body-file $(quote_arg "$BODY_FILE")"

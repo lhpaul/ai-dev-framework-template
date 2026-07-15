@@ -19,6 +19,14 @@ repository, not the hub. Stop before mutation if product repository context is
 missing or ambiguous. Missing mode or `single_repo` keeps the current repository
 as the mutation target and does not require `--repo`.
 
+Before creating an implementation branch or opening an implementation PR for a
+tracker-backed item, run `run-nested-artifact-guard.sh` with the expected
+workflow branch, parent-approved base, and artifact-owning repo root
+(`--repo-root "$ARTIFACT_REPO_ROOT"`). In `workflow_hub`, product implementation
+artifacts scan the selected product checkout, not the hub. Stop on missing base,
+duplicate artifacts, wrong-base PRs, or scan failures; deliberate splits require
+explicit parent approval.
+
 **BATCH_CONTEXT branch-skip rule (read first when BATCH_CONTEXT=true)**: When the handoff metadata includes `BATCH_CONTEXT=true`, the item-orchestrator already created the worktree on the correct branch. Do NOT run any of the following from this agent session: `git checkout develop`, `git checkout -b <branch>`, `git switch <branch>`, `git reset`, or `git restore`. Running these commands from the default CWD (main repo root) will leak a branch-switch into the main working tree, breaking isolation for all concurrent agents. Instead, verify your CWD with `pwd` — it must match the `<worktree-path>` provided in the handoff. If `<worktree-path>` was not provided, run `git rev-parse --show-toplevel` to get your CWD's repo root, then run `git rev-parse --git-common-dir` to get the shared `.git` dir, resolve `$(git rev-parse --git-common-dir)/..` to get the main repo root, and confirm the two paths differ (i.e., you are NOT in the main repo root but in an isolated worktree). Only `git fetch origin` is safe to run without a worktree-path check. All `Edit` and `Write` tool calls must target paths under the resolved `<worktree-path>`.
 
 **Main-tree return rule (BATCH_CONTEXT=false / no worktree isolation)**: When this agent is dispatched **without** worktree isolation (i.e., `BATCH_CONTEXT` is `false` or absent), it runs in the main working tree. After creating the feature/fix branch and completing all work (code, PR, review loop), **before returning to the caller**, the agent MUST switch the main working tree back to the integration branch:

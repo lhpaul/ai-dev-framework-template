@@ -111,6 +111,48 @@ Use this when:
 - The orchestrator needs to verify whether a workflow item has already been started
 - You want to avoid re-dispatching work for an item that already has a branch or worktree
 
+### `run-nested-artifact-guard.sh`
+
+Prevents nested or spawned agents from silently creating duplicate issue-scoped
+workflow artifacts or opening PRs against an unapproved base.
+
+Usage:
+
+```bash
+./scripts/development-workflow/run-nested-artifact-guard.sh \
+  --mode pre-create \
+  --issue 1200 \
+  --expected-branch feature/1200-example \
+  --approved-base develop \
+  --repo-root "$(pwd)"
+```
+
+What it does:
+
+- Scans registered worktrees, local branches, remote branches, and open PRs.
+- Treats the expected branch or expected worktree as canonical.
+- Compares non-PR artifacts against the expected workflow stage so merged
+  prior-stage `spec/*`, `implementation-plan/*`, or `hotfix/*` branches do not
+  block the next legitimate stage.
+- Reports duplicate issue-scoped artifacts as `RESULT=blocked_duplicate`.
+- Reports wrong-base open PRs as `RESULT=wrong_base`.
+- Reports parent audit forks as `RESULT=unexpected_fork`.
+- Reports missing parent-approved base context as `RESULT=missing_base` in all
+  modes, including `audit`.
+- Reports scan failures as `RESULT=scan_failed` instead of assuming clean.
+- Uses `--repo-root` to choose which repository owns the artifacts being
+  scanned; in `workflow_hub` mode, product implementation artifacts must scan
+  the selected product checkout rather than the hub checkout.
+
+Use this when:
+
+- A parent runner is about to dispatch a child agent that may create a branch.
+- A stage agent is about to open or ready a workflow PR.
+- A parent runner is auditing in-scope forks before dispatch or after a child
+  returns control.
+- A deliberate split needs explicit `--allow-split true` approval with the
+  approved base recorded in the parent summary.
+
 ### `pr-ci-loop.sh`
 
 Polls GitHub status checks for a PR until they are green, failing, or timed out.

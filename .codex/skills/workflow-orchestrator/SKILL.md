@@ -14,6 +14,7 @@ Recommended model tier: `economy`
 5. Keep batching and prioritization decisions explicit, especially when work must be serialized because the runner cannot execute multiple item orchestrators concurrently.
 6. Do not stop after dispatching a batch if any selected or approved item still has a deterministic next action.
 7. For `workflow_hub` implementation work, include workflow mode, artifact owner, selected product repository, local path or remote identity, and mutation target in item handoffs; stop before mutation-oriented dispatch when product repository context is missing or ambiguous. Missing mode or `single_repo` does not require `--repo`.
+   Include the parent-approved base branch in mutation-oriented handoffs; child runners must use it with `run-nested-artifact-guard.sh --approved-base` before branch or PR creation.
 8. **Guardrails enforcement**: Before any artifact-mutating action, resolve the effective guardrails (three-layer precedence: repo config → session overrides → invocation overrides) and report them in the portfolio run summary. Enforce the six gates described in `docs/workflow/development-workflow/guardrails-enforcement.md`: load+report at run start, backlog-start gate, per-stage PR-open gate, delegated review gate, delegated merge gate, and completion gate. When no `guardrails` section is found, state "conservative defaults in effect."
 9. When supervising sweep, batch, helper-extraction, numeric-target, or
    pattern-completeness items, require residual gate evidence before accepting

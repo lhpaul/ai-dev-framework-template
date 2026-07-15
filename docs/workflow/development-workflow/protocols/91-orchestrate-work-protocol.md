@@ -423,6 +423,34 @@ git worktree list | grep "<branch-prefix>/<slug>"
 
 If any check returns a match: **do not re-dispatch**. Resume from the existing branch or PR with `workflow-next-action.sh`.
 
+### Nested artifact guard before child dispatch
+
+Before dispatching any creator-stage or PR-opening child agent for an item with
+a positive numeric issue number, run:
+
+```bash
+ARTIFACT_REPO_ROOT="${ARTIFACT_REPO_ROOT:-$(pwd)}"
+./scripts/development-workflow/run-nested-artifact-guard.sh \
+  --mode pre-create \
+  --issue "$ISSUE_NUMBER" \
+  --expected-branch "<branch-prefix>/<slug>" \
+  --approved-base "$BASE_BRANCH" \
+  --repo-root "$ARTIFACT_REPO_ROOT"
+```
+
+Run the same helper with `--mode pre-pr` before any stage agent opens a PR. The
+approved base must come from the bounded prelude, portfolio handoff, integration
+branch resolution, or explicit human override. Treat `RESULT=missing_base`,
+`RESULT=blocked_duplicate`, `RESULT=wrong_base`, and `RESULT=scan_failed` as
+non-terminal blockers; resume the canonical path or obtain explicit split
+approval before continuing. Add `--expected-worktree <path>` only when a
+non-empty expected worktree path is known.
+
+Set `ARTIFACT_REPO_ROOT` to the repository that owns the branch and PR being
+guarded. In `workflow_hub` mode, implementation artifacts live in the selected
+product checkout, not the hub checkout; hub-owned spec and plan artifacts keep
+using the hub repository root.
+
 ### Integration-branch base override (sub-items with `integration-branch:<slug>` label)
 
 Before dispatching any creator-stage agent, check whether the item carries an `integration-branch:<slug>` label:

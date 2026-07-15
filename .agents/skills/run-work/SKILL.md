@@ -28,5 +28,9 @@ command. It performs no mutation in any routing mode.
    `/run-items` command for the operator to execute.
 5. For single-item advancement use `$run-item`; for epic bounded runs use `$run-epic`;
    for multi-item execution use `$run-items`.
+6. When presenting executable follow-ups, include the resolved base branch when
+   known so later mutation-oriented commands can pass it to
+   `run-nested-artifact-guard.sh --approved-base`. Do not infer a base during
+   the read-only scan.
 
 Routing specification: `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`

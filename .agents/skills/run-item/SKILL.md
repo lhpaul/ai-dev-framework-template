@@ -33,7 +33,12 @@ advances exactly one non-epic item through Protocol 91.
 5. Before implementation mutation in `workflow_hub`, state selected product
    repository, artifact owner, and mutation target; stop when context is missing
    or ambiguous.
-6. **Guardrails enforcement**: Use portfolio-resolved guardrails from handoff when
+6. Before branch creation or PR creation for a tracker-backed item, run
+   `run-nested-artifact-guard.sh` with the expected branch, approved base, and
+   artifact-owning repo root (`--repo-root "$ARTIFACT_REPO_ROOT"`).
+   Stop on `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed`;
+   explicit split work requires parent approval and `--allow-split true`.
+7. **Guardrails enforcement**: Use portfolio-resolved guardrails from handoff when
    available; otherwise resolve from repo `guardrails` config. Report effective
    values before mutation. Enforce gates per
    `docs/workflow/development-workflow/guardrails-enforcement.md` section 3.
@@ -45,8 +50,8 @@ advances exactly one non-epic item through Protocol 91.
    items, run Protocol 91's residual gate before `ready-for-human-review`; block
    or escalate instead of reporting terminal when residual evidence is missing or
    incomplete.
-7. Epic-like targets must use `$run-epic` / `/run-epic`, not this command.
-8. When the delegated merge gate returns `merge_allowed`, continue through merge,
+8. Epic-like targets must use `$run-epic` / `/run-epic`, not this command.
+9. When the delegated merge gate returns `merge_allowed`, continue through merge,
    remote/local branch cleanup, `post-merge-cleanup.sh`, and live tracker
    verification before reporting the item terminal. Do not stop at
    `ready-for-human-review` in a delegated merge run.

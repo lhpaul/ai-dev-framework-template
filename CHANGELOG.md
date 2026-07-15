@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   broad-scope workflow items to record residual evidence before readiness.
 - **Auto-close graduation sub-items** (#1178): Reconcile delivered
   integration-branch sub-items and parent epics during graduation closeout.
+- **Prevent unsanctioned nested agent PRs** (#1200): Add workflow guards that
+  stop duplicate nested-agent artifacts and reject missing or wrong PR base
+  context.
 
 ### Changed
 

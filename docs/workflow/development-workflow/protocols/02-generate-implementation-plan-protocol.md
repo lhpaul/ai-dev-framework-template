@@ -327,6 +327,13 @@ If no blocking human decision remains:
      exit 1
    fi
    echo "Pre-branch HEAD check passed: HEAD matches origin/${ARTIFACT_BASE_BRANCH}"
+   if [ -n "${ISSUE_NUMBER:-}" ]; then
+     ./scripts/development-workflow/run-nested-artifact-guard.sh \
+       --mode pre-create \
+       --issue "$ISSUE_NUMBER" \
+       --expected-branch "implementation-plan/[branch-slug]" \
+       --approved-base "$ARTIFACT_BASE_BRANCH"
+   fi
    git checkout -b implementation-plan/[branch-slug]
    ```
 
@@ -417,11 +424,26 @@ If no blocking human decision remains:
 9. **Do NOT update CHANGELOG**: `implementation-plan/*` branches are exempt from CHANGELOG entries. The changelog policy only applies to `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches. Do not create or modify `CHANGELOG.md` in this PR.
 10. Commit: `docs: add implementation plan for [feature-name]`
 11. Push: `git push -u origin implementation-plan/[branch-slug]`
-12. Open a **draft** PR targeting the plan artifact base branch with:
+12. Before opening the draft PR, run the nested-artifact guard again in `pre-pr`
+    mode when a positive numeric issue number is available:
+
+    ```bash
+    ./scripts/development-workflow/run-nested-artifact-guard.sh \
+      --mode pre-pr \
+      --issue "$ISSUE_NUMBER" \
+      --expected-branch "implementation-plan/[branch-slug]" \
+      --approved-base "$ARTIFACT_BASE_BRANCH"
+    ```
+
+    Treat `RESULT=missing_base`, `RESULT=blocked_duplicate`,
+    `RESULT=wrong_base`, or `RESULT=scan_failed` as a hard stop before PR
+    creation. A deliberate split requires explicit parent-run approval and
+    `--allow-split true` with the approved base recorded in the run summary.
+13. Open a **draft** PR targeting the plan artifact base branch with:
     - Title: `docs(plan): [feature-name]`
     - Body: summary of the approach, complexity estimate, key risks, link to plan and runbook
     - `Document Quality Gate` log from the pre-PR gate above
-13. Return the branch + PR details to the **Work Item Runner**
+14. Return the branch + PR details to the **Work Item Runner**
 
 ---
 
