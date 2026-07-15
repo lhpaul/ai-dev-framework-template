@@ -1178,7 +1178,7 @@ the enforcement mechanism — do not skip them.
 - [ ] No new database schema migrations
 - [ ] No new architectural patterns
 - [ ] Human provided a clear, self-contained brief
-- [ ] **Fast Track blast-radius gate passed** — the issue title, body, recent comments, and any linked spec/plan show no concrete multi-layer signal, no high call-site volume for an identifiable primary entity, and no known or likely external-system impact
+- [ ] **Fast Track blast-radius gate passed** — the issue title, body, recent comments, and any linked spec/plan show no concrete multi-layer signal, no high call-site volume for an identifiable primary entity, and an external-system result of no signal found
 
 **Fast Track blast-radius gate**: Apply the deterministic decision rule in
 [`91-orchestrate-work-protocol.md` Step 2 — Fast Track blast-radius gate](./91-orchestrate-work-protocol.md)

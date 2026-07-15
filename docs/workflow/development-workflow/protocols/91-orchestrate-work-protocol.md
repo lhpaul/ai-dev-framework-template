@@ -368,11 +368,12 @@ them when Type is available.
 
 **Decision rule (deterministic)**:
 
-- **No concrete multi-layer signal, no high call-site volume, and no known or likely external-system impact** → the item may proceed as Fast Track.
+- **No concrete multi-layer signal, no high call-site volume, and external-system result is no signal found** → the item may proceed as Fast Track.
 - **At least one concrete multi-layer signal found** → the item must NOT be fast-tracked. Route it to the Full Pipeline (spec → plan → implement) so all layers are planned and coordinated. Update the tracker status to **Writing Spec** and dispatch `01-generate-spec-protocol.md`.
 - **High call-site volume found** → the item must NOT be fast-tracked unless the human explicitly overrides the route. Route it to the Full Pipeline and include a visible note such as: "High call-site volume detected: N files / M occurrences; routing to Full Pipeline so scope can be audited before implementation."
 - **Primary entity is ambiguous** → record why the call-site check is not applicable, or ask for clarification when the ambiguity prevents a defensible Fast Track decision.
 - **Known or likely external-system impact found** → do not proceed as immediate Fast Track work. Route to the Full Pipeline, or require a tracked pre-flight follow-up before any later Fast Track dispatch.
+- **External-system clarification required** → stop before Fast Track dispatch and ask the human for the missing context, or route to the Full Pipeline if the uncertainty is material enough that implementation would require guessing.
 
 **Routing evidence**: The Work Item Runner summary must record the cross-layer result, the primary entity and call-site result when applicable, and the external-system impact result. For external-system impact, record one of: no signal found, signal found, or clarification required.
 

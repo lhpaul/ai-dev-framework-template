@@ -366,7 +366,7 @@ Use it only when all of the following are true:
 - No new architectural pattern is being introduced.
 - No database migration is involved.
 - The human brief is self-contained.
-- The Fast Track blast-radius gate has no blockers. The issue title, body, recent comments, and any linked spec/plan must show no concrete multi-layer signal, no high call-site volume for an identifiable primary entity, and no known or likely external-system impact. Cross-layer scope checks architectural spread; call-site volume checks propagation breadth even when a change stays within one or two layers. See the Fast Track blast-radius gate in `91-orchestrate-work-protocol.md` Step 2 for the decision rule.
+- The Fast Track blast-radius gate has no blockers. The issue title, body, recent comments, and any linked spec/plan must show no concrete multi-layer signal, no high call-site volume for an identifiable primary entity, and an external-system result of no signal found. Cross-layer scope checks architectural spread; call-site volume checks propagation breadth even when a change stays within one or two layers. See the Fast Track blast-radius gate in `91-orchestrate-work-protocol.md` Step 2 for the decision rule.
 
 Path: `fix/[slug]` from `develop` -> implement -> review gate -> smoke test as needed -> merge.
 
