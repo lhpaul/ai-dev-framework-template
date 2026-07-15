@@ -36,7 +36,7 @@ assignment with the expected worktree path, expected branch, artifact repo root,
 approved base branch, mutation classification, and `isolation: "worktree"`.
 Before the first file edit, branch-changing command, commit, push, PR mutation,
 tracker mutation, or stage handoff, verify that every field is present, that
-`pwd -P` is at or under the expected worktree path, and that
+`pwd -P` equals the expected worktree path or begins with the expected worktree path followed by `/`, and that
 `git rev-parse --abbrev-ref HEAD` equals the expected branch. Stop before
 mutation on missing metadata, wrong CWD, main-repo CWD, or wrong branch. If
 mutation may already have occurred outside the assigned worktree, escalate for

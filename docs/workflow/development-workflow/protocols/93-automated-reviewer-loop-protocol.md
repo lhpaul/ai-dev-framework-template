@@ -174,9 +174,10 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
    mutation, or tracker mutation: the full Protocol 90 isolation assignment
    must be present (`BATCH_CONTEXT=true`, resolved absolute worktree path,
    expected branch, artifact repo root, approved base branch, mutation
-   classification, and `isolation: "worktree"`), `pwd -P` must be at or under the
-   assigned worktree path, and `git rev-parse --abbrev-ref HEAD` must match the
-   expected branch. Stop before mutation if the check fails.
+   classification, and `isolation: "worktree"`), `pwd -P` must equal the
+   assigned worktree path or begin with that path followed by `/`, and
+   `git rev-parse --abbrev-ref HEAD` must match the expected branch. Stop before
+   mutation if the check fails.
 2. Apply every blocking finding in one pass (follow the batching rule: all in one commit).
 3. Commit with a descriptive message (e.g., `fix: address [platform] findings inline ([brief description])`).
 4. Push the commit. _(Push before resolving threads — if push fails, threads must not be falsely marked resolved.)_
@@ -213,7 +214,7 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
 
 When this protocol runs inside a worktree (the item was dispatched as part of an explicit-list batch, `BATCH_CONTEXT=true`), all fixer agents dispatched during the reviewer loop **must** stay inside the worktree. The same rules from Protocol 91 Step 3 "Critical: Worktree Git Discipline" apply here:
 
-- **Before any git state-changing command** (`git switch`, `git checkout`, `git commit`, `git push`, `git reset`, `git restore`): confirm the working directory is inside the worktree path, not the main repo root. Run `pwd -P` and confirm it equals `<worktree-path>` or is nested under it.
+- **Before any git state-changing command** (`git switch`, `git checkout`, `git commit`, `git push`, `git reset`, `git restore`): confirm the working directory is inside the worktree path, not the main repo root. Run `pwd -P` and confirm it equals `<worktree-path>` or begins with `<worktree-path>/`.
 - **Never run `git checkout develop` or any base-branch switch** from inside the worktree — the base branch is already checked out in the main working tree and cannot be checked out in the worktree simultaneously.
 - When delegating a fixer subagent, pass the full Protocol 90 isolation assignment in the handoff: `BATCH_CONTEXT=true`, resolved absolute worktree path, expected branch, artifact repo root, approved base branch, mutation classification, and `isolation: "worktree"`. Instruct the fixer to validate all `Write`/`Edit` tool call paths start with `<worktree-path>/`.
 

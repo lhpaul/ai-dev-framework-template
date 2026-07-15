@@ -696,9 +696,16 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 
 **When dispatched as part of an explicit-list batch** (`BATCH_CONTEXT=true` in the handoff metadata):
 
-1. **Create a dedicated worktree** for this item before executing any stage work. This ensures complete isolation from other Work Item Runners in the batch, including sequential fallback where the same batch contract is preserved.
+1. If the handoff explicitly classifies the runner as `read_only`, do not create
+   a dedicated worktree and do not mutate files, switch branches, commit, push,
+   mutate PRs, change labels, or update tracker state. If a mutating action
+   becomes necessary, stop and return to the Portfolio Orchestrator so the item
+   can be redispatched as `mutating` with a Protocol 90 isolation manifest
+   assignment.
 
-2. Determine the appropriate base branch for the worktree:
+2. **For mutating runners, create a dedicated worktree** for this item before executing any stage work. This ensures complete isolation from other Work Item Runners in the batch, including sequential fallback where the same batch contract is preserved.
+
+3. Determine the appropriate base branch for the worktree:
 
    **If `BASE_BRANCH` is present in the handoff metadata** (set by the
    Portfolio Orchestrator when the item carries an `integration-branch:<slug>`
@@ -722,7 +729,7 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 
 **Note:** Use `origin/<base>` (remote tracking) rather than local `<base>` to avoid git worktree conflicts if the local base branch is already checked out elsewhere.
 
-3. Create the worktree at the worktree path assigned by the Protocol 90
+4. Create the worktree at the worktree path assigned by the Protocol 90
    isolation manifest. Do not invent, shorten, or substitute a different
    `<worktree-path>` for a mutating batch dispatch. If `BATCH_CONTEXT=true`,
    the runner may mutate artifacts, and the manifest-assigned absolute worktree
@@ -784,8 +791,9 @@ matches the isolation assignment from the Portfolio Orchestrator:
 
 - Expected worktree path is present, absolute, and matches the resolved
   `<worktree-path>`.
-- Observed directory (`pwd -P`) is inside the expected worktree path and is not
-  the main repository root.
+- Observed directory (`pwd -P`) equals the expected worktree path or begins with
+  the expected worktree path followed by `/`, and is not the main repository
+  root.
 - Expected branch is present and matches `git rev-parse --abbrev-ref HEAD`.
 - Artifact repo root is present.
 - Approved base branch is present.
@@ -836,7 +844,7 @@ The guard is **non-blocking**: it emits a `GUARDRAIL WARNING` and returns exit c
 2. The expected branch, artifact repo root, approved base branch, mutation
    classification, and `isolation: "worktree"` when the stage agent may mutate
    artifacts.
-3. The explicit instruction: "BATCH_CONTEXT=true — the worktree is already on branch `<branch>`. Do NOT run `git checkout develop`, `git checkout -b`, `git switch`, `git reset`, or `git restore` from the main repo root. Confirm `pwd -P` is at or under `<worktree-path>` before any git state-changing command."
+3. The explicit instruction: "BATCH_CONTEXT=true — the worktree is already on branch `<branch>`. Do NOT run `git checkout develop`, `git checkout -b`, `git switch`, `git reset`, or `git restore` from the main repo root. Confirm `pwd -P` equals `<worktree-path>` or begins with `<worktree-path>/` before any git state-changing command."
 
 Omitting any required instruction or metadata field from the handoff is the root
 cause of the branch-leak pattern where stage subagents run Protocol 03's
@@ -851,7 +859,7 @@ branch.
 Before issuing any `git switch`, `git checkout`, `git checkout -b`, `git reset`, or `git restore` command, confirm both conditions below. If either check fails, do not run the command — correct the path or use the `-C` flag instead.
 
 1. **Confirm you are operating inside the worktree, not the main repository root.**
-   Run `pwd -P` and confirm the output equals `<worktree-path>` or is nested under it. If it is outside the assigned worktree, you are in the wrong directory. `cd <worktree-path>` or use `git -C <worktree-path>` before continuing.
+   Run `pwd -P` and confirm the output equals `<worktree-path>` or begins with `<worktree-path>/`. If it is outside the assigned worktree, you are in the wrong directory. `cd <worktree-path>` or use `git -C <worktree-path>` before continuing.
 
 2. **Confirm the command targets the current worktree branch, not a base branch.**
    Running `git checkout develop` (or any other base branch) inside the worktree will fail because `develop` is already checked out in the main working tree — git prevents the same branch from being checked out in two locations simultaneously. If a stage protocol's branching step says `git checkout develop && git checkout -b <branch>`, skip it entirely: the worktree was already created on the correct branch.

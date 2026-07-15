@@ -1350,8 +1350,8 @@ Before any inline edit, branch-changing command, commit, push, PR mutation, or
 tracker mutation, run the same Protocol 91 pre-mutation isolation self-check:
 `BATCH_CONTEXT=true`, expected branch, artifact repo root, approved base branch,
 mutation classification, and `isolation: "worktree"` must be present; `pwd -P`
-must be at or under the manifest-assigned worktree path; and `git rev-parse
---abbrev-ref HEAD` must match the expected branch.
+must equal the manifest-assigned worktree path or begin with that path followed
+by `/`; and `git rev-parse --abbrev-ref HEAD` must match the expected branch.
 
 Re-evaluate item state from scratch:
 
