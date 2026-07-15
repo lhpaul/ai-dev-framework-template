@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Require worktree isolation for concurrent runners** (#1205): Require
+  concurrent mutating batch dispatches to use distinct isolated worktrees and
+  pre-mutation runner self-checks.
 - **Restore worktree CWD on checkpoint resume** (#1174): Add a resume preflight
   so checkpointed worktree-isolated runs cannot continue from the main clone.
 - **Bounded prelude base selection** (#1204): Require explicit-list

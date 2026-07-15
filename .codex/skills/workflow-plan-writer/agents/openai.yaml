@@ -1,7 +1,7 @@
 interface:
   display_name: "Workflow Plan Writer"
   short_description: "Draft an implementation plan from a merged spec."
-  default_prompt: "Use $workflow-plan-writer to turn the approved spec into an implementation plan, resolving repository mode and keeping workflow_hub plans hub-owned. For broad sweep, batch, helper-extraction, numeric-target, or pattern-completeness plans, name the residual verification strategy and evidence source implementation must produce before readiness."
+  default_prompt: "Use $workflow-plan-writer to turn the approved spec into an implementation plan, resolving repository mode and keeping workflow_hub plans hub-owned. For broad sweep, batch, helper-extraction, numeric-target, or pattern-completeness plans, name the residual verification strategy and evidence source implementation must produce before readiness. When BATCH_CONTEXT=true, complete the isolation self-check before mutation: require isolation: \"worktree\", expected worktree path, expected branch, artifact repo root, approved base branch, and mutation classification; ensure pwd -P equals the expected worktree path or begins with the expected worktree path followed by / and HEAD matches only the expected branch."
 
 policy:
   allow_implicit_invocation: true

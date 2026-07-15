@@ -890,7 +890,12 @@ For each item in the batch, prepare a short handoff:
 - Current next action
 - Priority context
 - Parallelization notes or serialization reason
-- `BATCH_CONTEXT=true` — required for parallel batches so the Work Item Runner (protocol 91) activates worktree isolation
+- Isolation assignment for mutating explicit-list batches, including sequential
+  fallback: item identifier, expected branch, absolute worktree path,
+  `isolation: "worktree"`, mutation classification (`mutating` or
+  `read_only`), artifact repo root, and base branch
+- `BATCH_CONTEXT=true` — required for explicit-list batch dispatch so the Work
+  Item Runner (protocol 91) activates worktree isolation
 - `BASE_BRANCH=<resolved-base>` — include the bounded-prelude-approved base,
   normally `develop`. Use `develop-<slug>` only when the explicit-list or epic
   scope has one shared `integration-branch:<slug>` label and the owning remote
@@ -907,6 +912,47 @@ For each item in the batch, prepare a short handoff:
 **When batching items for parallel dispatch**: Each item in a parallel batch **must** run in its own isolated worktree (or checked-out copy) to prevent branch contamination, PR cross-pollution, and shared-state conflicts between concurrent agents.
 
 Do **not** dispatch multiple Work Item Runners to operate in the same working directory.
+
+### Mutating batch dispatch isolation manifest
+
+Before dispatching an explicit-list batch where any Work Item Runner may mutate
+files, branches, commits, PRs, labels, or tracker state, the Portfolio
+Orchestrator must build a pre-dispatch isolation manifest. This applies to both
+concurrent dispatch and the documented sequential fallback for runners that
+cannot execute multiple Work Item Runners concurrently. The manifest is part of
+the batch evidence and must be visible in the dispatch summary.
+
+Each mutating runner entry must include:
+
+- Work item identifier
+- Expected workflow branch
+- Absolute worktree path
+- `isolation: "worktree"`
+- Mutation classification (`mutating`)
+- Artifact-owning repo root
+- Approved base branch
+
+Pre-dispatch validation is mandatory:
+
+- If any mutating runner is missing `isolation: "worktree"` or an
+  absolute worktree path, stop before dispatch with guardrail stop condition
+  `unclear_requirements`; name the affected item, the expected branch, the
+  missing isolation field, and the human action needed to unblock.
+- If two mutating runners are assigned the same worktree path, stop before
+  dispatch with guardrail stop condition `unclear_requirements`; name both
+  items, the shared path, and the human action needed to unblock.
+- A non-isolated runner is allowed only when it is explicitly classified
+  `read_only` and will not edit files, switch branches, create commits, push,
+  open or update PRs, modify labels, or update tracker state.
+
+This requirement is separate from the unsanctioned nested-agent PR guard in
+#1200. The #1200 guard prevents child agents from creating duplicate or
+wrong-base PR artifacts. The isolation manifest prevents multiple sanctioned
+mutating runners from sharing one checkout or silently mutating the main tree.
+
+The terminal batch summary must record whether the isolation manifest passed,
+failed before dispatch, or escalated after detecting possible out-of-worktree
+mutation.
 
 ### Integration-branch base override
 
@@ -1288,11 +1334,24 @@ Do **not** redispatch the same subagent for the same item in the same batch run.
 
 ### Inline fallback (AC2)
 
-Execute the item from the main session. If the worktree was already created during dispatch, use that path. If the denial occurred before the worktree was created (early preflight failure in Protocol 91 Step 3.5), create it first:
+Execute the item from the current orchestration session, but operate only inside
+the manifest-assigned worktree. If the worktree was already created during
+dispatch, use that exact absolute path. If the denial occurred before the
+worktree was created (early preflight failure in Protocol 91 Step 3.5), create
+it at the manifest-assigned absolute worktree path first. Stop with guardrail
+stop condition `unclear_requirements` if the manifest assignment is missing; do
+not substitute a generic path or continue from the main repository checkout.
 
 ```bash
-git worktree add <path> <branch>
+git worktree add <manifest-assigned-worktree-path> <branch>
 ```
+
+Before any inline edit, branch-changing command, commit, push, PR mutation, or
+tracker mutation, run the same Protocol 91 pre-mutation isolation self-check:
+`BATCH_CONTEXT=true`, expected branch, artifact repo root, approved base branch,
+mutation classification, and `isolation: "worktree"` must be present; `pwd -P`
+must equal the manifest-assigned worktree path or begin with that path followed
+by `/`; and `git rev-parse --abbrev-ref HEAD` must match the expected branch.
 
 Re-evaluate item state from scratch:
 
@@ -1330,7 +1389,7 @@ After a Work Item Runner returns:
 
 1. **Re-check tracker status first** when an issue tracker is configured — query the tracker for the item's current status before consulting VCS state. Do not rely solely on `workflow-next-action.sh` to determine whether an item should advance, as VCS-derived status cannot reliably distinguish certain states (e.g., a spec PR awaiting review vs. one already merged). Use `workflow-next-action.sh` only for VCS-level enrichment (branch existence, PR labels) after the tracker status is known.
 2. If the tracker is unavailable, fall back to `workflow-next-action.sh` but flag to the human that status may be stale.
-3. If the next action is still deterministic because the Work Item Runner returned early or was interrupted, redispatch / resume that same item. **Worktree isolation is mandatory on redispatch**: when the original batch used parallel dispatch (`BATCH_CONTEXT=true`), every redispatch — including fixer-agent passes triggered by review findings — must carry `BATCH_CONTEXT=true` and the resolved `<worktree-path>` in the handoff. Redispatching without `BATCH_CONTEXT=true` causes fixer agents to use main-repo file paths in `Read`/`Edit`/`Write` calls while committing via the worktree git context, leaving uncommitted files in the main working tree instead of the isolated branch.
+3. If the next action is still deterministic because the Work Item Runner returned early or was interrupted, redispatch / resume that same item. **Worktree isolation is mandatory on redispatch**: when the original batch used explicit-list dispatch (`BATCH_CONTEXT=true`), every redispatch — including fixer-agent passes triggered by review findings — must carry the full Protocol 90 isolation assignment in the handoff: `BATCH_CONTEXT=true`, resolved absolute worktree path, expected branch, artifact repo root, approved base branch, mutation classification, and `isolation: "worktree"`. Redispatching without the full assignment causes fixer agents to use main-repo file paths in `Read`/`Edit`/`Write` calls while committing via the worktree git context, leaving uncommitted files in the main working tree instead of the isolated branch.
 4. Stop supervising that item only when it is waiting on a human, blocked, or escalated.
 5. **Collect deferred tracker transitions**: scan the Work Item Runner's summary for any `TRACKER_UPDATE_REQUIRED:` lines. These are transitions that the subagent could not perform (e.g., because the provider requires MCP and MCP is not available in the subagent context). Apply each deferred transition now via MCP before moving on to the next item. For GitHub Projects, subagents use `gh` CLI directly and do not emit `TRACKER_UPDATE_REQUIRED:` — this step only applies to providers without CLI support (e.g., Linear).
 6. **When a human confirms PRs have been merged**: run post-merge status transitions per the table in Step 10 of `91-orchestrate-work-protocol.md` — set tracker status to `Spec Ready`, `Plan Ready`, or `Merged` depending on the branch type of the merged PR — and clean up local branches and worktrees associated with the merged PRs.
@@ -1433,7 +1492,7 @@ If a check requires agent redispatch:
 1. Log the specific failure in your retrospective notes (see "Retrospective notes during supervision" below).
 2. Remove `ready-for-human-review` if it is present: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.
 3. Add the `needs-fixes` label to the PR: `gh pr edit <pr_number> --add-label "needs-fixes"`.
-4. Redispatch / resume the Work Item Runner for that item to address the gap. **Worktree isolation is mandatory**: if the original batch used parallel dispatch (`BATCH_CONTEXT=true`), the redispatched Work Item Runner must also receive `BATCH_CONTEXT=true` and the resolved `<worktree-path>` so it operates inside the existing worktree. Do not redispatch without these values — fixer agents that run outside the worktree will use main-repo file paths and leave uncommitted changes in the main working tree.
+4. Redispatch / resume the Work Item Runner for that item to address the gap. **Worktree isolation is mandatory**: if the original batch used explicit-list dispatch (`BATCH_CONTEXT=true`), the redispatched Work Item Runner must receive the full Protocol 90 isolation assignment: `BATCH_CONTEXT=true`, resolved absolute worktree path, expected branch, artifact repo root, approved base branch, mutation classification, and `isolation: "worktree"`. Do not redispatch without these values — fixer agents that run outside the worktree will use main-repo file paths and leave uncommitted changes in the main working tree.
 5. Re-run this verification after the next Work Item Runner return.
 
 Do not consider the batch complete until every dispatched item has reached a real terminal condition.

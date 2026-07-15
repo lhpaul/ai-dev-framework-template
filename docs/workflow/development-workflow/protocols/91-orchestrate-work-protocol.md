@@ -209,9 +209,24 @@ When an issue tracker is configured in `.ai-dev-workflow.yaml`, **always query t
 
 Prefer the helper scripts in `scripts/development-workflow/` for deterministic state inspection before falling back to ad hoc shell commands.
 
-### Parallel batch indicator
+### Batch context indicator
 
-**Check for a parallel batch context**: If this Work Item Runner was dispatched as part of a parallel batch by the Portfolio Orchestrator (`90-batch-orchestrate-work-protocol.md`), the handoff metadata will indicate `BATCH_CONTEXT=true`. Note this indicator; you will use it in Step 3 (Dispatch Strategy) to decide whether worktree isolation is required.
+**Check for batch context**: If this Work Item Runner was dispatched as part of
+an explicit-list batch by the Portfolio Orchestrator
+(`90-batch-orchestrate-work-protocol.md`), including sequential fallback, the
+handoff metadata will indicate `BATCH_CONTEXT=true`. Note this indicator; you
+will use it in Step 3 (Dispatch Strategy) to decide whether worktree isolation
+is required.
+
+When `BATCH_CONTEXT=true` and the runner may mutate artifacts, the handoff must
+also include the Portfolio Orchestrator's isolation assignment: expected
+worktree path, expected workflow branch, artifact repo root, approved base
+branch, mutation classification, and `isolation: "worktree"`. Missing isolation
+metadata is non-terminal for direct single-item runs, but in mutating batch
+dispatch it is a dispatch error: stop before mutation and report the missing
+field to the Portfolio Orchestrator. This isolation check complements, but does
+not replace, the #1200 nested artifact guard for duplicate or wrong-base PR
+artifacts.
 
 **CHANGELOG in parallel batches**: Each item in a parallel batch adds its own CHANGELOG entry as normal. CHANGELOG merge conflicts are resolved at merge time by the batch-merge auto-resolution (protocol 94 Step 4.3). Do not skip or consolidate CHANGELOG entries — see protocol 90 Step 3.6 for rationale.
 
@@ -648,7 +663,7 @@ Handle helper results as follows:
 | Result | Meaning | Required action |
 | --- | --- | --- |
 | `RESULT=continue` | Current CWD is already inside the expected worktree on the expected branch. | Continue the item run from the current directory. |
-| `RESULT=reenter` | Current CWD is the main clone and exactly one registered worktree matches the expected branch/path. | `cd "$TARGET_WORKTREE"`, run `bash scripts/development-workflow/worktree-cwd-guard.sh --check-cwd "$TARGET_WORKTREE" "$MAIN_REPO_ROOT"`, verify `pwd` and `git rev-parse --abbrev-ref HEAD`, then continue. |
+| `RESULT=reenter` | Current CWD is the main clone and exactly one registered worktree matches the expected branch/path. | `cd "$TARGET_WORKTREE"`, run `bash scripts/development-workflow/worktree-cwd-guard.sh --check-cwd "$TARGET_WORKTREE" "$MAIN_REPO_ROOT"`, verify `pwd -P` and `git rev-parse --abbrev-ref HEAD`, then continue. |
 | `RESULT=stop` | The expected worktree is missing, ambiguous, detached, on the wrong branch, or the current CWD is untrusted. | Stop before mutation and report the helper fields to the human. |
 
 Stop output must include: item, expected branch, expected worktree when known,
@@ -677,13 +692,20 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 | Implement feature           | `developer`                                                                                                                             |
 | Review code (post-draft-PR) | `code-reviewer` agent (Claude Code: `/code-review`); for other runners use compatibility wrapper `03-review-implementation-protocol.md` |
 
-### Worktree isolation for parallel batches
+### Worktree isolation for batch dispatch
 
-**When dispatched as part of a parallel batch** (`BATCH_CONTEXT=true` in the handoff metadata):
+**When dispatched as part of an explicit-list batch** (`BATCH_CONTEXT=true` in the handoff metadata):
 
-1. **Create a dedicated worktree** for this item before executing any stage work. This ensures complete isolation from other concurrent Work Item Runners in the batch.
+1. If the handoff explicitly classifies the runner as `read_only`, do not create
+   a dedicated worktree and do not mutate files, switch branches, commit, push,
+   mutate PRs, change labels, or update tracker state. If a mutating action
+   becomes necessary, stop and return to the Portfolio Orchestrator so the item
+   can be redispatched as `mutating` with a Protocol 90 isolation manifest
+   assignment.
 
-2. Determine the appropriate base branch for the worktree:
+2. **For mutating runners, create a dedicated worktree** for this item before executing any stage work. This ensures complete isolation from other Work Item Runners in the batch, including sequential fallback where the same batch contract is preserved.
+
+3. Determine the appropriate base branch for the worktree:
 
    **If `BASE_BRANCH` is present in the handoff metadata** (set by the
    Portfolio Orchestrator when the item carries an `integration-branch:<slug>`
@@ -707,13 +729,20 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 
 **Note:** Use `origin/<base>` (remote tracking) rather than local `<base>` to avoid git worktree conflicts if the local base branch is already checked out elsewhere.
 
-3. Create the worktree. The command depends on whether the item's branch already exists:
+4. Create the worktree at the worktree path assigned by the Protocol 90
+   isolation manifest. Do not invent, shorten, or substitute a different
+   `<worktree-path>` for a mutating batch dispatch. If `BATCH_CONTEXT=true`,
+   the runner may mutate artifacts, and the manifest-assigned absolute worktree
+   path is missing, stop before creating a worktree or mutating files and report
+   the missing assignment to the Portfolio Orchestrator. The command depends on
+   whether the item's branch already exists:
 
 ```bash
 # Fetch latest remote refs first
 git fetch origin
 
 # Case A: New item — branch does not exist yet
+# <worktree-path> must be the manifest-assigned absolute path.
 git worktree add <worktree-path> -b <branch-prefix>/<slug> origin/<base-branch>
 
 # Case B: Resuming item — branch exists locally
@@ -754,6 +783,41 @@ if [ "$CURRENT" != "<branch>" ]; then
 fi
 ```
 
+**Pre-mutation isolation self-check — mandatory for `BATCH_CONTEXT=true`**
+
+Before the first file edit, branch-changing command, commit, push, PR mutation,
+tracker mutation, or stage-agent handoff, verify that the active runner context
+matches the isolation assignment from the Portfolio Orchestrator:
+
+- Expected worktree path is present, absolute, and matches the resolved
+  `<worktree-path>`.
+- Observed directory (`pwd -P`) equals the expected worktree path or begins with
+  the expected worktree path followed by `/`, and is not the main repository
+  root.
+- Expected branch is present and matches `git rev-parse --abbrev-ref HEAD`.
+- Artifact repo root is present.
+- Approved base branch is present.
+- `isolation: "worktree"` is present.
+- Mutation classification is `mutating` for any runner that will edit files,
+  change branches, commit, push, open or update PRs, modify labels, or update
+  tracker state.
+
+If the observed directory is outside the expected worktree path, if the runner
+is in the main repo root, or if the observed branch differs from the expected
+branch, stop before mutation with guardrail stop condition
+`unclear_requirements`. The stop report must include the stop condition name,
+item identifier, expected worktree, observed directory, expected branch,
+observed branch, and the human action needed to unblock.
+
+If there is evidence that mutation may already have occurred outside the
+assigned worktree, escalate for human inspection instead of trying to repair it
+automatically. Do not reset, restore, stash, commit, or delete the suspect
+changes without explicit human direction.
+
+Record the pre-mutation isolation self-check result in the Work Item Runner
+terminal summary. The Portfolio Orchestrator must treat missing, failed, or
+escalated isolation evidence as non-terminal for the batch item.
+
 **Runtime CWD guard — activate immediately after entering the worktree**
 
 After `cd <worktree-path>`, source and initialise the CWD guard. This provides runtime enforcement that catches branch-switching commands issued from the wrong directory **at execution time** rather than only at the post-agent Step 5.2 inspection:
@@ -777,9 +841,16 @@ The guard is **non-blocking**: it emits a `GUARDRAIL WARNING` and returns exit c
 **Stage-agent handoff branch-skip requirement** (`BATCH_CONTEXT=true` only): Every stage-agent handoff (to `developer`, `tech-lead`, `product-manager`, or any other stage agent) when `BATCH_CONTEXT=true` **must** include:
 
 1. The literal resolved `<worktree-path>` value (e.g., `/path/to/repo/.claude/worktrees/lh-168/fix-lh-168-slug`).
-2. The explicit instruction: "BATCH_CONTEXT=true — the worktree is already on branch `<branch>`. Do NOT run `git checkout develop`, `git checkout -b`, `git switch`, `git reset`, or `git restore` from the main repo root. Confirm CWD matches `<worktree-path>` before any git state-changing command."
+2. The expected branch, artifact repo root, approved base branch, mutation
+   classification, and `isolation: "worktree"` when the stage agent may mutate
+   artifacts.
+3. The explicit instruction: "BATCH_CONTEXT=true — the worktree is already on branch `<branch>`. Do NOT run `git checkout develop`, `git checkout -b`, `git switch`, `git reset`, or `git restore` from the main repo root. Confirm `pwd -P` equals `<worktree-path>` or begins with `<worktree-path>/` before any git state-changing command."
 
-Omitting either of these from the handoff is the root cause of the branch-leak pattern where stage subagents run Protocol 03's branching steps (`git checkout develop && git checkout -b <branch>`) from the main repo root CWD, silently switching the main working tree to the feature branch.
+Omitting any required instruction or metadata field from the handoff is the root
+cause of the branch-leak pattern where stage subagents run Protocol 03's
+branching steps (`git checkout develop && git checkout -b <branch>`) from the
+main repo root CWD, silently switching the main working tree to the feature
+branch.
 
 **Critical: Worktree Git Discipline** (`BATCH_CONTEXT=true` only)
 
@@ -788,7 +859,7 @@ Omitting either of these from the handoff is the root cause of the branch-leak p
 Before issuing any `git switch`, `git checkout`, `git checkout -b`, `git reset`, or `git restore` command, confirm both conditions below. If either check fails, do not run the command — correct the path or use the `-C` flag instead.
 
 1. **Confirm you are operating inside the worktree, not the main repository root.**
-   Run `pwd` and compare the output against `<worktree-path>`. If they differ, you are in the wrong directory. `cd <worktree-path>` or use `git -C <worktree-path>` before continuing.
+   Run `pwd -P` and confirm the output equals `<worktree-path>` or begins with `<worktree-path>/`. If it is outside the assigned worktree, you are in the wrong directory. `cd <worktree-path>` or use `git -C <worktree-path>` before continuing.
 
 2. **Confirm the command targets the current worktree branch, not a base branch.**
    Running `git checkout develop` (or any other base branch) inside the worktree will fail because `develop` is already checked out in the main working tree — git prevents the same branch from being checked out in two locations simultaneously. If a stage protocol's branching step says `git checkout develop && git checkout -b <branch>`, skip it entirely: the worktree was already created on the correct branch.
@@ -935,7 +1006,10 @@ git worktree remove <worktree-path>
 
 After removing the worktree, verify that the CWD is still valid by running a simple command like `pwd` before executing any further shell operations.
 
-**When not in a parallel batch**: Worktree creation is optional but recommended for large development folders or long-running work. If not using a dedicated worktree, ensure the working directory is clean before proceeding.
+**When not in batch dispatch**: Worktree creation is optional only for direct
+single-item runs where `BATCH_CONTEXT=true` is absent. Mutating explicit-list
+batch dispatch, including sequential fallback, must use the Protocol 90
+manifest-assigned worktree path.
 
 **Permission-denial early exit (subagent runs only)**: If at any point during the run the harness responds with the known harness failure pattern — a message containing the phrase `"Permission to use"` AND a denied tool name (`Edit`, `Write`, or `Bash`) — the subagent must **immediately stop all further work** and return the following structured string to the Portfolio Orchestrator:
 
@@ -991,7 +1065,7 @@ This rule prevents agents from making changes that affect unrelated issues and c
 
 ## Step 3.5: Pre-flight Permission Self-Check (Subagent Runs Only)
 
-**Applies to**: Work Item Runner subagents dispatched as part of a parallel batch (`BATCH_CONTEXT=true`). This step is **optional but recommended** — the permission-denial early-exit in Step 3 (above) covers mid-run failures even without the self-check.
+**Applies to**: Work Item Runner subagents dispatched as part of an explicit-list batch (`BATCH_CONTEXT=true`). This step is **optional but recommended** — the permission-denial early-exit in Step 3 (above) covers mid-run failures even without the self-check.
 
 Before calling any creator-stage agent or making any file edits, perform a lightweight sanity check to verify that both `Edit` and `Bash` are accessible:
 
@@ -1720,13 +1794,16 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
 
 **When ALL criteria are met — apply the fixes directly** in the current session using Edit/Bash tools:
 
-1. Apply every blocking finding in one pass (follow the batching rule: all in one commit).
-2. Commit with a descriptive message (e.g., `fix: address [platform] findings inline ([brief description])`).
-3. Push the commit. _(Push before resolving threads — if push fails, threads must not be falsely marked resolved.)_
-4. Reply to each finding's review thread with the fix description and commit SHA.
-5. Resolve each addressed thread via the GraphQL `resolveReviewThread` mutation.
-6. **Increment `cycle`** (the same counter used in the sub-agent loop). Inline fix retries are bounded by `max_cycles` exactly like sub-agent retries — the inline path is a faster lane, not an unbounded one.
-7. Run `pr-review-loop.sh` again from the top of Step 7. If it returns `clean`, proceed normally. If the loop still reports unresolved blocking findings **and** `cycle >= max_cycles`, escalate to human (the just-pushed fix is always given a chance to be verified before escalating).
+1. If `BATCH_CONTEXT=true`, complete the pre-mutation isolation self-check above
+   before any inline edit, branch-changing command, commit, push, PR mutation, or
+   tracker mutation. Stop before mutation if the check fails.
+2. Apply every blocking finding in one pass (follow the batching rule: all in one commit).
+3. Commit with a descriptive message (e.g., `fix: address [platform] findings inline ([brief description])`).
+4. Push the commit. _(Push before resolving threads — if push fails, threads must not be falsely marked resolved.)_
+5. Reply to each finding's review thread with the fix description and commit SHA.
+6. Resolve each addressed thread via the GraphQL `resolveReviewThread` mutation.
+7. **Increment `cycle`** (the same counter used in the sub-agent loop). Inline fix retries are bounded by `max_cycles` exactly like sub-agent retries — the inline path is a faster lane, not an unbounded one.
+8. Run `pr-review-loop.sh` again from the top of Step 7. If it returns `clean`, proceed normally. If the loop still reports unresolved blocking findings **and** `cycle >= max_cycles`, escalate to human (the just-pushed fix is always given a chance to be verified before escalating).
 
 **Do not dispatch a sub-agent for mechanical findings.** Sub-agent startup overhead (context loading, planning) typically costs 10–20 minutes for changes that take 30 seconds to apply directly.
 
@@ -1740,14 +1817,19 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
 | `implementation-plan/*`                           | `implementation-plan-reviewer`                               |
 | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `code-reviewer`                                              |
 
-**Fixer agent worktree isolation rule (mandatory for parallel batches):**
+**Fixer agent worktree isolation rule (mandatory for batch dispatch):**
 
-When this Work Item Runner was dispatched as part of a parallel batch (`BATCH_CONTEXT=true`), all fixer agents dispatched from this step **must** receive `BATCH_CONTEXT=true` and the resolved `<worktree-path>` in their handoff. Fixer agents that run without these values will use main-repo absolute file paths in `Read`/`Edit`/`Write` calls while committing via the worktree git context — causing their changes to be written to the main working tree and left uncommitted on the integration branch instead of on the isolated feature branch.
+When this Work Item Runner was dispatched as part of an explicit-list batch (`BATCH_CONTEXT=true`), all fixer agents dispatched from this step **must** receive `BATCH_CONTEXT=true` and the resolved `<worktree-path>` in their handoff. Fixer agents that run without these values will use main-repo absolute file paths in `Read`/`Edit`/`Write` calls while committing via the worktree git context — causing their changes to be written to the main working tree and left uncommitted on the integration branch instead of on the isolated feature branch.
 
-Required fixer handoff values (parallel batches only):
+Required fixer handoff values (batch dispatch only):
 
 - `BATCH_CONTEXT=true`
 - `WORKTREE_PATH=<resolved-absolute-worktree-path>` — the same path used when this item was first dispatched
+- `EXPECTED_BRANCH=<branch>`
+- `ARTIFACT_REPO_ROOT=<artifact-owning-repo-root>`
+- `APPROVED_BASE_BRANCH=<base-branch>`
+- `MUTATION_CLASSIFICATION=mutating`
+- `isolation: "worktree"`
 - The explicit branch-skip instruction: "BATCH_CONTEXT=true — the worktree is already on branch `<branch>`. Do NOT run `git checkout develop`, `git checkout -b`, `git switch`, `git reset`, or `git restore` from the main repo root."
 
 **Fixer agent batching rule (mandatory):**

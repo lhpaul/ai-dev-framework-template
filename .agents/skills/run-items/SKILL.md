@@ -38,9 +38,16 @@ proposal step.
    `run-nested-artifact-guard.sh --repo-root "$ARTIFACT_REPO_ROOT"` before mutation. Stop on
    `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed` instead
    of widening scope or inferring a base.
-9. Do not stop after advancing one item if another item in the explicit list still
+9. Before dispatching an explicit-list batch where any runner may mutate,
+   including sequential fallback, build the Protocol 90 isolation manifest and
+   require a distinct absolute worktree path plus `isolation: "worktree"` for
+   every mutating item. Stop before dispatch on missing isolation assignment or
+   duplicate worktree path; non-isolated runners are exempt only when explicitly
+   classified `read_only` and they will not edit files, switch branches, commit,
+   push, mutate PRs, change labels, or update tracker state.
+10. Do not stop after advancing one item if another item in the explicit list still
    has a deterministic next action.
-10. Do not stop at transient in-flight CI/watch states. If a local watch exits
+11. Do not stop at transient in-flight CI/watch states. If a local watch exits
    early, duplicate checks are skipped/cancelled, or GitHub still shows pending
    or incomplete check evidence, re-query authoritative PR/check state and keep
    supervising until every in-scope PR is green, blocked, escalated, merged, or
@@ -48,12 +55,12 @@ proposal step.
    For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
    items, require residual gate evidence before accepting an item as
    `ready-for-human-review`.
-11. Before accepting any in-scope item as terminal, require the item runner's
+12. Before accepting any in-scope item as terminal, require the item runner's
    `## Ground-Truth Completion Verification` output from
    `item-completion-self-check.sh` or run the helper directly from current
    artifact state. Missing self-check evidence, `discrepancy`, or
    `unavailable_required` keeps the item under Protocol 90 Step 5 supervision.
-12. After all in-scope PRs reach `ready-for-human-review`, inspect the effective
+13. After all in-scope PRs reach `ready-for-human-review`, inspect the effective
    guardrails. When the relevant stages allow `may_merge_pr: true`, run
    Guardrails Enforcement Gate 5 for each in-scope PR, including
    `run-epic-risk-classifier.sh` and `run-epic-delegated-gate.sh`; continue only
@@ -69,7 +76,7 @@ proposal step.
    `stages.<stage>.may_merge_pr: false` guardrail for each affected PR, and tell
    the human to invoke `$batch-merge` or adjust guardrails to permit delegated
    merging.
-13. For single-item advancement use `$run-item`; for epic-scoped runs use `$run-epic`;
+14. For single-item advancement use `$run-item`; for epic-scoped runs use `$run-epic`;
    for read-only portfolio scan and proposal use `$run-work`.
 
 > **Deprecation notice**: `/run-epic --items` is deprecated. Use `/run-items` for

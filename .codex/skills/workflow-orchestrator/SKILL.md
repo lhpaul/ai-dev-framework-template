@@ -12,14 +12,15 @@ Recommended model tier: `economy`
 3. Prefer the helper scripts in `scripts/development-workflow/` for state discovery, batch planning, next-action classification, resume behavior, CI polling, and automated review polling before using ad hoc shell commands.
 4. Treat the protocol as canonical. Use `workflow-item-orchestrator` for each selected or approved item when your runner supports skill-to-skill handoff; otherwise continue in the current session by following `91-orchestrate-work-protocol.md` item by item.
 5. Keep batching and prioritization decisions explicit, especially when work must be serialized because the runner cannot execute multiple item orchestrators concurrently.
-6. Do not stop after dispatching a batch if any selected or approved item still has a deterministic next action.
-7. For `workflow_hub` implementation work, include workflow mode, artifact owner, selected product repository, local path or remote identity, and mutation target in item handoffs; stop before mutation-oriented dispatch when product repository context is missing or ambiguous. Missing mode or `single_repo` does not require `--repo`.
+6. Before dispatching an explicit-list batch where any runner may mutate, including sequential fallback, build the Protocol 90 isolation manifest and require a distinct absolute worktree path plus `isolation: "worktree"` for every mutating item. Stop before dispatch on missing isolation assignment or duplicate worktree path; non-isolated runners are allowed only when explicitly classified `read_only` and will not edit files, switch branches, commit, push, mutate PRs, change labels, or update tracker state.
+7. Do not stop after dispatching a batch if any selected or approved item still has a deterministic next action.
+8. For `workflow_hub` implementation work, include workflow mode, artifact owner, selected product repository, local path or remote identity, and mutation target in item handoffs; stop before mutation-oriented dispatch when product repository context is missing or ambiguous. Missing mode or `single_repo` does not require `--repo`.
    Include the parent-approved base branch in mutation-oriented handoffs; child runners must use it with `run-nested-artifact-guard.sh --approved-base` before branch or PR creation.
-8. **Guardrails enforcement**: Before any artifact-mutating action, resolve the effective guardrails (three-layer precedence: repo config → session overrides → invocation overrides) and report them in the portfolio run summary. Enforce the six gates described in `docs/workflow/development-workflow/guardrails-enforcement.md`: load+report at run start, backlog-start gate, per-stage PR-open gate, delegated review gate, delegated merge gate, and completion gate. When no `guardrails` section is found, state "conservative defaults in effect."
-9. When supervising sweep, batch, helper-extraction, numeric-target, or
+9. **Guardrails enforcement**: Before any artifact-mutating action, resolve the effective guardrails (three-layer precedence: repo config → session overrides → invocation overrides) and report them in the portfolio run summary. Enforce the six gates described in `docs/workflow/development-workflow/guardrails-enforcement.md`: load+report at run start, backlog-start gate, per-stage PR-open gate, delegated review gate, delegated merge gate, and completion gate. When no `guardrails` section is found, state "conservative defaults in effect."
+10. When supervising sweep, batch, helper-extraction, numeric-target, or
    pattern-completeness items, require residual gate evidence before accepting
    `ready-for-human-review` as terminal.
-10. Before accepting any item as terminal in a batch summary, require the
+11. Before accepting any item as terminal in a batch summary, require the
     Work Item Runner's `## Ground-Truth Completion Verification` section from
     `scripts/development-workflow/item-completion-self-check.sh` or run the
     helper directly from current artifact state. Do not declare the batch item
