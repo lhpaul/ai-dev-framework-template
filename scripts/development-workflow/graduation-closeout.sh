@@ -497,10 +497,8 @@ print_section() {
 
 validate_graduation_pr
 
-NATIVE_DISCOVERY_OK=1
 if ! discover_native_subissues; then
   echo "Warning: native sub-issue discovery failed for epic #${EPIC_ISSUE}; using label fallback only." >&2
-  NATIVE_DISCOVERY_OK=0
 fi
 if [ ! -s "$CANDIDATES_FILE" ]; then
   if ! discover_label_subitems; then
@@ -509,7 +507,7 @@ if [ ! -s "$CANDIDATES_FILE" ]; then
   fi
 else
   # Still include label-discovered legacy items when native sub-issues exist.
-  if ! discover_label_subitems && [ "$NATIVE_DISCOVERY_OK" -eq 0 ]; then
+  if ! discover_label_subitems; then
     echo "Warning: label fallback discovery failed for ${INTEGRATION_LABEL}." >&2
     record_result "$FAILED_FILE" "discovery" "Candidate discovery" "label:${INTEGRATION_LABEL}" "label_fallback_failed"
   fi

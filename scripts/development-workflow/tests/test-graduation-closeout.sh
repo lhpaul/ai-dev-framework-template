@@ -96,6 +96,10 @@ JSON
     esac
     ;;
   issue\ list\ --label\ integration-branch:test\ --state\ all\ --limit\ 1000\ --json\ number,title,state,labels\ --jq\ .[]\ \|\ .number)
+    if [ "${MOCK_LABEL_MODE:-ok}" = "fail" ]; then
+      printf 'mock label discovery failure\n' >&2
+      exit 47
+    fi
     if [ -n "${MOCK_LABEL_ISSUES:-}" ]; then
       printf '%s\n' "$MOCK_LABEL_ISSUES"
     fi
@@ -244,7 +248,7 @@ set_status() {
 reset_fixture() {
   rm -f "$MOCK_STATE_DIR"/*.json "$MOCK_STATUS_DIR"/* "$MOCK_CLOSE_LOG"
   : > "$MOCK_CLOSE_LOG"
-  unset MOCK_NATIVE_MODE MOCK_LABEL_ISSUES MOCK_PR_MODE MOCK_GRADUATION_PR_MODE MOCK_CLOSE_FAIL_ISSUE MOCK_STATUS_FAIL_ISSUE GITHUB_PROJECT_STATUS_GRADUATED GITHUB_PROJECT_STATUS_MERGED
+  unset MOCK_NATIVE_MODE MOCK_LABEL_MODE MOCK_LABEL_ISSUES MOCK_PR_MODE MOCK_GRADUATION_PR_MODE MOCK_CLOSE_FAIL_ISSUE MOCK_STATUS_FAIL_ISSUE GITHUB_PROJECT_STATUS_GRADUATED GITHUB_PROJECT_STATUS_MERGED
 }
 
 run_closeout() {
@@ -298,6 +302,27 @@ run_contains "pr_discovery_reason" "merged_pr_discovery_failed" "$pr_discovery_b
 run_contains "pr_discovery_epic_held" "EPIC_RESULT=held" "$pr_discovery_body"
 run_test "pr_discovery_child_still_processed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/101.json"))["state"])')"
 run_test "pr_discovery_no_epic_close" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/900.json"))["state"])')"
+
+reset_fixture
+export MOCK_LABEL_MODE=fail
+export MOCK_PR_MODE=none
+write_issue 101 "Open child" OPEN
+write_issue 102 "Closed nonterminal" CLOSED
+write_issue 103 "Closed terminal" CLOSED
+write_issue 104 "Optional child" OPEN optional
+write_issue 900 "Parent epic" OPEN
+set_status 101 "In Development"
+set_status 102 "Development in Review"
+set_status 103 "Merged"
+set_status 104 "In Development"
+set_status 900 "In Development"
+label_discovery_result="$(run_closeout)"
+label_discovery_body="$(last_output_body "$label_discovery_result")"
+run_test "label_discovery_exit_one" "1" "$(last_output_status "$label_discovery_result")"
+run_contains "label_discovery_reason" "label_fallback_failed" "$label_discovery_body"
+run_contains "label_discovery_epic_held" "EPIC_RESULT=held" "$label_discovery_body"
+run_test "label_discovery_child_still_processed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/101.json"))["state"])')"
+run_test "label_discovery_no_epic_close" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/900.json"))["state"])')"
 
 echo ""
 echo "=== graduation closeout: graduation PR validation ==="
