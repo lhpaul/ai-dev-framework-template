@@ -13,8 +13,8 @@ Follow the spec generation protocol exactly as defined in:
 Before the first file edit, branch-changing command, commit, push, PR mutation,
 or tracker mutation, verify `isolation: "worktree"`, expected worktree path,
 expected branch, artifact repo root, approved base branch, and mutation
-classification are present; compare only the expected worktree path to `pwd -P`
-and only the expected branch to `git rev-parse --abbrev-ref HEAD`. Stop
+classification are present; ensure `pwd -P` equals or is nested under the expected worktree path
+and compare only the expected branch to `git rev-parse --abbrev-ref HEAD`. Stop
 before mutation on missing metadata, wrong CWD, main-repo CWD, or wrong branch;
 escalate for human inspection if mutation may already have occurred outside the
 assigned worktree. All `Edit` and `Write` tool calls must target paths under the

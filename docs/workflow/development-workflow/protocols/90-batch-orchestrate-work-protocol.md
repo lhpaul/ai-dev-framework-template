@@ -935,12 +935,12 @@ Each mutating runner entry must include:
 Pre-dispatch validation is mandatory:
 
 - If any mutating runner is missing `isolation: "worktree"` or an
-  absolute worktree path, stop before dispatch; name the affected item, the
-  expected branch, the missing isolation field, and the human action needed to
-  unblock.
+  absolute worktree path, stop before dispatch with guardrail stop condition
+  `unclear_requirements`; name the affected item, the expected branch, the
+  missing isolation field, and the human action needed to unblock.
 - If two mutating runners are assigned the same worktree path, stop before
-  dispatch; name both items, the shared path, and the human action needed to
-  unblock.
+  dispatch with guardrail stop condition `destructive_action`; name both items,
+  the shared path, and the human action needed to unblock.
 - A non-isolated runner is allowed only when it is explicitly classified
   `read_only` and will not edit files, switch branches, create commits, push,
   open or update PRs, modify labels, or update tracker state.

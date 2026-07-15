@@ -832,7 +832,7 @@ The guard is **non-blocking**: it emits a `GUARDRAIL WARNING` and returns exit c
 2. The expected branch, artifact repo root, approved base branch, mutation
    classification, and `isolation: "worktree"` when the stage agent may mutate
    artifacts.
-3. The explicit instruction: "BATCH_CONTEXT=true — the worktree is already on branch `<branch>`. Do NOT run `git checkout develop`, `git checkout -b`, `git switch`, `git reset`, or `git restore` from the main repo root. Confirm CWD matches `<worktree-path>` before any git state-changing command."
+3. The explicit instruction: "BATCH_CONTEXT=true — the worktree is already on branch `<branch>`. Do NOT run `git checkout develop`, `git checkout -b`, `git switch`, `git reset`, or `git restore` from the main repo root. Confirm `pwd -P` is at or under `<worktree-path>` before any git state-changing command."
 
 Omitting any required instruction or metadata field from the handoff is the root
 cause of the branch-leak pattern where stage subagents run Protocol 03's
@@ -847,7 +847,7 @@ branch.
 Before issuing any `git switch`, `git checkout`, `git checkout -b`, `git reset`, or `git restore` command, confirm both conditions below. If either check fails, do not run the command — correct the path or use the `-C` flag instead.
 
 1. **Confirm you are operating inside the worktree, not the main repository root.**
-   Run `pwd -P` and compare the output against `<worktree-path>`. If they differ, you are in the wrong directory. `cd <worktree-path>` or use `git -C <worktree-path>` before continuing.
+   Run `pwd -P` and confirm the output equals `<worktree-path>` or is nested under it. If it is outside the assigned worktree, you are in the wrong directory. `cd <worktree-path>` or use `git -C <worktree-path>` before continuing.
 
 2. **Confirm the command targets the current worktree branch, not a base branch.**
    Running `git checkout develop` (or any other base branch) inside the worktree will fail because `develop` is already checked out in the main working tree — git prevents the same branch from being checked out in two locations simultaneously. If a stage protocol's branching step says `git checkout develop && git checkout -b <branch>`, skip it entirely: the worktree was already created on the correct branch.

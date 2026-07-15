@@ -93,7 +93,7 @@ resetting, restoring, stashing, committing, or deleting suspect changes.
 2. The expected branch, artifact repo root, approved base branch, mutation
    classification, and `isolation: "worktree"` when the stage agent may mutate
    artifacts.
-3. The sentence: "BATCH_CONTEXT=true — the worktree is already on branch `<branch>`. Do NOT run `git checkout develop`, `git checkout -b`, `git switch`, `git reset`, or `git restore` from the main repo root. Confirm CWD matches `<worktree-path>` before any git state-changing command."
+3. The sentence: "BATCH_CONTEXT=true — the worktree is already on branch `<branch>`. Do NOT run `git checkout develop`, `git checkout -b`, `git switch`, `git reset`, or `git restore` from the main repo root. Confirm `pwd -P` is at or under `<worktree-path>` before any git state-changing command."
    Omitting any required instruction or metadata field is the root cause of the branch-leak pattern where stage subagents run Protocol 03's branching steps from the main repo root CWD, silently switching the main working tree to the feature branch.
 
 **Main-tree return rule (BATCH_CONTEXT=false / no isolation: worktree)**: When this agent is dispatched **without** worktree isolation (i.e., `BATCH_CONTEXT` is `false` or absent), the agent runs in the main working tree. In this case:
