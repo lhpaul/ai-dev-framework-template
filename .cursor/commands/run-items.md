@@ -52,10 +52,10 @@ Key responsibilities:
 - Use the supplied targets as the hard bounded scope for Protocol 90 `explicit_list` mode.
 - Target `develop` directly; `/run-items` does not create or target
   `develop-<slug>` integration branches.
-- Before dispatching concurrent mutating runners, build the Protocol 90
-  isolation manifest and require a distinct absolute worktree path plus
-  `isolation: "worktree"` for every mutating item. Stop before dispatch on
-  missing isolation assignment or duplicate worktree path.
+- Before dispatching two or more concurrent runners when any runner may mutate,
+  build the Protocol 90 isolation manifest and require a distinct absolute
+  worktree path plus `isolation: "worktree"` for every mutating item. Stop
+  before dispatch on missing isolation assignment or duplicate worktree path.
 - In `workflow_hub`, include selected product repository context in implementation handoffs.
 - Do not stop after advancing one item if another in the list still has a
   deterministic next action.

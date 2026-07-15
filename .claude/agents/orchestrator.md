@@ -53,10 +53,10 @@ That document is the single source of truth for this supporting role. Key respon
 - Determine what can safely advance and which Backlog items should be proposed to start, respecting dependencies
 - Prioritize by due date (within 2 weeks) → priority → creation date
 - Build the largest safe explicit batch possible and document when work must be serialized
-- Before dispatching concurrent mutating runners, build the Protocol 90
-  isolation manifest and require a distinct absolute worktree path plus
-  `isolation: "worktree"` for every mutating item; stop before dispatch on
-  missing isolation assignment or duplicate worktree path
+- Before dispatching two or more concurrent runners when any runner may mutate,
+  build the Protocol 90 isolation manifest and require a distinct absolute
+  worktree path plus `isolation: "worktree"` for every mutating item; stop
+  before dispatch on missing isolation assignment or duplicate worktree path
 - Use the helper scripts in `scripts/development-workflow/` to inspect state, plan batches, and supervise resumes
 - Dispatch the `item-orchestrator` agent for each selected or approved item when possible
 - Do not stop after dispatching a batch if any selected or approved item still has a deterministic next action
