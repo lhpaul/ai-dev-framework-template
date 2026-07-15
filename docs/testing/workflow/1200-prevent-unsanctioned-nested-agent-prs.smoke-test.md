@@ -117,9 +117,11 @@ not opportunistically touch unrelated work.
 3. Re-run with explicit split approval and approved base `develop`.
 4. Confirm the output allows continuation and includes an audit line that names
    the approved split path and base branch.
+5. Re-run with split approval but a mocked wrong-base PR and confirm
+   `RESULT=wrong_base` still blocks continuation.
 
 **Expected result**: Deliberate split work is possible only when it is explicit,
-parent-visible, and base-bound.
+parent-visible, base-bound, and not masking a wrong-base PR.
 
 ### Last Step: Validate Parent Summary Content
 
@@ -148,8 +150,8 @@ Expected coverage includes canonical artifacts, duplicate local/remote/worktree
 artifacts, `ENG-1200` tracker prefixes, lowercase/path lookalikes,
 `backport/hotfix/*` branches, wrong-base PRs, audit-only unexpected forks,
 explicit split approval, `gh pr list` scan failure, mixed in-scope/out-of-scope
-PR data, malformed PR JSON, and `open-product-pr.sh --approved-base`
-dry-run/live mismatch stops.
+PR data, malformed PR JSON, split approval that cannot override wrong-base PRs,
+and `open-product-pr.sh --approved-base` dry-run/live mismatch stops.
 
 ---
 

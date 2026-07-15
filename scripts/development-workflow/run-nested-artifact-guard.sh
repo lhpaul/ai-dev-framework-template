@@ -270,10 +270,10 @@ if [ -s "$ARTIFACTS_FILE" ]; then
   done < "$ARTIFACTS_FILE"
 fi
 
-if [ "$ALLOW_SPLIT" = "true" ] && [ -n "$APPROVED_BASE" ]; then
-  result="clean"
-elif [ "$wrong_base_count" -gt 0 ]; then
+if [ "$wrong_base_count" -gt 0 ]; then
   result="wrong_base"
+elif [ "$ALLOW_SPLIT" = "true" ] && [ -n "$APPROVED_BASE" ]; then
+  result="clean"
 elif [ "$duplicate_count" -gt 0 ]; then
   if [ "$MODE" = "audit" ]; then
     result="unexpected_fork"

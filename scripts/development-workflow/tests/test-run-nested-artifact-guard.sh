@@ -190,6 +190,13 @@ run_test "wrong_base_exit_one" "1" "$(status_code "$out")"
 run_contains "wrong_base_result" "RESULT=wrong_base" "$(body "$out")"
 run_contains "wrong_base_pr" "base=main" "$(body "$out")"
 
+repo="$(make_repo split-wrong-pr-base)"
+export MOCK_GH_PR_MODE=wrong_base
+out="$(guard_output --repo-root "$repo" --mode pre-pr --issue 1200 --expected-branch feature/1200-canonical-path --approved-base develop --allow-split true)"
+unset MOCK_GH_PR_MODE
+run_test "split_wrong_base_exit_one" "1" "$(status_code "$out")"
+run_contains "split_wrong_base_still_blocks" "RESULT=wrong_base" "$(body "$out")"
+
 repo="$(make_repo audit)"
 git -C "$repo" branch feature/1200-audit-fork
 out="$(guard_output --repo-root "$repo" --mode audit --issue 1200 --expected-branch feature/1200-canonical-path)"
