@@ -24,7 +24,7 @@
 | Repo revision | `git rev-parse --short HEAD` | `d26edf4` |
 | Template-fit check | Read `.ai-dev-workflow.yaml` and issue #1207 brief | `template.is_template: true`; issue improves template workflow routing and is framework-generic |
 | Existing Fast Track routing surfaces | `rg -l "Cross-layer scope check|No multi-layer scope signals|Fast track is the shortened path|Fast Track \\(Bug / Simple Change\\)" docs/workflow/development-workflow/README.md docs/workflow/development-workflow/protocols/03-implement-development-protocol.md docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | 3 core files: README, Protocol 03, Protocol 91 |
-| Direct Fast Track implementer guidance | `grep -rl "03-implement-development-protocol\\|Fast Track\\|fast-track" .claude/agents/ .cursor/agents/ .codex/skills/ .agents/skills/ 2>/dev/null` | 3 direct-entry files: `.claude/agents/developer.md`, `.cursor/agents/developer.md`, `.codex/skills/workflow-implementer/SKILL.md` |
+| Direct Fast Track implementer guidance | `grep -rl "03-implement-development-protocol\\|Fast Track\\|fast-track" .claude/agents/ .cursor/agents/ .cursor/commands/ .codex/skills/ .agents/skills/ 2>/dev/null` | 4 direct-entry files: `.claude/agents/developer.md`, `.cursor/agents/developer.md`, `.cursor/commands/implement-development.md`, `.codex/skills/workflow-implementer/SKILL.md` |
 | Protocol 91 reference fan-out | `grep -rl "91-orchestrate-work-protocol" .claude/agents/ .claude/commands/ .cursor/agents/ .cursor/commands/ .codex/skills/ .agents/skills/ docs/workflow 2>/dev/null` | 30 files reference Protocol 91; most should continue to rely on the canonical protocol without duplicated criteria |
 | Parser/concurrency classification | `rg -n "parser|scanner|regex|structured-text|concurrent|listener|timer|queue|shared mutable|call-site|ripgrep|grep" docs/specs/developments/20260714170008_1207-fast-track-blast-radius-call-site-volume/1_1207-fast-track-blast-radius-call-site-volume_specs.md docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` | Parser-risk: no custom parser or scanner implementation planned; ordinary `rg`/`grep` examples only. Concurrent-event-source: not applicable |
 
@@ -54,6 +54,7 @@
 
 - [ ] Update `.claude/agents/developer.md` — replace the generic "stop if scope expands" Fast Track reminder with a pointer to the Protocol 91 blast-radius routing gate and Protocol 03 criteria.
 - [ ] Update `.cursor/agents/developer.md` — mirror the Claude developer reminder.
+- [ ] Update `.cursor/commands/implement-development.md` — replace the inline generic Fast Track scope-expansion reminder with a Protocol 91 / Protocol 03 blast-radius gate reminder so Cursor command entry cannot bypass the same routing criteria.
 - [ ] Update `.codex/skills/workflow-implementer/SKILL.md` — add a concise instruction that Fast Track work must have passed the Protocol 91 blast-radius gate and must stop if call-site volume or external-system impact is discovered after dispatch.
 
 ### Not Modified
@@ -78,6 +79,7 @@
 | `docs/workflow/development-workflow/README.md` | Mirror workflow overview |
 | `.claude/agents/developer.md` | Add direct-entry reminder |
 | `.cursor/agents/developer.md` | Add direct-entry reminder |
+| `.cursor/commands/implement-development.md` | Add direct command-entry reminder |
 | `.codex/skills/workflow-implementer/SKILL.md` | Add direct-entry reminder |
 | `REVIEW.md` | No edit; existing checks cover policy consistency and documentation PRs |
 | Tech-lead agent/skill files | No edit; this affects Fast Track routing and implementation entry, not plan writing behavior |
@@ -127,6 +129,7 @@ None. This workflow documentation change has no database, fixture, or seed-data 
 - [ ] `docs/workflow/development-workflow/README.md` — Fast Track overview.
 - [ ] `.claude/agents/developer.md` — developer role reminder.
 - [ ] `.cursor/agents/developer.md` — developer role reminder.
+- [ ] `.cursor/commands/implement-development.md` — Cursor command entry reminder.
 - [ ] `.codex/skills/workflow-implementer/SKILL.md` — Codex implementer skill reminder.
 
 ---
@@ -154,12 +157,12 @@ No production code samples are included. The implementation may include short il
 2. Add the Protocol 91 threshold and search-scope mechanics: identifiable primary entity, non-test source references, more than 15 files or more than 30 occurrences, explicit override requirement, and summary evidence.
 3. Update Protocol 03 Path 3 criteria so direct Fast Track implementation requires the same blast-radius gate before coding.
 4. Update the README Fast Track overview to state that call-site volume is a propagation-breadth check distinct from architectural layer presence.
-5. Add concise direct-entry reminders to `.claude/agents/developer.md`, `.cursor/agents/developer.md`, and `.codex/skills/workflow-implementer/SKILL.md`.
+5. Add concise direct-entry reminders to `.claude/agents/developer.md`, `.cursor/agents/developer.md`, `.cursor/commands/implement-development.md`, and `.codex/skills/workflow-implementer/SKILL.md`.
 6. Run a cross-reference consistency check:
    - Search for `Fast Track`, `cross-layer scope check`, `call-site volume`, and `external-system impact`.
    - Confirm Protocol 91 remains authoritative and mirrored surfaces do not contradict the threshold, routing outcome, or external-system wording.
 7. Run markdown/document checks:
-   - `npx markdownlint-cli2 "docs/workflow/development-workflow/README.md" "docs/workflow/development-workflow/protocols/03-implement-development-protocol.md" "docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md" ".claude/agents/developer.md" ".cursor/agents/developer.md" ".codex/skills/workflow-implementer/SKILL.md"`
+   - `npx markdownlint-cli2 "docs/workflow/development-workflow/README.md" "docs/workflow/development-workflow/protocols/03-implement-development-protocol.md" "docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md" ".claude/agents/developer.md" ".cursor/agents/developer.md" ".cursor/commands/implement-development.md" ".codex/skills/workflow-implementer/SKILL.md"`
    - Run the smoke test runbook and confirm every assertion passes.
 8. Update `CHANGELOG.md` under `[Unreleased]` in the implementation PR using:
    - `### Changed`

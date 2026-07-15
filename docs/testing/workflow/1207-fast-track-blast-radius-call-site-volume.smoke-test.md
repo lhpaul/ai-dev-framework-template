@@ -65,9 +65,10 @@ Before running this smoke test:
 
 1. Open `.claude/agents/developer.md`.
 2. Open `.cursor/agents/developer.md`.
-3. Open `.codex/skills/workflow-implementer/SKILL.md`.
-4. Confirm each file points Fast Track work back to the Protocol 91 or Protocol 03 eligibility gate.
-5. Confirm each file tells direct-entry implementers to stop when call-site volume or external-system impact is discovered after dispatch.
+3. Open `.cursor/commands/implement-development.md`.
+4. Open `.codex/skills/workflow-implementer/SKILL.md`.
+5. Confirm each file points Fast Track work back to the Protocol 91 or Protocol 03 eligibility gate.
+6. Confirm each file tells direct-entry implementers to stop when call-site volume or external-system impact is discovered after dispatch.
 
 **Expected result**: Direct implementer entry points do not silently bypass the new routing evidence requirements.
 
