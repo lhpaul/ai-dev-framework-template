@@ -116,8 +116,9 @@ warning comments.
 **Maps to**: Acceptance Criteria 2, 3, 5, 8, 9
 
 1. Inspect Protocol 91 Step 8a in the implementation branch.
-2. Confirm the stage-alignment checker runs before `ready-for-human-review` is
-   applied.
+2. Confirm the stage-alignment checker runs before every
+   `ready-for-human-review` application path, including Human Checkpoint Label
+   Sync and the embedded readiness checklist.
 3. Confirm the documented exception path is correction or human escalation, not
    a silent bypass.
 4. Confirm valid documentation-only spec and plan PRs can continue through the

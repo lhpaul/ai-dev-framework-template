@@ -78,16 +78,20 @@ agent and skill guidance, a new script, and a script test harness.
 ### Work Item Runner / Readiness Protocols
 
 - [ ] Update `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
-      Step 8a to run the stage-alignment checker after CI and reviewer-loop
-      evidence is clean but before `ready-for-human-review` is applied.
+      Step 8a to run the stage-alignment checker before every path that applies
+      `ready-for-human-review`, including the Human Checkpoint Label Sync path
+      and the embedded readiness checklist path. The checker should still run
+      after CI and reviewer-loop evidence is available so its warning is added
+      only when the PR would otherwise be ready.
 - [ ] Add the next unused Step 8a exit code, `8`, for documentation-stage
       mismatch, and require `check-documentation-stage-alignment.sh` to emit that
       same code for mismatch outcomes. The action should be: leave the PR
       without `ready-for-human-review`, post or update the warning, apply
       `needs-fixes` if the implementation chooses to use labels for blockers,
       and report a human/workflow correction action.
-- [ ] Make the gate run on every pass through Step 8a, including resumed PRs and
-      fix cycles, so contaminated existing branches cannot bypass inspection.
+- [ ] Make the gate run on every pass through Step 8a, including resumed PRs,
+      fix cycles, and checkpoint-policy runs, so contaminated existing branches
+      cannot bypass inspection through an earlier readiness-label path.
 - [ ] Update `docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md`
       so `ready-for-human-review` requires documentation-stage alignment for
       `spec/*` and `implementation-plan/*` PRs.
@@ -391,9 +395,11 @@ the checker and tests directly.
    with fixture-based coverage for the parser-risk edge cases and required
    acceptance examples.
 3. Run the new test harness and confirm it passes.
-4. Update Protocol 91 Step 8a to call the checker before
-   `ready-for-human-review`, document the new exit code, and require runner
-   summaries to include the stage-alignment result when blocked.
+4. Update Protocol 91 Step 8a to call the checker before every
+   `ready-for-human-review` label application path, including Human Checkpoint
+   Label Sync and the embedded readiness checklist, document the new exit code,
+   and require runner summaries to include the stage-alignment result when
+   blocked.
 5. Update Protocol 92 readiness conditions and Protocol 93 standalone guidance
    so all readiness paths preserve the gate.
 6. Update `REVIEW.md` with spec and plan review expectations for documentation
