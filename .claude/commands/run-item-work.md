@@ -16,3 +16,7 @@ Follow the same protocol and prelude as `/run-item`:
 The alias inherits `/run-item` preflight confirmation behavior, including
 `policyRecommendation.confirmationSummary` and the invocation-scoped
 `RUN_ITEM_POLICY_CONFIRMED` item/policy binding.
+
+It also inherits `/run-item` checkpoint-resume worktree preflight behavior: a
+checkpointed worktree-isolated run must re-enter the expected item worktree
+before mutation, and re-entry does not satisfy or waive checkpoint state.

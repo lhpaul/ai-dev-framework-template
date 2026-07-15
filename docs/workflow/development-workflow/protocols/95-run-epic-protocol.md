@@ -457,6 +457,30 @@ contract. Future `/run-epic` parallel dispatch should set `isolation: worktree`
 handing off to each agent, making the pre-branch guard redundant for parallel
 runs while keeping it as a backstop for single-checkout fallback.
 
+**Checkpoint-resume worktree preflight**: When an epic-scoped item resumes
+after a human-checkpoint pause and the prior run used a dedicated item
+worktree, run Protocol 91's checkpoint-resume preflight before any mutation in
+the resumed session:
+
+```bash
+./scripts/development-workflow/worktree-resume-preflight.sh \
+  --item <item-id> \
+  --expected-branch <branch-prefix>/<slug> \
+  --expected-worktree <worktree-path-if-known> \
+  --main-repo-root <main-repo-root> \
+  --json
+```
+
+`RESULT=continue` means the session is already inside the expected worktree.
+`RESULT=reenter` means the runner must `cd "$TARGET_WORKTREE"` and verify the
+branch before continuing, including a one-shot
+`worktree-cwd-guard.sh --check-cwd "$TARGET_WORKTREE" "$MAIN_REPO_ROOT"` check.
+`RESULT=stop` means the run must stop before mutation and report the item,
+expected branch, expected worktree when known, observed directory, observed
+branch when available, failure reason, and human recovery action. The helper is
+read-only and never satisfies, waives, clears, or changes checkpoint state;
+checkpoint lifecycle still requires explicit satisfaction or waiver evidence.
+
 For each in-scope item:
 
 1. Advance the item with the existing `/run-item-work` or stage protocol. Do not

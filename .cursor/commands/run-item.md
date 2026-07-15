@@ -42,6 +42,9 @@ Key responsibilities:
   re-prompt for the same selected policy.
 - Pending checkpoints, guardrail stops, review/CI failures, risk violations, and
   missing permissions still stop the run.
+- When resuming after a human-checkpoint pause from a prior worktree-isolated
+  run, perform Protocol 91's checkpoint-resume worktree preflight before any
+  mutation. Worktree re-entry does not satisfy or waive checkpoint state.
 - Resolve the request to exactly one non-epic workflow item
 - Use helper scripts in `scripts/development-workflow/` for next-action classification
 - In `workflow_hub`, state selected product repository, artifact owner, and mutation target before implementation mutation

@@ -37,6 +37,10 @@ advances exactly one non-epic item through Protocol 91.
    available; otherwise resolve from repo `guardrails` config. Report effective
    values before mutation. Enforce gates per
    `docs/workflow/development-workflow/guardrails-enforcement.md` section 3.
+   When resuming after a human-checkpoint pause from a prior worktree-isolated
+   run, perform Protocol 91's checkpoint-resume worktree preflight before any
+   mutation. Worktree re-entry is a CWD safety check only; it does not satisfy
+   or waive checkpoint state.
 7. Epic-like targets must use `$run-epic` / `/run-epic`, not this command.
 8. When the delegated merge gate returns `merge_allowed`, continue through merge,
    remote/local branch cleanup, `post-merge-cleanup.sh`, and live tracker

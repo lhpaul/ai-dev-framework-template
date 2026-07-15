@@ -10,3 +10,6 @@ description: "Deprecated compatibility alias for /run-item. Identical behavior â
 
 1. Read `AGENTS.md` for repository-wide rules.
 2. Follow `.agents/skills/run-item/SKILL.md` exactly (same bounded prelude + Protocol 91).
+   This includes the checkpoint-resume worktree preflight inherited from
+   `$run-item`; the deprecated alias must not resume a checkpointed worktree run
+   from the main clone.
