@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Restore worktree CWD on checkpoint resume** (#1174): Add a resume preflight
   so checkpointed worktree-isolated runs cannot continue from the main clone.
+- **Bounded prelude base selection** (#1204): Require explicit-list
+  integration labels to cover the whole item set and verify shared
+  integration branches before selecting `develop-<slug>`.
 - **Bounded prelude PR lookup**: avoid paginating every historical PR targeting
   `develop` for unlabeled `/run-items` Backlog starts by using targeted
   issue-head PR search before falling back to legacy lookup paths.

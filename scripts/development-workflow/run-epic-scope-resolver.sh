@@ -333,6 +333,20 @@ base_branch_cache_file() {
   printf '%s/prs_base_%s.json\n' "$tmp_dir" "$safe"
 }
 
+remote_branch_status() {
+  local branch="$1"
+  local status
+  set +e
+  git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1
+  status=$?
+  set -e
+  case "$status" in
+    0) printf 'exists\n' ;;
+    2) printf 'missing\n' ;;
+    *) printf 'failed\n' ;;
+  esac
+}
+
 fetch_prs_for_base() {
   local branch="$1"
   local cache_file encoded_branch
@@ -764,6 +778,11 @@ items_json="$(jq -s '.' "$items_file")"
 
 integration_labels="$(printf '%s\n' "$items_json" | jq -r '[.[].integrationBranchLabel | select(. != "")] | unique | .[]')"
 integration_count="$(printf '%s\n' "$integration_labels" | sed '/^$/d' | wc -l | tr -d ' ')"
+item_count="$(printf '%s\n' "$items_json" | jq 'length')"
+labeled_item_count="$(printf '%s\n' "$items_json" | jq '[.[] | select((.integrationBranchLabel // "") != "")] | length')"
+base_warnings_json="[]"
+base_validation_result="not_applicable"
+base_validation_branch=""
 
 base_branch=""
 base_reason=""
@@ -773,12 +792,54 @@ if [ -n "$base_override" ]; then
   base_reason="supplied --base override"
 elif [ "$integration_count" -eq 1 ]; then
   label="$(printf '%s\n' "$integration_labels" | sed -n '1p')"
-  base_branch="develop-${label#integration-branch:}"
-  base_reason="shared integration branch label ${label}"
+  candidate_branch="develop-${label#integration-branch:}"
+  base_validation_branch="$candidate_branch"
+  if [ "$labeled_item_count" -lt "$item_count" ]; then
+    base_branch="develop"
+    base_reason="partial integration branch label coverage for ${label}; falling back to develop"
+    base_validation_result="skipped_partial_label_coverage"
+    base_warnings_json="$(jq -nc \
+      --arg label "$label" \
+      --argjson labeled "$labeled_item_count" \
+      --argjson total "$item_count" \
+      '[("partial integration branch label " + $label + " applies to " + ($labeled|tostring) + " of " + ($total|tostring) + " items; using develop")]')"
+  elif [ "$base_branch_applies_to" != "current_repository_prs" ]; then
+    base_branch="$candidate_branch"
+    base_reason="shared integration branch label ${label}; branch validation deferred for ${base_branch_applies_to}"
+    base_validation_result="deferred"
+  else
+    base_validation_result="$(remote_branch_status "$candidate_branch")"
+    if [ "$base_validation_result" = "exists" ]; then
+      base_branch="$candidate_branch"
+      base_reason="shared integration branch label ${label}; remote branch verified"
+    elif [ "$base_validation_result" = "missing" ]; then
+      base_branch="develop"
+      base_reason="shared integration branch label ${label} points to missing branch ${candidate_branch}; falling back to develop"
+      base_warnings_json="$(jq -nc \
+        --arg label "$label" \
+        --arg branch "$candidate_branch" \
+        '[("integration branch " + $branch + " from label " + $label + " was not found on origin; using develop")]')"
+    else
+      base_branch="develop"
+      base_reason="could not verify integration branch ${candidate_branch}; falling back to develop"
+      base_warnings_json="$(jq -nc \
+        --arg label "$label" \
+        --arg branch "$candidate_branch" \
+        '[("could not verify integration branch " + $branch + " from label " + $label + "; using develop")]')"
+    fi
+  fi
 elif [ "$integration_count" -gt 1 ]; then
-  base_branch=""
-  base_reason="conflicting integration branch labels"
-  set_ambiguous=1
+  base_validation_result="skipped_mixed_labels"
+  if [ -n "$epic_number" ]; then
+    base_branch=""
+    base_reason="conflicting integration branch labels"
+    set_ambiguous=1
+  else
+    base_branch="develop"
+    base_reason="mixed integration branch labels; falling back to develop"
+    base_warnings_json="$(printf '%s\n' "$integration_labels" | jq -R -s -c \
+      'split("\n") | map(select(. != "")) | [("mixed integration branch labels in scope: " + join(", ") + "; using develop")]')"
+  fi
 else
   base_branch="develop"
   base_reason="no integration branch label"
@@ -797,9 +858,12 @@ summary_json="$(jq -n \
   --arg itemInput "$items_arg" \
   --arg baseBranch "$base_branch" \
   --arg baseReason "$base_reason" \
+  --arg baseValidationResult "$base_validation_result" \
+  --arg baseValidationBranch "$base_validation_branch" \
   --arg workflowMode "$workflow_mode" \
   --arg baseBranchAppliesTo "$base_branch_applies_to" \
   --arg baseBranchValidationNote "$base_branch_validation_note" \
+  --argjson baseWarnings "$base_warnings_json" \
   --argjson delegateReview "$delegate_review" \
   --argjson mayMerge "$may_merge" \
   --arg mayStartBacklog "$may_start_backlog" \
@@ -813,6 +877,11 @@ summary_json="$(jq -n \
     baseBranch: (if $baseBranch == "" then null else $baseBranch end),
     baseAmbiguous: ($baseBranch == ""),
     baseReason: $baseReason,
+    baseWarnings: $baseWarnings,
+    baseValidation: {
+      branch: (if $baseValidationBranch == "" then null else $baseValidationBranch end),
+      result: $baseValidationResult
+    },
     workflowMode: $workflowMode,
     baseBranchAppliesTo: $baseBranchAppliesTo,
     baseBranchValidationNote: $baseBranchValidationNote,
@@ -854,6 +923,7 @@ if [ "$(printf '%s\n' "$summary_json" | jq -r '.emptyEpicScope')" = "true" ]; th
   printf 'Native sub-issues: none resolved for epic #%s\n' "$epic_number"
 fi
 printf 'Base branch: %s (%s)\n' "${base_branch:-ambiguous}" "$base_reason"
+printf '%s\n' "$summary_json" | jq -r '.baseWarnings[]? | "WARNING: " + .'
 printf 'Workflow mode: %s\n' "$workflow_mode"
 printf 'Base applies to: %s\n' "$base_branch_applies_to"
 printf 'Base validation note: %s\n' "$base_branch_validation_note"

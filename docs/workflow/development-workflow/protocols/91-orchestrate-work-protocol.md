@@ -493,30 +493,41 @@ gh issue view <issue-number> --json labels --jq '.labels[].name | select(startsw
 If the label is present:
 
 1. **Derive the integration branch name**: `develop-<slug>` (replace `<slug>` with the value after `integration-branch:`).
+   When the bounded prelude or portfolio handoff already resolved
+   `BASE_BRANCH=develop` because the label was partial, mixed, missing on the
+   remote, or unverifiable, do not re-adopt `develop-<slug>` silently. Preserve
+   the approved base and report the prelude warning before mutation.
 2. **Resolve the branch owner**. In `single_repo`, the integration branch is
    owned by the current repository. In `workflow_hub`, it is the product
    implementation base and must be checked against the selected product
    repository, not the hub repository. Hub-owned spec and plan artifacts still
    target the hub artifact base branch.
-3. **Verify the branch exists on the owning remote** (output `0` = does not
-   exist, `1` = exists):
+3. **Verify the branch exists on the owning remote** using
+   `git ls-remote --exit-code --heads`. Exit `0` means the branch exists, exit
+   `2` means it is missing, and any other non-zero status means validation
+   failed:
 
    ```bash
    OWNING_REPO_ROOT="<current-or-selected-product-repository-root>"
    OWNING_REMOTE="origin"
-   BRANCH_EXISTS=$(set -o pipefail; git -C "$OWNING_REPO_ROOT" ls-remote "$OWNING_REMOTE" "refs/heads/develop-<slug>" 2>/dev/null | wc -l | tr -d ' ') || {
+   set +e
+   git -C "$OWNING_REPO_ROOT" ls-remote --exit-code --heads "$OWNING_REMOTE" "develop-<slug>" >/dev/null 2>&1
+   BRANCH_STATUS=$?
+   set -e
+   if [ "$BRANCH_STATUS" -ne 0 ] && [ "$BRANCH_STATUS" -ne 2 ]; then
      echo "WARNING: failed to verify whether develop-<slug> exists on the owning remote; skipping auto-create for this item."
      continue  # or return 1 / exit 1 depending on surrounding loop/function context
-   }
+   fi
    ```
 
-4. **If the branch does not exist** (`BRANCH_EXISTS` is `0`), create and push it
+4. **If the branch does not exist** (`BRANCH_STATUS` is `2`), create and push it
    from the owning repository's default implementation branch:
 
-   ```bash
-   OWNING_REPO_ROOT="<current-or-selected-product-repository-root>"
-   OWNING_REMOTE="origin"
-   DEFAULT_IMPLEMENTATION_BRANCH="<default-implementation-branch>"
+	   ```bash
+	   set -euo pipefail
+	   OWNING_REPO_ROOT="<current-or-selected-product-repository-root>"
+	   OWNING_REMOTE="origin"
+	   DEFAULT_IMPLEMENTATION_BRANCH="<default-implementation-branch>"
    git -C "$OWNING_REPO_ROOT" fetch "$OWNING_REMOTE" "$DEFAULT_IMPLEMENTATION_BRANCH"
    git -C "$OWNING_REPO_ROOT" checkout -B develop-<slug> "$OWNING_REMOTE/$DEFAULT_IMPLEMENTATION_BRANCH"
    git -C "$OWNING_REPO_ROOT" push -u "$OWNING_REMOTE" develop-<slug>

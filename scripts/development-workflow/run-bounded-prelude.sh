@@ -557,15 +557,28 @@ if ! jq -c \
         "Bounded run policy confirmation"
       end
     ),
-    scopeLines: [
+    scopeLines: ([
       source_line("Scope"; ($scopePayload.scopeSource // .scope.source // "unknown")),
       source_line("Resolved item"; (
         ($resolvedItem | tostring)
         + if ($resolvedTitle // "") == "" then "" else " - " + ($resolvedTitle | tostring) end
       )),
       source_line("Base"; (.effectivePolicy.base // "ambiguous")),
-      source_line("Base source"; (.fieldSources.base // "unknown"))
-    ],
+      source_line("Base source"; (.fieldSources.base // "unknown")),
+      source_line("Base reason"; ($scopePayload.baseReason // .scope.baseReason // "unknown"))
+    ] + [
+      ($scopePayload.baseWarnings // .scope.baseWarnings // [])[]?
+      | source_line("Base warning"; .)
+    ] + [
+      if (($scopePayload.baseValidation // .scope.baseValidation // null) == null) then empty
+      else source_line("Base validation"; (
+        (($scopePayload.baseValidation // .scope.baseValidation).result // "not_applicable")
+        + if ((($scopePayload.baseValidation // .scope.baseValidation).branch // "") == "") then ""
+          else " for " + (($scopePayload.baseValidation // .scope.baseValidation).branch | tostring)
+          end
+      ))
+      end
+    ]),
     policyLines: [
       source_line("May start Backlog"; (bool_text(.effectivePolicy.mayStartBacklog) + " (" + (.fieldSources.mayStartBacklog // "unknown") + ")")),
       source_line("Delegated review"; (bool_text(.effectivePolicy.delegateReview) + " (" + (.fieldSources.delegateReview // "unknown") + ")")),
