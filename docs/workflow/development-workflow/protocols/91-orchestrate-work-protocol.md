@@ -2147,10 +2147,10 @@ time), synchronize the `human-checkpoint-required` label and stable PR comment
 after fixer pushes — so label state always reflects current checkpoint
 satisfaction.
 
-**Timing**: Run after the infrastructure dependency scan above and after the
-documentation-stage alignment checker has passed for `spec/*` and
-`implementation-plan/*` PRs, but before Check 4 (`ready-for-human-review`
-application) in the readiness checklist.
+**Timing**: Run after the infrastructure dependency scan above, after CI and
+reviewer-loop checks are clean, and before Check 4 (`ready-for-human-review`
+application) in the readiness checklist. This sync step never applies
+`ready-for-human-review` by itself; Check 4 is the only label-application path.
 
 **Procedure**:
 
@@ -2170,15 +2170,13 @@ application) in the readiness checklist.
      --write-checkpoints-file checkpoint-policy.json
    ```
 
-4. When `BLOCKING_COUNT` is greater than zero, first run
-   `scripts/development-workflow/check-documentation-stage-alignment.sh --pr "$PR_NUMBER"`
-   for `spec/*` and `implementation-plan/*` PRs. If it exits `8`, remove any
-   stale `ready-for-human-review`, add `needs-fixes`, keep readiness blocked,
-   and correct or escalate the documentation-stage mismatch. Only after the
-   checker passes may this path apply `ready-for-human-review` **and** keep
-   `human-checkpoint-required` (both labels may coexist per protocol 92
-   BR-11/BR-3). Record checkpoint reason and required human action in the
-   `<!-- run-epic:checkpoint-status -->` comment posted by the script.
+4. When `BLOCKING_COUNT` is greater than zero, keep
+   `human-checkpoint-required` and record checkpoint reason plus required human
+   action in the `<!-- run-epic:checkpoint-status -->` comment posted by the
+   script. Do **not** apply `ready-for-human-review` here. If CI, reviewers,
+   documentation-stage alignment, residual gates, and review-thread checks all
+   pass, Check 4 applies `ready-for-human-review`; the two labels may coexist
+   per protocol 92 BR-11/BR-3.
 5. When all applicable checkpoints are `satisfied` or `waived`, the script
    removes `human-checkpoint-required` automatically.
 6. During fix cycles (Step 9): when applying `needs-fixes`, do **not** remove
@@ -2192,6 +2190,9 @@ Run this checklist for **every PR**:
 ```bash
 PR_NUMBER=<pr_number>
 BRANCH=<branch_name>  # e.g., feature/foo, spec/bar, fix/baz
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source scripts/development-workflow/workflow-lib.sh
+TARGET_REPO=$(repo_slug)
 
 # Determine PR type (implementation vs. spec/plan)
 case "$BRANCH" in
@@ -2281,11 +2282,12 @@ if [ "$IS_IMPLEMENTATION_PR" = "true" ]; then
   fi
 fi
 
-# Check 3: needs-fixes label — remove if present (stale at this point: CI is green and reviews are clean)
+# Check 3: record needs-fixes label state.
+# Do not remove it yet. Later gates in this checklist, including residual and
+# documentation-stage alignment, can still prove that needs-fixes is current.
 HAS_NEEDS_FIXES=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c "^needs-fixes$" || true)
 if [ "$HAS_NEEDS_FIXES" -gt 0 ]; then
-  echo "INFO: Removing stale 'needs-fixes' label (CI is green and reviews are clean)."
-  gh pr edit "$PR_NUMBER" --remove-label "needs-fixes"
+  echo "INFO: needs-fixes is present; it will be removed only after all Step 8a gates pass."
 fi
 
 # Check 3.5: residual gate for broad-scope work.
@@ -2343,12 +2345,12 @@ set -e
 if [ "$ALIGNMENT_STATUS" -eq 8 ]; then
   echo "$ALIGNMENT_OUTPUT"
   echo "ERROR: Documentation-stage alignment mismatch blocks ready-for-human-review."
-  HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c "^ready-for-human-review$" || true)
+  HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --repo "$TARGET_REPO" --json labels --jq '.labels[].name' | grep -c "^ready-for-human-review$" || true)
   if [ "$HAS_HUMAN_REVIEW_LABEL" -gt 0 ]; then
-    gh pr edit "$PR_NUMBER" --remove-label "ready-for-human-review" ||
+    gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --remove-label "ready-for-human-review" ||
       echo "WARNING: failed to remove stale ready-for-human-review; mismatch still exits 8 and remains blocked."
   fi
-  gh pr edit "$PR_NUMBER" --add-label "needs-fixes" ||
+  gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --add-label "needs-fixes" ||
     echo "WARNING: failed to add needs-fixes; mismatch still exits 8 and remains blocked."
   echo "Correct the PR diff so it contains only expected documentation-stage artifacts, or escalate for a human workflow-stage decision."
   exit 8
@@ -2418,13 +2420,20 @@ else
   echo "✅ GraphQL verification: all review threads resolved. Proceeding to Check 4."
 fi
 
+# Check 3.7: remove stale needs-fixes only after every pre-readiness gate that
+# can keep it current has passed.
+if [ "$HAS_NEEDS_FIXES" -gt 0 ]; then
+  echo "INFO: Removing stale 'needs-fixes' label after all pre-readiness gates passed."
+  gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --remove-label "needs-fixes"
+fi
+
 # Check 4: ready-for-human-review label NOT yet applied (we are about to apply it)
-HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c "^ready-for-human-review$" || true)
+HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --repo "$TARGET_REPO" --json labels --jq '.labels[].name' | grep -c "^ready-for-human-review$" || true)
 if [ "$HAS_HUMAN_REVIEW_LABEL" -gt 0 ]; then
   echo "INFO: PR already has 'ready-for-human-review' label. Skipping re-application."
 else
   echo "Applying 'ready-for-human-review' label..."
-  gh pr edit "$PR_NUMBER" --add-label "ready-for-human-review"
+  gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --add-label "ready-for-human-review"
 fi
 
 echo "✅ Label readiness checklist passed. PR is ready for human review."
