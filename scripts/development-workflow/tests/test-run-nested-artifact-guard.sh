@@ -34,6 +34,9 @@ case "$*" in
       wrong_base)
         printf '[{"number":77,"headRefName":"feature/1200-duplicate-path","baseRefName":"main","title":"duplicate"}]\n'
         ;;
+      canonical_wrong_base)
+        printf '[{"number":77,"headRefName":"feature/1200-canonical-path","baseRefName":"main","title":"canonical wrong base"}]\n'
+        ;;
       mixed_scope)
         printf '[{"number":77,"headRefName":"feature/1200-duplicate-path","baseRefName":"develop","title":"in scope"},{"number":78,"headRefName":"feature/999-other","baseRefName":"main","title":"out of scope"}]\n'
         ;;
@@ -157,10 +160,12 @@ run_not_contains "ignores_foo_1200" "foo-1200" "$(body "$out")"
 repo="$(make_repo team-prefix)"
 git -C "$repo" branch feature/ENG-1200-prefixed
 git -C "$repo" branch feature/AB12-1200-prefixed
+git -C "$repo" branch feature/lh-1200-prefixed
 out="$(guard_output --repo-root "$repo" --mode pre-create --issue 1200 --expected-branch feature/1200-canonical-path --approved-base develop)"
 run_test "team_prefix_exit_one" "1" "$(status_code "$out")"
 run_contains "team_prefix_matches" "feature/ENG-1200-prefixed" "$(body "$out")"
 run_contains "team_prefix_digits_match" "feature/AB12-1200-prefixed" "$(body "$out")"
+run_contains "lowercase_team_prefix_match" "feature/lh-1200-prefixed" "$(body "$out")"
 
 repo="$(make_repo remote)"
 git -C "$repo" branch feature/1200-remote-only
@@ -189,6 +194,13 @@ unset MOCK_GH_PR_MODE
 run_test "wrong_base_exit_one" "1" "$(status_code "$out")"
 run_contains "wrong_base_result" "RESULT=wrong_base" "$(body "$out")"
 run_contains "wrong_base_pr" "base=main" "$(body "$out")"
+
+repo="$(make_repo canonical-wrong-pr-base)"
+export MOCK_GH_PR_MODE=canonical_wrong_base
+out="$(guard_output --repo-root "$repo" --mode pre-pr --issue 1200 --expected-branch feature/1200-canonical-path --approved-base develop)"
+unset MOCK_GH_PR_MODE
+run_test "canonical_wrong_base_exit_one" "1" "$(status_code "$out")"
+run_contains "canonical_wrong_base_result" "RESULT=wrong_base" "$(body "$out")"
 
 repo="$(make_repo split-wrong-pr-base)"
 export MOCK_GH_PR_MODE=wrong_base
@@ -224,6 +236,15 @@ out="$(guard_output --repo-root "$repo" --mode pre-pr --issue 1200 --expected-br
 unset MOCK_GH_PR_MODE
 run_test "gh_invalid_json_exit_one" "1" "$(status_code "$out")"
 run_contains "gh_invalid_json_scan_failed" "SCAN=open_prs_json" "$(body "$out")"
+
+repo="$(make_repo missing-gh)"
+git_bin_dir="$(dirname "$(command -v git)")"
+set +e
+out="$(PATH="$git_bin_dir:/usr/bin:/bin" "$GUARD" --repo-root "$repo" --mode pre-pr --issue 1200 --expected-branch feature/1200-canonical-path --approved-base develop 2>&1)"
+status=$?
+set -e
+run_test "missing_gh_exit_one" "1" "$status"
+run_contains "missing_gh_scan_failed" "SCAN=open_prs_missing_gh" "$out"
 
 repo="$(make_repo mixed-scope)"
 export MOCK_GH_PR_MODE=mixed_scope

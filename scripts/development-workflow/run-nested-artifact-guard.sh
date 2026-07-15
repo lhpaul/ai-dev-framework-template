@@ -122,7 +122,7 @@ trap cleanup EXIT
 
 branch_matches_issue() {
   local branch="$1"
-  [[ "$branch" =~ ^(feature|fix|refactor|hotfix|spec|implementation-plan|backport/hotfix)/([A-Z][A-Z0-9]{1,7}-)?${ISSUE_NUMBER}($|-) ]]
+  [[ "$branch" =~ ^(feature|fix|refactor|hotfix|spec|implementation-plan|backport/hotfix)/(([A-Z][A-Z0-9]{1,7}|[a-z][a-z0-9])-)?${ISSUE_NUMBER}($|-) ]]
 }
 
 is_canonical_artifact() {
@@ -148,6 +148,10 @@ add_artifact() {
   local canonical="false"
 
   branch_matches_issue "$branch" || return 0
+  if [ "$kind" = "open_pr" ] && [ -n "$APPROVED_BASE" ] && [ "$base" != "$APPROVED_BASE" ]; then
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$kind" "$branch" "$location" "$base" "$state" "$canonical" >> "$ARTIFACTS_FILE"
+    return 0
+  fi
   if is_canonical_artifact "$kind" "$branch" "$location"; then
     canonical="true"
     printf '%s\t%s\t%s\t%s\t%s\n' "$kind" "$branch" "$location" "$base" "$state" >> "$CANONICAL_FILE"
@@ -168,7 +172,7 @@ scan_worktrees() {
   current_branch=""
   while IFS= read -r line; do
     case "$line" in
-      worktree\ *) current_path="${line#worktree }" ;;
+      worktree\ *) current_path="${line#worktree }"; current_branch="" ;;
       branch\ refs/heads/*)
         current_branch="${line#branch refs/heads/}"
         add_artifact "worktree" "$current_branch" "$current_path" "" "local"
@@ -214,16 +218,63 @@ $output
 EOF
 }
 
+github_repo_from_url() {
+  local value="$1"
+  case "$value" in
+    git@github.com:*/*.git)
+      value="${value#git@github.com:}"
+      value="${value%.git}"
+      ;;
+    git@github.com:*/*)
+      value="${value#git@github.com:}"
+      ;;
+    https://github.com/*/*.git)
+      value="${value#https://github.com/}"
+      value="${value%.git}"
+      ;;
+    https://github.com/*/*)
+      value="${value#https://github.com/}"
+      value="${value%/}"
+      ;;
+    ssh://git@github.com/*/*.git)
+      value="${value#ssh://git@github.com/}"
+      value="${value%.git}"
+      ;;
+    ssh://git@github.com/*/*)
+      value="${value#ssh://git@github.com/}"
+      value="${value%/}"
+      ;;
+    *)
+      value=""
+      ;;
+  esac
+  printf '%s\n' "$value"
+}
+
 scan_open_prs() {
-  local output parsed
+  local output parsed remote_url repo_slug
   if ! command -v gh >/dev/null 2>&1; then
-    return 0
-  fi
-  if ! output="$(gh pr list --state open --search "$ISSUE_NUMBER" --json number,headRefName,baseRefName,title 2>/dev/null)"; then
     printf 'RESULT=scan_failed\n'
-    printf 'SCAN=open_prs\n'
-    printf 'REQUIRED_ACTION=Retry gh PR scan before nested artifact creation.\n'
+    printf 'SCAN=open_prs_missing_gh\n'
+    printf 'REQUIRED_ACTION=Install or expose gh CLI before nested artifact creation.\n'
     exit 1
+  fi
+  remote_url="$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null || true)"
+  repo_slug="$(github_repo_from_url "$remote_url")"
+  if [ -n "$repo_slug" ]; then
+    output="$(gh pr list --repo "$repo_slug" --state open --search "$ISSUE_NUMBER" --json number,headRefName,baseRefName,title 2>/dev/null)" || {
+      printf 'RESULT=scan_failed\n'
+      printf 'SCAN=open_prs\n'
+      printf 'REQUIRED_ACTION=Retry gh PR scan before nested artifact creation.\n'
+      exit 1
+    }
+  else
+    output="$(gh pr list --state open --search "$ISSUE_NUMBER" --json number,headRefName,baseRefName,title 2>/dev/null)" || {
+      printf 'RESULT=scan_failed\n'
+      printf 'SCAN=open_prs\n'
+      printf 'REQUIRED_ACTION=Retry gh PR scan before nested artifact creation.\n'
+      exit 1
+    }
   fi
   if ! parsed="$(printf '%s' "$output" | python3 -c '
 import json, sys

@@ -121,7 +121,7 @@ scripts/development-workflow/open-product-pr.sh \
 The dry-run output includes the target `owner/repo`, base branch, head branch,
 approved base branch, title, and a redacted
 `gh pr create --repo <owner/repo>` command shape. It does not require or print
-credentials. If `--approved-base` is supplied and does not match `--base`, the
+credentials. `--approved-base` is required; if it does not match `--base`, the
 helper stops before credentials or `gh pr create` are used.
 
 Run the same dry-run for a second product repository to verify routing:

@@ -151,7 +151,7 @@ run_contains "auth_json_private_key_path" "\"AUTH_PRIVATE_KEY_PATH\": \"$mobile_
 body_file="$hub_dir/body.md"
 printf 'PR body\n' > "$body_file"
 mobile_dry_run="$(bash "$PR_HELPER" --repo-root "$hub_dir" --repo mobile-app --base main --approved-base main --head feature/test --title "Mobile PR" --body-file "$body_file" --dry-run)"
-admin_dry_run="$(bash "$PR_HELPER" --repo-root "$hub_dir" --repo admin-portal --base develop --head feature/test --title "Admin PR" --body-file "$body_file" --dry-run)"
+admin_dry_run="$(bash "$PR_HELPER" --repo-root "$hub_dir" --repo admin-portal --base develop --approved-base develop --head feature/test --title "Admin PR" --body-file "$body_file" --dry-run)"
 run_contains "mobile_dry_run_targets_mobile" "TARGET_REPO=example/mobile-app" "$mobile_dry_run"
 run_contains "mobile_dry_run_records_approved_base" "APPROVED_BASE=main" "$mobile_dry_run"
 run_contains "admin_dry_run_targets_admin" "TARGET_REPO=example/admin-portal" "$admin_dry_run"
@@ -161,6 +161,10 @@ run_fails_contains \
   "product_pr_rejects_wrong_approved_base" \
   "base 'main' does not match approved base 'develop'" \
   bash "$PR_HELPER" --repo-root "$hub_dir" --repo mobile-app --base main --approved-base develop --head feature/test --title "Mobile PR" --body-file "$body_file" --dry-run
+run_fails_contains \
+  "product_pr_requires_approved_base" \
+  "--approved-base is required" \
+  bash "$PR_HELPER" --repo-root "$hub_dir" --repo mobile-app --base main --head feature/test --title "Mobile PR" --body-file "$body_file" --dry-run
 
 https_dir="$(fixture_dir https-url)"
 cat > "$https_dir/.ai-dev-workflow.yaml" <<'YAML'
@@ -172,7 +176,7 @@ workflow_hub:
     - name: web-app
       git_url: https://github.com/example/web-app.git
 YAML
-https_dry_run="$(bash "$PR_HELPER" --repo-root "$https_dir" --repo web-app --base main --head feature/test --title "Web PR" --body-file "$body_file" --dry-run)"
+https_dry_run="$(bash "$PR_HELPER" --repo-root "$https_dir" --repo web-app --base main --approved-base main --head feature/test --title "Web PR" --body-file "$body_file" --dry-run)"
 run_contains "https_git_url_targets_repo" "TARGET_REPO=example/web-app" "$https_dry_run"
 
 non_github_dir="$(fixture_dir non-github)"
@@ -188,7 +192,7 @@ YAML
 run_fails_contains \
   "product_pr_non_github_url_fails" \
   "does not resolve to a GitHub owner/repo slug" \
-  bash "$PR_HELPER" --repo-root "$non_github_dir" --repo internal-app --base main --head feature/test --title "Internal PR" --body-file "$body_file" --dry-run
+  bash "$PR_HELPER" --repo-root "$non_github_dir" --repo internal-app --base main --approved-base main --head feature/test --title "Internal PR" --body-file "$body_file" --dry-run
 
 single_repo_dir="$(fixture_dir single-repo)"
 cat > "$single_repo_dir/.ai-dev-workflow.yaml" <<'YAML'
@@ -200,7 +204,7 @@ run_contains "auth_not_required_json" '"AUTH_STATUS": "not_required"' "$single_a
 run_fails_contains \
   "product_pr_single_repo_mode_fails" \
   "product PR operations require workflow_hub mode" \
-  bash "$PR_HELPER" --repo-root "$single_repo_dir" --repo mobile-app --base main --head feature/test --title "Mobile PR" --body-file "$body_file" --dry-run
+  bash "$PR_HELPER" --repo-root "$single_repo_dir" --repo mobile-app --base main --approved-base main --head feature/test --title "Mobile PR" --body-file "$body_file" --dry-run
 run_fails_contains \
   "product_pr_missing_repo_value" \
   "--repo requires a value" \

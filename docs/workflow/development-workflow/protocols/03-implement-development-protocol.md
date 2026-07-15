@@ -752,7 +752,8 @@ description before running `gh pr create`.
 
 **Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
 
-Open a **draft** PR targeting `develop` with:
+Open a **draft** PR targeting the approved base branch (normally `develop`,
+or `develop-<slug>` for integration-branch items) with:
 
 - **Title**: `feat([scope]): [feature-name]`
 - **Description**:
@@ -764,7 +765,7 @@ Open a **draft** PR targeting `develop` with:
 
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
 
-Before running `gh pr create`, verify that the current branch was actually cut from `develop` and confirm the intended base matches:
+Before running `gh pr create`, verify that the current branch was actually cut from the approved base and confirm the intended base matches:
 
 ```bash
 BASE_BRANCH="develop"  # or develop-<slug> when an integration-branch label is present
@@ -775,31 +776,34 @@ if [ -n "${ISSUE_NUMBER:-}" ]; then
     --expected-branch "feature/[branch-slug]" \
     --approved-base "$BASE_BRANCH"
 fi
-# 1. Verify the current branch descends from origin/develop (not from main or another branch)
-if ! git merge-base --is-ancestor origin/develop HEAD; then
-  echo "ERROR: Current branch does not descend from origin/develop. Verify the branch was cut from develop before opening the PR."
+# 1. Verify the current branch descends from the approved base (not from main or another branch)
+if ! git merge-base --is-ancestor "origin/${BASE_BRANCH}" HEAD; then
+  echo "ERROR: Current branch does not descend from origin/${BASE_BRANCH}. Verify the branch was cut from ${BASE_BRANCH} before opening the PR."
   exit 1
 fi
-echo "Base-branch guard passed: branch descends from origin/develop"
+echo "Base-branch guard passed: branch descends from origin/${BASE_BRANCH}"
 ```
 
 **Post-create base-branch assertion (mandatory — run immediately after `gh pr create`)**:
 
 ```bash
-gh pr create --draft --base develop --title "feat([scope]): [feature-name]" --body "..."
+gh pr create --draft --base "$BASE_BRANCH" --title "feat([scope]): [feature-name]" --body "..."
 PR_NUMBER=$(gh pr view --json number -q '.number')
 
-# Assert the opened PR targets develop
+# Assert the opened PR targets the approved base
 ACTUAL_BASE=$(gh pr view "$PR_NUMBER" --json baseRefName -q '.baseRefName')
-if [ "$ACTUAL_BASE" != "develop" ]; then
-  echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of 'develop'. Closing the malformed PR."
-  gh pr close "$PR_NUMBER" --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against develop."
+if [ "$ACTUAL_BASE" != "$BASE_BRANCH" ]; then
+  echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of '$BASE_BRANCH'. Closing the malformed PR."
+  gh pr close "$PR_NUMBER" --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against '$BASE_BRANCH'."
   exit 1
 fi
 echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
 ```
 
-**Important**: Always use `--base develop` to explicitly target the `develop` branch. This prevents accidental PR creation to `main` or other branches. The pre-create guard and post-create assertion above are the enforcement mechanism — do not skip them.
+**Important**: Always use `--base "$BASE_BRANCH"` to explicitly target the
+approved base branch. This prevents accidental PR creation to `main`, `develop`,
+or another branch that was not approved for the item. The pre-create guard and
+post-create assertion above are the enforcement mechanism — do not skip them.
 
 ### Step 9: Handoff to Work Item Runner
 
@@ -1079,7 +1083,10 @@ Fix all ShellCheck warnings before committing. Workflow scripts must also be bas
 9. **Pre-Submission Self-Review Pass (mandatory — before opening the PR)**: Complete the [Pre-Submission Self-Review Pass](#pre-submission-self-review-pass) using `git diff develop...HEAD` for normal `develop`-target work, or `git diff develop-<slug>...HEAD` for integration-branch items. For Refactor work, the coverage check must confirm every implementation-plan acceptance criterion is addressed. This pass complements, and does not replace, the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) when a test harness is involved. Add the self-review log to the PR description.
 10. **Pre-PR Tracking Item Gate (mandatory — before opening the PR)**: Complete the [Pre-PR Tracking Item Gate](#pre-pr-tracking-item-gate). If no tracker item exists, create or accept a retroactive backlog item and reference it in the PR description before running `gh pr create`.
 11. **Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
-12. Open a **draft** PR targeting `develop` with refactor-appropriate metadata (do **not** reuse Path 1 Step 8 verbatim — that path uses `feat(...)` and a spec link):
+12. Open a **draft** PR targeting the approved base branch (normally `develop`,
+    or `develop-<slug>` for integration-branch items) with
+    refactor-appropriate metadata (do **not** reuse Path 1 Step 8 verbatim —
+    that path uses `feat(...)` and a spec link):
     - **Title**: `refactor([scope]): [short description]`
     - **Description**:
       - What was refactored and why
@@ -1099,31 +1106,33 @@ if [ -n "${ISSUE_NUMBER:-}" ]; then
     --expected-branch "refactor/[branch-slug]" \
     --approved-base "$BASE_BRANCH"
 fi
-# 1. Verify the current branch descends from origin/develop
-if ! git merge-base --is-ancestor origin/develop HEAD; then
-  echo "ERROR: Current branch does not descend from origin/develop. Verify the branch was cut from develop before opening the PR."
+# 1. Verify the current branch descends from the approved base
+if ! git merge-base --is-ancestor "origin/${BASE_BRANCH}" HEAD; then
+  echo "ERROR: Current branch does not descend from origin/${BASE_BRANCH}. Verify the branch was cut from ${BASE_BRANCH} before opening the PR."
   exit 1
 fi
-echo "Base-branch guard passed: branch descends from origin/develop"
+echo "Base-branch guard passed: branch descends from origin/${BASE_BRANCH}"
 ```
 
 **Post-create base-branch assertion (mandatory — run immediately after `gh pr create`)**:
 
 ```bash
-gh pr create --draft --base develop --title "refactor([scope]): [short description]" --body "..."
+gh pr create --draft --base "$BASE_BRANCH" --title "refactor([scope]): [short description]" --body "..."
 PR_NUMBER=$(gh pr view --json number -q '.number')
 
-# Assert the opened PR targets develop
+# Assert the opened PR targets the approved base
 ACTUAL_BASE=$(gh pr view "$PR_NUMBER" --json baseRefName -q '.baseRefName')
-if [ "$ACTUAL_BASE" != "develop" ]; then
-  echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of 'develop'. Closing the malformed PR."
-  gh pr close "$PR_NUMBER" --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against develop."
+if [ "$ACTUAL_BASE" != "$BASE_BRANCH" ]; then
+  echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of '$BASE_BRANCH'. Closing the malformed PR."
+  gh pr close "$PR_NUMBER" --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against '$BASE_BRANCH'."
   exit 1
 fi
 echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
 ```
 
-**Important**: Always use `--base develop` to explicitly target the `develop` branch. The pre-create guard and post-create assertion above are the enforcement mechanism — do not skip them.
+**Important**: Always use `--base "$BASE_BRANCH"` to explicitly target the
+approved base branch. The pre-create guard and post-create assertion above are
+the enforcement mechanism — do not skip them.
 
 12. Hand off to the Work Item Runner with the same lifecycle expectations as Path 1 Step 9 (internal review gate, automated reviewer loop, CI, labels). **Label derivation rule**: `refactor/*` branches always require `ready-for-regression` based on branch prefix, not content type. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table. See `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
 
@@ -1343,7 +1352,9 @@ description before running `gh pr create`.
 
 **Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
 
-Open a **draft** PR targeting `develop` using the same structure as Path 1 `### Step 8: Open PR (Draft)`, but with a **`fix(...)`** title and a fix-focused description (omit spec/plan links when none exist):
+Open a **draft** PR targeting the approved base branch using the same structure
+as Path 1 `### Step 8: Open PR (Draft)`, but with a **`fix(...)`** title and a
+fix-focused description (omit spec/plan links when none exist):
 
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
 
@@ -1356,31 +1367,34 @@ if [ -n "${ISSUE_NUMBER:-}" ]; then
     --expected-branch "fix/[branch-slug]" \
     --approved-base "$BASE_BRANCH"
 fi
-# 1. Verify the current branch descends from origin/develop
-if ! git merge-base --is-ancestor origin/develop HEAD; then
-  echo "ERROR: Current branch does not descend from origin/develop. Verify the branch was cut from develop before opening the PR."
+# 1. Verify the current branch descends from the approved base
+if ! git merge-base --is-ancestor "origin/${BASE_BRANCH}" HEAD; then
+  echo "ERROR: Current branch does not descend from origin/${BASE_BRANCH}. Verify the branch was cut from ${BASE_BRANCH} before opening the PR."
   exit 1
 fi
-echo "Base-branch guard passed: branch descends from origin/develop"
+echo "Base-branch guard passed: branch descends from origin/${BASE_BRANCH}"
 ```
 
 **Post-create base-branch assertion (mandatory — run immediately after `gh pr create`)**:
 
 ```bash
-gh pr create --draft --base develop --title "fix([scope]): [description]" --body "..."
+gh pr create --draft --base "$BASE_BRANCH" --title "fix([scope]): [description]" --body "..."
 PR_NUMBER=$(gh pr view --json number -q '.number')
 
-# Assert the opened PR targets develop
+# Assert the opened PR targets the approved base
 ACTUAL_BASE=$(gh pr view "$PR_NUMBER" --json baseRefName -q '.baseRefName')
-if [ "$ACTUAL_BASE" != "develop" ]; then
-  echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of 'develop'. Closing the malformed PR."
-  gh pr close "$PR_NUMBER" --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against develop."
+if [ "$ACTUAL_BASE" != "$BASE_BRANCH" ]; then
+  echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of '$BASE_BRANCH'. Closing the malformed PR."
+  gh pr close "$PR_NUMBER" --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against '$BASE_BRANCH'."
   exit 1
 fi
 echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
 ```
 
-**Important**: Always use `--base develop` to explicitly target the `develop` branch. This prevents accidental PR creation to `main` or other branches. The pre-create guard and post-create assertion above are the enforcement mechanism — do not skip them.
+**Important**: Always use `--base "$BASE_BRANCH"` to explicitly target the
+approved base branch. This prevents accidental PR creation to `main`, `develop`,
+or another branch that was not approved for the item. The pre-create guard and
+post-create assertion above are the enforcement mechanism — do not skip them.
 
 ### Step 9: Handoff to Work Item Runner
 

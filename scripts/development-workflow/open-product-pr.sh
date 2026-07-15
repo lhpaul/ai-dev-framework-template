@@ -129,7 +129,8 @@ done
 
 [ -n "$REPO_NAME" ] || die "--repo is required"
 [ -n "$BASE_BRANCH" ] || die "--base is required"
-[ -z "$APPROVED_BASE" ] || [ "$BASE_BRANCH" = "$APPROVED_BASE" ] || die "base '$BASE_BRANCH' does not match approved base '$APPROVED_BASE'"
+[ -n "$APPROVED_BASE" ] || die "--approved-base is required"
+[ "$BASE_BRANCH" = "$APPROVED_BASE" ] || die "base '$BASE_BRANCH' does not match approved base '$APPROVED_BASE'"
 [ -n "$HEAD_BRANCH" ] || die "--head is required"
 [ -n "$TITLE" ] || die "--title is required"
 [ -n "$BODY_FILE" ] || die "--body-file is required"
