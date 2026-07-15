@@ -56,6 +56,10 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
    verification, branch deletion/pruning, `post-merge-cleanup.sh`, live tracker
    verification, audit update, and rediscovery before treating that PR as
    complete.
+   When resuming an epic-scoped item after a human-checkpoint pause from a
+   prior worktree-isolated run, run the Protocol 95/91 checkpoint-resume
+   worktree preflight before any mutation. Re-entering the worktree is a CWD
+   safety check only; it does not satisfy, waive, or clear checkpoint state.
 9. **Guardrails layer context**: The `--delegate-review`, `--may-merge`,
    `--may-start-backlog`, and `--max-risk` flags are the **invocation-override**
    layer (highest priority) of the three-layer guardrails precedence. The

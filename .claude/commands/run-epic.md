@@ -30,6 +30,9 @@ Key responsibilities:
 - When autonomy policy is missing or ambiguous, run the read-only policy
   recommender, present the recommended config and checkpoint policy in-place,
   and continue the same run when the human accepts or customizes it.
+- On checkpoint resume from a prior worktree-isolated item run, perform the
+  Protocol 95/91 worktree-resume preflight before mutation. Re-entry does not
+  satisfy or waive checkpoint state.
 - Before any later delegated merge decision, run the PR risk classifier and
   respect its `--max-risk` gate.
 - After delegated review, fix, merge, block, or escalation decisions, update
