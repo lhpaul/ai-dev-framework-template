@@ -94,11 +94,14 @@ lists the unexpected file, and blocks automatic human-review readiness.
 **Maps to**: Acceptance Criteria 7
 
 1. Use a fixture that represents an already-open documentation-stage PR with
-   unexpected implementation files in its current diff.
+   unexpected implementation files in its current diff and a stale
+   `ready-for-human-review` label already present.
 2. Run the checker without creating new files in the current session.
 
 **Expected result**: The checker evaluates the current diff and blocks
-readiness even though the contamination pre-existed the resumed run.
+readiness even though the contamination pre-existed the resumed run. The
+readiness path removes the stale `ready-for-human-review` label before reporting
+the mismatch.
 
 ### Step 6: Verify Stable Warning Comment Behavior
 
@@ -153,6 +156,8 @@ Each checkbox maps to an acceptance criterion from the spec.
 - [ ] Warning text identifies workflow stage collapse, not code correctness.
       AC6.
 - [ ] Resume behavior evaluates the current PR diff. AC7.
+- [ ] Resumed mismatched PRs with a stale `ready-for-human-review` label remove
+      that label before reporting the blocker. AC5, AC7.
 - [ ] Valid documentation-only spec and plan PRs are not blocked. AC8.
 - [ ] Empty changed-file lists on documentation-stage branches block readiness
       instead of passing as aligned. AC8, AC10.

@@ -86,12 +86,16 @@ agent and skill guidance, a new script, and a script test harness.
 - [ ] Add the next unused Step 8a exit code, `8`, for documentation-stage
       mismatch, and require `check-documentation-stage-alignment.sh` to emit that
       same code for mismatch outcomes. The action should be: leave the PR
-      without `ready-for-human-review`, post or update the warning, apply
-      `needs-fixes` if the implementation chooses to use labels for blockers,
-      and report a human/workflow correction action.
+      without `ready-for-human-review`, remove an existing stale
+      `ready-for-human-review` label if the PR already had one, post or update
+      the warning, apply `needs-fixes` if the implementation chooses to use
+      labels for blockers, and report a human/workflow correction action.
 - [ ] Make the gate run on every pass through Step 8a, including resumed PRs,
       fix cycles, and checkpoint-policy runs, so contaminated existing branches
       cannot bypass inspection through an earlier readiness-label path.
+- [ ] Update Protocol 91 Check 4 / existing-ready-label handling so a resumed
+      documentation-stage PR with a stale `ready-for-human-review` label still
+      runs the alignment checker and removes the label when a mismatch is found.
 - [ ] Update `docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md`
       so `ready-for-human-review` requires documentation-stage alignment for
       `spec/*` and `implementation-plan/*` PRs.
