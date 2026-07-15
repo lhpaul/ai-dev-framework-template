@@ -35,11 +35,13 @@ When `BATCH_CONTEXT=true`, the item-orchestrator must provide an isolation
 assignment with the expected worktree path, expected branch, artifact repo root,
 approved base branch, mutation classification, and `isolation: "worktree"`.
 Before the first file edit, branch-changing command, commit, push, PR mutation,
-tracker mutation, or stage handoff, verify that `pwd -P` is inside the expected
-worktree path and that `git rev-parse --abbrev-ref HEAD` equals the expected
-branch. Stop before mutation on any mismatch. If mutation may already have
-occurred outside the assigned worktree, escalate for human inspection instead of
-resetting, restoring, stashing, committing, or deleting the suspect changes.
+tracker mutation, or stage handoff, verify that every field is present, that
+`pwd -P` is at or under the expected worktree path, and that
+`git rev-parse --abbrev-ref HEAD` equals the expected branch. Stop before
+mutation on missing metadata, wrong CWD, main-repo CWD, or wrong branch. If
+mutation may already have occurred outside the assigned worktree, escalate for
+human inspection instead of resetting, restoring, stashing, committing, or
+deleting the suspect changes.
 
 ## Nested Artifact Guard
 
